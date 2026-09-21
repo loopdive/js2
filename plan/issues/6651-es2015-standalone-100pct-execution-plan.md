@@ -1173,6 +1173,177 @@ families (16). Each needs a mechanism rather than an arm, and the detached
 cohort (22) cannot be measured in this container at all — so E1 took the four
 seams that are complete, measurable and independently verifiable here.
 
+### 2026-09-21 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E2
+
+- **Branch** `issue-6651-E2-typedarray-mop`, based on `3769840f`
+  (== `origin/main` at start of slice). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a45f4665e71a5e440`.
+- **Manifest** `plan/agent-context/6651/E-typedarray-buffers.txt`, 144 rows,
+  sha256 `61f309fc147d13c3989e47a83ece94a8073b04eae8c1c6a9736cac59e0367a17`.
+
+| standalone, `--isolate` | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/E2-before.log`) | 13 | 130 | 1 |
+| after (`.tmp/6651/E2-after.final.log`) | **20** | 123 | 1 |
+
+**+7 rows pass, 0 lost, 0 other verdict changes.** Gained:
+`TypedArray/from/{arylk-get-length,arylk-to-length,iter-access,iter-invoke,iter-next,iter-next-value}-error.js`
+and `TypedArrayConstructors/from/mapfn-is-not-callable.js`.
+
+**Measurement note — a sharded `--isolate` run can manufacture 40 fake
+regressions.** The un-sharded run measured at ~2 min/row on a box carrying four
+other lanes (load ~21 on 8 cores), i.e. ~5 h for 144 rows, so the manifest was
+split 6 ways with each ROW still in its own fresh child — identical methodology,
+more rows in flight. 40 rows then came back `error / spawnSync … ETIMEDOUT`:
+the runner's 135 s per-row child budget is a *serial* number, and under 6-way
+self-contention it is not enough. Scored naively that read as **5 pass→non-pass
+regressions and 35 verdict changes**, every one of them an artefact. The 40 rows
+were re-run at `JS2WASM_ROW_TIMEOUT_MS=420000` across 2 shards and merged; the
+table above is the merged result. Anyone sharding this runner should treat an
+`error` row as "not measured", never as a verdict.
+
+#### E2-a — `%TypedArray%.from` surfaced its own TypeError instead of the source's
+
+`%TypedArray%` (§23.2.1) is materialized in standalone as a plain `$Object`
+singleton by `emitTypedArrayIntrinsicCtorObject` — the object
+`harness/testTypedArray.js` binds with
+`var TypedArray = Object.getPrototypeOf(Int8Array)`. It is neither a
+`$__ta_ctor` struct nor the `ctor:Int8Array` carrier, so both runtime
+discriminators in `tryEmitTaStaticOfFrom` declined and `TypedArray.from(src)`
+fell through to the **refusal closure** seeded on the carrier's own `from`/`of`
+properties. That closure's TypeError was the call's FIRST observable act —
+which is the wrong error at the wrong time: §23.2.2.1 runs IterableToList / the
+array-like `length` read BEFORE TypedArrayCreate, so a source whose iterator or
+`length` getter throws must surface THAT completion.
+
+The identity predicate went into the new module
+`src/codegen/ta-static-from-of-spec.ts` (kept out of both `array-object-proto.ts`,
+which owns the intrinsic's SEEDING, and `call-receiver-method.ts`, which owns the
+CONSUMING arm — the predicate is exactly the contract between them), and the
+abstract-constructor TypeError moved to TypedArrayCreate inside
+`__ta_from_arraylike`.
+
+**Its placement is load-bearing and was measured, not reasoned.** With the
+`kind < 0` check in front of the `__extern_length` read the source's `length`
+getter ran **0** times; behind it, **1**. The first cut had it in front and
+every one of the six rows still failed, with the identical error message — the
+arm was working and the ORDER was wrong.
+
+`array-object-proto.ts` carries a comment claiming the refusal closure "is also
+the correct answer for a bare `TypedArray.from([])`". **That claim is wrong**:
+`IsConstructor(%TypedArray%)` is true, so `from` runs and the TypeError belongs
+at TypedArrayCreate, after the drain. The comment is left for a follow-up that
+touches that file.
+
+#### E2-b — §23.2.2.1 step 3, `IsCallable(mapfn)`, before the `@@iterator` GET
+
+Two defects in one decision. The call-site arm decided "is there a mapping?"
+with `__nullish_to_null` + `ref.is_null`, which **folds `null` and `undefined`
+together** — so `TA.from(src, null)` silently ran the no-mapping path and
+returned a typed array instead of throwing — and it did so **after** step 4's
+`GetMethod(source, @@iterator)`. `mapfn-is-not-callable.js` asserts exactly that
+ordering with a counting `@@iterator` accessor: measured **14** gets where the
+spec requires **0**.
+
+The gate is emitted ahead of both drain arms and reuses the two natives the
+sibling §23.1.3.30 `sort` comparefn gate already uses
+(`__extern_is_undefined` / `__typeof_function`, #6651 E-S1) so the two "a
+present non-callable function argument is a TypeError" sites agree rather than
+each inventing a predicate.
+
+#### E2-c — §10.4.5.6 `[[OwnPropertyKeys]]` for a dynamic view
+
+`ta-dyn-mop.ts` already gives `__object_keys` a correct dyn-view arm. But
+`Object.getOwnPropertyNames` and — the surface the `internals/OwnPropertyKeys`
+rows use — `Reflect.ownKeys` do **not** route through `__object_keys`: the
+standalone `Reflect.ownKeys` arm calls `__getOwnPropertyNames` and appends
+`__getOwnPropertySymbols`. That native had no dyn-view arm, so a typed array was
+answered by the generic `$__vec_base` arm, which is written for an ordinary
+Array and therefore appends `"length"` — not an own property of an
+integer-indexed exotic object at all (§10.4.5 has no `length` slot;
+`%TypedArray%.prototype.length` is an inherited accessor) — and never consults
+the expando side table.
+
+Measured base → after, through the real harness shape:
+
+| receiver | base | after (= spec) |
+| --- | --- | --- |
+| `new C([42,42,42])` | `["0","1","2","length"]` | `["0","1","2"]` |
+| `new C(4)` | 4 indices + `"length"` | 4 indices |
+| `new C()` | `["length"]` | `[]` |
+| `new C(2)` then `sample.test262 = 42` | `["0","1","length"]` | `["0","1","test262"]` |
+| `new C(2)` then `Object.defineProperty(…,"x",…)` | `["0","1","length"]` | `["0","1","x"]` |
+
+Symbol keys — §10.4.5.6's third group — are deliberately NOT in the arm. The
+caller appends `__getOwnPropertySymbols`, and on a dyn view that native has its
+own gap (`Reflect.defineProperty(view, sym, …)` returns true and the read back
+is `undefined`), so there is nothing correct to append yet; adding a
+half-working symbol group would turn a missing key into a wrong one. That is
+why `internals/OwnPropertyKeys/not-enumerable-keys.js` is still open.
+
+**⚠ The probe shape decides whether you can see any of this.** A probe that
+binds the constructor as `var TA = [Float64Array][0]` does **not** reproduce it:
+TypeScript types that expression as `Float64ArrayConstructor`, so `new TA(…)`
+takes the STATIC path and yields a plain `__vec_f64` compiler vec — a different
+representation, for which `"length"` genuinely IS an own key. Only an
+`any`-typed callee reaches `emitTaDynCtorConstructFromLocals` and the
+`$__ta_dyn_view`. This module was measured against the static shape first, read
+as a complete no-op, and was deleted before a type-classification probe
+(`ref.test` against `$__ta_dyn_view` / `$__vec_base` / `__vec_f64` / `$Object`,
+reported through the key list) showed the receiver was never a view. Cost:
+about an hour. The rule that falls out: **probe through
+`testWithTypedArrayConstructors`, never through a locally-bound constructor.**
+
+#### Controls
+
+- **Standalone neighbourhood, before vs after, 372 rows: zero pass→non-pass.**
+  48 non-pass before → 38 after. The 10 fixed include **3 rows outside the
+  manifest**: `TypedArrayConstructors/from/BigInt/mapfn-is-not-callable.js` and
+  `internals/OwnPropertyKeys/integer-indexes-resizable-array-buffer-{auto,fixed}.js`.
+  Logs `.tmp/e2/ctl-sa-{before,after}.log`; the before pass ran in a pristine
+  `git worktree` of `HEAD` at `.tmp/basetree`, same list, same 60-row chunking,
+  same filter, so "row absent from the log" means "pass" in both.
+- **Scope of that control, stated plainly.** The relevant neighbourhood is 2,966
+  rows (`built-ins/TypedArray*/**` 2,184 + `ArrayBuffer/**` 221 + `DataView/**`
+  561). A before/after standalone sweep of all of it was **not** run: measured
+  throughput on this box while four other lanes were running was ~10 s/row, i.e.
+  >16 h for the four passes. The 372 rows are the subset whose SOURCE (or whose
+  harness includes) mentions any surface this change can reach — `ownKeys`,
+  `getOwnPropertyNames`, `getOwnPropertyDescriptors`, `.from(`, `.of(`,
+  `JSON.stringify`, `propertyHelper.js`, `deepEqual.js`. Rows outside that set
+  are argued, not measured.
+- **Host lane: byte-identical.** All three seams are behind `ctx.standalone` /
+  `noJsHost(ctx)`, and that was verified rather than asserted: a 42-row corpus
+  spanning the same neighbourhood was compiled for the host target on the base
+  worktree and on the branch and the emitted binaries hashed —
+  **42/42 identical, 0 compile errors** (`.tmp/e2/hostbin-{base,new}.txt`).
+- **Adversarial probes, run on the branch AND on the base worktree**
+  (`.tmp/e2/probe12.mts`): `Object.defineProperty` on a view, `delete` of an
+  expando, expando + descriptor together, bound / builtin (`Math.abs`) /
+  anonymous mapfns, and non-TypedArray receivers. Plain-array and plain-object
+  key lists are unchanged, `"length"` and all. **One difference found and it is
+  NOT ours**: a generator function used as a mapfn throws TypeError
+  (`__typeof_function` does not classify it as callable) — reproduced
+  identically on base.
+
+#### Residual sub-buckets after E2 (123 fail + 1 CE), with signatures
+
+| rows | sub-bucket | why it is still open |
+| ---: | --- | --- |
+| 22 | the `$DETACHBUFFER` cohort | unchanged from E1 — the `$262` shim pulls the runtime-eval seam; unverifiable in this container |
+| 16 | `internals/{Set,DefineOwnProperty,OwnPropertyKeys}` | see the three entries below — E2 closed the `[[OwnPropertyKeys]]` **string-key** half; what is left is three separate mechanisms |
+| 7 | `internals/Set` | §10.4.5.5 with a **distinct Receiver** — every row is a 4-argument `Reflect.set(ta, k, v, receiver)` or a prototype-chain set. Standalone's `Reflect.set` has no receiver-override path, so the write lands on the target. A real mechanism, not an arm |
+| 5 | `internals/DefineOwnProperty` | §10.4.5.3's descriptor **attribute** checks (`configurable`/`enumerable`/`writable` of an index and of a non-index expando) plus `desc-value-throws`. The expando table stores values, not attributes |
+| 2 | `internals/OwnPropertyKeys/integer-indexes{,-and-string-keys}.js` | **ROOT-CAUSED by E2, newly actionable.** Both now get the first two assertions RIGHT and die on the third: `new TA(4).subarray(2)` answers **null**. `shouldWrapDynViewSpeciesTwoArm` requires `ts.isIdentifier(propAccess.expression)`, so a method called directly on a `new` expression never enters the dyn-view species arm and falls through to a null result. `slice` is null the same way. Fixing it means giving that arm a non-identifier receiver without double-evaluating it (its ELSE arm re-compiles the whole `callExpr`) |
+| 2 | `internals/OwnPropertyKeys/{not-enumerable-keys,…-and-symbol-keys-}.js` | §10.4.5.6's SYMBOL group, deliberately out of E2 — see E2-c |
+| 9 | `prototype/toLocaleString/*` | unchanged from E1 |
+| 6 | `DataView` prototype identity | unchanged from E1. **Separately measured in E2 and worth recording**: 5 DataView rows fail with `Expected SameValue(«function () { [native code] }», «function () { [native code] }»)` — `sample.byteLength` reads back the GETTER CLOSURE instead of invoking it |
+| 5 | `ctors/object-arg/throws-setting-obj-*` | unchanged from E1 — blocked on the static carrier's expando table |
+| 3 | `ctors/object-arg/iterator-*` | **NARROWED.** `iterator-{not-callable-throws,throws}.js` pass `var obj = function () {}` — a CALLABLE. The `$Object` arm in `emitTaDynCtorConstructFromLocals` already implements §23.2.5.1 step 6 correctly (GetMethod, non-callable → TypeError, nullish → array-like); it is simply gated on `ref.test $Object`, which a closure fails. Widening that gate with `__typeof_function` is the fix. `iterator-is-null-as-array-like.js` is a DIFFERENT defect: construction succeeds and `typedArray instanceof TypedArray` is false |
+| 2 | `ctors/object-arg/{iterating,as-generator-iterable}-*` | the ctor argument is a **generator object** — a third carrier shape |
+| 7 | `TypedArrayConstructors/{from,of}` custom-`this` | `%TypedArray%.{from,of}` is still not INHERITED by the concrete constructors: `C.from` and `TypedArray.from` are distinct closures, and the `%TypedArray%` from/of closures are minted only at brand `-1073741821`, which the concrete-ctor property read does not use |
+| rest | species `@@species` `this`, `{filter,map}` callback receiver identity, `isView` subclass, `sort`, `ArrayBuffer` residuals, `length-excessive-throws`, one CE | each its own mechanism, unchanged from E1 |
+
 ### 2026-09-21 — Cluster C (class / object-literal / `super`, standalone), slice C2
 
 - **Branch** `worktree-agent-a27d2e622e3791fde`, based on
@@ -1769,7 +1940,7 @@ handoff; their receipts are the two Cluster-status entries just above.
 | C3 | defaulted parameter typed `number` by the checker lowered to an f64 slot (`«0» vs «false»`, `«NaN» vs «undefined»`) | ≥18 in C, more in G | widen the parameter TYPE in the function's type map, not just the slot (`isUndefinedDefaultOnlyParam` doc); needs a control over every defaulted param in the corpus | senior-dev, max |
 | D2 | observable intrinsic `Promise.all/race` protocol (`invoke-resolve*`, `invoke-then*`, iterator close) | ~34 | held PR #5883 (#5197 R3-2/R3-4) — integrate, don't re-implement; class-receiver `Construct(C)` (14 CE) is #5197 G9/G10 | senior-dev, high |
 | B2 | observable `RegExpExec` substrate + brand-check widening | 62 | #5198 Slice B / draft #5393 owns it; coordinate with that lane first | senior-dev, high |
-| E2 | integer-indexed MOP `internals/{Set,DefineOwnProperty,OwnPropertyKeys}`, `TypedArray.from/of` statics, static-carrier expando table | 37 | each is a mechanism, not an arm; the static `new Int8Array(1)` carrier has no expando side-table for `__extern_get` | senior-dev, high |
+| ~~E2~~ **DONE 2026-09-21** (+7 manifest, +3 outside, 0 regressions — see the slice-E2 entry) | closed: §10.4.5.6 `[[OwnPropertyKeys]]` string keys, the `%TypedArray%` static `from`/`of` carrier, §23.2.2.1 step-3 `IsCallable(mapfn)`. Still open and RE-ROOT-CAUSED there: `internals/Set` (needs `Reflect.set` receiver override), `internals/DefineOwnProperty` (expando table stores values, not attributes), the symbol group, the static-carrier expando table, and two rows blocked on `new TA(4).subarray(2)` answering null | 37 | each is a mechanism, not an arm; the static `new Int8Array(1)` carrier has no expando side-table for `__extern_get` | senior-dev, high |
 | F2 | proxy in the prototype chain never runs its trap; `Proxy/construct` NewTarget | 7 + 7 | `$Object.$proto` is `ref null $Object` and `$Proxy` is not a subtype — architectural; NewTarget belongs to the #3371 lane | architect spec first |
 | H2 | symbol-keyed accessor `defineProperty` on a vec carrier dropped; `__extern_length` for non-`$Object` carriers; `Object.prototype.toString` runtime tag honouring `delete` | ~15 | localized to lines in H's receipt | developer, high |
 | I2 | `instanceof` never consults `@@hasInstance` (primitive-LHS fold in `emitDynamicInstanceOf` answers before the handler) | 3 (+ corpus) | lowering change in one function via the existing `__apply_closure` invoker; both-lane sweep over `language/expressions/instanceof/**` | developer, high |
