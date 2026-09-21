@@ -26,14 +26,61 @@ import type { GeneratorDecl } from "./generators-native.js";
  * deliberately use a DIFFERENT set that OMITS arrows (arrows inherit the
  * enclosing `this`/`super`), so those keep their own inline disjunction and must
  * not be folded into this helper.
+ *
+ * (#6651 A2, 2026-09-21) ACCESSORS, CONSTRUCTORS and class static blocks were
+ * missing from the list, and the omission was not cosmetic: it is a `return`
+ * (or a `this`, or a binding name) inside one of them being attributed to the
+ * ENCLOSING generator. `statementContainsReturn` therefore reported `true` for
+ *
+ *     function* g() { ({ get yield() { return 1 } }); }
+ *
+ * — a statement with no yield and no generator-level return at all — which sent
+ * it down the structural state-graph lowering, where an ExpressionStatement of
+ * that shape is unmodeled, and the whole generator bailed to the host path
+ * (4 rows of the #6651 cluster-A manifest, all named
+ * `yield-as-literal-property-name`, where the point of the test is exactly that
+ * `yield` is a legal PROPERTY name). A getter/setter/constructor/static block is
+ * a function scope by every rule this helper encodes; `ts.isMethodDeclaration`
+ * simply does not answer true for them.
  */
 export function isFunctionLikeScope(node: ts.Node): boolean {
   return (
     ts.isFunctionDeclaration(node) ||
     ts.isFunctionExpression(node) ||
     ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node)
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isClassStaticBlockDeclaration(node)
   );
+}
+
+/**
+ * (#6651 A2) The one child of a function-like scope node that is still
+ * evaluated in the ENCLOSING scope: a COMPUTED PROPERTY NAME. §8.6.1 /
+ * ClassElementEvaluation evaluate `[expr]` where the element is written, so in
+ *
+ *     function* g() { class C { get [yield]() { return 'x' } } }
+ *
+ * the `yield` really does suspend `g` — only the accessor BODY is a new scope.
+ * A scan that stops at the whole node loses that suspension and compiles a
+ * generator that never suspends, which is a silent wrong answer rather than a
+ * loud bail: measured on the five `accessor-name-*computed-yield-expr` rows,
+ * which flip compile_error → `SameValue(«undefined», «"get yield"»)` without
+ * this carve-out. Parameter defaults are NOT in this set — they belong to the
+ * callee's own scope. `statementContainsReturn` deliberately does NOT take this
+ * carve-out: a `return` cannot occur in an expression except inside a nested
+ * arrow/function, which the scan stops at anyway, so it would be dead weight.
+ */
+function enclosingScopedComputedName(node: ts.Node): ts.Expression | undefined {
+  if (
+    (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
+    ts.isComputedPropertyName(node.name)
+  ) {
+    return node.name.expression;
+  }
+  return undefined;
 }
 
 export function statementContainsYield(stmt: ts.Statement): boolean {
@@ -83,8 +130,11 @@ export function nodeContainsYield(root: ts.Node): boolean {
       return;
     }
     // Do not descend into nested function bodies — a `yield` there belongs to
-    // a different (inner) generator and must not split this one.
+    // a different (inner) generator and must not split this one. Its COMPUTED
+    // NAME is the exception: that expression is evaluated here.
     if (isFunctionLikeScope(node)) {
+      const outer = enclosingScopedComputedName(node);
+      if (outer) visit(outer);
       return;
     }
     ts.forEachChild(node, visit);
