@@ -67,6 +67,19 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+# 2026-09-21 — cluster C, slice C2 (top-level `C.prototype.x = v`).
+# `declarations.ts` +10 / `collectDeclarations` +9, `assignment.ts` +5 /
+# `compilePropertyAssignment` +4, `property-access-dispatch.ts` +9. All three
+# MECHANISMS moved into two new leaf modules (`class-proto-toplevel-write.ts`,
+# `error-message-proto-read.ts`); what is left is irreducible call sites. A
+# module-init KEEP has to be at the point the statement would otherwise be
+# dropped; the decline that stops a `.prototype` receiver from being cast to
+# `$Error_struct` has to be on the arm that would do the casting; the
+# absent-`message` read has to be inside the arm that owns the
+# statically-typed Error read. Inlined, the same change was +114.
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -74,6 +87,8 @@ func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -822,6 +837,136 @@ ORIGINAL-HARNESS assembly, not against a hand-written `export function test()`.*
 several of this cluster's defects live and where a function-scoped probe cannot
 see them. Most of this slice's investigation time went into a defect that
 only exists in the function-scoped shape.
+
+### 2026-09-21 — Cluster C (class / object-literal / `super`, standalone), slice C2
+
+- **Branch** `worktree-agent-a27d2e622e3791fde`, based on
+  `claude/es2015-test262-plan-54tooh` @ `252beab1` (origin/main + plan +
+  clusters A, B, D, H and C1). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a27d2e622e3791fde`.
+- **Manifest** `plan/agent-context/6651/C-class-object-super.txt`, 177 rows,
+  sha256 `785dd45d78a609ecefc58377433fd144a142423557001a9b513cf1ae1492ad8d`.
+
+| standalone, `--isolate` | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/C2-before.log`) | 0 | 173 | 4 |
+| after C2-a (`.tmp/6651/C2-after1.log`) | **12** | 161 | 4 |
+
+**+12 rows pass, 0 lost.** Both logs account for all 177 rows (12 + 161 + 4),
+so neither was truncated — worth stating because another lane ran a blanket
+`pkill -f run-test262-paths` during this slice; every log here was re-validated
+for completeness afterwards rather than assumed intact.
+
+#### C2-a — a top-level `C.prototype.<name> = value` was SILENTLY DROPPED
+
+The module-init keep analysis in `declarations.ts` retains a top-level
+`C.<name> = …` STATIC write on a compiled class, and the host lane retains
+`F.prototype.m = …` for a top-level FUNCTION (#4618). Neither arm matches a
+CLASS's prototype chain, so in standalone the statement fell past every keep
+and compiled to **nothing**. Established by instrumentation, not inference:
+`compileAssignment` is never entered for it, while the identical statement
+inside a function body is — and works.
+
+Measured on this branch's base (`.tmp/w6651C/m7.ts`, standalone):
+
+```
+class Plain {}
+const holder = {}; holder.k = "H";     // lands
+Plain.prototype.tagy = "Y";            // DROPPED
+let ran = 0; ran = 5;                  // lands
+new Plain()["tag"+"y"]                 // undefined    node "Y"
+Plain.prototype["tag"+"y"]             // undefined    node "Y"
+```
+
+Two other statements in the same module landing is what rules out "module init
+did not run". It is not Error-specific — the probe uses a plain class — and it
+is not a corner: the honest test262 harness compiles every test body at MODULE
+scope, where `A.prototype.fromA = 'a'` is one of the suite's commonest idioms.
+
+Keeping the statement is necessary but **not sufficient**, and the second half
+is the part that would have shipped a trap:
+
+1. **The keep** (`class-proto-toplevel-write.ts` →
+   `isTopLevelClassPrototypeWrite`, called from `collectDeclarations`).
+   Standalone-gated; the root must resolve to a genuine class DECLARATION, the
+   same evidence the static-write keep beside it demands.
+2. **The decline** (same module → `targetReceiverIsPrototypeAccess`, called
+   from `compilePropertyAssignment`). The checker types `C.prototype` as the
+   INSTANCE type `C`, so for an externref-backed subclass the own-field-write
+   arm claimed a write aimed at the PROTOTYPE object — which is never an
+   `$Error_struct`. With the keep alone, `class Err extends TypeError {}` +
+   `Err.prototype.tagx = "T"` turned from a silent no-op into **`illegal cast`,
+   uncatchably, taking the module with it**. `error-instance-field-write.ts`
+   already carries the identical guard for the identical reason; it was
+   unreachable only because this statement was being dropped before it could be
+   compiled.
+3. **The absent-`message` read** (`error-message-proto-read.ts`, called from
+   the statically-typed Error arm in `property-access-dispatch.ts`). §20.5.1.1
+   step 3 makes `message` the one `$Error_struct` field that can legitimately be
+   absent, and the arm read field 1 unconditionally, answered JS `null` and
+   stopped the walk. Measured (`.tmp/w6651C/m10.ts`): `err2.message` answers
+   `undefined` through a statically-typed `Err` receiver and
+   `"custom-type-error"` through `(err2 as { message }).message` — the same
+   program, the same value, two answers, selected by the static type. That is
+   also why the C1 slice concluded this arm was unreachable: the C1 probe
+   carried the cast.
+
+#### Rows gained (12 on the manifest, 15 on the 960-row control)
+
+| rows | family |
+| ---: | --- |
+| 7 | `class/subclass/builtin-objects/{NativeError/*-message, Error/message-property-assignment}.js` — the C1 residual, now closed |
+| 5 | `expressions/super/prop-{dot,expr}-cls-val{,-from-arrow}.js` + `prop-expr-cls-val-from-eval.js` |
+| +3 (control only) | `class/scope-setter-paramsbody-var-{close,open}.js`, `class/super/in-constructor.js` |
+
+The five `super/prop-*-cls-val*` rows are the family #5350 recorded as blocked
+by "a block-scoped class method's write to a captured `var`". They are not:
+they were blocked by this dropped top-level statement, and the `var`-capture
+defect (C1's finding 1) is not involved in the harness shape at all. The
+coordinator's item (2) — collecting `var` in `collectBlockScopedDeclNames` — is
+therefore **not needed for this family**, which is the re-measurement it asked
+for; see the C2-b note below.
+
+#### Controls — zero pass → non-pass
+
+| set | rows | before | after |
+| --- | ---: | --- | --- |
+| manifest, `--isolate` | 177 | 0 / 173 / 4 | **12** / 161 / 4 |
+| 960-row combined control, in-process, 10 chunks | 960 | 658 pass / 280 fail / 21 CE / 1 skip | **673** / 265 / 21 / 1 |
+
+The 960-row control is every test262 file containing a top-level
+`<ident>.prototype.<name> =` write (363 across `language/**` and
+`built-ins/**` — i.e. the idiom this change makes execute), plus all 187
+`built-ins/{Error,NativeErrors}` rows and the 429-row
+`class/subclass` + `expressions/super` + `statements/try` + `AggregateError`
+set. Per-row set diff: **15 gained, 0 lost, no other verdict changes**. Every
+chunk was verified to account for exactly its input rows before the diff was
+taken. Logs `.tmp/6651/ctl2-{before,after}-0*.log`, list `.tmp/6651/ctl2.txt`.
+
+**Host (gc) control is a byte-identity proof.** The keep is `ctx.standalone`-
+gated and the read arm is `native-first`-gated, so host output cannot move:
+**11/11 gc binaries sha256-identical**, and on standalone only the 2 corpus
+programs that actually contain the construct change
+(`.tmp/6651/bytes2-{before,after}.txt`).
+
+Pin `tests/issue-6651-class-prototype-toplevel-write.test.ts` — 4 cases, **3
+verified RED on the base** (0→7, 0→15, 1→3), the fourth a guard that the
+in-function form is untouched. Case 2 is specifically the one that traps
+("illegal cast") if the keep lands without the decline.
+
+Gates, run bare: loc-budget and func-budget PASS with the grants added to this
+file's frontmatter (`declarations.ts` +10 / `collectDeclarations` +9,
+`assignment.ts` +5 / `compilePropertyAssignment` +4,
+`property-access-dispatch.ts` +9 — every mechanism moved into the two new leaf
+modules; inlined, the same change was +114); coercion-sites, oracle-ratchet,
+dead-exports, compiler-boundaries `--mode inventory`, typecheck, prettier and
+`biome lint --diagnostic-level=error` all 0. `node scripts/equivalence-gate.mjs`:
+22 failing / 1720 passing, all 22 already in the baseline.
+
+`scripts/compiler-boundaries.json` also classifies
+`src/codegen/string-symbol-protocol.ts` — cluster B's new module, which arrived
+on the merged base unclassified and fails the inventory gate for every lane
+that follows it.
 
 ## Manifest generator note
 

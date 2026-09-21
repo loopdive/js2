@@ -5,6 +5,7 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
+import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -4374,6 +4375,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.moduleInitStatements.push(stmt);
             continue;
           }
+        }
+        // (#6651 cluster C, C2) A top-level `C.prototype.<name> = value` on a
+        // compiled CLASS. The static arm above keeps `C.<name> = …`; the
+        // prototype chain has a PropertyAccess receiver and fell past every
+        // keep, so the statement compiled to NOTHING. Measurement and scope:
+        // class-proto-toplevel-write.ts.
+        if (isTopLevelClassPrototypeWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
         }
         // (#3468 F1) STANDALONE counterpart of the #2671 keep below (which is
         // gated `!ctx.standalone`): a top-level `F.<name> = …` static property
