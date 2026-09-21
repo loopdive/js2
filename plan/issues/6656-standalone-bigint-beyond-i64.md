@@ -14,10 +14,38 @@ parent: 5383
 loc-budget-allow:
   - src/codegen/string-ops.ts
   - src/codegen/declarations/import-collector.ts
+  - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
+  - src/codegen/binary-ops.ts
 func-budget-allow:
   - src/codegen/string-ops.ts::compileStringBinaryOp
   - src/codegen/declarations/import-collector.ts::unifiedVisitNode
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
+
+<!--
+2026-09-21 budget rationale (slice 3). All three decisions — which operand
+pairs are proven BigInt carriers, which function bodies are BigInt kernels,
+and how a carrier pair's `===`/arithmetic lowers — live in the new leaf
+`src/codegen/bigint-carrier-operands.ts`, and the two `typeof` folds moved into
+the existing leaf `src/codegen/typeof-static-folds.ts`. That extraction took
+the growth from +159 lines across four god-files (and +25/+17/+16 on three
+functions) down to what is listed here. What remains cannot move:
+
+- `context/types.ts` +10 — one `CodegenContext` field
+  (`bigIntKernelFunctions`) and its doc comment. A context field has to be
+  declared on the context.
+- `context/create-context.ts::createCodegenContext` +1 — that field's
+  initialiser, one line in the object literal.
+- `declarations.ts` +10 — two call sites into `recordBigIntKernel`, in the two
+  places a function's RESULT type is decided (`inferredNumericResultType` and
+  `resolveGenericDeclarationCallSiteTypes`), plus the `stmt` parameter those
+  call sites thread through. Both already own the `params`/`results` locals the
+  predicate reads; hoisting them would duplicate the signature resolution.
+- `binary-ops.ts` +7 — the numeric-hint branch (the hint local and its
+  ternary arm) and two one-line calls into the leaf. The hint is computed from
+  six sibling flags that exist only in `compileBinaryExpression`.
+-->
 
 <!--
 2026-09-20 budget rationale (slice 2). The DECISION (which formatter a
@@ -415,6 +443,106 @@ have; the standalone Temporal provider is byte-identical before and after
 (3 488 870 B, same cache key); and the 94-row corpus shows `shaFlips=0`. The
 `Duration` group — the one of the thirteen that actually contains bigint rows
 — is measured flat above.
+
+### Slice 3 (2026-09-21) — `any`-typed BigInt arithmetic, landed
+
+**Acceptance met: `.tmp/s74b/bi5.mts` 11/11 (base 3/11), host-free standalone,
+`hostBridge: "off"` and an empty import object.**
+
+The slice-1 design said the fix was bigint arms in `any-helpers.ts`. That was
+**falsified by measurement**: those arms were written, wired in, and moved
+none of the eleven rows (3/11 → 3/11), so the module was deleted rather than
+shipped unmeasured. Dumping the WAT found the real chain — the failure never
+reaches the `$AnyValue` helpers with a bigint in hand, because the value has
+already been rounded to an f64 by then.
+
+**Three independent leaks, each measured on its own.** In untyped JS a helper
+like `function mul(a, b) { return a * b; }` called with bigints gets
+bigint-branded i64 PARAMETER slots from the compiler's own call-site
+inference, while TypeScript types both parameters `any` and therefore types
+`a * b` as `number`. Every leak follows from that one disagreement:
+
+| # | leak | what it did | where |
+| --- | --- | --- | --- |
+| 1 | the numeric hint | derived from the OPERATOR (numeric ⇒ f64), so each operand loaded through `f64.convert_i64_s` — the existing i64/i64 arm in `compileTypedBinaryDispatch` was unreachable for this shape | `binary-ops.ts` |
+| 2 | the result type | `inferNumericReturnTypes` promotes a body that "looks numeric" to an f64 RESULT, converting the exact i64 straight back at the return | `declarations.ts` |
+| 3 | `===` and `typeof` | both fold from the STATIC type, so they answered the constants `false` and `"number"` for values that are real BigInts | `binary-ops.ts`, `typeof-static-folds.ts` |
+
+`+` is why leak 1 alone is not enough: `any + any` is `any`, never `number`,
+so `a + b` over two bigint parameters never consulted the numeric hint at all
+and reached the `$AnyValue` helpers, which box each side with
+`__any_box_f64`. Both operands were rounded to doubles and then
+**concatenated as strings** before `__any_add` ever ran —
+`add(9007199254740992n, 1n)` answered `90071992547409921`.
+
+| probe row | base | branch |
+| --- | --- | --- |
+| `mul(6n, 7n) === 42n` | `NaN` | ✓ |
+| `mul(1234567890123456789n, 7n)` (19 digits) | `NaN` | ✓ |
+| `add(9007199254740992n, 1n)` (2^53+1) | `90071992547409921` | ✓ |
+| `sub` / `div` / `mod` past 2^53 | `NaN` | ✓ |
+| `neg(9007199254740993n)` | `NaN` | ✓ |
+| `typeof mul(6n, 7n)` | `"number"` | `"bigint"` |
+| `<` / `===` over carriers | already ✓ | ✓ |
+
+**The proof is the BRAND, not the i64 kind.** A bare i64 slot is also how a
+native `type i64 = number` annotation lowers, and `/` on two of those is FLOAT
+division (§6.1.6.1.5), not `i64.div_s`. The first cut of leak 3 gated the
+equality on "the i64 hint produced an i64", which is not evidence — a `number`
+operand under an i64 hint is also an i64 — and it made `0n === 0` answer TRUE,
+breaking §7.2.15 step 1. `tests/issue-6656-any-bigint-arith.test.ts` carries
+that regression as the control `strictEqBigIntVsNumber`: it fails on the
+intermediate version and passes on both the base and the fix.
+
+**Two residuals, recorded rather than hidden.**
+
+- `pTypeofVia` — `typeof` of a bigint read back out of a local the kernel's
+  result was assigned to, rather than of the call itself. The `typeof` fold
+  records kernel FUNCTIONS (`ctx.bigIntKernelFunctions`); it does not
+  propagate the brand into an assigned local.
+- `bigIntConcat` — `add("v", 12n)` where one untyped `add` is shared by a
+  number call site and a bigint one. Monomorphisation gives both call sites
+  one signature, so the bigint call arrives already converted. Measured
+  IDENTICAL on base and branch and asserted at its base value in the test, so
+  a future change to it surfaces there rather than silently.
+
+**Validation.**
+
+- `tests/issue-6656-any-bigint-arith.test.ts` — 10 arithmetic rows with teeth
+  (every value past 2^53) plus 7 controls; verified to FAIL on a true
+  file-copy revert of the fix.
+- 30 bigint/typeof suites, 211 tests: 209 pass. The two failures
+  (`issue-1472-es5-getprototypeof`, `issue-3037-cs1c-getprototypeof-carrier`)
+  were A/B-checked against a file-copy revert of the whole change-set and
+  **fail identically on the base** — pre-existing, not this slice's.
+- All five source-ratchet gates green. The dead-export gate earned its keep:
+  it caught two `prepareAsyncCallableAbi` call sites that a scripted removal
+  of debug tracing had eaten along with the traces.
+
+**The eight briefed Temporal rows do NOT move — 0 of 8, re-measured on this
+branch.** `node --import tsx scripts/run-test262-paths.mts --standalone
+--isolate`, standalone provider `bee695f13a3f4836` (3 490 363 B), QuickJS eval
+provider `073742801ba76347`. All eight fail with the **byte-identical
+signatures** recorded in §C on the base: three `SameValue(«NaN»,
+«9007199254740992»)`, two `RangeError … no exception`, one `TypeError: cannot
+convert number to bigint`, two `SameValue(«"[object Object]"», «"PT900719925…
+S"»)`.
+
+This **contradicts the slice-3 plan above**, which called slice 3 "the one
+with measurable Temporal yield". It is not. Every one of the eight is a
+>2^63 magnitude failure — the nanosecond totals involved are ~9.0e24, four
+orders of magnitude past what an i64 holds — so they belong to slices 4–5
+(arbitrary precision), exactly where §C's own closing line put them before the
+slice-3 target section over-claimed. Slice 3's yield is the `any`-typed
+arithmetic correctness itself (11 probe rows, and every untyped bigint helper
+in a test262 `.js` body), not these rows. Recorded here so the next lane
+does not re-measure them expecting movement.
+
+**Budget.** Extraction into the new leaf `bigint-carrier-operands.ts` (and the
+two `typeof` folds into the existing `typeof-static-folds.ts`) took the growth
+from +159 lines across four god-files, and +25/+17/+16 on three functions,
+down to +27 lines and +1 on one function. What remains is allowed in this
+file's frontmatter, with the per-file reason in the comment above.
 
 ### Full battery — complete (2026-09-21)
 
