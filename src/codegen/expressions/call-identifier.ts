@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
   captureSourceSlot,
   expectsBoxedCaptureValue,
@@ -2100,7 +2101,7 @@ export function compileIdentifierCall(
             continue;
           }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-          sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+          sigParamWasmTypes.push(widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, paramType)));
         }
 
         // (#4616) A REAL declared rest param (`body: (...args: unknown[]) =>

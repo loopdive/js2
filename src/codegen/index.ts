@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -13616,7 +13617,9 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
       const paramDecl = param.valueDeclaration;
       if (paramDecl && ts.isParameter(paramDecl)) {
         const pt = ctx.checker.getTypeAtLocation(paramDecl);
-        let wasmType = resolveWasmType(ctx, pt);
+        // (#6651 C3) …and the JS-defaulted-parameter widening, for the same
+        // must-match reason. See `paramTypeIsJsDefaultGuess`.
+        let wasmType = widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, pt));
         if (paramDecl.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }

@@ -4,6 +4,7 @@
  * property method calls, IIFEs, and conditional callees.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot, widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
@@ -10044,7 +10045,7 @@ function compileExpressionCallee(
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
       const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-      sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+      sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
     }
 
     // (#4394) Exact-first (typeIdx-aware) matching — the old kind-only linear
@@ -10170,6 +10171,29 @@ function compileExpressionCallee(
 }
 
 /**
+ * (#6651 C3) The value a lifted IIFE's MISSING externref argument is padded
+ * with. §9.2.12 FunctionDeclarationInstantiation pads the argument list with
+ * `undefined`, and `emitDefaultParamInit`'s externref arm tests exactly that
+ * (`__extern_is_undefined`); a bare `ref.null.extern` is JS **`null`** under
+ * the standalone value model (#2864), so the default never fired and the
+ * parameter kept the null.
+ *
+ * The bug is PRE-EXISTING and was latent: measured on the base tree,
+ * `(function (f: any = 123) { init = f; }())` already left `init` null. Only
+ * defaulted parameters reach the new arm — for a parameter with no
+ * initializer `ref.null.extern` still means "absent reference", which is the
+ * distinction `canonicalUndefinedExternInstrs` asks callers to preserve.
+ */
+function missingIIFEArgExternref(
+  ctx: CodegenContext,
+  funcExpr: ts.FunctionExpression | ts.ArrowFunction,
+  index: number,
+): Instr[] {
+  if (funcExpr.parameters[index]?.initializer === undefined) return [{ op: "ref.null.extern" }];
+  return canonicalUndefinedExternInstrs(ctx);
+}
+
+/**
  * Compile an IIFE (Immediately Invoked Function Expression):
  *   (function(params) { body })(args)
  *
@@ -10199,7 +10223,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   const paramTypes: ValType[] = [];
   for (const p of funcExpr.parameters) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    paramTypes.push(resolveWasmType(ctx, paramType));
+    paramTypes.push(widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType)));
   }
 
   // Determine return type
@@ -10472,7 +10496,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     const pt = paramTypes[i] ?? { kind: "f64" as const };
     if (pt.kind === "f64") fctx.body.push({ op: "f64.const", value: NaN });
     else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
-    else if (pt.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+    else if (pt.kind === "externref") fctx.body.push(...missingIIFEArgExternref(ctx, funcExpr, i));
     else if (pt.kind === "ref" || pt.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: pt.typeIdx });
   }
 

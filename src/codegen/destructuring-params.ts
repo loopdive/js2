@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
+import { paramTypeIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
@@ -815,7 +816,7 @@ export function widenUndefinedDefaultParamSlot(param: ts.ParameterDeclaration, w
   if (param.type !== undefined) return wasmType;
   if (param.dotDotDotToken !== undefined) return wasmType;
   if (param.initializer === undefined) return wasmType;
-  if (!isNullOrUndefinedLiteral(param.initializer)) return wasmType;
+  if (!isNullOrUndefinedLiteral(param.initializer) && !paramTypeIsJsDefaultGuess(param)) return wasmType;
   if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
   return { kind: "externref" };
 }

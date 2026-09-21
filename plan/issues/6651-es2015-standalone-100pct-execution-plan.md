@@ -118,6 +118,46 @@ loc-budget-allow:
 # statically-typed Error read. Inlined, the same change was +114.
   - src/codegen/declarations.ts
   - src/codegen/property-access-dispatch.ts
+# 2026-09-21 — cluster C, slice C3 (a JS defaulted parameter's slot). +26 LOC
+# across 14 files, and TWELVE of those are exactly +1: the import of the one
+# leaf module (`js-default-param-type-guess.ts`, new, ~100 LOC of which ~75 is
+# the rationale) plus the single call that wraps an existing
+# `resolveWasmType(ctx, paramType)`. That spread is the change, not an
+# accident of it. There is no single place where a parameter's Wasm type is
+# decided: the callee has ~a dozen lanes (constructor ×4, class method ×2,
+# function declaration ×3, closure ×2, object-literal method ×3) and a CALL
+# SITE independently rebuilds a candidate signature from the checker to match
+# a stored closure. Measured: with only the four callee lanes the manifest
+# rows needed, `function outer(f = function (q = 2) { return q; }) { return
+# f(7); }` went from a CORRECT answer on the base to an uncaught Wasm
+# exception, because the candidate asked for an `f64` the compiled closure no
+# longer declared. #5221 recorded the same failure mode for its own widening
+# and left it unfixed for exactly this reason. The three files above +1 carry
+# the argument at the point it is decided: `class-bodies.ts` +9 / `identifiers.ts`
+# +5 / `declarations.ts` +5 (already granted above for C2).
+# `calls.ts` is +24, not +1, and the extra 23 are ONE thing the corpus control
+# found: a PRE-EXISTING `compileIIFE` defect this slice's widening routes rows
+# into. Its missing-argument pad was `ref.null.extern` — JS `null` under the
+# standalone value model (#2864) — so `emitDefaultParamInit`'s
+# `__extern_is_undefined` test answered false and the default never fired.
+# Latent on the base tree, where `(function (f: any = 123) { init = f; }())`
+# already left `init` null; nine annexB `*-func-skip-dft-param.js` rows would
+# have regressed. The pad decision is a named module-level function with its
+# measurement in the doc rather than a branch inlined into `compileIIFE`,
+# which keeps that function's own count flat.
+  - src/codegen/class-bodies.ts
+  - src/codegen/closures.ts
+  - src/codegen/destructuring-params.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/declarations/param-return-inference.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/statements/variables.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -128,6 +168,26 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
+# 2026-09-21 (cluster C, slice C3) — three functions, +11 lines total, all of
+# them the same one-line call plus the comment that says why the lane it sits
+# in must agree with the other eleven. `collectClassDeclaration` (+5) and
+# `compileClassBodiesInner` (+2) are the constructor/method SIGNATURE and
+# fctx-build twins: a disagreement between those two is invalid Wasm, not a
+# wrong value, so the pairing note has to be readable in both.
+# `compileIdentifierCore` (+4) is the READ half — the narrowing gate is one
+# boolean chain and the new refusal cannot be expressed anywhere else.
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+# The other two (+2 each) are the two derivations a MEASURED regression forced
+# in after the first sweep: `ensureStructForType` holds the object-literal
+# method pre-registration #5221 names as a twin of `literals.ts`, and
+# `compileFunctionBody`'s fallback resolve is the body half of a signature it
+# would otherwise contradict. Both are one call plus the reflow prettier
+# requires; the marked@18 UMD bundle went from compiling to an "ABI changed
+# after reservation" internal error without the second one.
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/index.ts::ensureStructForType
 # 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
 # hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
 # [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
@@ -1666,6 +1726,174 @@ func-budget pass with the grants added to this file's frontmatter above, dated.
 4. **Give the host lane a struct-capable rest drain** if the drive is ever to
    be ungated — see the gate rationale above.
 
+### 2026-09-21 — Cluster C (class / object-literal / `super`, standalone), slice C3: a JS defaulted parameter is not a scalar contract
+
+- **Branch** `worktree-agent-a35b06677e1b85446`, based on `origin/main`
+  @ `3769840f` (the merge of PR #6024). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a35b06677e1b85446`. Not pushed —
+  the round-2 coordinator integrates it.
+- **Manifests** `C-class-object-super.txt`, 177 rows, sha256
+  `785dd45d78a609ecefc58377433fd144a142423557001a9b513cf1ae1492ad8d`;
+  `G-forof-destructuring-iterators.txt`, 134 rows, sha256
+  `e68a764ab55ce04936572717bdf96f724fb337af6a9af3a758f3525851ff1dec`.
+
+| standalone, `--isolate` | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| C before (`.tmp/6651/C3-before.log`) | 15 | 158 | 4 |
+| C after (`.tmp/6651/C3-after2.log`) | **24** | 149 | 4 |
+| G before (`.tmp/6651/G3-before.log`) | 23 | 109 | 2 |
+| G after (`.tmp/6651/G3-after.log`) | **25** | 107 | 2 |
+
+**+11 rows, 0 lost, 0 other verdict changes**, per-row set diff. Both logs
+account for every input row (24+149+4 = 177, 25+107+2 = 134). The before side
+was measured on a pristine `git archive HEAD` extract (`.tmp/basetree`) rather
+than in the working worktree: the `--isolate` runner re-imports the compiler
+from disk per row, so a sweep that overlaps an edit measures two compilers and
+reads as one. Three sweeps were discarded to that before the discipline stuck —
+freeze `src/` for the whole duration of any measurement.
+
+#### The defect
+
+A defaulted parameter in a JavaScript source file has no type. The checker
+reports one anyway, read off the parameter's own initializer, and that report
+is a statement about ONE call: `method(aFalse = c1 += 1)` infers
+`aFalse: number`, so the parameter got an `f64` slot and
+`C.prototype.method(false)` arrived as `0` — `SameValue(«0», «false»)`.
+
+This generalises #5360, which keyed on the SHAPE of the initializer
+(`= undefined` / `= null`) because in a `.ts` file those are the one default
+whose inferred type is never a usable contract. In a `.js` file **no** default
+yields a contract — there is no annotation the author could have written that
+the checker would then enforce at every call site. So the gate is the FILE
+(`/\.(?:[cm]?js|jsx)$/`), and the resulting rule is the one JavaScript already
+has: every unannotated parameter is dynamic, defaulted or not. An unannotated
+parameter WITHOUT a default is already `any` ⇒ externref; the defaulted one was
+the anomaly. New leaf module `src/codegen/js-default-param-type-guess.ts`
+(classified in `scripts/compiler-boundaries.json`).
+
+**Two halves, and one alone is worse than neither.**
+
+1. **Slot** — `paramTypeIsJsDefaultGuess` widens the scalar (`i32`/`f64`/`i64`)
+   slot to `externref`, applied at ~20 derivations through ONE helper. That
+   spread is the change, not an accident of it: the callee has ~a dozen lanes
+   (constructor ×4, class method ×2, function declaration ×3, closure ×2,
+   object-literal method ×3) and a CALL SITE independently rebuilds a candidate
+   signature from the checker to match a stored closure. A disagreement is not
+   a wrong value — it is a failed `ref.test`. Measured: with only the four
+   callee lanes the manifest rows needed,
+   `function outer(f = function (q = 2) { return q; }) { return f(7); }` went
+   from a CORRECT answer on the base to an uncaught Wasm exception. #5221
+   recorded the same failure mode for its own widening and left it unfixed for
+   exactly this reason.
+2. **Read** — `paramReadIsJsDefaultGuess`. The prologue was already right
+   (`__extern_is_undefined` gates the default), but the next instruction at
+   every use was `call $__unbox_number`, because an identifier read re-narrows
+   an externref local to the checker's type, and the §7.2.16 step-1 fold in
+   `binary-ops-typed-dispatch` decided `Type(number) !== Type(boolean)` and
+   emitted `drop; drop; i32.const 0` for `a === false` without ever reading the
+   boxed boolean. Widening the slot alone moves the coercion one instruction
+   later: measured, `typeof a` answered `"number"` for an argument that had
+   arrived as a boxed boolean, and `aFalse === false` stayed wrong on the host
+   lane while `aFalse == false` and `!aFalse` were right.
+
+Scope is deliberately the SCALAR slots. A JS default that resolves to a ref
+(`= {}`, `= ""`) is structurally open for the identical reason and the closure
+lane already carries that rule locally; extending it is an ABI change for every
+object-shaped parameter in every npm package and is not part of this slice.
+
+#### The corpus-wide control — and the two defects it found that the manifest could not
+
+This is the expensive half of the slice and it earned its cost twice. The list
+is every test262 file carrying a *widenable* defaulted parameter — **3,660 of
+53,869**, found by a TS-parser scan, deterministically shuffled with seed 6651
+so any prefix is a uniform sample, then the first **794** rows measured on BOTH
+targets, before and after, in 150-row chunks per fresh process.
+
+| 794-row control (`.tmp/w6651C3/ctl-corpus.txt`, sha256 `f7b449fb…`) | pass | fail | CE | skip | set diff |
+| --- | ---: | ---: | ---: | ---: | --- |
+| standalone before | 584 | 158 | 24 | 28 | — |
+| standalone after | **588** | 154 | 24 | 28 | +4 gained, **0 lost** |
+| host (gc) before | 627 | 139 | 0 | 28 | — |
+| host (gc) after | **633** | 133 | 0 | 28 | +6 gained, **0 lost** |
+
+The first after-run was **−9 on standalone**, and both causes were
+**pre-existing defects this widening merely routes rows into**, not new
+breakage. Neither is visible from the manifest.
+
+1. **`compileIIFE` padded a missing argument with `ref.null.extern`.** §9.2.12
+   pads with `undefined`, and `emitDefaultParamInit`'s externref arm tests
+   exactly that (`__extern_is_undefined`); a bare null externref is JS **`null`**
+   under the standalone value model (#2864), so the default never fired.
+   Latent on the base tree, where `(function (f: any = 123) { init = f; }())`
+   already left `init` null — a TypeScript-lane bug this slice's file gate never
+   touches. Fixed by `missingIIFEArgExternref` (defaulted parameters only; for a
+   parameter with no initializer `ref.null.extern` still means "absent
+   reference", the distinction `canonicalUndefinedExternInstrs` asks callers to
+   keep). Cost: 8 annexB rows + `param-dflt-yield-non-strict.js`.
+2. **B.3.3.1 step 1.a.ii — `parameterNames does not contain F` — was not
+   implemented for step 3.** #4131 added the web-compat *assignment* onto an
+   existing binding without that guard, so a block-nested `function f(){}`
+   overwrote a same-named parameter. It had been invisible because the
+   parameter sat on an `f64` slot and the function object could not be stored
+   there: the eight `*-func-skip-dft-param.js` rows were passing **by
+   accident**, and widening the slot made the spec-wrong write land. Fixed in
+   `annexb-cancel.ts` (`scopeBindsNameAsParameter`). A parameter is categorically
+   different from the `var f` that `scopeBindsName` also reports: `var f` gets
+   the step-3 assignment, a parameter gets nothing. Re-measured directly — all
+   8 rows plus `block-decl-func-skip-param.js`, `-existing-var-update.js`,
+   `-existing-fn-update.js`, `-func-update.js`, `-func-init.js` and
+   `param-dflt-yield-non-strict.js`: **14/14 pass**.
+
+Two further controls, because a parameter-slot move is an ABI change:
+
+- **TypeScript lane, byte identity.** 13 `website/playground/examples/**/*.ts`
+  × both targets: **26/26 sha256 identical**. The file gate cannot move a `.ts`
+  program. (The IIFE fix *can* — it is not file-gated, proved by the probe
+  above — it simply does not for this corpus.)
+- **Real npm sources.** All **59** files across 10 packages that the scan says
+  carry a widenable defaulted parameter (hono 48, axios 7, marked 2, jsbi 1,
+  js-temporal-polyfill 1), compiled on the host lane: **47 binaries identical,
+  10 changed, 0 OK→ERR** (the same 2 pre-existing `async shape not supported`
+  refusals on both sides). This control caught a real regression during
+  development: `marked.umd.js` failed with `nested function me changed its full
+  physical ABI after reservation` because the nested-function *reservation* was
+  widened and the nested-function *body derivation* was not.
+
+#### What this slice does NOT close
+
+- **The 8 `dstr/*-dflt-obj-ptrn-prop-ary` rows in C are a DIFFERENT defect**,
+  and the round-2 dispatch table's "≥18 in C" conflates them. Measured
+  unchanged before and after. Isolated precisely — only the parameter-default
+  materialization path is wrong:
+
+  ```js
+  var { w: [a,b,c] } = { w: [7, undefined, ] };            // c === undefined  ✓
+  function f({ w: [x,y,z] })           {}  f({w:[7,undefined,]});  // ✓
+  function h({ w: [x,y,z] = [4,5,6] }) {}  h({w:[7,undefined,]});  // ✓
+  function g({ w: [x,y,z] } = { w: [7, undefined, ] }) {}  g();    // z === null ✗
+  ```
+
+  §13.3.3.7 says `undefined`; an elision past the end of the materialized
+  default array reads as wasm `null`. That is the next C slice.
+- `object/method-definition/gen-meth-dflt-params-arg-val-not-undefined.js` — an
+  object-literal GENERATOR method produces no generator object at all
+  (`Cannot read properties of undefined (reading 'next')`). Unrelated lane.
+- Standalone only: `aString.length === 0` on a widened parameter still answers
+  wrong (right on host, wrong on standalone in the probe bitmask). Wrong on the
+  base too.
+- Ref-valued JS defaults (`= {}`, `= ""`) — see the scope note above.
+
+#### Gates
+
+`check-loc-budget` (grants + dated rationale in this file's frontmatter),
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`
+(`getTypeAtLocation +0, ctx.checker +0` across 19 changed files — the
+declaration query goes through `ctx.oracle.declarationsOf`),
+`check:dead-exports`, `check:compiler-boundaries:inventory`, prettier and
+`equivalence-gate` (22 failing / 1720 passing, all 22 in the baseline) are all
+green. Pin test `tests/issue-6651-js-defaulted-param-slot.test.ts`, 9 cases,
+five of them verified RED on a pristine base extract.
+
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
 ### What landed
@@ -1735,7 +1963,7 @@ handoff; their receipts are the two Cluster-status entries just above.
 | # | residual family | rows | mechanism (from the owner's receipt) | lane / effort |
 | --- | --- | ---: | --- | --- |
 | A2 | `yield` inside a destructuring pattern (`[x = yield] = v`, `for ([{} = yield] of …)`) | 90 | `lowerStatements` must model a suspension inside a pattern; **fails on host too** (8/8 probe), so it is new engineering in both lanes, not a port | senior-dev, max |
-| C3 | defaulted parameter typed `number` by the checker lowered to an f64 slot (`«0» vs «false»`, `«NaN» vs «undefined»`) | ≥18 in C, more in G | widen the parameter TYPE in the function's type map, not just the slot (`isUndefinedDefaultOnlyParam` doc); needs a control over every defaulted param in the corpus | senior-dev, max |
+| C3 | ~~defaulted parameter typed `number` by the checker lowered to an f64 slot (`«0» vs «false»`, `«NaN» vs «undefined»`)~~ **DONE** — see the C3 entry above | 10 in C + 2 in G (the `«0» vs «false»` half); the 8 `«NaN» vs «undefined»` rows are a separate `dstr` defect, still open | landed as slot-widening at ~20 derivations + suppression of the checker-type re-narrowing at READS, not a type-map change; corpus control 794 rows × both targets, 0 pass→non-pass | senior-dev, max |
 | D2 | observable intrinsic `Promise.all/race` protocol (`invoke-resolve*`, `invoke-then*`, iterator close) | ~34 | held PR #5883 (#5197 R3-2/R3-4) — integrate, don't re-implement; class-receiver `Construct(C)` (14 CE) is #5197 G9/G10 | senior-dev, high |
 | B2 | observable `RegExpExec` substrate + brand-check widening | 62 | #5198 Slice B / draft #5393 owns it; coordinate with that lane first | senior-dev, high |
 | E2 | integer-indexed MOP `internals/{Set,DefineOwnProperty,OwnPropertyKeys}`, `TypedArray.from/of` statics, static-carrier expando table | 37 | each is a mechanism, not an arm; the static `new Int8Array(1)` carrier has no expando side-table for `__extern_get` | senior-dev, high |
