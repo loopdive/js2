@@ -12431,6 +12431,32 @@ NO twin splice on the statically-resolved-key arm, where `i["echo"](...A2)` and
 not taking over a working lowering for no measured gain. A comment at that site
 records the measurement.
 
+**Verification** (head `80a49601a4`, base `bccd46c552`; the box was at load
+~20 on 4 cores with three other lanes, so the battery was resumed twice after
+OOM kills — `run-batch.mts` skips groups whose out-file exists):
+
+| check | result |
+| --- | --- |
+| gate chain (loc, func, coercion-sites, oracle-ratchet, dead-exports), typecheck, lint | green — loc +13 / func +12 in `call-tail-dispatch.ts`, allowance with dated rationale in the #6654 frontmatter |
+| witness on a TRUE file-copy revert of the two src files to `bccd46c552` | 3 teeth FAIL, all 11 controls pass; 14/14 on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493, Node 25.9 | 59 files / 368 tests, all pass |
+| same, Node 22 | 346 pass, 0 test failures; 2 suites died on a 10 s `beforeAll` hook timeout under load (`issue-6484-iterator-prototypes`, `issue-6648-regexp-capture-array-output`) — both green on Node 25 in the same tree, so load artifacts |
+| battery, 14 groups / 3,834 rows, fresh `--target both` provider from HEAD (`cacheHit=false`) | **0 pass→fail**, 6 fail→pass |
+| four families × 120 | **465/480** ← 463 (PlainDate 120, Duration 110 ← 109, PlainDateTime 117, ZDT 118 ← 117) |
+| AddSub 150 | **142/150** ← 138 |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass |
+| corpus 94 rows vs the S70 base | statusFlips=0 shaFlips=0 |
+| equivalence | 22 / 1720 / 22, no new regressions |
+
+**Six fail→pass, all one shape** — the two briefed rows plus four never
+targeted individually: `Duration/prototype/abs`, `ZonedDateTime/prototype/add`,
+`PlainDate/prototype/{add,subtract}`, `PlainYearMonth/prototype/{add,subtract}`,
+each `subclassing-ignored.js`. One further flip,
+`language/expressions/object/fn-name-class.js`, is **base drift, not S72**: it
+PASSES on a true file-copy revert to `bccd46c552`, and the mechanism cannot
+reach it (`ctx.classLinkedDynamicParentExpr` is empty outside a link consumer,
+so the predicate short-circuits and emits nothing).
+
 **Residuals measured, NOT fixed**: `C.prototype.m.call(inst, …)` through a link
 answers `undefined` (a provider-`prototype` member READ, a different
 mechanism); a computed-key spread call on a plain LOCAL subclass is still

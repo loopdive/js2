@@ -1,7 +1,7 @@
 ---
 id: 6654
 title: "standalone: a computed-key method call on an instance of a subclass of a linked provider class loses the receiver and collapses a spread"
-status: in-progress
+status: done
 sprint: current
 priority: high
 horizon: m
@@ -10,6 +10,7 @@ reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 assignee: ttraenkler/sendev-s72
 created: 2026-09-20
+completed: 2026-09-21
 # 2026-09-20 (#6654 / #5383 S72): +13 LOC in the dispatch driver — one 5-line
 # dispatch arm (a predicate call + the delegation to the existing #6641
 # terminal) plus its two explanatory comments, one of which records the
@@ -133,3 +134,38 @@ Two scope decisions, both measured rather than assumed:
    fixed-arity collapse, in the non-linked user-class arm. General, not
    link-specific; widening that arm is a much larger blast radius and is not
    this slice's.
+
+## Verification (2026-09-21, head `80a49601a4`, base `bccd46c552`)
+
+| check | result |
+| --- | --- |
+| gate chain — loc, func, coercion-sites, oracle-ratchet, dead-exports | green (loc/func under the allowance above) |
+| typecheck, lint | green |
+| witness on a TRUE file-copy revert of the two src files to `bccd46c552` | 3 teeth FAIL, all 11 controls pass; 14/14 on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493, **Node 25.9** | 59 files / 368 tests, all pass |
+| sweep, **Node 22** | 346 tests pass, 0 test failures; 2 SUITES failed on a 10 s `beforeAll` hook timeout (`issue-6484-iterator-prototypes`, `issue-6648-regexp-capture-array-output`) under a load average of ~20 on 4 cores — both green on Node 25 in the same tree, so load artifacts, not findings |
+| battery, 14 groups / 3,834 rows, fresh `--target both` provider prewarmed from HEAD (`cacheHit=false`) | **0 pass→fail**, 6 fail→pass |
+| four families × 120 | **465/480** (PlainDate 120, Duration 110 ← 109, PlainDateTime 117, ZDT 118 ← 117) |
+| AddSub 150 | **142/150** ← 138 |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail |
+| corpus 47×{gc,standalone} = 94 rows vs the S70 base | statusFlips=0 shaFlips=0 |
+| equivalence gate | 22 failing / 1720 passing / 22 known — no new regressions |
+
+### The six fail→pass rows
+
+The two briefed rows plus four more of the same shape, none of them targeted
+individually:
+
+- `Temporal/Duration/prototype/abs/subclassing-ignored.js`
+- `Temporal/ZonedDateTime/prototype/add/subclassing-ignored.js`
+- `Temporal/PlainDate/prototype/{add,subtract}/subclassing-ignored.js`
+- `Temporal/PlainYearMonth/prototype/{add,subtract}/subclassing-ignored.js`
+
+### The one flip that is NOT ours
+
+`test/language/expressions/object/fn-name-class.js` reads fail→pass against the
+S70 base file. Re-run on a TRUE file-copy revert of the two src files to
+`bccd46c552`: **pass**. So it is base drift — `main` fixed it between S70's base
+commit and `bccd46c552` — not S72. (The mechanism could not reach it anyway:
+`ctx.classLinkedDynamicParentExpr` is empty outside a link consumer, so the new
+predicate short-circuits to `false` and emits nothing.)
