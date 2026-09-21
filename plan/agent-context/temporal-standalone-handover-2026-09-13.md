@@ -1390,3 +1390,38 @@ whole group — chunk long groups at ≤200 rows; `pnpm install` in a fresh harn
 worktree needs `CI=true` (no TTY); a `git checkout HEAD -- <path>` elsewhere in
 the tree can drop the `test262` symlink back to an empty submodule dir — re-link
 before any further battery run.
+
+## Stack state 2026-09-21 (post-S74) — parallel lanes S71–S74 all landed or landing; four-family 465/480; add/subtract 139/150; THIS BOX'S DISK IS FAILING
+
+On the user's directive the remaining buckets ran as four parallel Opus lanes
+(spawn load cap raised via the gitignored `.claude/max-load`). Outcome:
+
+| lane | issue | PR | result |
+| --- | --- | --- | --- |
+| S71 | #6652 return-carrier for arrow/fn-expr/method/class/nested | #6019 merged | user-code fix; provider byte-identical; +3 `Instant` rows |
+| S72 | #6654 `instance[method](...a)` on a subclass of a linked class | #6021 | both `subclassing-ignored` rows + `PlainYearMonth/subtract/subclassing-ignored` pass; four-family 463 → 465, AddSub 138 → 139 |
+| S73 | #6655 `__apply_closure` unreachable = >8-formal arity ceiling | landing (branch `issue-5383-standalone-temporal-s73`) | caller-side ladder fixed + witnessed; trap kept because the three rows die again in the PROVIDER's own ladder cap — S75 brief in #6655 (recommended: measure a fixed shared ceiling first, then the module-origin closure tag that also closes #6628) |
+| S74 | #6656 BigInt, slice 2 | #6020 merged | exact static ToString; the eight rows re-attributed: `any`-typed bigint ARITHMETIC does not exist in standalone (no bigint tag in the `AnyValue` set) — slice 3 designed in #6656 ("Slice 3 design"), i64 carrier, `src/codegen/any-helpers.ts` |
+
+**Next lanes** (one at a time or in parallel, Opus): S74b = #6656 slice 3
+(`any`-typed bigint arithmetic; acceptance `bi5.mts` 11/11 + the eight
+Target8 rows re-measured); S75 = #6655 provider-side arity ladder cap; then
+#6656 slices 4–5 (limbs); the three offset-grammar rows are polyfill-version.
+
+**Environment — read before starting anywhere.** The container that ran
+S67–S74 has a FAILING DISK: bad sectors inside `.git/objects/pack/pack-d51ee84f…`
+(the `tailwindcss-4.3.3.tgz` fixture blob), every fresh worktree checkout
+SIGBUSes at ~65 %, a full `--refetch` was cut off by the proxy, and the kernel
+error count kept rising with no probes. Every lane commit and landing branch is
+on origin, so nothing is lost — but the NEXT SESSION MUST START ON A FRESH
+CONTAINER; do not try to repair that pack. Base TSVs for the next lane are
+S70's (`.tmp/s70/battery/*-cur.tsv` in worktree `agent-a81e3f8f42bdcb089`) plus
+S72's for the two flipped rows — regenerate a base on the new box instead of
+copying. Traps learned this night: at most ONE battery process per lane and
+`--maxWorkers=1` sweeps on a 4-core/16 GB no-swap box (three concurrent
+batteries OOM-killed each other); never `pnpm install` in a worktree whose
+`node_modules` is a symlink (it rewrote the shared install's links and broke
+three lanes); `run-batch.mts` skips pairs whose out-file exists and writes a
+TSV only at group end; `prewarm-temporal-provider.mjs` needs `--target both`;
+the oracle-ratchet gate counts the token `ctx.checker` even in comments; a
+`Hook timed out` vitest file under load is re-run alone before it counts.

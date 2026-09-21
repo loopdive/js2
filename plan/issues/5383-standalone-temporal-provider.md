@@ -12586,3 +12586,142 @@ between; the only conflict was this file's appended sections, kept in order).
 Accepted as slice 2 of #6656 (issue stays `in-progress`; slice 3 = `any`-typed
 bigint arithmetic in `src/codegen/any-helpers.ts` is the next lane, designed in
 the issue file).
+
+### S73 findings (2026-09-21) — #6655: the `__apply_closure` `unreachable` is an ARITY ceiling, and there are TWO of them, in two different modules; the caller's is fixed, the provider's is the next slice
+
+S73 (Opus, branch `issue-5383-standalone-temporal-s73`, worktree
+`agent-aaa16c583701d521a`, base `bccd46c552` + a merge of `origin/main` that
+picked up S71's #6652).
+
+**The briefing's framing was wrong in a way worth recording.** The three rows
+were handed over as a callable-KIND misclassification (the #6628
+provider-owned-closure residual), possibly two mechanisms — an eval-path one
+and a module-init one. They are ONE mechanism and it is not about ownership:
+it is **arity**. `fillApplyClosure` builds the dynamic dispatcher as a ladder
+with arms for `n = 0..8`, where `n = max(argc, __closure_arity(fn))` (the
+#3592 under-application widening), and sits a deliberate `unreachable` above
+it (#1058, "fail loudly rather than answer the undefined sentinel"). A dynamic
+call to a function with more than eight declared formals matches no arm and
+traps. The callees are ordinary test262 harness functions:
+`TemporalHelpers.assertPlainDateTime` has **14** formals,
+`createDurationPropertyBagObserver` **11**. The `__runtime_eval_call_aot`
+frame on the Duration row is the CALLER of `__apply_closure`, not a second
+defect.
+
+**Ceiling 1 — the caller's ladder. FIXED.** Reduced to a provider-free,
+link-free probe (`.tmp/s73/probes/arity4.mts`, case `namedSpread14`): a spread
+argument list into a 14-formal object-literal method answers `TRAP
+unreachable` on the true base and the right value on the fix. The fix mints
+ONE above-cap dispatcher per module at its top declared arity —
+`topHighClosureMethodCallArity` — because `__call_fn_method_<N>` invokes each
+admitted closure through its own funcref type and therefore serves every
+arity `<= N`. Three constraints turned up while building it, each measured:
+
+- **Per-arity minting blows the runner's compile budget.** The
+  `argument-string-offset.js` consumer declares 12 AND 14; two full dispatcher
+  ladders took its compile from ~25 s to 39.5 s, past the 30 s limit, so the
+  "fix" reported `compilation timeout`. One top dispatcher, carrying only the
+  above-cap closures (`minHostArity`) and no native-proto receivers (181 of
+  them at arity 14), is both correct and affordable.
+- **The closure host-bridge manifest cannot take it.**
+  `closureHostBridgeDefinition` is a fixed 18-bit physical export family with
+  slots for method arities 0..8; minting 14 through it dies with `unknown
+  closure host bridge __call_fn_method_14`. An above-cap dispatcher has no
+  host caller, so it is published as an ordinary internal function.
+- **Gate it on the lane.** Minted only when `ctx.applyClosureReserved` — i.e.
+  standalone/wasi. On host/gc it is unreachable code: **+21,274 B** on the
+  `@js-temporal/polyfill` host provider (1,726,098 → 1,747,372) before the
+  gate was added.
+
+**Ceiling 2 — the linked PROVIDER's ladder. NOT fixed; it is what actually
+blocks the three rows.** Proven, not inferred:
+
+1. a build whose above-cap arm is a bare `unreachable`, guarded by `n > 8`
+   with no upper bound and with the caller's trap removed, does **not** trap on
+   those rows — the caller's ladder is never consulted;
+2. removing the caller's trap alone makes all three rows `pass` — **vacuously**:
+   a shadow copy of `overflow-default-constrain.js` with a deliberately wrong
+   expected day (31 → 30, `.tmp/s73/probes/shadow-run.mts`) passes too, i.e.
+   `assertPlainDateTime` is never entered.
+
+So `__apply_closure` returns through its #6420 peer-callable-kind front guard:
+under `canonicalRuntimeTypes` the provider's structural `__is_callable`
+answers yes for a consumer closure it has never seen (#6628's open ownership
+ambiguity), the call is shipped to the PROVIDER's `__apply_closure`, and the
+provider's copy of the same trap fires because ITS ladder stops at 8 — the
+polyfill declares no 9+-formal closure. Nothing the caller can mint reaches
+that.
+
+**The trap was therefore kept, with its bound raised to the module's top
+minted arity.** Retiring it buys two green Temporal rows that assert nothing;
+a silent wrong answer in place of a loud one is not worth two points of
+conformance. The three rows are unchanged from base, deliberately.
+
+**Next slice (S75) is written up at the top of #6655's issue file**: which
+module owns the trap, the two observations above, and two costed directions —
+a module-origin tag on every closure struct (the durable fix, shared with
+#6628, which already recorded that two narrower structural gates cannot work)
+versus a FIXED shared max arity across the link (cheap, but must not be
+per-consumer: the provider artifact is prewarmed once and cached for every
+row — and it still needs a loop-breaker, because the consumer's own front
+guard hands the value straight back).
+
+**Validation.**
+
+| check | result |
+| --- | --- |
+| `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` on a file-copy revert of the three touched files to `bccd46c552` (identical to `origin/main` for those three files) | fails with EXACTLY ONE differing key, `spread14: "TRAP unreachable"`; passes on the fix |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (59 files / 368 tests) | Node 22 and Node 25: 368/368 pass |
+| equivalence gate | 22 failing / 1720 passing / 22 known-failures — unchanged |
+| corpus (94 rows, gc + standalone) vs the S70 base | statusFlips=0 shaFlips=0 |
+| both Temporal providers rebuilt from HEAD, `cacheHit=false`, `--target both` | byte-IDENTICAL to base: host 1,726,098 B, standalone 3,488,870 B |
+| four Temporal families (PlainDate, PlainDateTime, ZonedDateTime, Duration — 480 rows) vs the S70 base | 0 pass→fail, 0 fail→pass |
+| AddSub (`PlainDate`/`PlainYearMonth` add+subtract, 150 rows) vs the S70 base | 0 pass→fail, 0 fail→pass |
+| the nine must-not-move groups (A–D, E-linked/unlinked, F-class/methoddef/objproto) | **fix-tree only, not diffed** — S72 and S74 held the battery slot for the whole window. The risk is bounded: both providers rebuild byte-identical, the corpus shows 0 sha flips, and the mint is gated on `ctx.applyClosureReserved` AND on the module declaring a 9+-formal closure, which none of those groups' consumers do |
+| the three briefed rows | unchanged from base (same trap, same frames) — see above |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, typecheck, lint | green |
+
+**Residuals measured but not fixed** (both identical on base and fix, so
+neither is this slice's): `f.apply(recv, args)` where `f` has 14 formals fails
+the #2090 stack-balance gate at compile time; and 12 actual arguments into 14
+formals through an "any"-typed receiver put the trailing argument in the LAST
+formal rather than the 12th. Probes: `.tmp/s73/probes/arity3.mts` case
+`apply14`, `.tmp/s73/probes/arity4.mts` case `anyRecv14`.
+
+**Trap for the next lane (cost me ~40 minutes).** The test262 runner's disk
+cache key (`tests/test262-shared.ts` `buildCompilerHash`) hashes
+`scripts/compiler-bundle.mjs`, `tests/test262-runner.ts` and
+`src/runtime.ts` — **not** `src/codegen/**`. Editing codegen and re-running a
+row silently re-serves the cached compile: the measurement is of the OLD
+compiler and looks like "my change did nothing". `pnpm run build:compiler-bundle`
+is what invalidates it, and it must be followed by
+`node scripts/build-quickjs-eval-provider.mjs` (the eval adapter is keyed on
+the bundle too) and a prewarm into a FRESH cache label. `.tmp/s73/rebuild.sh`
+does the three in order.
+
+**Second trap.** A `pnpm install` in your own worktree replaces the `test262`
+symlink with an empty directory — check `ls test262/harness` afterwards. (It
+was needed here: S71's install had rewritten the shared
+`/home/user/js2/node_modules` to point into its own worktree store, which
+broke `lint` and `check:dead-exports` box-wide.)
+
+#### S73 — lead verification (2026-09-21)
+
+Head `f46b6e2df8` (clean tree), merged with `origin/main` (docs-only conflict
+in this file's appended sections, kept in order). The lane was killed by a
+container restart with groups C and D of its battery outstanding; the lead ran
+those two from its worktree against the lane's HEAD-built provider (`s73-14`)
+and completed the checks below.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green |
+| sweep `tests/issue-66*` + 6484 + 6493 on the merged head, Node 25 | 61 files / 370 tests green (lane: Node 22 and 25 green on its head) |
+| 13 groups + AddSub (3,834 rows) vs the S70 base, own diff (C and D run by the lead) | 0 pass→fail; 1 fail→pass (`language/expressions/object/fn-name-class.js`, main's own progress) |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows); both Temporal providers byte-identical |
+| `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` on a TRUE file-copy revert of the three touched src files to the merge-base | fails; passes on the fix |
+| equivalence (lane log) | 22 / 1720 / 22 |
+
+Accepted with rows unchanged and the arity trap deliberately kept: retiring it
+makes the three rows pass vacuously (a mutated copy passes too). The
+provider-side ladder cap is the S75 brief in #6655.

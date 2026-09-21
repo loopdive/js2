@@ -638,6 +638,7 @@ import {
   emitClosureCallExport3,
   emitClosureCallExport4,
   emitClosureMethodCallExportN,
+  topHighClosureMethodCallArity,
   emitIsClosureExport,
   emitIsCtorClosureExport,
   emitClosureArityExport,
@@ -6343,6 +6344,14 @@ export function generateModule(
       maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 6; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
+      // (#6655) …plus ONE dispatcher at the module's top above-cap arity.
+      // `TemporalHelpers.assertPlainDateTime` (14 formals) and
+      // `createDurationPropertyBagObserver` (11) are ordinary test262 harness
+      // functions; a dynamic call to either widened `n` past 8 and hit
+      // `__apply_closure`'s arity-overflow `unreachable`. `undefined` (and
+      // therefore byte-inert) for every module whose closures top out at 8.
+      const topArity = topHighClosureMethodCallArity(ctx, cap);
+      if (topArity !== undefined) emitClosureMethodCallExportN(ctx, topArity, cap + 1);
     }
 
     // (#1058) Callable-property sites can compile before the closure stored by
@@ -11501,6 +11510,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
+      // (#6655) Multi-source twin of the above-cap mint.
+      const topArity = topHighClosureMethodCallArity(ctx, cap);
+      if (topArity !== undefined) emitClosureMethodCallExportN(ctx, topArity, cap + 1);
     });
 
     // (#1058) Multi-source twin of the primary finalize seam. The parser-side
