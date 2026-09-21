@@ -49,6 +49,7 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
+import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { resolveWasmType } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
@@ -2244,6 +2245,14 @@ function compileForOfAssignDestructuringExternref(
   /** (#4447) Enclosing for-of — needed to recurse into nested patterns. */
   stmtForNested: ts.ForOfStatement,
 ): void {
+  // (#6651 cluster G, G1) The twin of the plain-assignment hook: a pattern with
+  // a MEMBER target has an OBSERVABLE reference evaluation that §13.15.5.5
+  // orders BEFORE the IteratorStep, which the `__array_from_iter_n` drain below
+  // cannot express (it steps first, by construction). The drive refuses —
+  // emitting nothing — for every shape it does not model, so all-identifier
+  // heads keep the lowering below byte-for-byte.
+  if (tryEmitSpecOrderedArrayAssignDrive(ctx, fctx, expr, elemLocal)) return;
+
   // (#4447) GetIterator materialisation — must run BEFORE the readers are
   // resolved, since `ensureLateImport` can shift function indices.
   let srcLocal = elemLocal;
