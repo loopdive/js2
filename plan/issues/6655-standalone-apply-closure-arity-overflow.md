@@ -16,25 +16,31 @@ loc-budget-allow:
   # 2026-09-20 (S73, #6655) — the above-cap dispatcher path has to live in the
   # three files that already own the mechanism; there is no subsystem module to
   # push it into without splitting one mechanism across four files.
-  #   closure-exports.ts (+50): `collectHighClosureMethodCallArities` (the
-  #     arity set) + `publishInternalClosureMethodDispatcher` (above-cap
-  #     dispatchers are internal, not host-bridge-manifest entries — the
-  #     manifest is a fixed 18-bit export family) + their doc comments, which
-  #     carry the measured reason the host/gc lane is gated out (+21,274 B of
-  #     unreachable code).
-  #   object-runtime.ts (+25): `fillApplyClosure`'s registry scan for
-  #     `__call_fn_method_<N>` above 8, the ladder built over that set instead
-  #     of a fixed range, and the raised overflow bound.
-  #   index.ts (+10): one mint loop at each of the two dispatcher-mint sites.
+  #   closure-exports.ts (+62): `topHighClosureMethodCallArity` +
+  #     `publishInternalClosureMethodDispatcher` (above-cap dispatchers are
+  #     internal, not host-bridge-manifest entries — the manifest is a fixed
+  #     18-bit export family) + the `minHostArity` filter, plus the doc
+  #     comments carrying the measured reasons: the host/gc lane is gated out
+  #     (+21,274 B of unreachable code) and per-arity minting blew the
+  #     runner's compile budget (39.5 s vs a 30 s limit).
+  #   object-runtime.ts (+52): `fillApplyClosure`'s registry scan for the top
+  #     `__call_fn_method_<N>`, the above-cap range arm, and the write-up of
+  #     why the arity-overflow trap is retired (a FOREIGN closure's arity read
+  #     through the canonical wrapper root was what tripped it).
+  #   index.ts (+12): one mint at each of the two dispatcher-mint sites.
   - src/codegen/closure-exports.ts
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
 func-budget-allow:
   # 2026-09-20 (S73, #6655) — same change-set, same rationale. `fillApplyClosure`
-  # is the function that BUILDS the ladder, so the ladder's arity set cannot be
-  # computed anywhere else without another cross-file indirection; the two
-  # generateModule twins grow by their one mint loop each.
+  # is the function that BUILDS the ladder, so the above-cap arm cannot be
+  # assembled anywhere else without another cross-file indirection; the two
+  # generateModule twins grow by their one mint each.
   - src/codegen/object-runtime.ts::fillApplyClosure
+  # `emitClosureMethodCallExportN` (+8): the `minHostArity` filter and the
+  # internal-vs-host-bridge publish branch, both inside the one function that
+  # builds a dispatcher.
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 ---
@@ -55,7 +61,7 @@ provider-owned-closure residual) and as possibly two mechanisms — an
 eval-path one and a module-init one. Both framings are wrong. **All three are
 one mechanism and it is not about ownership at all: it is ARITY.**
 
-## Root cause
+## Root cause — TWO arity ceilings, in two different modules
 
 `fillApplyClosure` (`src/codegen/object-runtime.ts`) builds the dynamic
 callable dispatcher as a ladder `if n==0 … if n==8 else <peer/undefined
@@ -65,7 +71,7 @@ fallback>`, where
 n = max(argc, __closure_arity(fn))      // #3592 under-application widening
 ```
 
-and `__call_fn_method_<N>` dispatchers are minted for `N = 0..min(maxArity, 8)`
+and `__call_fn_method_<N>` dispatchers were minted for `N = 0..min(maxArity, 8)`
 (`src/codegen/index.ts`, two sites). Immediately before the ladder sits the one
 and only `unreachable` in the filled body:
 
@@ -73,74 +79,124 @@ and only `unreachable` in the filled body:
 declaredArity > APPLY_CLOSURE_MAX_ARITY /* 8 */  ⇒  unreachable
 ```
 
-added deliberately so an above-cap closure "fails loudly rather than falling
-through to the undefined sentinel".
+added deliberately (#1058) so an above-cap closure "fails loudly rather than
+falling through to the undefined sentinel".
 
-The failing callees are ordinary **test262 harness functions whose declared
-formal count exceeds eight**:
+**Ceiling 1 — the caller's own ladder (FIXED here).** A dynamic call to a
+function with more than eight declared formals matches no arm and hits that
+trap. Reduced to a provider-free, link-free probe
+(`.tmp/s73/probes/arity4.mts`, case `namedSpread14`): a spread argument list
+into a 14-formal object-literal method answers `TRAP unreachable` on the branch
+base and `0/u` on the fix. This is the test262 harness's own shape —
+`TemporalHelpers.assertPlainDateTime(dt, ...tenValues, "description")`, 14
+formals — so the class is real well beyond Temporal, and it is what this issue
+fixes.
 
-- `TemporalHelpers.assertPlainDateTime(datetime, year, month, monthCode, day,
-  hour, minute, second, millisecond, microsecond, nanosecond, description,
-  era, eraYear)` — **14 formals** (`test262/harness/temporalHelpers.js` L252,
-  source L496 of the harness+test concatenation the trap names);
-- `createDurationPropertyBagObserver(name, y, mon, w, d, h, min, s, ms, µs, ns)`
-  — **11 formals** (`Duration/compare/order-of-operations.js` L173, source
-  L964).
+**Ceiling 2 — the linked PROVIDER's ladder (NOT fixed; the real blocker for
+the three briefed rows).** In the linked Temporal rows the consumer's ladder is
+never even consulted. Proven, not inferred: a build whose above-cap arm is a
+bare `unreachable`, guarded only by `n > 8` and with the caller's overflow trap
+removed, does **not** trap on those rows. So `__apply_closure` returns before
+reaching the ladder — through one of its prepended front guards, and the only
+one that claims an ordinary compiled closure is the **#6420 peer-callable-kind
+guard**: it asks the linked provider "is this externref callable?", and under
+`canonicalRuntimeTypes` the provider's structural `__is_callable` answers YES
+for a closure it has never seen (#6628's ownership ambiguity, still open). The
+call is therefore shipped to the PROVIDER's `__apply_closure` — whose own
+ladder tops out at 8, because `@js-temporal/polyfill` declares no 9+-formal
+closure — and the provider's copy of the same trap fires.
 
-Each is invoked through the dynamic bridge (a spread argument list in the
-first two, the #6647 live-global-binding route via `__runtime_eval_call_aot`
-in the third), the widening lifts `n` to 14 / 11, no arm exists, and the
-overflow guard traps. The `__runtime_eval_call_aot` frame in the Duration row
-is the CALLER of `__apply_closure`, not a second defect.
+Three observations that only this explanation fits:
 
-**Confirmed by direct instrumentation, not by inspection.** Replacing that one
-`unreachable` with the undefined sentinel (`ref.null.extern` + `return`) and
-re-running the three rows moved all three off the trap — the two PlainDateTime
-rows to `pass` (vacuously: the assert never ran) and the Duration row to
-`TypeError: expected a string, not null`. Nothing else in the module can
-produce that trap: `fillApplyClosure`'s emitted body contains exactly one
-`unreachable`.
+1. the trap is `unreachable in __apply_closure()` and that body contains
+   exactly one `unreachable`;
+2. replacing that `unreachable` with the undefined sentinel clears the trap on
+   all three rows — it changes BOTH modules, because both are built by this
+   compiler;
+3. with the caller's ladder covering arity 14 (instrumented: `top=14`,
+   dispatcher entries `[12,14]`) and its arm made unreachable, nothing traps —
+   the caller's ladder is not on the path.
 
 ## Fix
 
-Support the arities a module actually declares instead of raising a constant.
+**1. One above-cap dispatcher per module.**
 
-1. `collectHighClosureMethodCallArities(ctx, floor)`
-   (`src/codegen/closure-exports.ts`) — the DISTINCT `closureHostArity` values
-   above `floor`. A set, not a range: the contiguous `0..8` loop is untouched
-   and only the arities a module really has are minted above it.
-2. `src/codegen/index.ts`, both dispatcher-mint sites (single-source
-   finalize + multi-source twin): mint one `__call_fn_method_<N>` per
-   above-cap arity, after the existing `0..cap` loop and before
-   `fillApplyClosure` runs.
-3. `emitClosureMethodCallExportN` publishes an above-cap dispatcher as an
-   ORDINARY INTERNAL function (`mintDefinedFunc`/`pushDefinedFunc`), not
-   through `publishClosureHostBridge`. The closure host-bridge manifest is a
-   fixed 18-bit physical export family (`closureHostBridgeDefinition`) with
-   slots for method arities 0..8 only; an above-cap dispatcher has no host
-   caller — it exists solely as a `call` target for the in-module ladder — so
-   widening the published ABI would be wrong as well as impossible. Without
-   this the compile dies with `unknown closure host bridge
-   __call_fn_method_14`.
-4. `fillApplyClosure` reads the registry (`__call_fn_method_<N>` keys in
-   `ctx.funcMap`) for above-cap arities, appends one ladder arm per registered
-   arity, and raises the overflow guard's bound to the top minted arity.
+- `topHighClosureMethodCallArity(ctx, floor)`
+  (`src/codegen/closure-exports.ts`) — the module's highest `closureHostArity`
+  above `floor`, or `undefined`. ONE dispatcher covers every above-cap arity:
+  `emitClosureMethodCallExportN(N)` admits every closure of host arity `<= N`
+  and invokes each through its own funcref type with exactly that many of the
+  supplied values, so `__call_fn_method_<top>` serves a 12-formal callee as
+  correctly as a 14-formal one. Minting per-arity was measurably wasteful —
+  the `argument-string-offset.js` consumer declares 12 AND 14, and two full
+  ladders pushed its compile from ~25 s to 39.5 s, past the runner's 30 s
+  budget, turning the fix into a `compilation timeout`.
+- The above-cap dispatcher carries ONLY the above-cap closures and **no**
+  native-prototype receivers (`minHostArity`, a new optional parameter that is
+  `0` and therefore inert for every ordinary dispatcher). Measured 181
+  native-proto arms at arity 14 on a Temporal consumer, all of them claimed by
+  their own front guard long before this arm is reachable.
+- It is published as an ORDINARY INTERNAL function
+  (`mintDefinedFunc`/`pushDefinedFunc`), not through
+  `publishClosureHostBridge`. The closure host-bridge manifest is a fixed
+  18-bit physical export family (`closureHostBridgeDefinition`) with slots for
+  method arities 0..8 only, and an above-cap dispatcher has no host caller —
+  it exists solely as a `call` target for the in-module ladder. Without this
+  the compile dies with `unknown closure host bridge __call_fn_method_14`.
+- Minted only when `ctx.applyClosureReserved` is true, i.e. on the
+  standalone/wasi lanes that reserve the bridge. On host/gc it would be
+  unreachable bytes: measured **+21,274 B** on the `@js-temporal/polyfill`
+  host provider (1,726,098 → 1,747,372) before the gate was added.
+- `fillApplyClosure` reads the registry (`__call_fn_method_<N>` keys in
+  `ctx.funcMap`) for the top above-cap arity and adds ONE arm, guarded by
+  `n > 8` with no upper bound.
+
+**2. The overflow trap stays, with its bound raised to the top minted arity.**
+
+Retiring it was tried and REJECTED on evidence. With it gone the three Temporal
+rows flip to `pass` — **vacuously**: a shadow copy of
+`overflow-default-constrain.js` with a deliberately wrong expected day (31 → 30,
+`.tmp/s73/probes/shadow-run.mts`) passes too, i.e. `assertPlainDateTime` is
+never entered and the assertions never run. Trading a loud trap for a silent
+wrong answer would inflate conformance with rows that assert nothing, so the
+guard keeps its #1058 meaning; only its bound moves from a fixed eight to the
+module's real maximum.
 
 **Byte-inertness is structural, not incidental**: a module with no closure
-above eight mints nothing extra, so the registry scan finds nothing, the
-ladder is the same nine arms, and the guard constant is still 8. Measured on
-the unlinked probe (`.tmp/s73/probes/arity3.mts`): the two arity-8 cases are
-byte-identical base vs fix (143,416 B / 143,017 B); the arity-14 cases grow
-~1.5 KB for the one extra dispatcher.
+above eight mints nothing, so the registry scan finds nothing and neither the
+ladder nor the bridge moves. Both `@js-temporal/polyfill` providers rebuild
+byte-identical (host 1,726,098 B; standalone 3,488,870 B) — the polyfill itself
+declares no 9+-formal closure; it is the test262 HARNESS that does.
 
 ## Acceptance
 
-- The three rows above stop trapping and the assertions actually run.
 - `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` fails on the
-  true base and passes on the fix.
+  true base and passes on the fix. MET.
 - Battery: 0 pass→fail across the 13 must-not-move groups + AddSub.
+- The three briefed rows: **NOT met, and deliberately not forced.** They are
+  blocked on ceiling 2 (the provider's ladder, reached through #6628's
+  peer-callable-kind hijack), not on anything this change can reach. The only
+  way to make them green from here is to retire the trap, which makes them
+  pass without running their assertions — see the measured shadow-mutation
+  above.
 
 ## Residuals (measured, not fixed)
+
+- **The three briefed rows, and the mechanism behind them.** A consumer-owned
+  closure with more than eight formals cannot be invoked once the #6420 peer
+  front-guard hands it to the provider: the provider's own ladder stops at its
+  own maximum declared arity, and it has no way to mint an arm for an arity
+  only the consumer knows. Two candidate directions, both larger than this
+  slice: (a) give the peer front-guard a real ownership test — #6628 concluded
+  that needs a module-origin tag written at `struct.new`, since
+  `canonicalRuntimeTypes` makes `ref.test` ownership-blind BY DESIGN; or (b)
+  have the provider's above-top fallback route the callee BACK across the link
+  instead of answering the sentinel, which needs a loop-breaker because the
+  consumer's own front guard would hand it straight back. Reduced probe for
+  (a): `plan/issues/6628-standalone-proxy-trap-peer-callable-kind-misclassification.md`'s
+  9-line linked repro; for the arity half, `.tmp/s73/probes/shadow-run.mts`
+  (pass/fail is only meaningful with the mutated copy, which is the
+  non-vacuity check).
 
 - `H.m.apply(H, ARR12)` where `m` has 14 formals fails to COMPILE — the
   #2090 stack-balance gate reports an operand underflow of 14 in the caller.

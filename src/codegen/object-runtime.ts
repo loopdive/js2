@@ -7534,17 +7534,6 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     const arity = Number(name.slice("__call_fn_method_".length));
     if (Number.isInteger(arity) && arity > applyClosureTopArity) applyClosureTopArity = arity;
   }
-  if (process.env.S73_DEBUG === "1") {
-    const all: string[] = [];
-    for (const info of ctx.closureInfoByTypeIdx.values()) {
-      const n = info.paramTypes.length;
-      if (n > 8)
-        all.push(
-          `${n}${info.hasRestParam ? "R" : ""}${info.nativeProtoVariadic ? "V" : ""}${info.hostOneShotOnly ? "H" : ""}${info.domCallbackOnly ? "D" : ""}`,
-        );
-    }
-    console.error(`S73 top=${applyClosureTopArity} above8=[${[...new Set(all)].sort().join(",")}]`);
-  }
 
   const argcGlobalIdx = ensureArgcGlobal(ctx);
 
@@ -7553,9 +7542,10 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // (#3592) An UNDER-APPLIED call (`assert.sameValue(a, b)` into a 3-formal
   // `sameValue`) matched no `__call_fn_method_N` arm and silently returned the
   // undefined sentinel — it never happened. Rationale: see the builder.
-  // The widening helper appends its declared-arity probe at its own first new
-  // local; nothing outside the helper reads that slot any more (#6655 retired
-  // the arity-overflow guard that did).
+  // The widening helper appends its declared-arity probe at this first new
+  // local. Keep that local distinct from `n`: linked/native callables may carry
+  // more than eight actual arguments through their full-vector fallback.
+  const declaredArityLocal = 3 + locals.length;
   const widen = buildApplyClosureArityWidening(ctx, locals, 0, 3, 3);
   const resultLocal = 3 + locals.length;
   locals.push({ name: "result", type: { kind: "externref" } });
@@ -7669,18 +7659,29 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   // if n==0 .. n==APPLY_CLOSURE_MAX_ARITY else undefined. Nest as if/else chain.
   let dispatch: Instr[] = armUnsupported;
-  // (#6655) The above-cap arm is a RANGE test (`8 < n <= top`), not an equality
-  // one: `n` can be any declared arity in that window and the single top
-  // dispatcher serves them all.
+  // (#6655) One arm for EVERY above-cap selector, guarded by `n > 8` alone and
+  // deliberately NOT bounded above by `top`. Two independent reasons:
+  //
+  //  - the top dispatcher serves every above-cap arity anyway (it invokes each
+  //    admitted closure through its own funcref type), so an equality or
+  //    window test buys nothing; and
+  //  - `n` can legitimately exceed every LOCAL arity. Under
+  //    `canonicalRuntimeTypes` the inline `__closure_arity` probe reads the
+  //    declared formal count off the shared canonical wrapper root, so it
+  //    answers for values this module never compiled. A `8 < n <= top` window
+  //    let exactly those selectors skip the arm — measured: with `top` at 14
+  //    and the window in place, `TemporalHelpers.assertPlainDateTime` was
+  //    never entered and the row passed VACUOUSLY (a deliberately wrong
+  //    expected value still passed).
+  //
+  // An unmatched callee is not lost: the dispatcher's own terminal is the
+  // linked-peer apply on the standalone lane, the same destination the
+  // fall-through `armUnsupported` has.
   if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
       { op: "i32.gt_s" },
-      { op: "local.get", index: 3 },
-      { op: "i32.const", value: applyClosureTopArity },
-      { op: "i32.le_s" },
-      { op: "i32.and" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
@@ -7745,23 +7746,30 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...widen,
-    // (#6655) The historical "declared arity above the fixed eight-value ABI ⇒
-    // `unreachable`" guard stood here. It was added so a COMPILED closure above
-    // the cap failed loudly instead of silently answering the undefined
-    // sentinel — but the dispatcher ladder now reaches this module's true
-    // maximum declared arity, so no local closure can exceed it by
-    // construction. What DID exceed it was a FOREIGN one: under
-    // `canonicalRuntimeTypes` a linked provider's closure shares the canonical
-    // wrapper root, so the inline `__closure_arity` probe happily reads ITS
-    // declared formal count off a value this module never compiled. The guard
-    // then trapped on a callee whose correct destination was the peer apply
-    // terminal two lines below — measured as `RuntimeError: unreachable in
-    // __apply_closure()` on three standalone Temporal rows, and reproduced with
-    // the ladder already covering every local arity.
+    // A compiled closure above the module's TOP dispatcher arity must fail
+    // loudly rather than falling through to the undefined sentinel (#1058).
+    // The bound is the top minted arity, not a fixed eight (#6655): with the
+    // ladder reaching the module's real maximum, a local closure can no longer
+    // trip this, and the trap keeps its original meaning — "this callee is
+    // beyond anything this module can dispatch".
     //
-    // Falling through is therefore not a loss of loudness: `n` above the top
-    // arm reaches `armUnsupported`, which is the linked-peer fallback on the
-    // standalone lane and the undefined sentinel only where there is no peer.
+    // Deliberately NOT retired. Retiring it makes the three #6655 Temporal
+    // rows PASS VACUOUSLY (measured: a shadow copy of
+    // `overflow-default-constrain.js` with a deliberately wrong expected day
+    // also passes, i.e. the assertion never runs) — a silent wrong answer in
+    // place of a loud one. See the issue for where that call really goes.
+    ...(widen.length > 0
+      ? ([
+          { op: "local.get", index: declaredArityLocal },
+          { op: "i32.const", value: applyClosureTopArity },
+          { op: "i32.gt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "unreachable" }],
+          },
+        ] satisfies Instr[])
+      : []),
     ...dispatch,
     { op: "local.set", index: resultLocal },
     { op: "i32.const", value: -1 },

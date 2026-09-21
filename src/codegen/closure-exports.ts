@@ -1436,7 +1436,12 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   const entries: ClosureDispatchEntry[] = [];
   const restEntries: ClosureDispatchEntry[] = [];
   // (#3992) Every native-proto METHOD closure of this arity — see the collector.
-  const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
+  // (#6655) An above-cap dispatcher carries no native-prototype receivers: it
+  // is reached only from `__apply_closure`'s `n > 8` arm, and a native proto
+  // method is claimed by its own front guard long before that. Measured 181
+  // such arms at arity 14 on a Temporal consumer — pure compile time, and one
+  // more chance to mis-claim a callee.
+  const nativeProtoReceiverEntries = minHostArity > 0 ? [] : collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
