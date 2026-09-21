@@ -161,6 +161,20 @@ loc-budget-allow:
 # the moved prologue plus `emitRegexExecArrayCall`, both `$NativeRegExp`
 # operations that live in this file.
   - src/codegen/regexp-standalone.ts
+# 2026-09-21 — cluster D, slice D2 (#5197 R3-2, integrating held PR #5883).
+# The observable §27.2.4.1.1/§27.2.4.3.1 Get/Call/Invoke pipeline (+913) lives
+# in `promise-combinators.ts`, the module that already owns every native
+# combinator emitter; the intrinsic-`Promise.resolve`-write proof (+99) lives
+# beside the existing builtin-write keeps it is an exception to, and only the
+# two dispatch decisions travel to the god-files (+39 admission gate in
+# call-namespace-static, +19 module-init keep in declarations). Both dispatch
+# sites are irreducible: "can source observe this constructor's `resolve` or
+# this element's `then`?" has to be readable at the point the fast native arm
+# would otherwise be taken, and "is this write the unshadowed intrinsic?" at
+# the point module-init collection would otherwise drop it. Restated here so
+# the grant is not stranded in #5197 alone.
+  - src/codegen/promise-combinators.ts
+  - src/codegen/builtin-write-keeps.ts
 func-budget-allow:
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -236,6 +250,11 @@ func-budget-allow:
 #     reads the sign so §7.2.10 SameValue can separate `-0` from `+0`, which
 #     `set-lastindex-init-samevalue` and `set-lastindex-restore-samevalue`
 #     measure. No value is converted from one type to another.
+# 2026-09-21 — cluster D, slice D2: `emitStandalonePromiseCombinatorRuntime`
+# gains the observable branch (+28) — the admission test plus the delegation to
+# the observable runtime emitter. The pipeline itself is in new module-level
+# helpers, not in this function.
+  - src/codegen/promise-combinators.ts::emitStandalonePromiseCombinatorRuntime
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -2513,6 +2532,167 @@ result through loops that are each comparable in size to this whole slice, and
 wiring them to the substrate *without* their loops would replace a wrong answer
 with a differently wrong answer — so the substrate is published with its two
 honest consumers and the loops are named above with their row counts.
+
+### 2026-09-21 — Cluster D (native Promise combinators), slice D2: the observable intrinsic protocol
+
+- **Branch** `worktree-agent-a0aff283c2b48c5f9`, **base** `claude/es2015-test262-plan-54tooh`
+  at `a61c2d41b4` (= `origin/main` + slices A2 + C3). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a0aff283c2b48c5f9`. Engine for every
+  measurement below: `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`,
+  adapter `d4799bda84cfed0d`), runner `--standalone --isolate`.
+
+- **What of PR #5883 was carried.** The held upstream PR
+  ([#5883](https://github.com/loopdive/js2/pull/5883), commit `6e684e2950`
+  "fix(promise): preserve observable resolve combinator protocol", Codex lane,
+  #5197 R3-2) was fetched and **integrated, not re-derived** —
+  `git cherry-pick -n 6e684e2950`. Four of its five files applied clean:
+  `builtin-write-keeps.ts` (+99: `isStandaloneIntrinsicPromiseResolveWriteTarget`,
+  the declaration-level proof that the `Promise.resolve = …` receiver is the
+  unshadowed intrinsic), `declarations.ts` (+16: keep that write as a
+  source-ordered module-init statement), `call-namespace-static.ts` (+53: the
+  `sourceHasMethodOverride`-gated `observableResolve` admission plus the
+  observable-only f64-vec arm), `promise-combinators.ts` (+931: the whole
+  §27.2.4.1.1/§27.2.4.3.1 Get/Call/Invoke pipeline, the
+  `$__combinator_all_resolve_cap` element-function carrier, and the
+  literal/direct-vector emitters). Its 450-line control file
+  `tests/issue-5197-promise-observable-combinator-r3-2.test.ts` came with it.
+  ONE conflict, in `emitStandalonePromiseCombinatorRuntime`: main has since
+  refactored that function's locals onto `buildNativeAllProviderLocals` +
+  `buildNativePromiseCombinatorVectorBody` (the #5883 branch predates it).
+  Resolved in favour of **main's** shape, keeping #5883's widening of `opts`
+  (`notIterLocal`/`rejectReason` became optional so the observable flags can
+  share the bag) and narrowing the pair back at the legacy vector body's call
+  site — that body only ever understood the (#2922) not-iterable rejection
+  pair, and widening its contract would have been the wrong direction.
+  Nothing D1 already superseded was reapplied: the custom-constructor
+  `.call(C, …)` protocol stays entirely in `promise-custom-combinator.ts`, and
+  the observable gate explicitly excludes a Promise-subclass receiver.
+  The port also flipped #5197's frontmatter to `in-progress`; that is reverted
+  here — #5197 is `done` on `main` and its LOC/func grants (which this
+  change-set relies on, and which live in a file this change-set touches, so
+  they are not stranded) are unaffected by the status field.
+
+- **Manifest** `plan/agent-context/6651/D-promise-combinators.txt` (101 rows),
+  re-measured on this branch's own source-clean base:
+
+  | | pass | fail | compile_error |
+  | --- | ---: | ---: | ---: |
+  | before (`.tmp/6651/D2-before.log`) | 26 | 57 | 18 |
+  | after (`.tmp/6651/D2-after-s1.log`) | **47** | 40 | 14 |
+
+  **+21, zero regressions** (per-row set diff: 21 non-pass → pass, 0 pass →
+  non-pass). The 21: `{all,race}/invoke-resolve{,-get-error-reject,-get-once-multiple-calls,-get-once-no-calls,-on-promises-every-iteration-of-promise,-on-values-every-iteration-of-promise}`,
+  `{all,race}/invoke-then{,-error-reject,-get-error-reject}`,
+  `all/invoke-resolve-error-reject`, `all/resolve-not-callable-reject-with-typeerror`,
+  `race/resolve-prms-cstm-then`. One fail→fail row changed its message
+  (`race/resolve-self.js`: "called value is not a function" → "async completion
+  marker not observed"); every other shared failure reports byte-identical text
+  before and after.
+
+- **Neighbourhood control** — all 729 `built-ins/Promise/**` rows, `--standalone
+  --isolate`, 183-row chunks (`.tmp/6651/neigh-after-0{0,1,2,3}.log`):
+  **pass 421, fail 174, compile_error 134**. The before lane was then run on the
+  **308 rows that are non-pass AFTER** (`.tmp/6651/neigh-before-0{0,1}.log`,
+  154-row chunks, base restored by file-copy A/B) — that is exactly the set in
+  which a regression could hide. It scored **0 pass / 174 fail / 134 CE**:
+  every row that does not pass now did not pass before either, so
+  **pass → non-pass is 0 across the full 729**. (Stated precisely rather than as
+  a headline delta: a full before lane over all 729 was not run, because a row
+  that passes after cannot be a regression.)
+
+- **Host (gc) lane — byte identity, not a run.** D1's finding stands: the
+  non-isolated host run of `built-ins/Promise/**` poisons the runner's own realm
+  and cannot be used as a control. Substituted an 8-program sha256 corpus
+  (`.tmp/6651/bytes-{before,after}.txt`, `.tmp/6651/bytes.mts`): intrinsic
+  `all` literal / `race` over a vec / `allSettled` / `any`, a `.then` chain, the
+  D1 custom-constructor `.call` shape, and the two OBSERVABLE shapes
+  (`Promise.resolve = fn` + `Promise.all([1,2])`; an own-`then` element +
+  `Promise.race`). Result: **8/8 gc binaries byte-identical**; on standalone
+  **exactly the 2 observable programs move** and the other 6 are byte-identical.
+  That is the intended delta, stated as bytes: a module that cannot observe
+  `resolve`/`then` compiles to the same wasm it did before.
+
+- **Unit controls.** `tests/issue-5197-promise-observable-combinator-r3-2.test.ts`
+  13/13 and `tests/issue-6651-promise-custom-combinator.test.ts` 8/8 and
+  `tests/issue-4682.test.ts` 3/3 pass. The 3 failures in
+  `tests/promise-combinators.test.ts` (2 × 35 s timeout) and
+  `tests/issue-2671-promise-capability.test.ts` are **pre-existing**: the same
+  three test names fail on the base tree with the source files reverted
+  (`.tmp/6651/unit-{before,after}.log`).
+
+- **Gates**: `check-loc-budget` (+913 promise-combinators, +99
+  builtin-write-keeps, +39 call-namespace-static, +19 declarations — all
+  granted by #5197's frontmatter, which this change-set modifies),
+  `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`
+  (getTypeAtLocation +0, ctx.checker +0), `check:dead-exports`,
+  `check-compiler-boundaries --mode inventory --base origin/main` (no new
+  module; `inventoryValid: true`), `npm run -s typecheck`,
+  `biome lint src tests scripts --diagnostic-level=error`, and
+  `scripts/equivalence-gate.mjs` (22 failing / 1,720 passing / 22 known — no new
+  regressions) all pass.
+
+**Residual buckets after D2 (54 non-pass of the 101 manifest rows):**
+
+| rows | status | bucket | why it is still open |
+| ---: | --- | --- | --- |
+| 6 | fail | `{all,race}/invoke-{resolve,then}-{error,get-error}-close` | R3-4 interleaved iterator drive + IteratorClose — see the H1 finding below |
+| 2 | fail | `{all,race}/invoke-resolve-get-error` | same drive: `Get(C,"resolve")` must throw BEFORE `GetIterator` is reached; today the argument is normalised first and the row rejects "argument is not iterable" |
+| 4 | fail | `{all,race}/iter-step-err-reject`, `{all,race}/iter-next-val-err-reject` | same root cause (H1) — these do NOT trip the observable gate, so they stay on the legacy `__combinator_to_vec` drain |
+| 2 | fail | `all/S25.4.4.1_A5.1_T1`, `race/S25.4.4.3_A4.1_T1` | same |
+| 1 | fail | `all/capability-resolve-throws-no-close` | H1 on the custom-`C` `.call` path (D1's module) |
+| 8 | CE | `{all,race,allSettled,any}/resolve-throws-iterator-return-*` | `class BadPromise {}` receiver — standalone has no `Construct(C, «executor»)` for a compiled class (#5197 G10) |
+| 6 | CE | `{all,race,resolve,reject}/ctx-ctor`, `{all,race}/invoke-resolve-on-promises-every-iteration-of-custom` | `class X extends Promise` receiver (#5197 G9) |
+| ~10 | fail | `prototype/then/{ctor-*,capability-executor-*,ctor-access-count,deferred-is-resolved-value}`, `prototype/catch/*` | #5197 R3-6 / R3-9 — SpeciesConstructor reads and GetCapabilitiesExecutor; untouched by this slice |
+| rest | fail | `resolve-poisoned-then`, `resolve-thenable`, `race/resolve-self`, `resolve/arg-uniq-ctor`, `Object.prototype.toString` tag, `proto-from-ctor-realm` | #5197 R3-5 / R3-7 and #4119 |
+
+**H1 is confirmed, and its mechanism is NOT what the hypothesis assumed
+(this is the finding the next slice needs).** The hypothesis was that
+`__call_@@iterator` is *blind* to a symbol-keyed `@@iterator` expando on an
+`$Object`. Measured with two probes (`.tmp/6651/probe-h1.mts`,
+`.tmp/6651/probe-h1b.mts`, both standalone, zero imports):
+
+1. `iter[Symbol.iterator] = fn; Promise.all(iter)` rejects with
+   "argument is not iterable" and calls `next()` **zero** times.
+2. In the *same* module, `const f = iter[Symbol.iterator]; f.call(iter)` returns
+   a working iterator and `typeof f === "function"`. A `for…of` over the same
+   object also drives it correctly.
+3. The compiled module exports **no `__call_@@iterator` at all**.
+
+So the dispatcher is not blind — it is **not emitted**: `emitMethodDispatch`
+only mints `__call_@@iterator` when some registered *struct* carries an
+`@@iterator` member, and a plain `$Object` expando carrier registers none. With
+the dispatcher absent, `fillCombinatorToVec` bails and leaves the eager
+vec-only body, which answers null ⇒ "not iterable". The fix is therefore NOT in
+the dispatcher: `[Symbol.iterator]` lowers to the reserved key string
+`"@@iterator"` (literals.ts ~L3107), so `__extern_get(x, "@@iterator")` +
+`__apply_closure` already sees the expando — or, better, the whole
+`__iterator_strict` / `__iterator_next_strict` runtime
+(`iterator-native.ts` L1515-L1606) already implements strict GetIterator with
+getter/step/value abrupt propagation and is the substrate the drive should use.
+
+**Two hard constraints the R3-4 drive must plan around (both measured here,
+both absent from the R3-4 plan):**
+
+- **Fixing H1 inside the LEGACY `__combinator_to_vec` would hang the six
+  `*-close` rows**, whose `next()` never reports `done` — today they fail fast
+  precisely because the iterator is never acquired. H1 must be fixed *inside
+  the observable/interleaved drive only*, leaving the legacy drain untouched;
+  that also keeps every non-observable module byte-identical.
+- **`p.then` read as a VALUE off a native `$Promise` is not a function**
+  (`.tmp/6651/probe-then.mts`: `typeof p.then === "function"` is **false**, and
+  `t.call(p, …)` traps). That is #5197 R3-7, and it is why #5883's
+  `buildNativeInvoke` keeps a `__combinator_subscribe` fallback for a native
+  `$Promise` without an own `then`. A drive-mode `all` therefore cannot route
+  every element through the generic Invoke, and `__combinator_subscribe` casts
+  its `state` argument to the *immutable-field* `$CombinatorState`
+  (`resultsArr` and `length` are `mutable: false` —
+  `delay-combinator-layouts.ts::createNativeCombinatorStateShape`). An
+  interleaved drive has no element count up front, so `all` drive mode needs a
+  **new, additively-registered** mutable state struct plus its own
+  resolve-element and subscribe bodies — roughly 300–400 lines of hand-built
+  wasm. `race` drive mode needs none of that (its handlers are the capability's
+  own resolve/reject), so **`race` is the cheap half and should be sliced
+  first**. That sizing is why D2 stops here rather than half-landing it.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
