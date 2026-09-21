@@ -70,6 +70,18 @@ assignee: "ttraenkler/fable-es2015-plan"
 # `ownKeys` "the native runtime does not retain symbol-keyed properties yet" —
 # it does), so the measurement that overturns each claim is recorded next to
 # it rather than in a commit message nobody reads at the site.
+# 2026-09-21 (cluster E, slice E1): three of the four seams are single arms
+# spliced into an EXISTING ladder in a god-file, so the growth cannot be moved
+# to a subsystem module without splitting the ladder itself:
+#   - array-methods.ts (+15): the §7.1.4 Symbol-index gate at the top of
+#     `emitDynViewSpeciesMethodTwoArm`, which is where slice/subarray on a
+#     dynamic view compile their window arguments;
+#   - dataview-native.ts (+14): the `ArrayBuffer.isView` carrier-set
+#     correction, inside the one shared `isViewRefTestInstrs` chain;
+#   - closed-method-dispatch.ts (+3): admitting arity 0 to the native array
+#     HOF arm (its reserve gate plus the `undefined` callback operand).
+# The `sort` comparefn gate went into `dyn-array-producers.ts`, a subsystem
+# module already under budget, so it needs no grant.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/vec-overlay.ts
@@ -77,6 +89,9 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/closed-method-dispatch.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -999,6 +1014,104 @@ the 24 nested-proxy-over-exotic-target rows (many mechanisms per row) and the
 7 prototype-chain rows (blocked on `$Object.$proto` being unable to hold a
 `$Proxy` — a type-graph change, not a call-site one). The 4+3 `construct` rows
 are a single, clean mechanism but sit inside #3371's active surface.
+
+### 2026-09-21 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E1
+
+- **Branch** `worktree-agent-aa1dfb3d978fd9ede`, base `claude/es2015-test262-plan-54tooh`
+  (`16a99c21`, i.e. origin/main + plan + cluster D). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-aa1dfb3d978fd9ede`.
+- **Manifest** `plan/agent-context/6651/E-typedarray-buffers.txt` (144 rows),
+  `--standalone --isolate`, measured on this branch's own base:
+
+  | | pass | fail | compile_error |
+  | --- | ---: | ---: | ---: |
+  | before (`.tmp/6651/E-before.log`) | 0 | 143 | 1 |
+  | after (`.tmp/6651/E-after.log`) | **13** | 130 | 1 |
+
+  Per-row set diff: **13 non-pass → pass, 0 pass → non-pass.**
+
+- **What landed — four seams, each a spec step the standalone lane skipped.**
+  1. **Arity-0 array HOFs (6 rows).** `closed-method-dispatch.ts` gated its
+     native `__hof_<m>` arm on `arity >= 1`, so `sample.every()` fell to the
+     open-`$Object` bottom arm, where `__extern_method_call` answers `undefined`
+     for a vec brand — a NORMAL RETURN where §23.1.3.x step 3 requires
+     `IsCallable(undefined)` → TypeError. The arm now admits arity 0 and feeds
+     the canonical `undefined` as the callback, so the helper's own IsCallable
+     gate raises it. Not typed-array specific: `[1,2].every()` on an `any`
+     receiver was equally silent.
+  2. **`sort` comparefn (1 row).** `__arrprod_sort` treated a non-callable
+     comparefn as "no comparator". §23.1.3.30 step 1 makes a PRESENT,
+     non-`undefined`, non-callable one a TypeError. Absent vs explicit is told
+     apart by the args vec's own length, so `sort()` / `sort(undefined)` keep
+     the default order while `sort(null)` throws.
+  3. **`ArrayBuffer.isView` carrier set (3 rows).** Two errors in one chain:
+     the DYNAMIC view brand `$__ta_dyn_view` was absent (so every
+     `testWithTypedArrayConstructors` sample read as NOT a view), and the
+     ArrayBuffer's own `$__vec_i32_byte` backing carrier was PRESENT (so a
+     buffer read as a view). §25.1.4.1 is `[[ViewedArrayBuffer]]`, which the
+     buffer does not have.
+  4. **Symbol window arguments on a dynamic view (4 rows).** `slice`/`subarray`
+     compile their index args in `{kind:"f64"}` context, where a Symbol (an i32
+     id) coerces SILENTLY to 0; §7.1.4 step 3 makes it a TypeError. Reuses the
+     existing `emitSymbolIndexArgThrow` gate (`fill`/`copyWithin` precedent),
+     positions 0 and 1, `map`/`filter` excluded (their position 0 is a
+     callback).
+
+- **Neighbourhood control** — 2,266 rows, `--standalone`, before vs after
+  (`.tmp/6651/chunks-{before,after}/`): all of `built-ins/ArrayBuffer/**`,
+  `built-ins/DataView/**`, `built-ins/TypedArray/**`, plus the
+  callback/comparator rows of `built-ins/Array/prototype/{every,some,forEach,
+  reduce,reduceRight,map,filter,find,findIndex,sort}` (the arity-0 arm is not
+  typed-array specific). pass **1433 → 1456**, fail 770 → 747, compile_error
+  62 → 62. Per-row set diff: **0 pass → non-pass**, 23 non-pass → pass — the
+  13 manifest rows plus their 10 `BigInt/` twins, which are outside the ES2015
+  manifest.
+  - Runner note: the single 2,266-row in-process run DIED at exit 1 with an
+    EMPTY log (the realm-poisoning death the runner header documents) and two
+    200-row chunks exhausted the V8 heap. Both sides are therefore run in
+    identical 200-row chunks, with one 50-row sub-chunk (`c10s2`) run
+    `--isolate` on both sides. Chunking is what makes a crash cost its own
+    rows instead of the whole measurement.
+- **Host (gc) lane**: every seam is standalone-gated, so the control is a
+  sha256 byte comparison of 8 compiled programs (zero-arg and callback HOF,
+  dyn `sort` with and without a comparator, `isView` direct and as a
+  first-class value, TypedArray `slice`/`subarray`) — **all 8 host binaries
+  byte-identical** (`.tmp/6651/hostbytes-{before,after}.txt`). On standalone the
+  same corpus shows exactly the intended delta: the five programs that touch a
+  changed seam differ, the three that do not are byte-identical
+  (`.tmp/6651/sabytes-{before,after}.txt`).
+- **Unit tests**: new `tests/issue-6651-e-typedarray.test.ts` (9 cases — the
+  four seams plus their negative controls: a callable HOF still runs, an
+  absent/undefined/callable comparator still sorts, an ordinary numeric
+  `slice`/`subarray` window still works).
+- **Gates**: loc-budget passes with the three god-file grants added to this
+  file's frontmatter (+15 / +14 / +3, each a single arm spliced into an
+  existing ladder); func-budget, coercion-sites, oracle-ratchet, dead-exports
+  and `scripts/equivalence-gate.mjs` (22 known failures, no new) all pass.
+
+**Residual sub-buckets (130 fail + 1 CE on the manifest), with signatures:**
+
+| rows | status | sub-bucket | why it is still open |
+| ---: | --- | --- | --- |
+| 22 | fail | every `$DETACHBUFFER` row — `JS2WASM_EVAL_ENGINE=quickjs … provider is not built` | ENVIRONMENT ONLY, and it is the whole detached-buffer cohort (`{every,some,forEach,reduce,reduceRight}/callbackfn-detachbuffer`, `fill/coerced-*-detach`, `copyWithin/coerced-values-*`, `{join,toString,toLocaleString,subarray}/detached-buffer`, `from/*-mapper-detaches-result`, `sort/sort-tonumber`, two `proto-from-ctor-realm`). The `$262` shim pulls the runtime-eval seam and the QuickJS artifact is not built in this container, so these rows are **unverifiable locally** — they were never measured either way here |
+| 9 | fail | `Object.prototype.toString is not yet implemented in --target standalone` | #4119, owned by cluster H — `ArrayBuffer/newtarget-prototype-is-not-object`, `ArrayBuffer/prototype/slice/species-*`, `ctors/{no-species,length-arg/toindex-length}`, `ctors/typedarray-arg/same-ctor-buffer-ctor-species-*` |
+| 9 | fail | `TypedArray.from` iterator/array-like error propagation — `Expected a Test262Error but got a TypeError` | the `from` pipeline turns a user abrupt completion into its own TypeError (`from/{arylk-get-length,arylk-to-length,iter-access,iter-invoke,iter-next,iter-next-value}-error`) |
+| 7 | fail | `TypedArrayConstructors/{from,of}` statics | `%TypedArray%.{from,of}` is not inherited by the concrete constructors, and the custom-`this` forms are unimplemented (`inherited.js` reads `undefined`; `custom-ctor*.js` / `new-instance-using-custom-ctor.js` read `undefined.call`) |
+| 5 | fail | `ctors/object-arg/throws-setting-obj-*` — ToNumber(element) of a typed array with an own `valueOf`/`toString`/`@@toPrimitive` expando | ROOT-CAUSED, not fixed: `__to_primitive` reduces any `$__vec_base` subtype through `Array.prototype.toString`, so OrdinaryToPrimitive never runs. A dyn-view arm in `__to_primitive` DOES fix it for a dynamically-constructed view (measured: `Number(v)` with a throwing `valueOf` expando propagates), but these rows build the sample as a STATIC `new Int8Array(1)`, whose carrier has no expando side-table for `__extern_get` to find — so the arm gains 0 measured rows and was reverted rather than shipped unmeasured. The blocking gap is the static carrier's expando table, not ToPrimitive |
+| 5 | fail | `ctors/object-arg/iterator-*` + `iterating-throws` + `iterator-is-null-as-array-like` | the ctor argument is `var obj = function () {}` — a CALLABLE. It is neither `$Object` nor a vec, so the dispatch falls to the count form (ToIndex → 0) and never consults `@@iterator`; §23.2.5.1 step 6 needs a closure arm |
+| 4 | fail | `{filter,map}/callbackfn-arguments-with[out]-thisarg` — `results[0][2] - this` | the dyn-view species two-arm rebinds the receiver identifier to the MATERIALIZED f64 vec before compiling the loop, so the callback's third argument has the right CONTENTS and the wrong IDENTITY |
+| 4 | fail | `{filter,map,slice,subarray}/speciesctor-get-species-custom-ctor-invocation` | the `@@species` getter's `this` is not the constructor |
+| 16 | fail | `internals/{Set,DefineOwnProperty,OwnPropertyKeys}` | the integer-indexed exotic MOP over Proxy receivers, `preventExtensions`, symbol keys and key ordering — a separate mechanism |
+| 9 | fail | `prototype/toLocaleString/*` | needs `Invoke(element, "toLocaleString")` per element; measured precondition missing: a user `Number.prototype.toLocaleString` override is not honoured even for a direct `n.toLocaleString()` in standalone |
+| 6 | fail | `DataView/{dataview,defined-*,return-instance,custom-proto-*,instance-extensibility}` | `Object.getPrototypeOf(new DataView(…))` does not answer `DataView.prototype` |
+| 6 | fail | `{entries,keys,values}/{iter-prototype,return-itor}` | the iterator result is not an %ArrayIteratorPrototype% object (`Cannot read properties of undefined (reading 'next')`) |
+| rest | fail/CE | `isView` subclass instances, `sort` ordering, `ArrayBuffer/{prop-desc,data-allocation-…,prototype-from-newtarget}`, `slice` species residuals, `length-excessive-throws` (a wasm `requested new array is too large` trap), one `from-typedarray-into-itself-mapper-detaches-result` CE (`env::__unwrap_for_wasm`) | each its own mechanism |
+
+**Not started in this slice (and why):** the four largest remaining buckets are
+the integer-indexed MOP (16), `toLocaleString` (9) and the two `from`/`of`
+families (16). Each needs a mechanism rather than an arm, and the detached
+cohort (22) cannot be measured in this container at all — so E1 took the four
+seams that are complete, measurable and independently verifiable here.
 
 ## Manifest generator note
 
