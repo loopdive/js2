@@ -16,12 +16,17 @@
  * `createDurationPropertyBagObserver` has 11, which is how three standalone
  * Temporal rows failed with `RuntimeError: unreachable in __apply_closure()`.
  *
- * `spread14` below is the defect; it answers `TRAP unreachable` on the branch
- * base `bccd46c552` (file-copy revert of the three touched files, measured —
- * `.tmp/s73/probes/arity4.mts`). Every other row already answers correctly on
- * that base, so the controls cannot carry this file green: they exist to pin
- * that widening a module's dispatcher set changes NOTHING for the arities that
- * already worked, including the arity-8 boundary itself.
+ * `spread14` below is the defect, and it is the ONLY row that moves: on a
+ * file-copy revert of the three touched files to the branch base
+ * `bccd46c552` this file fails with exactly one differing key,
+ * `spread14: "TRAP unreachable"` (measured, `.tmp/s73/witness-base.log`).
+ *
+ * Every other row — including `spread9`, one formal past the historical cap —
+ * already answers correctly on that base, so the controls cannot carry this
+ * file green. They are here to pin that widening a module's dispatcher set
+ * changes NOTHING for what already worked, and `spread9` additionally records
+ * that the trap is not simply "declared arity > 8": some above-cap shapes
+ * never reach the dynamic bridge at all.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -32,13 +37,14 @@ const M8 = `const E8 = { m(a,b,c,d,e,f,g,h) { return "" + a + "/" + (h === undef
 
 /** name → [declarations, the expression whose value is read] */
 const CASES: [name: string, decl: string, read: string][] = [
-  // ── the defect ────────────────────────────────────────────────────────────
+  // ── the defect (the only row that is red on the base) ────────────────────
   // The test262 `assertPlainDateTime(dt, ...tenValues, "description")` shape:
   // a spread argument list into a 14-formal method.
   ["spread14", M14, `H.m(0, ...DATA, "d")`],
-  // The arity-9 boundary — one formal past the historical cap.
-  ["spread9", M9, `N9.m(0, ...DATA)`],
   // ── controls: correct on the base, must stay correct ─────────────────────
+  // The arity-9 boundary, one formal past the historical cap — green on the
+  // base too, which is the point: above-cap alone does not reach the bridge.
+  ["spread9", M9, `N9.m(0, ...DATA)`],
   ["spread8", M8, `E8.m(0, ...DATA)`],
   ["exact8", M8, `E8.m(1,2,3,4,5,6,7,8)`],
   ["short8", M8, `E8.m(1,2)`],
