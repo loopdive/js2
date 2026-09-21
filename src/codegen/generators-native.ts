@@ -2428,13 +2428,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // how a leak gets traded for a silent wrong value — so `gen` stays bailed
       // uniformly and is left as a measured, bounded follow-up on #3952.
       //
-      // The generator FUNCTION-EXPRESSION host (`const g = function*({…} = {}){}`)
-      // keeps the bail for ALL closure defaults too, and the control is what
-      // justifies it: that lane already traps on an element default with a plain
-      // NUMERIC value (`{ n = 41 }`), with no closure anywhere. So its defect is
-      // pre-existing and closure-INDEPENDENT — admitting these 8 rows would swap a
-      // loud host-import leak for a runtime trap without proving anything. Tracked
-      // separately; do not fold it in here.
+      // (#6651 A2, 2026-09-21) The paragraph that used to stand here said the
+      // generator FUNCTION-EXPRESSION host (`const g = function*({…} = {}){}`)
+      // keeps the bail for ALL closure defaults because "that lane already traps
+      // on an element default with a plain NUMERIC value (`{ n = 41 }`), with no
+      // closure anywhere". That control was RE-RUN and it does not reproduce:
+      // all four `fnexpr-num-{obj,ary}-{susp,nosusp}` cells of the 80-cell
+      // matrix in #6651's cluster-A round-2 receipt PASS on the isolated
+      // standalone runner, host-free. The claim is stale,
+      // so the blanket `ts.isFunctionExpression(decl)` arm it justified is gone
+      // (see the admission predicate below). Leaving it would have kept 16
+      // manifest rows bailed on a defect that no longer exists.
       const closureDefault =
         el.initializer !== undefined &&
         (ts.isFunctionExpression(el.initializer) ||
@@ -2449,15 +2453,31 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // boundary `externref` representation avoids that identity collision and
       // lets the normal dynamic property path observe the constructor name.
       // Methods with a yield retain the #3952 cross-suspend host path.
-      const classDefaultSafe =
-        el.initializer !== undefined &&
-        ts.isClassExpression(el.initializer!) &&
-        ts.isMethodDeclaration(decl) &&
+      //
+      // (#6651 A2, 2026-09-21) The condition that carries that argument is
+      // "the value never crosses a suspension" — a property of the BODY. The
+      // `ts.isMethodDeclaration(decl) && <parent is class/objlit>` conjunct it
+      // used to be spelled with is LANE IDENTITY, which is exactly what the
+      // #3952 note above warns against relying on. A generator function
+      // DECLARATION and a generator function EXPRESSION reach the same factory
+      // / resume split (#5255 free declarations, #3164/#3302 lifted closures)
+      // and spill into the same state struct, so the same argument applies to
+      // them verbatim. Measured, not assumed: the 80-cell
+      // lane × default-kind × pattern × suspension matrix is in #6651's cluster
+      // A round-2 receipt; every cell this predicate newly admits passes the
+      // isolated standalone runner, and every cell it still refuses is one that
+      // FAILS when admitted.
+      const zeroSuspendDefaultLane =
         decl.body !== undefined &&
         !nodeContainsYield(decl.body) &&
-        (ts.isClassDeclaration(decl.parent) ||
-          ts.isObjectLiteralExpression(decl.parent) ||
-          ts.isClassExpression(decl.parent));
+        (ts.isFunctionDeclaration(decl) ||
+          ts.isFunctionExpression(decl) ||
+          (ts.isMethodDeclaration(decl) &&
+            (ts.isClassDeclaration(decl.parent) ||
+              ts.isObjectLiteralExpression(decl.parent) ||
+              ts.isClassExpression(decl.parent))));
+      const classDefaultSafe =
+        el.initializer !== undefined && ts.isClassExpression(el.initializer!) && zeroSuspendDefaultLane;
       // (#6651 A2) A GENERATOR function-expression default (`[g = function*(){}]`)
       // is admitted on exactly the terms #4769 already set for a class-valued
       // one, and for the same reason: in a ZERO-SUSPEND method the default is
@@ -2470,26 +2490,21 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // #6651 cluster-A manifest, all three method lanes, before/after on the
       // isolated standalone runner.
       //
-      // The generator FUNCTION-EXPRESSION host (`ts.isFunctionExpression(decl)`)
-      // keeps its blanket bail, unchanged and for the reason recorded above:
-      // that lane mishandles element defaults with no closure involved at all,
-      // so admitting these would swap a loud import leak for a silent wrong
-      // value. A yielding method likewise keeps the host path.
+      // (#6651 A2) A yielding body still keeps the host path for a generator- or
+      // class-valued default: `{gen,cls}-*-susp` are the cells that FAIL when
+      // admitted, and `zeroSuspendDefaultLane` is what excludes them. Arrow and
+      // plain-function defaults are admitted across a suspension too — #3952
+      // proved that round-trip, and the matrix re-confirms it in the two lanes
+      // this slice adds.
       const genDefaultSafe =
         el.initializer !== undefined &&
         ts.isFunctionExpression(el.initializer!) &&
         el.initializer!.asteriskToken !== undefined &&
-        ts.isMethodDeclaration(decl) &&
-        decl.body !== undefined &&
-        !nodeContainsYield(decl.body) &&
-        (ts.isClassDeclaration(decl.parent) ||
-          ts.isObjectLiteralExpression(decl.parent) ||
-          ts.isClassExpression(decl.parent));
+        zeroSuspendDefaultLane;
       if (
         closureDefault &&
         ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined && !genDefaultSafe) ||
-          (ts.isClassExpression(el.initializer!) && !classDefaultSafe) ||
-          ts.isFunctionExpression(decl))
+          (ts.isClassExpression(el.initializer!) && !classDefaultSafe))
       ) {
         return null;
       }

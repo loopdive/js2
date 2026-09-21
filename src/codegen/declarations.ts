@@ -6,7 +6,9 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
+import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -23,7 +25,6 @@ import {
   mapTsTypeToWasm,
   resolveBindingElementType,
   unwrapPromiseType,
-  widenJsUntypedDefaultParamSlot,
 } from "../checker/type-mapper.js";
 import type { FieldDef, FuncHandle, GlobalDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import type { IrUnitId } from "../ir/identity.js";
@@ -244,6 +245,7 @@ import {
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { recordBigIntKernel } from "./bigint-carrier-operands.js";
 /**
  * Record source-level boundary classifications for a user-exported function
  * so the JS-host `wrapExports` can marshal native strings and TypedArray
@@ -1448,11 +1450,10 @@ function lowerParamType(
   if (isUndefinedDefaultOnlyParam(param, paramType)) {
     wasmType = { kind: "externref" };
   }
-  // (#6651 C3) …and its JavaScript generalisation: in a `.js` file the
-  // checker's parameter type comes from the default initializer alone, so a
-  // scalar slot silently coerces every argument the default did not predict.
+  // (#6651 C3) …and the same for a JS defaulted parameter whose type is read
+  // off its own initializer. See `paramTypeIsJsDefaultGuess`.
   if (nativeParam === null) {
-    wasmType = widenJsUntypedDefaultParamSlot(param, wasmType);
+    wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
   if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
@@ -1599,8 +1600,15 @@ function inferredNumericResultType(
   isAsync: boolean,
   isImplicitAnyReturn: boolean,
   params: readonly ValType[],
+  stmt?: ts.FunctionDeclaration,
 ): ValType | undefined {
-  if (isAsync || !isImplicitAnyReturn) return undefined;
+  if (isAsync) return undefined;
+  // (#6656 slice 3) A BigInt kernel in untyped JS gets a branded i64 result, so
+  // the exact i64 is not converted back at the return. Deliberately ABOVE the
+  // implicit-any guard: TypeScript types `a * b` over two `any` parameters as
+  // `number`, so such a kernel is not an implicit-any return at all.
+  if (stmt !== undefined && recordBigIntKernel(ctx, name, params, stmt)) return { kind: "i64", bigint: true };
+  if (!isImplicitAnyReturn) return undefined;
   const bindingAware = numericReturnsFlagEnabled() ? ctx.bindingAwareNumericReturnTypes?.get(name) : undefined;
   if (bindingAware) return bindingAware;
   const legacy = ctx.numericReturnTypes?.get(name);
@@ -1745,6 +1753,10 @@ function resolveGenericDeclarationCallSiteTypes(
             (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
           ? [identityCarrier]
           : resolved.results;
+  // (#6656 slice 3) The call-site signature gets the PARAMETERS' bigint-branded
+  // i64 slots right, but the checker types the RESULT `number`, so an
+  // `f64.convert_i64_s` rounded the exact i64 away at the return.
+  if (recordBigIntKernel(ctx, name, params, stmt)) return { params, results: [{ kind: "i64", bigint: true }] };
   return {
     params,
     results,
@@ -1836,7 +1848,7 @@ function registerBodylessFunctionDeclaration(
     const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
     const inferredNumericRet = dynamicReturn
       ? null
-      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
     } else if (dynamicReturn) {
@@ -2967,7 +2979,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
         const inferredNumericRet = dynamicReturn
           ? null
-          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
         if (nativeTaViewReturn !== null) {
           results = [nativeTaViewReturn];
         } else if (inferredNumericRet) {
@@ -3207,7 +3219,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             const params: ValType[] = [];
             for (const param of fnExpr.parameters) {
               const paramType = ctx.checker.getTypeAtLocation(param);
-              params.push(resolveWasmType(ctx, paramType));
+              params.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
             }
             const retType = ctx.checker.getReturnTypeOfSignature(sig);
             // (#2905) Carrier own-return guard — see findCallSignature. An async
@@ -3278,7 +3290,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           const params: ValType[] = [];
           for (const param of fnExpr.parameters) {
             const paramType = ctx.checker.getTypeAtLocation(param);
-            params.push(resolveWasmType(ctx, paramType));
+            params.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
           }
           const retType = ctx.checker.getReturnTypeOfSignature(sig);
           // (#2905) Carrier own-return guard — see findCallSignature. CJS named

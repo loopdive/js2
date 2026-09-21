@@ -224,6 +224,7 @@ export function createCodegenContext(
     runtimeKeyClassMethodNames: new Set(),
     standaloneRuntimeKeyClassProtos: new Set(),
     genericResolved: new Map(),
+    bigIntKernelFunctions: new Set(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
     funcReadsOwnThis: new Set(),

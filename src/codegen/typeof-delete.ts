@@ -1734,8 +1734,8 @@ export function compileTypeofExpression(
 ): ValType | null {
   const operand = expr.expression;
 
-  const realmGlobalTypeof = tf.tryCompileRealmGlobalTypeof(ctx, fctx, operand);
-  if (realmGlobalTypeof !== undefined) return realmGlobalTypeof;
+  const staticTypeofFold = tf.tryCompileStaticTypeofFold(ctx, fctx, operand);
+  if (staticTypeofFold !== undefined) return staticTypeofFold;
 
   // typeof Math.<constant> -> "number", typeof Math.<method> -> "function"
   const builtinTypeof = tf.tryCompileBuiltinMemberTypeof(ctx, fctx, operand);
@@ -2204,8 +2204,8 @@ export function compileTypeofComparison(
     guardOperand = (guardOperand as ts.ParenthesizedExpression | ts.AsExpression).expression;
   }
 
-  const realmGlobalComparison = tf.tryCompileRealmGlobalTypeofComparison(ctx, fctx, operand, stringLiteral, isEq);
-  if (realmGlobalComparison !== undefined) return realmGlobalComparison;
+  const staticFoldComparison = tf.tryCompileStaticTypeofComparisonFold(ctx, fctx, operand, stringLiteral, isEq);
+  if (staticFoldComparison !== undefined) return staticFoldComparison;
 
   // typeof UndeclaredIdentifier -> "undefined" (#1050)
   {

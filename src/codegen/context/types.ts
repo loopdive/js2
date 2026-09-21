@@ -2776,6 +2776,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standaloneRuntimeKeyClassProtos: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
+
+  /**
+   * (#6656 slice 3) Functions whose wasm RESULT was proven to be a
+   * bigint-branded i64 even though TypeScript types their return `number` — a
+   * BigInt kernel in untyped JS (`function mul(a, b) { return a * b; }`).
+   * `typeof` folds from the static type, so without this record
+   * `typeof mul(6n, 7n)` answered the constant `"number"` for a call that
+   * returns a real BigInt.
+   */
+  bigIntKernelFunctions: Set<string>;
   /** Rest parameter info per function (functions with ...rest syntax) */
   funcRestParams: Map<string, RestParamInfo>;
   /**

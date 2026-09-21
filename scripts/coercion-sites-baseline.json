@@ -108,6 +108,7 @@
   "codegen/symbol-field-carrier.ts": 1,
   "codegen/symbol-native.ts": 1,
   "codegen/ta-dyn-mop.ts": 4,
+  "codegen/ta-dyn-own-property-names.ts": 1,
   "codegen/ta-hof-map-filter.ts": 3,
   "codegen/tonumber-fast-paths.ts": 7,
   "codegen/type-coercion.ts": 35,

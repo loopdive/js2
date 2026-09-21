@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
+import { paramTypeIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
@@ -21,7 +22,6 @@ import {
   isUndefWidenedBindingElement,
   resolveBindingElementType,
   undefinedPreservingBindingSourceType,
-  widenJsUntypedDefaultParamSlot,
 } from "../checker/type-mapper.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -813,14 +813,10 @@ export function paramUndefinedTypeIsDefaultArtifact(ctx: CodegenContext, expr: t
  * pairing rule the neighbouring binding-pattern widening documents.
  */
 export function widenUndefinedDefaultParamSlot(param: ts.ParameterDeclaration, wasmType: ValType): ValType {
-  // (#6651 C3) The JavaScript generalisation of the same argument — an
-  // inferred-from-its-own-default parameter type is a guess about one call.
-  const jsWidened = widenJsUntypedDefaultParamSlot(param, wasmType);
-  if (jsWidened !== wasmType) return jsWidened;
   if (param.type !== undefined) return wasmType;
   if (param.dotDotDotToken !== undefined) return wasmType;
   if (param.initializer === undefined) return wasmType;
-  if (!isNullOrUndefinedLiteral(param.initializer)) return wasmType;
+  if (!isNullOrUndefinedLiteral(param.initializer) && !paramTypeIsJsDefaultGuess(param)) return wasmType;
   if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
   return { kind: "externref" };
 }

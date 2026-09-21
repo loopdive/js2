@@ -75,6 +75,11 @@ import {
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
+import {
+  bothOperandsAreBigIntCarriers,
+  emitTypeDisjointStrictEq,
+  tryCompileBigIntCarrierArithmetic,
+} from "./bigint-carrier-operands.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
@@ -1855,13 +1860,7 @@ export function compileBinaryExpression(
           if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
           return { kind: "i32" };
         }
-        // Compile both sides for side effects, then drop them
-        const lt = compileExpression(ctx, fctx, expr.left);
-        if (lt) fctx.body.push({ op: "drop" });
-        const rt = compileExpression(ctx, fctx, expr.right);
-        if (rt) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: isStrictNeq ? 1 : 0 });
-        return { kind: "i32" };
+        return emitTypeDisjointStrictEq(ctx, fctx, expr, isStrictNeq);
       }
 
       // Loose equality and comparisons: convert both operands to f64, then compare
@@ -2502,8 +2501,12 @@ export function compileBinaryExpression(
   //   `hasI32LocalOperand`     — relational only, both sides proven i32
   //   `arithI32WithToInt32Wrap`— an enclosing ToInt32 makes the wrap observable-equal
   //   `bitwiseI32`             — the op itself is ToInt32-defined
-  const numericHint: ValType | undefined =
-    isNumericOp || bothStaticNumberEq
+  // (#6656 slice 3) An f64 hint rounds a proven bigint-carrier pair past 2^53 —
+  // see `bigint-carrier-operands.ts` for why the brand is the proof.
+  const bigIntCarrierPair = (isNumericOp || bothStaticNumberEq) && bothOperandsAreBigIntCarriers(ctx, fctx, expr);
+  const numericHint: ValType | undefined = bigIntCarrierPair
+    ? { kind: "i64" }
+    : isNumericOp || bothStaticNumberEq
       ? {
           kind:
             (bothNativeI32 || hasI32LocalOperand || arithI32WithToInt32Wrap || bitwiseI32) && !isDivOrPow
@@ -2626,6 +2629,10 @@ function compileAnyBinaryDispatch(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): InnerResult {
+  // (#6656 slice 3) `any + any` is `any`, never `number`, so a bigint pair
+  // reaching this dispatch would be boxed through `__any_box_f64` and rounded.
+  const bigIntArith = tryCompileBigIntCarrierArithmetic(ctx, fctx, expr, op);
+  if (bigIntArith !== undefined) return bigIntArith;
   // (#1917 Step E3) Equality (`==`/`===`/`!=`/`!==`) is the dispatch layer the
   // coercion engine owns: `emitStrictEq`/`emitLooseEq` select the helper, box
   // both operands, emit the call, and negate for `!=`/`!==`. This is a

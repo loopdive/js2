@@ -5,31 +5,9 @@
  * output consumers must preserve that value until the actual JS operation.
  */
 import { ts } from "../ts-api.js";
-import { isJsUntypedDefaultWidenedParam } from "../checker/type-mapper.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { paramReadIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-
-/**
- * (#6651 C3) True when `id` reads a JavaScript parameter whose scalar slot was
- * widened to externref because its only type evidence was its own default —
- * the same stale-checker-type family as the property guards below.
- *
- * Its checker type (`number` for `m(a = (count += 1))`) describes the DEFAULT,
- * and the identifier read path's unbox narrowing would apply it to the argument
- * that actually arrived: `local.get 1; call $__unbox_number` turns a boxed
- * `false` back into `0` one instruction after the prologue correctly refused to
- * use the default. Widening the slot WITHOUT this guard only moves the
- * coercion later, which is where the first attempt at C3 stopped. Numeric
- * consumers still coerce at their own use site — ordinary JS ToNumber.
- *
- * Declarations come from `ctx.oracle`, not the raw checker (#1930/#3273).
- */
-export function readsJsUntypedDefaultWidenedParam(ctx: CodegenContext, id: ts.Identifier): boolean {
-  for (const decl of ctx.oracle.declarationsOf(id)) {
-    if (ts.isParameter(decl) && isJsUntypedDefaultWidenedParam(decl)) return true;
-  }
-  return false;
-}
 
 const indexedStaleProperties = new WeakMap<CodegenContext, Set<ts.Declaration>>();
 
@@ -117,6 +95,12 @@ export function equalityOperandHasStaleStaticType(
   return (
     (ts.isIdentifier(expr) &&
       (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))) ||
+    // (#6651 C3) Third stale carrier, same kind as the two above: a JS
+    // defaulted parameter's checker type is read off its own initializer, so
+    // the §7.2.16 step-1 fold in `binary-ops-typed-dispatch` decided
+    // `Type(number) !== Type(boolean)` and answered a constant `false` for
+    // `a === false` without ever reading the boxed boolean that arrived.
+    paramReadIsJsDefaultGuess(ctx, expr) ||
     expressionHasWidenedPropertyType(ctx, expr)
   );
 }

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -6668,7 +6669,9 @@ export function generateModule(
     // (each fill prepends at body[0]; last fill wins the front slot, and the
     // dyn-view arm must beat the generic `$__vec_base` arms it subtypes).
     fillTaDynViewMopArms(ctx);
-    // (#6651 E2) The own-key surface (§10.4.5.6 + the own-ness predicates).
+    // (#6651 E2) The own-key surface (§10.4.5.6 + the own-ness predicates),
+    // including the `__getOwnPropertyNames` arm that `Reflect.ownKeys` /
+    // `Object.getOwnPropertyNames` read and `__object_keys` does NOT feed.
     // AFTER `fillVecLengthDynamicArms` above, whose vec own-`"length"` arm
     // sits in `__hasOwnProperty`/`__object_hasOwn` and must not win for a view.
     fillTaDynViewOwnKeyArms(ctx);
@@ -11375,6 +11378,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // in the single-source pipeline. Keep native views after generic vec fills
     // so they retain front precedence.
     profilePhase("fill-ta-dyn-view-mop-arms", () => fillTaDynViewMopArms(ctx));
+    // (#6651 E2) Multi-source parity with the single-source call above.
     profilePhase("fill-ta-dyn-view-own-key-arms", () => fillTaDynViewOwnKeyArms(ctx));
     profilePhase("fill-data-view-construct-proto", () => fillDataViewConstructProtoArm(ctx));
     profilePhase("fill-reflect-is-constructor", () => fillReflectIsConstructor(ctx));
@@ -13627,7 +13631,9 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
       const paramDecl = param.valueDeclaration;
       if (paramDecl && ts.isParameter(paramDecl)) {
         const pt = ctx.checker.getTypeAtLocation(paramDecl);
-        let wasmType = resolveWasmType(ctx, pt);
+        // (#6651 C3) …and the JS-defaulted-parameter widening, for the same
+        // must-match reason. See `paramTypeIsJsDefaultGuess`.
+        let wasmType = widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, pt));
         if (paramDecl.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
