@@ -189,6 +189,19 @@ loc-budget-allow:
 # `RegExp.prototype[@@x]` singleton), and step 6's collect loop (~240 LOC) is
 # in `regexp-exec-protocol.ts`, where the rest of the §22.2.6.8 body already
 # lives.
+# 2026-09-21 — cluster B, slice B4 (§22.2.6 accessor READS on a native RegExp
+# carrier; #5198 Slice F). The MECHANISM is the new module
+# `src/codegen/regexp-accessor-get-arm.ts` (~350 LOC: the generic §22.2.6.4
+# getter, the accessor ladder, the `__extern_get` prologue). Only two
+# irreducible sites travel out of it. `regexp-standalone.ts` +12: the one arm in
+# `emitRegExpProtoMemberBody` that says "`flags` does NOT brand-check" — the
+# defect is that brand recovery ran first, and like B2's arm before it, that
+# fact is only readable at the point the brand check would otherwise happen.
+# `index.ts` +8 (+4 in each of `generateModule`/`generateMultiModule`): the
+# finalize call site, which must sit after `fillClosedStructExternGetArms` (the
+# ladder it pre-empts) and before `unshiftExternGetProtoCacheArm` (which has to
+# stay the body's prefix or `inlineExternGetCallSites` declines wholesale) —
+# an ORDERING constraint that is only statable in the ordered pass list.
 func-budget-allow:
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -274,6 +287,15 @@ coercion-sites-allow:
   - src/codegen/ta-dyn-mop.ts
   - src/codegen/ta-dyn-own-keys.ts
   - src/codegen/regexp-exec-protocol.ts
+# 2026-09-21 — cluster B, slice B4: `regexp-accessor-get-arm.ts` gains
+# `__is_truthy` ×2 (`+2` net). Both are §22.2.6.4's ToBoolean, and `__is_truthy`
+# IS the engine's ToBoolean for an arbitrary externref — the same call
+# `new Boolean(x)` and every array HOF predicate make (#2915). One is inside the
+# eight-step generic getter, one is its resolution guard. Routing through
+# `coerceType` is not available here: the value is a `[[Get]]` RESULT that must
+# be tested without being converted, and the native is emitted at FINALIZE where
+# no `FunctionContext` exists to coerce into.
+  - src/codegen/regexp-accessor-get-arm.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -2881,6 +2903,173 @@ no validation error, just wrong answers.
 | 5 | `prototype/flags` | the generic `flags` getter (fails on host too) — the PROTOTYPE-side twin of the instance-side defect above. |
 | 1 | `@@search/coerce-string-err` | half of it passes (the poisoned `toString` propagates); the other half needs `__extern_toString(symbol)` to throw a TypeError per §7.1.17. A one-line object-runtime fact, not a RegExp one. |
 | 20 | assorted `String.prototype.*`, the individual flag getters, `prototype/exec` | unchanged from B1/B2. |
+
+### 2026-09-21 — Cluster B (RegExp `@@` protocol, standalone), slice B4: §22.2.6 accessor READS on the `$NativeRegExp` carrier (+ the generic `flags` getter, #5198 Slice F)
+
+- **Base** `89767a49d9` (`claude/es2015-test262-plan-54tooh` immediately after
+  B3), **not** current `origin/main`. `git log 89767a49d9..origin/main --
+  src/codegen` touches no RegExp module, so this slice is collision-free with
+  what landed meanwhile; the A2/C3/E2 twin merge into main is being resolved
+  separately on the PR branch and is deliberately NOT done here.
+- **Manifest** `plan/agent-context/6651/B-regexp-protocol.txt` **minus the 27
+  rows B1+B2+B3 landed** = 120 rows (`.tmp/6651/B4-manifest.txt`, sha256
+  `df02bc5dcd63f8135054a2a3c3e211510323e34cc078972a878d7deb447f159d`).
+- **Engine** `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter key
+  `d4799bda84cfed0d` — the same pair B2/B3 measured under, rebuilt for this
+  run), `--standalone --isolate`, 60-row chunks in fresh processes, one runner
+  at a time.
+
+#### The defect
+
+A `$NativeRegExp` is a closed nominal struct whose DECLARED FIELD NAMES include
+`flags` (the i32 bitfield) and `source`, and `fillClosedStructExternGetArms`
+gives every closed struct a declared-field ladder in `__extern_get`. So a
+RUNTIME-keyed read walked into the ladder instead of the §22.2.6 accessor:
+`re[k]` with `k = "flags"` answered the **number 1** for `/a/g`, `re[k]` with
+`k = "global"` answered `undefined`, and `source` looked right only by
+coincidence (the field holds what the getter would return). §22.2.6.8 step 4 is
+`ToString(? Get(rx, "flags"))`, so `"1"` contains no `g` — B3's fully
+implemented §22.2.6.8 step-6 global collect loop was **dead on every real
+RegExp receiver**, which is why B3 gained zero rows from it.
+
+#### The fix — one prologue, one shared predicate, one generic getter
+
+`src/codegen/regexp-accessor-get-arm.ts` (new, ~350 LOC) unshifts onto
+`__extern_get`:
+
+```
+if (__regexp_getter_only_set(obj, key))   // brand + a §22.2.6 name — the WRITE
+  if (!__carrier_bag_has(obj, key))       // half's predicate, reused verbatim
+    return __regexp_accessor_get(obj, key);
+```
+
+Three facts are load-bearing and each is recorded in the module header:
+
+1. **`__regexp_flags_generic` is §22.2.6.4 verbatim** — eight ordered
+   `ToBoolean(? Get(R, <name>))` calls — and does NOT shortcut to the bitfield
+   even on a real RegExp. `coerce-global` overrides `global` on the instance and
+   requires `flags` to see it; `get-global-err` requires a poisoned `global`
+   getter to abort the read. The recursion is one level deep: the eight flag
+   names are answered from the struct and none of them is `flags`.
+2. **The own-property consult is the shadowing implementation.** For seven of
+   the nine names "fall through" is enough (the ordinary path reads the expando
+   bag and runs accessors found there). `flags` and `source` cannot fall
+   through — they are also declared FIELD names, so the ladder answers them
+   first — and are re-entered against the bag object directly. Deliberate
+   narrowing, recorded: the bag is then the accessor's `this`.
+3. **The same native is the body of the reified `RegExp.prototype.flags`
+   getter** (#5198 Slice F), which is brand-check-free because §22.2.6.4 is the
+   one member of the family defined over an arbitrary Object. One native, two
+   entry points, so the instance-side and prototype-side halves cannot drift.
+
+The WRITE half (`regexp-accessor-set-guard.ts`) gained the same own-property
+consult: §10.1.9 consults the OWN descriptor first, and the getter-only no-op
+is what happens when the walk reaches the PROTOTYPE's accessor. Without it
+`Object.defineProperty(r,'global',{writable:true}); r.global = true` was
+swallowed.
+
+**The `fileObservesRegExpExecProtocol` widening takes TWO tokens, and that is
+measured.** A descriptor-shaped definition is the other way a program makes
+§22.2.6 observable, but on the bare `defineProperty` token the widening gained
+2 rows and LOST 3 (`@@match/{y-fail-lastindex-no-write,
+builtin-failure-y-set-lastindex-err,builtin-success-y-set-lastindex-err}`) —
+all of which define a **non-writable `lastIndex`** and need the `Set` to throw,
+which the static core honours and the observable route does not yet. Requiring
+a `defineProperty`/`defineProperties` token AND a §22.2.6 **accessor** name
+(`lastIndex` deliberately excluded) keeps the gain and drops the loss.
+
+#### Receipt — manifest (re-measured for this commit)
+
+| 120 rows, `--standalone --isolate`, QuickJS | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before, sources `cp`-reverted (`.tmp/6651/B4-before3-{00,01}.log`) | **0** | 111 | 9 |
+| after (`.tmp/6651/B4-after3-{00,01}.log`) | **8** | 104 | 8 |
+
+**+8 rows pass, zero regressions**, joined row-by-row (`.tmp/6651/join.mjs`,
+output in `.tmp/6651/B4-join-manifest.txt`): 8 rows changed status, all
+non-pass → pass, every other row keeps its exact status. The 8 are
+`@@match/{get-global-err, get-unicode-error, coerce-global, flags-tostring-error,
+g-get-result-err, g-coerce-result-err, builtin-success-g-set-lastindex,
+builtin-infer-unicode}` — i.e. the poisoned-accessor reads, the own-`flags`
+shadow, and four rows of B3's step-6 loop that are reachable for the first time
+because step 4 finally answers `"g"`.
+
+**The predecessor's logs are NOT the receipt.** `.tmp/6651/B4-after2-00.log` is
+a byte-identical copy of `B4-after-00.log` (20:09) and `B4-after2-01.log` is
+empty; both predate the 21:11 gate widening, and the 20:33-21:02 control logs
+predate it too. Everything above was re-run from scratch on the final sources.
+
+#### Controls — zero pass → non-pass
+
+Control set = B3's 252-row recipe WIDENED with every §22.2.6 accessor directory
+in full (`built-ins/RegExp/prototype/{flags,global,ignoreCase,multiline,dotAll,
+unicode,sticky,hasIndices,source}/**`), minus the manifest: **326 rows**
+(`.tmp/6651/B4-controls.txt`, sha256
+`352c5604a723d590656f7c968dce45f5ef855d4e7dc165a0400329fe4a215cde`, built by
+`.tmp/6651/mkctrl.mjs`).
+
+| lane | rows | result |
+| --- | ---: | --- |
+| standalone, after (`.tmp/6651/ctrl-after3-{00,01,02}.log`) | 326 | 269 pass / 37 fail / 20 compile_error |
+| standalone, before — the **57 non-pass-after rows** on `cp`-reverted sources (`.tmp/6651/ctrl-before3.log`) | 57 | 0 pass; **every row's status IDENTICAL to its after status** |
+| host — compiled-binary sha256 of 12 representative programs (`.tmp/6651/hostsha3-{before,after}.txt`) | 12 | **all 12 byte-identical** |
+| standalone — the same 12 (`.tmp/6651/sasha3-{before,after}.txt`) | 12 | 3 identical (`static-reflection`, `defineproperty-plain-object`, `no-regexp-at-all`), 9 differ |
+
+The 57-row before-side is COMPLETE for the regression question, not a sample: a
+pass→non-pass regression is by definition non-pass after. The standalone sha
+table differs from B3's on purpose — B4 has **no** byte-identity claim for
+standalone: the prologue is unshifted into `__extern_get` in every module that
+has a `$NativeRegExp` struct, so any regexp-bearing standalone program changes
+bytes. A program with no regexp is untouched, which is what the two identical
+non-regexp rows assert. The host lane is where byte-identity IS claimed, and it
+holds on all 12.
+
+#### Gates (bare, exit codes read directly)
+
+`check-loc-budget` · `check-func-budget` · `check-coercion-sites` ·
+`check:oracle-ratchet` · `check:dead-exports` — all `0`.
+`check-compiler-boundaries --mode inventory --base origin/main` — `0`
+(`regexp-accessor-get-arm.ts` classified). `npm run -s typecheck` — `0`.
+`npx biome lint src tests scripts --diagnostic-level=error` — `0`.
+`prettier --check` on all touched files — `0`. `scripts/equivalence-gate.mjs` —
+`0`, **22 failing / 1720 passing, all 22 in the committed baseline**.
+Pin suites: B1 `issue-6651-string-symbol-protocol` + B2
+`issue-6651-regexp-exec-protocol` + B3 `issue-6651-regexp-symbol-protocol-b3`
+**35/35**, and the new `tests/issue-6651-regexp-accessor-get-b4.test.ts`
+**14/14** (the vitest process still exits 1 on the known
+`[vitest-worker]: Timeout calling "onTaskUpdate"` RPC flake under a loaded
+4-core box; every test reports PASS). The new suite was **verified red on the
+reverted base**: 13 of its 14 fail there
+(`.tmp/6651/g-pin-b4-ONBASE.log`), the single green one being the intended
+static-reflection control.
+
+#### Residuals (112 rows) and one honest correction
+
+| rows | bucket | what it needs |
+| ---: | --- | --- |
+| 31 | `@@split` (6 CE) | unchanged: SpeciesConstructor, the sticky splitter walk, generic result reads |
+| 30 | `@@replace` | unchanged: §22.2.6.11's result loop + GetSubstitution |
+| 12 | RegExp ctor / statics (1 CE) | observable `IsRegExp`, called-as-function short-circuit, ordered `source`/`flags` Gets |
+| 10 | `String.prototype.*` (1 CE) | unchanged from B1/B2 |
+| 8 | `RegExp.prototype` accessors / `exec` | unchanged from B1/B2 |
+| 7 | `prototype/compile` | Annex B ordering + SyntaxError/TypeError shapes |
+| 5 | `@@match` `*-set-lastindex-err` family | ALL five that remain are the strict `[[Set]]`-must-throw gap — `__extern_set` silently no-ops on a non-writable property (B3's recorded object-runtime gap). Closing that closes this bucket AND re-opens the one-token gate widening above. |
+| 5 | `prototype/flags/coercion-*` | see below |
+| 3 | `@@search` | `coerce-string-err` needs `__extern_toString(symbol)` to throw per §7.1.17 |
+| 1 | annexB misc | unchanged |
+
+**The five `flags/coercion-*` rows do NOT pass, and the Slice F claim is
+narrower than it reads.** The brand-check defect they named IS fixed — their
+failure moved from `TypeError: Method called on incompatible receiver … at L21`
+(the FIRST assert) to `SameValue(«""», «"g"») … at L33` (the first TRUTHY
+value), i.e. four more asserts now run. The remaining half is not §22.2.6.4:
+compiled as TypeScript the identical sequence answers correctly
+(`.tmp/6651/probe-coercion3.mts` walks `undefined → null → NaN → "" → "string"
+→ 86` on a plain object and returns 1), and the pin suite's generic-getter case
+(`get.call({global:"truthy-string", sticky:86}) === "gy"`) passes. So what is
+left is in the row's own shape — a script-scope `var` receiver whose property
+slot loses a later string — not in the getter. Next owner: treat these as an
+object-runtime/property-slot row family, not a RegExp one.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

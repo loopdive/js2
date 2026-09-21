@@ -405,6 +405,7 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484 S2) record property reads
+import { unshiftRegExpAccessorGetArm } from "./regexp-accessor-get-arm.js"; // (#6651 B4) §22.2.6 accessor reads
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import {
   noteNumberPrimitiveMethodDemand,
@@ -6583,6 +6584,10 @@ export function generateModule(
     // `__ta_dyn_<m>` helper exists, so every other method keeps its current
     // path. See ta-dyn-method-call.ts.
     unshiftExternMethodCallTaDynViewArm(ctx);
+    // (#6651 B4) §22.2.6 accessor READS on a `$NativeRegExp` — ahead of the
+    // closed-struct declared-field ladder (which answered `flags` with the raw
+    // bitfield) and behind the proto-cache arm, which must stay the prefix.
+    unshiftRegExpAccessorGetArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -11309,6 +11314,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("unshift-extern-method-call-number-primitive", () => unshiftExternMethodCallNumberPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-bigint-primitive", () => unshiftExternMethodCallBigIntPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
+    // (#6651 B4) §22.2.6 accessor READS on a `$NativeRegExp` — ahead of the
+    // closed-struct declared-field ladder (which answered `flags` with the raw
+    // bitfield) and behind the proto-cache arm, which must stay the prefix.
+    profilePhase("unshift-regexp-accessor-get", () => unshiftRegExpAccessorGetArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
