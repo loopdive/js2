@@ -1015,6 +1015,45 @@ own module is what kept `compileDeclarations` under its ceiling); equivalence
 `tests/issue-6651-block-class-var-capture.test.ts` — 3 cases, 2 RED on the base
 (0→5, 5→7), 1 guard.
 
+#### C2-c — the f64-typed parameter slot (18 rows): NOT landed, diagnosed exactly
+
+The coordinator's item (3) — the 10 `dflt-params-arg-val-not-undefined.js` rows
+(`Expected SameValue(«0», «false»)`) and the 8
+`dstr/…-dflt-obj-ptrn-prop-ary.js` rows (`«NaN»` vs `«undefined»`) — is one
+defect: in a JAVASCRIPT source file a parameter's only type evidence is its
+default initializer, so `method(aFalse = falseCount += 1)` is inferred `number`
+and `C.prototype.method(false)` arrives as `0`. In a `.ts` file that inference
+is a genuine declaration and the scalar slot is right; in a `.js` file there
+are no parameter types at all, so it is a guess about one call.
+
+**The slot half is a one-line widening and it works.** `isUndefinedDefaultOnlyParam`
+(`src/checker/type-mapper.ts`) already states exactly this argument for the
+`= undefined` case — *"an ABSENCE of information, not a scalar contract"* — and
+its own doc requires every parameter-lowering site to apply it identically, so
+all four call sites (class-bodies ×2, declarations, closures) pick a widening
+up for free. Adding `|| <the parameter is in a .js/.mjs/.cjs/.jsx file>` to it
+produces the right signature, WAT-verified on a JS compile:
+
+```
+(func $C_method (param (ref null 60) externref) (result (ref null 6)))   ; was  … f64 …
+```
+
+**It is NOT sufficient, and the reason is worth the next owner's time.** The
+value is not lost at the boundary — it is lost on first READ. The body prologue
+is correct (`__extern_is_undefined(a)` gates the default), and the very next
+instructions are `local.get 1; call $__unbox_number`: every USE of the
+parameter still coerces through the checker-inferred `number`, so
+`typeof a` answers `"number"` for an argument that arrived as a boxed boolean.
+Widening the wasm slot without widening the parameter's TYPE in the function's
+own type map just moves the coercion one instruction later.
+
+So this is a checker/oracle change — the parameter must be typed `any` for such
+a declaration — not a codegen slot change, and it needs its own control: it
+would move the slot of **every defaulted parameter in every JS input**, which
+is all of test262 and every npm package. The attempted patch is kept at
+`.tmp/w6651C/attempt-type-mapper.ts` rather than committed; nothing of it is in
+the branch.
+
 ## Manifest generator note
 
 Partition rule applied to the 1,320 non-pass rows, first match wins:
