@@ -200,6 +200,33 @@ type StateTerminator =
       unwind?: readonly UnwindEntry[];
       next: number;
       bindResultTo?: string;
+    }
+  // (#6651 A2) `for (<decl> of <iterable>) { … yield … }` — the loop HEADER of a
+  // for-of whose body suspends. Until this kind existed `lowerStatements` had no
+  // `ForOfStatement` arm at all, so EVERY for-of carrying a yield fell out of the
+  // native plan; in standalone that is the #680 refusal (measured: 32 of the 69
+  // rows in the A2 residual, 8 of them a plain body-yield with no destructuring
+  // involved).
+  //
+  // The state is NOT self-suspending: it performs one IteratorStep per entry and
+  // transfers straight to `bodyState` (a value was produced) or `exitState` (the
+  // iterator is done) without returning to the caller. The suspension happens
+  // inside the body's own states, which is why the iterator has to survive a
+  // resume boundary — it rides the same per-site `externref` frame slot the
+  // `yield* <generic iterable>` delegation already allocates
+  // (`iterableDelegationSites`), driven by `__gen_delegate_start` /
+  // `__gen_delegate_step`. Reusing that slot family is deliberate: it is the one
+  // carrier in the frame that is already proven to hold a live iterator record
+  // across `.next()` calls.
+  | {
+      kind: "for-of-step";
+      subject: ts.Expression;
+      /** Index into `iterableDelegationSites` — the frame slot holding the record. */
+      siteIndex: number;
+      /** Spill name of the loop variable bound from each produced value. */
+      bindTo: string;
+      bodyState: number;
+      exitState: number;
     };
 
 /**
@@ -235,7 +262,16 @@ interface TryRegionPlan {
 type UnwindEntry =
   | { kind: "replay"; statements: readonly ts.Statement[] }
   | { kind: "catch"; region: TryRegionPlan }
-  | { kind: "finally"; region: TryRegionPlan };
+  | { kind: "finally"; region: TryRegionPlan }
+  // (#6651 A2) An enclosing native-lowered `for-of` whose iterator is still
+  // live. §14.7.5.7 step 6: leaving a ForIn/OfBodyEvaluation with an abrupt
+  // completion runs IteratorClose — so a `.return(v)` / `.throw(e)` delivered
+  // at a yield INSIDE the loop body must call the iterator's `return` before
+  // the completion continues outward. Intercepts NEITHER completion kind (it
+  // closes and keeps walking), which is why it sits in the chain rather than
+  // being folded into the terminator: an inner `catch` still gets its turn
+  // only if it is closer in, and the close runs exactly once per live record.
+  | { kind: "iter-close"; siteIndex: number };
 
 /**
  * (#3050) Runtime-throw route for exceptions raised WHILE EXECUTING a state
@@ -574,6 +610,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // (#3050) Catch-param spills are typed externref (the exn tag payload) —
   // resolved here, not from a body VariableDeclaration (none exists).
   const catchParamSpillTypes = new Map<string, ValType>();
+  // (#6651 A2) `for (<decl> of …)` loop-variable spills. The iterator hands back
+  // an `externref`, and the head's `VariableDeclaration` has no initializer for
+  // `resolveSpillLocalValType` to read, so the binding is typed here — exactly as
+  // the catch param is. Widened names are marked `undefWidenedLocals` in the
+  // resume fctx so a yielded `undefined` stays observable.
+  const forOfBindingSpillTypes = new Map<string, ValType>();
 
   // Reserve the state id for the in-progress state.
   let curId = reserveState();
@@ -633,6 +675,36 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   const statementsAreYieldFree = (statements: readonly ts.Statement[]): boolean =>
     statements.every((stmt) => !statementContainsYield(stmt));
+
+  /** (#6651 A2) A `return` in THIS function's scope (nested functions own theirs). */
+  const statementContainsReturn = (stmt: ts.Statement): boolean => {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found || isFunctionLikeScope(node)) return;
+      if (ts.isReturnStatement(node)) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(stmt);
+    return found;
+  };
+
+  /** (#6651 A2) A `yield*` in THIS function's scope. */
+  const nodeContainsDelegatedYield = (node: ts.Node): boolean => {
+    let found = false;
+    const visit = (n: ts.Node): void => {
+      if (found || (n !== node && isFunctionLikeScope(n))) return;
+      if (ts.isYieldExpression(n) && n.asteriskToken) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return found;
+  };
 
   /**
    * Lower a list of statements into the state graph, threading the "current
@@ -824,6 +896,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       }
       if (ts.isForStatement(stmt)) {
         if (!lowerFor(stmt, unwind)) return false;
+        continue;
+      }
+      if (ts.isForOfStatement(stmt)) {
+        if (!lowerForOf(stmt, unwind)) return false;
         continue;
       }
 
@@ -1200,13 +1276,27 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // `[Symbol.iterator]`), so a bare non-iterable object is NOT admitted. The
   // native `__iterator` runtime (#2038) then drives it host-free. Mirrors the
   // checker use already present in `nativeGeneratorDelegationName`.
-  function isGenericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
+  // (#6651 A2) `requireNext` additionally demands an own `next` member, i.e. the
+  // subject IS an iterator / generator object rather than merely iterable. The
+  // for-of header needs that stricter test because `__gen_delegate_start` drives
+  // the ORDINARY iterator protocol and nothing else: measured on this branch, a
+  // `number[]`, a `string` and a `Set` each compile host-free and then THROW at
+  // the first step, while a native generator and a `{ next(){}, [@@iterator](){} }`
+  // object both run correctly. Arrays have their own vec drive (the
+  // `isNumericIterableDelegate` split `yield*` already makes) and are deliberately
+  // not routed here — admitting them would trade the #680 refusal for a runtime
+  // trap, which is strictly worse than the leak it replaces.
+  function isGenericIterableDelegate(ctx: CodegenContext, subject: ts.Expression, requireNext = false): boolean {
     const t = ctx.checker.getTypeAtLocation(subject);
     if (!t) return false;
+    let iterable = false;
+    let hasNext = false;
     for (const p of ctx.checker.getPropertiesOfType(t)) {
-      if (p.getName().startsWith("__@iterator")) return true;
+      const n = p.getName();
+      if (n.startsWith("__@iterator")) iterable = true;
+      else if (n === "next") hasNext = true;
     }
-    return false;
+    return iterable && (!requireNext || hasNext);
   }
 
   // Reserve the successor of a yield and set up its resume binding/abrupt
@@ -2094,6 +2184,107 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     return ok;
   }
 
+  /**
+   * (#6651 A2) `for (<decl> of <iterable>) { … yield … }`.
+   *
+   * Until this existed `lowerStatements` had NO ForOfStatement arm, so a yield
+   * anywhere inside a for-of took the generic "unmodeled statement" bail — the
+   * single largest bail site in the A2 residual (32 of 69 rows; 8 of them plain
+   * body-yield loops with no destructuring anywhere). The host lane does not
+   * answer these either: an 8-row probe fails 8/8 with `i === 2` where the spec
+   * requires 1, i.e. the eager buffer ran the WHOLE loop before the first
+   * `.next()`. That is a property of the eager lowering, not of the feature, so
+   * the native state machine is the lane that can be correct here.
+   *
+   * Shape:
+   *
+   *     [cur] --jump--> [header] --value--> [body states] --jump--> [header]
+   *                        |
+   *                     exhausted
+   *                        v
+   *                     [exit]
+   *
+   * The header performs ONE IteratorStep per entry and never suspends; the
+   * suspension lives in the body's own states. The iterator therefore has to
+   * survive a resume boundary, which is why it rides the per-site `externref`
+   * frame slot family that `yield* <generic iterable>` already allocates — the
+   * one carrier in the frame proven to hold a live iterator record across
+   * `.next()` calls (`__gen_delegate_start` / `__gen_delegate_step`).
+   *
+   * Deliberate bails, each because admitting it would trade a LOUD standalone
+   * refusal for a SILENTLY wrong answer:
+   *  - JS-host lane: keeps the eager buffer (this is the standalone-only
+   *    widening rule every #680/#2864 slice follows — the host has a working
+   *    fallback, standalone has none);
+   *  - `for await`: no async-frame model here;
+   *  - a yield in the SUBJECT, or a destructuring / non-simple head: the head
+   *    pattern's own element evaluation would then have to be suspendable,
+   *    which is the separate §13.15.5 modelling this slice does not do;
+   *  - `return` anywhere in the body: the plain `return` terminator completes
+   *    without walking the unwind chain, so the iterator would never be closed
+   *    (§14.7.5.7 step 6);
+   *  - `yield*` in the body: the delegation terminator rebuilds its abrupt
+   *    context from `replay` entries ONLY, which would silently DROP this
+   *    loop's `iter-close` entry;
+   *  - `break` / `continue` (shared `loopBodyHasUnsupportedJump`).
+   */
+  function lowerForOf(stmt: ts.ForOfStatement, unwind: readonly UnwindEntry[]): boolean {
+    if (!noJsHostTarget(ctx)) return fail();
+    if (stmt.awaitModifier) return fail();
+    if (loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (nodeContainsYield(stmt.expression)) return fail();
+    // The subject must be an ITERATOR object (see isGenericIterableDelegate's
+    // `requireNext` note): arrays / strings / Sets compile host-free here and
+    // then trap at the first step, which is worse than the refusal they get now.
+    if (!isGenericIterableDelegate(ctx, stmt.expression, true)) return fail();
+    const init = stmt.initializer;
+    if (!ts.isVariableDeclarationList(init)) return fail();
+    if (init.declarations.length !== 1) return fail();
+    const declarator = init.declarations[0]!;
+    if (!ts.isIdentifier(declarator.name)) return fail();
+    const bindingName = declarator.name.text;
+    const body = thenBody(stmt.statement);
+    if (body.some((s) => statementContainsReturn(s))) return fail();
+    if (body.some((s) => nodeContainsDelegatedYield(s))) return fail();
+
+    collectSpillsIn(stmt.expression);
+    addSpill(bindingName);
+    // Type the loop variable at its DECLARED representation, not at the
+    // iterator's externref. Measured on this branch: with an externref slot
+    // `typeof x` answered `"number"` while `x * 2` and `yield x` both answered
+    // NaN — the unbox never happened on the read side, which is a silently
+    // wrong value, not a refusal. Binding at the declared type moves the single
+    // unbox to the ONE place that knows it is needed (the step's `local.set`).
+    forOfBindingSpillTypes.set(bindingName, resolveSpillLocalValType(ctx, declarator) ?? { kind: "externref" });
+
+    const siteIndex = iterableDelegationSites.length;
+    iterableDelegationSites.push({ subject: stmt.expression });
+
+    const headerId = reserveState();
+    finishState(curId, { kind: "jump", next: headerId });
+    const bodyEntry = reserveState();
+    const exitId = reserveState();
+    states[headerId] = {
+      statements: [],
+      resumeBindings: [],
+      terminator: {
+        kind: "for-of-step",
+        subject: stmt.expression,
+        siteIndex,
+        bindTo: bindingName,
+        bodyState: bodyEntry,
+        exitState: exitId,
+      },
+    };
+
+    resetCursor(bodyEntry);
+    if (!lowerStatements(body, [...unwind, { kind: "iter-close", siteIndex }], false)) return false;
+    finishState(curId, { kind: "jump", next: headerId });
+
+    resetCursor(exitId);
+    return ok;
+  }
+
   // Conservatively spill every simple numeric local declared / assigned in the
   // generator body, since loops re-enter states across suspensions and the live
   // local set is hard to compute precisely. Identifiers that are params are
@@ -2426,6 +2617,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const catchType = catchParamSpillTypes.get(name);
     if (catchType) {
       spillTypes.set(name, catchType);
+      continue;
+    }
+    // (#6651 A2) A for-of loop variable — externref (the iterator's value).
+    const forOfType = forOfBindingSpillTypes.get(name);
+    if (forOfType) {
+      spillTypes.set(name, forOfType);
       continue;
     }
     const declNode = spillDecls.get(name);
@@ -3743,11 +3940,16 @@ export function registerNativeGenerator(
     stateFields.push({ name: "pending", type: { kind: "i32" }, mutable: true });
   }
 
+  // (#6651 A2) A `for-of-step` header drives the SAME delegation runtime
+  // (`__gen_delegate_start`/`_step`) from the same frame-slot family, so it has
+  // to flip this flag too — it is what reserves those helpers
+  // (`ensureNativeDelegatedResultHelpers`) and the `executing` re-entrancy field.
   const nativeDelegates = plan.states.some(
     (state) =>
-      state.terminator.kind === "yield-star" &&
-      state.terminator.delegationKind === "iterable" &&
-      state.terminator.protocol,
+      state.terminator.kind === "for-of-step" ||
+      (state.terminator.kind === "yield-star" &&
+        state.terminator.delegationKind === "iterable" &&
+        state.terminator.protocol),
   );
   const executingFieldIdx = nativeDelegates ? stateFields.length : undefined;
   if (nativeDelegates) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
@@ -4656,6 +4858,11 @@ function compileState(
       });
       break;
     }
+    // (#6651 A2) for-of loop header — see emitForOfStepState.
+    case "for-of-step": {
+      emitForOfStepState(ctx, fctx, info, term, selfLocal, resultLocal, loopDepth);
+      break;
+    }
     case "done": {
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, info.doneState));
@@ -5269,6 +5476,123 @@ function emitGenericDelegationState(
 }
 
 /**
+// (#6651 A2) for-of loop header. One IteratorStep per entry, no suspension:
+//   if (rec == null) rec = __gen_delegate_start(<subject>)   ; GetIterator, once
+//   (status, value) = __gen_delegate_step(rec, MODE_NEXT, null)
+//   if (status == 0) { <bind> = value; state = body;  br loop }  ; produced
+//   else             { rec = null;     state = exit;  br loop }  ; exhausted
+//
+// `status == 0` is the delegation runtime's "the iterator yielded a value"
+// — the case `yield*` re-yields and a for-of consumes. The null-guard is what
+// makes GetIterator happen EXACTLY once for the whole loop while the header
+// is re-entered per iteration; clearing the slot on exhaustion is what lets
+// an ENCLOSING loop re-enter this for-of with a fresh iterator, and what
+// makes the `iter-close` unwind entry a no-op after normal completion.
+ */
+function emitForOfStepState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: NativeGeneratorInfo,
+  term: Extract<StateTerminator, { kind: "for-of-step" }>,
+  selfLocal: number,
+  resultLocal: number,
+  loopDepth: number,
+): void {
+  const body = fctx.body;
+
+  const slot = info.iterableDelegationSlots?.[term.siteIndex];
+  const bindLocal = fctx.localMap.get(term.bindTo);
+  const bindSpill = info.spillNames.indexOf(term.bindTo);
+  if (!slot || bindLocal === undefined || bindSpill < 0) {
+    // Defensive: the plan recorded a site the struct/registry did not back.
+    // Complete rather than emit invalid wasm (mirrors the yield-star arm).
+    body.push(...storeSpills(info, fctx, selfLocal));
+    body.push(...setStateInstrs(info, selfLocal, info.doneState));
+    body.push(...emptyResult(ctx, info));
+    body.push({ op: "local.set", index: resultLocal });
+    return;
+  }
+  const status = allocLocal(fctx, `__forof_status_${fctx.locals.length}`, { kind: "i32" });
+  const value = allocLocal(fctx, `__forof_value_${fctx.locals.length}`, { kind: "externref" });
+  const loadRec: Instr[] = [
+    { op: "local.get", index: selfLocal },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+  ];
+  const materialize: Instr[] = [];
+  {
+    const savedFo = fctx.body;
+    fctx.body = materialize;
+    const subjectType = compileExpression(ctx, fctx, term.subject, { kind: "externref" });
+    if (!subjectType) throw new Error("Unable to compile for-of subject");
+    if (subjectType.kind !== "externref") coerceType(ctx, fctx, subjectType, { kind: "externref" });
+    materialize.push({ op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_start")! });
+    fctx.body = savedFo;
+  }
+  body.push(
+    ...loadRec,
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: selfLocal },
+        ...materialize,
+        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+      ],
+      else: [],
+    },
+  );
+  body.push(...storeSpills(info, fctx, selfLocal));
+  body.push(
+    ...loadRec,
+    { op: "i32.const", value: MODE_NEXT },
+    { op: "ref.null.extern" },
+    { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_step")! },
+    { op: "local.set", index: value },
+    { op: "local.set", index: status },
+  );
+  const bindType = getLocalType(fctx, bindLocal)!;
+  // `__gen_delegate_step` status 0 hands back the RAW iterator result object
+  // (that is what `yield*` re-yields under the `done: -1` sentinel for its
+  // consumer to unwrap). A for-of consumes the value HERE, so it reads
+  // `.value` off the raw result itself. Binding `value` directly instead —
+  // the first cut — made `typeof x` answer `"number"` while `x * 2` and
+  // `yield x` both answered NaN: the number being unboxed was the result
+  // OBJECT, not its `value` field.
+  const bindInstrs: Instr[] = [
+    { op: "local.get", index: value },
+    { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_get_value")! },
+  ];
+  if (bindType.kind !== "externref") {
+    const savedBind = fctx.body;
+    fctx.body = bindInstrs;
+    coerceType(ctx, fctx, { kind: "externref" }, bindType);
+    fctx.body = savedBind;
+  }
+  const producedArm: Instr[] = [
+    ...bindInstrs,
+    { op: "local.set", index: bindLocal },
+    { op: "local.get", index: selfLocal },
+    { op: "local.get", index: bindLocal },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + bindSpill },
+    ...setStateInstrs(info, selfLocal, term.bodyState),
+    { op: "br", depth: loopDepth + 1 },
+  ];
+  const exhaustedArm: Instr[] = [
+    { op: "local.get", index: selfLocal },
+    { op: "ref.null.extern" },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+    ...setStateInstrs(info, selfLocal, term.exitState),
+    { op: "br", depth: loopDepth + 1 },
+  ];
+  body.push(
+    { op: "local.get", index: status },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: producedArm, else: exhaustedArm },
+  );
+}
+
+/**
  * (#3050) Emit the abrupt-completion unwind walk into `fctx.body`. `entries`
  * is innermost-first. The completion KIND is read from the state struct field
  * `srcFieldIdx` — the resume `mode` field when routing a fresh `.throw()` /
@@ -5306,6 +5630,43 @@ function emitUnwindWalk(
   for (const entry of entries) {
     if (entry.kind === "replay") {
       for (const stmt of entry.statements) compileStatement(ctx, fctx, stmt);
+      continue;
+    }
+    if (entry.kind === "iter-close") {
+      // (#6651 A2) §14.7.5.7 step 6 / §7.4.9 IteratorClose: an abrupt completion
+      // leaving a for-of body closes the loop's iterator. Drive the record's
+      // `return` once through the delegation runtime (mode 1 = return) and clear
+      // the slot, so a later completion on the same generator cannot close twice.
+      // Both results are discarded: §7.4.9 step 5 ignores the close's VALUE, and
+      // when the close itself throws the ORIGINAL completion still wins (step 6)
+      // — which is what discarding the status gives us here.
+      const slot = info.iterableDelegationSlots?.[entry.siteIndex];
+      if (!slot) continue;
+      const load: Instr[] = [
+        { op: "local.get", index: o.selfLocal },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+      ];
+      body.push(
+        ...load,
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...load,
+            { op: "i32.const", value: 1 },
+            { op: "ref.null.extern" },
+            { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_step")! },
+            { op: "drop" },
+            { op: "drop" },
+            { op: "local.get", index: o.selfLocal },
+            { op: "ref.null.extern" },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+          ],
+          else: [],
+        },
+      );
       continue;
     }
     if (entry.kind === "catch") {

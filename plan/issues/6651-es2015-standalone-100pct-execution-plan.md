@@ -118,6 +118,20 @@ loc-budget-allow:
 # statically-typed Error read. Inlined, the same change was +114.
   - src/codegen/declarations.ts
   - src/codegen/property-access-dispatch.ts
+# 2026-09-21 — cluster A, slice A2 (a suspension inside a `for-of` BODY).
+# `generators-native.ts` +344, `generators-delegation-runtime.ts` +73. The
+# growth is one new plan arm (`lowerForOf`), one new state terminator with its
+# emitter arm, and one new unwind-chain entry — all three of which HAVE to live
+# where the state graph is built and emitted. `lowerStatements`' statement
+# dispatch, the `compileState` terminator switch and `emitUnwindWalk`'s chain
+# walk are single closed switches over closed unions; a for-of arm cannot be
+# spliced in from a leaf module without first splitting the state machine
+# itself, which is a refactor this slice deliberately does not mix in. Roughly
+# half the added lines are comment: each records the MEASUREMENT that set a
+# bail (arrays/strings/Sets trap at the first step; binding the raw result
+# object made `x * 2` NaN while `typeof x` still said "number"), so the next
+# owner inherits the probe result rather than the conclusion.
+  - src/codegen/generators-delegation-runtime.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -128,6 +142,12 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
+# 2026-09-21 — cluster A, slice A2. `compileState` +5: the whole emitter for the
+# new `for-of-step` terminator lives in its OWN top-level `emitForOfStepState`
+# (the shape `emitGenericDelegationState` already established); what is left in
+# the god-function is the four-line dispatch arm that names it. A terminator
+# kind cannot be dispatched from anywhere but the terminator switch.
+  - src/codegen/generators-native.ts::compileState
 # 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
 # hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
 # [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
@@ -1665,6 +1685,229 @@ func-budget pass with the grants added to this file's frontmatter above, dated.
    CreateDynamicFunction (13 rows, eval-dependent).
 4. **Give the host lane a struct-capable rest drain** if the drive is ever to
    be ungated — see the gate rationale above.
+
+### 2026-09-21 — Cluster A (native generator lowering, standalone), slice A2: a suspension inside a `for-of`
+
+- **Branch** `worktree-agent-ab77b42be7e8077f0`, based on
+  `claude/es2015-test262-plan-54tooh` @ `3769840f` (== `origin/main`).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-ab77b42be7e8077f0`.
+- **Manifest** `plan/agent-context/6651/A2-forof-pattern-suspension.txt`, 278
+  rows, sha256
+  `2c2e807946cf393a7f0d7dc6882a0c9df421e07f40c532748d18059f604d5d7d` — A1's
+  197-row cluster-A manifest ∪ the 5 `module-code/*-gen-*` rows cluster I
+  routed here ∪ the generator / `dstr` rows clusters C and G routed here.
+- **Engine:** every runner command carried `JS2WASM_EVAL_ENGINE=quickjs`
+  (artifact `073742801ba7`, adapter key `d4799bda84cfed0d`); the compile-only
+  probe does not run code and is engine-independent.
+
+#### The finding that reframed the family: it is not all pattern work
+
+A1 handed over ~90 rows described as "`yield` inside a destructuring pattern".
+Instrumenting every `return false` / `fail()` in the candidate and plan gates
+and running the 278-row manifest through a **compile-only** probe (A1's method;
+`plan/agent-context/6651/A2-bail-attribution.tsv` is the per-row result) says
+the residual is in fact **two** mechanisms, not one:
+
+| rows | first bail | what it is |
+| ---: | --- | --- |
+| 65 | none — candidate gate | A1's enumerated small gates (own-name fn-expr, computed method names, rest params, …) |
+| 37 | `lowerStatements` · `ExpressionStatement` | `result = <pattern> = vals` and friends — the pattern family proper |
+| 32 | `lowerStatements` · `ForOfStatement` | **`lowerStatements` had no ForOfStatement arm at all** |
+| 6 | `ClassDeclaration` / `FirstStatement` / `WithStatement` | unrelated shapes swept in by the partition |
+
+Every plan bail in the whole 278-row manifest came from ONE line — the generic
+"unmodeled statement" `return fail()` at the end of `lowerStatements`
+(`A2BAIL plan gn:843:14`, 185/185 hits). So the gate to widen is the statement
+dispatch, and **for-of was the arm that was simply missing**: 8 of those 32 rows
+(`language/statements/for-of/yield*.js`) are plain body-yield loops with no
+destructuring anywhere, and the other 24 are the for-of/`dstr` head-pattern
+rows, which need the for-of arm **before** any pattern modelling can apply.
+
+The host lane is not a reference here and A1's 8/8 figure holds — but the two
+halves fail for DIFFERENT reasons, and only one of them is a feature gap:
+
+| family | host verdict | first failing assertion |
+| --- | --- | --- |
+| for-of body-yield (8 rows) | 8/8 fail | `First iteration: pre-yield Expected SameValue(«2», «1»)` — the eager buffer ran the WHOLE loop before the first `.next()` |
+| pattern-default (8 probed) | 8/8 fail | `Expected SameValue(«null», «undefined»)` — the yielded value's representation |
+
+The first is an artefact of the host lane's eager lowering, which the native
+state machine does not share. That is a positive prediction, and it held: all 4
+reachable rows of that family now pass in standalone while still failing on the
+host. Log: `.tmp/6651/probe-host16.log` (host, 16 rows, all fail).
+
+#### A2 design
+
+Model the for-of as a **non-suspending loop header state**. `lowerForOf`
+reserves a header, a body entry and an exit; the header's new `for-of-step`
+terminator performs exactly one IteratorStep per entry and transfers to the body
+(a value was produced) or the exit (exhausted) without returning to the caller.
+The suspension stays where it already worked — in the body's own states — so
+nothing about the yield model changes.
+
+The one genuinely new requirement is that the **iterator has to survive a resume
+boundary**. It rides the per-site `externref` frame slot family that
+`yield* <generic iterable>` already allocates (`iterableDelegationSites`), driven
+by `__gen_delegate_start` / `__gen_delegate_step`: that is the one carrier in the
+state struct already proven to hold a live iterator record across `.next()`
+calls, so the slice adds a terminator and an emitter arm rather than a second
+frame mechanism. GetIterator happens once (the slot's null-guard); the slot is
+cleared on exhaustion, which is what lets an enclosing loop re-enter with a fresh
+iterator and what makes the close a no-op after normal completion.
+
+§14.7.5.7 step 6 is the second requirement, and the reason for a new **unwind
+chain entry** rather than folding the close into the terminator: a `.return(v)` /
+`.throw(e)` delivered at a yield INSIDE the body has to run IteratorClose, but
+only if no closer handler intercepts first. `{ kind: "iter-close" }` sits in the
+innermost-first chain, closes the record and keeps walking — so an inner `catch`
+that intercepts a throw still wins (its arm `br`s out before the close is
+reached), while a return completion passes through the close on its way out. Both
+results of the close call are discarded: §7.4.9 step 5 ignores its value, and
+step 6 lets the ORIGINAL completion win when the close itself throws.
+
+Four bails are deliberate, and three of them are measurements rather than
+caution:
+
+1. **JS-host lane** — `lowerForOf` refuses outright unless `noJsHostTarget`.
+   The rule every #680/#2864 widening follows: the host has a working fallback,
+   so admitting shapes there is pure regression risk for no conformance gain.
+2. **Subject must be an ITERATOR object** (`[Symbol.iterator]` **and** `next`).
+   Measured on this branch: a `number[]`, a `string` and a `Set` each compile
+   host-free through `__gen_delegate_start` and then **trap at the first step**,
+   while a native generator and a `{ next(){}, [@@iterator](){} }` object both
+   run correctly (`.tmp/6651/p3.mts`). Admitting arrays would trade the loud #680
+   refusal for a runtime trap — strictly worse than the leak it replaces. Arrays
+   have their own vec drive, the split `yield*` already makes.
+3. **`return` in the body** — the plain `return` terminator completes without
+   walking the unwind chain, so the iterator would never be closed.
+4. **`yield*` in the body** — the native-gen / vec delegation terminators rebuild
+   their abrupt context from `replay` entries ONLY, which would silently DROP
+   this loop's `iter-close` entry. This is what keeps the four
+   `for-of/yield-star-*.js` rows red; closing it means giving those two
+   delegation kinds the full unwind chain the `iterable` kind already has.
+
+Two defects were found by probing rather than by reading, and both were silent:
+
+- **`__gen_result_unwrap` could only see through ONE result-struct type**, the
+  first delegating generator's. A `for (x of gen)` loop is the first shape that
+  makes an **f64**-carrier generator set `nativeDelegates`, and reading `value`
+  out of an f64 struct in an `externref -> externref` helper made the MODULE
+  invalid (`type error in fallthru[0] (expected externref, got f64)`). It now
+  enumerates every result-struct type in the module and boxes a non-externref
+  carrier (`undefSentinel`, so `yield;` comes back out as `undefined`).
+  **Keep the enumeration scoped to DELEGATING generators.** The first cut
+  enumerated every native generator, which sounds strictly more correct and
+  quietly changed the bytes of **every generator module in the corpus** — a
+  module with no delegating generator used to get the identity body and now got
+  a real unwrap chain. A 10-row SHA spot-check caught it; a verdict-only control
+  would not have, because none of those modules' verdicts moved. Scoping it back
+  restores byte-identity and keeps the blast radius at the shapes this slice
+  actually reaches.
+- **`__gen_delegate_step` status 0 returns the RAW result object**, not its value
+  — that is what `yield*` re-yields under the `done: -1` sentinel for its
+  consumer to unwrap. The first cut bound that raw object as the loop variable,
+  which left `typeof x === "number"` TRUE while `x * 2` and `yield x` both
+  answered **NaN**. All four target rows passed anyway, because none of them
+  reads `x`. `tests/issue-6651-generator-forof-suspension.test.ts` case 2 is the
+  pin for it.
+
+#### Measurements
+
+| 278-row manifest, compile-only probe | ok (host-free) | host_import | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/probe-base.tsv`) | 138 | 79 | 61 |
+| after (`.tmp/6651/probe-after-final.tsv`) | 142 | 75 | 61 |
+
+Exactly 4 rows moved, all `host_import → ok`, none backwards. Through the real
+runner (`--standalone --isolate`, QuickJS):
+
+| `language/statements/for-of/yield*.js`, 8 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/forof-before-final.log`) | 0 | 0 | 8 |
+| after (`.tmp/6651/forof-after-final.log`) | **4** | 0 | 4 |
+
+**+4 rows pass, 0 pass → non-pass.** The 4 still red are the `yield-star-*`
+sub-family held by bail (4) above.
+
+Corpus-wide reach, to size the widening beyond the manifest: every test262 file
+containing both `yield` and a `for (… of …)` (182 files) was probed before and
+after. 13 modules changed, none backwards; 4 are the rows above and 9 are
+`staging/sm/**` rows the runner SKIPS, so they do not move conformance
+(`.tmp/6651/corpus-{before,after}.tsv`, `.tmp/6651/changed13-after.log`).
+
+#### Neighbourhood regression control — binary identity, not verdict sampling
+
+The control is stronger than a before/after verdict run: a module whose wasm SHA
+is unchanged cannot have changed verdict, so the sweep compares **compile bucket
++ wasm SHA-256** for every generator-bearing row in the neighbourhood — all of
+`language/expressions/generators`, `language/statements/generators`,
+`built-ins/GeneratorPrototype`, `language/statements/for-of` and
+`language/expressions/assignment/dstr` that mention `yield` or `function*`
+(854 of 1,736 rows; the other 882 contain no generator at all, so there is no
+native plan and no `nativeDelegates` for this change to perturb).
+
+| lane | rows | modules whose bytes changed |
+| --- | ---: | --- |
+| standalone (`.tmp/6651/nb-sa-{before,after3}.tsv`) | 854 | **4** — the four target rows, `host_import → ok` |
+| host / default (`.tmp/6651/nb-host-{before,after3}.tsv`) | 854 | **0 — byte-identical** |
+
+The host result is structural as well as measured: `lowerForOf` fails
+immediately unless `noJsHostTarget`, and `nativeDelegates` — the only other
+reachable change — already required `ctx.standalone || ctx.wasi`.
+
+Also green: `npm run -s typecheck`; `npx biome lint src tests scripts
+--diagnostic-level=error`; `check-loc-budget` / `check-func-budget` /
+`check-coercion-sites` / `check:oracle-ratchet` / `check:dead-exports`;
+`check-compiler-boundaries --mode inventory`; `node scripts/equivalence-gate.mjs`
+(22 failing / 1,720 passing, all 22 already in the baseline — no new regressions);
+and the new 3-case unit suite `tests/issue-6651-generator-forof-suspension.test.ts`.
+
+#### What is NOT done, and the map for the next owner
+
+**The pattern half of A2 is untouched.** `[ x = yield ] = vals`,
+`({ x = yield } = obj)` and the for-of head twins still take the #680 refusal.
+The design question is settled and written down; the code is not.
+
+§13.15.5 makes the pattern's element evaluation a **conditional** suspension —
+the Initializer runs only when the element is `undefined` — while the whole #680
+continuation model is built on an UNCONDITIONAL one (suspend, then recompile the
+statement with the yield read from a spill). Re-running the statement in the
+successor is what makes that model order-preserving, and a pattern cannot be
+re-run: its `GetIterator` / `next()` / `Get` are observable, and the
+`*-iter-rtrn-close*` rows assert `nextCount === 1` explicitly. The shape that
+does work is the one this slice built for for-of — an explicit state graph:
+
+```
+S0   evaluate the rval; step the pattern's iterator once  → element spill
+     branch: element is undefined ?
+S1     yield          → sent spill                (the conditional suspension)
+S2   PutValue the target from whichever spill is live
+S3   IteratorClose if the record is still live; statement value = the rval
+```
+
+Every primitive for that now exists: the record slot, the step terminator, the
+`iter-close` entry, a canonical-undefined test, and the synthesized
+`<original target node> = <spill identifier>` statement idiom the `yield*`
+assignment arm already relies on. Two open risks: (a) the sent-value carrier — a
+resume binding is typed at the generator's carrier (f64 for a bare `yield;`) and
+these rows assert `value === undefined` AND `x === 86` on the same binding, so
+the value-representation work round 2's C3 row is about lands in the middle of
+it; (b) `{}` and nested patterns as destructuring targets.
+
+Residual buckets in the 278-row manifest after this slice, by first bail
+(`plan/agent-context/6651/A2-bail-attribution.tsv` has the per-row detail):
+
+| rows | bail / signature | note |
+| ---: | --- | --- |
+| 33 | `ExpressionStatement` — `result = <pattern> = vals` | the pattern family above; ~14 are the flat `x = yield` / `{ x = yield }` defaults, ~12 the `*-iter-rtrn-close*` family, which additionally needs a close at a mid-pattern suspension — the `iter-close` entry this slice adds IS that mechanism |
+| 28 | `ForOfStatement` — head is a PATTERN | blocked on the same modelling; the loop half is now done |
+| 4 | `ForOfStatement` — `yield*` in the body | bail (4) above; needs the full unwind chain on the native-gen / vec delegation terminators |
+| 4 | `ExpressionStatement` — `({ get yield() { return 1 } })` | NOT a yield at all — a getter NAMED `yield` trips the structural-lowering scan. Cheapest remaining row in the family |
+| 3 | `ExpressionStatement` — `(yield 3) + (yield 4)` | an arithmetic binary with two yields; `lowerCommaExpressionContinuation` already does the left-to-right two-suspension shape for `,` |
+| 2 | `ExpressionStatement` — `c[yield 9]()` | a yield in call arguments; needs a call root in `lowerContinuationRoot` |
+| 1 | `ExpressionStatement` — `` str = `1${ yield }3${4}5` `` | a TemplateExpression root |
+| 1 | `ExpressionStatement` — `obj.foo = yield` | the member-target exclusion #2864 documents; capturing the receiver as a prefix operand is order-preserving and would admit it |
+| 65 | candidate gate (no plan bail) | A1's enumerated list, unchanged |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
