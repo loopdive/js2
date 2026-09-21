@@ -1344,6 +1344,164 @@ is all of test262 and every npm package. The attempted patch is kept at
 `.tmp/w6651C/attempt-type-mapper.ts` rather than committed; nothing of it is in
 the branch.
 
+### 2026-09-21 — Cluster I (language misc, standalone), triage pass (no source slice)
+
+- **Branch** `worktree-agent-adcaab82a3507f049`, base
+  `claude/es2015-test262-plan-54tooh` @ `b104f96e41`.
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-adcaab82a3507f049`.
+- **Manifest** `plan/agent-context/6651/I-language-misc.txt`, 114 rows,
+  sha256 `f94fe9f129c0bcc5e5e52ce798cbeedfa6cae99f7506f5547af54717a71cdd68`.
+- **This entry is a TRIAGE deliverable. No `src/` change is in it** — every
+  bucket below was measured, three root causes were proven with probes, and
+  none of the buckets is the small slice the dispatch assumed. Nothing is
+  half-applied: the tree this was committed from is source-clean.
+
+| standalone, `--isolate`, eval engine **quickjs** | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/I-before.log`, cleaned copy `I-before-clean.log`) | **0** | 103 | 11 |
+
+#### Read this before measuring cluster I: the engine changes 40 of the 114 rows
+
+The first before-run (`.tmp/6651/I-before-noqjs.log`) reported **40 rows** as
+`Error: JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built`.
+That is not a verdict — it is the runner refusing to measure. The provider is
+**not** present in a fresh worktree and the selector deliberately never builds
+one (a silent degrade to the interpreter would invalidate the measurement), so
+a cluster-I sweep run without it silently converts a third of the manifest into
+noise, including **every** module-namespace row.
+
+Build it once per worktree — the artifact is ~50 s (clang-18 + network), the
+adapter ~5 s, and the adapter key folds in the compiler source hash, so it must
+be rebuilt after a `src/` edit:
+
+```bash
+node scripts/build-quickjs-eval-provider.mjs            # builds the artifact, then
+node --import tsx scripts/build-quickjs-eval-provider.mjs   # builds the adapter
+```
+
+Both logs in this entry are from the **quickjs** engine. With it present,
+**zero** rows are environment-unmeasurable.
+
+#### Triage table — all 114 rows, measured, bucketed by signature
+
+`fix?` is the verdict asked for: **(a)** fixable in standalone · **(b)**
+wont-fix-with-reason candidate (needs a second realm, or direct `eval` of
+dynamic text that the target has no host for) · **(c)** environment-unmeasurable.
+"size" is the honest horizon of the *whole* bucket, not of one row.
+
+| # | bucket | rows | fail/CE | fix? | size | what it actually needs |
+| --- | --- | ---: | --- | --- | --- | --- |
+| B3 | `with` + `@@unscopables` | 15 | 13 / 2 | a | XL | a **dynamic** `with` environment record. 5 rows put a `Proxy` in the `with` head; 6 need `@@unscopables` on an arbitrary object; 2 are the #1387 CE ("requires a proven closed object-literal shape"). The closed-shape model cannot answer any of them. |
+| B15 | singletons | 14 | 14 / 0 | a | — | 14 unrelated one-row defects; see `.tmp/6651/I-buckets.txt` for the list. |
+| B1 | `module-code/namespace/internals` | 12 | 12 / 0 | a | XL | **root cause proven, see below** — two independent blockers, runner *and* compiler. |
+| B5 | direct `eval` — spread args, caller scope, class-in-eval | 10 | 10 / 0 | a (4) / b (6) | L | `eval-spread*` (4) and `statementList/eval-class-*` (4) are real runtime-eval-lane defects (wrong arg vector; wrong `[[Prototype]]` identity for an `Array`/`RegExp` literal built inside the eval). `eval-code/direct/{new.target-fn,super-prop-method}` need the *caller's* `new.target`/`[[HomeObject]]` inside eval'd text — **wont-fix candidates** (#1066). |
+| B11 | parameter defaults / destructuring params | 9 | 9 / 0 | a | M | three tests × three function forms. `params-dflt-ref-arguments` needs `arguments` bound in the **parameter** scope (reads null today); `dstr/ary-ptrn-elem-ary-rest-init` reads null; `dflt-params-arg-val-not-undefined` returns `0` for an explicit `false` argument. |
+| B10 | global-object declaration descriptors | 7 | 7 / 0 | a | L | `var`/`function`/`let` at global code must create global-object properties with the spec's `configurable:false` and collide per §9.1.1.4. Two rows escape a bare `WebAssembly.Exception`. |
+| B9 | arrow `this` / `new.target` / `super` | 7 | 7 / 0 | a | L | lexical capture of the *enclosing function's* `new.target` and `[[HomeObject]]`. One row (`lexical-this.js`) is a null-pointer trap in `__module_init`, i.e. a miscompile, not a missing feature. |
+| B7 | tagged template | 7 | 6 / 1 | a | L | the site object is not frozen, is not passed as argument 0 in the member/call-expression forms, `this` binding is wrong for `obj.fn\`\``, `new tag\`\`` is not constructible, and one row still leaks `env::__tagged_template`. |
+| B4 | cross-realm | 6 | 6 / 0 | **b** | — | every row calls `$262.createRealm()`. A standalone binary is one realm by construction; there is no host to make a second one. **The clearest wont-fix-with-reason group in the cluster.** |
+| B8 | `instanceof` | 6 | 6 / 0 | a | M | 3 × `@@hasInstance` (**root cause proven, see below**), 3 × an accessor `Function.prototype.prototype` that `Get(C,"prototype")` must call observably. |
+| B12 | `arguments` object | 5 | 5 / 0 | a | M | own `@@iterator` (2 rows), and `arguments`-named-`arguments` shadowing, which currently traps with `illegal cast` (2) or reports `typeof "function"` (1). |
+| B2 | `module-code` generator exports | 5 | 0 / 5 | a | — | all five are `standalone target emitted host imports: env::g` — a **generator** leak. Same family as cluster A; they landed in I only because the partition rule keyed on the path, not the error. Hand to A. |
+| B14 | annexB | 4 | 1 / 3 | a | S | one `\P{…}` RegExp CE (#1539 Phase 2d), one labelled-function-declaration SyntaxError, one block-scope redeclaration, one `substr` coercion order. |
+| B13 | TDZ in closures / block scope | 4 | 4 / 0 | a | M | a closure that reads a `let`/`const` before its initializer must throw `ReferenceError`; we return the value. |
+| B6 | proper tail calls | 3 | 3 / 0 | a | M | `tco-non-eval-*`; one now blows the stack (`RangeError: Maximum call stack size exceeded`), which is the honest signature — the tail position is not being taken. |
+| | **total** | **114** | 103 / 11 | | | |
+
+Counts: **(a) fixable 102 · (b) wont-fix candidates 12** (6 cross-realm + 6
+direct-eval-of-dynamic-text) · **(c) environment-unmeasurable 0** once the
+quickjs provider is built.
+
+#### Root cause 1 — the module-namespace family is blocked TWICE, not once
+
+The 12 rows do not fail on the §10.4.6 exotic-object MOP. They fail because
+`ns` is **null**: `Reflect.defineProperty called on non-object`,
+`stringKeys.length === 0`, `Cannot access property on null or undefined`.
+
+- **Blocker A (runner).** These tests SELF-import
+  (`import * as ns from './own-property-keys-sort.js'`). `wrapTest` hoists only
+  `_FIXTURE` specifiers to module top level — deliberately, per the #2932 note
+  in `tests/test262-runner.ts`: the test compiles under the virtual key
+  `./test.ts`, so a hoisted self-import cannot resolve, and hoisting it anyway
+  flipped 4 of these rows to "ns is not defined" in PR #2471's merge_group. So
+  the import stays nested inside `export function test()`, where it is
+  leniently ignored and the binding reads null.
+- **Blocker B (compiler).** Even given a top-level self-import, the compiler
+  does not materialize the namespace. Probed directly
+  (`.tmp/6651/selfimport2.mts`, source-clean tree, `--target standalone`, module
+  compiled under `fileName: "test.ts"` with `import * as ns from './test.ts'`):
+
+  | probe body | result |
+  | --- | --- |
+  | `typeof ns === 'object'` | **0** (it is not an object) |
+  | `ns !== null` | **throws a bare `WebAssembly.Exception`** |
+  | `ns.localA` | throws |
+  | `Object.getOwnPropertyNames(ns)` | throws |
+  | `Object.keys(ns)` | throws |
+
+  `module-namespace-value.ts` materializes a namespace for an import of
+  *another* module in the same compilation; the self-import case is not
+  modelled and reaches a trap rather than a decline.
+
+So the slice is: rewrite the self-import specifier to the compilation's own key
+and hoist it (runner), teach `module-namespace-value.ts` the self case
+(compiler), and only *then* do the MOP details (live-binding TDZ
+`ReferenceError`, `[[Set]]`/`[[Delete]]`/`[[DefineOwnProperty]]` refusals,
+sorted `[[OwnPropertyKeys]]`, `@@toStringTag`) decide individual rows. That is
+an XL, two-component slice — **not** the "likely small one" the dispatch
+assumed, which is the single most useful thing this triage establishes.
+
+#### Root cause 2 — `instanceof` never consults `@@hasInstance`, and the fix route is known
+
+§13.10.2 step 2 does `GetMethod(C, @@hasInstance)` **before** the step-5
+`IsCallable(C)` throw. `native-ordinary-instanceof.ts` already knows this — its
+`moduleInstallsCallableHasInstance` gate (#4484 A) declines the non-callable-RHS
+throw when the module installs a handler. But the very next arm in
+`emitDynamicInstanceOf` (`isExclusivelyPrimitiveType`, the #2998 primitive-LHS
+fold) then answers `false` for `0 instanceof F` **without** consulting the
+handler, so the handler is never called. That is exactly
+`symbol-hasinstance-{invocation,to-boolean}`; `symbol-hasinstance-get-err`
+additionally needs the gate widened to `Object.defineProperty(F,
+Symbol.hasInstance, {get})`, which the current syntactic scan does not match.
+
+The reason this is worth writing down: **the primitives to lower it already
+work.** Probed on the source-clean tree, `--target standalone`
+(`.tmp/6651/hasinst.mts`):
+
+| probe | result |
+| --- | --- |
+| `F[Symbol.hasInstance](7)` after `F[Symbol.hasInstance] = fn` | **1 (works)** |
+| `F[Symbol.hasInstance].call(F, 7)` | **1 (works)** |
+| `0 instanceof F` (same module) | **0 (handler never called)** |
+
+So the slice is a lowering change in `emitDynamicInstanceOf` only — read
+`@@hasInstance` off the RHS, and when it is callable invoke it through the
+generic `__apply_closure(target, thisArg, restVec)` primitive that
+`function-proto-invokers.ts` (#6630) already uses for
+`Function.prototype.call`, then `ToBoolean`. It needs its own before/after over
+`language/expressions/instanceof/**` on both lanes, because the gate is
+module-scoped and would change every `instanceof` site in a module that
+installs a handler.
+
+#### Root cause 3 — the partition put 5 generator rows in this cluster
+
+B2's five `language/module-code/*-gen-*` rows are `env::g` generator leaks, not
+language-misc work. The manifest generator note keys cluster I as "the rest",
+and the generator rule only matched errors mentioning `__gen_`/yield. Route
+them to A rather than re-deriving the same lowering here.
+
+#### Residuals
+
+All 114 rows. Nothing flipped; this entry buys the next owner a measured,
+engine-correct starting point and removes two false assumptions (that the
+namespace family is a MOP slice, and that a bare sweep measures this cluster).
+Logs: `.tmp/6651/I-before.log` (quickjs), `.tmp/6651/I-before-noqjs.log` (the
+unusable no-provider run, kept as the evidence for the engine warning),
+`.tmp/6651/I-before-clean.log`, per-bucket row lists in
+`.tmp/6651/I-buckets.txt`. Probes: `.tmp/6651/{selfimport,selfimport2,hasinst,probe}.mts`.
+None of the probes is committed.
+
+
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
 ### What landed
