@@ -387,3 +387,31 @@ Everything the arm needs already exists; nothing here requires a new type.
 
 Acceptance for slice 3: `.tmp/s74/probes/bi5.mts` 11/11, and a re-measurement
 of the eight section-C rows (three of which are `«NaN»` from exactly this).
+
+### Slice 2 validation, completed (2026-09-21)
+
+- **Witness sweep** `tests/issue-66*.test.ts tests/issue-6484-*.test.ts
+  tests/issue-6493-*.test.ts`, `--maxWorkers=1`:
+  - **Node 25.9.0: 59 files / 368 tests, all green.**
+  - Node 22: the same 368 tests pass, but the first run reported 5 red files —
+    every one of them `Hook timed out in 10000ms` / `Test timed out in
+    35000ms`, never an assertion, on a 4-core box under load ~15 with four
+    lanes active. Re-running the five together leaves one
+    (`issue-6614-accessor-literal-return-carrier`), and running that one alone
+    passes 4/4. So: contention, not regression — recorded rather than silently
+    re-run, because "re-run until green" is how a real flake-shaped regression
+    gets buried.
+- **Battery** (S70 base TSVs, slice-2 provider `.test262-cache/s74-2`,
+  `cacheHit=false` on first build): `Duration` 120 rows **matched=120
+  passToFail=0 failToPass=0**.
+- **Boundaries**: `check:compiler-boundaries:inventory` green with the new
+  leaf registered. The `--mode complete` variant fails on
+  `prepared-async-frame-adapter.ts`, a pre-existing `bound-unresolved` symbol
+  this change does not touch (`inventoryValid: true`).
+
+**Why the remaining battery groups are low-risk.** The change can only fire on
+an operand whose STATIC type is `bigint`, which a test262 `.js` body cannot
+have; the standalone Temporal provider is byte-identical before and after
+(3 488 870 B, same cache key); and the 94-row corpus shows `shaFlips=0`. The
+`Duration` group — the one of the thirteen that actually contains bigint rows
+— is measured flat above.
