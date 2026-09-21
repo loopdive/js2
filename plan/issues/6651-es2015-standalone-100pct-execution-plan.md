@@ -106,6 +106,21 @@ loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
   - src/codegen/closed-method-dispatch.ts
+# 2026-09-21 — cluster A, round 2 (slice A2-gates). +14 lines in
+# `generators-native.ts`, all inside `buildNativeGeneratorPlan`'s
+# binding-element-default admission predicate, and ~80 % of them comment. The
+# growth cannot move to a subsystem module: what changed is the PREDICATE
+# itself — the admission test stops being lane identity
+# (`ts.isMethodDeclaration(decl)` + a class/object-literal parent) and becomes
+# the property that actually carries #4769's argument, "the default never
+# crosses a suspension". That decision has to be readable at the point the
+# element is admitted, beside the three paragraphs of prior rationale it
+# overturns. Two of those paragraphs assert a control that was RE-RUN here and
+# does not reproduce (the generator function-expression lane "already traps on
+# an element default with a plain NUMERIC value"; it passes, all four cells),
+# so the correction is recorded in place rather than in a commit message nobody
+# reads at the bail site. The mechanism's other half went into the subsystem
+# module `generators-native-ast-scan.ts`, which is under budget.
 # 2026-09-21 — cluster C, slice C2 (top-level `C.prototype.x = v`).
 # `declarations.ts` +10 / `collectDeclarations` +9, `assignment.ts` +5 /
 # `compilePropertyAssignment` +4, `property-access-dispatch.ts` +9. All three
@@ -1665,6 +1680,206 @@ func-budget pass with the grants added to this file's frontmatter above, dated.
    CreateDynamicFunction (13 rows, eval-dependent).
 4. **Give the host lane a struct-capable rest drain** if the drive is ever to
    be ungated — see the gate rationale above.
+
+### 2026-09-21 — Cluster A round 2 (slice A2-gates): the 37-row gate family, not the 90-row one
+
+- **Branch** `worktree-agent-a62d9064b19aa6650`, based on `main` @ `3769840f`.
+  **Worktree** `/home/claude/js2/.claude/worktrees/agent-a62d9064b19aa6650`.
+  A second, source-clean worktree `/home/claude/js2/.claude/worktrees/measure-6651-A2`
+  (detached at the same commit) held every before-run, so no base measurement
+  was taken with an edited tree underneath the runner.
+- **Manifest** `plan/agent-context/6651/A-generators-standalone.txt`, 197 rows,
+  sha256 `5fc1a7c0c1d5672aba427f347ea225633e0c95cfa6e9547240fcc2cda2d62d77`.
+
+| standalone, `--isolate`, 197 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/A2-before.log`, clean worktree) | 62 | 2 | 133 |
+| after (`.tmp/6651/A2-after.log`) | **90** | 2 | 105 |
+
+**+28 gained, 0 lost, 0 other verdict changes** (per-row set diff, not a count
+comparison).
+
+#### Which family, and the measurement that chose it
+
+The round-2 dispatch table ranked A2-proper (the 90-row `yield`-inside-a-pattern
+family) first. **The cheap host-lane probe says the other family is worth
+strictly more, and the ordering predated that measurement.** All 127 residual
+rows were run on the HOST target from the clean base
+(`.tmp/6651/host-residual-before.log`, `--isolate`): **39 pass / 88 fail**. A row
+that fails on host cannot be made to pass by fixing standalone-only lowering, so
+per bail-site bucket:
+
+| bail site (per-gate histogram) | rows | host-pass | read |
+| --- | ---: | ---: | --- |
+| `buildNativeGeneratorPlan:2324` (`lowerStatements` failed — A2 proper) | 78 | **5** | new engineering in BOTH lanes |
+| `buildNativeGeneratorPlan:2303` (binding-element default) | 24 | **24** | pure standalone-only gap — **taken, all 24 now pass** |
+| `isNativeGeneratorExpressionShape:2525` (named fn-expr own name) | 9 | 4 | needs the immutable self-name binding |
+| `isNativeGeneratorCandidate:3162` (computed method name) | 6 | 4 | needs the EMIT site, not the gate (measured below) |
+| `isNativeGeneratorCandidate:3188` / `…Shape:2503` (rest params) | 6 | 1 | direct `eval` in parameter scope |
+| `isNativeGeneratorCandidate:3288` (`super` / outer capture) | 2 | 0 | no [[HomeObject]] slot in the frame |
+| `isNativeGeneratorCandidate:3151` (anonymous `export default function*`) | 2 | 1 | module-namespace + `g.name === "default"` |
+| parse: `'yield' is a reserved word …` | 6 | 0 | CE on **both** targets — a TS strict-parse issue, not a generator gap |
+
+The histogram is the predecessor's method re-run: every `return false`/`null` in
+the three gates was temporarily tagged with its line, `fail()` with its caller,
+and the unmodeled statement with its `SyntaxKind` + source text, then the
+manifest went through a **compile-only** probe (197 rows in ~3 min, versus ~50 min
+for a runner pass). Not committed.
+
+#### What landed
+
+**1. A binding-element default is admitted by SUSPENSION, not by lane
+(`generators-native.ts`, +14 lines, ~80 % comment).** #4769's argument for
+admitting a class-valued default is "the factory's eager call-time destructure
+(§10.2.11) hands the value to a resume function that runs immediately, so it
+never crosses a yield". That is a property of the BODY. It was spelled as
+`ts.isMethodDeclaration(decl)` plus a class/object-literal parent — lane
+identity, which the #3952 note two paragraphs above explicitly warns against
+relying on. `zeroSuspendDefaultLane` now states the property itself and admits
+the generator function DECLARATION and EXPRESSION lanes, which reach the same
+factory/resume split (#5255, #3164/#3302) and spill into the same state struct.
+
+  **The blanket `ts.isFunctionExpression(decl)` arm is gone because its recorded
+  control does not reproduce.** That arm was justified in place by: "that lane
+  already traps on an element default with a plain NUMERIC value (`{ n = 41 }`),
+  with no closure anywhere". Re-run through the runner at module scope, all four
+  `fnexpr-num-{obj,ary}-{susp,nosusp}` cells **pass**, host-free. The claim was
+  stale and was keeping 16 manifest rows bailed on a defect that no longer
+  exists; the correction is recorded at the bail site, not in a commit message.
+
+  Driven by an 80-cell matrix — lane {fndecl, fnexpr, objmeth, clsmeth} ×
+  default {arrow, fn, generator fn, class, numeric} × pattern {obj, ary} ×
+  {suspends, does not} — written as synthetic test262 rows and judged by the
+  runner's own `runTest262File`, so every cell is a module-scope
+  original-harness verdict (`.tmp/6651/matrix-{base,w1}-sa.txt`). **16 cells flip
+  compile_error → pass, 0 regress.** Every cell the predicate still refuses is
+  one that FAILS when admitted: `{gen,cls}-*-susp` in all four lanes.
+
+**2. An accessor / constructor / class static block is a function SCOPE
+(`generators-native-ast-scan.ts`).** `isFunctionLikeScope` named only
+declaration / expression / arrow / method, so a `return` inside a getter was
+attributed to the enclosing generator. `statementContainsReturn` therefore
+answered `true` for
+
+```js
+function* g() { ({ get yield() { return 1 } }); }
+```
+
+— a statement with no yield and no generator-level return — which routed it into
+the structural state-graph lowering, where an `ExpressionStatement` of that shape
+is unmodeled, and bailed the whole generator to the host path. Four manifest rows,
+all named `yield-as-literal-property-name`, whose entire point is that `yield` is
+a legal PROPERTY name.
+
+  **The carve-out beside it is the load-bearing half.** A COMPUTED property name
+  is evaluated in the ENCLOSING scope (§8.6.1 / ClassElementEvaluation), so in
+  `function* g() { class C { get [yield]() {…} } }` the `yield` really does
+  suspend `g`. The first cut stopped at the whole node and lost that suspension:
+  five `accessor-name-*-computed-yield-expr` rows flipped **compile_error →
+  `SameValue(«undefined», «"get yield"»)`** — a loud refusal traded for a silent
+  wrong answer, measured, not hypothesised. `nodeContainsYield` now visits the
+  computed name before stopping, and those five are back to a clean refusal.
+
+  The same carve-out also **corrects a row that was already shipping a wrong
+  answer**: `language/expressions/object/method-definition/name-prop-name-yield-expr.js`
+  compiled `{ [yield]() {} }` as a generator that never suspends, so the object
+  was built on the first `next()` and the row failed
+  `assert.sameValue(obj, null)`. It now refuses (compile_error) instead. That is
+  the one non-pass → non-pass move in the whole sweep and it is a deliberate
+  improvement, not drift.
+
+#### Controls — zero pass → non-pass on BOTH targets
+
+Neighbourhood: `language/{expressions,statements}/generators/**`,
+`built-ins/{GeneratorPrototype,GeneratorFunction}/**`,
+`language/expressions/object/method-definition/**`,
+`language/computed-property-names/**` — 991 rows, filtered to the **839** whose
+source (or an `includes:` harness file that itself declares a generator —
+checked, not assumed: `compareIterator.js`, `iteratorZipUtils.js`,
+`testIntl.js`, `wellKnownIntrinsicObjects.js`) contains a generator. The filter
+is sound because both edits live inside `buildNativeGeneratorPlan` /
+`isNativeGeneratorCandidate` / the scan predicates, which are reached only for a
+generator declaration; `generators-native-ast-scan.ts` has no consumer outside
+`generators-native.ts`. Run in 150-row chunks, one fresh process each; before on
+the clean worktree.
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| standalone | 839 | 661 pass / 113 fail / 65 CE | **688 / 112 / 39** | **+27, 0 lost**, 1 fail → CE (the `name-prop-name-yield-expr` correction above) |
+| host (default) | 839 | 553 pass / 136 fail (689 in-process) + 79 / 69 / 2 (150 isolated) | identical | **0 changes, per row** |
+
+Chunk `g-02` kills the in-process HOST runner (it replaces intrinsics in the
+runner's own realm) — identically before and after, so it was re-measured
+`--isolate`; an all-`error` or empty counts line is a broken run, not a
+measurement.
+
+Also green: `npm run -s typecheck`; the five ratchet gates run bare
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` — `getTypeAtLocation +0`, `ctx.checker +0` —
+`check:dead-exports`); `node scripts/equivalence-gate.mjs`: **22 failing / 1720
+passing, all 22 in the committed baseline, no new regressions**.
+
+Pin file `tests/issue-6651-generator-default-lane.test.ts`, 11/11, of which **6
+are verified RED on the clean base tree** and 5 are guards green on both sides —
+including both negative directions (a yielding body still bails; a computed
+accessor name containing `yield` still produces the LOUD #680 diagnostic) and a
+CONTROL that pins the one thing this slice does not fix (reading `.name` off a
+class-valued default through a TS annotation traps in the already-admitted
+object-literal lane too, so it is a pre-existing TS-lane gap — the test262 rows
+are untyped JS and do assert NamedEvaluation, and they pass).
+
+`tests/issue-3952.test.ts` — the case "generator FUNCTION-EXPRESSION host keeps
+the host path for closure defaults" asserted the stale control above. It is
+**REWRITTEN** to assert the measured behaviour, and tightened: host-free AND the
+right value, so a future regression cannot hide as a leak-free wrong answer.
+
+#### Two bounded experiments that returned NEGATIVE — do not repeat them
+
+Both were run by lifting the gate and measuring the bucket, then reverting.
+
+- **Computed-name generator methods (`isNativeGeneratorCandidate:3162`, 6 rows,
+  4 host-passing).** Lifting the `ts.isIdentifier(decl.name)` gate gains **0**:
+  all six still leak `env::__create_generator`. The emit sites in
+  `literals.ts` / `class-bodies.ts` do not route a computed-name generator
+  method to the native factory at all, so the candidate gate is the second
+  blocker, not the first. `resolveAccessorPropName` already derives a stable key
+  for the statically-resolvable subset, so the gate's recorded reason ("only an
+  identifier-named method threads cleanly through the funcMap key") is
+  answerable — but the work is at the emit site.
+- **Named fn-expr referencing its own name (`…Shape:2525`, 9 rows, 4
+  host-passing).** Lifting `bodyReferencesOwnName` turns 9 loud compile errors
+  into 9 **wrong answers**: the body's `g` resolves to the OUTER `var g`
+  (`scope-name-var-close` reports `g === <function>` where `'outside'` is
+  required), and `BindingIdentifier = 1` mutates the wrong binding, so the
+  strict-mode TypeError rows throw nothing. The immutable self-name binding has
+  to exist first. The bail stays.
+
+#### Residual sub-buckets (107 rows), with signatures
+
+| rows | bail site / signature | host-pass | what it needs |
+| ---: | --- | ---: | --- |
+| 74 | `buildNativeGeneratorPlan:2324` — `lowerStatements` reached an unmodeled statement | 1 | **A2 proper.** ~46 are `yield` inside a destructuring-assignment pattern or a `for-of` head; the rest are computed class/object property names from `yield` (8), `(yield 3) + (yield 4)` (3), a `for-of` with `try` inside (2), `with` (1), a template middle (1), `obj.foo = yield` (1). Fails on host too — new engineering in both lanes. |
+| 11 | `…Shape:2525` (9) + `…Shape:2503` (2) — fn-expr shape | 4 | the immutable self-name binding incl. its strict-mode TypeError; rest params with `eval` in parameter scope |
+| 6 | `isNativeGeneratorCandidate:3162` — computed method name | 4 | the EMIT site (see the negative above), not the gate |
+| 6 | parse: `'yield' is a reserved word and may not be used as an identifier in strict mode` | 0 | `function yield() {}` in a sloppy script. **compile_error on BOTH targets**, no `"use strict"` and no module marker in the assembly — a TypeScript parse-strictness question with corpus-wide blast radius, and the rows also need decorators. Not a generator gap; belongs in its own slice or a `wont-fix` with that reason. |
+| 4 | `isNativeGeneratorCandidate:3188` — rest params | 1 | `...[_ = (eval('var x = "inside"'), …)]` — parameter-scope direct `eval` |
+| 2 | `isNativeGeneratorCandidate:3288` — `super` / outer capture in an object-literal method | 0 | no [[HomeObject]] slot in the generator frame |
+| 2 | `isNativeGeneratorCandidate:3151` — anonymous `export default function*` | 1 | a funcMap key for an unnamed declaration, plus module-namespace + `g.name === "default"` |
+| 2 | fail (unchanged from A1) | — | `yield/star-in-rltn-expr.js` (wrong first `value`); `yield-star-before-newline.js` (`__gen_resume_g` `local.tee` type, pre-existing and byte-identical) |
+
+#### Next for this cluster, in rows-per-effort order
+
+1. **Wire the EMIT sites for computed-name generator methods** (6 rows, 4
+   host-passing) — `literals.ts` / `class-bodies.ts` already derive the key via
+   `resolveAccessorPropName`; the candidate gate then relaxes for free.
+2. **A2 proper** (74 rows) remains the big lever, but it is host-first work:
+   only 1 of the 74 passes on host today, so a standalone-only attempt cannot
+   pay off. Model the suspension inside a pattern in `lowerStatements` on the
+   HOST lane first, then let standalone follow.
+3. **The immutable self-name binding** (9 rows) — the measurement above says it
+   must land before the gate moves, not after.
+4. **The sloppy-script parse question** (6 rows) is not cluster A's; file it
+   where the strict/sloppy decision lives.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
