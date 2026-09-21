@@ -75,18 +75,68 @@ const EXTERNREF: ValType = { kind: "externref" };
 const observesByFile = new WeakMap<ts.SourceFile, boolean>();
 
 /**
+ * (#6651 B4) §22.2.6's getter-only member names. `lastIndex` is DELIBERATELY
+ * absent — see the descriptor clause in {@link fileObservesRegExpExecProtocol}.
+ */
+const REGEXP_ACCESSOR_NAMES: ReadonlySet<string> = new Set([
+  "source",
+  "flags",
+  "global",
+  "ignoreCase",
+  "multiline",
+  "dotAll",
+  "unicode",
+  "unicodeSets",
+  "sticky",
+  "hasIndices",
+]);
+
+/**
  * Does this SOURCE FILE observe the RegExp `exec` protocol anywhere?
  *
  * Walked once per file and memoised. See the module header for why the answer
  * is per-FILE rather than per-call: the cheap, provable property is "this
  * program never mentions `exec` and never touches `RegExp.prototype`", and that
  * is exactly the property that keeps the static lane byte-identical.
+ *
+ * (#6651 B4) A descriptor-shaped definition is the OTHER way a program makes
+ * §22.2.6 observable: `Object.defineProperty(re, 'unicode', {get(){throw}})`
+ * installs an own accessor that §22.2.6.8 step 4's `Get(rx, "flags")` has to
+ * run, and the static core reads neither `flags` nor the flag accessors, so
+ * `@@match/get-unicode-error` and `flags-tostring-error` could not fail any
+ * other way.
+ *
+ * That clause needs BOTH a `defineProperty`/`defineProperties` token AND one of
+ * the §22.2.6 ACCESSOR names, and this is measured, not fastidiousness. On the
+ * bare `defineProperty` token the widening gained those two rows and LOST three
+ * (`@@match/{y-fail-lastindex-no-write,builtin-failure-y-set-lastindex-err,
+ * builtin-success-y-set-lastindex-err}`), all of which define a non-writable
+ * `lastIndex` and require the `Set` to THROW. The static core honours that
+ * descriptor; the observable route does not yet (`__extern_set` silently
+ * no-ops on a non-writable property — B3's recorded object-runtime gap). So the
+ * route is a strict gain for a file that redefines an ACCESSOR and a strict
+ * loss for one that redefines `lastIndex`, and `lastIndex` is exactly the name
+ * {@link REGEXP_ACCESSOR_NAMES} leaves out. Revisit when strict `[[Set]]`
+ * throws.
  */
 export function fileObservesRegExpExecProtocol(node: ts.Node): boolean {
   const sf = node.getSourceFile();
   const cached = observesByFile.get(sf);
   if (cached !== undefined) return cached;
   let found = false;
+  // (#6651 B4) The descriptor half, and why it takes TWO tokens rather than one.
+  let sawDescriptorDefine = false;
+  let sawAccessorName = false;
+  const named = (n: ts.Node): string | undefined => {
+    if (ts.isStringLiteralLike(n)) return n.text;
+    if (
+      (ts.isPropertyAssignment(n) || ts.isMethodDeclaration(n) || ts.isPropertyDeclaration(n)) &&
+      (ts.isIdentifier(n.name) || ts.isStringLiteralLike(n.name))
+    ) {
+      return n.name.text;
+    }
+    return undefined;
+  };
   const visit = (n: ts.Node): void => {
     if (found) return;
     if (ts.isPropertyAccessExpression(n)) {
@@ -95,16 +145,15 @@ export function fileObservesRegExpExecProtocol(node: ts.Node): boolean {
       // receiver, an argument to `Object.defineProperty`.
       else if (n.name.text === "prototype" && ts.isIdentifier(n.expression) && n.expression.text === "RegExp") {
         found = true;
+      } else if (n.name.text === "defineProperty" || n.name.text === "defineProperties") {
+        sawDescriptorDefine = true;
       }
-    } else if (ts.isStringLiteralLike(n)) {
-      if (n.text === "exec") found = true;
-    } else if (
-      (ts.isPropertyAssignment(n) || ts.isMethodDeclaration(n) || ts.isPropertyDeclaration(n)) &&
-      (ts.isIdentifier(n.name) || ts.isStringLiteralLike(n.name)) &&
-      n.name.text === "exec"
-    ) {
-      found = true;
+    } else {
+      const key = named(n);
+      if (key === "exec") found = true;
+      else if (key !== undefined && REGEXP_ACCESSOR_NAMES.has(key)) sawAccessorName = true;
     }
+    if (sawDescriptorDefine && sawAccessorName) found = true;
     if (!found) ts.forEachChild(n, visit);
   };
   visit(sf);

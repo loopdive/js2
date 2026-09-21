@@ -29,6 +29,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitGenericFlagsGetterBody } from "./regexp-accessor-get-arm.js"; // (#5198 Slice F)
 import { coerceType } from "./type-coercion.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
@@ -1023,7 +1024,7 @@ export const RE_FIELD_FLAGS = 0;
 export const RE_FIELD_NGROUPS = 1;
 export const RE_FIELD_PROG = 2;
 export const RE_FIELD_CLASS_TABLE = 3;
-const RE_FIELD_SOURCE = 4;
+export const RE_FIELD_SOURCE = 4;
 export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guards
 // (#4439) Exported for the reflective `String.prototype.match` body, which must
 // resolve the `g` flag and reset `lastIndex` at RUNTIME — the borrowed form has
@@ -4991,7 +4992,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
 // ── #1914: RegExp reflection + match-result shape ─────────────────────
 
 /** Flag-boolean getter → bitfield bit (§22.2.6.5–.12, §22.2.6.18/.19). */
-const REGEXP_FLAG_BOOL_PROPS: Record<string, number> = {
+export const REGEXP_FLAG_BOOL_PROPS: Record<string, number> = {
   hasIndices: RE_FLAG_D,
   global: RE_FLAG_G,
   ignoreCase: RE_FLAG_I,
@@ -5647,6 +5648,16 @@ function emitRegExpProtoMemberBody(
         protoResult = undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
       }
       emitNativeProtoIdentityReturnUndefined(ctx, fctx, brand, 1, protoResult);
+    }
+
+    // (#5198 Slice F / #6651 B4) `flags` is the ONE member of this family that
+    // §22.2.6.4 defines over an arbitrary Object — it reads the other eight
+    // through `[[Get]]` rather than off the receiver's internal slots. Brand
+    // recovery is therefore wrong for it, and only for it: the individual flag
+    // getters keep their brand check (§22.2.6.5-.12 step 2).
+    if (member === "flags") {
+      const generic = emitGenericFlagsGetterBody(ctx, fctx, 1);
+      if (generic !== null) return generic;
     }
 
     // Brand-recovery prologue: `this` is closure param index 1 (externref). On a

@@ -77,6 +77,7 @@
  * then cannot disagree, because all three read the same native.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -108,7 +109,7 @@ const GUARD_FN = "__regexp_getter_only_set";
  * Returns the funcIdx, or `undefined` when a prerequisite is missing (no RegExp
  * struct in this module, no native-string subsystem) — declining is always safe.
  */
-function registerRegExpGetterOnlySet(ctx: CodegenContext): number | undefined {
+export function registerRegExpGetterOnlySet(ctx: CodegenContext): number | undefined {
   if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(GUARD_FN);
   if (existing !== undefined) return existing;
@@ -167,12 +168,41 @@ function registerRegExpGetterOnlySet(ctx: CodegenContext): number | undefined {
   return funcIdx;
 }
 
-/** Prologue: `if (<pred>(obj, key)) return <result?>;` at the front of a body. */
-function unshiftPredicateGuard(ctx: CodegenContext, fnName: string, predIdx: number, result: number | undefined): void {
+/**
+ * Prologue: `if (<pred>(obj, key)) return <result?>;` at the front of a body.
+ *
+ * With `ownShadows`, the guard is skipped when the receiver already carries an
+ * OWN entry for the key in the instance expando bag. §10.1.9
+ * OrdinarySetWithOwnDescriptor consults the OWN descriptor FIRST; the
+ * getter-only no-op is what happens when the walk reaches the PROTOTYPE's
+ * accessor instead. `@@match/coerce-global` measures exactly this: it calls
+ * `Object.defineProperty(r, 'global', {writable: true})` — which makes `global`
+ * an own DATA property on that one regexp — and then requires `r.global = true`
+ * to land (#6651 B4). Without the consult the guard swallowed every later
+ * write and the flag stayed `undefined`.
+ */
+function unshiftPredicateGuard(
+  ctx: CodegenContext,
+  fnName: string,
+  predIdx: number,
+  result: number | undefined,
+  ownShadows = false,
+): void {
   const fn = ctx.mod.functions.find((candidate) => candidate.name === fnName);
   if (!fn) return;
-  const then: Instr[] =
+  const bagHasIdx = ownShadows ? ctx.funcMap.get(CARRIER_BAG_HAS) : undefined;
+  const ret: Instr[] =
     result === undefined ? [{ op: "return" }] : [{ op: "i32.const", value: result }, { op: "return" }];
+  const then: Instr[] =
+    bagHasIdx === undefined
+      ? ret
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: bagHasIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: ret },
+        ];
   fn.body.unshift(
     { op: "local.get", index: 0 },
     { op: "local.get", index: 1 },
@@ -213,5 +243,5 @@ export function unshiftRegExpAccessorSetGuard(ctx: CodegenContext): void {
   }
   const funcIdx = registerRegExpGetterOnlySet(ctx);
   if (funcIdx === undefined) return;
-  unshiftPredicateGuard(ctx, "__extern_set", funcIdx, undefined);
+  unshiftPredicateGuard(ctx, "__extern_set", funcIdx, undefined, true);
 }
