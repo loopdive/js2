@@ -1,10 +1,11 @@
 {
   "id": "6652",
   "assignee": "ttraenkler/sendev-s71",
-  "requested_by": "ttraenkler/sendev-s71",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5383-standalone-temporal-s71",
   "claimed_at": "2026-09-20T20:05:32Z",
-  "updated_at": "2026-09-20T20:05:32Z",
-  "write_id": "31553-f6dxoyxr"
+  "updated_at": "2026-09-21T00:48:38Z",
+  "write_id": "5267-u5bmhhng",
+  "released_at": "2026-09-21T00:48:38Z"
 }
