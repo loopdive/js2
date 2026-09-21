@@ -5,6 +5,8 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
+import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
+import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -4375,6 +4377,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             continue;
           }
         }
+        // (#6651 cluster C, C2) A top-level `C.prototype.<name> = value` on a
+        // compiled CLASS. The static arm above keeps `C.<name> = …`; the
+        // prototype chain has a PropertyAccess receiver and fell past every
+        // keep, so the statement compiled to NOTHING. Measurement and scope:
+        // class-proto-toplevel-write.ts.
+        if (isTopLevelClassPrototypeWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
         // (#3468 F1) STANDALONE counterpart of the #2671 keep below (which is
         // gated `!ctx.standalone`): a top-level `F.<name> = …` static property
         // write on a top-level FUNCTION DECLARATION — the test262 assert-harness
@@ -5383,31 +5394,6 @@ export function compileDeclarations(
     }
   }
 
-  // (#2818) Collect the names of *block-scoped* (`let`/`const`) variables
-  // declared directly in a statement list (not descending into nested blocks
-  // or function bodies). Only `let`/`const` — a `var` is function-scoped and,
-  // when referenced by a class method, is already hoisted to a module global
-  // (see `wrapTest` and the module-global skip in
-  // `promoteAccessorCapturesToGlobals`), so it needs no deferral; including
-  // `var` needlessly perturbed the order-sensitive async-generator lowering.
-  function collectBlockScopedDeclNames(
-    stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
-    out: Set<string>,
-  ): void {
-    for (const stmt of stmts) {
-      if (!ts.isVariableStatement(stmt)) continue;
-      const isBlockScoped = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-      if (!isBlockScoped) continue;
-      for (const decl of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(decl.name)) {
-          out.add(decl.name.text);
-        } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
-          collectBindingPatternNames(decl.name, out);
-        }
-      }
-    }
-  }
-
   // (#2818) True iff any method / constructor / accessor body — or a
   // parameter-default initializer — of `decl` references a name in `names`
   // that `promoteAccessorCapturesToGlobals` would actually promote. Mirrors the
@@ -5513,7 +5499,7 @@ export function compileDeclarations(
     let scopeLocals: Set<string> | null = enclosingLocals;
     if (enclosingLocals) {
       scopeLocals = new Set(enclosingLocals);
-      collectBlockScopedDeclNames(stmts, scopeLocals);
+      collectScopeLocalDeclNames(stmts, scopeLocals);
     }
     for (const stmt of stmts) {
       // Mirror the `.d.ts` ambient guard from `collectClassesFromStatements`:

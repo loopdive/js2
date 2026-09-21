@@ -99,6 +99,7 @@ import { ensureObjectProtoProtoSetNative } from "../object-proto-proto-accessor.
 import { hasExplicitNullObjectPrototype } from "../object-proto-name-in.js"; // (#5268 review F4)
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
 import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
+import { targetReceiverIsPrototypeAccess } from "../class-proto-toplevel-write.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
@@ -4999,7 +5000,11 @@ function compilePropertyAssignment(
   // side-slot path. In JS-host mode the backing is the actual host instance
   // returned by `super(...)`; use ordinary [[Set]] instead of casting it to the
   // vestigial bookkeeping struct registered for the user class.
-  if (ctx.classExternrefBackedSet.has(typeName)) {
+  // (#6651 cluster C, C2) …but NOT when the receiver is `<C>.prototype`: the
+  // checker types it as the INSTANCE type, so this arm would cast a PROTOTYPE
+  // object to `$Error_struct` and TRAP. See class-proto-toplevel-write.ts.
+  const receiverIsClassPrototype = targetReceiverIsPrototypeAccess(target);
+  if (ctx.classExternrefBackedSet.has(typeName) && !receiverIsClassPrototype) {
     if (ctx.standalone) {
       const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
       if (ownWrite !== undefined) return ownWrite;

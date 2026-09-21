@@ -92,6 +92,19 @@ loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
   - src/codegen/closed-method-dispatch.ts
+# 2026-09-21 — cluster C, slice C2 (top-level `C.prototype.x = v`).
+# `declarations.ts` +10 / `collectDeclarations` +9, `assignment.ts` +5 /
+# `compilePropertyAssignment` +4, `property-access-dispatch.ts` +9. All three
+# MECHANISMS moved into two new leaf modules (`class-proto-toplevel-write.ts`,
+# `error-message-proto-read.ts`); what is left is irreducible call sites. A
+# module-init KEEP has to be at the point the statement would otherwise be
+# dropped; the decline that stops a `.prototype` receiver from being cast to
+# `$Error_struct` has to be on the arm that would do the casting; the
+# absent-`message` read has to be inside the arm that owns the
+# statically-typed Error read. Inlined, the same change was +114.
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -99,6 +112,8 @@ func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
 # 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
 # hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
 # [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
@@ -1112,6 +1127,222 @@ the integer-indexed MOP (16), `toLocaleString` (9) and the two `from`/`of`
 families (16). Each needs a mechanism rather than an arm, and the detached
 cohort (22) cannot be measured in this container at all — so E1 took the four
 seams that are complete, measurable and independently verifiable here.
+
+### 2026-09-21 — Cluster C (class / object-literal / `super`, standalone), slice C2
+
+- **Branch** `worktree-agent-a27d2e622e3791fde`, based on
+  `claude/es2015-test262-plan-54tooh` @ `252beab1` (origin/main + plan +
+  clusters A, B, D, H and C1). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a27d2e622e3791fde`.
+- **Manifest** `plan/agent-context/6651/C-class-object-super.txt`, 177 rows,
+  sha256 `785dd45d78a609ecefc58377433fd144a142423557001a9b513cf1ae1492ad8d`.
+
+| standalone, `--isolate` | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/C2-before.log`) | 0 | 173 | 4 |
+| after C2-a (`.tmp/6651/C2-after1.log`) | **12** | 161 | 4 |
+
+**+12 rows pass, 0 lost.** Both logs account for all 177 rows (12 + 161 + 4),
+so neither was truncated — worth stating because another lane ran a blanket
+`pkill -f run-test262-paths` during this slice; every log here was re-validated
+for completeness afterwards rather than assumed intact.
+
+#### C2-a — a top-level `C.prototype.<name> = value` was SILENTLY DROPPED
+
+The module-init keep analysis in `declarations.ts` retains a top-level
+`C.<name> = …` STATIC write on a compiled class, and the host lane retains
+`F.prototype.m = …` for a top-level FUNCTION (#4618). Neither arm matches a
+CLASS's prototype chain, so in standalone the statement fell past every keep
+and compiled to **nothing**. Established by instrumentation, not inference:
+`compileAssignment` is never entered for it, while the identical statement
+inside a function body is — and works.
+
+Measured on this branch's base (`.tmp/w6651C/m7.ts`, standalone):
+
+```
+class Plain {}
+const holder = {}; holder.k = "H";     // lands
+Plain.prototype.tagy = "Y";            // DROPPED
+let ran = 0; ran = 5;                  // lands
+new Plain()["tag"+"y"]                 // undefined    node "Y"
+Plain.prototype["tag"+"y"]             // undefined    node "Y"
+```
+
+Two other statements in the same module landing is what rules out "module init
+did not run". It is not Error-specific — the probe uses a plain class — and it
+is not a corner: the honest test262 harness compiles every test body at MODULE
+scope, where `A.prototype.fromA = 'a'` is one of the suite's commonest idioms.
+
+Keeping the statement is necessary but **not sufficient**, and the second half
+is the part that would have shipped a trap:
+
+1. **The keep** (`class-proto-toplevel-write.ts` →
+   `isTopLevelClassPrototypeWrite`, called from `collectDeclarations`).
+   Standalone-gated; the root must resolve to a genuine class DECLARATION, the
+   same evidence the static-write keep beside it demands.
+2. **The decline** (same module → `targetReceiverIsPrototypeAccess`, called
+   from `compilePropertyAssignment`). The checker types `C.prototype` as the
+   INSTANCE type `C`, so for an externref-backed subclass the own-field-write
+   arm claimed a write aimed at the PROTOTYPE object — which is never an
+   `$Error_struct`. With the keep alone, `class Err extends TypeError {}` +
+   `Err.prototype.tagx = "T"` turned from a silent no-op into **`illegal cast`,
+   uncatchably, taking the module with it**. `error-instance-field-write.ts`
+   already carries the identical guard for the identical reason; it was
+   unreachable only because this statement was being dropped before it could be
+   compiled.
+3. **The absent-`message` read** (`error-message-proto-read.ts`, called from
+   the statically-typed Error arm in `property-access-dispatch.ts`). §20.5.1.1
+   step 3 makes `message` the one `$Error_struct` field that can legitimately be
+   absent, and the arm read field 1 unconditionally, answered JS `null` and
+   stopped the walk. Measured (`.tmp/w6651C/m10.ts`): `err2.message` answers
+   `undefined` through a statically-typed `Err` receiver and
+   `"custom-type-error"` through `(err2 as { message }).message` — the same
+   program, the same value, two answers, selected by the static type. That is
+   also why the C1 slice concluded this arm was unreachable: the C1 probe
+   carried the cast.
+
+#### Rows gained (12 on the manifest, 15 on the 960-row control)
+
+| rows | family |
+| ---: | --- |
+| 7 | `class/subclass/builtin-objects/{NativeError/*-message, Error/message-property-assignment}.js` — the C1 residual, now closed |
+| 5 | `expressions/super/prop-{dot,expr}-cls-val{,-from-arrow}.js` + `prop-expr-cls-val-from-eval.js` |
+| +3 (control only) | `class/scope-setter-paramsbody-var-{close,open}.js`, `class/super/in-constructor.js` |
+
+The five `super/prop-*-cls-val*` rows are the family #5350 recorded as blocked
+by "a block-scoped class method's write to a captured `var`". They are not:
+they were blocked by this dropped top-level statement, and the `var`-capture
+defect (C1's finding 1) is not involved in the harness shape at all. The
+coordinator's item (2) — collecting `var` in `collectBlockScopedDeclNames` — is
+therefore **not needed for this family**, which is the re-measurement it asked
+for; see the C2-b note below.
+
+#### Controls — zero pass → non-pass
+
+| set | rows | before | after |
+| --- | ---: | --- | --- |
+| manifest, `--isolate` | 177 | 0 / 173 / 4 | **12** / 161 / 4 |
+| 960-row combined control, in-process, 10 chunks | 960 | 658 pass / 280 fail / 21 CE / 1 skip | **673** / 265 / 21 / 1 |
+
+The 960-row control is every test262 file containing a top-level
+`<ident>.prototype.<name> =` write (363 across `language/**` and
+`built-ins/**` — i.e. the idiom this change makes execute), plus all 187
+`built-ins/{Error,NativeErrors}` rows and the 429-row
+`class/subclass` + `expressions/super` + `statements/try` + `AggregateError`
+set. Per-row set diff: **15 gained, 0 lost, no other verdict changes**. Every
+chunk was verified to account for exactly its input rows before the diff was
+taken. Logs `.tmp/6651/ctl2-{before,after}-0*.log`, list `.tmp/6651/ctl2.txt`.
+
+**Host (gc) control is a byte-identity proof.** The keep is `ctx.standalone`-
+gated and the read arm is `native-first`-gated, so host output cannot move:
+**11/11 gc binaries sha256-identical**, and on standalone only the 2 corpus
+programs that actually contain the construct change
+(`.tmp/6651/bytes2-{before,after}.txt`).
+
+Pin `tests/issue-6651-class-prototype-toplevel-write.test.ts` — 4 cases, **3
+verified RED on the base** (0→7, 0→15, 1→3), the fourth a guard that the
+in-function form is untouched. Case 2 is specifically the one that traps
+("illegal cast") if the keep lands without the decline.
+
+Gates, run bare: loc-budget and func-budget PASS with the grants added to this
+file's frontmatter (`declarations.ts` +10 / `collectDeclarations` +9,
+`assignment.ts` +5 / `compilePropertyAssignment` +4,
+`property-access-dispatch.ts` +9 — every mechanism moved into the two new leaf
+modules; inlined, the same change was +114); coercion-sites, oracle-ratchet,
+dead-exports, compiler-boundaries `--mode inventory`, typecheck, prettier and
+`biome lint --diagnostic-level=error` all 0. `node scripts/equivalence-gate.mjs`:
+22 failing / 1720 passing, all 22 already in the baseline.
+
+`scripts/compiler-boundaries.json` also classifies
+`src/codegen/string-symbol-protocol.ts` — cluster B's new module, which arrived
+on the merged base unclassified and fails the inventory gate for every lane
+that follows it.
+
+#### C2-b — a block-scoped class capturing a function-scoped `var` (zero rows, shipped anyway)
+
+`collectBlockScopedDeclNames` collected only `let`/`const`, on the premise that
+"a `var` is function-scoped and therefore already a module global" — true at
+MODULE scope, and this function is only ever called from INSIDE a function
+body, which is where it is false. Base (`.tmp/w6651C/q31.ts`, standalone):
+
+```
+function test() { var n = 0;
+  if (1) { class C { m() { n = 5; } } new C().m(); }
+  return n; }                              // base 0, node 5
+```
+
+`$C_m` declares `(local $n f64)` and stores into it. The same class at
+function-body level answers 5, a `let` in the same block already worked, and a
+function expression / object-literal method in the same block already worked —
+the class method was the only one of three closure kinds that was broken. The
+collector now takes `var` too, moved to the leaf module
+`src/codegen/scope-local-decl-names.ts`.
+
+**This is the coordinator's item (2), and the re-measurement it asked for says
+the thing it was expected to unblock was already fixed by C2-a.** The
+`super/prop-*-cls-val` family passes because the top-level
+`A.prototype.fromA = 'a'` statement now runs, not because of any `var` capture:
+with C2-b applied the manifest is **byte-for-byte the same verdicts as C2-a**
+(12 pass / 161 fail / 4 CE, identical per-row), and #5350's attribution of that
+family to a block-scoped `var` capture does not survive contact with the honest
+harness shape, where the class and the `var` are both at module scope.
+
+It ships regardless because it is a real wrong answer with no measured cost,
+and because #2818's stated reason for excluding `var` — "including `var`
+needlessly perturbed the order-sensitive async-generator lowering" — was
+re-tested rather than taken on trust:
+
+| control | rows | result |
+| --- | ---: | --- |
+| cluster-C manifest, `--isolate` | 177 | identical to C2-a (12 / 161 / 4) |
+| 960-row combined control, in-process | 960 | **identical non-pass set**, 673 / 265 / 21 / 1 |
+| generator sample (`expressions/generators`, `statements/generators`, `expressions/async-generator`, every 4th row) | 295 | **identical non-pass set**, 248 passing |
+
+Logs `.tmp/6651/C2-after2.log`, `.tmp/6651/ctl2b-*.log`,
+`.tmp/6651/ctl3-{before,after}-*.log`. Gates all 0 (the collector moving to its
+own module is what kept `compileDeclarations` under its ceiling); equivalence
+22 failing / 1720 passing, all in baseline. Pin
+`tests/issue-6651-block-class-var-capture.test.ts` — 3 cases, 2 RED on the base
+(0→5, 5→7), 1 guard.
+
+#### C2-c — the f64-typed parameter slot (18 rows): NOT landed, diagnosed exactly
+
+The coordinator's item (3) — the 10 `dflt-params-arg-val-not-undefined.js` rows
+(`Expected SameValue(«0», «false»)`) and the 8
+`dstr/…-dflt-obj-ptrn-prop-ary.js` rows (`«NaN»` vs `«undefined»`) — is one
+defect: in a JAVASCRIPT source file a parameter's only type evidence is its
+default initializer, so `method(aFalse = falseCount += 1)` is inferred `number`
+and `C.prototype.method(false)` arrives as `0`. In a `.ts` file that inference
+is a genuine declaration and the scalar slot is right; in a `.js` file there
+are no parameter types at all, so it is a guess about one call.
+
+**The slot half is a one-line widening and it works.** `isUndefinedDefaultOnlyParam`
+(`src/checker/type-mapper.ts`) already states exactly this argument for the
+`= undefined` case — *"an ABSENCE of information, not a scalar contract"* — and
+its own doc requires every parameter-lowering site to apply it identically, so
+all four call sites (class-bodies ×2, declarations, closures) pick a widening
+up for free. Adding `|| <the parameter is in a .js/.mjs/.cjs/.jsx file>` to it
+produces the right signature, WAT-verified on a JS compile:
+
+```
+(func $C_method (param (ref null 60) externref) (result (ref null 6)))   ; was  … f64 …
+```
+
+**It is NOT sufficient, and the reason is worth the next owner's time.** The
+value is not lost at the boundary — it is lost on first READ. The body prologue
+is correct (`__extern_is_undefined(a)` gates the default), and the very next
+instructions are `local.get 1; call $__unbox_number`: every USE of the
+parameter still coerces through the checker-inferred `number`, so
+`typeof a` answers `"number"` for an argument that arrived as a boxed boolean.
+Widening the wasm slot without widening the parameter's TYPE in the function's
+own type map just moves the coercion one instruction later.
+
+So this is a checker/oracle change — the parameter must be typed `any` for such
+a declaration — not a codegen slot change, and it needs its own control: it
+would move the slot of **every defaulted parameter in every JS input**, which
+is all of test262 and every npm package. The attempted patch is kept at
+`.tmp/w6651C/attempt-type-mapper.ts` rather than committed; nothing of it is in
+the branch.
 
 ## Manifest generator note
 
