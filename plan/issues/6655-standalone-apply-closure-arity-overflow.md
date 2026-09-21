@@ -180,23 +180,55 @@ declares no 9+-formal closure; it is the test262 HARNESS that does.
   pass without running their assertions — see the measured shadow-mutation
   above.
 
-## Residuals (measured, not fixed)
+## Next slice (the S75 brief) — the PROVIDER's ladder cap
 
-- **The three briefed rows, and the mechanism behind them.** A consumer-owned
-  closure with more than eight formals cannot be invoked once the #6420 peer
-  front-guard hands it to the provider: the provider's own ladder stops at its
-  own maximum declared arity, and it has no way to mint an arm for an arity
-  only the consumer knows. Two candidate directions, both larger than this
-  slice: (a) give the peer front-guard a real ownership test — #6628 concluded
-  that needs a module-origin tag written at `struct.new`, since
-  `canonicalRuntimeTypes` makes `ref.test` ownership-blind BY DESIGN; or (b)
-  have the provider's above-top fallback route the callee BACK across the link
-  instead of answering the sentinel, which needs a loop-breaker because the
-  consumer's own front guard would hand it straight back. Reduced probe for
-  (a): `plan/issues/6628-standalone-proxy-trap-peer-callable-kind-misclassification.md`'s
-  9-line linked repro; for the arity half, `.tmp/s73/probes/shadow-run.mts`
-  (pass/fail is only meaningful with the mutated copy, which is the
-  non-vacuity check).
+**Who owns the trap.** The `unreachable` that kills the three briefed rows is
+NOT in the module the test compiles. It is in the linked
+`@js-temporal/polyfill` PROVIDER's own `__apply_closure`, reached because the
+#6420 peer-callable-kind front guard in the CONSUMER hands the consumer's own
+14-formal closure across the link (the provider's structural `__is_callable`
+answers yes for a value it has never seen — #6628's ownership ambiguity). The
+provider's ladder tops out at 8 because the polyfill declares no 9+-formal
+closure, and nothing the consumer mints can change that.
+
+Evidence to start from, all reproducible with `.tmp/s73/probes/shadow-run.mts`
+(read the MUTATED row, not the unmutated one — an unmutated pass is vacuous):
+
+- caller ladder covering arity 14, arm replaced by a bare `unreachable`,
+  guarded by `n > 8` with no upper bound, caller trap removed ⇒ **no trap** on
+  the three rows. The caller's ladder is not on the path.
+- caller trap removed, everything else stock ⇒ the rows "pass" while the
+  mutated copy (expected day 31 → 30) passes too, i.e. the provider answered
+  the undefined sentinel and the assertion never ran.
+
+**Direction (a) — a real ownership test on the peer front guard.** Give each
+closure a module-origin tag written at `struct.new` and gate the #6420 arm on
+it. This is the fix #6628 already identified and deferred; it is the only one
+that makes "mine vs theirs" decidable, because `canonicalRuntimeTypes` makes
+`ref.test` ownership-blind BY DESIGN (two structurally identical closures from
+two modules ARE the same WASM type — that is the whole point of the canonical
+rec-group). Cost: one field on every closure struct, plus every `struct.new`
+site. Benefit: closes #6628 as well, and #6628's own write-up records that two
+narrower attempts (structural gates against the deduped root list and against
+the full per-site key list) were tried and reverted because they cannot work.
+
+**Direction (b) — a shared max arity across the link boundary.** Publish the
+consumer's top declared arity to the provider (or negotiate a single max at
+link time) so both `__apply_closure` ladders are built to the same ceiling.
+Cheaper and local to this mechanism, but note two things before costing it:
+the provider is compiled and CACHED independently of any consumer (one
+prewarmed artifact serves every test262 row), so a per-consumer ceiling would
+defeat that cache — a FIXED shared ceiling, e.g. 16, is the practical form; and
+the provider still cannot dispatch a consumer closure, it can only route it
+BACK, so (b) also needs a loop-breaker: the consumer's own #6420 front guard
+will hand the same value straight back across the link.
+
+**Recommended:** measure (b)-as-a-fixed-ceiling first — it is one constant and
+one re-prewarm, and it answers whether the provider can round-trip the callee
+at all — then fall back to (a), which is the durable fix and is shared with
+#6628.
+
+## Residuals (measured, not fixed)
 
 - `H.m.apply(H, ARR12)` where `m` has 14 formals fails to COMPILE — the
   #2090 stack-balance gate reports an operand underflow of 14 in the caller.
