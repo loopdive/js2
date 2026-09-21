@@ -348,3 +348,42 @@ real `AnyValue` TAG (touches `typeof`, `===`, truthiness, ToString, ToNumber
 and every arithmetic helper) or whether each numeric helper tests
 `ref.test $BigInt` on the existing object tag's `refval` — the second is
 narrower and is what `extern-eq-fast.ts` already does for `===`.
+
+#### Slice 3 design (read before starting)
+
+Everything the arm needs already exists; nothing here requires a new type.
+
+- **Detection is free.** `__typeof_bigint(externref) -> i32` is already a
+  registered helper (`src/codegen/typeof-delete.ts:2272,2505`; native body in
+  standalone), and `ref.test $BigInt` is already used directly by
+  `extern-eq-fast.ts:135-155`, `any-helpers.ts:832-848`,
+  `collections-es2025.ts:260,732`, `wrapper-proto-value-of.ts:450` and
+  `is-truthy-ladder.ts:91`. So "this dynamic value is a bigint" is a
+  one-instruction question, not a new mechanism.
+- **The value is one `struct.get` away.** `$BigInt` is a one-field immutable
+  struct holding the i64, and `bigint_toString` / `compileI64BinaryOp` /
+  `__box_bigint` are the exact-i64 formatter, operator and re-boxer.
+- **The gap is only the dynamic numeric helpers.** In `any-helpers.ts`:
+  `addNumericBinaryHelper` (which generates `__any_sub` and `__any_mul`),
+  `__any_div`, `__any_add` (whose "stringy" test currently claims a bigint
+  carrier — that is the `90071992547409921` concat), the relational path
+  (`emitAnyRelational`) and `__any_to_f64` (`Number(bigint)`). Each needs a
+  leading both-operands-are-bigint arm: unwrap to i64, run the i64 op, re-box
+  with `__box_bigint`. Every arm is absent-not-wrong — a non-bigint operand
+  falls through to the existing tag dispatch untouched.
+- **The one real design decision** is whether the re-boxed result gets a new
+  `AnyValue` TAG or keeps riding the existing object/extern tag with the
+  `$BigInt` ref inside. The current tag set is `0 null · 1 undefined ·
+  2 number · 4 boolean · 5 string · 6 object` (`any-helpers.ts`), and a bigint
+  currently lands on 5/6 — which is *why* `+` concatenates. Keeping it on the
+  extern tag and testing the carrier (the `extern-eq-fast.ts` shape) is the
+  narrow option and needs no change to `__any_eq`, truthiness or the boxing
+  chokepoints; a real tag is cleaner but touches every tag consumer. Whichever
+  is chosen, `__any_typeof` must answer `"bigint"` for the carrier — today it
+  cannot, which is the `typeof mul(6n,7n) === "number"` row.
+- **Mixed bigint/number must throw a real TypeError**, not coerce (§6.1.6.2.1),
+  and `+` with a string operand must still CONCATENATE (§13.15.4) using the
+  exact formatter slice 2 just wired up.
+
+Acceptance for slice 3: `.tmp/s74/probes/bi5.mts` 11/11, and a re-measurement
+of the eight section-C rows (three of which are `«NaN»` from exactly this).
