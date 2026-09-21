@@ -179,6 +179,7 @@ import {
   reserveProtoIndexStore,
 } from "./proto-index-store.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
+import { reserveVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3) own-method prefix to the vec arm
 import { excludeArgumentsArrayCarrier, holeTestInstrs } from "./array-holes.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
@@ -5039,6 +5040,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
     const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
     const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
+    // (#6651 E3) …and the OWN-property OrdinaryToPrimitive step in front of it:
+    // §7.1.1 step 2 (`@@toPrimitive`) and §7.1.1.1's valueOf/toString cascade
+    // never ran for a vec carrier, so an own method on an Array or a TypedArray
+    // view was invisible. Same reserve/fill discipline; the filled body tails
+    // into `__array_to_primitive_string`, so this is strictly a prefix.
+    const vecOwnToPrimIdx = arrayLikeReduce ? reserveVecOwnToPrimitive(ctx) : -1;
     // (#2638) Standalone CLASS-instance → primitive. A nominal class struct is
     // neither `$Object` nor `$Vec`, so the `ref.test objectTypeIdx` arm below
     // misses it and ToPrimitive returns the struct unchanged → `__unbox_number`
@@ -5463,7 +5470,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: arrayToPrimIdx }, { op: "return" }],
+                  then: [
+                    { op: "local.get", index: 0 },
+                    // (#6651 E3) the own-method prefix; its own tail is
+                    // `__array_to_primitive_string`, so the join is unchanged.
+                    ...(vecOwnToPrimIdx >= 0
+                      ? ([
+                          { op: "local.get", index: 1 },
+                          { op: "call", funcIdx: vecOwnToPrimIdx },
+                        ] satisfies Instr[])
+                      : ([{ op: "call", funcIdx: arrayToPrimIdx }] satisfies Instr[])),
+                    { op: "return" },
+                  ],
                 },
                 // (#2638) A nominal CLASS instance is neither `$Object` nor `$Vec`.
                 // Route it through `__class_to_primitive(obj, stringHint)`, which

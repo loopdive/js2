@@ -175,6 +175,31 @@ loc-budget-allow:
 # the grant is not stranded in #5197 alone.
   - src/codegen/promise-combinators.ts
   - src/codegen/builtin-write-keeps.ts
+# 2026-09-21 (cluster E, slice E3) — the MECHANISM (~370 LOC, §7.1.1 step 2 plus
+# the §7.1.1.1 own-method cascade over a `$__vec_base` carrier) is the NEW
+# module `src/codegen/vec-own-to-primitive.ts`. Three god-file call sites is all
+# that travels, and none of them can move behind a seam:
+#   - `object-runtime.ts` +12: the reserve beside `reserveArrayToPrimitiveString`
+#     and the two-instruction prefix inside `__to_primitive`'s vec arm. The
+#     reserve HAS to sit with its sibling — a fill-time native cannot mint its
+#     own funcIdx after `__to_primitive`'s body has baked its `call` — and the
+#     prefix has to sit at the exact instruction the join was previously the
+#     WHOLE answer at.
+#   - `index.ts` +5: the import plus one finalize call site in each of
+#     `generateModule` / `generateMultiModule`. The placement ("immediately
+#     after `fillArrayToPrimitive`") is an ORDERING fact — the filled body tails
+#     into that native — and an ordering fact is only checkable where the order
+#     is written.
+#   - `expressions/assignment.ts` +15 (~70 % comment): the §10.4.5.5 statement
+#     that a Symbol key on a TypedArray view is an ORDINARY named set, recorded
+#     at the one gate that had been excluding view receivers from the
+#     named-key route. Written anywhere else it would be a fact about a lane
+#     the reader cannot see. The comment carries the measurement it reverses
+#     (the write was DROPPED, not misdirected to index 0), so the next owner
+#     inherits the probe rather than the conclusion.
+# `object-runtime.ts` is restated here — not left to #5197's file alone — so the
+# grant is not stranded in an issue this change-set might later stop touching.
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -255,6 +280,14 @@ func-budget-allow:
 # the observable runtime emitter. The pipeline itself is in new module-level
 # helpers, not in this function.
   - src/codegen/promise-combinators.ts::emitStandalonePromiseCombinatorRuntime
+# 2026-09-21 (cluster E, slice E3). `compileElementAssignment` +15 and
+# `ensureObjectRuntime` +12 (the latter restated from #5197's file so the grant
+# is not stranded). Both are the same irreducible-call-site argument as the LOC
+# grants above: an element-assignment routing decision has to be made inside the
+# element-assignment dispatcher, and a reserved native's funcIdx has to be
+# minted inside the function that bakes the `call` to it.
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -2693,6 +2726,218 @@ both absent from the R3-4 plan):**
   wasm. `race` drive mode needs none of that (its handlers are the capability's
   own resolve/reject), so **`race` is the cheap half and should be sliced
   first**. That sizing is why D2 stops here rather than half-landing it.
+
+### 2026-09-21 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E3
+
+- **Branch** `worktree-agent-a24bf92f8c93b26cc`, base
+  `claude/es2015-test262-plan-54tooh` @ `685351f7bd` (origin/main + A2 + C3 +
+  E2 + B2 + D2). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a24bf92f8c93b26cc`.
+- **Engine for every run below: QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`,
+  artifact `073742801ba7`, adapter key `d4799bda84cfed0d`), `--standalone`,
+  24-row chunks, one runner at a time.
+- **Manifest** `plan/agent-context/6651/E-typedarray-buffers.txt` (144 rows).
+  The subtraction of E2's 19 landed rows was not taken on trust: the full file
+  was re-measured on this source-clean base and came back **19 pass / 124 fail
+  / 1 compile_error** — exactly E2's published after-state — so the 125
+  non-pass rows ARE this slice's manifest
+  (`.tmp/6651/E3-before/`, `.tmp/6651/E3-manifest.txt`).
+
+| 144-row manifest, 24-row chunks | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/E3-before/`) | 19 | 124 | 1 |
+| after (`.tmp/6651/E3-after/`) | **24** | 119 | 1 |
+
+Per-row set diff (`.tmp/6651/E3-manifest-diff.txt`): **5 non-pass → pass, 0
+pass → non-pass** — the whole `ctors/object-arg/throws-setting-obj-*` family.
+
+#### What landed — ONE mechanism: OrdinaryToPrimitive over a vec carrier's OWN surface
+
+`__to_primitive`'s `$__vec_base` arm was a single step:
+`__array_to_primitive_string(v)`, i.e. `Array.prototype.toString` = `join(",")`.
+§7.1.1 step 2 (`GetMethod(input, @@toPrimitive)`) and §7.1.1.1's hint-ordered
+`valueOf`/`toString` cascade **never ran for any vec receiver**, so a method
+installed on the carrier itself was invisible. Measured on this slice's base
+(`.tmp/6651/p1.js`, `.tmp/6651/p3.js`):
+
+```
+a = [1];              a.valueOf   = () => 7;   a + 0     →  "10"   spec 7
+b = [2];              b.toString  = () => "Z"; b + ""    →  "2"    spec "Z"
+s = new Int8Array(1); s.valueOf   = () => 42;  s + 0     →  "00"   spec 42
+a[Symbol.toPrimitive] = () => 77;              a + 0     →  "10"   spec 77
+```
+
+So E1's and E2's readings of this bucket are both superseded. E1 blamed the
+static carrier's missing expando side-table; E2 measured that the table works
+and named `__to_primitive` — correctly, but as "a dyn-view arm". It is not a
+view arm: the gap is the whole vec family, **plain arrays included**, and a
+view is a `$__vec_base` subtype (#3057) that inherits it.
+
+New module `src/codegen/vec-own-to-primitive.ts` (~370 LOC), reserved beside
+`reserveArrayToPrimitiveString` and filled at finalize after
+`fillArrayToPrimitive`:
+
+1. **Own `@@toPrimitive`** (§7.1.1 step 2) — called with the hint string, with
+   §7.1.1 step 1's `"default"` substituted for the internal null hint, and
+   §7.1.1 step 2.c's TypeError on an object result.
+2. **The hint-ordered own `valueOf`/`toString` cascade** (§7.1.1.1).
+3. **Tail into `__array_to_primitive_string`** — which IS the §7.1.1.1
+   intrinsic step, since `%TypedArray%.prototype.toString` and
+   `Array.prototype.toString` are the same function (§23.1.3.30). So a carrier
+   with no own method keeps today's answer verbatim, and that is pinned as a
+   unit test rather than assumed.
+4. **…except when the intrinsic is SHADOWED.** A present, callable own
+   `toString` replaces the join, so a cascade that then exhausts is §7.1.1.1
+   step 6 — a TypeError, not a join. That single flag is the whole of
+   `throws-setting-obj-valueof-typeerror.js`.
+
+**The lookup is OWN-ONLY, and that boundary is the load-bearing part.** The
+cascade must NOT be spelled with `__extern_get(v, name)`: #4655 measured that
+on a vec receiver it resolves the BUILTIN `Array.prototype.toString`, and
+calling that routes straight back into the vec arm — unbounded recursion on
+`Number([1])`, `1 + [2]`, every array-in-string-concat. `__vec_prop_get` is out
+for the same reason one level down: its bag-miss tail is
+`protoIndexRecvGetMissInstrs`, which #4663 measured returning the builtin
+whenever `protoMemberDirty` armed the native-proto seeder. So the module reads
+only two surfaces a user write can reach — `__hasOwnProperty` → `__extern_get`
+(the DYNAMIC-view door, E2's expando side-table), and the #3537 vec expando bag
+addressed directly via `__is_vec_prop_carrier` → `__vec_bag_lookup` (LOOKUP,
+never ensure) → own-guarded `__extern_get` (the STATIC-carrier door). Neither
+can reach a builtin. Inherited overrides stay out: a user
+`Array.prototype.toString` is already honoured by #4663's companion probe
+inside `__array_to_primitive_string`, and widening the lookup to the chain is
+how #4017 cost 684 host-free passes.
+
+Plus one seam in the element-assignment dispatcher that the same five rows
+exposed:
+
+5. **A Symbol key on a TypedArray view is an ORDINARY named set**
+   (`expressions/assignment.ts`, +15). §10.4.5.5 step 1 only diverts a String
+   key whose CanonicalNumericIndexString is not undefined; a Symbol is neither.
+   The `vecElementTypedArrayName(...) === undefined` gate had been excluding
+   every view from the named-key route, and the write was **DROPPED** — not
+   misdirected: measured (`.tmp/6651/p4.js`, `.tmp/6651/t1.mts`), `f64[S]`,
+   `i8[S]` and `u8[S]` all read back `undefined` while the string-keyed
+   `i8.str = 6` landed, and element 0 of a pre-filled view was left untouched.
+   That silent drop, not ToPrimitive, is why the two `@@toPrimitive` rows
+   survived the first three fixes.
+
+#### Receipts
+
+- **Corpus control — 1,830 rows, before vs after, identical 24-row chunking on
+  both sides** (`.tmp/6651/E3-control.txt`, sha256
+  `7d7fb189681886c59a4eefc58a9a0a56b0616fba6e92ca33cdc6740ffa07c1cb`;
+  `.tmp/6651/ctl-{before,after}/`). Selection, stated as reachability rather
+  than as a directory: every row under
+  `built-ins/{TypedArray,TypedArrayConstructors,ArrayBuffer,DataView}/**` whose
+  SOURCE mentions `valueOf`/`toString`/`toPrimitive`/`Symbol` (848), plus every
+  row under `built-ins/Array/**` (193) and under
+  `built-ins/{Object,String,Number,JSON,Symbol,Boolean,Date}/**` +
+  `language/expressions/**` (718) that WRITES one of those names
+  (`(valueOf|toString)\s*[:=][^=]` or `Symbol.toPrimitive`), plus the whole E
+  manifest. pass **1301 → 1311**. Per-row set diff (`.tmp/6651/ctl-diff.txt`):
+  **0 pass → non-pass**, 10 non-pass → pass — the 5 manifest rows and their 5
+  `ctors-bigint/` twins, which are outside the ES2015 manifest.
+  - The brief asked for the whole `built-ins/**` `valueOf|toString|toPrimitive`
+    grep. That is 2,862 rows; at the measured 1.8 s/row on this box (two other
+    lanes active) it is ~3 h per side, so it was narrowed as above and the
+    narrowing is stated rather than implied. What the narrowing drops is rows
+    that mention one of the names without writing it — they can reach the new
+    prefix but can never take its branch.
+  - **Chunk composition moves verdicts in this family, again.** The same 144
+    manifest rows scored **19** pass when chunked alone and **23** inside the
+    control's chunking, on the SAME base tree. E2 found this at 60 vs 24 rows;
+    it is not only a chunk-SIZE effect, it is a chunk-COMPANY effect. Both
+    numbers above are like-for-like (same chunking on both sides), and the
+    manifest table quotes the manifest-only lane because that is the one whose
+    before-state reproduces E2's published after-state exactly.
+- **Byte-level blast radius** (`.tmp/6651/sha-{before,after}.txt`, 11 programs ×
+  2 targets). **All 11 host-lane binaries are byte-identical** — the change is
+  standalone-only by construction. On standalone, 9 of 11 differ and 2
+  (`scalar-arith`, `string-concat`) are identical. **This is NOT byte-neutral
+  for standalone modules that never use an array**, and that is stated plainly
+  rather than glossed: the reserve mints one functype and one function wherever
+  `__to_primitive`'s array-like arm is reserved at all, so `plain-object-keys`
+  and `plain-object-plus` shift too. The behaviour is unchanged there (the
+  filled body tails into the unchanged join); the emitted indices are not. The
+  1,830-row control is broad for exactly this reason.
+- **Unit tests**: new `tests/issue-6651-e3-vec-to-primitive.test.ts`, 11 cases,
+  each comparing INSIDE the module and returning a number. Verified on the base
+  tree: **8 of 8 positive cases fail there**, and all 3 controls pass on BOTH
+  trees (`.tmp/6651/unit-base3.log`). One of those controls is labelled as a
+  control precisely because it passes on both — the base did not clobber
+  element 0, it dropped the write, and a test that cannot distinguish the two
+  must not be presented as evidence for either.
+- **Gates**: loc-budget, func-budget, coercion-sites (no net growth — the new
+  module introduces no coercion vocabulary), oracle-ratchet (+0/+0),
+  dead-exports, `check-compiler-boundaries --mode inventory --base origin/main`
+  (the new module classified), `typecheck`, `biome lint … --diagnostic-level=error`,
+  and `scripts/equivalence-gate.mjs` (22 failing / 1,720 passing, no new) all
+  pass. E1's and E2's pin suites stay green (28 cases across the three files).
+  Grants added to this file's frontmatter, dated: `object-runtime.ts` LOC
+  (restated from #5197 so it is not stranded), `compileElementAssignment` and
+  `ensureObjectRuntime` func keys.
+
+#### `%TypedArray%.from` / `.of` — NOT attempted, and the measurements that say why
+
+This slice's brief put the 20 `from`/`of` rows first. They were triaged, not
+started; the mechanism is larger than the one above and half-landing it would
+have been worse than landing nothing. What was measured (`.tmp/6651/p5.js`, on
+this branch's tip) rather than assumed:
+
+| probe | answer | reading |
+| --- | --- | --- |
+| `typeof TypedArray.from` / `.of` | `function` | the intrinsic's static value read already mints a closure — a `genericThrowBody` refusal one (`builtin-value-read.ts` ~L1747) |
+| `TypedArray.from({length: 0})` | `TypeError: %TypedArray%.prototype.from is not yet implemented in --target standalone` | so the refusal body IS reached through `.call`/direct call — the closure plumbing works, the BODY is the hole |
+| `typeof Float64Array.of` | `function` | same refusal closure on the concrete ctor |
+| `Float64Array.of === TypedArray.of` | `false` | each read mints a FRESH `struct.new`; `inherited.js` needs one shared singleton value |
+| `Float64Array.hasOwnProperty("of")` | `false` | already correct — `inherited.js`'s second assertion passes today |
+| `Float64Array.from([1,2])` / `.of(1,2)` | work | the compile-time lowering in `call-builtin-static.ts` (~L1179) handles the static spelling only |
+| `TA.of` / `TA.from` where `TA` is the harness loop variable | **`undefined`** | the DYNAMIC read — `__extern_get($__ta_ctor, "of")` — has no arm at all |
+
+So the work decomposes into three parts, in dependency order, none of which is
+an arm: (a) a `$__ta_ctor` / `%TypedArray%`-intrinsic `__extern_get` arm for
+`of`/`from`; (b) ONE shared closure singleton per member so `===` holds
+(today's per-read `struct.new` cannot); (c) real §23.2.2.1/§23.2.2.2 bodies —
+`IsConstructor(C)`, `TypedArrayCreate(C, «len»)` via the existing
+`__native_construct_<N>` / `__class_construct_dispatch` substrate, the
+`@@iterator` / array-like split, `mapfn`/`thisArg`, and the variadic calling
+convention for `of` (which today is wired for exactly three builtins sharing
+one lifted func type). The 9 `built-ins/TypedArray/from/*` error-propagation
+rows need only (c)'s front half — steps 1-5 observable, before any Construct —
+which is the cheapest coherent sub-slice and the one to take first.
+
+#### Residual buckets in the 144-row manifest (120 non-pass), re-measured
+
+Unchanged from E2's table except for the five rows this slice took, plus two
+corrections and one new residual:
+
+| rows | sub-bucket | why it is still open |
+| ---: | --- | --- |
+| 20 | `TypedArray/from/*` + `TypedArrayConstructors/{from,of}/*` | the three-part mechanism above. E2's "an intrinsic-static-method mechanism, not an arm" is confirmed and now has the seven probe answers behind it |
+| 7 | `internals/Set/*` — receiver-aware `[[Set]]` | unchanged: `__reflect_set` is a three-argument native; §10.4.5.5 needs the Receiver and the §10.1.9.2 cascade over it |
+| 5 | `ctors/object-arg/iterator-*` | unchanged: the ctor argument is a CALLABLE, so dispatch falls to the count form and never consults `@@iterator` |
+| 22 | detached-buffer cohort | unchanged, measured under QuickJS |
+| 9 | `prototype/toLocaleString/*` | unchanged |
+| 3 | `internals/OwnPropertyKeys/integer-indexes*` | unchanged: the own-key answer is correct, then `new TA(makeCtorArg(4)).subarray(2)` — a method call on a `new` EXPRESSION — answers null |
+| rest | `Object.prototype.toString` (#4119), species-ctor `this`, `{filter,map}` callback receiver identity, DataView proto identity, `%ArrayIteratorPrototype%` results | unchanged |
+
+**Two things this slice found and deliberately did not fix**, both one-line
+locatable:
+
+- **The symbol-key READ on a view is still on the numeric lane.** The write now
+  lands; `typeof view[S]` still answers `undefined` (`.tmp/6651/p4.js` after).
+  The symmetric gate is `property-access.ts` ~L6490
+  (`elementAccessTypedArrayName(...) === undefined`). It was left alone on the
+  #4017 rule — the write arm has two measured test262 rows behind it and the
+  read arm has zero, and a read arm would change `view[Symbol.iterator]`, which
+  has a real §23.2.3.36 meaning.
+- **A STATICALLY-typed `Int8Array` receiver folds `+` without consulting
+  `__to_primitive` at all** — `(s as any) + 0` on an `Int8Array`-typed `s`
+  answers `NaN` on both trees while the `any`-typed spelling answers 99. That
+  is a static `+`-lowering gap, not a ToPrimitive one; it costs no manifest row
+  today because the test262 harness binds its samples through `any`-shaped
+  paths.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

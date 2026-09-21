@@ -435,6 +435,7 @@ import {
   fillReflectIsConstructor,
 } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
+import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
 import { fillClassToPrimitive } from "./class-to-primitive.js";
 import {
   fixupExternConvertAny,
@@ -6815,6 +6816,9 @@ export function generateModule(
     // `"1,2" == [1,2]` reduce a runtime `$Vec` host-free. No-op when no standalone
     // `__to_primitive` reserved it (`ctx.arrayToPrimitiveReserved`).
     fillArrayToPrimitive(ctx);
+    // (#6651 E3) …and the own-method prefix in front of it, which needs the
+    // same late helpers plus `__hasOwnProperty` / the #3537 vec bag.
+    fillVecOwnToPrimitive(ctx);
 
     // #1504: emit __is_closure(externref) -> i32 so the JS-side wrapExports
     // can discriminate a closure struct return from a vec/struct return
@@ -11621,6 +11625,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // unset) — byte-identical for modules that never reach `__to_primitive`'s
     // array/class-instance arms.
     profilePhase("fill-array-to-primitive", () => fillArrayToPrimitive(ctx));
+    profilePhase("fill-vec-own-to-primitive", () => fillVecOwnToPrimitive(ctx));
     profilePhase("fill-class-to-primitive", () => fillClassToPrimitive(ctx));
 
     // (#3981) Same class of multi-file gap as the two fills immediately above.
