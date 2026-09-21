@@ -240,6 +240,7 @@ import {
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { recordBigIntKernel } from "./bigint-carrier-operands.js";
 /**
  * Record source-level boundary classifications for a user-exported function
  * so the JS-host `wrapExports` can marshal native strings and TypedArray
@@ -1591,8 +1592,15 @@ function inferredNumericResultType(
   isAsync: boolean,
   isImplicitAnyReturn: boolean,
   params: readonly ValType[],
+  stmt?: ts.FunctionDeclaration,
 ): ValType | undefined {
-  if (isAsync || !isImplicitAnyReturn) return undefined;
+  if (isAsync) return undefined;
+  // (#6656 slice 3) A BigInt kernel in untyped JS gets a branded i64 result, so
+  // the exact i64 is not converted back at the return. Deliberately ABOVE the
+  // implicit-any guard: TypeScript types `a * b` over two `any` parameters as
+  // `number`, so such a kernel is not an implicit-any return at all.
+  if (stmt !== undefined && recordBigIntKernel(ctx, name, params, stmt)) return { kind: "i64", bigint: true };
+  if (!isImplicitAnyReturn) return undefined;
   const bindingAware = numericReturnsFlagEnabled() ? ctx.bindingAwareNumericReturnTypes?.get(name) : undefined;
   if (bindingAware) return bindingAware;
   const legacy = ctx.numericReturnTypes?.get(name);
@@ -1737,6 +1745,10 @@ function resolveGenericDeclarationCallSiteTypes(
             (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
           ? [identityCarrier]
           : resolved.results;
+  // (#6656 slice 3) The call-site signature gets the PARAMETERS' bigint-branded
+  // i64 slots right, but the checker types the RESULT `number`, so an
+  // `f64.convert_i64_s` rounded the exact i64 away at the return.
+  if (recordBigIntKernel(ctx, name, params, stmt)) return { params, results: [{ kind: "i64", bigint: true }] };
   return {
     params,
     results,
@@ -1828,7 +1840,7 @@ function registerBodylessFunctionDeclaration(
     const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
     const inferredNumericRet = dynamicReturn
       ? null
-      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
     } else if (dynamicReturn) {
@@ -2959,7 +2971,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
         const inferredNumericRet = dynamicReturn
           ? null
-          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
         if (nativeTaViewReturn !== null) {
           results = [nativeTaViewReturn];
         } else if (inferredNumericRet) {
