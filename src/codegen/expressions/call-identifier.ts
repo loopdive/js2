@@ -2101,6 +2101,16 @@ export function compileIdentifierCall(
             continue;
           }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+          // (#6651 C3/C3b) The third widening this site has to mirror, for the
+          // reason the two above already spell out: a JavaScript parameter whose
+          // only type evidence is its own default gets an `externref` slot in the
+          // callee (`paramTypeIsJsDefaultGuess`), so asking here for the checker's
+          // `number` builds a wrapper signature the compiled callee never declared.
+          // Measured on `class C { async m(a = 23) {} }`: `var ref = C.prototype.m;
+          // ref(undefined)` emitted an all-f64 dispatch chain while the trampoline's
+          // own func type was `(externref) -> externref`, so the call reached no arm
+          // and the method body never ran — the async-method lane C3 had to exclude
+          // until this site mirrored the widening.
           sigParamWasmTypes.push(widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, paramType)));
         }
 

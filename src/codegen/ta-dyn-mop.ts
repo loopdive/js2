@@ -258,11 +258,26 @@ export function ensureTaDynMopElemHelpers(
     const arr = allocLocal(fctx, "arr", { kind: "ref", typeIdx: arrTypeIdx });
     const off = allocLocal(fctx, "off", i32);
     const le = allocLocal(fctx, "le", i32);
-    // v first (spec order). `__unbox_number` is the finalize-safe ToNumber the
-    // vec write arms use (already a DEFINED func — no import add, no funcIdx
-    // shift at finalize; full ToPrimitive observability is a follow-on).
+    // v first (spec order, §10.4.5.16 step 1: ToNumber BEFORE the validity
+    // test, so an invalid index still runs the user's `valueOf`).
+    //
+    // (#6651 E2) ToNumber is now OBSERVABLE. `__unbox_number` alone answers
+    // NaN for an ordinary object without ever calling its `valueOf`/
+    // `toString`, so `Object.defineProperty(view, 0, {value: {valueOf(){throw}}})`
+    // completed silently where §7.1.4 → §7.1.1 requires the throw to propagate
+    // (`internals/DefineOwnProperty/desc-value-throws.js`), and every "valueOf
+    // is called exactly once" assertion in `internals/Set/*` read 0. Routing
+    // through `__to_primitive(v, "number")` first is OrdinaryToPrimitive; the
+    // unbox then turns the resulting primitive into the f64 to store. Both
+    // are DEFINED funcs at this point — no import add, no funcIdx shift at
+    // finalize. Declines to the old direct unbox if either is absent.
     const unboxNumIdx = ctx.funcMap.get("__unbox_number");
+    const toPrimIdx = ctx.funcMap.get("__to_primitive");
     fctx.body.push({ op: "local.get", index: 2 });
+    if (toPrimIdx !== undefined) {
+      fctx.body.push(...nativeStringLiteralInstrs(ctx, "number"), { op: "extern.convert_any" });
+      fctx.body.push({ op: "call", funcIdx: toPrimIdx });
+    }
     if (unboxNumIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: unboxNumIdx });
     } else {
@@ -1094,85 +1109,18 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
   const delFn = findFn("__delete_property");
   if (delFn) buildStringKeyArm(delFn, 2, "delete");
 
-  // ── __object_keys: enumerate "0".."len-1" (§10.4.5.11 OwnPropertyKeys —
-  // integer indices in ascending order; expando keys are a follow-on). ──
-  const keysFn = findFn("__object_keys");
-  if (keysFn && objVecNewIdx !== undefined && objVecPushIdx !== undefined) {
-    const base = 1 + keysFn.locals.length;
-    const kAny = base;
-    const kDv = base + 1;
-    const kKind = base + 2;
-    const kEs = base + 3;
-    const kLen = base + 4;
-    const kVec = base + 5;
-    const kI = base + 6;
-    keysFn.locals.push(
-      { name: "__tam_any", type: { kind: "anyref" } },
-      { name: "__tam_dv", type: { kind: "ref_null", typeIdx: dynIdx } },
-      { name: "__tam_kind", type: { kind: "i32" } },
-      { name: "__tam_es", type: { kind: "i32" } },
-      { name: "__tam_len", type: { kind: "i32" } },
-      { name: "__tam_vec", type: { kind: "externref" } },
-      { name: "__tam_i", type: { kind: "i32" } },
-    );
-    const inner: Instr[] = [];
-    const fctxLike = {
-      body: inner,
-      locals: keysFn.locals,
-      params: [{ name: "p", type: { kind: "externref" } }],
-      localMap: new Map(),
-    } as unknown as FunctionContext;
-    inner.push({ op: "local.get", index: kAny });
-    inner.push({ op: "ref.cast", typeIdx: dynIdx });
-    inner.push({ op: "local.set", index: kDv });
-    inner.push({ op: "local.get", index: kDv });
-    inner.push({ op: "ref.as_non_null" });
-    inner.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 });
-    inner.push({ op: "local.set", index: kKind });
-    pushElemSizeForKind(fctxLike, kKind);
-    inner.push({ op: "local.set", index: kEs });
-    pushTaDynViewInBoundsLen(ctx, fctxLike, kDv, kEs);
-    inner.push({ op: "local.set", index: kLen });
-    inner.push({ op: "call", funcIdx: objVecNewIdx });
-    inner.push({ op: "local.set", index: kVec });
-    inner.push({ op: "i32.const", value: 0 });
-    inner.push({ op: "local.set", index: kI });
-    inner.push({
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: kI },
-            { op: "local.get", index: kLen },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: kVec },
-            { op: "local.get", index: kI },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: numToStringIdx },
-            { op: "call", funcIdx: objVecPushIdx },
-            { op: "local.get", index: kI },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: kI },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    });
-    inner.push({ op: "local.get", index: kVec });
-    inner.push({ op: "return" });
-    keysFn.body.unshift(
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: kAny },
-      { op: "ref.test", typeIdx: dynIdx },
-      { op: "if", blockType: { kind: "empty" }, then: inner },
-    );
-  }
+  // ── __object_keys: RETIRED from this module (#6651 E2) ────────────────────
+  // The arm that stood here enumerated "0".."len-1" and stopped, parking
+  // expando keys as "a follow-on". An enumerable own expando was therefore
+  // invisible to `Object.keys` / `for…in` — which is precisely what
+  // propertyHelper's `verifyEnumerable` reads, so a correctly-defined,
+  // correctly-attributed property was reported non-enumerable
+  // (`internals/DefineOwnProperty/{non-extensible-redefine-key,
+  // key-is-not-canonical-index}.js`). `ta-dyn-own-keys.ts` now owns the whole
+  // own-key surface and emits the indices-plus-expando body for
+  // `__object_keys` and `__getOwnPropertyNames` from ONE emitter. Two arms
+  // racing for the front slot of the same native would be worse than one, so
+  // this one is deleted rather than shadowed.
 
   // ── (#3177 slice 3) Proto-identity + isExtensible arms ────────────────────
   //

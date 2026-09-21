@@ -164,7 +164,10 @@ import {
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
-import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
+import {
+  isStandaloneIntrinsicPromiseResolveWriteTarget,
+  shouldKeepBuiltinReceiverWrite,
+} from "./builtin-write-keeps.js"; // (#4176/#4199/#5197) builtin-receiver write keeps
 import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
@@ -1449,8 +1452,8 @@ function lowerParamType(
   }
   // (#6651 C3) …and the same for a JS defaulted parameter whose type is read
   // off its own initializer. See `paramTypeIsJsDefaultGuess`.
-  if (nativeParam === null) wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
   if (nativeParam === null) {
+    wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
   if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
@@ -4361,6 +4364,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // keeping the statement is the whole fix. Scope + the cases that must
         // STAY dropped: builtin-write-keeps.ts.
         if (shouldKeepBuiltinReceiverWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#5197 R3-2) An intrinsic `Promise.resolve = fn` replacement is a
+        // source-ordered observable setup step for Promise combinators. The
+        // broad builtin-write keep deliberately declines supported static
+        // methods, but this direct standalone form needs the ordinary
+        // property-write lowering so the later `Get(C, "resolve")` sees the
+        // replacement. The local declaration proof rejects user shadows while
+        // ignoring TypeScript's synthetic property-write Identifier entry.
+        if (opKind === ts.SyntaxKind.EqualsToken && isStandaloneIntrinsicPromiseResolveWriteTarget(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }

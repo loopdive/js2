@@ -428,7 +428,7 @@ import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) 
 import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
-import { fillTaDynViewOwnPropertyNamesArm } from "./ta-dyn-own-property-names.js"; // (#6651 E2) §10.4.5.6 on __getOwnPropertyNames
+import { fillTaDynViewOwnKeyArms } from "./ta-dyn-own-keys.js"; // (#6651 E2) §10.4.5.6 own-key surface
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import {
   fillNativeReflectOwnPropertyMop,
@@ -436,6 +436,7 @@ import {
   fillReflectIsConstructor,
 } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
+import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
 import { fillClassToPrimitive } from "./class-to-primitive.js";
 import {
   fixupExternConvertAny,
@@ -6668,10 +6669,12 @@ export function generateModule(
     // (each fill prepends at body[0]; last fill wins the front slot, and the
     // dyn-view arm must beat the generic `$__vec_base` arms it subtypes).
     fillTaDynViewMopArms(ctx);
-    // (#6651 E2) …and §10.4.5.6 `[[OwnPropertyKeys]]` on `__getOwnPropertyNames`,
-    // which `Reflect.ownKeys` / `Object.getOwnPropertyNames` read and
-    // `__object_keys` (filled above) does NOT feed. Same front-slot rule.
-    fillTaDynViewOwnPropertyNamesArm(ctx);
+    // (#6651 E2) The own-key surface (§10.4.5.6 + the own-ness predicates),
+    // including the `__getOwnPropertyNames` arm that `Reflect.ownKeys` /
+    // `Object.getOwnPropertyNames` read and `__object_keys` does NOT feed.
+    // AFTER `fillVecLengthDynamicArms` above, whose vec own-`"length"` arm
+    // sits in `__hasOwnProperty`/`__object_hasOwn` and must not win for a view.
+    fillTaDynViewOwnKeyArms(ctx);
     fillDataViewConstructProtoArm(ctx);
     fillReflectIsConstructor(ctx);
 
@@ -6816,6 +6819,9 @@ export function generateModule(
     // `"1,2" == [1,2]` reduce a runtime `$Vec` host-free. No-op when no standalone
     // `__to_primitive` reserved it (`ctx.arrayToPrimitiveReserved`).
     fillArrayToPrimitive(ctx);
+    // (#6651 E3) …and the own-method prefix in front of it, which needs the
+    // same late helpers plus `__hasOwnProperty` / the #3537 vec bag.
+    fillVecOwnToPrimitive(ctx);
 
     // #1504: emit __is_closure(externref) -> i32 so the JS-side wrapExports
     // can discriminate a closure struct return from a vec/struct return
@@ -11373,7 +11379,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // so they retain front precedence.
     profilePhase("fill-ta-dyn-view-mop-arms", () => fillTaDynViewMopArms(ctx));
     // (#6651 E2) Multi-source parity with the single-source call above.
-    profilePhase("fill-ta-dyn-view-own-property-names", () => fillTaDynViewOwnPropertyNamesArm(ctx));
+    profilePhase("fill-ta-dyn-view-own-key-arms", () => fillTaDynViewOwnKeyArms(ctx));
     profilePhase("fill-data-view-construct-proto", () => fillDataViewConstructProtoArm(ctx));
     profilePhase("fill-reflect-is-constructor", () => fillReflectIsConstructor(ctx));
 
@@ -11623,6 +11629,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // unset) — byte-identical for modules that never reach `__to_primitive`'s
     // array/class-instance arms.
     profilePhase("fill-array-to-primitive", () => fillArrayToPrimitive(ctx));
+    profilePhase("fill-vec-own-to-primitive", () => fillVecOwnToPrimitive(ctx));
     profilePhase("fill-class-to-primitive", () => fillClassToPrimitive(ctx));
 
     // (#3981) Same class of multi-file gap as the two fills immediately above.
