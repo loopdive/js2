@@ -7514,6 +7514,27 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // ever reserved under standalone/wasi (all reserveApplyClosure call sites).
   const APPLY_CLOSURE_MAX_ARITY = 8;
 
+  // (#6655) …and ONE arm above that cap, at the module's top declared arity,
+  // when index.ts minted a dispatcher there (`topHighClosureMethodCallArity`).
+  // Without it a dynamic call to a 9+-formal function — test262's own
+  // `TemporalHelpers.assertPlainDateTime` has 14 formals,
+  // `createDurationPropertyBagObserver` 11 — widened `n` past the last arm and
+  // fell into the arity-overflow `unreachable` below, trapping instead of
+  // calling. One arm suffices for EVERY above-cap arity because
+  // `__call_fn_method_<top>` admits every closure of host arity <= top and
+  // invokes each through its own funcref type with exactly that many of the
+  // supplied values.
+  //
+  // Reading the registry rather than raising the constant is what keeps a
+  // module whose closures top out at 8 byte-identical: nothing was minted, so
+  // there is no arm and the overflow bound stays 8.
+  let applyClosureTopArity = APPLY_CLOSURE_MAX_ARITY;
+  for (const name of ctx.funcMap.keys()) {
+    if (!name.startsWith("__call_fn_method_")) continue;
+    const arity = Number(name.slice("__call_fn_method_".length));
+    if (Number.isInteger(arity) && arity > applyClosureTopArity) applyClosureTopArity = arity;
+  }
+
   const argcGlobalIdx = ensureArgcGlobal(ctx);
 
   const locals: { name: string; type: ValType }[] = [{ name: "n", type: { kind: "i32" } }];
@@ -7638,6 +7659,37 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   // if n==0 .. n==APPLY_CLOSURE_MAX_ARITY else undefined. Nest as if/else chain.
   let dispatch: Instr[] = armUnsupported;
+  // (#6655) One arm for EVERY above-cap selector, guarded by `n > 8` alone and
+  // deliberately NOT bounded above by `top`. Two independent reasons:
+  //
+  //  - the top dispatcher serves every above-cap arity anyway (it invokes each
+  //    admitted closure through its own funcref type), so an equality or
+  //    window test buys nothing; and
+  //  - `n` can legitimately exceed every LOCAL arity. Under
+  //    `canonicalRuntimeTypes` the inline `__closure_arity` probe reads the
+  //    declared formal count off the shared canonical wrapper root, so it
+  //    answers for values this module never compiled. A `8 < n <= top` window
+  //    let exactly those selectors skip the arm — measured: with `top` at 14
+  //    and the window in place, `TemporalHelpers.assertPlainDateTime` was
+  //    never entered and the row passed VACUOUSLY (a deliberately wrong
+  //    expected value still passed).
+  //
+  // An unmatched callee is not lost: the dispatcher's own terminal is the
+  // linked-peer apply on the standalone lane, the same destination the
+  // fall-through `armUnsupported` has.
+  if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
+    dispatch = [
+      { op: "local.get", index: 3 },
+      { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: buildArm(applyClosureTopArity),
+        else: dispatch,
+      },
+    ];
+  }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
     dispatch = [
       { op: "local.get", index: 3 },
@@ -7694,14 +7746,22 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...widen,
-    // The fixed closure ABI ends at eight positional values. The special
-    // native/proxy/cross-module front guards are prepended below and therefore
-    // still run first; a compiled closure above the cap must fail loudly rather
-    // than falling through to the undefined sentinel.
+    // A compiled closure above the module's TOP dispatcher arity must fail
+    // loudly rather than falling through to the undefined sentinel (#1058).
+    // The bound is the top minted arity, not a fixed eight (#6655): with the
+    // ladder reaching the module's real maximum, a local closure can no longer
+    // trip this, and the trap keeps its original meaning — "this callee is
+    // beyond anything this module can dispatch".
+    //
+    // Deliberately NOT retired. Retiring it makes the three #6655 Temporal
+    // rows PASS VACUOUSLY (measured: a shadow copy of
+    // `overflow-default-constrain.js` with a deliberately wrong expected day
+    // also passes, i.e. the assertion never runs) — a silent wrong answer in
+    // place of a loud one. See the issue for where that call really goes.
     ...(widen.length > 0
       ? ([
           { op: "local.get", index: declaredArityLocal },
-          { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
+          { op: "i32.const", value: applyClosureTopArity },
           { op: "i32.gt_s" },
           {
             op: "if",
