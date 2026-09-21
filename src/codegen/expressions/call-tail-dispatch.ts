@@ -72,7 +72,7 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
-import { patchInlinedIifeReturns } from "./iife-return-patch.js"; // (#5339)
+import { parkOuterReturnProtocol, patchInlinedIifeReturns, restoreOuterReturnProtocol } from "./iife-return-patch.js"; // (#5339, #6651 C3b)
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { resolvePlainCallThisTrampoline, tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203, #6436)
@@ -452,6 +452,10 @@ export function compileTailDispatch(
               // function would coerce i32→f64 before local.set into an i32 local.
               const savedReturnType = fctx.returnType;
               fctx.returnType = iifeWasmRetType;
+              // (#6651 C3b) …and park the enclosing function's own return
+              // protocol for the same reason, one level up: see
+              // `parkOuterReturnProtocol`.
+              const parkedReturnProtocol = parkOuterReturnProtocol(fctx);
 
               // A real function instantiation creates all var bindings before
               // body evaluation. Besides read-before-declaration semantics, this
@@ -491,6 +495,7 @@ export function compileTailDispatch(
 
               // Restore outer function's return type
               fctx.returnType = savedReturnType;
+              restoreOuterReturnProtocol(fctx, parkedReturnProtocol);
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
@@ -532,8 +537,11 @@ export function compileTailDispatch(
               // compileReturnStatement to drop the expression value).
               const savedReturnType = fctx.returnType;
               fctx.returnType = null;
-
-              // See the returning arm above: function-scoped vars must exist
+              // (#6651 C3b) Park the enclosing function's return protocol — see
+              // the returning arm above and `parkOuterReturnProtocol`. A void
+              // IIFE's `return;` inside a generator factory would otherwise
+              // branch to the GENERATOR's exit label.
+              const parkedReturnProtocol = parkOuterReturnProtocol(fctx);
               // before the first statement and must shadow outer/global names.
               const isLargeIife = bodyStmts.length >= 1_000;
               if (isLargeIife) {
@@ -569,6 +577,7 @@ export function compileTailDispatch(
 
               // Restore outer function's return type
               fctx.returnType = savedReturnType;
+              restoreOuterReturnProtocol(fctx, parkedReturnProtocol);
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 

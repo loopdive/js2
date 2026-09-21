@@ -270,32 +270,28 @@ export function isUndefinedDefaultOnlyParam(param: ts.ParameterDeclaration, para
 const JS_SOURCE_FILE_RE = /\.(?:[cm]?js|jsx)$/i;
 
 /**
- * (#6651 C3 residual) A parameter of an `async` METHOD — `class C { async m(a = 23) {} }`
- * or the object-literal spelling, generator or not.
+ * (#6651 C3 → C3b) The `async` METHOD lane used to be EXCLUDED here, and is not
+ * any more — the exclusion is gone because the defect it worked around was
+ * found and fixed, not because it stopped reproducing.
  *
- * MEASURED EXCLUSION, not a design preference. An async method's callable value
- * is a cached singleton trampoline whose wrapper signature is derived from the
- * method signature at first `C.prototype.m` access and rebuilt at finalize
- * (`closures/method-trampolines.ts`, the #1669 `pendingMethodTrampolines`
- * enrolment). With the slot widened, that path stops applying the parameter
- * defaults when the method is invoked THROUGH the extracted reference — the
- * direct `new C().m(undefined)` call is correct, `var ref = C.prototype.m;
- * ref()` is not. Reproducer: `.tmp/w6651C3/p13.src.js`, and the 2,370-row
- * control caught it as 16 (standalone) / 20 (host) `dflt-params-arg-val-undefined`
- * + `dflt-params-trailing-comma` rows in exactly these four lanes.
+ * C3 measured the regression (16 standalone / 20 host rows,
+ * `dflt-params-arg-val-undefined` + `dflt-params-trailing-comma`, in the class
+ * `async-method[-static]` / `async-gen-method[-static]` and object-literal
+ * `async-meth` lanes) and attributed it to the trampoline signature rebuild in
+ * `closures/method-trampolines.ts`. That attribution was wrong: at finalize the
+ * wrapper params, the method params and the trampoline's own func type all
+ * agree (`externref`), so `finalizeMethodTrampolines` is a no-op for this shape.
  *
- * That is a defect in the trampoline's signature rebuild, NOT in the widening
- * — async FUNCTIONS, async ARROWS, sync methods and generator methods all take
- * the widening and gain. Excluding the one lane keeps every measured gain and
- * costs the four async-method rows in `*-arg-val-not-undefined`, which stay on
- * their pre-existing failure. Remove this clause together with a fix to
- * `finalizeMethodTrampolines`, re-running the same control.
+ * The real site is the CALL: `call-identifier.ts` rebuilds the callee's wrapper
+ * signature from the DECLARED (checker) parameter types to pick the dispatch
+ * arms, and the checker still says `number`. So the emitted chain was all
+ * f64-shaped while the value's func type was `(externref) -> externref` — the
+ * call reached no arm and `var ref = C.prototype.m; ref()` silently did not run
+ * the body (`.tmp/w6651C3/p13.src.js`; base OK, widened THREW). That site
+ * already carried the same mirror-widening for binding-pattern and
+ * `parameterMayBeOmitted` parameters, for the identical reason; this widening is
+ * the third and was simply missing. See `jsUntypedDefaultParamSlotMoves`.
  */
-function isAsyncMethodParam(param: ts.ParameterDeclaration): boolean {
-  const fn = param.parent;
-  if (!ts.isMethodDeclaration(fn)) return false;
-  return fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
-}
 
 /**
  * (#6651 C3) The same absence-of-information argument as
@@ -326,7 +322,6 @@ function isAsyncMethodParam(param: ts.ParameterDeclaration): boolean {
  */
 export function isJsUntypedDefaultParam(param: ts.ParameterDeclaration): boolean {
   return (
-    !isAsyncMethodParam(param) &&
     param.initializer !== undefined &&
     param.dotDotDotToken === undefined &&
     param.type === undefined &&
@@ -360,10 +355,26 @@ const jsUntypedDefaultWidenedParams = new WeakSet<ts.ParameterDeclaration>();
  * is invalid Wasm, not a wrong value.
  */
 export function widenJsUntypedDefaultParamSlot(param: ts.ParameterDeclaration, wasmType: ValType): ValType {
-  if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
-  if (!isJsUntypedDefaultParam(param)) return wasmType;
+  if (!jsUntypedDefaultParamSlotMoves(param, wasmType)) return wasmType;
   jsUntypedDefaultWidenedParams.add(param);
   return { kind: "externref" };
+}
+
+/**
+ * (#6651 C3b) The same question, asked WITHOUT recording an answer.
+ *
+ * A CALL SITE that rebuilds a callee's wrapper signature from the DECLARED
+ * types has to apply every widening the callee applied, or it asks for a scalar
+ * the compiled callee never declared (`call-identifier.ts` already carries the
+ * binding-pattern and `parameterMayBeOmitted` cases for exactly this reason).
+ * But it must not MEMOISE: `jsUntypedDefaultWidenedParams` is read by the
+ * identifier-read guard to mean "this parameter's own slot was widened in the
+ * function being compiled", and a call site's opinion about someone else's
+ * parameter is not that fact.
+ */
+export function jsUntypedDefaultParamSlotMoves(param: ts.ParameterDeclaration, wasmType: ValType): boolean {
+  if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return false;
+  return isJsUntypedDefaultParam(param);
 }
 
 /** True once {@link widenJsUntypedDefaultParamSlot} has moved this parameter's slot. */

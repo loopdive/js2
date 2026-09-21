@@ -24,7 +24,13 @@ import {
   restShapedWrapperCandidates,
   restSlotMarshalInstrs,
 } from "./callable-rest-bridge.js"; // (#5334)
-import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
+import {
+  isBooleanType,
+  isPromiseType,
+  isStringType,
+  isVoidType,
+  jsUntypedDefaultParamSlotMoves,
+} from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { ensureAnyHelpers, ensureAnyToExternHelper } from "../any-helpers.js";
@@ -2100,7 +2106,24 @@ export function compileIdentifierCall(
             continue;
           }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-          sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+          const resolvedParamType = resolveWasmType(ctx, paramType);
+          // (#6651 C3b) The third widening this site has to mirror, for the
+          // reason the two above already spell out: a JavaScript parameter whose
+          // only type evidence is its own default gets an `externref` slot in the
+          // callee (`widenJsUntypedDefaultParamSlot`), so asking here for the
+          // checker's `number` builds a wrapper signature the compiled callee
+          // never declared. Measured on `class C { async m(a = 23) {} }`:
+          // `var ref = C.prototype.m; ref(undefined)` emitted a dispatch chain
+          // whose arms were all f64-shaped while the trampoline's own func type
+          // was `(externref) -> externref`, so the call reached no arm and the
+          // method body never ran — the async-method lane C3 had to exclude.
+          // Non-memoising on purpose: the widened-parameter set is a fact about
+          // the function being compiled, not about a caller's view of it.
+          sigParamWasmTypes.push(
+            paramDecl && ts.isParameter(paramDecl) && jsUntypedDefaultParamSlotMoves(paramDecl, resolvedParamType)
+              ? { kind: "externref" }
+              : resolvedParamType,
+          );
         }
 
         // (#4616) A REAL declared rest param (`body: (...args: unknown[]) =>
