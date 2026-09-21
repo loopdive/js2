@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Nested declaration lowering, hoisting, default parameters, and `arguments`. */
 import { ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import {
@@ -1415,7 +1416,7 @@ function compileNestedFunctionDeclarationInScope(
     let wasmType: ValType =
       foreignEvalDeclaration || restBindingOverridesToExternref(p) || nestedBindingPatternParamNeedsWiden(p)
         ? { kind: "externref" }
-        : resolveWasmType(ctx, paramType!);
+        : widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType!));
     if (!foreignEvalDeclaration) {
       wasmType = preserveOmittedNestedParameter(ctx, stmt, p, wasmType);
     }
@@ -3309,7 +3310,7 @@ export function hoistFunctionDeclarations(
         if (foreignEvalDeclaration || nestedBindingPatternParamNeedsWiden(p)) return { kind: "externref" };
         const paramType = ctx.checker.getTypeAtLocation(p);
         ensureStructForType(ctx, paramType);
-        let wt = resolveWasmType(ctx, paramType);
+        let wt = widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType));
         wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };

@@ -3,6 +3,7 @@
  * Variable declaration statement lowering.
  */
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -2335,7 +2336,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           const sigParamWasmTypes: ValType[] = [];
           for (let i = 0; i < sigParamCount; i++) {
             const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-            sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+            sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
           }
 
           let matchedClosureInfo:

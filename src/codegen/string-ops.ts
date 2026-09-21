@@ -1,4 +1,5 @@
 import { isBigIntType, isBooleanType, isStringType, isSymbolType, isVoidType } from "../checker/type-mapper.js";
+import { widenJsDefaultGuessSymbolSlot } from "./js-default-param-type-guess.js";
 import type { Instr, ValType } from "../ir/types.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -1554,7 +1555,7 @@ export function compileTaggedTemplateExpression(
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
         const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-        sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
       }
 
       for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
