@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-21",
   "threshold": 1500,
-  "totalCeiling": 908492,
+  "totalCeiling": 908614,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -21,7 +21,7 @@
     "src/codegen/context/types.ts": 4855,
     "src/codegen/dataview-native.ts": 9519,
     "src/codegen/declarations.ts": 6692,
-    "src/codegen/declarations/import-collector.ts": 2298,
+    "src/codegen/declarations/import-collector.ts": 2305,
     "src/codegen/declarations/object-shape-widening.ts": 2704,
     "src/codegen/declarations/param-return-inference.ts": 1787,
     "src/codegen/destructuring-params.ts": 2908,
@@ -77,7 +77,7 @@
     "src/codegen/statements/loops.ts": 4461,
     "src/codegen/statements/nested-declarations.ts": 4461,
     "src/codegen/statements/variables.ts": 2647,
-    "src/codegen/string-ops.ts": 4314,
+    "src/codegen/string-ops.ts": 4339,
     "src/codegen/ta-dyn-mop.ts": 1791,
     "src/codegen/type-coercion.ts": 5250,
     "src/codegen/typed-this.ts": 2276,
