@@ -54,6 +54,7 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
+import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
@@ -3362,6 +3363,16 @@ export function compileReceiverMethodCall(
           return compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method, wrapperReceiverOverride);
         }
       }
+      // (#6651 cluster B) §22.1.3 step 2 — `GetMethod(searchValue, @@match /
+      // @@replace / @@search / @@split)` comes BEFORE the string lane, and for
+      // an ordinary-object search value it cannot be decided statically (the
+      // method is installed after the object is created). The probe declines
+      // for every other shape, so the fast paths are unchanged; the fallback
+      // arm is this very call. See `string-symbol-protocol.ts`.
+      const protocolResult = tryCompileStringSymbolProtocolDispatch(ctx, fctx, expr, propAccess, method, () =>
+        compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method),
+      );
+      if (protocolResult !== undefined) return protocolResult;
       return compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method);
     }
 
