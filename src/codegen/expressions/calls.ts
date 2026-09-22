@@ -5,6 +5,7 @@
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNamespaceQualifier } from "../static-enum-receiver.js";
+import { widenJsDefaultGuessSlot, widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
@@ -482,7 +483,7 @@ import {
   flushLateImportShifts,
   shiftLateImportIndices,
 } from "./late-imports.js";
-import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
+import { canonicalUndefinedExternInstrs, ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
 import {
@@ -1494,6 +1495,13 @@ export function emitReflectiveNativeProtoClosureCall(
   // runtime predicate. Other builtin families retain their existing ABI.
   const arrayBufferUndefinedPad =
     getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
+  // `String.prototype.normalize` has an optional form parameter even though
+  // its public `.length` is 0. Its closure body must distinguish an omitted
+  // form (and written `undefined`) from explicit `null`: only the former
+  // defaults to NFC. Keep this padding local to the one native String member;
+  // every other reflective ABI retains its existing null/undefined policy.
+  const nativeStringNormalize =
+    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (nativeProtoVariadic && i === 1) {
@@ -1521,9 +1529,24 @@ export function emitReflectiveNativeProtoClosureCall(
         coerceType(ctx, fctx, aType, pType);
       }
     } else if (pType.kind === "externref") {
-      fctx.body.push(...(arrayBufferUndefinedPad ?? [{ op: "ref.null.extern" }]));
+      // The receiver is always supplied by the caller. Only normalize's
+      // optional *form* slot (index 1) represents an omitted argument as the
+      // canonical undefined singleton; explicit null is still a real value.
+      const missingPad =
+        nativeStringNormalize && i === 1 ? canonicalUndefinedExternInstrs(ctx) : arrayBufferUndefinedPad;
+      fctx.body.push(...(missingPad ?? [{ op: "ref.null.extern" }]));
     } else {
       pushDefaultValue(fctx, pType, ctx);
+    }
+  }
+  // Native closure ABI carries only normalize's receiver and optional form.
+  // JavaScript still evaluates every surplus argument before entering the
+  // builtin, even though NormalizeString ignores them. Preserve those effects
+  // after the form slot and before call_ref; no other native member is widened.
+  if (nativeStringNormalize) {
+    for (let i = paramTypes.length; i < userArgs.length; i++) {
+      const extraType = compileExpression(ctx, fctx, userArgs[i]!);
+      if (extraType !== null) fctx.body.push({ op: "drop" });
     }
   }
 
@@ -10038,7 +10061,7 @@ function compileExpressionCallee(
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
       const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-      sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+      sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
     }
 
     // (#4394) Exact-first (typeIdx-aware) matching — the old kind-only linear
@@ -10164,6 +10187,29 @@ function compileExpressionCallee(
 }
 
 /**
+ * (#6651 C3) The value a lifted IIFE's MISSING externref argument is padded
+ * with. §9.2.12 FunctionDeclarationInstantiation pads the argument list with
+ * `undefined`, and `emitDefaultParamInit`'s externref arm tests exactly that
+ * (`__extern_is_undefined`); a bare `ref.null.extern` is JS **`null`** under
+ * the standalone value model (#2864), so the default never fired and the
+ * parameter kept the null.
+ *
+ * The bug is PRE-EXISTING and was latent: measured on the base tree,
+ * `(function (f: any = 123) { init = f; }())` already left `init` null. Only
+ * defaulted parameters reach the new arm — for a parameter with no
+ * initializer `ref.null.extern` still means "absent reference", which is the
+ * distinction `canonicalUndefinedExternInstrs` asks callers to preserve.
+ */
+function missingIIFEArgExternref(
+  ctx: CodegenContext,
+  funcExpr: ts.FunctionExpression | ts.ArrowFunction,
+  index: number,
+): Instr[] {
+  if (funcExpr.parameters[index]?.initializer === undefined) return [{ op: "ref.null.extern" }];
+  return canonicalUndefinedExternInstrs(ctx);
+}
+
+/**
  * Compile an IIFE (Immediately Invoked Function Expression):
  *   (function(params) { body })(args)
  *
@@ -10193,7 +10239,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   const paramTypes: ValType[] = [];
   for (const p of funcExpr.parameters) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    paramTypes.push(resolveWasmType(ctx, paramType));
+    paramTypes.push(widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType)));
   }
 
   // Determine return type
@@ -10466,7 +10512,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     const pt = paramTypes[i] ?? { kind: "f64" as const };
     if (pt.kind === "f64") fctx.body.push({ op: "f64.const", value: NaN });
     else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
-    else if (pt.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+    else if (pt.kind === "externref") fctx.body.push(...missingIIFEArgExternref(ctx, funcExpr, i));
     else if (pt.kind === "ref" || pt.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: pt.typeIdx });
   }
 

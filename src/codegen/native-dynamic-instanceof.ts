@@ -171,6 +171,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { noJsHost } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#6644) linked-provider target
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
@@ -238,6 +239,60 @@ function reserveObjectPrototypeInstanceHelper(ctx: CodegenContext): number {
   pushDefinedFunc(ctx, funcIdx, fn);
   ctx.funcMap.set(OBJECT_PROTO_INSTANCE_HELPER, funcIdx);
   return funcIdx;
+}
+
+/**
+ * (#6644) `Get(C, "prototype")` for an `instanceof` target the LINKED PROVIDER
+ * owns — the last-resort arm of {@link ensureNativeDynamicInstanceOf}'s body.
+ *
+ * Every other ingredient of §7.3.20 already crossed the seam correctly.
+ * Measured on the branch base with the real two-module fixture
+ * (`.tmp/s66/probes/p3.mts`): `typeof T` is `"function"`, `T.prototype` reads
+ * back the provider's own prototype object, `T.prototype.isPrototypeOf(V)` is
+ * `true` (the #6622 class-instance seed composed with #6617's link hop), and
+ * `Object.getPrototypeOf(V) === T.prototype` is `true`. The ONE step that
+ * missed was the own-property GATE: `hasOwnProperty(T, "prototype")` answers
+ * **false** for a provider-minted class object, because the consumer's
+ * own-property bag is a module-local `ref.test` ladder that a foreign struct
+ * matches nowhere. So the helper fell past both `prototype` arms to the
+ * closure identity edge (module-local by construction), missed there too, and
+ * answered the conservative `false` — for a DIRECTLY constructed provider
+ * instance as much as for a subclass of one.
+ *
+ * The peer's `callableKind` is the ownership answer the gate needs: a value
+ * with neither [[Call]] nor [[Construct]] over there is not a provider
+ * function object, and this emits NOTHING at all in a module that consumes no
+ * standalone provider. Bit 0 alone is not enough — a provider CLASS publishes
+ * construct-only (`fillStandaloneLinkBoundaryLateTerminals`'s encoding), and a
+ * class object is precisely the target every `x instanceof Temporal.Foo` names.
+ *
+ * `guardedTail` is §7.3.20 steps 3 + 5-7 for a `prototype` value already in
+ * `L_PROTO`, passed in already-built so each call site owns a FRESH instruction
+ * array (the index-finalization discipline every tail factory in this module
+ * follows). Emitted LAST, after every local answer has declined, so it can only
+ * replace a `false` that was a miss — never pre-empt an answer the consumer
+ * could give itself.
+ */
+function linkedPeerPrototypeArm(ctx: CodegenContext, externGetIdx: number, guardedTail: Instr[]): Instr[] {
+  const callableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  if (callableKindIdx === undefined) return [];
+  return [
+    { op: "local.get", index: P_TARGET },
+    { op: "call", funcIdx: callableKindIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: P_TARGET },
+        ...stringConstantExternrefInstrs(ctx, "prototype"),
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.tee", index: L_PROTO },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: guardedTail },
+      ],
+    },
+  ];
 }
 
 /**
@@ -461,6 +516,8 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
         // (#2660 M3) No own `prototype` anywhere — try the identity edge to the
         // compile-time prototype registry before giving up.
         ...prototypeEdgeArm(),
+        // (#6644) …and the linked provider, for a target it owns.
+        ...linkedPeerPrototypeArm(ctx, externGetIdx, [...requireObjectValue(), ...ordinaryHasInstanceTail()]),
         // Callable, and its `[[Prototype]]` source is not reachable from the
         // value — see the module header's "residual". Conservative `false`,
         // never a wrong `true` or a wrong throw.
@@ -486,6 +543,12 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
             then: [...requireObjectValue(), ...ordinaryHasInstanceTail()],
           },
         ] satisfies Instr[])),
+
+    // (#6644) A target this module cannot classify AT ALL may still be a
+    // function object the linked provider owns — `__typeof_function` tests
+    // THIS module's carrier shapes, so every provider-minted class object
+    // lands here.
+    ...linkedPeerPrototypeArm(ctx, externGetIdx, [...requireObjectValue(), ...ordinaryHasInstanceTail()]),
 
     // NOT CALLABLE ⇒ conservative false. Runtime classifiers cannot prove this
     // for every builtin carrier or class representation; statically provable

@@ -10,6 +10,7 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
 import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
@@ -72,7 +73,7 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
-import { patchInlinedIifeReturns } from "./iife-return-patch.js"; // (#5339)
+import { parkOuterReturnProtocol, patchInlinedIifeReturns, restoreOuterReturnProtocol } from "./iife-return-patch.js"; // (#5339, #6651 C3b)
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { resolvePlainCallThisTrampoline, tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203, #6436)
@@ -84,6 +85,8 @@ import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-r
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
+import { tryEmitLinkedStaticComputedCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
+import { isLinkedDynamicParentInstanceReceiver } from "../standalone-dynamic-parent-class.js"; // (#6654)
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
@@ -450,6 +453,10 @@ export function compileTailDispatch(
               // function would coerce i32→f64 before local.set into an i32 local.
               const savedReturnType = fctx.returnType;
               fctx.returnType = iifeWasmRetType;
+              // (#6651 C3b) …and park the enclosing function's own return
+              // protocol for the same reason, one level up: see
+              // `parkOuterReturnProtocol`.
+              const parkedReturnProtocol = parkOuterReturnProtocol(fctx);
 
               // A real function instantiation creates all var bindings before
               // body evaluation. Besides read-before-declaration semantics, this
@@ -489,6 +496,7 @@ export function compileTailDispatch(
 
               // Restore outer function's return type
               fctx.returnType = savedReturnType;
+              restoreOuterReturnProtocol(fctx, parkedReturnProtocol);
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
@@ -530,8 +538,11 @@ export function compileTailDispatch(
               // compileReturnStatement to drop the expression value).
               const savedReturnType = fctx.returnType;
               fctx.returnType = null;
-
-              // See the returning arm above: function-scoped vars must exist
+              // (#6651 C3b) Park the enclosing function's return protocol — see
+              // the returning arm above and `parkOuterReturnProtocol`. A void
+              // IIFE's `return;` inside a generator factory would otherwise
+              // branch to the GENERATOR's exit label.
+              const parkedReturnProtocol = parkOuterReturnProtocol(fctx);
               // before the first statement and must shadow outer/global names.
               const isLargeIife = bodyStmts.length >= 1_000;
               if (isLargeIife) {
@@ -567,6 +578,7 @@ export function compileTailDispatch(
 
               // Restore outer function's return type
               fctx.returnType = savedReturnType;
+              restoreOuterReturnProtocol(fctx, parkedReturnProtocol);
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
@@ -674,6 +686,15 @@ export function compileTailDispatch(
   if (ts.isElementAccessExpression(expr.expression)) {
     const elemAccess = expr.expression;
     const argExpr = elemAccess.argumentExpression;
+    // (#6644, #5383 S67) `S[k](...args)` where `S` extends a LINKED provider
+    // class: the whole call has to be shipped through the boundary's
+    // `__apply_closure` terminal, because every arm below marshals a FIXED
+    // arity and hands a spread's source array over as one argument. Gated on a
+    // spread being present, so a computed call that works today keeps its
+    // exact lowering; declines for every receiver that is not one of #6640's
+    // linked-dynamic-parent classes, which is every module with no provider.
+    const linkedSpreadCall = tryEmitLinkedStaticComputedCall(ctx, fctx, expr, elemAccess);
+    if (linkedSpreadCall !== undefined) return linkedSpreadCall;
     // Resolve the key to a static string: string literals, numeric literals, const variables, etc.
     let resolvedMethodName: string | undefined;
     if (argExpr) {
@@ -1521,6 +1542,10 @@ export function compileTailDispatch(
       // receiver. Placed BEFORE the field arm because a class with such a
       // member may also have a closure-valued field, and the runtime dispatch
       // serves that shape correctly too.
+      // (#6654) The linked-subclass arm spliced into the RUNTIME-key twin below
+      // has deliberately NO copy here — a statically resolved key on that
+      // receiver already answers correctly; see
+      // `isLinkedDynamicParentInstanceReceiver`.
       {
         const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
         if (classDyn !== undefined) return classDyn;
@@ -1601,6 +1626,18 @@ export function compileTailDispatch(
     // historical behaviour. A non-closure read value hits the safe default arm.
     // (#5195 F1/F3) The runtime-keyed twin of the resolved-key arm above — same
     // reason, and it must precede the receiver-less dispatch below.
+    // (#6654) An instance of a subclass of a LINKED PROVIDER class is in
+    // `ctx.classSet` like any other, so every user-class arm below claims it —
+    // but its carrier is the one the PROVIDER's constructor minted, which the
+    // consumer-side struct identity those arms resolve by cannot recognise, and
+    // they are fixed-arity. A receiver that is the CLASS OBJECT is excluded —
+    // that is a static call, owned by #6644's linked-static arms.
+    if (
+      isLinkedDynamicParentInstanceReceiver(ctx, elemAccess.expression, elemAccessReceiverClassName(ctx, elemAccess))
+    ) {
+      const linkedDyn = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+      if (linkedDyn !== undefined) return linkedDyn;
+    }
     {
       const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
       if (classDyn !== undefined) return classDyn;
@@ -1882,7 +1919,7 @@ export function compileTailDispatch(
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
         const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-        sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
       }
 
       const sigMatched = matchClosureInfoBySignature(ctx, sigParamWasmTypes, sigRetWasm, {
@@ -2019,7 +2056,7 @@ export function compileTailDispatch(
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
         const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-        sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
       }
 
       // (#1298 PR #231 fix) Look up an existing wrapper struct/funcref pair

@@ -3,6 +3,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import { dataFieldsHashKey } from "../wasm/physical/data-fields-key.js";
 import { primitiveSourceMethodSignature } from "../ir/object-method-key.js";
 import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -11,6 +12,7 @@ import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
+  fillErrorCtorUndefinedMessage,
   fillErrorStructMessageOwnPropArms,
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
@@ -407,6 +409,7 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484 S2) record property reads
+import { unshiftRegExpAccessorGetArm } from "./regexp-accessor-get-arm.js"; // (#6651 B4) §22.2.6 accessor reads
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import {
   noteNumberPrimitiveMethodDemand,
@@ -429,6 +432,7 @@ import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) 
 import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
+import { fillTaDynViewOwnKeyArms } from "./ta-dyn-own-keys.js"; // (#6651 E2) §10.4.5.6 own-key surface
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import {
   fillNativeReflectOwnPropertyMop,
@@ -436,6 +440,7 @@ import {
   fillReflectIsConstructor,
 } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
+import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
 import { fillClassToPrimitive } from "./class-to-primitive.js";
 import {
   fixupExternConvertAny,
@@ -511,9 +516,8 @@ import {
   callArgCoercionInstrs,
 } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
-import { ensureRegexMatchVecType } from "./native-regex.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
@@ -643,6 +647,7 @@ import {
   emitClosureCallExport3,
   emitClosureCallExport4,
   emitClosureMethodCallExportN,
+  topHighClosureMethodCallArity,
   emitIsClosureExport,
   emitIsCtorClosureExport,
   emitClosureArityExport,
@@ -6374,6 +6379,14 @@ export function generateModule(
       maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 6; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
+      // (#6655) …plus ONE dispatcher at the module's top above-cap arity.
+      // `TemporalHelpers.assertPlainDateTime` (14 formals) and
+      // `createDurationPropertyBagObserver` (11) are ordinary test262 harness
+      // functions; a dynamic call to either widened `n` past 8 and hit
+      // `__apply_closure`'s arity-overflow `unreachable`. `undefined` (and
+      // therefore byte-inert) for every module whose closures top out at 8.
+      const topArity = topHighClosureMethodCallArity(ctx, cap);
+      if (topArity !== undefined) emitClosureMethodCallExportN(ctx, topArity, cap + 1);
     }
 
     // (#1058) Callable-property sites can compile before the closure stored by
@@ -6603,6 +6616,10 @@ export function generateModule(
     // `__ta_dyn_<m>` helper exists, so every other method keeps its current
     // path. See ta-dyn-method-call.ts.
     unshiftExternMethodCallTaDynViewArm(ctx);
+    // (#6651 B4) §22.2.6 accessor READS on a `$NativeRegExp` — ahead of the
+    // closed-struct declared-field ladder (which answered `flags` with the raw
+    // bitfield) and behind the proto-cache arm, which must stay the prefix.
+    unshiftRegExpAccessorGetArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -6687,6 +6704,12 @@ export function generateModule(
     // (each fill prepends at body[0]; last fill wins the front slot, and the
     // dyn-view arm must beat the generic `$__vec_base` arms it subtypes).
     fillTaDynViewMopArms(ctx);
+    // (#6651 E2) The own-key surface (§10.4.5.6 + the own-ness predicates),
+    // including the `__getOwnPropertyNames` arm that `Reflect.ownKeys` /
+    // `Object.getOwnPropertyNames` read and `__object_keys` does NOT feed.
+    // AFTER `fillVecLengthDynamicArms` above, whose vec own-`"length"` arm
+    // sits in `__hasOwnProperty`/`__object_hasOwn` and must not win for a view.
+    fillTaDynViewOwnKeyArms(ctx);
     fillDataViewConstructProtoArm(ctx);
     fillReflectIsConstructor(ctx);
 
@@ -6742,6 +6765,7 @@ export function generateModule(
     // on native Error objects instead of missing to `undefined` (see the fill's
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
+    fillErrorCtorUndefinedMessage(ctx);
     fillExternGetErrorProps(ctx);
     // (#5269 L) …and the one intrinsic `$Error_struct` field that is a spec OWN
     // data property, so `hasOwnProperty(err, "message")` stops disagreeing with
@@ -6830,6 +6854,9 @@ export function generateModule(
     // `"1,2" == [1,2]` reduce a runtime `$Vec` host-free. No-op when no standalone
     // `__to_primitive` reserved it (`ctx.arrayToPrimitiveReserved`).
     fillArrayToPrimitive(ctx);
+    // (#6651 E3) …and the own-method prefix in front of it, which needs the
+    // same late helpers plus `__hasOwnProperty` / the #3537 vec bag.
+    fillVecOwnToPrimitive(ctx);
 
     // #1504: emit __is_closure(externref) -> i32 so the JS-side wrapExports
     // can discriminate a closure struct return from a vec/struct return
@@ -11325,6 +11352,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("unshift-extern-method-call-number-primitive", () => unshiftExternMethodCallNumberPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-bigint-primitive", () => unshiftExternMethodCallBigIntPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
+    // (#6651 B4) §22.2.6 accessor READS on a `$NativeRegExp` — ahead of the
+    // closed-struct declared-field ladder (which answered `flags` with the raw
+    // bitfield) and behind the proto-cache arm, which must stay the prefix.
+    profilePhase("unshift-regexp-accessor-get", () => unshiftRegExpAccessorGetArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -11387,6 +11418,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // in the single-source pipeline. Keep native views after generic vec fills
     // so they retain front precedence.
     profilePhase("fill-ta-dyn-view-mop-arms", () => fillTaDynViewMopArms(ctx));
+    // (#6651 E2) Multi-source parity with the single-source call above.
+    profilePhase("fill-ta-dyn-view-own-key-arms", () => fillTaDynViewOwnKeyArms(ctx));
     profilePhase("fill-data-view-construct-proto", () => fillDataViewConstructProtoArm(ctx));
     profilePhase("fill-reflect-is-constructor", () => fillReflectIsConstructor(ctx));
 
@@ -11401,6 +11434,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4098) Multi-source parity: the helper bodies were filled above; now
     // splice the native Error reader and publish the optional JS-boundary
     // adapter after native Error/string types are complete.
+    profilePhase("fill-error-ctor-undefined-message", () => fillErrorCtorUndefinedMessage(ctx));
     profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
     // (#5269 L) Multi-source parity with the single-source call above.
     profilePhase("fill-error-struct-hasown-message", () => fillErrorStructMessageOwnPropArms(ctx));
@@ -11533,6 +11567,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
+      // (#6655) Multi-source twin of the above-cap mint.
+      const topArity = topHighClosureMethodCallArity(ctx, cap);
+      if (topArity !== undefined) emitClosureMethodCallExportN(ctx, topArity, cap + 1);
     });
 
     // (#1058) Multi-source twin of the primary finalize seam. The parser-side
@@ -11632,6 +11669,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // unset) — byte-identical for modules that never reach `__to_primitive`'s
     // array/class-instance arms.
     profilePhase("fill-array-to-primitive", () => fillArrayToPrimitive(ctx));
+    profilePhase("fill-vec-own-to-primitive", () => fillVecOwnToPrimitive(ctx));
     profilePhase("fill-class-to-primitive", () => fillClassToPrimitive(ctx));
 
     // (#3981) Same class of multi-file gap as the two fills immediately above.
@@ -13615,7 +13653,9 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
       const paramDecl = param.valueDeclaration;
       if (paramDecl && ts.isParameter(paramDecl)) {
         const pt = ctx.checker.getTypeAtLocation(paramDecl);
-        let wasmType = resolveWasmType(ctx, pt);
+        // (#6651 C3) …and the JS-defaulted-parameter widening, for the same
+        // must-match reason. See `paramTypeIsJsDefaultGuess`.
+        let wasmType = widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, pt));
         if (paramDecl.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
@@ -14553,71 +14593,8 @@ function stripRegExpInferenceWrapper(expr: ts.Expression): ts.Expression {
   return expr;
 }
 
-function isStaticRegExpExpressionForInference(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const unwrapped = stripRegExpInferenceWrapper(expr);
-  if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
-  if (ts.isNewExpression(unwrapped) || (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken)) {
-    const callee = stripRegExpInferenceWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && callee.text === "RegExp";
-  }
-  if (ts.isIdentifier(unwrapped)) {
-    const sym = ctx.checker.getSymbolAtLocation(unwrapped);
-    const decl = sym?.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    return decl?.initializer !== undefined && isStaticRegExpExpressionForInference(ctx, decl.initializer);
-  }
-  return false;
-}
-
-function nativeStringVecTypeForStandaloneRegExp(ctx: CodegenContext): ValType | null {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
-  // The match result is the match-vec SUBTYPE of the nstr vec (#1914) — the
-  // precise local type keeps `.index`/`.input` reads cast-free while every
-  // base-vec consumer still applies via subsumption.
-  const vecTypeIdx = ensureRegexMatchVecType(ctx);
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
-}
-
-/** True for the computed key `Symbol.match` (the @@match well-known symbol). */
-function isSymbolMatchKeyForInference(arg: ts.Expression): boolean {
-  return (
-    ts.isPropertyAccessExpression(arg) &&
-    ts.isIdentifier(arg.expression) &&
-    arg.expression.text === "Symbol" &&
-    arg.name.text === "match"
-  );
-}
-
-function inferStandaloneRegExpMatchArrayType(
-  ctx: CodegenContext,
-  initializer: ts.Expression | undefined,
-): ValType | null {
-  if (!ctx.standalone || !initializer) return null;
-  const unwrapped = stripRegExpInferenceWrapper(initializer);
-  if (!ts.isCallExpression(unwrapped)) return null;
-  if (ts.isPropertyAccessExpression(unwrapped.expression)) {
-    const method = unwrapped.expression.name.text;
-    if (method === "exec") {
-      return isStaticRegExpExpressionForInference(ctx, unwrapped.expression.expression)
-        ? nativeStringVecTypeForStandaloneRegExp(ctx)
-        : null;
-    }
-    if (method === "match" && unwrapped.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, unwrapped.arguments[0]!)
-        ? nativeStringVecTypeForStandaloneRegExp(ctx)
-        : null;
-    }
-    return null;
-  }
-  // `re[Symbol.match](s)` (#2161) — symbol-protocol dual of `s.match(re)`.
-  if (ts.isElementAccessExpression(unwrapped.expression)) {
-    const elem = unwrapped.expression;
-    if (isSymbolMatchKeyForInference(elem.argumentExpression) && unwrapped.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, elem.expression)
-        ? nativeStringVecTypeForStandaloneRegExp(ctx)
-        : null;
-    }
-  }
-  return null;
+function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
+  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
 }
 
 function inferLetConstInitializerWasmType(
@@ -14637,7 +14614,7 @@ function inferLetConstInitializerWasmType(
   if (taViewType !== null) return taViewType;
   const taViewCallResultType = inferNativeTaViewCallResultType(ctx, initializer);
   if (taViewCallResultType !== null) return taViewCallResultType;
-  const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, initializer);
+  const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, declaration);
   if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
 
   const genericFactory = genericStructFactoryExpression(ctx, initializer);

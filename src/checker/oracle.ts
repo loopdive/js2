@@ -103,6 +103,8 @@ export interface TypeOracle {
    * for the raw checker (#1930 / #3273).
    */
   wellKnownSymbolMemberOf(node: ts.Node, name: string): boolean | undefined;
+  /** Common iterator and next members, unlike existential union symbol membership. */
+  commonIteratorMembersOf(node: ts.Node): boolean | undefined;
   /** Stable identity token for the node's checker type (Slice 5). */
   typeKeyOf(node: ts.Node): OracleTypeKey;
   /** Declared type NAME when the node's type has a named symbol. */
@@ -325,6 +327,19 @@ export class TsCheckerOracle implements TypeOracle {
   builtinReceiverOf(node: ts.Node): string | undefined {
     const fact = this.typeFactOf(node);
     return fact.kind === "builtin" ? fact.name : undefined;
+  }
+
+  commonIteratorMembersOf(node: ts.Node): boolean | undefined {
+    const type = this.checker.getTypeAtLocation(node);
+    if (!type || type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return undefined;
+    let iterable = false;
+    let hasNext = false;
+    for (const property of this.checker.getPropertiesOfType(type)) {
+      const name = property.getName();
+      if (name.startsWith("__@iterator")) iterable = true;
+      else if (name === "next") hasNext = true;
+    }
+    return iterable && hasNext;
   }
 
   wellKnownSymbolMemberOf(node: ts.Node, name: string): boolean | undefined {

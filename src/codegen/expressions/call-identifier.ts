@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
   captureSourceSlot,
   expectsBoxedCaptureValue,
@@ -66,6 +67,7 @@ import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } f
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
+import { tryEmitStandaloneDynamicSpreadCall } from "../standalone-dynamic-spread-call.js"; // (#6646)
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import {
@@ -2017,6 +2019,17 @@ export function compileIdentifierCall(
         const spreadCall = emitDynamicSpreadCall(ctx, fctx, expr, expectedType);
         if (spreadCall !== null) return spreadCall;
       }
+      // (#6646, #5383 S68) The HOST-FREE twin of the arm immediately above.
+      // Its header claimed the standalone lane "retains its native ObjVec /
+      // call_ref lowering, where the vector … can be expanded without a host
+      // boundary"; measured, the dispatch this block falls into is fixed-arity
+      // like every other, so `callSpread(f,a){return f(...a)}` handed `f` the
+      // source ARRAY as formal zero. Same ObjVec argv, no host boundary — see
+      // standalone-dynamic-spread-call.ts.
+      if (isKnownVariable && hasSpreadArg && noJsHost(ctx)) {
+        const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
+        if (nativeSpreadCall !== undefined) return nativeSpreadCall;
+      }
       if (callSigs && callSigs.length > 0 && !heterogeneousCallableCapture) {
         // Populate runtime callback candidates before compiling this HOF body.
         // Without the pre-scan, Test262's one-formal function expression is
@@ -2121,7 +2134,17 @@ export function compileIdentifierCall(
             continue;
           }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-          sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+          // (#6651 C3/C3b) The third widening this site has to mirror, for the
+          // reason the two above already spell out: a JavaScript parameter whose
+          // only type evidence is its own default gets an `externref` slot in the
+          // callee (`paramTypeIsJsDefaultGuess`), so asking here for the checker's
+          // `number` builds a wrapper signature the compiled callee never declared.
+          // Measured on `class C { async m(a = 23) {} }`: `var ref = C.prototype.m;
+          // ref(undefined)` emitted an all-f64 dispatch chain while the trampoline's
+          // own func type was `(externref) -> externref`, so the call reached no arm
+          // and the method body never ran — the async-method lane C3 had to exclude
+          // until this site mirrored the widening.
+          sigParamWasmTypes.push(widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, paramType)));
         }
 
         // (#4616) A REAL declared rest param (`body: (...args: unknown[]) =>

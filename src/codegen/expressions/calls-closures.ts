@@ -9,6 +9,7 @@
  */
 import { ts } from "../../ts-api.js";
 import { preserveOptionalDeclarationParameter } from "../optional-declaration-parameter.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
@@ -1589,7 +1590,7 @@ export function compileCallablePropertyCall(
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
     const declaration = sigParameters[i]!.valueDeclaration;
-    const type = resolveWasmType(ctx, paramType);
+    const type = widenJsDefaultGuessSymbolSlot(sigParameters[i], resolveWasmType(ctx, paramType));
     sigParamWasmTypes.push(
       declaration && ts.isParameter(declaration) ? preserveOptionalDeclarationParameter(ctx, declaration, type) : type,
     );
@@ -2193,7 +2194,7 @@ export function compileCallableElementAccessCall(
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
     const declaration = sig.parameters[i]!.valueDeclaration;
-    const type = resolveWasmType(ctx, paramType);
+    const type = widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType));
     sigParamWasmTypes.push(
       declaration && ts.isParameter(declaration) ? preserveOptionalDeclarationParameter(ctx, declaration, type) : type,
     );

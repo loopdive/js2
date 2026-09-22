@@ -54,6 +54,7 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
+import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
@@ -73,6 +74,7 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
+import { buildTaFromMapfnCallableGate, buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6651 E2) §23.2.1 carrier identity + §23.2.2.1 step 3
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { taDynDetachedGuardPrologue } from "../ta-dyn-method-call.js"; // (#6501) §23.2.4.4 prologue for the helper-routed mutators
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
@@ -97,6 +99,10 @@ import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
+import {
+  tryEmitStandaloneDynamicSpreadCall,
+  tryEmitStandaloneTrailingSpreadCall,
+} from "../standalone-dynamic-spread-call.js"; // (#6645/#6646)
 import { compilePropertyIntrospection } from "../object-ops.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveBindDynHelper } from "../object-runtime.js";
 import {
@@ -404,6 +410,11 @@ function tryEmitTaStaticOfFrom(
         const nullishIdx = ctx.funcMap.get("__nullish_to_null");
         const mapfn = argLocals[1]!;
         const thisArg = argLocals[2];
+        // (#6651 E2) §23.2.2.1 step 3 runs BEFORE step 4's
+        // `GetMethod(source, @@iterator)`, so the gate has to be emitted here —
+        // ahead of both drain arms — not folded into the nullish test below,
+        // which cannot tell `null` (a TypeError) from `undefined` (no mapping).
+        fctx.body.push(...buildTaFromMapfnCallableGate(ctx, mapfn));
         const iterArm: Instr[] = [
           { op: "local.get", index: src },
           { op: "f64.const", value: -1 },
@@ -465,6 +476,21 @@ function tryEmitTaStaticOfFrom(
   fctx.body.push({ op: "local.set", index: isTaCtorLocal });
   fctx.body.push(
     ...buildInt8ArrayCarrierMatch(ctx, recvAnyLocal, [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: isTaCtorLocal },
+    ]),
+  );
+  // (#6651 E2) …and the `%TypedArray%` INTRINSIC carrier (§23.2.1), which is
+  // neither a `$__ta_ctor` nor the Int8Array carrier. IsConstructor(%TypedArray%)
+  // is TRUE, so §23.2.2.1 step 2 does NOT throw for it — the abstract-constructor
+  // TypeError belongs to TypedArrayCreate at step 5/6, AFTER the source has been
+  // drained. Declining here sent `TypedArray.from(src)` to the dispatcher, whose
+  // refusal closure threw that TypeError as the FIRST observable act, so a
+  // source whose `@@iterator`/`next`/`length` throws reported the wrong
+  // completion. `__ta_from_arraylike` raises it at the right point instead
+  // (kind < 0 arm), so admitting the carrier here is what restores spec order.
+  fctx.body.push(
+    ...buildTypedArrayIntrinsicCarrierMatch(ctx, recvAnyLocal, [
       { op: "i32.const", value: 1 },
       { op: "local.set", index: isTaCtorLocal },
     ]),
@@ -2354,6 +2380,19 @@ export function compileReceiverMethodCall(
       if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
         funcIdx = undefined;
       }
+      // (#6645, #5383 S68) `o.m(a, ...src, b)` — a positional argument AFTER a
+      // spread. The arms below ARE spread-aware (#6616), but bind formals by
+      // the static accounting `compileSpreadCallArgs` documents, which is exact
+      // only while the spread's length is known at compile time. With a
+      // trailing argument the binding shifts — see
+      // {@link tryEmitStandaloneTrailingSpreadCall} for the measurement. Sits
+      // before the resolved-method arm because that arm claims the call
+      // whenever `funcIdx` is defined, which is the case for every
+      // object-literal method (`TemporalHelpers.assertPlainDate`).
+      {
+        const trailingSpread = tryEmitStandaloneTrailingSpreadCall(ctx, fctx, expr);
+        if (trailingSpread !== undefined) return trailingSpread;
+      }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         // (#4775) A fnctor receiver gets its devirtualization chance HERE.
@@ -2382,6 +2421,19 @@ export function compileReceiverMethodCall(
           });
           if (devirtualized !== undefined) return devirtualized;
         }
+        // (#6645, #5383 S68) A SPREAD into a callable PROPERTY. Both arms of
+        // `compileCallablePropertyCall` marshal a fixed arity — one local per
+        // AST argument node — so the spread's source array arrives as formal
+        // ZERO. Measured against the real Temporal provider,
+        // `.tmp/s68/probes/ea.js`: `TemporalHelpers.checkStaticInvalidReceiver(
+        // ...[Ctor,"from",["x"],fn])` threw "Cannot read properties of
+        // undefined (reading 'apply')" (`construct[method]` on the ARRAY),
+        // while the identical call with the four arguments written out ran
+        // both `from` and the assertion callback. Route it through the
+        // runtime-argv terminal instead; gated on a spread being present, so
+        // every callable-property call that works today is untouched.
+        const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
+        if (nativeSpreadCall !== undefined) return nativeSpreadCall;
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
@@ -3343,6 +3395,16 @@ export function compileReceiverMethodCall(
           return compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method, wrapperReceiverOverride);
         }
       }
+      // (#6651 cluster B) §22.1.3 step 2 — `GetMethod(searchValue, @@match /
+      // @@replace / @@search / @@split)` comes BEFORE the string lane, and for
+      // an ordinary-object search value it cannot be decided statically (the
+      // method is installed after the object is created). The probe declines
+      // for every other shape, so the fast paths are unchanged; the fallback
+      // arm is this very call. See `string-symbol-protocol.ts`.
+      const protocolResult = tryCompileStringSymbolProtocolDispatch(ctx, fctx, expr, propAccess, method, () =>
+        compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method),
+      );
+      if (protocolResult !== undefined) return protocolResult;
       return compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method);
     }
 

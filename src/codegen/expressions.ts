@@ -95,6 +95,7 @@ import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 import { brandBooleanBinaryResult, compileBinaryExpression } from "./binary-ops.js";
 import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
+import { tryEmitLinkedStaticComputedRead } from "./standalone-linked-static-inheritance.js"; // (#6644)
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
 import { describeInternalError } from "./internal-error.js";
@@ -1441,6 +1442,14 @@ function compileExpressionInner(
   }
 
   if (ts.isElementAccessExpression(expr)) {
+    // (#6644) A COMPUTED static read on a class that `extends` a LINKED
+    // provider class falls back to the parent's class object when this
+    // module's own lowering misses — a strict superset of that lowering,
+    // which it calls. Declines for every other receiver.
+    const linkedComputed = tryEmitLinkedStaticComputedRead(ctx, fctx, expr, () =>
+      compileElementAccess(ctx, fctx, expr, { kind: "externref" }),
+    );
+    if (linkedComputed !== undefined) return linkedComputed;
     // (#2128) Same getter-dispatch re-sync as the property-access arm above.
     // (#3037 CS1b(ii)) Re-classify a dynamic `any`-element read (`a[i]`, `o[key]`)
     // that is a direct operand of a standalone `any`-equality into the `$AnyValue`

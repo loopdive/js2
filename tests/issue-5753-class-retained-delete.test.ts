@@ -149,6 +149,18 @@ cases.push([
   return score;`,
 ]);
 
+cases.push([
+  "class marker and independent anonymous expando coexist",
+  `class C{x=11;}const c=new C();
+  const template={raw:{length:1}};const raw=template.raw;
+  const otherTemplate={raw:{length:1}};const other=otherTemplate.raw;
+  Object.defineProperty(c,"x",{value:23,writable:true,configurable:true});
+  Object.defineProperty(raw,"extra",{value:31,writable:true,configurable:true});
+  Object.defineProperty(other,"extra",{value:47,writable:true,configurable:true});
+  const a=remove(c,"x");const b=remove(raw,"extra");
+  return a+2*b+4*own(c,"x")+8*own(raw,"extra")+16*own(other,"extra")+32*remove(c,"x");`,
+]);
+
 describe.each([0, 2])("class retained-entry deletion O%i (known diagnostics explicitly separate)", (level) => {
   it.each(cases)(
     "%s",

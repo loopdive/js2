@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { unwrapReturnCarrierExpression } from "./declarations/host-carrier-object-literal.js";
+import { objectLiteralSpreadTakesHostPath } from "./literals.js";
 
 /**
  * (#6614) The RETURN-SLOT twin of #5376.
@@ -48,19 +50,24 @@ import type { CodegenContext } from "./context/types.js";
  *
  * ## Scope
  *
- * - **Accessor literals only.** Same deliberate narrowing as #5376: the other
- *   `objectLiteralForcesHostPath` reasons (runtime computed key,
- *   `[Symbol.dispose]`, empty-string key, spread in a non-specific context)
- *   share the null-drop mechanism and are a separate, separately-measured
- *   change. The existing FunctionDeclaration arm uses the broader predicate;
- *   this pre-pass is additive, so a declaration keeps whichever arm fires.
+ * - **Accessor literals plus SPREAD literals (#6652).** #6614 shipped the
+ *   accessor reason alone and named the others "a separate, separately-measured
+ *   change". #6650 then measured the spread reason at the FunctionDeclaration
+ *   return boundary (`Temporal.PlainDate.prototype.add` answered null for every
+ *   input, 72 → 138 of 150 rows) and #6652 measured the same mismatch surviving
+ *   in the other five spellings above, so the spread reason now joins this
+ *   pre-pass. The remaining `objectLiteralForcesHostPath` arms stay out — see
+ *   `isHostCarrierLiteral` for why that is a pipeline-ordering constraint, not
+ *   a scope preference.
  * - **Standalone / WASI only.** The JS-host lane represents every object as an
  *   externref already, so all six spellings above answer correctly there and
  *   its bytes must not move.
  * - Lives in its own module because `src/codegen/index.ts` — where the pre-pass
- *   is driven — cannot import `literals.ts` (index↔literals cycle), which is
- *   where `objectLiteralForcesHostPath` lives. Same reason as
- *   `accessor-value-field.ts`.
+ *   is driven — cannot import `literals.ts` DIRECTLY (index↔literals cycle).
+ *   Same reason as `accessor-value-field.ts`. This module may: the graph
+ *   index → declarations → declarations/host-carrier-object-literal → literals
+ *   already exists and resolves, because nothing in it is read at module-eval
+ *   time.
  */
 
 /** A literal that `compileObjectLiteralWithAccessors` builds as a host object. */
@@ -71,18 +78,22 @@ function isAccessorLiteral(expr: ts.Expression): expr is ts.ObjectLiteralExpress
   );
 }
 
-function unwrapCarrier(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isNonNullExpression(current) ||
-    ts.isSatisfiesExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
+/**
+ * (#6652) The literals this pre-pass has to pin: accessor-bearing (SHAPE) **or**
+ * spread-in-a-non-specific-context (#2804, CONTEXT). Both build an open host
+ * `$Object` and hand back an externref; both null-drop against a concrete
+ * struct result ABI.
+ *
+ * The remaining `objectLiteralForcesHostPath` arms are deliberately still not
+ * consulted here. Several of them read `ctx` state a pre-pass running before
+ * `collectDeclarations` has not populated (`_hasRuntimeComputedKey`,
+ * `_hasRealmGlobalObjectValue`). `objectLiteralSpreadTakesHostPath` is pure —
+ * it asks the TypeScript checker for a contextual type and nothing else, which is what
+ * makes it safe at this point in the pipeline.
+ */
+function isHostCarrierLiteral(ctx: CodegenContext, expr: ts.Expression): expr is ts.ObjectLiteralExpression {
+  if (!ts.isObjectLiteralExpression(expr)) return false;
+  return isAccessorLiteral(expr) || objectLiteralSpreadTakesHostPath(ctx, expr);
 }
 
 type FunctionLike =
@@ -110,12 +121,13 @@ function isOwnFunctionBoundary(node: ts.Node): boolean {
 }
 
 /**
- * True when `fn` hands an accessor-bearing object literal out through its
- * return slot — directly, through a local binding, or through either arm of a
+ * True when `fn` hands a host-carrier object literal out through its return
+ * slot — directly, through a local binding, or through either arm of a
  * conditional. Mirrors `declarations.ts::functionReturnsHostObjectLiteralCarrier`
- * so the two cannot disagree about what "returns a host carrier" means.
+ * so the two cannot disagree about what "returns a host carrier" means; they
+ * now share the wrapper-peeling helper outright (#6652).
  */
-function returnsAccessorLiteral(ctx: CodegenContext, fn: FunctionLike): boolean {
+function returnsHostCarrierLiteral(ctx: CodegenContext, fn: FunctionLike): boolean {
   const body = fn.body;
   if (!body) return false;
 
@@ -129,7 +141,7 @@ function returnsAccessorLiteral(ctx: CodegenContext, fn: FunctionLike): boolean 
     const visit = (node: ts.Node): void => {
       if (node !== body && isOwnFunctionBoundary(node)) return;
       if (ts.isVariableDeclaration(node) && node.initializer) {
-        if (isAccessorLiteral(unwrapCarrier(node.initializer))) hostDeclarations.add(node);
+        if (isHostCarrierLiteral(ctx, unwrapReturnCarrierExpression(node.initializer))) hostDeclarations.add(node);
       } else if (ts.isReturnStatement(node) && node.expression) {
         returns.push(node.expression);
       }
@@ -139,8 +151,8 @@ function returnsAccessorLiteral(ctx: CodegenContext, fn: FunctionLike): boolean 
   }
 
   const isHostCarrier = (expression: ts.Expression): boolean => {
-    const current = unwrapCarrier(expression);
-    if (isAccessorLiteral(current)) return true;
+    const current = unwrapReturnCarrierExpression(expression);
+    if (isHostCarrierLiteral(ctx, current)) return true;
     if (ts.isIdentifier(current)) {
       const declaration = ctx.oracle.valueDeclarationOf(current);
       return declaration !== undefined && ts.isVariableDeclaration(declaration) && hostDeclarations.has(declaration);
@@ -155,8 +167,8 @@ function returnsAccessorLiteral(ctx: CodegenContext, fn: FunctionLike): boolean 
 }
 
 /**
- * Pre-pass: record the return type of every function-like that hands out an
- * accessor-bearing object literal, so `resolveWasmType` answers `externref` for
+ * Pre-pass: record the return type of every function-like that hands out a
+ * host-carrier object literal, so `resolveWasmType` answers `externref` for
  * that type wherever it lands (module global, local slot, struct field).
  *
  * Runs at the same deterministic point as
@@ -171,7 +183,7 @@ export function collectAccessorLiteralReturnCarrierTypes(
   if (!ctx.standalone && !ctx.wasi) return;
   const carriers = new Set<ts.SignatureDeclaration>();
   const visit = (node: ts.Node): void => {
-    if (isFunctionLike(node) && returnsAccessorLiteral(ctx, node)) {
+    if (isFunctionLike(node) && returnsHostCarrierLiteral(ctx, node)) {
       carriers.add(node);
       const sig = checker.getSignatureFromDeclaration(node);
       if (sig) ctx.objectHashConsumerTypes.add(checker.getReturnTypeOfSignature(sig));

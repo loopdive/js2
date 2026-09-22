@@ -267,6 +267,10 @@ fix:  [year=2000]      … [cmp=-1]
    So the subclass answering `false` is that pre-existing gap, not a new one;
    both facts are PINNED as controls in the witness so the claim stays honest.
    This is the remaining piece of #6640's own item (3).
+   **RESOLVED by #6644 (S66, 2026-09-19)** — the own-property gate in
+   `__instanceof_dynamic` now falls back to the linked peer for a
+   provider-owned target. The two controls in this issue's witness are
+   updated to `true` in that change-set.
 2. **Unresolved-IDENTIFIER heritage is NOT covered** (`class MySubclass extends
    construct {}`, where `construct` is a function parameter — test262's
    `checkSubclassConstructorUndefined`/`NotCalled` shape). That arm is shared

@@ -3,6 +3,7 @@
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
   getNullablePrimitiveInfo,
@@ -1327,6 +1328,10 @@ function compileIdentifierCore(
       !fctx.forInIdentifierVars?.has(name) &&
       !fctx.mixedAssignmentCarrierVars?.has(name) &&
       !mappedExternrefParam &&
+      // (#6651 C3) A JavaScript defaulted parameter's checker type is read off
+      // its own initializer; the slot was widened for exactly that reason, so
+      // re-narrowing it here would undo the widening one instruction later.
+      !paramReadIsJsDefaultGuess(ctx, id) &&
       !expressionHasWidenedPropertyType(ctx, id)
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);

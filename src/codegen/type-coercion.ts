@@ -39,7 +39,7 @@ import {
   reserveTypedMemberGetF64DispatchLate,
   unpackedElemType,
 } from "./shared.js";
-import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { emitStandaloneObjectToNumber, tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
@@ -3783,6 +3783,17 @@ export function coerceType(
       }
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "f64.const", value: NaN });
+      return;
+    }
+    // The runtime's open `$Object` carrier is intentionally absent from the
+    // nominal type-name map below, but it remains an ordinary ECMAScript
+    // object. Route only this exact standalone carrier through the native
+    // ToPrimitive/ToNumber helpers before the re-entrancy bookkeeping so a
+    // provider decline leaves both the value stack and guard state untouched.
+    if (
+      typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx &&
+      emitStandaloneObjectToNumber(ctx, fctx, toPrimitiveHint ?? "number")
+    ) {
       return;
     }
     const wasInsideValueOf = (ctx as any).__insideValueOfCoercion ?? false;

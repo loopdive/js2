@@ -68,7 +68,9 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
-import { MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
+import { ITER_KIND_MAPSET, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter; (#6653) reflective method bodies
+import { ensureSetHelpers } from "./set-runtime.js"; // (#6653) __set_add for the reflective Set.prototype.add body
+import { ensureNativeIteratorRuntime } from "./iterator-native.js"; // (#6653) $__IterRec producer for reflective entries/keys/values
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
@@ -100,6 +102,7 @@ import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) Annex B §
 import { emitStringHtmlWrapperMemberBody } from "./string-proto-html.js"; // (#4445) reflective HTML wrappers
 import { emitStringMatchSearchMemberBody } from "./string-proto-match-search.js"; // (#4439) reflective match/search
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
+import { emitStringNormalizeMemberBody } from "./string-proto-normalize.js";
 import {
   NO_ARG_STRING_MEMBER_HELPER,
   SUPERSEDED_BY_BORROWED_PATH,
@@ -759,6 +762,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
  * closure types stay byte-identical.
  */
 const STRING_PROTO_METHOD_PARAM_SLOTS: Readonly<Record<string, number>> = {
+  // `normalize` advertises length 0 but needs a real optional form slot so
+  // borrowed `.call` / `.apply` can distinguish omitted/undefined from null.
+  normalize: 1,
   indexOf: 2, // (searchString, position) §22.1.3.8
   lastIndexOf: 2, // (searchString, position) §22.1.3.9
   includes: 2, // (searchString, position) §22.1.3.7
@@ -1105,6 +1111,11 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (member === "replace")
     return (
       emitStringReplaceMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
+      emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
+    );
+  if (member === "normalize" && (ctx.standalone || ctx.wasi))
+    return (
+      emitStringNormalizeMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
       emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
     );
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
@@ -1956,6 +1967,143 @@ function emitCollectionSizeGetterBody(ctx: CodegenContext, fctx: FunctionContext
 }
 
 /**
+ * (#6653 follow-up) Real reflective bodies for the collection proto METHODS
+ * whose native kernels already exist (`__map_get/has/delete/set/clear`,
+ * `__set_add`, `__map_iter_new` + the `$__IterRec` producer that
+ * `%MapIteratorPrototype%.next` (#6484 S2) steps). deno_core's `makeSafe`
+ * calls every zero-arg proto member on a dummy instance, so the
+ * degrade-to-TypeError stand-ins aborted the bootstrap at
+ * "Map.prototype.clear is not yet implemented". Members without a native
+ * kernel (forEach, getOrInsert*, the set-algebra family) return `null` and
+ * keep the catchable refusal.
+ *
+ * Closure ABI (native-proto.ts): local 0 = self wrapper, local 1 = externref
+ * `this`, locals 2+ = the member's boxed externref arguments.
+ */
+function emitCollectionMethodBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: "Map" | "Set",
+  member: string,
+): ValType | null {
+  const mapMembers = ["clear", "delete", "get", "has", "set", "entries", "keys", "values"];
+  const setMembers = ["add", "clear", "delete", "has", "entries", "values"];
+  if (!(name === "Map" ? mapMembers : setMembers).includes(member)) return null;
+  const resultType: ValType = { kind: "externref" };
+  const refuseMsg = `TypeError: Method ${name}.prototype.${member} called on incompatible receiver`;
+
+  ensureMapHelpers(ctx);
+  if (name === "Set") ensureSetHelpers(ctx);
+  const isIterProducer = member === "entries" || member === "keys" || member === "values";
+  if (isIterProducer) ensureNativeIteratorRuntime(ctx);
+  const helperName =
+    name === "Set" && member === "add" ? "__set_add" : isIterProducer ? "__map_iter_new" : `__map_${member}`;
+  const helperIdx = ctx.mapHelpers.get(helperName);
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  if (helperIdx === undefined || ctx.mapTypeIdx < 0 || (isIterProducer && iterRecTypeIdx === undefined)) {
+    // No native collection runtime in this module → no receiver can carry the
+    // internal slot → the RequireInternalSlot throw applies unconditionally.
+    emitBrandCheckTypeError(ctx, fctx.body, refuseMsg);
+    return resultType;
+  }
+  const boxBoolIdx =
+    member === "has" || member === "delete"
+      ? ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }])
+      : undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  // this → brand-checked (ref $Map) on the stack.
+  fctx.body.push({ op: "local.get", index: 1 });
+  emitReceiverBrandCheck(
+    ctx,
+    fctx,
+    { kind: "externref" },
+    {
+      message: refuseMsg,
+      structTypeIdx: ctx.mapTypeIdx,
+      kindField: {
+        fieldIdx: MAP_LAYOUT.M_KIND,
+        accept: [name === "Map" ? COLLECTION_KIND.MAP : COLLECTION_KIND.SET],
+      },
+    },
+  );
+
+  const pushArgAsAny = (local: number): void => {
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "any.convert_extern" });
+  };
+  switch (member) {
+    case "clear": {
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      // §24.1.3.1 / §24.2.3.2 answer undefined.
+      const undefClear = undefinedExternInstrs(ctx);
+      if (undefClear !== undefined) fctx.body.push(...undefClear);
+      else fctx.body.push({ op: "ref.null.extern" });
+      return resultType;
+    }
+    case "get": {
+      pushArgAsAny(2);
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      // A miss is a null anyref; under the undefined-singleton regime it must
+      // surface as the `$undefined` singleton (mirrors the gOPD accessor read).
+      const undefGet = undefinedExternInstrs(ctx);
+      if (undefGet !== undefined) {
+        const anyTmp = allocLocal(fctx, `__coll_get_${fctx.locals.length}`, { kind: "anyref" });
+        fctx.body.push({ op: "local.tee", index: anyTmp });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [...undefGet],
+          else: [{ op: "local.get", index: anyTmp }, { op: "extern.convert_any" }],
+        });
+      } else {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      return resultType;
+    }
+    case "has":
+    case "delete": {
+      pushArgAsAny(2);
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      fctx.body.push({ op: "call", funcIdx: boxBoolIdx! });
+      return resultType;
+    }
+    case "add":
+    case "set": {
+      pushArgAsAny(2);
+      if (member === "set") pushArgAsAny(3);
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      // Both return `this` (the receiver map/set) — chainable.
+      fctx.body.push({ op: "extern.convert_any" });
+      return resultType;
+    }
+    default: {
+      // entries / keys / values → the same live `$__IterRec` record the
+      // expression-position producer builds (emitLiveCollectionIterRec), so
+      // `%MapIteratorPrototype%.next`'s family check adopts it unchanged.
+      const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+      const iterKind = member === "entries" ? 2 : name === "Set" ? 1 : member === "keys" ? 0 : 1;
+      const mTmp = allocLocal(fctx, `__coll_iter_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+      fctx.body.push({ op: "local.set", index: mTmp });
+      fctx.body.push(
+        { op: "i32.const", value: ITER_KIND_MAPSET },
+        { op: "ref.null", typeIdx: vecTypeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: mTmp },
+        { op: "i32.const", value: iterKind },
+        { op: "call", funcIdx: helperIdx },
+        { op: "extern.convert_any" },
+        { op: "i32.const", value: name === "Set" ? ITER_FAMILY_SET : ITER_FAMILY_MAP },
+        { op: "struct.new", typeIdx: iterRecTypeIdx! },
+        { op: "extern.convert_any" },
+      );
+      return resultType;
+    }
+  }
+}
+
+/**
  * (#3171) Glue factory for Map/Set — `makeGlue` plus the `size` accessor
  * getter (real reflective body via {@link emitCollectionSizeGetterBody}).
  */
@@ -1986,7 +2134,7 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
-        : emitProtoMemberBodyRefusal(c, fctx, name, member),
+        : (emitCollectionMethodBody(c, fctx, name, member) ?? emitProtoMemberBodyRefusal(c, fctx, name, member)),
   };
 }
 
@@ -2438,7 +2586,14 @@ function makeGlue(
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
-    memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
+    memberParamSlots: (member) => {
+      if (name !== "String") return 0;
+      // All pre-existing String slot overrides are shared with host/native-first
+      // closure ABIs. Only normalize's new optional-form slot belongs to the
+      // native standalone/WASI body.
+      if (member === "normalize" && !(ctx.standalone || ctx.wasi)) return 0;
+      return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
+    },
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true

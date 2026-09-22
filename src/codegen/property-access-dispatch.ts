@@ -82,7 +82,8 @@ import {
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-method-shadow.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
-import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
+import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
+import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -222,6 +223,7 @@ import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } 
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
 import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
+import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -1464,6 +1466,14 @@ export function tryNativeErrorMemberRead(
           : { kind: "externref" };
 
       if (isErrorLhs) {
+        // (#6651 cluster C, C2) `message` is the one field that can legitimately
+        // be ABSENT (§20.5.1.1 step 3), so a null field must continue down the
+        // prototype chain instead of answering. Measurement and the `name` /
+        // `stack` exclusion: error-message-proto-read.ts.
+        if (propName === "message") {
+          emitErrorMessageReadWithProtoFallback(ctx, fctx, structIdx, fieldIdx, propName, resultType);
+          return resultType;
+        }
         // Static Error type — the value is always an `$Error` struct, so cast
         // unconditionally (a runtime non-Error would mean a miscompile elsewhere).
         fctx.body.push({ op: "ref.cast", typeIdx: structIdx });
@@ -2396,6 +2406,26 @@ function emitClassStaticMemberRead(
       fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       return { kind: "externref" };
     }
+  }
+  // (#6644) LAST arm — §15.7.14 step 6 across the wasm→wasm link. Every own
+  // static surface above has already declined, so a class that `extends` a
+  // LINKED provider class (#6640) puts the question to its parent's class
+  // object. A module with no linked provider never reaches this, and neither
+  // does any own member: `linkedStaticParentHeritage` answers only for a class
+  // in `classLinkedDynamicParentExpr`, and only for a name a derived class does
+  // not own outright.
+  const linkedHeritage = linkedStaticParentHeritage(ctx, resolvedClass, propName);
+  if (
+    linkedHeritage !== undefined &&
+    emitLinkedStaticMemberRead(ctx, fctx, resolvedClass, propName, (heritageExpr) => {
+      const heritageType = compileExpression(ctx, fctx, heritageExpr, { kind: "externref" });
+      if (heritageType === undefined) return false;
+      if (heritageType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (heritageType.kind !== "externref") coerceType(ctx, fctx, heritageType, { kind: "externref" });
+      return true;
+    })
+  ) {
+    return { kind: "externref" };
   }
   return PA_FALLTHROUGH;
 }

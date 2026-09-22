@@ -4,7 +4,7 @@ import { parseTest262SemanticProviders } from "./test262-lane.mjs";
  * Uses child_process.fork for full memory isolation.
  *
  * Protocol:
- *   Parent sends: { id, source, execute, isNegative, isRuntimeNegative, negativePhase?, target?, fixtureFiles?, dynamicFixtureFiles?, entryFile? }
+ *   Parent sends: { id, source, execute, isNegative, isRuntimeNegative, negativePhase?, target?, fixtureFiles?, dynamicFixtureFiles?, entryFile?, selfModuleGraph? }
  *   Worker sends: { id, status, error?, ret?, compileMs?, execMs?, errorCodes?, ... }
  *
  * When execute=false: compile only, write to disk (for cache warming).
@@ -30,6 +30,7 @@ import * as runtimeBundle from "./runtime-bundle.mjs";
 import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
+import { hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
 // (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
@@ -1236,12 +1237,25 @@ function makeWorkerRecycleError(reason) {
   return err;
 }
 
-function hasFixtureGraph(fixtureFiles) {
+function isFixtureFileRecord(fixtureFiles) {
   return (
     fixtureFiles &&
     typeof fixtureFiles === "object" &&
-    !Array.isArray(fixtureFiles) &&
-    Object.keys(fixtureFiles).length > 0
+    !Array.isArray(fixtureFiles)
+  );
+}
+
+function hasFixtureGraph(fixtureFiles) {
+  return isFixtureFileRecord(fixtureFiles) && Object.keys(fixtureFiles).length > 0;
+}
+
+function hasValidatedSelfNamespaceGraph({ selfModuleGraph, originalHarness, entryFile, fixtureFiles, source }) {
+  return (
+    selfModuleGraph === true &&
+    originalHarness === true &&
+    isFixtureFileRecord(fixtureFiles) &&
+    typeof source === "string" &&
+    hasPinnedNamespaceSelfModuleImport(entryFile, source)
   );
 }
 
@@ -1452,6 +1466,7 @@ async function doCompile(
   originalHarness,
   fixtureFiles,
   entryFile,
+  moduleGraph,
   isNegative,
   negativePhase,
   temporal,
@@ -1509,9 +1524,12 @@ async function doCompile(
     (target && target !== "standalone") || (!originalHarness && inferModuleStrictArguments)
       ? {}
       : { deferTopLevelInit: true };
-  if (hasFixtureGraph(fixtureFiles)) {
+  if (moduleGraph) {
     if (!originalHarness || typeof entryFile !== "string" || entryFile.length === 0) {
       throw new Error("fixture graph requires an original-harness entryFile");
+    }
+    if (!isFixtureFileRecord(fixtureFiles)) {
+      throw new Error("fixture graph requires an object fixtureFiles record");
     }
     if (Object.prototype.hasOwnProperty.call(fixtureFiles, entryFile)) {
       throw new Error(`fixture graph collides with entry file: ${entryFile}`);
@@ -1545,7 +1563,7 @@ async function doCompile(
       ...deferOpt,
     });
   }
-  if (temporal && originalHarness && !hasFixtureGraph(fixtureFiles)) {
+  if (temporal && originalHarness && !moduleGraph) {
     // (#5353) Same options as the literal-harness branch below, routed through
     // `compileWithTemporalGlobal`: it prepends a ONE-line prelude binding bare
     // `Temporal` to the provider export, adds the declaration-only stub to the
@@ -1589,7 +1607,7 @@ async function doCompile(
       ...deferOpt,
     });
   }
-  if (linkedHarness && originalHarness && !hasFixtureGraph(fixtureFiles)) {
+  if (linkedHarness && originalHarness && !moduleGraph) {
     // (#3451 slice 3) LINKED shadow lane. `source` is the body-only unit; the
     // provider carries the harness prefix. Same option set as the literal
     // branch below, so the only deliberate difference is where the harness
@@ -1973,7 +1991,15 @@ process.on("message", async (msg) => {
   const harnessPrefix = nativeHarness ? msg.harnessPrefix : "";
   const target = compileTargetFromMessage(msg.target);
   const semanticProviders = parseTest262SemanticProviders(msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS);
-  const fixtureGraph = hasFixtureGraph(msg.fixtureFiles);
+  const staticFixtureGraph = hasFixtureGraph(msg.fixtureFiles);
+  const selfNamespaceGraph = hasValidatedSelfNamespaceGraph({
+    selfModuleGraph: msg.selfModuleGraph,
+    originalHarness,
+    entryFile: msg.entryFile,
+    fixtureFiles: msg.fixtureFiles,
+    source,
+  });
+  const fixtureGraph = staticFixtureGraph || selfNamespaceGraph;
   const compileStart = performance.now();
 
   // #3492/#3509 — Dynamic fixture discovery is transport metadata, not proof
@@ -2032,6 +2058,7 @@ process.on("message", async (msg) => {
       originalHarness,
       msg.fixtureFiles,
       msg.entryFile,
+      fixtureGraph,
       isNegative,
       msg.negativePhase,
       temporal,

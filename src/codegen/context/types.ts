@@ -2777,6 +2777,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standaloneRuntimeKeyClassProtos: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
+
+  /**
+   * (#6656 slice 3) Functions whose wasm RESULT was proven to be a
+   * bigint-branded i64 even though TypeScript types their return `number` — a
+   * BigInt kernel in untyped JS (`function mul(a, b) { return a * b; }`).
+   * `typeof` folds from the static type, so without this record
+   * `typeof mul(6n, 7n)` answered the constant `"number"` for a call that
+   * returns a real BigInt.
+   */
+  bigIntKernelFunctions: Set<string>;
   /** Rest parameter info per function (functions with ...rest syntax) */
   funcRestParams: Map<string, RestParamInfo>;
   /**
@@ -3314,6 +3324,19 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   classLinkedDynamicParentExpr: Map<string, ts.Expression>;
   /**
+   * (#6644) For a class whose linked-provider heritage is an IDENTIFIER that
+   * only has a value at run time (a function PARAMETER — test262's
+   * `class MySubclass extends construct {}`), the module global that CAPTURES
+   * that value at ClassDefinitionEvaluation.
+   *
+   * A property-access heritage (`NS.Base`) needs no entry here: it is a pure
+   * read of a module-level binding, so every consuming site can simply
+   * re-compile the expression. A parameter is in scope ONLY at the class
+   * declaration's own statement, and the synthesized constructor and the
+   * static-inheritance arms are separate wasm functions that cannot see it.
+   */
+  classLinkedDynamicParentGlobal: Map<string, number>;
+  /**
    * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
    * class OBJECT can cross to the host and be constructed there. Exactly the
    * set that needs a `__class_construct_<Class>_<arity>` bridge; every other
@@ -3773,6 +3796,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   moduleUsesStaticTaView: boolean;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
+  /**
+   * (#6651 cluster C) `__new_<Error>` bodies whose message operand still needs
+   * the §20.5.1.1 step-3 `undefined` test woven in at FINALIZE — the
+   * `$AnyValue` carrier the test reads is not reserved when those
+   * constructors are emitted. Drained by `fillErrorCtorUndefinedMessage`.
+   */
+  errorCtorMessageSlots?: { funcIdx: number; argCount: number }[];
   /**
    * Extra properties for empty object variables.
    *

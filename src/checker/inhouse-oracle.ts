@@ -867,6 +867,11 @@ export class InHouseOracle implements TypeOracle {
    * receiver answers `undefined` (unknowable), which consumers treat as "do
    * not take the shortcut" — the safe side of the three-valued contract.
    */
+  commonIteratorMembersOf(_node: ts.Node): boolean | undefined {
+    // The in-house model does not yet prove common iterator/next membership.
+    return undefined;
+  }
+
   wellKnownSymbolMemberOf(node: ts.Node, name: string): boolean | undefined {
     const fact = this.typeFactOf(node);
     const primitives = PRIMITIVE_WELL_KNOWN_SYMBOLS.get(fact.kind);
