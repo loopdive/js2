@@ -4241,6 +4241,128 @@ unchanged. **Before starting any further slice of this plan, run
 main** — the two lanes working this issue produce twins in the same files, and a
 twin is far cheaper to avoid than to resolve.
 
+## Handoff — 2026-09-22, the project-thread lane (PR #6026) signs off
+
+This section closes out the **second** lane that worked #6651 on 2026-09-21 —
+the one that ran from the project thread and shipped PR
+[#6026](https://github.com/loopdive/js2/pull/6026). The `claude/es2015-test262-plan-54tooh`
+lane continued past it and owns the round-3 dispatch; nothing here competes with
+that. What this section adds is the part of #6026 that is *not* recoverable from
+the diff: which residuals were measured and left open, and what the two-lane
+overlap cost.
+
+### What this lane shipped, and what survived the twin resolution
+
+Three slices, each measured on its own base with the isolated standalone runner
+and a per-row set diff: **A2-gates +28**, **C3 +9 in C / +2 in G**, **E2 +7 in
+manifest / +3 beyond**. Total **+49, zero lost on either target**. All four
+manifests were re-measured on the integrated branch before the PR opened
+(90 / 24 / 20 / 25 pass), matching each slice's own after-state; the one verdict
+difference was A2 deliberately turning
+`language/expressions/object/method-definition/name-prop-name-yield-expr.js`
+from a silent wrong answer into a loud refusal.
+
+Per the merge note below, the `54tooh` lane then resolved the twins. Current
+state on `main`:
+
+| this lane's module | outcome |
+| --- | --- |
+| `src/codegen/js-default-param-type-guess.ts` | **kept** — it is now the single slot-widening mechanism; the twin in `checker/type-mapper.ts` was deleted |
+| `src/codegen/ta-static-from-of-spec.ts` | **kept** |
+| `src/codegen/ta-dyn-own-property-names.ts` | **removed** in favour of `ta-dyn-own-keys.ts` (five arms vs. one; two arms cannot both hold body[0] of the same native) |
+| `generators-native.ts` A2 gates | **kept**, complementary to the other lane's `for-of` step terminator |
+
+### Measurements worth not repeating
+
+- **A host-lane probe is the cheapest triage in this plan, and it overturned the
+  round-2 dispatch order.** All 127 cluster-A residual rows probed on the host:
+  **39 pass / 88 fail**. The 90-row family the round-2 table ranked first passes
+  **5 of 78** on the host — so it cannot be reached from standalone lowering at
+  all — while the binding-element-default bucket passed **24 of 24**, a pure
+  standalone-only gap. That is why this lane took the gate family instead. Run
+  the probe before ranking anything.
+- **Two gate rationales in `generators-native.ts` had gone stale**, each keeping
+  rows bailed on a defect that no longer reproduced. The blanket
+  `ts.isFunctionExpression` arm was one; its 16 rows were free. Re-measure a
+  written-down "this cannot work because X" before treating it as a constraint.
+- **Two bounded experiments returned NEGATIVE and are recorded so they are not
+  retried:** lifting the computed-name gate (`:3162`) gains **0** — the emit
+  sites in `literals.ts` / `class-bodies.ts` never route a computed-name
+  generator method to the native factory, so the gate is the *second* blocker;
+  lifting `bodyReferencesOwnName` (`:2525`) turns 9 loud compile errors into
+  **9 wrong answers**, because the immutable self-name binding does not exist
+  yet.
+- **A manifest-scoped slice cannot see an accidental pass.** C3's 794-row corpus
+  control found two latent defects that were *passing for the wrong reason* and
+  went red the moment the parameter type changed: `compileIIFE` padded a missing
+  argument with `ref.null.extern` instead of `undefined` (§9.2.12), and B.3.3.1
+  step 1.a.ii's "parameterNames does not contain F" guard was missing from step
+  3 — eight annexB rows had been green only because a function object could not
+  physically fit in the f64 slot it was wrongly written to. Both fixed in the
+  same commit. Any future slice that moves a parameter or variable slot needs
+  the same control, on **both** targets: standalone showed 9 losses the host
+  lane did not.
+- **The round-2 table's "≥18 rows in C" conflated two families.** Eleven belong
+  to C3; the rest are a separate materialization defect, isolated to:
+  ```js
+  function g({ w: [x,y,z] } = { w: [7, undefined, ] }) {}  g();   // z === null, §13.3.3.7 says undefined
+  ```
+  Only the parameter-default *materialization* path is wrong — the same pattern
+  as a variable declaration, as a plain parameter, and with an element-level
+  default all answer correctly. (The `54tooh` lane's C3b may already have taken
+  this; check before starting.)
+
+### Environment facts, additive to the round-1 list
+
+- **An `error` row is "not measured", never a verdict.** The runner's 135 s
+  child budget is a *serial* number: sharding an `--isolate` run 6 ways produced
+  40 `spawnSync ETIMEDOUT` rows, which scored naively as 5 pass→non-pass and 35
+  verdict changes — every one an artefact. Re-run with
+  `JS2WASM_ROW_TIMEOUT_MS=420000` rather than scoring them.
+- **Freeze `src/` for the whole duration of a measurement.** The `--isolate`
+  runner re-imports the compiler per row, so a sweep overlapping an edit
+  measures two compilers and reads as one. One lane discarded five sweeps to
+  this before measuring the before-state from a `git archive HEAD` extract
+  instead.
+- **Probe through `testWithTypedArrayConstructors`, never a locally-bound
+  constructor.** `var TA = [Float64Array][0]` is typed `Float64ArrayConstructor`
+  by TypeScript, so `new TA(…)` takes the static path and yields a plain vec —
+  against which a dyn-view arm reads as a total no-op. Cost one lane an hour and
+  a nearly-deleted correct change.
+- **Budget measurement time by load, not by row count.** On a 4-core box with
+  three lanes sweeping, a 177-row isolate sweep took 45 minutes instead of 8.
+- The QuickJS eval provider builds from cold in ~45 s
+  (`node --import tsx scripts/build-quickjs-eval-provider.mjs`), and a fresh
+  container needs `pnpm install` plus
+  `git submodule update --init --depth 1 test262` before any of this works.
+
+### Newly actionable residuals this lane root-caused
+
+| rows | finding | what it needs |
+| ---: | --- | --- |
+| 2 (+ `slice` twin) | `internals/OwnPropertyKeys/integer-indexes*.js` die on `new TA(4).subarray(2)` answering **null** | `shouldWrapDynViewSpeciesTwoArm` requires `ts.isIdentifier(propAccess.expression)`, so a method called on a `new` expression never enters the dyn-view species arm; the fix needs a non-identifier receiver without double-evaluating it (the ELSE arm re-compiles the whole `callExpr`) |
+| 2 | `ctors/object-arg/iterator-*` | the `$Object` arm in `emitTaDynCtorConstructFromLocals` already implements §23.2.5.1 step 6 correctly but is gated on `ref.test $Object`, which the tests' `var obj = function () {}` fails; widen with `__typeof_function` |
+| 6 | computed-name generator methods | the **emit sites**, not the gate (see the negative experiment above) |
+| 5 | DataView `sample.byteLength` reads back the getter **closure** instead of invoking it | out of scope for E2; worth its own task |
+| 6 | `'yield' is a reserved word` | `function yield() {}` in a sloppy script, compile_error on **both** targets — a TypeScript parse-strictness question with corpus-wide blast radius, not a generator gap |
+
+Also noted while reading: `array-object-proto.ts` carries a comment claiming the
+refusal closure "is also the correct answer for a bare `TypedArray.from([])`".
+`IsConstructor(%TypedArray%)` is true; the TypeError belongs at TypedArrayCreate,
+after the drain. Left for whoever next touches that file.
+
+### The concurrency lesson, stated once
+
+Two lanes worked this issue on the same day without knowing about each other,
+and produced twins of A2, C3 and E2 in the same files. The twins were resolved
+correctly but at real cost: three slices were implemented twice, and the
+resolution itself needed a careful read of both. The merge note below already
+says to run `git log origin/main --grep=6651` and diff the files you intend to
+touch before starting a slice. The stronger form: **this plan's cluster table is
+the lock, and it only works if one owner holds a cluster at a time.** Before
+dispatching, check whether another session is live on #6651 — the claim ref and
+the open-PR scan do not see a lane that has started but not yet pushed.
+
 ## Manifest generator note
 
 Partition rule applied to the 1,320 non-pass rows, first match wins:
