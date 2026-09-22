@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-21
+updated: 2026-09-22
 priority: high
 horizon: xl
 feasibility: hard
@@ -4362,6 +4362,22 @@ touch before starting a slice. The stronger form: **this plan's cluster table is
 the lock, and it only works if one owner holds a cluster at a time.** Before
 dispatching, check whether another session is live on #6651 — the claim ref and
 the open-PR scan do not see a lane that has started but not yet pushed.
+
+### Lane partition — 2026-09-22 (accepted)
+
+Two sessions work #6651 concurrently. To stop the twin duplication of
+2026-09-21 (A2/C3/E2 landed twice, reconciled in PR #6027), clusters are now
+partitioned by lane:
+
+| lane | clusters |
+| --- | --- |
+| project-thread lane (shipped PR #6026, #6029) | **F** Proxy/Reflect, **H** builtins misc, **I** language misc |
+| this lane (shipped #6023/#6024/#6027/#6028) | **B**, **C**, **D**, **E** (E4 in flight), **G** |
+| cluster **A** | neither lane until explicitly claimed here first |
+
+Both lanes `git merge origin/main` before opening a slice and record slices
+under `## Cluster status`. This lane has not opened F, H or I since round 1;
+the partition stands as proposed.
 
 ## Manifest generator note
 
