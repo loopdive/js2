@@ -2147,6 +2147,223 @@ unusable no-provider run, kept as the evidence for the engine warning),
 None of the probes is committed.
 
 
+### 2026-09-23 — Cluster H (builtins misc, standalone), slice H4: gOPS' missing vec arm, and two corrections to the cluster's worklist
+
+- **Branch** `issue-6651-h4-standalone-builtins`, base `claude/project-thread-yhj9pp`
+  @ `86943b93` (carries round 4 incl. H2 and H3). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-af3440f1dbf0363fc`.
+  A pristine `git archive HEAD` extract at `.tmp/base-tree/` was taken at the
+  FIRST edit; `src/` was never edited under a running sweep, and every
+  before-state below was measured by this lane, not inherited.
+- Took H3's worklist item 2. Items 1 and 3 are **root-caused and handed back**,
+  both with a correction to what the previous lanes believed — see the bottom.
+
+#### The dispatch's first target is NOT in the reachable set — measured, not argued
+
+The brief named `Object.prototype.toString` §20.1.3.6 step 15 (5–6 rows) as
+target 1. H2's own bucket table already marked all six of those rows **host-fail**,
+and H2's own criterion is that *core ∧ host-pass* — 35 rows — is what standalone
+lowering can reach. Re-measured here on both lanes before spending anything
+(`.tmp/6651/h4-{sa,host}-before.log`, 8 rows, `--isolate`):
+
+| row | standalone, base | host, base |
+| --- | --- | --- |
+| `toString/get-symbol-tag-err.js` | no exception | no exception |
+| `toString/symbol-tag-generators-builtin.js` | `[object Function]` | `[object Undefined]` |
+| `toString/symbol-tag-non-str-builtin.js` | #4119 refusal | `[object Undefined]` |
+| `toString/symbol-tag-override-primitives.js` | `[object Boolean]` | `[object Boolean]` |
+| `toString/symbol-tag-weakmap-builtin.js` | #4119 refusal | `[object Undefined]` |
+| `toString/symbol-tag-weakset-builtin.js` | #4119 refusal | `[object Undefined]` |
+| `getOwnPropertySymbols/order-after-define-property.js` | fail | **pass** |
+| `entries/symbols-omitted.js` | fail | **pass** |
+
+**All six `@@toStringTag` rows fail on the host lane too**, each with a
+*differently* wrong answer. So this is not one standalone arm: it needs a
+runtime `Get(O, @@toStringTag)` inside the classifier (observable — the
+`get-symbol-tag-err` row asserts a throwing getter propagates), real
+**deletable** builtin tag properties on ~6 prototypes (the `*-builtin` rows
+delete the tag and re-check), three new receiver arms (WeakMap, WeakSet,
+Symbol), a tag consult ordered BEFORE the primitive-wrapper arms — and a host
+twin of all of it. That is two to three slices. Sized, not started.
+
+The remaining two rows are the host-pass pair, and they are what this slice went
+after.
+
+#### What landed — §20.1.2.10 over an ARRAY carrier
+
+Measured standalone on base, one module (`test262/test/probe/gops.js`, not
+committed):
+
+| question | base | spec |
+| --- | ---: | ---: |
+| `gOPS(arr).length` after `arr[symA]=10` + a symbol `defineProperty` | `0` | `2` |
+| `arr[symA]` / `arr[symB]` | `10` / `20` ✓ | `10` / `20` |
+| `gOPN(arr)` | `0,1,length` ✓ | `0,1,length` |
+| `Object.keys(arr)` | `0,1` ✓ | `0,1` |
+| the same two defines on a PLAIN object | `2` ✓ | `2` |
+
+Values right, names right, plain-object carrier right — a carrier gap, not a
+symbol-key gap. `__getOwnPropertySymbols`' non-`$Object` branch returns a fresh
+empty vec, so it never reaches the #3251 overlay companion or the #3537 bag.
+Landed as `fillGopsVecArm` in the new `src/codegen/vec-symbol-own-keys.ts`,
+spliced after the native's own `__objvec_new` anchor exactly as `fillGopnVecArm`
+is, plus a key-KIND **mode bit** (`KEY_MODE_SYMBOLS_ONLY`, bit 1 of the existing
+third parameter) on the two shared key walkers. Bit 0 keeps its `includeNonEnum`
+meaning and no signature moves — load-bearing, because both natives are reserved
+with a baked `call <idx>` before they are filled.
+
+**Two things this slice got wrong first. Both are recorded because both were
+invisible to reasoning and only a measurement separated them.**
+
+1. **`__obj_ordered` / `__obj_ordered_all` are STRING-key walkers.** The first
+   draft screened them for symbol keys and pushed **nothing at all** — with the
+   arm demonstrably running (a sentinel push proved it, after four other
+   hypotheses had each been eliminated by instrumenting an early return). Symbol
+   entries are simply not in that sequence; `__obj_ordered_symbols` (#2866 slice
+   3) is their walker. A filter over the wrong sequence is indistinguishable
+   from a filter that is too strict, and only the sentinel told them apart.
+2. **The two stores OVERLAP, so the symbols lane still needs de-duplication.**
+   With the right walker, `order-after-define-property.js` answered
+   `[Symbol(a), Symbol(b), Symbol(a)]` against an expected `[Symbol(a),
+   Symbol(b)]`: `symA` is in the bag (assignment) AND in the companion (a later
+   define) — the #4010 two-table seam. `buildBagKeyDedupeSkip` is reused rather
+   than re-written, with two new knobs (`continueDepth`, `stepIndex`) because
+   the bag walk branches to a `loop` label (re-enters, must step the cursor by
+   hand) while the overlay lane branches to an enclosing `if` (falls through to
+   the loop's own increment, must NOT step). Getting that pairing wrong is
+   silent — an infinite loop or a dropped key, never a validation error — so the
+   two knobs travel together and say so.
+
+#### Manifest rows, standalone, `--isolate`, before → after
+
+`.tmp/6651/h4.txt`, the 8 rows above. Logs
+`.tmp/6651/h4-sa-{before,after-final}.log`.
+
+| | pass | fail |
+| --- | ---: | ---: |
+| before | **0** | 8 |
+| after | **1** | 7 |
+
+Per-row: `Object/getOwnPropertySymbols/order-after-define-property.js`.
+**1 gained, 0 lost, 0 other verdict changes.**
+
+#### Controls
+
+- **Neighbourhood, 1,732 rows, standalone, `--isolate`, BOTH sides** — all of
+  `built-ins/Object/{getOwnPropertySymbols,getOwnPropertyNames,keys,entries,
+  values,getOwnPropertyDescriptors,getOwnPropertyDescriptor,defineProperty}`,
+  `built-ins/Reflect/ownKeys`, `built-ins/Symbol`,
+  `built-ins/Array/prototype/Symbol.unscopables`. 6 chunks, 3 concurrent, fresh
+  process per row, 420 s row cap on both sides
+  (`.tmp/6651/nb-sa-{before,after}-*.log`):
+  **1,649 pass / 83 fail → 1,650 / 82**. Per-row set diff via `rowdiff.mjs`:
+  **1 gained, 0 lost, 0 other verdict changes** — the same
+  `order-after-define-property.js`. Four of the six chunk logs are
+  byte-identical between sides.
+  `built-ins/Object/defineProperties` (632 rows) is the one deliberate
+  exclusion: it is a thin wrapper over `defineProperty`, which is included in
+  full. The 1,131 `defineProperty` rows were kept precisely because this file's
+  own header records the #4055 **−684** incident, where a visibility widening
+  looked clean and cost 684 rows through `propertyHelper.js`.
+- **Host lane: byte identity, measured, not inferred.** 17-module corpus — the
+  13 `website/playground/examples` sources plus 4 inline modules, one per
+  construct this slice changes (symbol-keyed gOPS on an array, the same on a
+  plain object, the string names walk) and one control touching none.
+  **17/17 sha256-identical on `gc`**, before vs after
+  (`.tmp/6651/shas-{before,after}.txt`). The three modules that exercise exactly
+  the changed behaviour are in that 17, so this is not a sample that misses the
+  construct.
+- On **standalone 8 of the 17 move, INCLUDING the no-symbol control** — the mode
+  mask on `__carrier_bag_push_keys` is emitted wherever that native is reserved,
+  which is any standalone module with a carrier substrate, independent of the
+  #4230 demand gate. Behaviour there is unchanged (the mask folds to the old
+  constant) but the bytes are not, so this slice is **not** standalone-byte-neutral.
+  Stated because the sha corpus is what would catch a claim otherwise.
+- **The func-budget split is proven byte-identical, which is why the sweep still
+  applies.** The key-kind mode took `fillCarrierBagVisibility` from 291 to 352
+  lines and `fillVecOverlayPushKeys` from 237 to 351, both past the #3400 /
+  R-FUNC 300-line budget. Rather than take a `func-budget-allow:` grant, each
+  native's body was lifted VERBATIM into a module-scope builder
+  (`fillCarrierBagPushKeys`, `buildOverlayPushKeysBody`). The 34-row sha corpus
+  is **diff-empty across the extraction on both lanes**
+  (`.tmp/6651/shas-{prerefactor,postrefactor}.txt`), so the 1,732-row sweep —
+  measured on the pre-extraction tree — is evidence for the shipped tree too.
+  **No budget grant is needed and none is taken.**
+- Pin file `tests/issue-6651-vec-symbol-own-keys.test.ts`, 7 cases —
+  **3 verified RED on the base tree** via the file-copy A/B (the bag expando,
+  the non-enumerable companion define, the both-stores de-dup), 4 green on both
+  sides (the plain-object control; symbols staying OFF the names surfaces; an
+  array with no symbol key still answering `[]`; and the demand-gate gap below).
+
+#### KNOWN GAP, pinned rather than left to be rediscovered
+
+`ctx.vecOwnKeysDirty` (`array-holes.ts`) is a syntactic pre-scan for
+`defineProperty` / `defineProperties` / two-arg `create` / `getOwnPropertyNames`
+/ `ownKeys` / `getOwnPropertyDescriptors`. **`getOwnPropertySymbols` is not on
+that list**, so a module whose only own-key call is `gOPS` emits none of this
+machinery and still answers `[]`. Found by the pin file, not by reasoning.
+
+Adding the name is a one-line fix, but it WIDENS the gate — more modules get the
+whole vec key-walk machinery — so it wants its own neighbourhood sweep rather
+than a free ride on this one. Measured cost of deferring: **zero rows** in the
+1,732-row neighbourhood, where all 12 `built-ins/Object/getOwnPropertySymbols`
+rows either already passed or mention `defineProperty`. Pinned as a
+characterisation case asserting the current answer, with the reason.
+
+Gates, run bare: typecheck OK; **loc-budget OK and func-budget OK with NO
+grants** (net +472 LOC); coercion-sites OK; oracle-ratchet OK
+(`getTypeAtLocation +0`, `ctx.checker +0`); dead-exports OK; lint OK.
+`node scripts/equivalence-gate.mjs`: **22 failing / 1,720 passing, all 22
+already in the baseline — no new equivalence regressions.**
+
+#### Root-caused, NOT taken
+
+1. **`Object/entries/symbols-omitted.js` is NOT an entries defect, and not a
+   symbol-description-table defect either — H3's diagnosis and my own first
+   hypothesis were both wrong.** H3 recorded that `obj.key === symValue` is
+   `true` while `String(obj.key)` prints `Symbol()`. Measured here, the identity
+   half does not hold for the failing spelling, and the trigger is narrower and
+   stranger than "a defineProperty'd symbol key":
+
+   | program | `String(read)` | `read === sv` |
+   | --- | --- | --- |
+   | `{key: sv}` then `o.key` | `Symbol(value)` | `true` |
+   | `{}` then `o.key = sv` | **`Symbol()`** | **`false`** |
+   | `[sv]` then `arr[0]` | `Symbol(value)` | `true` |
+   | `{p:1}` then `o.p = sv` | **`101`** | — |
+   | `{key: sv}` + **any** `Object.defineProperty(o, …)` then `o.key` | **`Symbol()`** | `true` |
+
+   Four findings that redirect the next owner: (a) the **descriptor** lane is
+   correct where the ordinary read is wrong (`gOPD(c,"key").value` is
+   `Symbol(value)` while `c.key` is `Symbol()`); (b) on the **host** lane it is
+   exactly INVERTED — reads are right and `gOPD(...).value` leaks the raw id
+   `101`; (c) the trigger is **any** `defineProperty` on the object, including a
+   **string-keyed** one, so the symbol key is irrelevant; (d) `101` is the
+   symbol's i32 id, so the value is crossing a boundary as a bare id and each
+   side re-materialises it differently.
+   **A tempting fix that does NOT work, measured:** `__box_symbol` builds its
+   `$Symbol` carrier with `$desc` left null (its own doc comment says so).
+   Filling it from the description side table changes **nothing** on any of
+   these rows — because `fillSymbolAnyToStringArm` already looks the description
+   up by id from that same table, and `Object.getOwnPropertySymbols` carriers
+   render their descriptions correctly. The change was written, measured, found
+   behaviour-neutral, and **reverted** rather than shipped as unmotivated byte
+   churn. This is a value-representation defect (the #6651 `value-rep` lane), not
+   a cluster-H slice tail.
+2. **`Object.prototype.toString` §20.1.3.6 step 15** — sized at the top of this
+   receipt. Not reachable by standalone-lowering work alone; needs a host twin.
+3. **The RegExp `lastIndex` creation-order residual** H3 named is untouched.
+
+#### For the next owner
+
+1. `getOwnPropertySymbols` in the `vecOwnKeysDirty` pre-scan — one line plus its
+   own neighbourhood sweep (the KNOWN GAP above).
+2. The symbol-as-property-VALUE representation defect (item 1 above) — the
+   sharpest remaining lead in this cluster, and it is a `value-rep` item, not an
+   `Object.entries` one.
+3. `Object.prototype.toString` @@toStringTag — two to three slices, both lanes.
+4. Symbol wrapper objects — lane I4 owns the carrier this round.
+
 ### 2026-09-23 — Cluster H (builtins misc, standalone), slice H3: the array read that disagreed with its own descriptor, and gOPDs' missing symbol half
 
 - **Branch** `issue-6651-h3-standalone-builtins`, base `claude/project-thread-yhj9pp`
