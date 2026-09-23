@@ -22,8 +22,8 @@
 // Invoke: `pnpm run generate:npm-compat` (writes benchmarks/results/npm-compat.json
 // and copies it to website/public/benchmarks/results/).
 
-import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
@@ -81,6 +81,7 @@ import { setupPrettier } from "../tests/dogfood/setup-prettier.mjs";
 import { setupReact } from "../tests/dogfood/setup-react.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
 import { setupNpmCompatCatalogPackage } from "../tests/dogfood/npm-compat-catalog.mjs";
+import { isJsGrammarNoiseDiagnostic, packageEntryBlockReason } from "../tests/dogfood/package-entry-harness.mjs";
 import { buildNpmCompatPerfDriver, getNpmCompatPerfSpec } from "../tests/dogfood/npm-compat-perf-specs.mjs";
 import { COOKIE_OPS } from "../tests/dogfood/cookie-ops.mjs";
 import {
@@ -460,7 +461,11 @@ function moduleImportMetadata(moduleImports) {
 }
 
 function firstCompileDiagnostic(result) {
-  const error = result?.errors?.[0] ?? result?.diagnostics?.[0];
+  const errors = result?.errors ?? [];
+  const error =
+    errors.find((entry) => typeof entry?.message === "string" && !isJsGrammarNoiseDiagnostic(entry.message)) ??
+    errors[0] ??
+    result?.diagnostics?.[0];
   const value = error?.messageText ?? error?.message ?? error;
   if (typeof value === "string") return value;
   if (value && typeof value.messageText === "string") return value.messageText;
@@ -1594,16 +1599,6 @@ async function nativeFirstPerfLane(run) {
   return { ...(await collectJsHostPerfLane(run)), ...metadata };
 }
 
-function reportCompileDiagnostic(report) {
-  return (
-    report?.compile?.error ??
-    report?.compile?.errors?.[0]?.message ??
-    report?.compile?.diagnostics?.[0]?.messageText ??
-    report?.validation?.error ??
-    "package entry did not produce a runnable Wasm module"
-  );
-}
-
 function packagePerfFailure(spec, diagnostic, status = "compile-error") {
   const jsHostNative = {
     ...(runJsHostNativeLane ? failedOptimizedPerfLane("js-host", status, diagnostic) : skippedPerfLane("js-host")),
@@ -1740,7 +1735,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       failure: failedOptimizedPerfLane(
         target === "gc" ? "js-host" : "standalone",
         "runtime-error",
-        renderHarnessThrownText(error, instance),
+        renderModuleInitThrow(error, instance),
         {
           inputMode:
             lane === "standalone-dynamic"
@@ -1771,6 +1766,71 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
     }),
   };
+}
+
+/**
+ * (#6661) Render a module-init throw for a generic npm-compat lane. When the
+ * payload cannot be rendered AND the module exports no `__exn_render_*` pair,
+ * the throw cannot come from a source `throw` statement (#5384 keeps the pair
+ * whenever the source has one) — it was raised by compiler-generated code,
+ * e.g. the ReferenceError for an unresolved `require` (#6666). Say so instead
+ * of leaving the bare "non-stringifiable payload" label.
+ */
+function renderModuleInitThrow(error, instance) {
+  const text = renderHarnessThrownText(error, instance);
+  if (!instance || !text.includes("non-stringifiable payload")) return text;
+  if (typeof instance.exports?.__exn_render_prepare === "function") return text;
+  return `${text}: raised by compiler-generated code (the module has no source throw, so no __exn_render_* exports; see #6666)`;
+}
+
+const NPM_COMPAT_REPORT_SCRIPT = join(ROOT, "scripts", "generate-npm-compat-report.mjs");
+
+/**
+ * (#6661) Measure one package's standalone-dynamic lane in a child process
+ * with a wall-clock budget. Used when the JS-host package-entry gate failed:
+ * the in-process lane has no budget, and a graph that exhausted the host
+ * harness (TypeScript, webpack, ...) would otherwise stall the whole refresh.
+ * Returns the child's lane record verbatim, or a failed lane naming the budget
+ * overrun / child failure — never a placeholder.
+ */
+function standaloneDynamicLaneInChild(name, budgetMs) {
+  const partial = join(ROOT, ".tmp", "npm-compat-lane", `${name}-standalone-dynamic-${process.pid}.json`);
+  const args = ["--import", "tsx", NPM_COMPAT_REPORT_SCRIPT, "--only", name, "--no-write", "--perf-only"];
+  args.push("--lane", "standalone-dynamic", "--partial-output", partial);
+  if (preserveDebugNames) args.push("--preserve-debug-names");
+  const started = performance.now();
+  const child = spawnSync(process.execPath, args, {
+    cwd: ROOT,
+    encoding: "utf-8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: budgetMs,
+    killSignal: "SIGKILL",
+  });
+  const extra = { inputMode: "runtime-dynamic", compileDurationMs: performance.now() - started };
+  if (child.error?.code === "ETIMEDOUT") {
+    return failedOptimizedPerfLane(
+      "standalone",
+      "compile-error",
+      `standalone-dynamic lane exceeded the ${budgetMs}ms harness budget (compile-budget)`,
+      extra,
+    );
+  }
+  try {
+    const lane = JSON.parse(readFileSync(partial, "utf-8")).packages?.find((entry) => entry.name === name)?.perf?.lanes
+      ?.standaloneDynamic;
+    if (lane) return lane;
+  } catch {
+    // Fall through to the child's own failure text.
+  } finally {
+    rmSync(partial, { force: true });
+  }
+  const tail = `${child.stderr ?? ""}${child.stdout ?? ""}`.trim().split("\n").filter(Boolean).at(-1);
+  return failedOptimizedPerfLane(
+    "standalone",
+    "compile-error",
+    `standalone-dynamic lane child exited ${child.status ?? child.signal ?? "abnormally"}: ${tail ?? "no output"}`,
+    extra,
+  );
 }
 
 async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions } = {}) {
@@ -1997,15 +2057,22 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
   // Preserve the existing compatibility gate for the older lanes only.
   const blocked =
     report && (report.compile?.success === false || report.validation?.validates === false)
-      ? packagePerfFailure(spec, reportCompileDiagnostic(report)).lanes
+      ? packagePerfFailure(spec, packageEntryBlockReason(report)).lanes
       : null;
   const jsHost =
     blocked?.jsHost ?? (runJsHostLane ? await collectJsHostPerfLane(() => runHost()) : skippedPerfLane("js-host"));
   const jsHostNative = await nativeFirstPerfLane(() => runHost("js-host-native"));
   const standalone = blocked?.standalone ?? (runStandaloneLane ? await runStatic() : skippedPerfLane("standalone"));
-  const standaloneDynamic =
-    blocked?.standaloneDynamic ??
-    (runStandaloneDynamicLane ? await runDynamic() : skippedPerfLane("standalone", "runtime-dynamic"));
+  // (#6661) The standalone-dynamic lane compiles its own host-free graph, so a
+  // JS-host compile/validation failure is not evidence about it. When the host
+  // gate blocked, measure the real lane in a bounded child process (the same
+  // `--perf-only --lane standalone-dynamic` run a developer would use) so its
+  // own error — or its own budget overrun — is what the report shows.
+  const standaloneDynamic = !runStandaloneDynamicLane
+    ? skippedPerfLane("standalone", "runtime-dynamic")
+    : blocked
+      ? standaloneDynamicLaneInChild(name, report.compile?.timeoutMs ?? 120_000)
+      : await runDynamic();
   return packagePerfRecord(spec.sampleOp, jsHost, standalone, { jsHostNative, standaloneDynamic });
 }
 
