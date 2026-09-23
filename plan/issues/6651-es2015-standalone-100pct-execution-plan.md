@@ -131,6 +131,16 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     in front of the `__extern_length` read the source's `length` getter ran
 #     0 times; behind it, 1 — §23.2.2.1 performs the array-like length read
 #     before TypedArrayCreate, so a throwing getter must win.
+# 2026-09-22 (cluster F, slice F2) — `call-namespace-static.ts` +107, all of it
+# inside the Reflect block: the §28.1.2 step-1 `IsConstructor(target)` predicate
+# and its throw arm, plus a comment block recording why the STATIC half is the
+# only sound one here (a runtime `__reflect_is_constructor` probe would have to
+# spill the target into a local, and `compileNewExpression` then evaluates the
+# same expression a SECOND time — a real break for `Reflect.construct(f(), [])`).
+# The predicate cannot move to a leaf module without also moving
+# `targetIsStaticallyNullish` and the `fctx` shadowing checks it shares with the
+# neighbouring §28.1.x guards, which is the opposite of keeping one spec section
+# readable in one place. ~60 % of the growth is that comment.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
@@ -4359,6 +4369,173 @@ compiled as TypeScript the identical sequence answers correctly
 left is in the row's own shape — a script-scope `var` receiver whose property
 slot loses a later string — not in the getter. Next owner: treat these as an
 object-runtime/property-slot row family, not a RegExp one.
+
+### 2026-09-22 — Cluster F (Proxy / Reflect, standalone), slice F2: the realm verdict, and three checks that declined
+
+- **Branch** `issue-6651-cluster-F2-proxy-reflect`, based on `origin/main`
+  @ `6190e961`. **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-afd428375de50fa97`.
+- **Manifest** `plan/agent-context/6651/F-proxy-reflect.txt`, 89 rows, sha256
+  `3edd7052b503ee48f0022a8bc2f5c041a116228d19ef65d31bf2aeb54cf80dd7`
+  (unchanged from F1).
+
+| standalone, `--isolate`, 89 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/F2-before.log`, `.tmp/6651/nb-pr-before.log`) | **7** | 77 | 5 |
+| after (`.tmp/6651/nb-pr-after.log`) | **9** | 75 | 5 |
+
+**+2 rows; zero lost; zero other verdict changes** — a per-PATH join, not a
+count comparison. The before-state was measured TWICE, three hours apart: once
+in the worktree before any edit, and once from a `git archive HEAD` extract
+(`.tmp/base-tree`) while the branch sweep ran beside it. The two agree row for
+row, so the delta is not measurement drift.
+
+#### The 23 `*-realm*` rows: measurable, and NOT environment
+
+F1 recorded them as "unmeasurable in this container — `$262.createRealm` needs a
+built QuickJS provider". **That classification is retired.** The provider is
+built (`.test262-cache/quickjs-eval-adapter-d4799bda84cfed0d.wasm`), QUICKJS is
+now the runner's DEFAULT engine, and all 23 rows execute and fail with specific,
+deep assertion messages — none says "provider is not built". `$262.createRealm`
+works; `new OProxy(t, h)` through a foreign-realm `Proxy` constructor really does
+mint a `$Proxy` (probed: its `get` trap runs, exactly once). So these are
+ordinary compiler defects, and their causes are NOT realm-specific:
+
+| rows | signature | root cause as probed |
+| ---: | --- | --- |
+| 5 | `Proxy/defineProperty/targetdesc-*-realm`, `defineProperty/trap-is-not-callable-realm` | a foreign-realm proxy's `[[DefineOwnProperty]]` skips the §10.5.6 checks the same shape gets natively. Probed side by side: `new Proxy({}, {defineProperty:{}})` throws, `new OProxy({}, {defineProperty:{}})` does not — the proxy VALUE is real, the dynamic dispatch it reaches is the one without the guards |
+| 6+1 | `Proxy/construct/return-not-object-throws-*-realm`, `trap-is-not-callable-realm` | same asymmetry on `[[Construct]]`: `new P()` on a top-level foreign-realm proxy binding does not run §10.5.14 step 11, while the native spelling does. Shape-sensitive, not realm-sensitive — the native spelling ALSO loses the defineProperty guard when the proxy is built inside a helper function |
+| 1 | `getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm` | **not a realm defect at all** — the native spelling fails identically. The trap returns `null`, and `__proxy_inv_gopd`'s `isAbsent` treats a null externref as "the trap answered undefined" (§10.5.5 step 11). Deliberately not fixed: `__getOwnPropertyDescriptor` answers a genuine MISS with either null or the undefined singleton (#2106), so branding null as "not undefined" would throw for a legal `return undefined` trap. This needs a null/undefined-distinct value representation, not a guard tweak |
+| 2 | `Proxy/get-fn-realm{,-recursive}` | `Reflect.construct newTarget is not a constructor` — #3371's lane |
+| 4 | `apply/arguments-realm`, `construct/arguments-realm`, `construct/trap-is-undefined-proto-from-*-realm` | reading a foreign realm's intrinsic (`f().constructor`, `Object.getPrototypeOf(p)`) answers null |
+| 3 | `defineProperty/desc-realm`, `ownKeys/return-not-list-object-throws-realm`, `revocable/tco-fn-realm` | one each: a descriptor object with a null prototype; an `undefined` ownKeys result through the `new other.Proxy(…)` spelling; a cross-realm `TypeError` identity |
+
+Log: `.tmp/6651/F2-before.tsv` carries every row's verdict and reason.
+
+#### What landed — three checks that declined on a value they should have rejected
+
+None of the three is a new mechanism; each is an existing check whose admission
+test let the wrong value through.
+
+1. **`Object.getPrototypeOf(<integrity-marked binding>)` folded to
+   `%Object.prototype%` for every marked identifier.** The arm's own comment
+   scopes it to "closed standalone plain objects [that] keep their ordinary
+   prototype implicit" — exact for `var o = {}`, wrong for a binding whose
+   prototype was chosen at creation. Measured on base, one module:
+   `var a = Object.create(proto)` reads back `proto` BEFORE
+   `Object.preventExtensions(a)` and `%Object.prototype%` after. The order
+   sensitivity is the tell: `ctx.nonExtensibleVars` is filled as statements are
+   COMPILED, so only later-compiled sites see the mark. The runtime link is
+   untouched throughout — the same query through a helper function, through
+   `Reflect.getPrototypeOf`, through `proto.isPrototypeOf(a)` and through an
+   alias `var z = a` all answer `proto`. Only the folded spelling was wrong.
+   `bindingHasExplicitPrototype` now excludes an `Object.create(…)` /
+   `Object.setPrototypeOf(…)` / `Reflect.setPrototypeOf(…)` initializer and a
+   colon-form `__proto__` literal. **Deliberately not widened past the
+   DECLARATION**: a prototype written by a later `setPrototypeOf` STATEMENT
+   keeps the fold, because `Reflect/setPrototypeOf/return-false-*` asserts
+   exactly that singleton after a REFUSED set on a `var o = {}` carrier.
+2. **§28.1.1 step 2 (CreateListFromArrayLike) declined a LITERAL `null` /
+   `undefined` argumentsList.** `emitNativeReflectNonObjectGuard` refuses to
+   brand a null carrier at runtime — this compiler's alias widening nulls
+   ordinary objects — so `Reflect.apply(fn, null, null)` called `fn` with an
+   empty list. That hazard is about VALUES; this is a question about the
+   EXPRESSION, and `guardReflectTargetIsObjectOrNullish` (built for exactly
+   this in #6494 S3) already answers it. Measured: the row's other eight
+   assertions — number, boolean, symbol, `Infinity`, `NaN`, and the throwing
+   `length` getter — already passed.
+3. **§28.1.2 step 1 `IsConstructor(target)` was never checked.** The arm checks
+   IsConstructor on the NEWTARGET and nothing on the target, so
+   `Reflect.construct(1, [])` reached `compileNewExpression(new 1())` and
+   answered without throwing. Only the STATICALLY decidable half is taken, and
+   that restriction is the design, not a shortcut: a runtime
+   `__reflect_is_constructor` probe has to spill the target into a local, and
+   `compileNewExpression` then evaluates the same expression a SECOND time —
+   a real break for `Reflect.construct(f(), [])`. The static half never needs
+   the duplicate, because it fires only where the program is guaranteed to
+   throw. Three admitted classes: a primitive by the oracle's own type fact; an
+   object/array literal or arrow function written in place; and a BUILT-IN
+   METHOD through an unshadowed ambient global (`Date.now`), recognised by its
+   lib declaration being a `MethodSignature` in a `.d.ts` interface — every ES
+   constructor is `declare var X: XConstructor` instead, so the two separate
+   exactly without a hand-kept name table. TypeScript construct signatures are
+   NOT usable here: `function f() {}` has none and IS a constructor.
+   Evaluation order is preserved, not short-circuited — the target and each
+   argument-list element are compiled and dropped ahead of the throw.
+
+#### Controls
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| `built-ins/Proxy/**` + `built-ins/Reflect/**`, standalone (`.tmp/6651/nb-pr-{before,after}.log`) | 464 | 381 / 78 / 5 | **383** / 76 / 5 | +2, **0 lost, 0 other** |
+| corpus-wide integrity∩prototype rows (every test262 file mentioning `preventExtensions`/`seal`/`freeze` AND `getPrototypeOf`/`__proto__`, 30) + a deterministic 1-in-6 sample of the 820 `Reflect.apply`/`Reflect.construct` users OUTSIDE the neighbourhood (137), standalone (`.tmp/6651/nb-extra-{before,after}.log`) | 167 | 107 / 52 / 8 | **108** / 51 / 8 | **+1** (`built-ins/Object/prototype/__proto__/set-non-extensible.js`), 0 lost |
+| the 89-row manifest ∪ the 167 above, HOST (default target) (`.tmp/6651/nb-host-{before,after}.log`) | 252 | 138 / 113 / 1 | 138 / 113 / 1 | **none** |
+
+**Host byte-identity corpus** (`.tmp/6651/sha-{before,after}.txt`): ten programs
+— a Proxy/Reflect-free control, the four changed prototype shapes, the kept
+plain-literal fold, a nullish and a real `Reflect.apply`, a non-constructor and
+a real `Reflect.construct`, and a proxy module — compiled for BOTH targets.
+**All 10 `gc` binaries are byte-identical**; on standalone exactly the five
+programs that exercise a changed arm move and the other five are identical.
+That is the intended shape for a lane-gated change: the `getPrototypeOf` arm is
+guarded by `ctx.standalone`, and the two Reflect arms are not reached on the
+host lane (empirically, on these shapes).
+
+Also green, all run bare: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` — +0 `getTypeAtLocation`, +0 `ctx.checker` — and
+`check:dead-exports`); `node scripts/equivalence-gate.mjs` (22 failing / 1720
+passing, all 22 in the committed baseline); `biome lint
+--diagnostic-level=error`; and the new pin file
+`tests/issue-6651-cluster-f2-proxy-reflect.test.ts`, 7/7 — **5 of the 7 verified
+RED on the base commit**, 2 guards green on both sides.
+
+The pin file compiles module-scope **JavaScript** (`allowJs`,
+`deferTopLevelInit`) rather than the ORIGINAL-HARNESS assembly, and that is a
+deliberate, stated trade: the harness assembly reproduces all three defects (it
+is how they were found) but compiling it exceeds the 512 MB
+`VITEST_FORK_MAX_OLD_SPACE_SIZE` the unit lane runs under. The JS module-scope
+shape is what matters for defect 1 — a TS-typed local takes a different arm.
+
+#### Newly root-caused, NOT taken
+
+- **`Array.prototype` is not identity-stable inside a function body.** Probed on
+  base and on this branch: `function rd() { return Array.prototype; }` gives
+  `rd() !== Array.prototype` AND `rd() !== rd()` — every in-function read mints
+  a FRESH empty array (`Array.isArray` true, `length` 0). `Object.prototype`,
+  `Function.prototype`, `RegExp.prototype` and a user object are all stable, so
+  this is specific to `Array.prototype`. **This, and not the §10.5.1 invariant,
+  is what blocks `Proxy/getPrototypeOf/not-extensible-same-proto.js`**: the
+  target's real prototype and the value the trap returns are two different
+  objects, so the step-10 SameValue comparison fails and a COMPLIANT trap throws
+  `Proxy trap result violates a Proxy invariant`. Worth its own task; the
+  blast radius is every `X.prototype` identity comparison in a function.
+- **The §10.5 guards are dispatch-shape-sensitive, not realm-sensitive** (see
+  the realm table above). One mechanism — "a `$Proxy` the compiler only knows at
+  runtime reaches a dispatch without the §10.5.6 / §10.5.14 post-trap checks" —
+  is worth ~12 rows in this manifest alone. That is the best rows-per-effort
+  left in cluster F and it is now measured rather than guessed.
+- **`Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js`** is
+  NOT fixed by the narrowing above: its failing assertion reads
+  `Object.getPrototypeOf(outro)` where `outro = {}` and the prototype is written
+  inside a trap through the PARAMETER name `t`. The receiver-name scan sees `t`,
+  not `outro`, so the literal fold still claims it. Closing it needs the fold to
+  yield whenever a module contains a `setPrototypeOf` whose receiver is not
+  statically resolvable — a broad widening, not a call-site one.
+
+#### Residual sub-buckets (80 rows), updated
+
+| rows | status | sub-bucket | what it needs |
+| ---: | --- | --- | --- |
+| 23 | fail | `*-realm*` / `cross-realm` | **no longer environment** — re-classified above. 12 of them are the one dispatch-shape mechanism; 1 is the `null`-vs-`undefined` representation; 2 belong to #3371; 8 are foreign-intrinsic reads |
+| 24 | fail | `*-target-is-proxy.js` | nested-proxy forwarding over EXOTIC targets (array `length`, `new String("str")`, RegExp `lastIndex`, function `prototype`). Several mechanisms per row; 6 of 24 fail on host too |
+| 7 | fail | `has/call-in-prototype*`, `set/call-parameters-prototype*`, `defineProperty/call-parameters` | a proxy reached through the PROTOTYPE CHAIN never runs its trap — `$Object.$proto` is `ref null $Object` and `$Proxy` is not a subtype. Type-graph change, unchanged from F1 |
+| 4+3 | fail/CE | `Proxy/construct/*` NewTarget | #3371's lane, unchanged |
+| 4 | fail | `deleteProperty` family | #4745 tombstone/closed-struct gap, unchanged |
+| 4 | fail | `getOwnPropertyDescriptor/*` "X should be an own property" | gOPD trap-absent forward over exotic targets; 3 of 4 fail on host |
+| 2 | fail | `Reflect/ownKeys/{order-after-define-property,return-on-corresponding-order-large-index}` | unchanged from F1 |
+| 1 | fail | `Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js` | still blocked at its FIRST assertion (the refusal is invisible for a JS `var o = {}` carrier — F1's carrier-promotion finding). Its later `Object.getPrototypeOf(Object.create(null))` assertion is fixed by this slice, so the row is one defect closer |
+| 8 | fail/CE | singletons | `Proxy/getPrototypeOf/not-extensible-same-proto` (→ the `Array.prototype` identity defect above), `Reflect.hasOwnProperty` CE (`Reflect/enumerate/undefined.js`; `Reflect.enumerate === undefined` already answers correctly, so this row is one static fold away), `Reflect/construct/arguments-list-is-not-array-like.js` (non-array-literal argsList is still a hard compile error), `Proxy/enumerate`, `Proxy/set/trap-is-null-receiver` (prototype-chain), the `Proxy/apply/*-target-is-proxy` pair, `Proxy/get/trap-is-undefined-receiver` |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

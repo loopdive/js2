@@ -87,6 +87,64 @@ const ES5_OBJECT_PROTOTYPES = new Map([
   ["IArguments", "Object"],
 ]);
 
+/**
+ * (#6651 cluster F, slice F2) Does this binding's DECLARATION give it a
+ * prototype other than the implicit `%Object.prototype%`?
+ *
+ * The integrity arm in `tryCompileEs5GetPrototypeOfEarly` answers
+ * `Object.getPrototypeOf(<integrity-marked id>)` with the compiler-owned
+ * `%Object.prototype%` singleton, on the reasoning in its own comment: "closed
+ * standalone plain objects keep their ordinary prototype implicit". That is
+ * exact for `var o = {}` — and simply WRONG for a binding whose prototype was
+ * chosen at creation. Measured on this branch's base, one module, standalone:
+ *
+ *     var proto = { tag: 1 };
+ *     var a = Object.create(proto);
+ *     Object.getPrototypeOf(a) === proto;   // true
+ *     Object.preventExtensions(a);
+ *     Object.getPrototypeOf(a) === proto;   // FALSE — answers %Object.prototype%
+ *
+ * The read before the integrity call is right and the read after is wrong,
+ * because `ctx.nonExtensibleVars` is filled as statements are COMPILED, so the
+ * mark only exists for later-compiled sites. The runtime link is untouched
+ * throughout: the same query through a helper (`function gp(o) { return
+ * Object.getPrototypeOf(o); }`) answers `proto` both before and after, and so
+ * do `Reflect.getPrototypeOf(a)`, `proto.isPrototypeOf(a)` and an alias
+ * `var z = a`. Only the folded spelling is wrong — a silent wrong answer, and
+ * the one §10.5.1 step-10 SameValue comparison
+ * `Proxy/getPrototypeOf/not-extensible-same-proto.js` depends on.
+ *
+ * So the arm is kept, narrowed to the carrier class it describes. A binding
+ * whose initializer is `Object.create(…)` (including `Object.create(null)`,
+ * whose prototype is explicitly null) or `Object.setPrototypeOf(o, p)` /
+ * `Reflect.setPrototypeOf(o, p)` — both of which answer their receiver — or an
+ * object literal with a colon-form `__proto__`, is excluded and falls through
+ * to the ordinary path, whose generic `__getPrototypeOf` read is the answer the
+ * probes above verified.
+ *
+ * Deliberately NOT widened past the declaration: a binding whose prototype is
+ * written LATER by a `setPrototypeOf` STATEMENT keeps the fold, because
+ * `Reflect/setPrototypeOf/return-false-*` asserts exactly this singleton after
+ * a REFUSED set on a `var o = {}` carrier.
+ */
+function bindingHasExplicitPrototype(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const initializer = ctx.oracle.variableInitializerOf(id);
+  if (initializer === undefined) return false;
+  if (ts.isObjectLiteralExpression(initializer)) return objectLiteralHasColonProto(ctx, initializer);
+  if (
+    !ts.isCallExpression(initializer) ||
+    !ts.isPropertyAccessExpression(initializer.expression) ||
+    !ts.isIdentifier(initializer.expression.expression)
+  ) {
+    return false;
+  }
+  const namespace = initializer.expression.expression.text;
+  const method = initializer.expression.name.text;
+  if (namespace !== "Object" && namespace !== "Reflect") return false;
+  if (method === "create") return namespace === "Object" && initializer.arguments.length >= 1;
+  return method === "setPrototypeOf" && initializer.arguments.length >= 2;
+}
+
 function isTopLevelThis(expr: ts.Expression): boolean {
   if (expr.kind !== ts.SyntaxKind.ThisKeyword) return false;
   for (let parent = expr.parent; parent; parent = parent.parent) {
@@ -223,7 +281,8 @@ export function tryCompileEs5GetPrototypeOfEarly(
     ctx.standalone &&
     ts.isIdentifier(arg0) &&
     ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0)) &&
-    !isNativeGeneratorInstance(ctx, arg0)
+    !isNativeGeneratorInstance(ctx, arg0) &&
+    !bindingHasExplicitPrototype(ctx, arg0)
   ) {
     const argType = compileExpression(ctx, fctx, arg0);
     if (argType) fctx.body.push({ op: "drop" });

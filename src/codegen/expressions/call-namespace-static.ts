@@ -1026,6 +1026,61 @@ export function compileNamespaceStaticCall(
       const fact = ctx.oracle.typeFactOf(inner);
       return fact.kind === "null" || fact.kind === "undefined" || fact.kind === "void";
     };
+    /**
+     * (#6651 cluster F, slice F2) `IsConstructor(V)` is FALSE, decided from the
+     * expression alone. Positive tests only — an unrecognised shape answers
+     * `false` (i.e. "do not throw") and keeps its previous lowering, because a
+     * wrong fire turns a working `Reflect.construct` into a TypeError.
+     *
+     * Three admitted classes, one per assertion of
+     * `Reflect/construct/target-is-not-constructor-throws.js`:
+     *
+     *  - a PRIMITIVE by the oracle's own type fact (`1`, `null`, a `string`
+     *    binding, a symbol …). No object, so no [[Construct]], whatever the
+     *    value turns out to be;
+     *  - an object literal / array literal / arrow function written right
+     *    here — ordinary objects and non-constructor functions by construction;
+     *  - a BUILT-IN METHOD reached through an unshadowed ambient global
+     *    (`Date.now`, `Math.max`). Their lib declaration is a `MethodSignature`
+     *    inside a `.d.ts` interface, whereas every ES constructor is declared
+     *    as `declare var X: XConstructor` — so "the member resolves to a
+     *    declaration-file method signature" separates the two exactly, without
+     *    a hand-kept name table. TypeScript's own construct signatures are NOT
+     *    usable here: `function f() {}` has none, and it IS a constructor.
+     */
+    const targetIsDefinitelyNotConstructor = (argument: ts.Expression): boolean => {
+      let inner: ts.Expression = argument;
+      while (
+        ts.isParenthesizedExpression(inner) ||
+        ts.isAsExpression(inner) ||
+        ts.isTypeAssertionExpression(inner) ||
+        ts.isNonNullExpression(inner)
+      ) {
+        inner = inner.expression;
+      }
+      if (targetIsStaticallyNullish(inner)) return true;
+      if (ts.isObjectLiteralExpression(inner) || ts.isArrayLiteralExpression(inner) || ts.isArrowFunction(inner)) {
+        return true;
+      }
+      const fact = ctx.oracle.typeFactOf(inner);
+      if (
+        fact.kind === "number" ||
+        fact.kind === "string" ||
+        fact.kind === "boolean" ||
+        fact.kind === "bigint" ||
+        fact.kind === "symbol"
+      ) {
+        return true;
+      }
+      if (!ts.isPropertyAccessExpression(inner) || ts.isPrivateIdentifier(inner.name)) return false;
+      const root = inner.expression;
+      if (!ts.isIdentifier(root) || !resolvesToAmbientGlobal(ctx, root)) return false;
+      if (fctx.localMap.has(root.text) || (fctx.boxedCaptures?.has(root.text) ?? false)) return false;
+      const declaration = ctx.oracle.valueDeclarationOf(inner.name);
+      return (
+        declaration !== undefined && ts.isMethodSignature(declaration) && declaration.getSourceFile().isDeclarationFile
+      );
+    };
     const guardReflectTargetIsObjectOrNullish = (
       targetLocal: number,
       message: string,
@@ -2056,7 +2111,22 @@ export function compileNamespaceStaticCall(
           releaseReflectArgumentLocals(argLocals);
           return { kind: "externref" };
         }
-        guardReflectTargetIsObject(argLocals[2], "Reflect.apply argumentsList is not an object");
+        // (#6651 cluster F, slice F2) …and a LITERAL `null` / `undefined`
+        // argumentsList is the same question about the EXPRESSION, not about a
+        // value the runtime guard may have nulled. `emitNativeReflectNonObjectGuard`
+        // deliberately declines to brand a null carrier (this compiler's alias
+        // widening nulls ordinary objects), so `Reflect.apply(fn, null, null)`
+        // and `Reflect.apply(fn, null, undefined)` sailed past step 2 and
+        // invoked `fn` with an empty list. Measured on this branch's base:
+        // `Reflect/apply/arguments-list-is-not-array-like.js` failed on exactly
+        // those two of its ten assertions — the numeric, boolean, symbol and
+        // throwing-`length` spellings already threw. Same reasoning, same
+        // helper, as the `Reflect.{get,has}` target guard #6494 S3 added.
+        guardReflectTargetIsObjectOrNullish(
+          argLocals[2],
+          "Reflect.apply argumentsList is not an object",
+          expr.arguments[2],
+        );
         const applyIdx = reserveApplyClosure(ctx);
         fctx.body.push({ op: "local.get", index: targetLocal });
         if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });
@@ -2202,6 +2272,43 @@ export function compileNamespaceStaticCall(
         const listArg = expr.arguments[1];
         const newTargetArg = expr.arguments[2];
         const unwrappedList = listArg === undefined ? undefined : unwrapReflectConstructExpr(listArg);
+        // (#6651 cluster F, slice F2) §28.1.2 step 1 — `IsConstructor(target)`.
+        // The arm below checks IsConstructor on the NEWTARGET (`Reflect.construct
+        // newTarget is not a constructor`) and never on the TARGET, so
+        // `Reflect.construct(1, [])` reached `compileNewExpression(new 1())`
+        // and answered without throwing. Measured on this branch's base,
+        // `Reflect/construct/target-is-not-constructor-throws.js` fails on its
+        // FIRST assertion.
+        //
+        // Only the STATICALLY decidable half is taken. A runtime
+        // `__reflect_is_constructor` probe would have to evaluate `targetArg`
+        // into a local and `compileNewExpression` would then evaluate it a
+        // SECOND time — a real semantic break for `Reflect.construct(f(), [])`.
+        // The static half needs no such duplicate: it fires only where the
+        // program is guaranteed to throw, so nothing that constructs today
+        // changes.
+        //
+        // Evaluation order is preserved rather than short-circuited: JavaScript
+        // evaluates the callee's arguments before entering the builtin, so the
+        // target and every argument-list element are compiled (and dropped)
+        // ahead of the throw.
+        if (targetArg !== undefined && targetIsDefinitelyNotConstructor(targetArg)) {
+          const dropValue = (argument: ts.Expression): void => {
+            const ty = compileExpression(ctx, fctx, argument, externRef);
+            if (ty !== null) fctx.body.push({ op: "drop" });
+          };
+          dropValue(targetArg);
+          if (unwrappedList !== undefined && ts.isArrayLiteralExpression(unwrappedList)) {
+            for (const element of unwrappedList.elements) {
+              if (!ts.isOmittedExpression(element)) dropValue(element);
+            }
+          } else if (listArg !== undefined) {
+            dropValue(listArg);
+          }
+          if (newTargetArg !== undefined) dropValue(newTargetArg);
+          emitThrowTypeError(ctx, fctx, "Reflect.construct target is not a constructor");
+          return { kind: "externref" };
+        }
         if (
           targetArg === undefined ||
           !unwrappedList ||
