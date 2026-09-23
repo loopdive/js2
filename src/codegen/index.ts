@@ -294,6 +294,7 @@ import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
 import { fillStandaloneClassInstanceProtoArm } from "./standalone-class-instance-proto.js"; // (#6617)
+import { fillVecProtoLinkArms } from "./vec-proto-link.js"; // (#2917)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -6803,6 +6804,7 @@ export function generateModule(
     // #802's marked-root arm must still take the front slot of
     // `__getPrototypeOf` (the two arm sets are disjoint besides).
     fillStandaloneClassInstanceProtoArm(ctx);
+    fillVecProtoLinkArms(ctx); // (#2917)
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -11446,6 +11448,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-object-create-class-instance", () => fillStandaloneObjectCreateClassInstance(ctx));
     // (#6617) See the single-source path — same placement, same reason.
     profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
+    profilePhase("fill-vec-proto-link-arms", () => fillVecProtoLinkArms(ctx)); // (#2917)
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
@@ -11549,6 +11552,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // These reserve/fill drivers require the receiver-aware arity-0 bridge,
     // which is only registered by the loop above in the multi-source path.
     profilePhase("fill-proto-iterator-driver", () => fillProtoIteratorDriver(ctx));
+    // Declared-arity classifier. (#2917) BEFORE fillAccessorDrivers, as on the
+    // primary path — without it the driver bakes a bare `__call_fn_method_0`.
+    profilePhase("emit-closure-arity-export", () => emitClosureArityExport(ctx));
     // (#4098) Error sidecar accessors reserve receiver-aware drivers while the
     // MOP is built. Refill them only after multi-source method dispatchers exist.
     profilePhase("fill-accessor-drivers", () => fillAccessorDrivers(ctx));
@@ -11556,10 +11562,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // DisposableStack additionally uses the public __call_fn_0/1 exports
     // emitted above, so fill its LIFO driver only after both bridge families.
     fillDisposableStackDisposeDriver(ctx);
-
-    // Unknown-arity host wrappers use this classifier to choose a dispatcher
-    // wide enough for the closure's declared parameters.
-    profilePhase("emit-closure-arity-export", () => emitClosureArityExport(ctx));
 
     // Fill multi-source constructor method drivers after all closure tables.
     profilePhase("fill-host-fnctor-method-drivers", () => fillHostFnctorMethodDrivers(ctx));

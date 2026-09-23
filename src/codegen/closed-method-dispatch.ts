@@ -80,6 +80,7 @@ import { defaultValueInstrs } from "./type-coercion.js";
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
+import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -1474,6 +1475,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         current = [
           { op: "local.get", index: anyLocalIdx },
           { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
+          ...arraySubclassOwnMethodShadowTest(ctx, methodName),
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },

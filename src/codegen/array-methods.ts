@@ -68,6 +68,7 @@ import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterato
 import { ensureRegexMatchFlatVecType, REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js"; // (#4556 bucket A)
+import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "./array-subclass-receiver.js"; // (#2917)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import {
   compileArrowAsClosure,
@@ -1192,6 +1193,9 @@ function inferExpressionWasmType(
   expr: ts.Expression,
   allowProbe = true,
 ): ValType | undefined {
+  // (#2917) A receiver pre-spilled by array-subclass-receiver.ts reads its local.
+  const spilled = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
+  if (spilled !== undefined) return getLocalType(fctx, spilled);
   if (ts.isIdentifier(expr)) {
     const name = expr.text;
     const localIdx = fctx.localMap.get(name);
@@ -2073,7 +2077,20 @@ export function compileArrayMethodCall(
   const arrInfo =
     (receiverType === undefined ? null : resolveArrayInfo(ctx, receiverType)) ??
     resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, receiverType === undefined));
-  if (!arrInfo) return undefined;
+  if (!arrInfo) {
+    // (#2917) A standalone `class X extends Array` receiver is a real vec typed
+    // externref — lower it as one (array-subclass-receiver.ts).
+    if (receiverType === undefined || !isStandaloneArraySubclass(ctx, receiverType.getSymbol()?.name)) {
+      return undefined;
+    }
+    return withArraySubclassReceiverAsVec(
+      ctx,
+      fctx,
+      receiverExpr,
+      () => compileExpression(ctx, fctx, receiverExpr),
+      () => compileArrayMethodCall(ctx, fctx, propAccess, callExpr, undefined, methodName, expectedType, true),
+    );
+  }
 
   // A native-string join over a closure-producing array expression must
   // compile that receiver exactly once. The ordinary actual-type probe below
@@ -2121,7 +2138,7 @@ export function compileArrayMethodCall(
   if (receiverExpr && !skipReceiverProbeForNativeJoin) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
-    if (ts.isIdentifier(receiverExpr)) {
+    if (ts.isIdentifier(receiverExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(receiverExpr)) {
       const name = receiverExpr.text;
       const localIdx = fctx.localMap.get(name);
       if (localIdx !== undefined) {
