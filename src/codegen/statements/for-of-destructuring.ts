@@ -50,6 +50,7 @@ import {
 } from "../global-environment.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
 import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
+import { emitHoleToUndefined } from "../array-holes.js"; // (#6651 G2) hole read boundary before a default
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { resolveWasmType } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
@@ -959,6 +960,23 @@ export function compileForOfDestructuring(
  * Captured-mutable names live in a cell, never a module global, so there is no
  * global-sync to emit. Consumes exactly one stack value.
  */
+/**
+ * (#6651 G2) The #2001 read-boundary invariant for a DEFAULTED slot of an
+ * `any[]` vec: `$Hole → undefined` before the default's `__extern_is_undefined`
+ * test sees the value. Without it the elision in
+ * `for ([a = 1, b = 2, c = 3] of [[2, null, , undefined]])` failed the test and
+ * bound the raw sentinel (`c` read back as an object). Mirrors the assignment
+ * lowering's two vec-read sites (`assignment.ts`, #2001).
+ */
+function emitHoleBoundaryBeforeDefault(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemType: ValType,
+  defaultInit: ts.Expression | undefined,
+): void {
+  if (defaultInit && ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+}
+
 function emitBoxedForOfAssignStore(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1695,6 +1713,7 @@ export function compileForOfAssignDestructuring(
             ctx,
             innerElemType.kind === "externref" || innerElemType.kind === "ref_extern",
           );
+          emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
           if (defaultInit) {
             emitDefaultValueCheck(ctx, fctx, memElemVT, tmpV, defaultInit, memElemVT);
           } else {
@@ -1714,6 +1733,7 @@ export function compileForOfAssignDestructuring(
           fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
           fctx.body.push({ op: "i32.const", value: i });
           emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType, ctx, true);
+          emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
           if (defaultInit) {
             emitDefaultValueCheck(ctx, fctx, unresolvableElemType, valueLocal, defaultInit, unresolvableElemType);
           } else {
@@ -1764,6 +1784,7 @@ export function compileForOfAssignDestructuring(
             ctx,
             innerElemType.kind === "externref" || innerElemType.kind === "ref_extern",
           );
+          emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
           // Now stack: [box-ref, value:innerElemType]. Apply default-on-undefined
           // and coerce to valType before struct.set.
           // For f64: check sNaN sentinel; for ref/null: check ref.is_null;
@@ -1848,6 +1869,7 @@ export function compileForOfAssignDestructuring(
               op: "array.get",
               typeIdx: innerArrTypeIdx,
             });
+            emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
             emitDefaultValueCheck(ctx, fctx, innerElemType, targetLocal!, defaultInit!, targetType ?? undefined);
           });
           // Else branch: OOB — apply default directly
