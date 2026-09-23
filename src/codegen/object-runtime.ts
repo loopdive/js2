@@ -129,7 +129,7 @@ import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispat
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
-import { buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
+import { buildVecNumericKeyGetArm, buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
 // splices the declared-field write-through prologue onto `__extern_set`.
 import {
@@ -11634,6 +11634,17 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: [...lenBody, ...ctorBody, ...captureOrGenericNumericArm],
           },
+          // (#6651 H3) …and the NUMERIC-key half, the GET twin of the #6485
+          // arm `__extern_has` got above. A read site whose key type is
+          // statically non-numeric (`string|symbol`) keeps `__extern_get` and
+          // boxes the key, so a runtime Number never reached any of the index
+          // delegations behind the `$AnyString` test. vec-numeric-key-presence.ts.
+          ...buildVecNumericKeyGetArm(ctx, {
+            objParam: 0,
+            keyParam: 1,
+            numLocal: gN,
+            getIdxIdx: externGetIdxIdx,
+          }),
           // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
           // body — its non-$Object miss arm consults the #3537 expando side
           // table (`__vec_prop_get`), which itself answers the undefined-miss
