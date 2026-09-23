@@ -1258,7 +1258,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3776,
+      "passCount": 3782,
       "totalCount": 4979
     },
     {
