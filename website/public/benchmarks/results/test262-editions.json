@@ -48,39 +48,39 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10121,
+    "pass": 10154,
     "fail": 1532,
-    "ce": 51,
+    "ce": 18,
     "skip": 0,
     "total": 11704,
-    "pct": 86,
+    "pct": 87,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3874,
+        "pass": 3907,
         "fail": 245,
-        "ce": 34,
+        "ce": 1,
         "skip": 0,
         "total": 4153,
-        "pct": 93
+        "pct": 94
       },
       {
         "name": "generators",
-        "pass": 2119,
+        "pass": 2131,
         "fail": 355,
-        "ce": 12,
+        "ce": 0,
         "skip": 0,
         "total": 2486,
-        "pct": 85
+        "pct": 86
       },
       {
         "name": "default-parameters",
-        "pass": 1470,
+        "pass": 1483,
         "fail": 69,
-        "ce": 13,
+        "ce": 0,
         "skip": 0,
         "total": 1552,
-        "pct": 95
+        "pct": 96
       },
       {
         "name": "TypedArray",
@@ -93,12 +93,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 553,
+        "pass": 586,
         "fail": 209,
-        "ce": 33,
+        "ce": 0,
         "skip": 0,
         "total": 795,
-        "pct": 70
+        "pct": 74
       },
       {
         "name": "Symbol",
@@ -1062,21 +1062,21 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3701,
+    "pass": 3715,
     "fail": 1104,
-    "ce": 18,
+    "ce": 4,
     "skip": 0,
     "total": 4823,
     "pct": 77,
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2755,
+        "pass": 2769,
         "fail": 1038,
-        "ce": 17,
+        "ce": 3,
         "skip": 0,
         "total": 3810,
-        "pct": 72
+        "pct": 73
       },
       {
         "name": "destructuring-binding",
@@ -1089,12 +1089,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 138,
+        "pass": 152,
         "fail": 499,
-        "ce": 15,
+        "ce": 1,
         "skip": 0,
         "total": 652,
-        "pct": 21
+        "pct": 23
       },
       {
         "name": "regexp-unicode-property-escapes",

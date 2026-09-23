@@ -423,12 +423,12 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1105,
+      "passCount": 1104,
       "totalCount": 1177,
       "editionSpread": [
         {
           "edition": "ES5",
-          "pass": 795,
+          "pass": 794,
           "total": 795
         },
         {
@@ -1074,13 +1074,13 @@
         "built-ins/WeakMap",
         "built-ins/WeakSet"
       ],
-      "passCount": 124,
+      "passCount": 126,
       "totalCount": 129
     },
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1711,
+      "passCount": 1725,
       "totalCount": 1955
     },
     {

@@ -96,9 +96,11 @@ import {
   emitAssertedStructExtension,
   emitGuardedFuncRefCast,
   emitGuardedRefCast,
+  buildVecFromExternMaterializer,
   getVecInfo,
   pushDefaultValue,
   pushParamSentinel,
+  vecFromExternFuncIdx,
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
 import { annexBDeclaringRange } from "../annexb-cancel.js";
@@ -130,6 +132,8 @@ import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { buildUnmatchedClosureHostCall, reserveUnmatchedClosureHostCall } from "./unmatched-closure-host-call.js"; // (#1058)
+import { withDeclarationBoundCallee } from "./declaration-bound-callee.js"; // (#1058)
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
@@ -682,6 +686,17 @@ function emitShadowCalleeSelect(ctx: CodegenContext, fctx: FunctionContext, call
 }
 
 export function compileIdentifierCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  expectedType?: ValType,
+): InnerResult | undefined {
+  // (#1058) Resolve a same-named top-level function by declaration, not by the
+  // graph-wide bare-name binding (see declaration-bound-callee.ts).
+  return withDeclarationBoundCallee(ctx, expr, () => compileBoundIdentifierCall(ctx, fctx, expr, expectedType));
+}
+
+function compileBoundIdentifierCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
@@ -2057,6 +2072,7 @@ export function compileIdentifierCall(
         const sigRetWasm =
           builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));
         const sigParamWasmTypes: ValType[] = builtinAliasInfo ? [...builtinAliasInfo.paramTypes] : [];
+        const omittedSlots = new Map<number, ValType>();
         for (let i = 0; !builtinAliasInfo && i < sigParamCount; i++) {
           // (#820d) Destructuring-pattern parameters (e.g. `method({ x = 5 } = {})`)
           // are compiled by the callee as a single `externref` slot — the binding
@@ -2103,11 +2119,15 @@ export function compileIdentifierCall(
           // instead of `"unknown size"` whenever the function reached a caller
           // through this path (a default export), while the byte-identical
           // named export was correct.
+          const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
           if (paramDecl && ts.isParameter(paramDecl) && parameterMayBeOmitted(paramDecl)) {
             sigParamWasmTypes.push({ kind: "externref" });
+            // The implementation may declare the same slot `x: T | undefined`
+            // (not omittable), which keeps its nullable ref (see below).
+            const declaredSlot = resolveWasmType(ctx, paramType);
+            if (declaredSlot.kind === "ref_null" || declaredSlot.kind === "f64") omittedSlots.set(i, declaredSlot);
             continue;
           }
-          const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
           // (#6651 C3/C3b) The third widening this site has to mirror, for the
           // reason the two above already spell out: a JavaScript parameter whose
           // only type evidence is its own default gets an `externref` slot in the
@@ -2408,6 +2428,16 @@ export function compileIdentifierCall(
               (to.kind === "ref" || to.kind === "ref_null") &&
               (isErasedGenericRefCarrier(to.typeIdx) || sigParamWasmTypes.length === 0)
             ) {
+              // An erased argument may hold a vec of a DIFFERENT element
+              // representation than the candidate's formal (the parser's
+              // `factoryCreateNodeArray(elements)`), so a bare cast traps with
+              // `illegal cast`. Prefer the materializer reserved below.
+              const vecMaterializerIdx = vecFromExternFuncIdx(ctx, to.typeIdx);
+              if (vecMaterializerIdx !== undefined) {
+                return to.kind === "ref"
+                  ? [{ op: "call", funcIdx: vecMaterializerIdx }, { op: "ref.as_non_null" }]
+                  : [{ op: "call", funcIdx: vecMaterializerIdx }];
+              }
               return [
                 { op: "any.convert_extern" },
                 {
@@ -2573,6 +2603,67 @@ export function compileIdentifierCall(
               });
             }
           };
+          // An interface method declaring `x?: T` widens that slot to externref,
+          // while an implementation declaring `x: T | undefined` keeps its
+          // nullable ref and one declaring `x = d` keeps its number (TypeScript's
+          // NodeFactory: `createVariableDeclaration`, `createVariableDeclarationList`).
+          // Add that one exact signature so the arm below can hand the omitted
+          // slots over (null / default sentinel, else cast / unbox) instead of
+          // ending in TypeError.
+          const omittedSlotFuncTypes = new Set<number>();
+          let omittedSlotTmp: number | undefined;
+          if (omittedSlots.size > 0 && !ctx.standalone && !ctx.wasi) {
+            const restoredParams = sigParamWasmTypes.map((type, i) => omittedSlots.get(i) ?? type);
+            const alt = getOrCreateFuncRefWrapperTypes(ctx, restoredParams, resultTypes);
+            if (alt && !seenFuncTypeIdx.has(alt.closureInfo.funcTypeIdx)) {
+              ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+              addUnionImports(ctx);
+              flushLateImportShifts(ctx, fctx);
+              seenFuncTypeIdx.add(alt.closureInfo.funcTypeIdx);
+              omittedSlotFuncTypes.add(alt.closureInfo.funcTypeIdx);
+              funcCandidates.push({
+                funcTypeIdx: alt.closureInfo.funcTypeIdx,
+                structTypeIdx: alt.closureInfo.structTypeIdx,
+                returnType: alt.closureInfo.returnType,
+                paramTypes: alt.closureInfo.paramTypes,
+                hasRestParam: alt.closureInfo.hasRestParam,
+              });
+            }
+          }
+          const omittedSlotArgumentBridge = (
+            candidate: { funcTypeIdx: number },
+            paramIndex: number,
+            from: ValType,
+            to: ValType,
+          ): Instr[] | null => {
+            const slot = omittedSlotFuncTypes.has(candidate.funcTypeIdx) ? omittedSlots.get(paramIndex) : undefined;
+            const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+            if (slot === undefined || isUndefinedIdx === undefined || !isHostExtern(from) || slot.kind !== to.kind) {
+              return null;
+            }
+            let present: Instr[] | null = null;
+            if (to.kind === "f64") {
+              // A present value in a number slot is a JavaScript Number.
+              present = dispatchBridgePlan(from, to, true, false);
+              if (present === null) return null;
+            } else if (to.kind === "ref_null" && slot.kind === "ref_null" && slot.typeIdx === to.typeIdx) {
+              present = [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: to.typeIdx }];
+            } else {
+              return null;
+            }
+            omittedSlotTmp ??= allocLocal(fctx, `__omitted_arg_${fctx.locals.length}`, { kind: "externref" });
+            return [
+              { op: "local.tee", index: omittedSlotTmp },
+              { op: "call", funcIdx: isUndefinedIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: to },
+                // An absent number arrives as the default-initializer sentinel.
+                then: defaultValueInstrs(to),
+                else: [{ op: "local.get", index: omittedSlotTmp }, ...present],
+              },
+            ];
+          };
           // Create externref-return variant if not already expected
           if (!expectedReturn || expectedReturn.kind !== "externref") {
             tryAltFuncType([{ kind: "externref" }]);
@@ -2719,7 +2810,22 @@ export function compileIdentifierCall(
               seenFuncTypeIdx.add(info.funcTypeIdx);
               funcCandidates.push(info);
             }
+            // Reserve the cross-rep vec materializer for every vec formal fed
+            // from an erased argument, before any arm captures an index.
+            let reservedVecMaterializer = false;
+            for (const candidate of funcCandidates) {
+              for (let pi = 0; pi < Math.min(candidate.paramTypes.length, sigParamWasmTypes.length); pi++) {
+                const to = candidate.paramTypes[pi]!;
+                if (!isHostExtern(sigParamWasmTypes[pi]!) || (to.kind !== "ref" && to.kind !== "ref_null")) continue;
+                if (getVecInfo(ctx, to.typeIdx) === null || vecFromExternFuncIdx(ctx, to.typeIdx) !== undefined)
+                  continue;
+                if (buildVecFromExternMaterializer(ctx, to.typeIdx) !== undefined) reservedVecMaterializer = true;
+              }
+            }
+            if (reservedVecMaterializer) flushLateImportShifts(ctx, fctx);
           }
+          const unmatchedClosureHostCall =
+            funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr.arguments.length) : undefined;
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one
@@ -3133,8 +3239,20 @@ export function compileIdentifierCall(
             const retBlockType =
               expectedReturn === null ? ({ kind: "empty" } as const) : ({ kind: "val", type: expectedReturn } as const);
 
-            // Build dispatch chain bottom-up (innermost = throw TypeError)
-            let funcDispatch: Instr[] = typeErrorThrowInstrs(ctx, expr.expression);
+            // Build dispatch chain bottom-up (innermost = a live closure no arm
+            // names goes through the host, see unmatched-closure-host-call.ts;
+            // otherwise throw TypeError)
+            let funcDispatch: Instr[] =
+              (unmatchedClosureHostCall &&
+                buildUnmatchedClosureHostCall(
+                  ctx,
+                  unmatchedClosureHostCall,
+                  closureLocal,
+                  actualArgExternLocals,
+                  expectedReturn,
+                  (from, to) => dispatchBridgePlan(from, to, true, true),
+                )) ??
+              typeErrorThrowInstrs(ctx, expr.expression);
 
             // (#2933) Innermost fallback BEFORE the TypeError: the variadic
             // builtin value-closure arm. Its lifted func type has ONE
@@ -3303,6 +3421,7 @@ export function compileIdentifierCall(
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
                 if (!scalarAbiTypesMatch(fromType, toType)) {
                   const bridge =
+                    omittedSlotArgumentBridge(fc, ai, fromType, toType) ??
                     dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai), true) ??
                     referencePredicateArgumentBridge(fc, ai, fromType, toType) ??
                     genericReferenceCallbackArgumentBridge(fc, ai, fromType, toType) ??

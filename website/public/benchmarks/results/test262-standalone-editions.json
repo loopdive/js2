@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 9028,
-    "fail": 1,
+    "pass": 9027,
+    "fail": 2,
     "ce": 0,
     "skip": 0,
     "total": 9029,
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10784,
-    "fail": 769,
-    "ce": 151,
+    "pass": 10802,
+    "fail": 752,
+    "ce": 150,
     "skip": 0,
     "total": 11704,
     "pct": 92,
@@ -85,20 +85,20 @@
       {
         "name": "TypedArray",
         "pass": 963,
-        "fail": 86,
-        "ce": 1,
+        "fail": 87,
+        "ce": 0,
         "skip": 0,
         "total": 1050,
         "pct": 92
       },
       {
         "name": "Symbol.iterator",
-        "pass": 724,
-        "fail": 47,
+        "pass": 738,
+        "fail": 33,
         "ce": 24,
         "skip": 0,
         "total": 795,
-        "pct": 91
+        "pct": 93
       },
       {
         "name": "Symbol",
@@ -408,12 +408,12 @@
       },
       {
         "name": "Map",
-        "pass": 19,
-        "fail": 3,
+        "pass": 21,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 22,
-        "pct": 86
+        "pct": 95
       },
       {
         "name": "String.fromCodePoint",
