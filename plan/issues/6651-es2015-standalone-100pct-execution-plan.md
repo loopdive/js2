@@ -4455,12 +4455,10 @@ The spec-level reason a no-host standalone target cannot honour them:
 
 So the honest verdict is **wont-fix for `--target standalone`**, not "not yet".
 The JS-host lane keeps whatever `$262.createRealm` support the runner gives it;
-nothing here changes that. **No issue id was allocated for this** — allocating
-one writes to the shared `issue-assignments` ref, and this lane was instructed
-not to push. The round-3 owner should allocate via
-`claim-issue.mjs --allocate` and file it with the three points above; that
-converts 6 of cluster I's 108 residual rows into documented done, per this
-issue's definition of done.
+nothing here changes that. Filed as
+[#6657](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6657-standalone-262-createrealm-wontfix)
+(`status: wont-fix`) on 2026-09-23, which converts 6 of cluster I's 108
+residual rows into documented done under this issue's definition of done.
 
 #### Logs and artefacts
 
