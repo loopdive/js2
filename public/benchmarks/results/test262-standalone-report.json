@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-21T23:44:14.184Z",
-  "baseline_generated_at": "2026-09-21T23:44:14.184Z",
-  "baseline_sha": "b28556a3c2f6ccb6780c214cf4199fa0a7be17c1",
+  "timestamp": "2026-09-23T01:52:19.705Z",
+  "baseline_generated_at": "2026-09-23T01:52:19.705Z",
+  "baseline_sha": "cf9ffc44ed4d6bc1c4c6ab894ad4fdcd1c4b75d7",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -12,22 +12,22 @@
   "summary": {
     "total": 48232,
     "pass": 36108,
-    "fail": 9261,
+    "fail": 9262,
     "compile_error": 2833,
-    "compile_timeout": 12,
+    "compile_timeout": 11,
     "skip": 18,
-    "compilable": 45369,
+    "compilable": 45370,
     "host_free_pass": 36108,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 35079,
-        "fail": 9223,
+        "fail": 9224,
         "compile_error": 2814,
-        "compile_timeout": 12,
+        "compile_timeout": 11,
         "skip": 18,
-        "compilable": 44302,
+        "compilable": 44303,
         "host_free_pass": 35079,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -59,11 +59,11 @@
       "official": {
         "total": 48232,
         "pass": 36108,
-        "fail": 9261,
+        "fail": 9262,
         "compile_error": 2833,
-        "compile_timeout": 12,
+        "compile_timeout": 11,
         "skip": 18,
-        "compilable": 45369,
+        "compilable": 45370,
         "host_free_pass": 36108,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -71,11 +71,11 @@
       "full": {
         "total": 48735,
         "pass": 36343,
-        "fail": 9277,
+        "fail": 9278,
         "compile_error": 2989,
-        "compile_timeout": 12,
+        "compile_timeout": 11,
         "skip": 114,
-        "compilable": 45620,
+        "compilable": 45621,
         "host_free_pass": 36343,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -85,33 +85,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 36108,
-    "fail": 9261,
+    "fail": 9262,
     "compile_error": 2833,
-    "compile_timeout": 12,
+    "compile_timeout": 11,
     "skip": 18,
-    "compilable": 45369,
+    "compilable": 45370,
     "host_free_pass": 36108,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 36343,
-    "fail": 9277,
+    "fail": 9278,
     "compile_error": 2989,
-    "compile_timeout": 12,
+    "compile_timeout": 11,
     "skip": 114,
-    "compilable": 45620,
+    "compilable": 45621,
     "host_free_pass": 36343,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 33822,
-    "fail": 9128,
+    "fail": 9129,
     "compile_error": 2741,
-    "compile_timeout": 12,
+    "compile_timeout": 11,
     "skip": 18,
-    "compilable": 42950,
+    "compilable": 42951,
     "host_free_pass": 33822,
     "stale": 0
   },
@@ -141,11 +141,11 @@
     "standard": {
       "total": 47146,
       "pass": 35079,
-      "fail": 9223,
+      "fail": 9224,
       "compile_error": 2814,
-      "compile_timeout": 12,
+      "compile_timeout": 11,
       "skip": 18,
-      "compilable": 44302,
+      "compilable": 44303,
       "host_free_pass": 35079,
       "stale": 0
     }
@@ -199,9 +199,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 2207,
-      "fail": 754,
+      "fail": 755,
       "compile_error": 110,
-      "compile_timeout": 11,
+      "compile_timeout": 10,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2207
@@ -1198,14 +1198,14 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4577,
+    "assertion_fail": 4578,
     "host_import_leak": 1757,
-    "illegal_cast": 235,
+    "illegal_cast": 234,
     "missing_builtin": 2,
     "negative_test_fail": 3,
     "null_deref": 15,
     "oob": 7,
-    "other": 3200,
+    "other": 3201,
     "promise_error": 52,
     "range_error": 15,
     "runtime_error": 141,
@@ -1291,17 +1291,17 @@
           "ES2026": 4433
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
-          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
-          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
+          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "other:ReferenceError: Temporal is not defined"
         ]
       },
@@ -1445,11 +1445,10 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 43,
+          "assertion_fail": 44,
           "runtime_error": 1,
           "type_error": 1,
-          "other": 7,
-          "illegal_cast": 1
+          "other": 7
         },
         "by_edition": {
           "Unclassified (untagged)": 34,
@@ -1460,15 +1459,15 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/value-tojson-object-circular.js",
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
-          "test/built-ins/JSON/parse/reviver-wrapper.js",
           "test/built-ins/JSON/stringify/value-function.js",
+          "test/built-ins/JSON/parse/reviver-wrapper.js",
           "test/built-ins/JSON/stringify/value-object-abrupt.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«\"#\"», «undefined») to be true",
-          "assertion_fail:Test262Error: [[Set]] should not be called.",
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
+          "assertion_fail:Test262Error: [[Set]] should not be called.",
           "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
         ]
       },
@@ -1976,9 +1975,9 @@
         "count": 1687,
         "statuses": {
           "pass": 0,
-          "fail": 1466,
+          "fail": 1467,
           "compile_error": 209,
-          "compile_timeout": 12,
+          "compile_timeout": 11,
           "skip": 0,
           "total": 1687,
           "host_free_pass": 0
@@ -1989,7 +1988,7 @@
           "illegal_cast": 174,
           "type_error": 248,
           "host_import_leak": 180,
-          "other": 33,
+          "other": 34,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2807,7 +2806,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
+          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
         ]
       },
       {
@@ -2911,8 +2910,8 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/part-unicode-17.0.0-class.js",
+          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [

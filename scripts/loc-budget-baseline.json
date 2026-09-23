@@ -1,7 +1,7 @@
 {
-  "generated": "2026-09-21",
+  "generated": "2026-09-23",
   "threshold": 1500,
-  "totalCeiling": 917124,
+  "totalCeiling": 917161,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -30,7 +30,7 @@
     "src/codegen/expressions/assignment.ts": 6488,
     "src/codegen/expressions/builtins.ts": 3874,
     "src/codegen/expressions/call-builtin-static.ts": 4693,
-    "src/codegen/expressions/call-identifier.ts": 4326,
+    "src/codegen/expressions/call-identifier.ts": 4330,
     "src/codegen/expressions/call-namespace-static.ts": 4248,
     "src/codegen/expressions/call-receiver-method.ts": 4847,
     "src/codegen/expressions/call-tail-dispatch.ts": 2309,
