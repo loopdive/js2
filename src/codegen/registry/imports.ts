@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
+import { registerWideBigIntTypes } from "../bigint-wide.js";
 import type { Import, Instr, ValType } from "../../ir/types.js";
 import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
 import {
@@ -1258,7 +1259,10 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     kind: "struct",
     name: "$BigInt",
     fields: [{ name: "value", type: { kind: "i64", bigint: true }, mutable: false }],
+    // (#6656) Open: `$BigIntWide` (a value past i64) is its subtype.
+    superTypeIdx: -1,
   });
+  registerWideBigIntTypes(ctx, bigIntStructIdx);
   ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;
   ctx.nativeBoxBooleanTypeIdx = boxBoolStructIdx;
   ctx.nativeBigIntTypeIdx = bigIntStructIdx;
