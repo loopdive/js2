@@ -434,7 +434,8 @@ function emitDefaultRegExpSplitter(
         { op: "ref.cast", typeIdx: structTypeIdx },
         { op: "local.set", index: reLocal },
         // `$NativeRegExp` field order: flags, nGroups, prog, classTable,
-        // source, nScratch, lastIndex, lastIndexRaw, lastIndexRawPresent.
+        // source, nScratch, lastIndex, lastIndexRaw, lastIndexRawPresent,
+        // $lastIndexNonWritable.
         ...field(0),
         { op: "i32.const", value: RE_FLAG_Y },
         { op: "i32.or" },
@@ -445,6 +446,7 @@ function emitDefaultRegExpSplitter(
         ...field(5),
         { op: "f64.const", value: 0 },
         { op: "ref.null.extern" },
+        { op: "i32.const", value: 0 },
         { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: structTypeIdx },
         { op: "extern.convert_any" },

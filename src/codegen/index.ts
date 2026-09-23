@@ -408,6 +408,7 @@ import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primiti
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484 S2) record property reads
 import { unshiftRegExpAccessorGetArm } from "./regexp-accessor-get-arm.js"; // (#6651 B4) §22.2.6 accessor reads
+import { installRegExpLastIndexCarrierArms } from "./regexp-lastindex-carrier.js"; // (#6651 B6) lastIndex MOP
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import {
   noteNumberPrimitiveMethodDemand,
@@ -6591,6 +6592,8 @@ export function generateModule(
     // closed-struct declared-field ladder (which answered `flags` with the raw
     // bitfield) and behind the proto-cache arm, which must stay the prefix.
     unshiftRegExpAccessorGetArm(ctx);
+    // (#6651 B6) runtime-keyed `lastIndex` Get/Set/define on a `$NativeRegExp`.
+    installRegExpLastIndexCarrierArms(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -11327,6 +11330,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // closed-struct declared-field ladder (which answered `flags` with the raw
     // bitfield) and behind the proto-cache arm, which must stay the prefix.
     profilePhase("unshift-regexp-accessor-get", () => unshiftRegExpAccessorGetArm(ctx));
+    profilePhase("install-regexp-lastindex-carrier", () => installRegExpLastIndexCarrierArms(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
