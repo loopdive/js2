@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: standalone
-related: [1058, 3494, 4043, 4287, 5384, 6665, 6666, 6667]
+related: [1058, 3494, 4043, 4287, 5384, 6660, 6665, 6666, 6667]
 ---
 
 # #6661 — make every npm-compat standalone-dynamic status name its real cause
@@ -94,6 +94,11 @@ full-mode path was verified end-to-end on stylelint):
 | jest | `Cannot find module 'jest-config'` | runtime-error at module-init: `…non-stringifiable payload): raised by compiler-generated code (…; see #6666)` — the throw is `ReferenceError: require is not defined` (decoded from the WAT, #6666) |
 | lodash | `Signature declarations…` (noise) | `String.prototype.replace(...) with a RegExp … value` (#6665) |
 | prettier | `Signature declarations…` (noise) | `String.prototype.replace(...) with a RegExp … value` (#6665) |
+
+Outside this cluster the same mechanism also changes axios (host-blocked by
+#3587): its standalone-dynamic lane will show its own `'__get_builtin' …
+(#1472 Phase B)` refusal, as measured in #6660, which this change resolves for
+the standalone-dynamic lane (the static `standalone` lane still inherits).
 
 In CI (full mode) typescript/webpack will read `standalone-dynamic lane
 exceeded the <timeoutMs>ms harness budget (compile-budget)` — the child is
