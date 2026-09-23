@@ -464,6 +464,8 @@ import { brandCollidingShapeTypes, linkBrandRoleOf } from "./shape-brand.js";
 import {
   addImport,
   addStringConstantGlobal,
+  beginDeferredStringConstants,
+  resolveDeferredStringConstants,
   ensureExnTag,
   exportedExnTagIndex,
   localGlobalIdx,
@@ -5862,6 +5864,8 @@ export function generateModule(
       irPreserveBodyUnitIds = routing.preserveBodyUnitIds;
     }
     // Third pass: compile function bodies
+    // (#1058) Batch throw-message string imports until the bodies are done.
+    beginDeferredStringConstants(ctx);
     const {
       actuallySkipped,
       functionUnitIds: actuallySkippedFunctionUnitIds,
@@ -6017,6 +6021,8 @@ export function generateModule(
     if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuardForLinkedProvider(ctx);
     // (#6619) Its f64 twin, same gate shape.
     if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuardForLinkedProvider(ctx);
+
+    resolveDeferredStringConstants(ctx);
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     // Dynamic field additions during expression compilation can add fields to struct types
@@ -11051,6 +11057,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       nonExtensibleVars: new Set(ctx.nonExtensibleVars),
     };
     const nativeGenEndState = snapshotNativeGeneratorEndState(ctx, ownNativeGenBySource);
+    // (#1058) Batch throw-message string imports until the bodies are done.
+    beginDeferredStringConstants(ctx);
     profilePhase("bodies", () => {
       const lastIndex = multiAst.sourceFiles.length - 1;
       for (const [index, sf] of multiAst.sourceFiles.entries()) {
@@ -11108,6 +11116,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     compileMultiPreparedProgramOverlays(multiPreparedProgram, multiAst, options, ctx, irAuthority);
 
     multiPreparedProgram?.sealRoutesComplete();
+    profilePhase("resolve-deferred-string-constants", () => resolveDeferredStringConstants(ctx));
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
     frameStage(ctx, "fixupStructNewArgCounts");
