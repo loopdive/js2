@@ -66,9 +66,6 @@ import {
 // than approximating an ordinary `arguments.length` with a raw f64 cast.
 import { buildArrayLikeToLengthFromExternref } from "./object-runtime-enumeration.js";
 import { ensureHoleType } from "./array-holes.js";
-// (#3206) `__array_from_mapped` reuses the native array-map HOF loop
-// (`__hof_map`) after normalizing the source through `__array_from_iter_n`.
-import { ensureNativeArrayHof } from "./hof-native.js";
 // (#3100 S4) `__extern_slice`'s $AnyString arm reuses the #1470 code-point
 // char-vec helper so a string rest (`const [a, ...r] = "hello"`) yields the
 // spec §22.1.5.1 per-code-point elements natively.
@@ -2063,72 +2060,6 @@ export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__array_from_iter_n", funcIdx);
   pushDefinedFunc(ctx, funcIdx, { name: "__array_from_iter_n", typeIdx, locals, body, exported: false });
-  return funcIdx;
-}
-
-/**
- * (#3206) Register a native standalone `__array_from_mapped(source, mapFn,
- * thisArg) -> externref` — the host-free lowering of `Array.from(source,
- * mapFn, thisArg)` (§23.1.2.1 with a mapper). This is the last harness-level
- * gate before the `built-ins/TypedArray/prototype/**` makeCtorArg family
- * (`harness/testTypedArray.js` `makeArray` = `Array.from({length:n}, fn)` /
- * `Array.from(iterable, fn)`) can execute its body — previously the mapFn arm
- * fell to the host `env.__array_from` + `env.__make_callback` bridge, both
- * unsatisfiable standalone (module failed to instantiate).
- *
- * `Array.from(source, mapFn, thisArg)` is `source.map(mapFn, thisArg)` after
- * normalizing an iterable source to an array-like carrier, so the body simply
- * composes two existing native helpers:
- *   - `__array_from_iter_n(source, -1)` drains an iterable source to a `$Vec`
- *     and passes an indexable carrier (`$Vec`/`$ObjVec`/`$Object {length}`/host
- *     array) through UNCHANGED (§23.1.2.1: iterator protocol if the source is
- *     iterable, else the array-like `length`/indexed walk which the downstream
- *     `__extern_length`/`__extern_get_idx` reader performs).
- *   - `__hof_map(recv, cb, thisArg)` runs the per-element loop, invoking the
- *     callback through the `__apply_closure` bridge with `(value, index, recv)`.
- *     `__apply_closure` clamps to the callback's declared arity (§2939) so a
- *     `(value, index)` mapper ignores the extra `recv` arg — exactly the
- *     `Array.from` mapFn contract; array-like holes read `undefined`.
- *
- * The `$ObjVec` result carrier is the same boxed-any array `.map` returns and
- * what the host `__array_from` handed back — the consumer reads it through the
- * dynamic `__extern_length`/`__extern_get_idx` arm.
- *
- * Standalone-only (the deps `__hof_map` / `__extern_*` array-like arms are
- * standalone-gated); returns `undefined` if the map HOF is unavailable so the
- * caller keeps the existing routing. Append-only (defined funcs — no funcIdx
- * shift); the composed `call` funcIdx are patched by `shiftLateImportIndices`
- * like any other defined body if a later import shifts them.
- */
-export function ensureNativeArrayFromMapped(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
-  const existing = ctx.funcMap.get("__array_from_mapped");
-  if (existing !== undefined) return existing;
-
-  // Register the composed deps first so their funcIdx are stable reads.
-  const afinIdx = ensureNativeArrayFromIterN(ctx);
-  const hofMapIdx = ensureNativeArrayHof(ctx, "map");
-  if (hofMapIdx === undefined) return undefined;
-
-  // __array_from_mapped(source, mapFn, thisArg) =
-  //   __hof_map(__array_from_iter_n(source, -1), mapFn, thisArg)
-  const body: Instr[] = [
-    { op: "local.get", index: 0 }, // source
-    { op: "f64.const", value: -1 }, // unbounded drain
-    { op: "call", funcIdx: afinIdx }, // → normalized array-like carrier
-    { op: "local.get", index: 1 }, // mapFn (raw GC closure externref)
-    { op: "local.get", index: 2 }, // thisArg (externref | null)
-    { op: "call", funcIdx: hofMapIdx }, // → $ObjVec externref
-  ];
-
-  const typeIdx = addFuncType(
-    ctx,
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__array_from_mapped", funcIdx);
-  pushDefinedFunc(ctx, funcIdx, { name: "__array_from_mapped", typeIdx, locals: [], body, exported: false });
   return funcIdx;
 }
 

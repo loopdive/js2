@@ -105,8 +105,10 @@ import {
 import {
   emitNativeGlobalThisObject,
   emitTypedArrayIntrinsicCtorObject,
+  ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
 } from "./array-object-proto.js";
+import { emitTaStaticFromOfInheritedValue, isTaStaticFromOfMember } from "./ta-static-from-of-body.js";
 import {
   buildInt8ArrayCarrierMatch,
   dvDetachedThrowInstrs,
@@ -1974,6 +1976,12 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
         if (protoBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, protoBrand)) {
           return { kind: "externref" };
         }
+      }
+      // (#6651 E5) `Int32Array.from` / `.of` — the INHERITED `%TypedArray%` singleton.
+      if (TYPED_ARRAY_NAMES.has(builtinName) && isTaStaticFromOfMember(propName)) {
+        const brand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+        const inherited = emitTaStaticFromOfInheritedValue(ctx, fctx, brand, propName);
+        if (inherited !== undefined) return inherited;
       }
       const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
       if (closure) {

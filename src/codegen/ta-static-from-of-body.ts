@@ -75,7 +75,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
-import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import {
   buildInt8ArrayCarrierMatch,
   ensureTaFromArrayLikeHelper,
@@ -91,7 +91,9 @@ import { reserveNativeConstructDriver } from "./native-construct.js";
 import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped } from "./iterator-native.js";
+import { ensureNativeArrayFromIterN } from "./iterator-native.js";
+import { ensureStandaloneNativeMethodClosure } from "./native-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -210,6 +212,7 @@ function buildOrdinaryTypedArrayCreateAndFill(
     externGetIdxIdx: number;
     boxNumIdx: number;
   },
+  mapping?: FromMapping,
 ): Instr[] {
   const { recvLocal, carrierLocal, constructIdx, externLenIdx, externSetIdx, externGetIdxIdx, boxNumIdx } = deps;
   const lenLocal = allocLocal(fctx, `__tatc_len_${fctx.locals.length}`, { kind: "f64" });
@@ -287,6 +290,7 @@ function buildOrdinaryTypedArrayCreateAndFill(
             { op: "local.get", index: kLocal },
             { op: "f64.convert_i32_s" },
             { op: "call", funcIdx: externGetIdxIdx },
+            ...(mapping ? mapKValueInstrs(ctx, fctx, mapping, kLocal, boxNumIdx) : []),
             { op: "call", funcIdx: externSetIdx },
             { op: "local.get", index: kLocal },
             { op: "i32.const", value: 1 },
@@ -301,10 +305,61 @@ function buildOrdinaryTypedArrayCreateAndFill(
   ];
 }
 
+/** (#6651 E5) §23.2.2.1's `mapping` flag and the two values step 3 unpacked. */
+interface FromMapping {
+  mappingLocal: number;
+  mapfnLocal: number;
+  thisArgLocal: number;
+}
+
+/**
+ * (#6651 E5) `kValue` on the stack → `mapping ? Call(mapfn, thisArg, « kValue,
+ * 𝔽(k) ») : kValue` — exactly two arguments, the §23.2.2.1 step 7.e.iii /
+ * 11.c call, made for element k right before that element's Set.
+ */
+function mapKValueInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  m: FromMapping,
+  kLocal: number,
+  boxNumIdx: number,
+): Instr[] {
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const applyIdx = reserveApplyClosure(ctx);
+  const vLocal = allocLocal(fctx, `__tatc_kv_${fctx.locals.length}`, EXTERNREF);
+  const argsLocal = allocLocal(fctx, `__tatc_margs_${fctx.locals.length}`, EXTERNREF);
+  return [
+    { op: "local.set", index: vLocal },
+    { op: "local.get", index: m.mappingLocal },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [
+        { op: "call", funcIdx: newIdx },
+        { op: "local.set", index: argsLocal },
+        { op: "local.get", index: argsLocal },
+        { op: "local.get", index: vLocal },
+        { op: "call", funcIdx: pushIdx },
+        { op: "local.get", index: argsLocal },
+        { op: "local.get", index: kLocal },
+        { op: "f64.convert_i32_s" },
+        { op: "call", funcIdx: boxNumIdx },
+        { op: "call", funcIdx: pushIdx },
+        { op: "local.get", index: m.mapfnLocal },
+        { op: "local.get", index: m.thisArgLocal },
+        { op: "local.get", index: argsLocal },
+        { op: "call", funcIdx: applyIdx },
+      ],
+      else: [{ op: "local.get", index: vLocal }],
+    },
+  ];
+}
+
 /**
  * §23.2.2.1 steps 3–6 for the VALUE body: unpack `(source, mapfn, thisArg)`
  * from the packed args vector, gate `mapfn`, and leave `carrierLocal` holding
- * an indexable carrier of the (mapped) source values.
+ * an indexable carrier of the UNMAPPED source values (E5: mapping happens per
+ * element, after TypedArrayCreate — see `ensureTaFromArrayLikeMappedHelper`).
  *
  * Step 3 is `If mapfn is not undefined and IsCallable(mapfn) is false, throw`,
  * BEFORE step 4's `@@iterator` GET (`mapfn-is-not-callable.js` counts that GET).
@@ -318,10 +373,9 @@ function emitFromSourceToCarrier(
   vecTypeIdx: number,
   undefinedInstrs: Instr[],
   carrierLocal: number,
-): void {
+): FromMapping {
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const iterNIdx = ensureNativeArrayFromIterN(ctx);
-  const mappedIdx = ensureNativeArrayFromMapped(ctx);
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   const nLocal = allocLocal(fctx, `__tasf_n_${fctx.locals.length}`, { kind: "i32" });
   const argLocals = ["src", "mapfn", "this"].map((n) =>
@@ -389,27 +443,16 @@ function emitFromSourceToCarrier(
     blockType: { kind: "empty" },
     then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: %TypedArray%.from source is null or undefined"),
   });
-  const iterArm: Instr[] = [
+  // (#6651 E5) The source is normalized WITHOUT mapping: §23.2.2.1 maps inside
+  // the element loop that follows TypedArrayCreate, one Set at a time (see
+  // `ensureTaFromArrayLikeMappedHelper`), never over the whole list up front.
+  fctx.body.push(
     { op: "local.get", index: srcLocal },
     { op: "f64.const", value: -1 },
     { op: "call", funcIdx: iterNIdx },
     { op: "local.set", index: carrierLocal },
-  ];
-  if (mappedIdx === undefined) {
-    for (const instr of iterArm) fctx.body.push(instr);
-    return;
-  }
-  const mapArm: Instr[] = [
-    { op: "local.get", index: srcLocal },
-    { op: "local.get", index: mapfnLocal },
-    { op: "local.get", index: thisArgLocal },
-    { op: "call", funcIdx: mappedIdx },
-    { op: "local.set", index: carrierLocal },
-  ];
-  fctx.body.push(
-    { op: "local.get", index: mappingLocal },
-    { op: "if", blockType: { kind: "empty" }, then: mapArm, else: iterArm },
   );
+  return { mappingLocal, mapfnLocal, thisArgLocal };
 }
 
 /**
@@ -429,11 +472,14 @@ export function emitTaStaticFromOfBody(ctx: CodegenContext, fctx: FunctionContex
     ensureObjVecBuilders(ctx);
   } else {
     ensureNativeArrayFromIterN(ctx);
-    ensureNativeArrayFromMapped(ctx);
+    ensureObjVecBuilders(ctx);
+    reserveApplyClosure(ctx);
   }
 
   const taFromIdx = ensureTaFromArrayLikeHelper(ctx);
   if (taFromIdx === undefined) return null;
+  const taFromMappedIdx = member === "from" ? ensureTaFromArrayLikeMappedHelper(ctx) : undefined;
+  if (member === "from" && taFromMappedIdx === undefined) return null;
   ensureObjectRuntime(ctx);
   const externLenIdx = ctx.funcMap.get("__extern_length");
   const externSetIdx = ctx.funcMap.get("__extern_set");
@@ -516,34 +562,134 @@ export function emitTaStaticFromOfBody(ctx: CodegenContext, fctx: FunctionContex
 
   // ── The source → indexable carrier ───────────────────────────────────────
   const carrierLocal = allocLocal(fctx, `__tast_carrier_${fctx.locals.length}`, EXTERNREF);
+  let mapping: FromMapping | undefined;
   if (member === "of") {
     emitArgsVecToCarrier(ctx, fctx, 2, argsVecTypeIdx, carrierLocal);
   } else {
-    emitFromSourceToCarrier(ctx, fctx, argsVecTypeIdx, undefinedInstrs, carrierLocal);
+    mapping = emitFromSourceToCarrier(ctx, fctx, argsVecTypeIdx, undefinedInstrs, carrierLocal);
   }
 
   // ── TypedArrayCreate + the element writes ────────────────────────────────
-  const ordinaryArm = buildOrdinaryTypedArrayCreateAndFill(ctx, fctx, {
-    recvLocal,
-    carrierLocal,
-    constructIdx,
-    externLenIdx,
-    externSetIdx,
-    externGetIdxIdx,
-    boxNumIdx,
-  });
+  const ordinaryArm = buildOrdinaryTypedArrayCreateAndFill(
+    ctx,
+    fctx,
+    { recvLocal, carrierLocal, constructIdx, externLenIdx, externSetIdx, externGetIdxIdx, boxNumIdx },
+    mapping,
+  );
+  const taArm: Instr[] = [
+    { op: "local.get", index: recvLocal },
+    { op: "local.get", index: carrierLocal },
+    { op: "call", funcIdx: taFromIdx },
+  ];
   fctx.body.push({ op: "local.get", index: taIshLocal });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: EXTERNREF },
-    then: [
-      { op: "local.get", index: recvLocal },
-      { op: "local.get", index: carrierLocal },
-      { op: "call", funcIdx: taFromIdx },
-    ],
+    // (#6651 E5) A mapping `from` maps per element inside the shared helper.
+    then:
+      mapping && taFromMappedIdx !== undefined
+        ? [
+            { op: "local.get", index: mapping.mappingLocal },
+            {
+              op: "if",
+              blockType: { kind: "val", type: EXTERNREF },
+              then: [
+                { op: "local.get", index: recvLocal },
+                { op: "local.get", index: carrierLocal },
+                { op: "local.get", index: mapping.mapfnLocal },
+                { op: "local.get", index: mapping.thisArgLocal },
+                { op: "call", funcIdx: taFromMappedIdx },
+              ],
+              else: taArm,
+            },
+          ]
+        : taArm,
     else: ordinaryArm,
   });
   return EXTERNREF;
+}
+
+/**
+ * (#6651 E5) `__ta_from_arraylike_mapped(ctor, carrier, mapfn, thisArg)` — the
+ * mapping twin of `__ta_from_arraylike`, for a recognized TypedArray `ctor`.
+ *
+ * §23.2.2.1 maps INSIDE the element loop that runs AFTER TypedArrayCreate:
+ * `mappedValue = ? Call(mapfn, thisArg, « kValue, 𝔽(k) »)` then
+ * `? Set(targetObj, Pk, mappedValue, true)`, one element at a time. The old
+ * lowering mapped the whole source up front through `__array_from_mapped`
+ * (= `__hof_map`), which is wrong three ways, each a test262 row:
+ *  - the callback got `Array.prototype.map`'s THREE arguments
+ *    (`from/mapfn-arguments.js`: `arguments.length` 3, spec 2);
+ *  - every mapfn call ran before the FIRST element's ToNumber, so an abrupt
+ *    ToNumber on element k no longer stopped the mapping of k+1
+ *    (`from/set-value-abrupt-completion.js`: `lastValue` was the last element);
+ *  - the abstract `%TypedArray%` TypeError came after every mapfn call.
+ * Splicing the call into the shared helper's loop — between the carrier read
+ * and the ToNumber that IS that element's Set — gives the spec's interleaving
+ * without a second copy of the element codec. The fresh view is not reachable
+ * from `mapfn`, so writing it at the end is unobservable.
+ */
+export function ensureTaFromArrayLikeMappedHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get("__ta_from_arraylike_mapped");
+  if (existing !== undefined) return existing;
+  // Every dependency is registered BEFORE the helper mints its index; the hook
+  // below only reads them.
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const applyIdx = reserveApplyClosure(ctx);
+  const boxNumIdx = ctx.funcMap.get("__box_number");
+  if (boxNumIdx === undefined) return undefined;
+  return ensureTaFromArrayLikeHelper(ctx, {
+    helperName: "__ta_from_arraylike_mapped",
+    extraParams: ["mapfn", "thisArg"], // params 2, 3
+    mapElement: (fctx, iLocal) => {
+      const vLocal = allocLocal(fctx, "mapK", EXTERNREF);
+      const argsLocal = allocLocal(fctx, "mapArgs", EXTERNREF);
+      fctx.body.push(
+        { op: "local.set", index: vLocal },
+        { op: "call", funcIdx: newIdx },
+        { op: "local.set", index: argsLocal },
+        { op: "local.get", index: argsLocal },
+        { op: "local.get", index: vLocal },
+        { op: "call", funcIdx: pushIdx },
+        { op: "local.get", index: argsLocal },
+        { op: "local.get", index: iLocal },
+        { op: "f64.convert_i32_s" },
+        { op: "call", funcIdx: boxNumIdx },
+        { op: "call", funcIdx: pushIdx },
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 3 },
+        { op: "local.get", index: argsLocal },
+        { op: "call", funcIdx: applyIdx },
+      );
+    },
+  });
+}
+
+/**
+ * (#6651 E5) `<ConcreteTA>.from` / `.of` read as a VALUE from the constructor
+ * NAME — `Int32Array.from.call(C, …)`. §23.2.6 makes the concrete constructor
+ * inherit both from `%TypedArray%`, so the answer is the intrinsic's own
+ * singleton (`Int32Array.from === TypedArray.from`). E4's inherited-value arm
+ * only answers a DYNAMIC read on a constructor VALUE, and deliberately never
+ * mints (it runs at finalize); this static spelling is compiled in a function
+ * body, where minting the closure is the ordinary reserve-time operation — the
+ * one `emitTypedArrayIntrinsicCtorObject` performs when it seeds the carrier.
+ * Returns `undefined` (nothing pushed) to decline.
+ */
+export function emitTaStaticFromOfInheritedValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  intrinsicBrand: number | undefined,
+  member: string,
+): ValType | undefined {
+  if (!ctx.standalone || intrinsicBrand === undefined || !isTaStaticFromOfMember(member)) return undefined;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, intrinsicBrand, member, "method", {
+    refusalBodyFallback: true,
+  });
+  if (!closure) return undefined;
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+  return closure.type;
 }
 
 /**
