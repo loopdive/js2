@@ -84,3 +84,12 @@ compile), or label an inherited row explicitly (e.g. `status: "blocked-by-host"`
 with the host diagnostic in `inheritedFrom`). This changes what the
 CI-refreshed dashboard publishes, so it needs a lead decision; do not
 hand-commit `npm-compat.json`.
+
+## Progress (2026-09-23, [#6661](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6661-npm-compat-opaque-lane-diagnostic))
+
+The **standalone-dynamic** half is fixed by #6661: when the JS-host gate
+blocks, that lane is measured in a bounded child process
+(`--perf-only --lane standalone-dynamic`, budget = the package's harness
+`timeoutMs`) and reports its own error; TS8017/TS8010 timer-shim noise is no
+longer chosen as a blocker anywhere. Still open here: the compile-time-static
+`standalone` lane (and `jsHost`, by design) still inherit the host block.

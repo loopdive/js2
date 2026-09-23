@@ -131,7 +131,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 56,
+      "passCount": 57,
       "totalCount": 59,
       "editionSpread": [
         {
@@ -141,7 +141,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 9,
+          "pass": 10,
           "total": 11
         },
         {
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4360,
+      "passCount": 4362,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 663,
+          "pass": 665,
           "total": 752
         },
         {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1725,
+      "passCount": 1728,
       "totalCount": 1955
     },
     {
