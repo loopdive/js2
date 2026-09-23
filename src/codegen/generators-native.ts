@@ -32,6 +32,7 @@ import {
  *     (try/finally without catch is, as in Phase 1).
  */
 import { ts } from "../ts-api.js";
+import { resolveComputedKeyExpression } from "./literals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import {
   isBooleanType,
@@ -3359,8 +3360,11 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // rehydrates it into the detached resume context, including mapped metadata.
   // (#3164) A FunctionExpression may be anonymous — its native registration
   // rides a synthetic lifted-closure name supplied by the emit site
-  // (closures.ts). Everything else still requires a name (funcMap key).
-  if (!decl.name && !ts.isFunctionExpression(decl)) return false;
+  // (closures.ts). Everything else still requires a name (funcMap key) —
+  // except (#6651 A3) the anonymous `export default function* () {}`, which the
+  // declaration collector already registers under the synthetic name "default"
+  // (declarations.ts), so its funcMap key is as stable as a named one's.
+  if (!decl.name && !ts.isFunctionExpression(decl) && !isAnonymousDefaultExportDeclaration(decl)) return false;
   // (#3164) Fn-expr-specific shape gate (identifier-only params, frame-carried
   // `arguments`, no `this`/self-name reference, no outer capture). Applied
   // here — the SINGLE candidate gate — so `sourceNeedsGeneratorHostImports`,
@@ -3371,7 +3375,20 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // (`{ [k]*(){} }`, `{ "m"*(){} }`) is out of scope — only an identifier-named
   // method threads cleanly through the funcMap key. (#3896) PRIVATE names are
   // admitted: already `__priv_`-mangled, and class-only, so never this shape.
-  if (ts.isMethodDeclaration(decl) && !ts.isIdentifier(decl.name) && !ts.isPrivateIdentifier(decl.name)) return false;
+  //
+  // (#6651 A3) A string / numeric / COMPUTED name whose key folds at compile
+  // time (`*['a']()`, `*[1]()`, `*[Symbol.iterator]()`) is admitted: both emit
+  // sites already key the method by the FOLDED name (`resolveClassMemberName` /
+  // `resolveAccessorPropName` -> `${owner}_${key}`), so the funcMap key threads
+  // exactly like an identifier's. An unfoldable computed key still bails.
+  if (
+    ts.isMethodDeclaration(decl) &&
+    !ts.isIdentifier(decl.name) &&
+    !ts.isPrivateIdentifier(decl.name) &&
+    foldedMethodKey(ctx, decl.name) === undefined
+  ) {
+    return false;
+  }
   // (#2571/#2581) A method generator is native-routable only when its emit site
   // is wired to the native factory: CLASS bodies (class-bodies.ts, #2571) and
   // OBJECT-LITERAL methods (literals.ts, #2581). Both compile the method body as
@@ -3457,19 +3474,17 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // AND `sourceNeedsGeneratorHostImports` all agree (host imports stay
   // registered; behavior matches the pre-#2938 eager-buffer path).
   if (ts.isMethodDeclaration(decl)) {
-    if (ts.isComputedPropertyName(decl.name)) return false;
+    // (#6651 A3) Uniqueness is decided on the FOLDED key — the one the emit
+    // sites key by — so `*['a']()` and `*a()` in one body collide, as they do
+    // at the funcMap. An unfoldable computed name bailed above.
+    const ownName = foldedMethodKey(ctx, decl.name);
+    if (ownName === undefined) return false;
     const parent = decl.parent;
     if (ts.isClassLike(parent) || ts.isObjectLiteralExpression(parent)) {
-      const ownName = decl.name.getText();
       const members: readonly ts.Node[] = ts.isObjectLiteralExpression(parent) ? parent.properties : parent.members;
       let sameName = 0;
       for (const m of members) {
-        if (
-          ts.isMethodDeclaration(m) &&
-          m.asteriskToken &&
-          !ts.isComputedPropertyName(m.name) &&
-          m.name.getText() === ownName
-        ) {
+        if (ts.isMethodDeclaration(m) && m.asteriskToken && foldedMethodKey(ctx, m.name) === ownName) {
           sameName++;
         }
       }
@@ -3504,6 +3519,42 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // native candidates now that #2936 fixed the late-import funcIdx-shift class.
   // Relaxed in LOCKSTEP with buildNativeGeneratorPlan's suspendCount bail.
   return plan !== null;
+}
+
+/**
+ * (#6651 A3) `export default function* () {}` — a declaration with no name.
+ *
+ * Not admitted from a source TypeScript could not parse cleanly. The compiler
+ * tolerates TS1109 ("Expression expected") globally, so
+ * `export default function* () {}();` — an early SyntaxError, test262
+ * `module-code/parse-err-invoke-anon-gen-decl.js` — reaches codegen, and the
+ * #680 refusal is the only thing that rejects it today. Admitting it turned
+ * that row pass → fail (measured); the row needs a real early error, not this
+ * gate, and until it has one the gate must not remove the refusal.
+ */
+function isAnonymousDefaultExportDeclaration(decl: GeneratorDecl): boolean {
+  if (!ts.isFunctionDeclaration(decl) || decl.name !== undefined) return false;
+  const parseDiagnostics = (decl.getSourceFile() as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics;
+  if (parseDiagnostics !== undefined && parseDiagnostics.length > 0) return false;
+  const mods = ts.getModifiers(decl);
+  return (
+    mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true &&
+    mods.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+  );
+}
+
+/**
+ * (#6651 A3) The compile-time key a generator METHOD is emitted under, or
+ * `undefined` when the name does not fold. Mirrors `resolveClassMemberName` /
+ * `resolveAccessorPropName` (the two emit sites' key derivations).
+ */
+function foldedMethodKey(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return "__priv_" + name.text.slice(1);
+  if (ts.isStringLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return String(Number(name.text));
+  if (ts.isComputedPropertyName(name)) return resolveComputedKeyExpression(ctx, name.expression);
+  return undefined;
 }
 
 /**
@@ -3771,9 +3822,16 @@ export function registerNativeGenerator(
   // snapshot the body would observe whatever receiver the *resuming* caller
   // happened to have. This unblocks the `Array.prototype[Symbol.iterator] =
   // function*(){ … this.length … }` fixture family.
+  // (#6651 A3) An object-literal generator METHOD registered WITHOUT a
+  // synthesized receiver param is the closure-lane method (closures.ts
+  // `isNativeGeneratorMethodClosure`): its `this` arrives exactly like a function
+  // expression's, through `__current_this`, so it needs the same snapshot. The
+  // struct-lane method (literals.ts) always passes `synthesizedThis`.
   const capturesDynamicThis =
     !synthesizedThis &&
-    (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) &&
+    (ts.isFunctionDeclaration(decl) ||
+      ts.isFunctionExpression(decl) ||
+      (ts.isMethodDeclaration(decl) && ts.isObjectLiteralExpression(decl.parent))) &&
     decl.body !== undefined &&
     bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned

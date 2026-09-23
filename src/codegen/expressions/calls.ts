@@ -314,7 +314,6 @@ import {
   ensureGeneratorPrototypeNativeProtoGlue,
   emitTypedArrayIntrinsicCtorObject,
   emitArrayIteratorPrototypeSingleton,
-  emitGeneratorFunctionPrototypeSingleton,
   emitGeneratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
   isWiredTypedArrayViewName,
