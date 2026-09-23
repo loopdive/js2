@@ -657,7 +657,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
  */
 export function standaloneLinkBoundaryPeerIndex(
   ctx: CodegenContext,
-  key: "apply" | "callableKind" | "construct" | "isClassObject",
+  key: "apply" | "callableKind" | "construct" | "isClassObject" | "methodCall" | "getPrototypeOf",
 ): number | undefined {
   if (peerNamespaces(ctx).length === 0) return undefined;
   return ctx.funcMap.get(LINK_BOUNDARY_EXPORTS[key]);
