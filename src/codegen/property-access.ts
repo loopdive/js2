@@ -24,6 +24,7 @@ import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { tryEmitAnyValueArrayUndefinedOobGet } from "./any-value-element-read.js"; // (#6651 G3)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
+import { isConstructedFnctorName } from "./fnctor-instance-names.js"; // (#1058)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -1022,7 +1023,9 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
     return undefined;
   }
   if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
-    return name;
+    // (#1058) An interface named like a constructed function holds fnctor
+    // instances (resolveWasmType types it that way), not its own struct.
+    return !ctx.classSet.has(name) && isConstructedFnctorName(ctx, name) ? undefined : name;
   }
   // Check class expression name mapping (e.g. "__class" → "Point")
   if (name) {
