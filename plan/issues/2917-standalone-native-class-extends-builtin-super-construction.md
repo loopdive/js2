@@ -27,12 +27,18 @@ loc-budget-allow:
   - src/codegen/vec-overlay.ts
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/closed-method-dispatch.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/index.ts
+  - src/codegen/type-coercion.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/class-bodies.ts::compileSuperCall
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 <!-- 2026-09-23 budget-allow rationale (Array-subclass methods lane): the
@@ -46,6 +52,17 @@ arity forward in compileSuperCall, the gOPD(subclass, "length") fold guard in
 compileBuiltinStaticCall and the own-override shadow test in the closed
 dispatcher's vec mutator arm. -->
 
+<!--
+2026-09-23 budget rationale (Array-subclass prototype identity slice): all of
+the logic lives in the NEW module src/codegen/vec-proto-link.ts. The god-file
+growth is wiring only — one import line per file plus: the `instanceof`
+dispatch arm in compileHostInstanceOf (+2, it must be chosen inside that
+dispatcher), the `Object.getPrototypeOf(J.prototype)` fold in
+compileBuiltinStaticCall (+2, next to the user-class parent fold it extends),
+one finalize call in each of generateModule / generateMultiModule (+1 each,
+beside their `fillStandaloneClassInstanceProtoArm` twins), and the import
+feeding the one-line alias wrap in coerceType (type-coercion.ts +1).
+-->
 
 # #2917 — Standalone native `class X extends <Builtin>` super-construction
 
@@ -490,3 +507,60 @@ Date, RegExp, Function — each its own issue id referencing #2917 + #3240.
   `in-progress`→`ready` for the next slice owner.
 - **If resuming mid-CI**: check `gh pr checks` for the PR from this branch;
   fix-forward on the branch; never enqueue manually.
+
+## Slice — Array-subclass prototype identity (2026-09-23, opus lane "proto-identity")
+
+**Problem (measured on `fb7607cd9e`).** An `extends Array` instance is a plain
+`$__vec_externref`; nothing on it says "J". Through an `any` receiver
+(`function id(v){ if (typeof v === "object") return v; return null; }`):
+`id(new J(1)) instanceof J` → false, `Object.getPrototypeOf(id(new J(1))) ===
+J.prototype` → false, `Object.setPrototypeOf(vec, J.prototype)` → silent no-op,
+`Object.getPrototypeOf(J.prototype) === Array.prototype` → false (statically
+folded to `null`), and `function f(){ return Array.prototype } f() === f()` →
+false (each vec-typed slot materialised a fresh copy).
+
+**Design B, as built** (`src/codegen/vec-proto-link.ts`):
+
+- *Link storage.* The #3537 expando bag is a `$Object`, and nothing reads its
+  `$proto` (every bag consumer reads own-only). `emitSetSubclassProto`
+  (class-bodies.ts) now stores `Sub.prototype` there after the #5383 method
+  install. The method install is KEPT, so `hasOwnProperty`/`Object.keys`
+  answers are unchanged.
+- *Readers.* Finalize-time arms (same window as #6617's
+  `fillStandaloneClassInstanceProtoArm`): `__getPrototypeOf(vec)` answers the
+  link; `__object_setPrototypeOf(vec, P)` writes it (`$Object` P) or clears it
+  (anything else); `__vec_proto_instanceof(v, C.prototype)` walks link →
+  `$Object.$proto` chain with `ref.eq` (so `K extends J` needs no class list).
+  The no-JS-host `instanceof` branch (expressions/identifiers.ts) routes
+  Array-rooted classes there instead of the `i32.const 0` fallback.
+- *`J.prototype → Array.prototype`.* `$proto` cannot hold the `$NativeProto`,
+  so the edge is answered where asked: a `__getPrototypeOf` arm per class that
+  directly `extends Array` (only while its prototype's `$proto` is still the
+  implicit default), and the static `Object.getPrototypeOf(J.prototype)` fold in
+  call-builtin-static.ts.
+- *Stable `Array.prototype` in vec slots.* `coerceType` externref→vec now
+  answers one module-wide alias vec per vec type when the source IS the
+  `Array.prototype` singleton (`wrapArrayProtoVecAlias`).
+
+**Why not design A** (vec subtype with a proto field): every `ref.test` of the
+concrete vec type would need to accept the subtype; the bag is already
+per-instance state with an identity-keyed lookup.
+
+**Hazard found.** `fixups.ts` repairs a `struct.set` receiver by walking back
+over net-zero instructions; with `local.get <externref vec>; call
+__vec_bag_ensure; any.convert_extern; ref.cast $Object` as the receiver it
+landed on the vec and spliced a `ref.cast_null $Object` onto it (illegal cast
+at runtime). Every `struct.set` in the new code takes its receiver from a
+TYPED local.
+
+**Not fixed (documented limits).**
+- Identity ACROSS representations: the alias vec and the `$NativeProto` are two
+  values, so `ap() === Array.prototype` (one side vec, the other externref)
+  stays false. `built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js`
+  therefore still fails (the trap returns the vec alias; the invariant check
+  compares it with the target's `$NativeProto`). A real fix needs a single
+  representation for `Array.prototype` or a vec→externref canonicalization.
+- Inherited USER methods through the link (`id(new K(1)).m()` where `m` is on
+  `J`) still miss: `__vec_prop_get` reads the bag own-only. Walking the link
+  there is the natural follow-up and would let the #5383 own-property install
+  go away (which would also fix `hasOwnProperty("m") === true`).

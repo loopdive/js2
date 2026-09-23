@@ -42,6 +42,7 @@ import { emitStandaloneObjectToNumber, tryEmitFastToNumber } from "./tonumber-fa
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
+import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -3167,7 +3168,7 @@ export function coerceType(
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: materializeWithSidecar,
+          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeWithSidecar),
         },
       ];
     } else {

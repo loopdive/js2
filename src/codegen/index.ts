@@ -294,6 +294,7 @@ import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
 import { fillStandaloneClassInstanceProtoArm } from "./standalone-class-instance-proto.js"; // (#6617)
+import { fillVecProtoLinkArms } from "./vec-proto-link.js"; // (#2917)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -6803,6 +6804,7 @@ export function generateModule(
     // #802's marked-root arm must still take the front slot of
     // `__getPrototypeOf` (the two arm sets are disjoint besides).
     fillStandaloneClassInstanceProtoArm(ctx);
+    fillVecProtoLinkArms(ctx); // (#2917)
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -11446,6 +11448,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-object-create-class-instance", () => fillStandaloneObjectCreateClassInstance(ctx));
     // (#6617) See the single-source path — same placement, same reason.
     profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
+    profilePhase("fill-vec-proto-link-arms", () => fillVecProtoLinkArms(ctx)); // (#2917)
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
