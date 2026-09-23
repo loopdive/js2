@@ -64,6 +64,7 @@ import {
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
+import { throwMessageExternrefInstrs } from "./js-errors.js";
 import {
   buildThrowJsErrorInstrs,
   classifyPrivateMember,
@@ -1444,9 +1445,9 @@ export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node, flush?
   // Register the literal: in legacy mode this adds a `string_constants` global
   // import; in nativeStrings mode it just records the value with sentinel -1
   // so call sites can materialize it inline (#1174).
-  addStringConstantGlobal(ctx, message);
+  const messageInstrs = throwMessageExternrefInstrs(ctx, message);
   const tagIdx = ensureExnTag(ctx);
-  return [...stringConstantExternrefInstrs(ctx, message), { op: "throw", tagIdx }];
+  return [...messageInstrs, { op: "throw", tagIdx }];
 }
 
 /**

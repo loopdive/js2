@@ -1689,6 +1689,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   stringGlobalMap: Map<string, number>;
   /** Host-string globals needed beside native-string literals at JS boundaries. */
   hostStringGlobalMap: Map<string, number>;
+  /**
+   * (#1058) Throw-message strings whose import registration is deferred to the
+   * end of the body phase; undefined when deferral is inactive. See
+   * `deferrableStringConstantGlobalGet` in registry/imports.ts.
+   */
+  deferredStringConstants?: Set<string>;
+  /** (#1058) Outlined dynamic-call ladders: shape key → helper function name. */
+  outlinedDynamicCallHelpers?: Map<string, string>;
   /** Number of imported globals (string constants) */
   numImportGlobals: number;
   /** Whether wasm:js-string imports have been registered */
