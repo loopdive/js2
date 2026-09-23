@@ -12117,7 +12117,7 @@ function resolveImport(
       // extern-class argument path exposes it as a non-callable Proxy. Store
       // the identity-cached callable bridge instead, and apply the same
       // normalization to later key lookups so Map/Set identity remains stable.
-      // Non-callable Wasm structs keep the existing live host proxy behavior.
+      // Results are unwrapped: `get` must hand back the raw struct (#1058).
       const keyedCollectionMethod =
         (intent.className === "Map" || intent.className === "WeakMap") &&
         (m === "set" || m === "get" || m === "has" || m === "delete")
@@ -12136,10 +12136,6 @@ function resolveImport(
             return callable !== arg ? callable : _wrapForHost(arg, exports);
           });
           const fn = self[m] ?? _sidecarGet(self, m);
-          // (#1058) The stored value is the host view minted above, so a
-          // `get` hands that view back. Unwrap it to the raw struct, or the
-          // caller's `ref.test` against its struct type fails and the value
-          // reads as null (TypeScript's binder lost every symbol-table hit).
           if (typeof fn === "function") return _unwrapForHost(fn.call(self, ...wrappedArgs), callbackState);
           return undefined;
         };
