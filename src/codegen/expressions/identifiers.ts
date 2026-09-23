@@ -67,6 +67,7 @@ import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCance
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
   identifierIsWrittenTo,
+  moduleInstallsCallableHasInstance,
   resolveBuiltinCtorAliasName,
   tryEmitNonCallableRhsThrow,
 } from "../native-ordinary-instanceof.js";
@@ -2674,7 +2675,18 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
   if (nonCallableThrow) return nonCallableThrow;
 
-  if (noJsHost(ctx) && isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))) {
+  // (#6651 I2) …and the fold is ALSO not the spec order when the module can
+  // install `@@hasInstance`: §13.10.2 step 2 reads the handler and step 4 calls
+  // it, both before OrdinaryHasInstance step 3 ever asks whether V is an
+  // object. `0 instanceof F` with `F[Symbol.hasInstance] = fn` measured
+  // `callCount === 0` on this branch's base because this fold answered first.
+  // Declining routes the site to the native operator wrapper, which answers the
+  // primitive-LHS `false` itself when no handler is installed.
+  if (
+    noJsHost(ctx) &&
+    !moduleInstallsCallableHasInstance(expr.getSourceFile()) &&
+    isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))
+  ) {
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });
     const rt = compileExpression(ctx, fctx, expr.right);
