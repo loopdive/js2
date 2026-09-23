@@ -97,6 +97,7 @@ import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
+import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
 import { emitRegExpSymbolSplitBody } from "./regexp-split-protocol.js";
 import {
   emitRegExpSymbolProtocolApply,
@@ -4935,6 +4936,25 @@ export function tryCompileStandaloneRegExpSymbolCall(
     }
   }
 
+  // (#6651 B5) `re[Symbol.replace](s, v)` takes the same route to the reified
+  // §22.2.6.11 body when the program can observe the protocol (B3's whole-file
+  // predicate) or an operand is one the static core cannot type (a missing or
+  // non-string subject, a missing replacement).
+  if (symbolMethod === "replace" && expr.arguments.length <= 2) {
+    const [subject, replacement] = expr.arguments;
+    const observed =
+      fileObservesRegExpExecProtocol(expr) ||
+      subject === undefined ||
+      replacement === undefined ||
+      !isStringLikeArg(ctx, subject);
+    const replaceId = getWellKnownSymbolId("replace");
+    if (observed && replaceId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, replaceId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
   // arg[0] is the subject string in every form; string-coercion
   // (`re[Symbol.match](42)`) falls through to the host path which does ToString.
   if (expr.arguments.length < 1) return undefined;
@@ -5771,10 +5791,13 @@ function emitRegExpProtoMemberBody(
   // placement rule as `@@9`/`@@7`: step 2 is `Type(rx) is Object`, and the
   // brand requirement lives in RegExpExec step 5 on the SPLITTER, so the
   // builtin arm recovers the struct from the splitter local, not from `this`.
-  if (member === "@@10") {
-    const splitResult = emitRegExpSymbolSplitBody(ctx, fctx, 1, 2, 3, emitBuiltinExec);
+  if (member === "@@10" || member === "@@8") {
+    const result =
+      member === "@@10"
+        ? emitRegExpSymbolSplitBody(ctx, fctx, 1, 2, 3, emitBuiltinExec)
+        : emitRegExpSymbolReplaceBody(ctx, fctx, 1, 2, 3, emitBuiltinExec);
     // A decline emits nothing and falls to the placeholder below, unchanged.
-    if (splitResult !== null) return splitResult;
+    if (result !== null) return result;
   }
   if (member === "@@9" || member === "@@7") {
     const protocolResult =

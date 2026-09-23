@@ -406,6 +406,14 @@ loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/expressions/assignment.ts
+# 2026-09-23 — cluster B, slice B5b (`RegExp.prototype[@@replace]`, §22.2.6.11).
+# `regexp-standalone.ts` +23 more (+77 over the slice): the `@@8` arm joins the
+# `@@10` one in `emitRegExpProtoMemberBody` and the direct `re[Symbol.replace]`
+# spelling gets the same ROUTING decision as `@@split` in
+# `tryCompileStandaloneRegExpSymbolCall` — both the B2/B3 placement facts
+# restated above. The mechanism (the collect loop, the per-result reads and an
+# inline GetSubstitution over captured strings) is the new module
+# `src/codegen/regexp-replace-protocol.ts`.
 func-budget-allow:
   # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
   # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
@@ -580,6 +588,16 @@ coercion-sites-allow:
 # run `valueOf`/`@@toPrimitive` with hint "number"
 # (`str-coerce-lastindex`, `str-result-coerce-length`, `coerce-limit-err`).
   - src/codegen/regexp-split-protocol.ts
+# 2026-09-23 — cluster B, slice B5b: `regexp-replace-protocol.ts` names the same
+# `__to_primitive` ×1 / `__unbox_number` ×1 fallback pair as
+# `regexp-split-protocol.ts` above, for the same reason (the canonical provider
+# set from `prepareStandaloneExternrefToNumberProviders`; the fused
+# `__to_number` when fusion is on). Its sites are §22.2.6.11's
+# ToLength(Get(rx, "lastIndex")), LengthOfArrayLike(result) and
+# ToIntegerOrInfinity(Get(result, "index")) — each on a user value whose
+# `valueOf` / `@@toPrimitive` must run with hint "number"
+# (`result-coerce-index-undefined` asserts the hint).
+  - src/codegen/regexp-replace-protocol.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -4881,13 +4899,118 @@ heap, and the inline cases cover what the dropped rows pinned.
 
 | rows | bucket | what it needs |
 | ---: | --- | --- |
-| 31 | `@@replace` (30) + `String.prototype.replace/cstm-replace-get-err` (CE) | §22.2.6.11's collect loop + GetSubstitution over captured strings — see the B5b entry if it lands, else next slice |
+| 31 | `@@replace` (30) + `String.prototype.replace/cstm-replace-get-err` (CE) | §22.2.6.11's collect loop + GetSubstitution over captured strings — **landed in B5b** (next entry): 28 of the 30 now pass |
 | 2 | `@@split/coerce-{flags,string}-err` | `ToString(Symbol)` must throw a TypeError (§7.1.17); `__extern_toString` answers a string. The recorded object-runtime gap (B3's `@@search/coerce-string-err`) |
 | 1 | `@@split/species-ctor-ctor-non-obj` | the default splitter's runtime compile of `"[object Object]"` (a character class) is outside `__regex_compile_dynamic_simple`'s grammar |
 | 1 | `@@split/species-ctor` | **not a RegExp defect**: `new S()` for a first-class function value links `this` to the wrong prototype — `t instanceof F` and `getPrototypeOf(t) === F.prototype` are both false after `new ([F][0])()` (probe). The `#3981` driver's prototype link |
 | 1 | `@@split/splitter-proto-from-ctor-realm` | `$262.createRealm` |
 | 2 | `String.prototype.split/{limit-touint32-error,this-value-tostring-error}` | `String.prototype.split`'s own step order (§22.1.3.23), not `@@split` |
 | 47 | unchanged buckets from B4 | constructor/statics, `compile`, flag-getter `coercion-*`, the strict-`[[Set]]` `*-set-lastindex-err` family, cross-realm, `String.prototype.*` |
+
+### 2026-09-23 — Cluster B (RegExp `@@` protocol, standalone), slice B5b: `RegExp.prototype[@@replace]` (§22.2.6.11)
+
+- **Base** this branch immediately after B5 (`e60aa7753a`). Same manifest file
+  as B5, same engine and runner discipline; the BEFORE state of every row below
+  is B5's own measured AFTER state (`.tmp/b5/after-{m,c,x}-*.log`), with sources
+  hash-checked unchanged between B5's sweep and its commit, so the join needs no
+  re-run.
+
+#### What changed
+
+One new module, `src/codegen/regexp-replace-protocol.ts` (~1,100 LOC incl. the
+rationale), on the same substrate; `@@8` joins `@@10` in
+`emitRegExpProtoMemberBody`, and the direct `re[Symbol.replace](s, v)` spelling
+takes the same `__apply_closure` route when the file observes the protocol (B3's
+predicate) or an operand is one the static core cannot type (missing/non-string
+subject, missing replacement). **No new host import.**
+
+- **Collect, then substitute** — §22.2.6.11 steps 10-12 run RegExpExec to
+  completion (global: an empty match advances `lastIndex` from
+  `ToLength(Get(rx, "lastIndex"))`, computed in f64 so `2^53 - 1 + 1` survives),
+  and only then does step 15 read each result. Every read is a `[[Get]]` on the
+  RESULT object — `length` (LengthOfArrayLike), `0` (ToString), `index`
+  (ToIntegerOrInfinity, clamped to `[0, lengthS]`), `n` (ToString unless
+  undefined), `groups` — because each `result-{get,coerce}-*` row poisons or
+  coerces exactly one of them.
+- **A functional replacer** gets `«matched, …captures, position, S[, groups]»`
+  with `this` undefined through `__apply_closure`, and its result is ToString'd.
+- **GetSubstitution is emitted inline over captured STRINGS.** The existing
+  `__regex_get_substitution` expands against a capture-OFFSET array; the generic
+  method only has whatever the result object's properties coerced to. The inline
+  walk handles `$$`, `$&`, `` $` ``, `$'`, `$n`/`$nn` (two digits when that index
+  is in `1..m`, else one digit when THAT is, else literal — so `$0`, `$00` and an
+  out-of-range `$3` stay literal) and `$<name>` (literal with no named captures;
+  otherwise `Get(groups, name)`, undefined ⇒ ""), copying the literal runs
+  between substitutions as O(1) substring views.
+- The locals that are assigned on only one arm of an `if` (the template, the
+  replacement) are NULLABLE and read through `ref.as_non_null`: a non-defaultable
+  local initialised inside a branch is not initialised after the join, and the
+  module would not validate.
+
+#### Receipt — manifest
+
+| 112 rows, `--standalone --isolate`, QuickJS | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before = B5 after (`.tmp/b5/after-m-0{0,1}.log`) | 27 | 84 | 1 |
+| after (`.tmp/b5/a2-m-0{0,1}.log`) | **55** | 56 | 1 |
+
+**+28, zero regressions**, joined row-by-row (`.tmp/b5/join2-manifest.txt`):
+exactly 28 rows changed status, all `fail → pass`, all in
+`built-ins/RegExp/prototype/Symbol.replace/` — 28 of its 30 manifest rows.
+**Slice total (B5 + B5b): 112-row manifest 0 → 55 pass.**
+
+#### Controls — zero pass → non-pass
+
+The B5 control set (544 rows + the 15 `Symbol.split/**` rows) plus the 40
+`built-ins/RegExp/prototype/Symbol.replace/**` rows in neither list
+(`.tmp/b5/controls-extra-r.txt`, measured on B5's after-state before this
+slice's first edit).
+
+| lane | rows | result |
+| --- | ---: | --- |
+| standalone, `Symbol.{split,replace}/**` extras, B5 → B5b (`.tmp/b5/{after,a2}-x-0{0,1}.log`) | 55 | 48 → **53 pass**, 0 regressions; the 5 gains are `named-groups-fn`, `result-get-groups-err`, `result-get-groups-prop-err`, `result-coerce-groups-prop{,-err}` — the named-capture half of the same body |
+| standalone, the 544-row set, B5 → B5b (`.tmp/b5/a2-c-0{0..9}.log`) | 544 | 470 → **471 pass**, **0 pass → non-pass**, every other row's status identical (`.tmp/b5/join2-controls.txt`); the gain is `String.prototype.replace/regexp-prototype-replace-v-u-flag` |
+| host — compiled-binary sha256 of the 22 programs (`.tmp/b5/hostsha-c2.txt`) | 22 | **all 22 byte-identical to the base** |
+| standalone — the same 22 (`.tmp/b5/sasha-c2.txt`) | 22 | **all 22 byte-identical to B5**, incl. `direct-replace-static` (`re[Symbol.replace]("abcb","x")`), `direct-replace-fn` (an arrow replacer), `"abc".replace(/b/,"x")` and `"a-b".replace(/-/,"$&$&")` — the ungated spellings keep the static core |
+
+#### Gates
+
+Every B-slice control is a join against the PREVIOUS slice's measured state,
+and a regression is by definition non-pass AFTER, so the B5 → B5b joins above
+are complete for this slice, and B5's own base re-run covers the chain back to
+the source-clean branch tip. The whole-slice claim therefore holds: **0 → 55
+manifest, +1 and +5 outside it, zero pass → non-pass across 599 control rows.**
+
+`check-loc-budget` · `check-func-budget` · `check-coercion-sites` ·
+`check:oracle-ratchet` · `check:dead-exports` — all `0` (with and without
+`LOC_GATE_BASE=origin/main`). Boundaries inventory — `0`
+(`regexp-replace-protocol.ts` classified). `npm run -s typecheck`, `npx biome
+lint src tests scripts --diagnostic-level=error` — `0`.
+`scripts/equivalence-gate.mjs` — `0`, **22 failing / 1720 passing, all 22 in
+the committed baseline**. Pin suites: B1–B4 **49/49**, B5 `@@split` **12/12**,
+and the new `@@replace` suite **11/11** — **verified red on B5's state: 10 of 11
+fail there** (`.tmp/b5/pin-b5r-ONBASE.log`), the one green being the
+static-spelling control.
+
+**One measured side effect, and the test-layout change it forced.** With the
+`@@replace` body joining `@@split`'s in the RegExp glue, every module that
+materialises that glue emits both, and B5's `@@split` suite (7 in-process
+test262 compiles + 5 inline programs in ONE 512 MB vitest fork) ran out of heap
+deterministically — while the rows alone and the inline cases alone each pass.
+Both suites are therefore split into a test262-rows file and an `-inline` file
+(`tests/issue-6651-regexp-{split,replace}-protocol-b5{,-inline}.test.ts`, 23/23
+across the four). The binary-size side is bounded by the sha table above: only
+a program that READS a RegExp.prototype member reflectively (or takes the gated
+route) registers the glue, and none of the 22 ungated shapes changed.
+
+#### Residuals (57 rows)
+
+| rows | bucket | what it needs |
+| ---: | --- | --- |
+| 2 | `@@replace/coerce-lastindex{,-err}` | a `$NativeRegExp`'s `lastIndex` is two slots (the f64 fast slot + a raw value for a deferred-ToLength object assignment); the dynamic `[[Get]]`/`[[Set]]` (`__extern_get`/`__extern_set`'s closed-struct ladder) reads and writes only the f64 slot, so after `r.lastIndex = {valueOf}` a dynamic read never runs `valueOf` and a dynamic write leaves the static read answering the stale object. One carrier fix, both ladders — not a RegExp-method defect |
+| 1 | `String.prototype.replace/cstm-replace-get-err` | B1's recorded one-argument `replace` refusal (#1474) |
+| 7 | `@@split` | see the B5 entry |
+| 47 | unchanged buckets from B4 | see the B5 entry |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
