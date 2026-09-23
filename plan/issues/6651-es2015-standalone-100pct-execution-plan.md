@@ -173,6 +173,19 @@ loc-budget-allow:
 # keys this same change-set needs).
   - src/codegen/class-bodies.ts
   - src/codegen/destructuring-params.ts
+# 2026-09-23 — cluster I, slice I2 (`instanceof` consults `@@hasInstance`).
+# `expressions/identifiers.ts` +12, of which 7 are comment. The MECHANISM — the
+# whole §13.10.2 step 2-4 handler dispatch — is in `native-dynamic-instanceof.ts`
+# as a new wrapper native (`__instanceof_operator`), and the module-scope
+# predicate stays in `native-ordinary-instanceof.ts`. What cannot move is the
+# one-line DECLINE on the #2998 primitive-LHS fold: that fold sits inside
+# `emitDynamicInstanceOf` and answers `false` before any lowering below it runs,
+# so "a primitive left operand does not end this operator" has to be readable at
+# the fold itself. Measured: with the fold first, `0 instanceof F` called the
+# installed handler 0 times (`symbol-hasinstance-invocation.js`, callCount 0 vs
+# 1). The comment records that measurement in place, next to the bail it
+# reverses.
+  - src/codegen/expressions/identifiers.ts
   - src/codegen/expressions/identifiers.ts
 # 2026-09-21 — cluster B, slice B2 (observable RegExpExec substrate).
 # `regexp-standalone.ts` +47, all of it in `emitRegExpProtoMemberBody`'s new
@@ -456,6 +469,17 @@ coercion-sites-allow:
 # be tested without being converted, and the native is emitted at FINALIZE where
 # no `FunctionContext` exists to coerce into.
   - src/codegen/regexp-accessor-get-arm.ts
+# 2026-09-23 — cluster I, slice I2: `native-dynamic-instanceof.ts` gains
+# `__is_truthy` ×1 (`+1` net). It is §13.10.2 step 4.a's ToBoolean, written in
+# the spec as `ToBoolean(Call(instOfHandler, C, «O»))`, and `__is_truthy` IS the
+# engine's ToBoolean for an arbitrary externref — the same call every array HOF
+# predicate makes (#2915). `coerceType` is not available here: the value is the
+# handler's RETURN value, which must be tested without being converted, and the
+# `__instanceof_operator` native is built with no `FunctionContext` to coerce
+# into. Measured coverage: `symbol-hasinstance-to-boolean.js` exercises nine
+# return values (undefined / null / true / NaN / 1 / "" / "string" / a symbol /
+# an object) through this one call.
+  - src/codegen/native-dynamic-instanceof.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -4240,6 +4264,212 @@ unchanged. **Before starting any further slice of this plan, run
 `git log origin/main --grep=6651` and diff the files you intend to touch against
 main** — the two lanes working this issue produce twins in the same files, and a
 twin is far cheaper to avoid than to resolve.
+
+### 2026-09-23 — Cluster I (language misc, standalone), slice I2: `instanceof` consults `@@hasInstance`
+
+- **Branch** `worktree-agent-ad69a5dbc13ab8a8e`, base `main` @ `6190e961`.
+  **Worktree** `/home/claude/js2/.claude/worktrees/agent-ad69a5dbc13ab8a8e`.
+  Not pushed; the round-3 owner integrates it.
+- **Manifest** `plan/agent-context/6651/I-language-misc.txt`, 114 rows,
+  sha256 `f94fe9f129c0bcc5e5e52ce798cbeedfa6cae99f7506f5547af54717a71cdd68`
+  (unchanged from the triage pass).
+
+| standalone, `--isolate`, engine **quickjs** | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/I2-before.log`) | **3** | 100 | 11 |
+| after (`.tmp/6651/I2-after.log`) | **6** | 97 | 11 |
+
+**Per-row set diff (not a count comparison): +3 gained, 0 lost, 0 other
+verdict changes.**
+
+```
++ language/expressions/instanceof/symbol-hasinstance-get-err.js
++ language/expressions/instanceof/symbol-hasinstance-invocation.js
++ language/expressions/instanceof/symbol-hasinstance-to-boolean.js
+```
+
+**The triage's before-state is stale by 3 rows — measure your own.** The
+2026-09-21 triage entry above records `0 / 103 / 11`; on `main` @ `6190e961`
+the same manifest, same engine, same runner reads `3 / 100 / 11`. Three rows
+were fixed by other lanes' landed work between the two runs. Nothing was wrong
+with the triage; the manifest simply is not a constant.
+
+#### What landed, and the one design decision worth reading
+
+Three edits, `noJsHost`-only, ~215 lines of which most is comment:
+
+1. **`native-dynamic-instanceof.ts` — a new wrapper native
+   `__instanceof_operator(value, target) -> i32`.** It performs §13.10.2
+   InstanceofOperator steps 2-4 (`GetMethod(C, @@hasInstance)`, then
+   `ToBoolean(Call(handler, C, «O»))` through the existing `__apply_closure`
+   bridge with a one-element `__objvec`) and otherwise delegates, unchanged, to
+   `__instanceof_dynamic`. Same 0/1/2 tri-state, so the caller's
+   `emitInstanceofThrowGuard` is untouched.
+2. **`native-ordinary-instanceof.ts` — `moduleInstallsCallableHasInstance` is
+   exported and widened** to count `Object.defineProperty(X,
+   Symbol.hasInstance, <desc>)` / `Reflect.defineProperty(…)`.
+3. **`expressions/identifiers.ts` — the #2998 primitive-LHS fold declines**
+   when that predicate is true.
+
+**The decision: the handler dispatch is a WRAPPER, not an arm inside
+`__instanceof_dynamic`.** The round-2 dispatch table called I2 "a lowering
+change in one function"; putting it in that one function would have been a
+correctness bug. `__instanceof_dynamic` IS §7.3.20 OrdinaryHasInstance, and
+`function-proto-has-instance.ts` calls it directly as the body of
+`%Function.prototype%[@@hasInstance]`. OrdinaryHasInstance never consults
+`@@hasInstance` — an arm inside the helper would make
+`Function.prototype[Symbol.hasInstance].call(F, x)` re-enter `F`'s own handler,
+which no step of the spec does. One level up is the only place the dispatch is
+correct.
+
+Two measurements that set the other two edits, recorded so they are not
+re-derived:
+
+- `symbol-hasinstance-get-err.js` failed with **"Expected a Test262Error but
+  got a TypeError"** — i.e. `tryEmitNonCallableRhsThrow` fired. The gate's
+  syntactic scan matched `F[Symbol.hasInstance] = …` and
+  `{ [Symbol.hasInstance]: … }` but not the `Object.defineProperty` accessor
+  spelling, so the step-5 throw beat the step-2 read. That is edit 2.
+- `symbol-hasinstance-invocation.js` failed with **`callCount === 0`** — the
+  handler was never called, because the primitive-LHS fold answered `false`
+  first. That is edit 3, and it is why the change could not be confined to
+  `native-*-instanceof.ts`.
+
+The wrapper is built **only for a source file that installs a possibly-callable
+`@@hasInstance`**, so `__apply_closure` and the argument-vector runtime stay out
+of every other standalone binary. Documented residual: in a multi-file
+compilation where the first dynamic `instanceof` site is in a file without an
+installation and a later site is in one with it, the wrapper is minted once,
+from the first site, and the later site keeps the ordinary helper — a missed
+conversion, never a wrong answer.
+
+#### Controls — both targets, per-row, zero pass→non-pass
+
+Control manifest: every `language/expressions/instanceof/**` row plus every
+`built-ins/{Symbol/hasInstance,Function/prototype/Symbol.hasInstance}/**` row
+plus every file in the corpus that mentions `Symbol.hasInstance` at all
+(`grep -rl`, minus `intl402/`) — **85 rows**, i.e. the whole blast radius of
+both the widened gate and the declined fold. `.tmp/6651/I2-control.txt`.
+
+| control | before | after | row diff |
+| --- | --- | --- | --- |
+| standalone (`I2-control-standalone-{before,after}.log`) | 66 pass / 12 fail / 3 CE / 4 skip | **69** pass / 9 fail / 3 CE / 4 skip | +3 gained, **0 lost**, 0 other changes |
+| host, default target (`I2-control-host-{before,after}.log`) | 59 pass / 22 fail / 4 skip | 59 pass / 22 fail / 4 skip | **0 changes of any kind** |
+
+The +3 in the standalone control are the same three manifest rows; nothing
+outside them moved. The host lane is unchanged row-for-row, as the `noJsHost`
+gating predicts.
+
+Gates, run bare and chained before the commit: loc ✓ (after the grant below),
+func ✓, coercion ✓ (after the grant below), oracle-ratchet ✓ (+0 raw checker
+calls), dead-exports ✓, lint ✓, prettier ✓, `check:compiler-boundaries:inventory`
+✓, `node scripts/equivalence-gate.mjs` → **22 failing / 1720 passing, all 22 in
+the committed baseline, "No new equivalence regressions"**. Two allowances are
+in this file's frontmatter, dated 2026-09-23: `loc-budget-allow`
+`expressions/identifiers.ts` (+12, 7 of them comment — the decline has to be
+readable at the fold it reverses) and `coercion-sites-allow`
+`native-dynamic-instanceof.ts` (`__is_truthy` +1 — literally §13.10.2 step
+4.a's `ToBoolean`).
+
+#### Residuals — all 114 rows, re-bucketed on THIS base
+
+`.tmp/6651/I2-after.log` is the authority. 108 rows still non-pass. The
+triage's bucket table above still holds shape-for-shape; what changed is the
+count and three specifics worth recording:
+
+| bucket | rows left | note vs. the triage |
+| --- | ---: | --- |
+| `with` + `@@unscopables` | 15 | unchanged, still XL (a dynamic `with` environment record) |
+| singletons | ~13 | unchanged in kind |
+| `module-code/namespace/internals` | 12 | unchanged — I3, still wants a spec, see below |
+| direct `eval` (spread / caller scope / class-in-eval) | 10 | unchanged |
+| parameter defaults / destructuring params | 9 | unchanged |
+| global-object declaration descriptors | 7 | unchanged |
+| arrow `this` / `new.target` / `super` | 7 | unchanged |
+| tagged template | 7 | unchanged |
+| cross-realm | 6 | **wont-fix, reason below** |
+| `instanceof` | **3** | was 6. The `@@hasInstance` half is CLOSED by this slice; the `Function.prototype.prototype` half is re-root-caused below |
+| `arguments` object | 5 | unchanged |
+| `module-code` generator exports | 5 | still `env::g` — **still cluster A's, not I's** |
+| annexB | 4 | unchanged |
+| TDZ in closures / block scope | 4 | unchanged |
+| proper tail calls | 3 | unchanged |
+
+**Re-root-caused: the other three `instanceof` rows
+(`primitive-prototype-with-object`, `prototype-getter-with-object{,-throws}`).**
+All three are `[] instanceof Function.prototype`. They do NOT fail on the
+prototype walk — they fail because `__typeof_function` does not classify the
+canonical `Function.prototype` carrier as callable, so `__instanceof_dynamic`
+takes its documented "NOT CALLABLE ⇒ conservative false" tail and returns `0`
+without ever performing `Get(C, "prototype")`. The getter therefore runs zero
+times and no TypeError is raised. Closing them needs **two** things, and the
+second is the expensive one: (a) an exact-identity probe for the
+`Function.prototype` `$NativeProto` carrier in that tail, in the same
+reserve-then-fill shape as `__instanceof_object_prototype`; and (b)
+`__extern_get` on a `$NativeProto` carrier having to INVOKE an accessor
+installed by `Object.defineProperty(Function.prototype, "prototype", {get})` —
+the same "the expando table stores values, not attributes" limitation the
+slice-E2 handoff records for TypedArray carriers. Without (b), (a) alone turns
+a silent `false` into a silent `false` plus a wasted probe. **Deliberately not
+attempted here:** widening `__typeof_function` instead would be corpus-wide,
+and a wrong `true` on that classifier is observable everywhere.
+
+#### `$262.createRealm` — the wont-fix, with the spec-level reason
+
+Six rows, all of them calling `$262.createRealm()`:
+
+```
+built-ins/ThrowTypeError/distinct-cross-realm.js
+language/eval-code/indirect/realm.js
+language/expressions/call/eval-realm-indirect.js
+language/expressions/tagged-template/cache-realm.js
+language/types/reference/get-value-prop-base-primitive-realm.js
+language/types/reference/put-value-prop-base-primitive-realm.js
+```
+
+They are **not** an `instanceof`/eval/tagged-template gap that happens to use a
+realm; the realm IS the assertion. `distinct-cross-realm` asserts
+`%ThrowTypeError%` is a *different function object* in the second realm;
+`cache-realm` asserts the template-object cache is per-realm;
+`get-value-prop-base-primitive-realm` asserts a primitive's wrapper resolves
+against the *other* realm's `Number.prototype`. Each test's subject is the
+existence of two realms.
+
+The spec-level reason a no-host standalone target cannot honour them:
+
+1. **`$262.createRealm` is a HOST hook, not an ECMAScript feature.** test262's
+   INTERPRETING.md defines it as "a new ECMAScript Realm ... created by the
+   host"; §9.6 InitializeHostDefinedRealm is host-defined by construction. A
+   standalone binary has, by definition, no host to define it.
+2. **A standalone module instance IS exactly one realm, materialised at compile
+   time.** The intrinsics are WasmGC structs and module globals minted by
+   codegen and instantiated once per module instance. There is no runtime
+   operation that mints a second set — creating one would mean instantiating a
+   second module, which needs an embedder.
+3. **Even given a second instance, the two realms could not exchange object
+   references usefully.** Each instance has its own rec-group type identities,
+   so a value from instance B does not satisfy any `ref.test` in instance A;
+   every brand check, every `__typeof_*` classifier and the whole prototype
+   substrate would answer "foreign". The cross-realm *identity* assertions
+   these six rows make are precisely the ones that depend on those checks.
+
+So the honest verdict is **wont-fix for `--target standalone`**, not "not yet".
+The JS-host lane keeps whatever `$262.createRealm` support the runner gives it;
+nothing here changes that. **No issue id was allocated for this** — allocating
+one writes to the shared `issue-assignments` ref, and this lane was instructed
+not to push. The round-3 owner should allocate via
+`claim-issue.mjs --allocate` and file it with the three points above; that
+converts 6 of cluster I's 108 residual rows into documented done, per this
+issue's definition of done.
+
+#### Logs and artefacts
+
+All under `.tmp/6651/` in the worktree (gitignored, not committed):
+`I2-before.log`, `I2-after.log`, `I2-control.txt`,
+`I2-control-standalone-{before,after}.log`,
+`I2-control-host-{before,after}.log`, `rowdiff.mjs` (the per-row set-diff
+tool), `gate-*.txt` (one file per gate, run bare — never piped), and
+`.tmp/base/` copies of all three edited files taken at the first edit.
 
 ## Handoff — 2026-09-22, the project-thread lane (PR #6026) signs off
 

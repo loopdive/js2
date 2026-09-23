@@ -169,8 +169,10 @@ import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) cl
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { noJsHost } from "./js-errors.js";
+import { getWellKnownSymbolId } from "./literals.js"; // (#6651 I2) @@hasInstance id
+import { moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js"; // (#6651 I2)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#6644) linked-provider target
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
@@ -726,6 +728,173 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
   }
 }
 
+/** `__instanceof_operator(value, target) -> i32` — §13.10.2 over the ordinary helper. */
+const OPERATOR_HELPER_NAME = "__instanceof_operator";
+
+/** Local slots of the §13.10.2 operator wrapper (params are P_VALUE / P_TARGET). */
+const OP_L_HANDLER = 2;
+const OP_L_ARGS = 3;
+
+/**
+ * (#6651 I2) §13.10.2 InstanceofOperator steps 2-4 — the `@@hasInstance`
+ * dispatch — as a WRAPPER around `__instanceof_dynamic`, not as an arm inside
+ * it.
+ *
+ * ## Why a wrapper
+ *
+ * `__instanceof_dynamic` IS §7.3.20 OrdinaryHasInstance, and
+ * `%Function.prototype%[@@hasInstance]` (`function-proto-has-instance.ts`) is
+ * that abstract operation's public spelling — it calls the helper directly.
+ * OrdinaryHasInstance must NEVER consult `@@hasInstance`; an arm inside the
+ * helper would make `Function.prototype[Symbol.hasInstance].call(F, x)`
+ * re-enter `F`'s own handler, which no step of the spec does. The handler
+ * dispatch therefore belongs one level up, in the OPERATOR, and the ordinary
+ * helper stays byte-identical for every existing caller.
+ *
+ * ## The steps, and what each one costs at runtime
+ *
+ *   2. `instOfHandler = GetMethod(C, @@hasInstance)` — `__extern_get` against
+ *      the interned well-known `$Symbol` carrier `__box_symbol(2)`, the same
+ *      identity a user's `F[Symbol.hasInstance] = …` write lands on. A
+ *      THROWING accessor propagates: there is no catch here, which is exactly
+ *      §13.10.2 step 3's `?` (`symbol-hasinstance-get-err.js`, which measured
+ *      "Expected a Test262Error but got a TypeError" before this).
+ *   4. `ToBoolean(Call(instOfHandler, C, «O»))` — the generic open-`any`
+ *      bridge `__apply_closure(handler, C, argvec)` with a one-element
+ *      `__objvec` holding `O`, then `__is_truthy`. That gives the handler the
+ *      spec's `this` (`C`) and argument list (`«O»`, length 1) without a host
+ *      import (`symbol-hasinstance-invocation.js`), and coerces whatever it
+ *      returns (`symbol-hasinstance-to-boolean.js`).
+ *
+ * Everything else — a null/undefined handler (§13.10.2 step 4's "is not
+ * undefined" is false, `GetMethod` having already mapped both to `undefined`),
+ * and steps 5-6 — falls through to `__instanceof_dynamic` unchanged.
+ *
+ * ## Absent-not-wrong, twice
+ *
+ *  - A handler that is present but which `__typeof_function` cannot classify as
+ *    callable falls through instead of throwing. The spec would throw (Call on
+ *    a non-callable), but this backend's classifier is conservative about
+ *    carrier shapes, so a wrong THROW would be catchable and observable while a
+ *    fall-through is only a missed conversion. The statically provable
+ *    non-callable spelling (`F[Symbol.hasInstance] = null`) never reaches here:
+ *    `tryEmitNonCallableRhsThrow` answers it, and still does.
+ *  - A `null` target skips the read entirely, so `__extern_get` is never handed
+ *    a null receiver.
+ *
+ * ## Why this is not emitted everywhere
+ *
+ * The wrapper is built only for a source file that INSTALLS a possibly-callable
+ * `@@hasInstance` (`moduleInstallsCallableHasInstance`). That is the same
+ * module-scope question `tryEmitNonCallableRhsThrow` already asks, and it keeps
+ * `__apply_closure` plus the argument-vector runtime out of every standalone
+ * binary that merely uses `instanceof`. Residual, stated plainly: in a
+ * MULTI-FILE compilation where the first dynamic `instanceof` site lives in a
+ * file that does not install a handler and a later site lives in one that does,
+ * the wrapper is minted once, from the first site, and the later site keeps the
+ * ordinary helper. That is a missed conversion, never a wrong answer.
+ */
+function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(OPERATOR_HELPER_NAME);
+  if (existing !== undefined) return existing;
+
+  const ordinaryIdx = ensureNativeDynamicInstanceOf(ctx);
+  if (ordinaryIdx === undefined) return undefined;
+
+  // Every callee must be registered BEFORE the body bakes its index; the object
+  // runtime (which owns `__objvec_new` / `__objvec_push`) is already up via
+  // `ensureNativeDynamicInstanceOf` above.
+  const externGetIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
+  const isTruthyIdx = ensureLateImport(ctx, "__is_truthy", [EXTERNREF], [I32]);
+  const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [I32]);
+  const typeofUndefinedIdx = ensureLateImport(ctx, "__typeof_undefined", [EXTERNREF], [I32]);
+  const applyClosureIdx = reserveApplyClosure(ctx);
+  flushLateImportShifts(ctx, null);
+
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const hasInstanceId = getWellKnownSymbolId("hasInstance");
+  if (
+    externGetIdx === undefined ||
+    boxSymbolIdx === undefined ||
+    isTruthyIdx === undefined ||
+    typeofFunctionIdx === undefined ||
+    typeofUndefinedIdx === undefined ||
+    objVecNewIdx === undefined ||
+    objVecPushIdx === undefined ||
+    hasInstanceId === undefined
+  ) {
+    return undefined;
+  }
+
+  // step 4.a: ToBoolean(Call(handler, C, «O»)).
+  const callHandler: Instr[] = [
+    { op: "call", funcIdx: objVecNewIdx },
+    { op: "local.set", index: OP_L_ARGS },
+    { op: "local.get", index: OP_L_ARGS },
+    { op: "local.get", index: P_VALUE },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: OP_L_HANDLER },
+    { op: "local.get", index: P_TARGET },
+    { op: "local.get", index: OP_L_ARGS },
+    { op: "call", funcIdx: applyClosureIdx },
+    { op: "call", funcIdx: isTruthyIdx },
+    { op: "return" },
+  ];
+
+  const body: Instr[] = [
+    { op: "local.get", index: P_TARGET },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // step 2: GetMethod(C, @@hasInstance). A throwing getter propagates.
+        { op: "local.get", index: P_TARGET },
+        { op: "i32.const", value: hasInstanceId },
+        { op: "call", funcIdx: boxSymbolIdx },
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.tee", index: OP_L_HANDLER },
+        { op: "ref.is_null" },
+        { op: "local.get", index: OP_L_HANDLER },
+        { op: "call", funcIdx: typeofUndefinedIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: OP_L_HANDLER },
+            { op: "call", funcIdx: typeofFunctionIdx },
+            { op: "if", blockType: { kind: "empty" }, then: callHandler },
+          ],
+        },
+      ],
+    },
+    // steps 5-6: OrdinaryHasInstance(C, O), tri-state, unchanged.
+    { op: "local.get", index: P_VALUE },
+    { op: "local.get", index: P_TARGET },
+    { op: "call", funcIdx: ctx.funcMap.get(HELPER_NAME) ?? ordinaryIdx },
+  ];
+
+  const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(OPERATOR_HELPER_NAME, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: OPERATOR_HELPER_NAME,
+    typeIdx,
+    locals: [
+      { name: "hasInstanceHandler", type: EXTERNREF },
+      { name: "hasInstanceArgs", type: EXTERNREF },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
 /**
  * Emit `expr.left instanceof expr.right` for a fully-dynamic RHS as a host-free
  * i32 TRI-STATE (0 / 1 / 2) — the caller runs `emitInstanceofThrowGuard` over
@@ -745,7 +914,17 @@ export function tryEmitNativeDynamicInstanceOf(
   // Reserve the helper (and everything it calls) BEFORE either operand is
   // compiled, so any index shift it triggers reaches the already-emitted
   // instructions through `currentFunc`.
-  const helperIdx = ensureNativeDynamicInstanceOf(ctx);
+  //
+  // (#6651 I2) In a module that installs a possibly-callable `@@hasInstance`,
+  // the OPERATOR (§13.10.2) is the entry point, not OrdinaryHasInstance — see
+  // `ensureInstanceofOperator`. It wraps the same tri-state, so the caller's
+  // throw guard is unchanged, and it declines to the ordinary helper whenever
+  // its substrate is absent.
+  const operatorIdx = moduleInstallsCallableHasInstance(expr.getSourceFile())
+    ? ensureInstanceofOperator(ctx)
+    : undefined;
+  const entryName = operatorIdx === undefined ? HELPER_NAME : OPERATOR_HELPER_NAME;
+  const helperIdx = operatorIdx ?? ensureNativeDynamicInstanceOf(ctx);
   if (helperIdx === undefined) return null;
   flushLateImportShifts(ctx, fctx);
 
@@ -764,6 +943,6 @@ export function tryEmitNativeDynamicInstanceOf(
   }
 
   // Re-read the handle: compiling the operands may have registered helpers.
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(HELPER_NAME) ?? helperIdx });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(entryName) ?? helperIdx });
   return { kind: "i32" };
 }
