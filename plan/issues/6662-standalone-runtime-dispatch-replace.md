@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: feature
 area: compiler
 goal: standalone
-related: [1474, 1539, 1913, 4016, 4224, 4620, 6651]
+related: [1474, 1539, 1913, 4016, 4224, 4620, 6651, 6665]
 loc-budget-allow:
   # 2026-09-23 (#6662): the two dispatch sites live in these god-files and
   # nowhere else — the #1474 refusal in `compileNativeStringMethodCall` and the
@@ -144,6 +144,10 @@ residuals below (3 `replaceAll/searchValue-*` overridden-`@@replace` rows, 2
 - A RegExp built at runtime hands `$<name>` / a replacer no `groups` object
   (`named-groups/functional-replace-*`, `groups-object-subclass*`:
   compile_error → fail when reached through a runtime-only search value).
+- [#6665](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6665-standalone-string-methods-dynamic-regexp-value)
+  (filed in parallel for lodash/lodash-es/prettier) covers the same refusal for
+  `replace`/`split`/`match`/`search`; this issue lands its `replace`/`replaceAll`
+  slice, the other three methods remain there.
 - The remaining lane blockers are other clusters: dynamic `match`/`search`/
   `split` search values (#1474 siblings), `Array.prototype.flat` (#2717), and
   the styled-components `re` validation failure.
