@@ -3773,84 +3773,9 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
   return { kind: "externref" };
 }
 
-/**
- * (#3236 S1) Native standalone `%Generator%` (= `%GeneratorFunction.prototype%`,
- * §27.3.3) value — the object `getPrototypeOf(genFn)` must return. A lazily-cached
- * `$Object` singleton whose:
- *   - `[[Prototype]]` (`$proto`) is `%Function.prototype%` (so
- *     `getPrototypeOf(getPrototypeOf(genFn)) === getPrototypeOf(ordinaryFn)`,
- *     §27.3.3.2 — the `prototype-relation-to-function.js` identity), built via
- *     `__object_create(%Function.prototype%)`, and
- *   - own `prototype` data property is `%GeneratorPrototype%` (§27.3.3.3), so
- *     `getPrototypeOf(genFn).prototype` reaches GP for the GeneratorPrototype
- *     descriptor / this-val tests.
- * Modelled on `emitTypedArrayIntrinsicCtorObject` (the `$Object`-with-a-native-
- * proto-`prototype` shape). Standalone/WASI only. Leaves the `%Generator%`
- * externref on the stack; returns its ValType or `null` on unavailable runtime.
- */
-export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  const brand = ensureGeneratorPrototypeNativeProtoGlue(ctx);
-  if (brand === undefined) return null;
-
-  ensureObjectRuntime(ctx);
-  const createIdx = ctx.funcMap.get("__object_create");
-  const setIdx = ctx.funcMap.get("__extern_set");
-  if (createIdx === undefined || setIdx === undefined) return null;
-
-  const globalName = "__native_generator_function_prototype";
-  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
-  if (globalIdx === undefined) {
-    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: globalName,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.builtinObjectGlobals.set(globalName, globalIdx);
-  }
-
-  const objLocal = allocLocal(fctx, `__genfn_proto_obj_${fctx.locals.length}`, { kind: "externref" });
-  const initBody: Instr[] = [];
-
-  // (#2182 pattern) `savedBody` is detached during the swap; register it in
-  // `liveBodies` so any late-import funcidx shift still walks it.
-  const savedBody = fctx.body;
-  fctx.body = initBody;
-  ctx.liveBodies.add(savedBody);
-  let ok = true;
-  try {
-    // G = __object_create(%Function.prototype%)  — sets $proto for the relation
-    // identity. FP materialization (its own lazy-global guard) nests here.
-    if (emitFunctionPrototypeObjectSingleton(ctx, fctx) === null) {
-      ok = false;
-    } else {
-      fctx.body.push({ op: "call", funcIdx: createIdx });
-      fctx.body.push({ op: "local.set", index: objLocal });
-      // G.prototype = %GeneratorPrototype%
-      fctx.body.push({ op: "local.get", index: objLocal });
-      addStringConstantGlobal(ctx, "prototype");
-      for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
-      if (emitGeneratorPrototypeSingleton(ctx, fctx) !== null) {
-        fctx.body.push({ op: "call", funcIdx: setIdx });
-        fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "global.set", index: globalIdx });
-      } else {
-        ok = false;
-      }
-    }
-  } finally {
-    fctx.body = savedBody;
-    ctx.liveBodies.delete(savedBody);
-  }
-  if (!ok) return null;
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
-}
+// (#6651 A3) `emitGeneratorFunctionPrototypeSingleton` — the standalone
+// `%GeneratorFunction.prototype%` / `%GeneratorFunction%` pair — lives in
+// `generator-function-intrinsic.ts`.
 
 /**
  * Native standalone `%AsyncGenerator%` (= `%AsyncGeneratorFunction.prototype%`)

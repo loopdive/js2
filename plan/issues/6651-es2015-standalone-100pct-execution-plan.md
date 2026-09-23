@@ -527,7 +527,6 @@ loc-budget-allow:
 # stale number after a deferred object write. The skip has to sit in the one
 # function every inline field ladder asks for its candidates; with it the access
 # falls to `__extern_get`/`__extern_set`, whose carrier arms own the property.
-  - src/codegen/property-access.ts
   # 2026-09-23 — cluster G, slice G3. `expressions/assignment.ts` +39: the
   # 9-line `isTupleShapedStruct` predicate, one early route in each of the two
   # array-assignment readers (top-level and nested) that treated EVERY non-vec
@@ -541,6 +540,18 @@ loc-budget-allow:
   # `object-runtime.ts` +6: the `$AnyValue` arm of `boxVecElementToExternref`,
   # the one recipe every vec-family reader (`__iterator`, `__extern_get_idx`)
   # uses to lift an element to externref; the arm must sit in that recipe.
+  # 2026-09-23 — cluster A slice A3. The `%GeneratorFunction%` intrinsic lives in
+  # the NEW leaf `src/codegen/generator-function-intrinsic.ts` (its predecessor
+  # left `array-object-proto.ts`, which shrinks by ~70). God-file growth is the
+  # dispatch sites that must name it or the gates that must widen in place:
+  # `expressions/call-builtin-static.ts` +13 (the `getPrototypeOf(<generator
+  # value>)` arm, beside the declaration arm it generalizes), `closures.ts` +36
+  # (`isNativeGeneratorMethodClosure`, ~75 % comment, and its three call sites
+  # at the generator tests that used to read only `ts.isFunctionExpression`),
+  # `generators-native.ts` +58 (`foldedMethodKey` and
+  # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
+  # gate it relaxes — the candidate gate is the single source of truth three
+  # emit sites and the host-import scan consult, so it cannot move).
 func-budget-allow:
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
@@ -751,6 +762,15 @@ func-budget-allow:
   # OOB-widen site, see the loc rationale above).
   - src/codegen/expressions/assignment.ts::compileArrayDestructuringAssignment
   - src/codegen/property-access.ts::compileElementAccessBody
+  # 2026-09-23 — cluster A slice A3: `compileLiftedClosureBody` +5 and
+  # `compileArrowAsClosure` +2 — the generator tests in both now also accept an
+  # object-literal generator METHOD admitted by `isNativeGeneratorMethodClosure`
+  # (the open-`$Object` literal lane), in place, because those tests are what
+  # decide native-factory vs plain closure. `compileBuiltinStaticCall` +10 is the
+  # `getPrototypeOf(<generator value>)` arm and `registerNativeGenerator` +7 the
+  # closure-lane method's `this` snapshot (see the LOC grant).
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/closures.ts::compileArrowAsClosure
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -6512,6 +6532,192 @@ correctness fix for the probe shapes and the pins.
 | 3 | G2's step-loop rows (`iterator-next-reference`, `iterator-next-result-type`, `array-key-get-error`): the native `__iterator_next` OBJ arm re-reads `next` per step and has no non-Object-result TypeError; caching `next` needs a new `$IterRec` field. Time-boxed out. |
 | — | Standalone `[a] = { x: 1 }` still binds `undefined` instead of throwing: the native `__array_from_iter_n` passes a non-drainable struct through (#2904 rationale). The host now throws on the new route. |
 | — | Standalone self-iterator (`[Symbol.iterator]() { return this; }` on a literal that also has `next`): the values are right but the `@@iterator` call is skipped (log `next,next`), in the declaration lane as well — a native `__iterator` shortcut. |
+
+### 2026-09-23 — Cluster A (native generator lowering, standalone), slice A3: `%GeneratorFunction%` reified, object-literal / class generator methods, module default-export generators
+
+Claimed 2026-09-23 by the round-3 A3 lane (Opus 5 High), branch `a3`, based on
+`origin/main` @ `072f0a796b`. Every before-state was measured from a
+source-clean tree: the worktree before its first edit (A manifest chunk
+00), otherwise a `git archive HEAD` extract (`.tmp/basetree`). The
+engine was `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter
+`d4799bda84cfed0d`), and every run was `--standalone --isolate` in 24-row chunks.
+
+| set | before | after | gained | lost |
+| --- | ---: | ---: | ---: | ---: |
+| A manifest, 197 rows (sha256 `5fc1a7c0…2d77`) | 94 pass / 2 fail / 101 CE | **100** / 2 / 95 | +6 | 0 |
+| `GeneratorFunction` rows, 34 (every row spelling `getPrototypeOf(function*`, all of `built-ins/GeneratorFunction/**`, `GeneratorPrototype/constructor.js`) | 6 pass | **13** | +7 | 0 |
+| C4's open-lane rows, 3 (outside both manifests) | 0 | **3** | +3 | 0 |
+
+The rest of this entry covers what each target was, which parts landed, and the controls.
+
+#### Target 1: `%GeneratorFunction%` / `%GeneratorFunction.prototype%` (+7)
+
+- **The defect.** Only `Object.getPrototypeOf(<generator declaration name>)`
+  reached the singleton. Every `built-ins/GeneratorFunction/**` row writes
+  `Object.getPrototypeOf(function* () {})`. That expression form went to the
+  generic callable arm, which answered `%Function.prototype%`, so
+  `.constructor` read `%Function%`. `GeneratorFunction/length.js` and
+  `extensibility.js` were passing for that wrong reason, because `Function.length`
+  is also 1.
+- **Other gaps in the singleton itself.** It owned only a `prototype` property,
+  set through `__extern_set`, which made it writable and enumerable. It had no
+  `constructor`, no `@@toStringTag`, and `%GeneratorPrototype%.constructor` did
+  not exist.
+- **The new module.** `src/codegen/generator-function-intrinsic.ts` now owns
+  the builder, moved out of `array-object-proto.ts`. It builds both objects with
+  the §27.3 attribute words through `__defineProperty_value`:
+  - `%GeneratorFunction%` gets `length` 1, `name`, a
+    `{w:F, e:F, c:F}` `prototype`, and the `[[Call]]`/`[[Construct]]` carrier brand.
+  - `%GeneratorFunction.prototype%` gets `constructor`, `prototype` and
+    `@@toStringTag`.
+  - `%GeneratorPrototype%.constructor` is wired from this builder.
+- **A known limit.** `%GeneratorPrototype%.constructor` is wired only when
+  `%GeneratorFunction.prototype%` is first reified. Wiring it from the GP
+  builder would splice this init body into every generator-instance prototype
+  read.
+- **The routing change.** `isStaticSyncGeneratorFunctionValue` answers the
+  getPrototypeOf arm for a sync generator EXPRESSION.
+- **The regression this caused, and the fix.** Routing only the expression
+  turned `object/method-definition/generator-prototype.js` from pass to fail.
+  That row compares `getPrototypeOf(obj.method)` with
+  `getPrototypeOf(function* () {})` and had passed only because both sides
+  answered `%Function.prototype%`. The predicate therefore also claims `o.m`
+  when all of these hold:
+  - `o` is a single-assignment binding (`bindingIsSingleAssignment`) initialised
+    to an object literal;
+  - the literal's only `m` member is a sync `*m(){}`;
+  - no `o.m` / `o[…]` is written or deleted anywhere in the file.
+
+  A replaced method is not claimed. The pin suite has a CONTROL case for that.
+
+#### Target 2: generator METHODS (+5 computed names, +3 open-object lane)
+
+- **2a, folded non-identifier names.**
+  - The candidate gate refused every string, numeric or computed method name.
+    The `#2938` uniqueness check compared `getText()`.
+  - Both emit sites already key the method by the folded name
+    (`resolveClassMemberName` / `resolveAccessorPropName` → `${owner}_${key}`).
+    `foldedMethodKey` now makes the same derivation at the gate. An unfoldable
+    computed key still bails, and uniqueness is decided on the folded key.
+  - **A2-gates' negative experiment for this gate ("gains 0") no longer
+    reproduces on this base.** All 5 host-passing rows pass. The one that still
+    leaks is `fn-name-gen-method.js`, a duplicate name, which bails by design.
+- **2b, the open-object lane (C4's rows).**
+  - `var obj = {}; var obj = { *method… }` lowers the literal to an open
+    `$Object`. Its methods then go through `emitObjectLiteralMethodFn` →
+    `compileArrowAsClosure`. Every generator test on that path read
+    `ts.isFunctionExpression`, so the method became a plain closure whose body
+    ran on the call.
+  - `isNativeGeneratorMethodClosure` in `closures.ts` admits an object-literal
+    method at the three tests. It is limited to standalone/WASI, non-async
+    methods that `isNativeGeneratorCandidate` accepts. Those methods are
+    registered like a function expression (`__self` leading capture). Anything
+    else keeps the historical plain closure; it never falls into the
+    host-import eager path that C4's bare widening hit.
+  - `registerNativeGenerator` snapshots `this` for such a method, exactly like a
+    function expression (`capturesDynamicThis`, gated on an object-literal
+    parent without a synthesized receiver).
+  - Probe `.tmp/a3/p/open1.js` checks laziness, values, `this === obj` and the
+    return value. It passes.
+- **Class generator methods do not share cause 2b**: class bodies are always
+  lowered on the struct lane.
+
+#### Target 3: anonymous `export default function* () {}` (+1)
+
+- The gate required a name. The declaration collector already registers the
+  anonymous declaration as "default", so `isAnonymousDefaultExportDeclaration`
+  admits it.
+- **Measured regression, fixed narrowly.** The first cut turned
+  `module-code/parse-err-invoke-anon-gen-decl.js`
+  (`export default function* () {}();`) from pass to fail. The compiler
+  tolerates TS1109 globally, so that early SyntaxError was rejected only by the
+  #680 refusal. The gate now declines any source that has `parseDiagnostics`,
+  and that row is byte-identical to base again. It still passes for the wrong
+  reason: it needs a real early error.
+- `instn-named-bndng-dflt-gen-anon.js` fails on host too. It needs the
+  self-import and module-namespace work (I3), and its CE signature moved from
+  `#680` to `env::g`.
+
+#### Controls: zero pass → non-pass
+
+- **Compile-only differential, both targets, base vs after, primary + strict
+  variants.** The harness is assembled exactly as `runTest262File` does it
+  (`.tmp/a3/sha.mts`). The corpus is every non-staging test262 row whose source
+  is a generator row AND contains `getPrototypeOf` or a non-identifier-named
+  generator method (641). Added to that:
+  - every generator-method row outside the class directories (652);
+  - a seeded 150-row sample of the class directories;
+  - the 7 `export default function*` rows.
+
+  That is 1,450 rows. The class sample is there to check the structural claim
+  that identifier-named class generator methods cannot be reached. It holds:
+  all 150 are byte-identical.
+  - **Host lane: 0 of 1,450 modules changed.** All four edits are gated on
+    standalone/WASI, or sit behind the host arm of `isNativeGeneratorCandidate`,
+    which returns first.
+  - **Standalone: 64 modules changed** (`.tmp/a3/changed.txt`).
+- **Verdicts on those 64 rows**, in-process on both trees, on the final
+  source: 24 → **40 pass**, +16, **0 pass → non-pass**. The two other moves are
+  CE → fail:
+  - `Function/prototype/toString/generator-method.js` (source text of a
+    computed-name method);
+  - `Iterator/zip/basic-longest.js` (Iterator helpers are out of scope, G2).
+- **Why the other ~5,800 generator rows were not compiled.** Every edit is
+  reachable only through a `getPrototypeOf` call on a spelled generator value, a
+  generator method, or an anonymous default-export generator. Rows with none of
+  these are unreachable by construction.
+- **Other gates:**
+  - `website/playground/examples/` + `benchmarks/`: 32/32 byte-identical.
+  - `node scripts/equivalence-gate.mjs`: 22 failing / 1,720 passing, all 22 in
+    the baseline.
+  - `pnpm run check:ir-fallbacks`: OK.
+  - Generator pin suites (`vitest run generator`, 41 files): the 3 failing
+    cases fail identically on base. They are `generator-method-destructuring`
+    "untyped array destructuring" and two `issue-2864-standalone-generator-carrier`
+    cases.
+  - New pin suite `tests/issue-6651-a3-generator-function-intrinsic.test.ts`,
+    9 cases, **7 red on base**:
+    - the 6 fix cases;
+    - the replaced-method CONTROL, which answers 1 on base by the
+      both-sides-wrong coincidence.
+
+    The object-literal-METHOD guard and the declaration CONTROL are green on
+    both trees.
+
+#### Residuals
+
+- **`GeneratorFunction/**` (14 rows): eval-dependent.** Calling or constructing
+  `%GeneratorFunction%` is CreateDynamicFunction. The QuickJS provider's
+  `__runtime_new_function` has no generator kind, so these rows need a provider
+  entry, not codegen. The rows are:
+  - `invoked-as-*` ×4, `instance-*` ×6;
+  - `is-a-constructor` (`isConstructor` fails before its `new`);
+  - `proto-from-ctor-realm*` ×2;
+  - `Function/prototype/toString/GeneratorFunction.js`.
+- **`has-instance`: a runtime link that does not exist.** `g instanceof
+  GeneratorFunction` needs a generator function VALUE's runtime `[[Prototype]]`
+  to be `%GeneratorFunction.prototype%`. Standalone closures do not carry that
+  link. The static arm answers only spelled values.
+- **`class/subclass/builtin-objects/GeneratorFunction/*` (5 rows):**
+  `class extends GeneratorFunction`, eval-backed.
+- **`generator-prototype-prop.js`:** a struct-lane object-literal generator
+  method has no own `prototype` property. `initializeNativeGeneratorFunctionValue`
+  is declaration/expression-only.
+- **A manifest (97 non-pass).** These are the A2-gates bail families,
+  unchanged apart from the 6 rows closed here:
+  - 42 `#680` refusals;
+  - 44 `__gen_*` host leaks: `yield` inside assignment patterns and for-of
+    heads, the named fn-expr self-name binding (9), rest params with
+    parameter-scope `eval` (4), `super` in a generator method, `yield*` in a
+    for-of body (4), and the duplicate-name `fn-name-gen-method`;
+  - 6 decorator `'yield' is a reserved word` parse errors;
+  - the two pre-existing `fail`s;
+  - `concise-generator` (`super`, leaking `env::__gen_result_value`);
+  - `instn-named-bndng-dflt-gen-anon` (`env::g`, self-import).
+
+Half-done: nothing is left in a half-landed state. Not attempted: target 4
+(A2-proper `yield` inside patterns). The before-state offered no cheaper path:
+1 of 74 of those rows passes on host.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
