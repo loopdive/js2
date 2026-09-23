@@ -370,7 +370,6 @@ loc-budget-allow:
   - src/codegen/declarations/param-return-inference.ts
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/expressions/calls.ts
-  - src/codegen/expressions/new-super.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/statements/variables.ts
 # 2026-09-21 — cluster B, slice B4 (§22.2.6 accessor READS on a native RegExp
@@ -418,8 +417,6 @@ loc-budget-allow:
 # measurement that justifies it — `readIt([10,20], 0)` answered `undefined`
 # where `readIt([10,20], "0")` answered `10` — next to the `$AnyString` gate
 # that caused it.
-  - src/codegen/object-runtime.ts
-  - src/codegen/array-object-proto.ts
   - src/codegen/ta-dyn-mop.ts
 # 2026-09-23 — cluster B, slice B5 (`RegExp.prototype[@@split]`, §22.2.6.14).
 # The MECHANISM is the new module `src/codegen/regexp-split-protocol.ts` (the
@@ -442,9 +439,6 @@ loc-budget-allow:
 #     `Object` member write (`re.constructor = f`), which otherwise binds the
 #     `Object_set_constructor` HOST import — a compile error in standalone. It
 #     has to sit in `compileExternPropertySet`, the function that binds it.
-  - src/codegen/regexp-standalone.ts
-  - src/codegen/property-access-dispatch.ts
-  - src/codegen/expressions/assignment.ts
 # 2026-09-23 — cluster B, slice B5b (`RegExp.prototype[@@replace]`, §22.2.6.11).
 # `regexp-standalone.ts` +23 more (+77 over the slice): the `@@8` arm joins the
 # `@@10` one in `emitRegExpProtoMemberBody` and the direct `re[Symbol.replace]`
@@ -453,6 +447,15 @@ loc-budget-allow:
 # restated above. The mechanism (the collect loop, the per-result reads and an
 # inline GetSubstitution over captured strings) is the new module
 # `src/codegen/regexp-replace-protocol.ts`.
+# 2026-09-23 — cluster C, slice C4 (array patterns over a tuple-struct source).
+# `destructuring-params.ts` +12 (path listed just above, restated here so the
+# grant is dated for this change-set). The MECHANISM — the exhausted-element
+# binding and the sentinel-aware field box — lives in the 90-line leaf
+# `tuple-rest.ts`, which already owned the exhausted REST element. What stays in
+# the god-file is the 5-line call arm inside the tuple loop (the only place that
+# knows the tuple's width) and a 7-line module-level adapter that hands the leaf
+# the recursion (`destructureParamObject`/`destructureParamArray`), so the leaf
+# does not import its own importer.
 func-budget-allow:
   # 2026-09-23 — cluster F slice F3: +13 inside `compileObjectDefineProperty`,
   # the same comment-dominated one-line change as the LOC grant above. The
@@ -609,6 +612,11 @@ func-budget-allow:
 # mechanism, its gate and its receiver compile are all inside
 # `regexp-split-protocol.ts::tryEmitRegExpOwnConstructorRead`.
   - src/codegen/property-access-dispatch.ts::tryConstructorPrototypeIdentity
+  # 2026-09-23 — cluster C slice C4: `destructureParamArray` +4, the call arm
+  # for a non-rest element past the tuple's width (see the loc rationale). It
+  # has to sit inside the tuple-struct loop: that loop is the only code that
+  # holds `tupleDef.fields.length`, and the old `break` it replaces was there.
+  - src/codegen/destructuring-params.ts::destructureParamArray
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -5255,6 +5263,123 @@ route) registers the glue, and none of the 22 ungated shapes changed.
 | 1 | `String.prototype.replace/cstm-replace-get-err` | B1's recorded one-argument `replace` refusal (#1474) |
 | 7 | `@@split` | see the B5 entry |
 | 47 | unchanged buckets from B4 | see the B5 entry |
+
+### 2026-09-23 — Cluster C, slice C4 (array patterns over a tuple-struct source: the `dflt-obj-ptrn-prop-ary` family)
+
+- **Branch** `c4`, base `origin/main` @ `6cb630798e`. **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a4e3be6d143ec3400`. Not pushed.
+- **Manifest** `.tmp/c4/manifest.txt` — every `dflt` row of the C/G/I
+  manifests, 42 rows. Engine `quickjs`, `--standalone --isolate`, 24-row
+  chunks in fresh processes, all chunk exits `0`.
+
+| standalone, `--isolate`, engine quickjs | pass | non-pass |
+| --- | ---: | ---: |
+| before (`.tmp/c4/before-0{0,1}.log`) | 21 | 21 |
+| after (`.tmp/c4/after-0{0,1}.log`) | **31** | 11 |
+
+Per-row: **10 non-pass → pass (all ten `dstr/*dflt-obj-ptrn-prop-ary`), 0 lost.**
+(The brief expected ~35 on the base; the measured base is 21.)
+
+#### C3b's two-defect diagnosis, re-measured: right about the location, wrong about defect (a)
+
+- **(b) is real and was the loop, not the default path.** `destructureParamArray`'s
+  tuple-struct lane `break`s at the first element past the tuple's width. A
+  parameter default `{ w: [7, 8] }` types `w` as `[number, number]`, so
+  `[a, b, c]` never wrote `c` — it kept its zero-initialised externref local,
+  which is JS `null` in the standalone value model. Only the parameter-default
+  path showed it because that is where the checker hands the pattern a TUPLE
+  (an argument goes through the vec lane). The same `break` also skipped the
+  element's own default (`[a, b, c = 9]` gave `0`), a nested default
+  (`[a, b, [c] = [5]]` gave `null`), and the TypeError for a nested pattern with
+  no default. Fix: `emitExhaustedTupleElement` (in `tuple-rest.ts`, beside its
+  rest-element twin) binds `undefined`, then that element's own default, for
+  every non-rest element past the width.
+- **(a) is NOT a literal-representation defect, and the suggested fix makes it
+  worse — measured.** `[7, undefined]` already stores the `UNDEF_F64_BITS`
+  sentinel in its f64 slot, and the `===`/`typeof` observers read it correctly.
+  The value is lost when a slot read is BOXED to externref: `String(y)` answered
+  `"NaN"` while `y === undefined` answered `true` in the same function. I tried
+  the brief's gate (JS file + `undefined` element ⇒ externref carrier, in
+  `compileArrayLiteral`'s `hasNullLiteral` arm). Every probe got WORSE: the
+  binding's checker type is still `number[]`, so the externref vec is coerced back
+  to an f64 vec at the assignment, and that coercion writes a plain NaN — the
+  sentinel is gone and `typeof`, `=== undefined` and destructuring defaults all
+  broke too (`var [p = 5, q = 6] = [7, undefined]` gave `q = NaN`). Reverted,
+  not committed.
+- **What fixes the manifest rows is the tuple FIELD box.** The tuple lane had the
+  sentinel-aware read only for an element WITH a default (#2574). The
+  no-default arm boxed the f64 field with the generic `__box_number`, which #3315
+  deliberately keeps sentinel-blind: a fresh Math result can carry the sentinel
+  bits. `coerceTupleBindingElement` now boxes an f64 FIELD into an externref
+  binding through the existing `undefSentinel` brand. That is the decode site
+  #3315 names as the right one ("slot reads"), and the vec lane already does
+  this (`vec-access-exports.ts`).
+
+#### Control — every row that can reach the new code, both targets
+
+The C3 2,370-row list controls an array-literal change, and this slice has none.
+So the control asks a stricter question: which rows reach either edited branch
+at all? Both branches are new arms. A row that reaches neither compiles to the
+same bytes as base by construction.
+
+1. **AST scan** (`.tmp/c4/scan.mjs`) of all of `test262/test`: 7,447 files contain
+   an `ArrayBindingPattern` or an array-literal assignment target. That syntax is
+   the only way into `destructureParamArray`. `test262/harness` has none.
+2. **Fire detection** (`.tmp/c4/detect2.mts`) compiled all 7,447 with a counter
+   on both branches, on **both** targets. The counter was temporary and was
+   removed before any verdict run. Body-only compiles, validated first: on the
+   first 518 rows the fire set was identical to full-harness compiles. Zero
+   compile throws. **464 rows fire, and it is the same 464 on standalone and
+   host** (`.tmp/c4/fired.txt`, sha256 `551c4ac5…`).
+3. **Verdicts** for those 464: before and after on both targets, engine
+   quickjs, in-process 200-row chunks, one runner at a time. All chunk exits
+   `0`, and `counted=464` on all four passes.
+
+| target | before non-pass | after non-pass | pass → non-pass | non-pass → pass |
+| --- | ---: | ---: | ---: | ---: |
+| standalone (`.tmp/c4/ctl/ctl-{before,after}-standalone.log`) | 31 | 4 | **0** | **27** |
+| host (`.tmp/c4/ctl/ctl-{before,after}-host.log`) | 44 | 17 | **0** | **27** |
+
+The 27 are the whole `dflt-obj-ptrn-prop-ary` family (class `meth` / `gen-meth`
+/ `async-gen-meth` / `private-*` × static, plus `function`, `generators` and
+`async-generator`). The manifest carries 10 of them. No other verdict changed,
+including the non-pass status kinds.
+
+The helper moved from the god-file into `tuple-rest.ts` after the control ran.
+To show the move changed nothing, all 464 fired rows were compiled under both
+trees on both targets: **928/928 binaries identical**. Other gates, on the
+final tree:
+- 32/32 playground + benchmark files compile to **byte-identical** binaries
+  (`.tmp/c4/corpus-{base,new}.txt`).
+- `equivalence-gate`: 22 failing / 1,720 passing, 22 known, **no new**.
+- Green: `check:ir-fallbacks`; loc/func budgets, both local and
+  `LOC_GATE_BASE=origin/main` (grants in the frontmatter); coercion-sites;
+  oracle-ratchet (+0/+0); dead-exports; compiler-boundaries inventory; biome;
+  typecheck.
+- C-family pins stay green. All 40 `dstr|destruct|tuple` suites were run one
+  process per file. `tests/issue-4655.test.ts` (5) and 8 of those suites fail
+  identically on base: `issue-3643` (2), `illegal-cast-vec-tuple-648` (5),
+  `issue-3522` (2), `generator-method-destructuring` (1), `issue-43-fexp` (1),
+  plus whole-file failures in `issue-4376`, `issue-4758` and `issue-5738`. Every
+  failure is pre-existing, with the same test names on both trees.
+- New pin `tests/issue-6651-c4-tuple-dstr-undefined.test.ts`: 4 cases, all RED
+  on base (standalone 7 / host 1 / 32 / 32 against 63).
+
+#### Residuals in the manifest (11)
+
+| rows | signature | finding |
+| ---: | --- | --- |
+| 6 | `Cannot access property on null or undefined` — `params-dflt-ref-arguments` ×5, `params-dflt-meth-ref-arguments` | unchanged from C3/C3b: `arguments` in the PARAMETER scope (cluster I's B11). |
+| 2 | `Cannot read properties of undefined (reading 'next')` — object `gen-meth-dflt-params-arg-val-not-undefined`, `dstr/gen-meth-dflt-obj-ptrn-empty` | **Root-caused, not fixed.** Both tests declare `var obj = {}`, then `var obj = { *method… }`. The checker types the binding from the first declaration, so the literal takes the open-object lane. There, `emitObjectLiteralMethodFn` passes the MethodDeclaration to `compileArrowAsClosure`, whose generator test is `ts.isFunctionExpression(arrow) && asteriskToken`. So a `*method` becomes a plain closure: the body runs eagerly and returns `undefined`. Repro: `var p = {}; var p = { *m() {} }; p.m()`. Widening the two `isGenerator` tests to MethodDeclaration made the module emit `env::` host imports under `--target standalone`. The native generator lowering keys on `FunctionExpression` in more places, so this is not a one-site fix. It belongs with cluster A's generator lane. |
+| 3 | `standalone target emitted host imports: env::g (#2961)` — `module-code/*-dflt-*gen*` | module-code default-export generators, unrelated to parameters. |
+
+**Still open from C3b's list: the non-destructuring read of defect (a).** In
+`var a = [7, undefined]; String(a[1])` an f64-vec ELEMENT read is boxed without
+the sentinel decode. The fix is the same brand as this slice's, applied to the
+f64-vec element-access result type. That is corpus-wide and moves the ABI
+wherever the result reaches a signature (`function-types.ts` keys on the
+brand). It needs its own slice and its own control. No row in this manifest
+depends on it.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
