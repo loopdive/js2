@@ -21,6 +21,7 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
+import { tryEmitAnyValueArrayUndefinedOobGet } from "./any-value-element-read.js"; // (#6651 G3)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -64,6 +65,7 @@ import {
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
+import { throwMessageExternrefInstrs } from "./js-errors.js";
 import {
   buildThrowJsErrorInstrs,
   classifyPrivateMember,
@@ -1444,9 +1446,9 @@ export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node, flush?
   // Register the literal: in legacy mode this adds a `string_constants` global
   // import; in nativeStrings mode it just records the value with sentinel -1
   // so call sites can materialize it inline (#1174).
-  addStringConstantGlobal(ctx, message);
+  const messageInstrs = throwMessageExternrefInstrs(ctx, message);
   const tagIdx = ensureExnTag(ctx);
-  return [...stringConstantExternrefInstrs(ctx, message), { op: "throw", tagIdx }];
+  return [...messageInstrs, { op: "throw", tagIdx }];
 }
 
 /**
@@ -6311,7 +6313,13 @@ export function compileElementAccessBody(
         const keyIsStringy =
           (keyType.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) !== 0 &&
           (keyType.flags & NUMERIC_KEY_FLAGS) === 0;
-        const keySwitchEligible = (keyType.flags & PERMISSIVE_KEY_FLAGS) !== 0 && !keyIsStringy;
+        // (#1058) A numeric enum type (`SyntaxKind`) is a UNION of number-literal
+        // members, so the NumberLiteral bit sits only on each member. The
+        // TypeScript parser's `forEachChildTable[node.kind]` is that shape.
+        const keyIsNumericEnumUnion =
+          keyType.isUnion() && keyType.types.every((part) => (part.flags & ts.TypeFlags.NumberLike) !== 0);
+        const keySwitchEligible =
+          ((keyType.flags & PERMISSIVE_KEY_FLAGS) !== 0 || keyIsNumericEnumUnion) && !keyIsStringy;
         // Only take the static key-switch when EVERY field is numeric-named and
         // every value has one uniform reference representation. JS-host object
         // literals use externref; standalone Acorn's string-valued tables use
@@ -6339,9 +6347,14 @@ export function compileElementAccessBody(
             uniformReferenceFieldType.kind === "ref"
               ? { kind: "ref_null", typeIdx: uniformReferenceFieldType.typeIdx }
               : uniformReferenceFieldType;
+          // (#1058) A missing key reads as `undefined`, as `__extern_get` would
+          // answer; `ref.null.extern` is JS `null`, so `fn === undefined` missed
+          // it and the caller invoked null. Emit it in place, then lift it out.
+          const missingKeyStart = fctx.body.length;
+          if (resultType.kind === "externref") emitUndefined(ctx, fctx);
           let chain: Instr[] =
             resultType.kind === "externref"
-              ? [{ op: "ref.null.extern" }]
+              ? fctx.body.splice(missingKeyStart)
               : [{ op: "ref.null", typeIdx: resultType.typeIdx }];
           for (let i = numericFields.length - 1; i >= 0; i--) {
             const { f, idx } = numericFields[i]!;
@@ -6663,6 +6676,9 @@ export function compileElementAccessBody(
       emitPlainArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, f1BoxType, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (shouldWidenReferenceArrayOob(oobUndefined, expr, arrDef.element)) {
+      // (#6651 G3) An `$AnyValue` element keeps its box (see the module).
+      const anyRead = tryEmitAnyValueArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
+      if (anyRead) return anyRead;
       emitReferenceArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (oobUndefinedTypedArray) {
@@ -6772,6 +6788,8 @@ export function compileElementAccessBody(
     emitPlainArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element, f1BoxTypeArr);
     return { kind: "externref" };
   } else if (shouldWidenReferenceArrayOob(oobUndefinedArr, expr, typeDef.element)) {
+    const anyRead = tryEmitAnyValueArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element); // (#6651 G3)
+    if (anyRead) return anyRead;
     emitReferenceArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element);
     return { kind: "externref" };
   } else if (oobUndefinedTypedArrayArr) {

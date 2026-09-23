@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-05
+updated: 2026-09-23
 priority: high
 feasibility: hard
 model: fable
@@ -74,7 +74,22 @@ loc-budget-allow:
   # 2026-08-31: projected NodeArray vecs retain their host-backed sidecar/MOP
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
+  # 2026-09-23: the binder symbol-table slice adds small hooks to
+  # call-identifier.ts, property-access.ts, binary-ops.ts, assignment.ts,
+  # expressions.ts and runtime.ts (all listed above); the logic lives in new
+  # subsystem modules (declaration-bound-callee, undefined-holding-variable,
+  # null-ref-undefined-box, unmatched-closure-host-call).
 func-budget-allow:
+  # 2026-09-23: binder slice. compileIdentifierCall's body moves verbatim into
+  # compileBoundIdentifierCall behind the declaration-bound callee wrapper; the
+  # numeric-key switch learns enum keys and an undefined miss.
+  - src/codegen/expressions/call-identifier.ts::compileBoundIdentifierCall
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions.ts::compileExpressionBody
+  # 2026-09-23: the dynamic-call arm ladder moves verbatim out of
+  # tryEmitInlineDynamicCall (which shrinks by the same amount) so a large
+  # ladder can be emitted once as a shared helper instead of per call site.
+  - src/codegen/expressions/calls.ts::buildInlineDynamicDispatch
   # 2026-09-01: the standalone apply bridge rejects a local closure whose live
   # declared arity exceeds its fixed eight-position ABI while preserving the
   # existing full-vector linked/native fallback.
@@ -1572,6 +1587,111 @@ the binder slice must be `const x: number = "str"` producing TS2322; `1 +
 "str"` is valid TypeScript and is not a checker-negative control. Printer
 equivalence should be a separate `createPrinter().printFile` slice before full
 emit and self-hosting.
+
+## Parser on current main: compile time and runtime crashes (2026-09-23)
+
+Measured on the pinned TypeScript 5.9.3 checkout with
+`dogfood:typescript-parser-source` (JS host, consumer-driven barrels).
+
+**Compile time.** Main took about **28 min** and emitted a **70 MB** module.
+Two changes bring that to **~2.4 min** (143,046 ms wall, 1,650 MiB peak RSS) and
+**7.64 MB**:
+
+- *Deferred throw-message strings.* Every positioned `TypeError` message minted
+  during the body phase used to register its own string import and shift every
+  module global mid-body. They are now placeholders registered in one batch and
+  patched in `fixupModuleGlobalIndices`.
+- *Outlined dynamic-call ladders.* A dynamic call site with 16 or more candidate
+  closure types used to inline the whole `ref.test` ladder. It now calls one
+  shared `__dyn_call_N` helper per distinct candidate plan.
+
+**Barrel regression from PR #5963.** Four `issue-1058-barrel-*` tests failed on
+main. The #6491 under-applied-call widening padded formals whose type cannot
+hold `undefined`. `closurePadSafe` now gates it (externref, nullable ref, f64,
+i32 only).
+
+**Runtime crashes, both in the identifier-callee closure ladder
+(`call-identifier.ts`).** The parser calls NodeFactory functions through
+destructured bindings (`const { createNodeArray: factoryCreateNodeArray } =
+factory`), so every call dispatches on the runtime funcref type.
+
+1. `factoryCreateNodeArray(elements)` trapped with `illegal cast`. The generic
+   formal is erased to externref, and the candidate arm cast it straight to its
+   own vec type while the caller held a vec with a different element
+   representation. The arm now uses the reserved `__vec_from_extern_<vec>`
+   materializer.
+2. `factoryCreateVariableDeclaration(...)` and
+   `factoryCreateVariableDeclarationList(...)` ended in the ladder's TypeError
+   terminal. The `NodeFactory` interface declares `x?: T`, which the call site
+   widens to externref. The implementation declares `x: T | undefined` (a
+   nullable ref) or `x = default` (a number), so no candidate had its funcref
+   type. The site now adds that one restored signature and hands the slot over
+   as null or the default sentinel when it is `undefined`, else a cast or unbox.
+
+**Result:** all three parser fingerprints (`builderStatePublic.ts`,
+`corePublic.ts`, `performanceCore.ts`) match exactly. Before, all three
+crashed. Regression tests: `issue-1058-erased-vec-closure-arg`,
+`issue-1058-optional-slot-closure-arg`, `issue-1058-deferred-throw-strings`,
+`issue-1058-outlined-dynamic-call`.
+
+**Known separate gap.** A `T | undefined` struct field holding an absent value
+reads back as `null`, so `d.init === undefined` is false even on a direct call.
+Truthiness checks are unaffected. This does not block the parser fingerprints.
+
+**Next:** rerun the binder probe (const-local = 65,792; duplicate-let =
+131,330).
+
+## Binder oracles pass (2026-09-23)
+
+`dogfood:typescript-binder-source` now matches both oracles:
+const-local = **65,792** and duplicate-let = **131,330**. The run took about
+**155 s** and produced an **8.26 MB** module; peak RSS was **2,280 MiB**.
+
+Before this change, the binder bound no symbols and reported no
+redeclarations. There were six causes:
+
+1. **`undefined`-holding typed variables.** A `let x: T` that has no
+   initializer, or is reset with `x = undefined!`, stores `undefined` as a
+   null ref. `x === undefined` used to fold to `false`, so the binder ran
+   `for (const d of jsDocImports)` over null.
+   - Fix: `undefined-holding-variable.ts` keeps both strict comparisons as a
+     runtime null test.
+2. **Enum-typed table keys.** `forEachChildTable[node.kind]` has a key typed
+   as a numeric enum union. It skipped the static numeric-key switch and
+   missed every entry.
+   - Fix: the switch now accepts number-like unions.
+   - A missing key now reads as `undefined`, where it was `null`. This fixes
+     `fn === undefined` for plain number keys too.
+3. **Same-name functions across modules.** Module-level function expressions
+   in parser.ts's table called visitorPublic's exported `visitNodes` instead
+   of the private one, both by call and by call-site inlining.
+   - Fix: `declaration-bound-callee.ts` binds the checker-resolved
+     declaration's own slot for the call and withholds the name-keyed inline
+     entry.
+4. **`Map.get` returned the host view of a stored struct.** A typed read of
+   that view turned it into null, so `symbolTable.get(name)` never found a
+   symbol.
+   - Fix: the keyed-collection shim in runtime.ts unwraps results.
+5. **Generic rest parameters.** A generic function's call-site-resolved
+   signature never registered its rest parameter, so
+   `addRelatedInfo(diag, ...relatedInformation)` expanded the array
+   positionally.
+   - Fix: `resolved-rest-param.ts` registers it.
+6. **Vec type mismatch at the rest slot.** A spread passed into a rest slot
+   is now projected onto the rest vec type when its element type differs. It
+   used to hit a bare `ref.cast` between unrelated vec types.
+
+Regression tests: `issue-1058-binder-symbol-table` (5 cases),
+`issue-1058-null-ref-undefined-box`, and
+`issue-1058-unmatched-closure-host-call`.
+
+**Known separate gap.** Inside a generic `f<T extends D>(d: T)`, a write such
+as `d.list = []` followed by `d.list.push(...)` does not reach the struct
+field when the caller reads it afterwards. This does not affect the binder
+oracles, because the duplicate path's related-information list is empty.
+
+**Next:** extend the binder workload beyond the two fixtures, then move on to
+the checker.
 
 ## Acceptance criteria
 

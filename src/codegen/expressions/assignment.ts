@@ -70,6 +70,7 @@ import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; 
 import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
+import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -1980,6 +1981,16 @@ function tryEmitArrayProtoIteratorAssignDrive(
   return true;
 }
 
+/**
+ * (#6651 G3) A struct the positional array-pattern readers may treat as a
+ * TUPLE: fields named `_0.._n`, or a registered (possibly empty) tuple type.
+ */
+function isTupleShapedStruct(ctx: CodegenContext, typeIdx: number, fields: readonly { name?: string }[]): boolean {
+  if (fields.length > 0) return fields.every((f, idx) => f.name === `_${idx}`);
+  for (const t of ctx.tupleTypeMap.values()) if (t === typeIdx) return true;
+  return false;
+}
+
 function compileArrayDestructuringAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2049,6 +2060,15 @@ function compileArrayDestructuringAssignment(
   // Detect whether RHS is a tuple struct (fields $_0, $_1, ...) or vec struct ({length, data})
   const isVecStruct =
     typeDef.fields.length === 2 && typeDef.fields[0]?.name === "length" && typeDef.fields[1]?.name === "data";
+
+  // (#6651 G3) Any other struct — an object literal carrying `@@iterator`, a
+  // class instance, a native string — is an arbitrary iterable, not a tuple:
+  // §13.15.5.2 calls GetIterator on it. Reading its fields positionally bound
+  // `[a, b] = { [Symbol.iterator]() {…}, next() {…} }` to the struct's FIELDS.
+  if (!isVecStruct && !isTupleShapedStruct(ctx, typeIdx, typeDef.fields)) {
+    fctx.body.push({ op: "extern.convert_any" });
+    return compileExternrefArrayDestructuringAssignment(ctx, fctx, target, { kind: "externref" }, true);
+  }
 
   let arrTypeIdx = -1;
   let arrDef: { kind: string; element: ValType } | undefined;
@@ -2524,7 +2544,14 @@ function compileExternrefArrayDestructuringAssignment(
   fctx: FunctionContext,
   target: ts.ArrayLiteralExpression,
   resultType: ValType,
+  // (#6651 G3) The source is a WasmGC struct iterable. The host's lenient
+  // `__array_from_iter_n` cannot see a compiled `@@iterator` method (it answers
+  // `[]`), so the host lane takes the strict GetIterator twin the binding lane
+  // uses (#3643), whose struct arm needs the `__call_@@iterator` export that
+  // registering `__iterator` demands. Standalone keeps its native drain.
+  structIterable = false,
 ): InnerResult {
+  const hostStrictIter = structIterable && !ctx.standalone && !ctx.wasi;
   // Store externref in temp local
   const tmpLocal = allocLocal(fctx, `__ext_arr_destruct_${fctx.locals.length}`, resultType);
   fctx.body.push({ op: "local.set", index: tmpLocal });
@@ -2573,9 +2600,10 @@ function compileExternrefArrayDestructuringAssignment(
   // immediately (§13.15.5.2), so the empty-pattern gate is gone.
   if (resultType.kind === "externref") {
     const matStepCount = patternIteratorStepCount(target.elements);
+    if (hostStrictIter) ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
     const matIterIdx = ensureLateImport(
       ctx,
-      "__array_from_iter_n",
+      hostStrictIter ? "__array_from_iter_n_strict" : "__array_from_iter_n",
       [{ kind: "externref" }, { kind: "f64" }],
       [{ kind: "externref" }],
     );
@@ -3387,6 +3415,18 @@ function emitArrayDestructureFromLocal(
   // throw the spec-required TypeError (#1225). Without this, nested patterns
   // like `[[ _ ]] = [null]` would silently drop the destructuring.
   if (!isVecStruct && !isTupleStruct) {
+    // (#6651 G3) A non-tuple struct is an arbitrary iterable — drive it
+    // through the externref GetIterator path, like the top-level pattern.
+    if (!isTupleShapedStruct(ctx, srcTypeIdx, srcDef.fields)) {
+      const extLocal = allocLocal(fctx, `__nested_iter_src_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.get", index: srcLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "local.set", index: extLocal });
+      fctx.body.push({ op: "local.get", index: extLocal });
+      compileExternrefArrayDestructuringAssignment(ctx, fctx, pattern, { kind: "externref" }, true);
+      fctx.body.push({ op: "drop" });
+      return;
+    }
     if (needsNullGuard) {
       const throwInstrs = buildDestructureNullThrow(ctx, fctx);
       fctx.body.push({ op: "local.get", index: srcLocal });
@@ -3965,8 +4005,10 @@ function tryEmitPinnedStructMemberSet(
     getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
   ) {
     fctx.body.push({ op: "extern.convert_any" });
+    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
+    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -5237,6 +5279,7 @@ function compilePropertyAssignmentExternSet(
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
   } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
+    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   }
   let assignmentResultLocal: number | undefined;
   if (wrapRuntimeEvalCallable) {

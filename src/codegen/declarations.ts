@@ -8,6 +8,7 @@
 import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
+import { registerResolvedRestParam } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
@@ -1819,6 +1820,7 @@ function registerBodylessFunctionDeclaration(
   } else if (resolved) {
     params = resolved.params;
     results = resolved.results;
+    registerResolvedRestParam(ctx, name, stmt, params); // (#1058)
   } else {
     params = [];
     for (let i = 0; i < stmt.parameters.length; i++) {
@@ -2941,6 +2943,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // Use call-site resolved types for generic functions
         params = resolved.params;
         results = resolved.results;
+        registerResolvedRestParam(ctx, name, stmt, params); // (#1058)
       } else {
         params = [];
         for (let i = 0; i < stmt.parameters.length; i++) {
