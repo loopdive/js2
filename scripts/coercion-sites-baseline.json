@@ -93,6 +93,8 @@
   "codegen/record-from-host-object.ts": 1,
   "codegen/regexp-accessor-get-arm.ts": 2,
   "codegen/regexp-exec-protocol.ts": 6,
+  "codegen/regexp-replace-protocol.ts": 2,
+  "codegen/regexp-split-protocol.ts": 2,
   "codegen/regexp-standalone.ts": 2,
   "codegen/registry/imports.ts": 17,
   "codegen/runtime-eval-boundary.ts": 1,

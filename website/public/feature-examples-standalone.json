@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1104,
+      "passCount": 1105,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -433,7 +433,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 224,
+          "pass": 225,
           "total": 262
         },
         {
@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1144,
+      "passCount": 1145,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -687,7 +687,7 @@
         },
         {
           "edition": "ES2024",
-          "pass": 13,
+          "pass": 14,
           "total": 21
         },
         {
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1718,
+      "passCount": 1779,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -907,7 +907,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 185,
+          "pass": 239,
           "total": 278
         },
         {
@@ -917,12 +917,12 @@
         },
         {
           "edition": "ES2018",
-          "pass": 629,
+          "pass": 634,
           "total": 648
         },
         {
           "edition": "ES2020",
-          "pass": 3,
+          "pass": 5,
           "total": 43
         },
         {
@@ -1013,7 +1013,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 4212,
+      "passCount": 4222,
       "totalCount": 4290
     },
     {
@@ -1025,7 +1025,7 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1533,
+      "passCount": 1543,
       "totalCount": 1552
     },
     {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2289,
+      "passCount": 2294,
       "totalCount": 2486
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1646,
+      "passCount": 1700,
       "totalCount": 1955
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2942,
+      "passCount": 2947,
       "totalCount": 3812
     },
     {
@@ -1258,7 +1258,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3782,
+      "passCount": 3794,
       "totalCount": 4979
     },
     {
@@ -1346,7 +1346,7 @@
     {
       "name": "RegExp v flag",
       "testCategories": ["built-ins/RegExp/unicodeSets"],
-      "passCount": 183,
+      "passCount": 184,
       "totalCount": 187
     },
     {
