@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 1015,
+      "passCount": 1018,
       "totalCount": 1106
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 597,
+      "passCount": 598,
       "totalCount": 1048
     },
     {

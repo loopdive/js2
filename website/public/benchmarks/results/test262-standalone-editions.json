@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10768,
-    "fail": 785,
+    "pass": 10771,
+    "fail": 782,
     "ce": 151,
     "skip": 0,
     "total": 11704,
@@ -84,12 +84,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 960,
-        "fail": 89,
+        "pass": 963,
+        "fail": 86,
         "ce": 1,
         "skip": 0,
         "total": 1050,
-        "pct": 91
+        "pct": 92
       },
       {
         "name": "Symbol.iterator",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1005,
-    "fail": 519,
+    "pass": 1006,
+    "fail": 518,
     "ce": 493,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 597,
-        "fail": 373,
+        "pass": 598,
+        "fail": 372,
         "ce": 78,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 394,
-        "fail": 239,
+        "pass": 395,
+        "fail": 238,
         "ce": 75,
         "skip": 0,
         "total": 708,
