@@ -22,7 +22,7 @@ import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
-import { tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`
+import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`; (#6651 F4) helper-returned
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
@@ -1166,8 +1166,23 @@ export function compileObjectDefineProperty(
         const init = declInitializerOf(recv);
         return init !== undefined && isProxyRevocableCall(init);
       };
-      const isProxyExpr = (e: ts.Expression): boolean =>
-        isNewProxy(unwrapTransparentExpression(e)) || isRevocableProxyRead(e);
+      // (#6651 F4) …and the third spelling F3 named as invisible to BOTH
+      // admissions: a proxy returned by a helper. `function mk(){ return new
+      // Proxy(t,h); } Object.defineProperty(mk(), …)` — and its one-hop twin
+      // `var m = mk()` — ran ZERO define-trap calls on this branch's base,
+      // because no predicate here traced a function's RETURN value. The hop
+      // (single statement, `return <expr>`, callee binding proven
+      // single-assignment) lives in `proxy-value-provenance.ts` so the read,
+      // write, construct and define sites all ask one question.
+      const isProxyExpr = (raw: ts.Expression): boolean => {
+        const e = unwrapTransparentExpression(raw);
+        if (isNewProxy(e) || isRevocableProxyRead(raw)) return true;
+        const returned = singleReturnExpressionOfCall(ctx, e);
+        return (
+          returned !== undefined &&
+          (isNewProxy(unwrapTransparentExpression(returned)) || isRevocableProxyRead(returned))
+        );
+      };
       if (isProxyExpr(objArg)) return true;
       const objInit = declInitializerOf(objArg);
       return objInit !== undefined && isProxyExpr(objInit);

@@ -100,7 +100,7 @@ import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; /
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
-import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
+import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0); (#6651 F4)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { VOID_RESULT, type InnerResult } from "../shared.js";
 import {
@@ -3904,6 +3904,18 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
   };
   const isProxyFactory = (value: ts.Expression): boolean => {
     const current = unwrap(value);
+    // (#6651 F4) `var mc = mkc(); new mc()` where `mkc`'s whole body is
+    // `return new Proxy(function(){}, h);`. F3 measured this as invisible to
+    // BOTH admissions: re-measured on this branch's base, the construct trap
+    // ran ZERO times for the helper-returned proxy while the direct spelling
+    // ran it. The hop and its single-assignment proof live in
+    // `proxy-value-provenance.ts` so the read, write and construct sites all
+    // ask the same question. Still NOT covered, deliberately: `new (mkc())()`
+    // with the call written in callee position — `tryCompileNativeConstructFromValue`
+    // gates on `ts.isIdentifier(calleeExpr)` before reaching here, and widening
+    // that gate is a much larger blast radius than this slice.
+    const returnedFromHelper = singleReturnExpressionOfCall(ctx, current);
+    if (returnedFromHelper !== undefined) return isProxyFactory(returnedFromHelper);
     // (#6651 F3) `new <Proxy-constructor value>(t, h)` — not just the spelling
     // `new Proxy(t, h)`. `var P = new OProxy(f, h); new P()` reached NO proxy
     // arm at all: this admission declined, so `tryCompileNativeConstructFromValue`
