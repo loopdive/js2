@@ -85,6 +85,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
+import { tryCompileRuntimeReplacer } from "./string-replace-dynamic.js";
 import { tryCompileStandaloneRegExpLegacyStaticRead } from "./regexp-legacy-static.js";
 import {
   resolveAssignedTransferredProtoMember,
@@ -1000,7 +1001,7 @@ export function staticRegExpGroupMeta(
   }
 }
 
-function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
+export function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
   const full = staticRegExpGroupMeta(ctx, expr);
   if (full !== null) return full.groupNames;
   const pattern = staticRegExpPatternFlags(ctx, expr, 0, true)?.pattern;
@@ -3450,7 +3451,7 @@ function regExpArgType(ctx: CodegenContext, argExpr: ts.Expression): ts.Type {
   return ctx.checker.getTypeAtLocation(argExpr);
 }
 
-function isStringLikeArg(ctx: CodegenContext, argExpr: ts.Expression, preFetchedType?: ts.Type): boolean {
+export function isStringLikeArg(ctx: CodegenContext, argExpr: ts.Expression, preFetchedType?: ts.Type): boolean {
   const argType = preFetchedType ?? regExpArgType(ctx, argExpr);
   return (
     (argType.flags & ts.TypeFlags.StringLike) !== 0 ||
@@ -4478,6 +4479,10 @@ export function tryCompileStandaloneStringReplace(
     );
     if (fnReplace !== undefined) return fnReplace;
   }
+
+  // (#6662) An un-provable replacer dispatches at RUNTIME instead of refusing.
+  const dynamic = tryCompileRuntimeReplacer(ctx, fctx, expr, method, reExpr, receiverOverride, propAccess.expression);
+  if (dynamic !== undefined) return dynamic;
 
   // Function replacers require closure dispatch plus capture-argument
   // marshalling, which the host-free RegExp carrier does not implement yet.
@@ -5693,7 +5698,7 @@ export function ensureRegExpNativeProtoGlue(ctx: CodegenContext): number | undef
  * `@@match` / `@@search` bodies (where `rxLocal` is `this`) and `@@split`
  * (where it is the constructed SPLITTER).
  */
-function emitRegExpBuiltinExecFromLocal(
+export function emitRegExpBuiltinExecFromLocal(
   ctx: CodegenContext,
   fctx: FunctionContext,
   rxLocal: number,
