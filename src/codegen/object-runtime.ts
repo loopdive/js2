@@ -3066,6 +3066,22 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ name: "o", type: objRef }],
       body,
     );
+    // (#6651 I4) `Object(sym)` — §7.1.18 ToObject, Table 13 Symbol row. The
+    // Symbol wrapper is the same `[[PrimitiveValue]]` `$Object` as every other
+    // wrapper, and the call site (emitObjectCoercion, calls-guards.ts) hands it
+    // an ALREADY-boxed value: the `$Symbol` carrier externref minted by
+    // `__box_symbol` (#2866). So the builder body is instruction-for-
+    // instruction `__new_String`'s — `emitWrapperBuildTail(0, 1)` and nothing
+    // else; neither builder inspects the value it wraps.
+    //
+    // Registered as an ALIAS onto that funcIdx rather than as a second copy.
+    // `ensureObjectRuntime` is an all-or-nothing block, so a duplicate function
+    // would grow EVERY standalone module (the #4034 unconditional-pull-in
+    // lesson) to serve the rare `Object(sym)`. The distinct name still keeps
+    // the call site readable and lets a future Symbol-specific wrapper (an own
+    // `@@toStringTag`, say) become a real function without touching callers.
+    const newStringIdx = ctx.funcMap.get("__new_String");
+    if (newStringIdx !== undefined) ctx.funcMap.set("__new_Symbol", newStringIdx);
   }
 
   // __new_Boolean(f64) -> externref : ToBoolean(arg) — the call sites coerce the
@@ -8652,6 +8668,12 @@ export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType)
   // behaviour to those paths.
   if (elemType.kind === "ref" || elemType.kind === "ref_null") {
     const ti = (elemType as { typeIdx: number }).typeIdx;
+    // (#6651 G3) A tagged `$AnyValue` element is a BOX, not the JS value: project
+    // it by tag (`__any_to_extern`) so a vec reader hands on the value the
+    // element read (`any-value-element-read.ts`) does. `extern.convert_any` of
+    // the box leaked it — `ToNumber` and the `===` identity arm do not know it.
+    const anyToExtern = ti >= 0 && ti === ctx.anyValueTypeIdx ? ctx.funcMap.get("__any_to_extern") : undefined;
+    if (anyToExtern !== undefined) return [{ op: "call", funcIdx: anyToExtern }];
     // (#3244) GENERALISED from the string-only arm this replaces. A homogeneous
     // reference-element array — `[{ x: 777 }]` (element = object STRUCT ref) or a
     // nested `[[10, 20, 30]]` (element = inner `__vec_<k>` STRUCT ref) — compiles
@@ -13146,4 +13168,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__new_Boolean",
   // (#4631) BigInt wrapper — same [[PrimitiveValue]] slot pattern.
   "__new_BigInt",
+  // (#6651 I4) Symbol wrapper — same slot pattern, aliased onto __new_String's
+  // builder (the value arrives already boxed as a `$Symbol` carrier).
+  "__new_Symbol",
 ]);

@@ -770,17 +770,27 @@ export function emitObjectCoercion(
       fctx.body.push({ op: "call", funcIdx: finalBigIntIdx });
       return { kind: "externref" };
     }
-  } else if (isSymbolType(argTsType) && !noJsHost(ctx)) {
+  } else if (isSymbolType(argTsType)) {
     // (#2728) Object(sym) → Symbol-wrapper object (§7.1.18 ToObject, Table 13),
     // whose `typeof` is "object". Symbol is NOT a constructor, so the generic
     // `__new_<Ctor>` (`new Symbol(id)`) path throws — mirror the `__new_BigInt`
-    // (#1568) approach with a dedicated `__new_Symbol` host helper that boxes
-    // the i32 symbol id to the real JS Symbol (reusing the same per-instance
-    // id→Symbol cache as `__box_symbol`, so identity/description round-trip) and
-    // returns `Object(sym)`. Symbols compile to a bare i32 counter id.
-    // Standalone / no-JS-host: no host wrapper — fall through to identity below.
-    compileExpression(ctx, fctx, args[0]!, { kind: "i32" });
-    const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+    // (#1568) approach with a dedicated `__new_Symbol` helper. Symbols compile
+    // to a bare i32 counter id.
+    //
+    // (#6651 I4) The carrier the helper takes differs by lane, exactly as the
+    // BigInt arm above splits: the JS-host helper takes the raw i32 id and
+    // re-boxes it to the real JS Symbol through the same per-instance
+    // id→Symbol cache as `__box_symbol` (so identity/description round-trip),
+    // while the host-free helper is the native `[[PrimitiveValue]]` wrapper
+    // builder and wants the value ALREADY boxed — the `$Symbol` GC carrier
+    // externref from `__box_symbol` (#2866).
+    //
+    // Until #6651 the host-free lane had no arm at all and fell through to the
+    // identity tail below, so `Object(Symbol())` evaluated to the symbol
+    // itself and `typeof Object(Symbol())` read "symbol" (typeof/symbol.js).
+    const symCarrier: ValType = noJsHost(ctx) ? { kind: "externref" } : { kind: "i32" };
+    compileExpression(ctx, fctx, args[0]!, symCarrier);
+    const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [symCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalSymIdx = ctx.funcMap.get("__new_Symbol") ?? newSymIdx;
     if (finalSymIdx !== undefined) {

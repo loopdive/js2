@@ -63,9 +63,68 @@ function tracesToRevocableHandle(ctx: CodegenContext, expr: ts.Expression, depth
 }
 
 /**
+ * (#6651 F4) The RETURN-EXPRESSION hop: `f()` where `f` is a function whose
+ * whole body is `return <expr>;`, answered as `<expr>`.
+ *
+ * F3 measured the gap this closes: `function mk(){ return new Proxy(t,h); }
+ * Object.defineProperty(mk(), "x", {value:1})` ran **zero** trap calls, and
+ * `new (mk())()` ran zero construct traps, because neither admission traced a
+ * function's return value — the call was simply not a `new Proxy(…)` to any
+ * predicate here. Re-measured on this branch's base before the change: `dp`
+ * stayed at 1 across the direct site and both helper sites, and `cn` stayed 0.
+ *
+ * Three restrictions, each load-bearing:
+ *
+ *  - **Exactly one statement, and it is a `return` with an expression.** A
+ *    multi-statement body can choose between values, and this predicate has no
+ *    way to say "sometimes". One statement leaves nothing to choose.
+ *  - **The callee binding must be single-assignment-equivalent.** A
+ *    `function mk(){…}` DECLARATION is hoisted and can still be overwritten
+ *    (`mk = somethingElse`), so the name scan from {@link
+ *    isSingleAssignmentBinding} is applied to it too; a `var mk = function…`
+ *    goes through that helper unchanged. Declining costs a fast path; accepting
+ *    a reassigned binding would claim the wrong answer, which is the failure
+ *    mode #5196 R3 already paid for once.
+ *  - **The returned expression is re-traced, not trusted.** It gets the ordinary
+ *    depth-limited walk, so a chain of single-return helpers terminates.
+ *
+ * The returned expression may mention the helper's PARAMETERS. That is sound
+ * for this question: `new Proxy(t, h)` mints a proxy whatever `t` and `h` are,
+ * so the answer does not depend on the arguments the call site passed.
+ */
+export function singleReturnExpressionOfCall(ctx: CodegenContext, expr: ts.Expression): ts.Expression | undefined {
+  if (!ts.isCallExpression(expr)) return undefined;
+  const callee = unwrap(expr.expression);
+  if (!ts.isIdentifier(callee)) return undefined;
+  const decls = ctx.oracle.declarationsOf(callee);
+  if (decls.length !== 1) return undefined;
+  const decl = decls[0]!;
+  let fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | undefined;
+  if (ts.isFunctionDeclaration(decl)) {
+    const sourceFile = decl.getSourceFile();
+    if (sourceFile !== callee.getSourceFile()) return undefined;
+    if (identifierIsWrittenTo(sourceFile, callee.text)) return undefined;
+    fn = decl;
+  } else if (ts.isVariableDeclaration(decl)) {
+    if (!isSingleAssignmentBinding(ctx, callee)) return undefined;
+    const init = decl.initializer === undefined ? undefined : unwrap(decl.initializer);
+    if (init !== undefined && (ts.isFunctionExpression(init) || ts.isArrowFunction(init))) fn = init;
+  }
+  if (fn === undefined) return undefined;
+  const body = fn.body;
+  // A concise arrow body (`() => new Proxy(t, h)`) IS the returned expression.
+  if (body !== undefined && !ts.isBlock(body)) return body;
+  if (body === undefined || body.statements.length !== 1) return undefined;
+  const only = body.statements[0]!;
+  if (!ts.isReturnStatement(only) || only.expression === undefined) return undefined;
+  return only.expression;
+}
+
+/**
  * True when `expr` may evaluate to a Proxy exotic object: `new Proxy(…)`,
- * `<handle>.proxy` where `<handle>` traces to `Proxy.revocable(…)`, or a
- * single-initializer variable that traces to either.
+ * `<handle>.proxy` where `<handle>` traces to `Proxy.revocable(…)`, a
+ * single-return helper CALL that yields either, or a single-initializer
+ * variable that traces to any of them.
  */
 export function tracesToProxyValue(ctx: CodegenContext, expr: ts.Expression, depth = 0): boolean {
   if (depth > TRACE_DEPTH_LIMIT) return false;
@@ -87,6 +146,9 @@ export function tracesToProxyValue(ctx: CodegenContext, expr: ts.Expression, dep
     const init = ctx.oracle.variableInitializerOf(e);
     if (init && init !== e) return tracesToProxyValue(ctx, init, depth + 1);
   }
+  // (#6651 F4) `mk()` where `mk`'s whole body is `return new Proxy(t, h);`.
+  const returned = singleReturnExpressionOfCall(ctx, e);
+  if (returned !== undefined) return tracesToProxyValue(ctx, returned, depth + 1);
   return false;
 }
 

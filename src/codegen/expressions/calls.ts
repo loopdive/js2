@@ -21,6 +21,7 @@ import {
   isVoidType,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { compileHostFreeCryptoCall, isHostFreeCryptoCall } from "./standalone-crypto.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
@@ -4484,6 +4485,103 @@ function reserveDynamicApplyFallback(ctx: CodegenContext): {
   };
 }
 
+/** Minimum candidate count at which an inline dynamic-call ladder is outlined (#1058). */
+const DYNAMIC_CALL_OUTLINE_MIN_CANDIDATES = 16;
+
+/**
+ * (#1058) Return the shared helper `(anyref, externref × arity) -> externref`
+ * holding the dynamic-call ladder for `key`, building it on first use. Every
+ * import and helper the ladder references was ensured by the caller before the
+ * key was formed, so building the body adds nothing to the index spaces.
+ */
+function outlinedDynamicCallHelper(ctx: CodegenContext, key: string, plan: InlineDynamicDispatchPlan): number {
+  const helpers = (ctx.outlinedDynamicCallHelpers ??= new Map());
+  const existingName = helpers.get(key);
+  if (existingName !== undefined) {
+    const existing = ctx.funcMap.get(existingName);
+    if (existing !== undefined) return existing;
+  }
+  let ordinal = helpers.size;
+  let name = `__dyn_call_${ordinal}`;
+  while (ctx.funcMap.has(name)) name = `__dyn_call_${++ordinal}`;
+  const params: { name: string; type: ValType }[] = [{ name: "__callee", type: { kind: "anyref" } }];
+  for (let i = 0; i < plan.arity; i++) params.push({ name: `__arg${i}`, type: { kind: "externref" } });
+  const hfctx: FunctionContext = {
+    name,
+    params,
+    locals: [],
+    localMap: new Map(params.map((param, index) => [param.name, index])),
+    returnType: { kind: "externref" },
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  const argLocals = params.slice(1).map((_param, index) => index + 1);
+  hfctx.body = buildInlineDynamicDispatch(ctx, hfctx, plan, 0, argLocals);
+  const typeIdx = addFuncType(
+    ctx,
+    params.map((param) => param.type),
+    [{ kind: "externref" }],
+    `$${name}_type`,
+  );
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: hfctx.locals, body: hfctx.body, exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  helpers.set(key, name);
+  return funcIdx;
+}
+
+/**
+ * Cache key for an outlined ladder: every plan input that changes the emitted
+ * helper body. The ladder never depends on the call site itself.
+ */
+function inlineDynamicDispatchKey(ctx: CodegenContext, plan: InlineDynamicDispatchPlan): string {
+  return [
+    plan.arity,
+    plan.allowHostBoundaryFallback,
+    plan.proxyArm !== undefined,
+    plan.boundArm !== undefined,
+    plan.applyFallback !== undefined,
+    plan.variadicArm?.funcTypeIdx ?? -1,
+    plan.wantTaCtorArm,
+    ctx.taCtorTypeIdx,
+    plan.undefinedIdx !== undefined,
+    plan.undefinedSingletonPad !== undefined,
+    plan.isUndefinedIdx !== undefined,
+    plan.unwrapForWasmIdx !== undefined,
+    (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx ?? -1,
+    plan.candidates
+      .map((c) =>
+        c.info.hasRestParam === true && c.info.paramTypes.length > 0
+          ? `${c.info.funcTypeIdx}r${c.structTypeIdx}`
+          : `${c.info.funcTypeIdx}`,
+      )
+      .join(","),
+  ].join("|");
+}
+
+/** Everything `buildInlineDynamicDispatch` reads besides the callee/argument locals. */
+interface InlineDynamicDispatchPlan {
+  arity: number;
+  allowHostBoundaryFallback: boolean;
+  hostCallPlan: ReturnType<typeof planHostCallFallback>;
+  candidates: { structTypeIdx: number; info: ClosureInfo }[];
+  applyFallback: ReturnType<typeof reserveDynamicApplyFallback> | undefined;
+  variadicArm: CodegenContext["variadicBuiltinClosure"];
+  proxyArm: { proxyTypeIdx: number; dispatchIdx: number; vecNewIdx: number; vecPushIdx: number } | undefined;
+  boundArm: { bfTypeIdx: number; applyIdx: number; vecNewIdx: number; vecPushIdx: number } | undefined;
+  wantTaCtorArm: boolean;
+  undefinedIdx: number | undefined;
+  undefinedSingletonPad: Instr[] | undefined;
+  boxNumberIdx: number;
+  unboxNumberIdx: number;
+  isUndefinedIdx: number | undefined;
+  unwrapForWasmIdx: number | undefined;
+}
+
 export function tryEmitInlineDynamicCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4932,6 +5030,68 @@ export function tryEmitInlineDynamicCall(
     );
   }
 
+  const plan: InlineDynamicDispatchPlan = {
+    arity,
+    allowHostBoundaryFallback,
+    hostCallPlan,
+    candidates,
+    applyFallback,
+    variadicArm,
+    proxyArm,
+    boundArm,
+    wantTaCtorArm,
+    undefinedIdx,
+    undefinedSingletonPad,
+    boxNumberIdx,
+    unboxNumberIdx,
+    isUndefinedIdx,
+    unwrapForWasmIdx,
+  };
+  // (#1058) The ladder depends only on the plan, never on the call site. A large
+  // program (TypeScript's visitor table) reaches it from thousands of sites with
+  // ~800 candidates each; inlining it everywhere made 63 MB of the parser graph's
+  // 68 MB code section. Large ladders are emitted once per distinct plan as a
+  // helper `(anyref callee, externref args…) -> externref`; small ones stay
+  // inline (byte-identical).
+  let dispatch: Instr[];
+  if (candidates.length < DYNAMIC_CALL_OUTLINE_MIN_CANDIDATES) {
+    dispatch = buildInlineDynamicDispatch(ctx, fctx, plan, anyLocal, argLocals);
+  } else {
+    const helperIdx = outlinedDynamicCallHelper(ctx, inlineDynamicDispatchKey(ctx, plan), plan);
+    dispatch = [{ op: "local.get", index: anyLocal }];
+    for (const argLocal of argLocals) dispatch.push({ op: "local.get", index: argLocal });
+    dispatch.push({ op: "call", funcIdx: helperIdx });
+  }
+  fctx.body.push(...emitDynamicCallDispatch(ctx, fctx, expr, dispatch));
+  return { kind: "externref" };
+}
+
+/** Build the dynamic-call arm ladder for `plan` into `fctx` (a call site or an outlined helper). */
+function buildInlineDynamicDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  plan: InlineDynamicDispatchPlan,
+  anyLocal: number,
+  argLocals: number[],
+): Instr[] {
+  const {
+    arity,
+    allowHostBoundaryFallback,
+    hostCallPlan,
+    candidates,
+    applyFallback,
+    variadicArm,
+    proxyArm,
+    boundArm,
+    wantTaCtorArm,
+    undefinedIdx,
+    undefinedSingletonPad,
+    boxNumberIdx,
+    unboxNumberIdx,
+    isUndefinedIdx,
+    unwrapForWasmIdx,
+  } = plan;
+
   // Build dispatch chain (innermost = default, outermost = first).
   // Default: ref.null.extern (matches existing fallback semantics).
   let dispatch: Instr[] = [{ op: "ref.null.extern" }];
@@ -5358,8 +5518,7 @@ export function tryEmitInlineDynamicCall(
     }
   }
 
-  fctx.body.push(...emitDynamicCallDispatch(ctx, fctx, expr, dispatch));
-  return { kind: "externref" };
+  return dispatch;
 }
 
 /**
@@ -9507,14 +9666,13 @@ function compileCallExpression(
     }
 
     // (#1503) Web Crypto host imports: crypto.randomUUID() / crypto.getRandomValues(buf).
-    // Available wherever the host exposes a `crypto` global (browsers + Node 19+).
-    // In WASI mode there is no JS host, so the imports are still added but resolve
-    // to a throw at runtime (no silent fallback to Math.random — that would be a
-    // security trap, see issue #1503). Shadow-aware.
+    // Never a Math.random fallback (security trap, #1503/#4569): standalone throws
+    // (#6659, standalone-crypto.ts); WASI imports resolve to a throw. Shadow-aware.
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "crypto") {
       const isShadowed = fctx.localMap.has("crypto") || (fctx.boxedCaptures?.has("crypto") ?? false);
       if (!isShadowed) {
         const cryptoMethod = propAccess.name.text;
+        if (isHostFreeCryptoCall(ctx, cryptoMethod)) return compileHostFreeCryptoCall(ctx, fctx);
         if (cryptoMethod === "randomUUID") {
           const idx = ensureLateImport(ctx, "__crypto_random_uuid", [], [{ kind: "externref" }]);
           flushLateImportShifts(ctx, fctx);
