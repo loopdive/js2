@@ -71,6 +71,7 @@
   "codegen/map-runtime.ts": 2,
   "codegen/math-value-read.ts": 1,
   "codegen/member-get-dispatch.ts": 3,
+  "codegen/native-dynamic-instanceof.ts": 1,
   "codegen/native-proto-wrapper-primitive.ts": 1,
   "codegen/native-string-slot-bridge.ts": 1,
   "codegen/new-boolean-tobooleanarg.ts": 2,
