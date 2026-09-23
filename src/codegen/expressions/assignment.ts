@@ -5308,6 +5308,11 @@ function compileExternPropertySet(
   const resolvedInfo = findExternInfoForMember(ctx, className, propName, "property");
   const propOwner = resolvedInfo ?? ctx.externClasses.get(className);
   if (!propOwner) return null;
+  // (#6651 B5) Without a JS host an INHERITED `Object` member write
+  // (`re.constructor = f` — the §22.2.6.14 SpeciesConstructor idiom) must not
+  // bind the `Object_set_<name>` host import; the caller's `__extern_set`
+  // fallback is the native ordinary [[Set]].
+  if (noJsHost(ctx) && propOwner.importPrefix === "Object") return null;
 
   // Check if the import exists BEFORE compiling object+value to avoid dangling stack values
   const importName = `${propOwner.importPrefix}_set_${propName}`;
