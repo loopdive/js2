@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10771,
-    "fail": 782,
+    "pass": 10772,
+    "fail": 781,
     "ce": 151,
     "skip": 0,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 4085,
-        "fail": 19,
+        "pass": 4086,
+        "fail": 18,
         "ce": 49,
         "skip": 0,
         "total": 4153,
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3860,
-    "fail": 512,
+    "pass": 3862,
+    "fail": 510,
     "ce": 451,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2946,
-        "fail": 420,
+        "pass": 2948,
+        "fail": 418,
         "ce": 444,
         "skip": 0,
         "total": 3810,
@@ -1080,12 +1080,12 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 1101,
-        "fail": 89,
+        "pass": 1103,
+        "fail": 87,
         "ce": 195,
         "skip": 0,
         "total": 1385,
-        "pct": 79
+        "pct": 80
       },
       {
         "name": "Symbol.iterator",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4483,
-    "fail": 884,
+    "pass": 4484,
+    "fail": 883,
     "ce": 78,
     "skip": 0,
     "total": 5445,
