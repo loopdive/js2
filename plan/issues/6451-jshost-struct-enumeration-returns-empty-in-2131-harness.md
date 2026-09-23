@@ -4,8 +4,8 @@ title: "JS-host `Object.keys`/`values`/`entries`/`for-in` return nothing in the 
 status: done
 sprint: current
 created: 2026-09-13
-updated: 2026-09-13
-completed: 2026-09-13
+updated: 2026-09-23
+completed: 2026-09-23
 priority: high
 horizon: m
 feasibility: medium
@@ -201,3 +201,32 @@ New issues filed for the out-of-scope findings above:
 (Date-struct field leak once the host bridge is authenticated) and
 [#6472](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6472-jshost-defineproperty-enumerable-false-not-honored-by-object-keys)
 (`defineProperty(..., {enumerable:false})` ignored by `Object.keys`/`values`/`entries`/`propertyIsEnumerable`).
+
+### Re-verified against `upstream/main` `10902f7c8d` (2026-09-23)
+
+Ten days of merges landed between the sweep and the PR, so the whole set was
+re-measured at one HEAD after merging `upstream/main` in. A/B by swapping all 19
+changed test files to their `upstream/main` contents and back:
+
+- **baseline (main's test files): 72 failures of 191 tests** across the 19 files
+- **with the sweep: 8 failures of 191** — unchanged **+64** net
+
+The 8 residuals are the same pre-existing, unrelated failures listed above, with
+one composition shift from main-side drift: `issue-3643-array-dstr-getiterator`
+now carries **two** pre-existing failures on main rather than one (the added one
+is "control — a plain object WITH a callable `@@iterator` still destructures",
+failing inside `src/runtime/strict-iterator-host.ts`), so that row reads
+**12/14 → 13/14** on this HEAD instead of 13/14 → 14/14. The delta is still +1.
+
+Anti-vacuity control re-run at this HEAD: reverting only
+`tests/issue-2131.test.ts` to `setExports` returns it to **1/7**; with
+`setInstance` it is **7/7**.
+
+`check:compiler-boundaries` still exits 1 with
+`inventory-valid-architecture-incomplete`, now naming
+`src/codegen/prepared-async-frame-adapter.ts#emitPreparedIrAsyncFrame` as
+`bound-unresolved`. That module was **moved on main** to
+`src/backend/wasmgc/async/prepared-async-frame-adapter.ts` without the policy
+being updated; this PR changes zero files under `src/`, `scripts/` or
+`.github/`, so it is main-side drift, not a finding of this change.
+
