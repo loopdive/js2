@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { LOWERING_TARGETS } from "../scripts/check-pushraw.mjs";
-import { baseBlob, parseFrontmatterList, resolveChangeBase } from "../scripts/lib/change-scope.mjs";
+import { baseBlob, parseFrontmatterList } from "../scripts/lib/change-scope.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checker = resolve(repository, "scripts/check-pushraw.mjs");
@@ -191,38 +191,108 @@ function bodyReceipt(source: string, name: string) {
   };
 }
 
-const { base } = resolveChangeBase(repository);
-const beforeGeneric = base && baseBlob(repository, base, generic);
-const beforeLegacy = base && baseBlob(repository, base, legacy);
+function replaceExact(source: string, before: string, after: string): string {
+  const at = source.indexOf(before);
+  if (at < 0 || source.indexOf(before, at + before.length) >= 0)
+    throw new Error("missing or duplicate reviewed composition span");
+  return source.slice(0, at) + after + source.slice(at + before.length);
+}
+
+function requireComposedLowerer(source: string): void {
+  const main = baseBlob(repository, "8c9b65b389194c8c8fc3e857e4b7316b0ae524e1", generic);
+  expect(main).toBeDefined();
+  // Exact reviewed M -> C hunks. No diff generated from the candidate is used
+  // as its own allowance, and every original byte outside these spans remains.
+  const changes: readonly (readonly [string, string])[] = [
+    [
+      'import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";',
+      'import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";\nimport { objectConstructionValues } from "./object-construction-order.js";',
+    ],
+    [
+      "        // Push values in canonical (sorted) field order — same order as\n        // shape.fields, which is also the WasmGC struct's declared field\n        // order. The builder enforces value-count parity with shape arity,\n        // so this loop always produces the right stack shape.",
+      "        // Load the canonical SSA operands in the resolver's physical field order.\n        // Effectful definitions retain their scheduled evaluation order.",
+    ],
+    [
+      "        for (const v of instr.values) emitValue(v, out);",
+      "        for (const v of objectConstructionValues(instr.shape, instr.values, obj)) emitValue(v, out);",
+    ],
+    [
+      "        const inner = asVal(valueIrType);\n        if (!inner) {\n          throw new Error(`ir/lower: refcell.new value must be a val-kind IrType (${func.name})`);\n        }",
+      "        const inner = lowerIrTypeToValType(valueIrType, resolver, func.name);",
+    ],
+    [
+      "        const getInner = memberValType(cellT.inner, func.name);",
+      "        const getInner = lowerIrTypeToValType(cellT.inner, resolver, func.name);",
+    ],
+    [
+      "        const setInner = memberValType(cellT.inner, func.name);",
+      "        const setInner = lowerIrTypeToValType(cellT.inner, resolver, func.name);",
+    ],
+    [
+      "  const innerVal = memberValType(t.inner, funcName);",
+      "  const innerVal = lowerIrTypeToValType(t.inner, resolver, funcName);",
+    ],
+  ];
+  let expected = main!;
+  for (const [before, after] of changes) expected = replaceExact(expected, before, after);
+  expect(source).toBe(expected);
+  let inverse = source;
+  for (const [before, after] of [...changes].reverse()) inverse = replaceExact(inverse, after, before);
+  expect(inverse).toBe(main);
+  for (const [name, hash, span] of [
+    ["emitInstrTree", "75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424", 2297],
+    ["lowerIrFunctionBody", "ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739", 3380],
+  ] as const)
+    expect(bodyReceipt(inverse, name)).toEqual({ hash, span });
+}
+
+describe("#5753 bounded lowering composition preserves the original donor receipts", () => {
+  it("permits only the reviewed object-order and logical refcell changes", () => {
+    requireComposedLowerer(readFileSync(resolve(repository, generic), "utf8"));
+  });
+  it.each(["inside approved hunk", "outside approved hunk"] as const)("rejects a mutation %s", (kind) => {
+    const source = readFileSync(resolve(repository, generic), "utf8");
+    requireComposedLowerer(source);
+    const changed =
+      kind === "inside approved hunk"
+        ? replaceExact(source, "objectConstructionValues(instr.shape, instr.values, obj)", "instr.values")
+        : replaceExact(source, "export function lowerIrFunctionBody", "export function changedLowerIrFunctionBody");
+    expect(() => requireComposedLowerer(changed)).toThrow();
+  });
+});
+
+// Historical provenance remains live even when the current change base already
+// contains the relocation. Never skip it merely because main has advanced.
+const base = "120cd638cf2a971934eaaccf47aaf65f06491f3d";
+const relocation = "c257b46620fb4996bf5233763b80298c1fd03dc6";
+const beforeLegacy = baseBlob(repository, base, legacy);
 describe("#3518 initial relocation budget provenance", () => {
-  it.skipIf(base !== undefined && beforeGeneric !== undefined)(
-    "moves exact bodies with no duplicate allowance or growth credit",
-    () => {
-      expect(base, "A known change base is required for initial relocation provenance").toBeDefined();
-      expect(beforeLegacy).toBeDefined();
-      const after = readFileSync(resolve(repository, generic), "utf8");
-      for (const [name, hash, span] of [
-        ["emitInstrTree", "75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424", 2297],
-        ["lowerIrFunctionBody", "ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739", 3380],
-      ] as const) {
-        expect(bodyReceipt(beforeLegacy!, name)).toEqual({ hash, span });
-        expect(bodyReceipt(after, name)).toEqual({ hash, span });
-        expect(readFileSync(resolve(repository, legacy), "utf8")).not.toContain(`function ${name}`);
-      }
-      const beforeIssue = baseBlob(repository, base!, issue)!;
-      const afterIssue = readFileSync(resolve(repository, issue), "utf8");
-      for (const key of ["loc-budget-allow", "func-budget-allow"]) {
-        const before = parseFrontmatterList(beforeIssue, key);
-        const afterKeys = parseFrontmatterList(afterIssue, key);
-        expect(afterKeys).toEqual(before.map((entry: string) => entry.replace(/^src\/ir\/lower\.ts(?=::|$)/, generic)));
-        expect(new Set(afterKeys).size).toBe(afterKeys.length);
-      }
-      for (const path of ["scripts/loc-budget-baseline.json", "scripts/func-budget-baseline.json"]) {
-        expect(readFileSync(resolve(repository, path), "utf8")).toBe(baseBlob(repository, base!, path));
-      }
-      const oldRaw = JSON.parse(baseBlob(repository, base!, baselinePath)!);
-      const newRaw = JSON.parse(readFileSync(resolve(repository, baselinePath), "utf8"));
-      for (const key of ["total", "tagged", "untagged"]) expect(newRaw[key]).toBe(oldRaw[key]);
-    },
-  );
+  it("moves exact bodies with no duplicate allowance or growth credit", () => {
+    expect(base, "A known change base is required for initial relocation provenance").toBeDefined();
+    expect(beforeLegacy).toBeDefined();
+    const after = baseBlob(repository, relocation, generic)!;
+    expect(after).toBeDefined();
+    for (const [name, hash, span] of [
+      ["emitInstrTree", "75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424", 2297],
+      ["lowerIrFunctionBody", "ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739", 3380],
+    ] as const) {
+      expect(bodyReceipt(beforeLegacy!, name)).toEqual({ hash, span });
+      expect(bodyReceipt(after, name)).toEqual({ hash, span });
+      expect(readFileSync(resolve(repository, legacy), "utf8")).not.toContain(`function ${name}`);
+    }
+    const beforeIssue = baseBlob(repository, base!, issue)!;
+    const afterIssue = baseBlob(repository, relocation, issue)!;
+    for (const key of ["loc-budget-allow", "func-budget-allow"]) {
+      const before = parseFrontmatterList(beforeIssue, key);
+      const afterKeys = parseFrontmatterList(afterIssue, key);
+      expect(afterKeys).toEqual(before.map((entry: string) => entry.replace(/^src\/ir\/lower\.ts(?=::|$)/, generic)));
+      expect(new Set(afterKeys).size).toBe(afterKeys.length);
+    }
+    for (const path of ["scripts/loc-budget-baseline.json", "scripts/func-budget-baseline.json"]) {
+      expect(baseBlob(repository, relocation, path)).toBe(baseBlob(repository, base!, path));
+    }
+    const oldRaw = JSON.parse(baseBlob(repository, base!, baselinePath)!);
+    const newRaw = JSON.parse(baseBlob(repository, relocation, baselinePath)!);
+    for (const key of ["total", "tagged", "untagged"]) expect(newRaw[key]).toBe(oldRaw[key]);
+  });
 });

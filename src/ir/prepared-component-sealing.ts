@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { CodegenContext } from "../codegen/context/types.js";
-import { definedFuncAt } from "../codegen/func-space.js";
-import { planProgramAbiUnitCallable } from "../codegen/program-abi-planning.js";
-import { irClassTypeRef, irTypeBindingKey } from "./abi-bindings.js";
-import { irCallableBindingKey, irRuntimeFuncRef, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
-import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
+import type {
+  PreparedSupportTypeDescriptor,
+  PreparedUnitCallableDescriptor,
+} from "../shared/contracts/prepared-component-tokens.js";
+import type { PreparedComponentCandidateDemand } from "./program/component-candidate-demand.js";
+import { irUnitCallableBindingId } from "./callable-bindings.js";
+import type { IrBindingId, IrUnitId, IrUnitInventory } from "./identity.js";
 import type { IrFunction } from "./nodes.js";
 import type { IrIntegrationDiagnosticVisibility } from "./integration-report.js";
 import { IrInvariantError, IrUnsupportedError, PreparedProgramAbiCommitError } from "./outcomes.js";
@@ -14,7 +16,6 @@ import {
   derivePreparedComponentDependencies,
   type PreparedComponentAbiEntry,
   type PreparedComponentDependencyEvidence,
-  type PreparedComponentDependencyFailure,
   type PreparedComponentDependencyReport,
   type PreparedInstructionSupportSidecars,
 } from "./prepared-component-dependencies.js";
@@ -24,7 +25,7 @@ import {
 } from "./prepared-dynamic-support.js";
 import { ProgramAbiInvariantError } from "./program-abi.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
-import type { Import, ValType, WasmFunction } from "./types.js";
+import type { Import, ValType } from "./types.js";
 
 type PreparedProgramAbiScopeTransaction = ReturnType<
   NonNullable<CodegenContext["programAbiSession"]>["beginPreparedComponentScope"]
@@ -125,23 +126,15 @@ export interface PreparedComponentArtifactEntry {
   readonly moduleInit?: boolean;
 }
 
-function preparableClassLayoutId(
-  ctx: CodegenContext,
-  classIdByBindingId: ReadonlyMap<IrBindingId, IrClassId>,
-  failure: PreparedComponentDependencyFailure,
-): IrClassId | undefined {
-  if (failure.code !== "unplanned-abi-binding" || failure.bindingId === undefined) return undefined;
-  const classId = classIdByBindingId.get(failure.bindingId);
-  return classId !== undefined && ctx.programAbiTypes?.canPrepareClassLayout(classId) === true ? classId : undefined;
-}
-
 type PreparedSealFailureSelector =
   | { readonly kind: "none" }
   | { readonly kind: "all" }
   | { readonly kind: "component"; readonly value: string }
   | { readonly kind: "terminal"; readonly value: IrUnitId };
 
-interface PreparedComponentBatchDescription {
+export interface PreparedComponentBatchDescription {
+  readonly supportTypes?: PreparedSupportTypeDescriptor;
+  readonly unitCallables?: PreparedUnitCallableDescriptor;
   readonly requestedStructuralReferenceKeys: readonly string[];
   readonly callableImports?: ReturnType<NonNullable<CodegenContext["programAbiCallableImports"]>["describePrepared"]>;
   readonly callableProviders?: ReturnType<
@@ -212,155 +205,6 @@ function resolvePreparedSealFailureTargets(
     );
   }
   return new Set([matches[0]!.id]);
-}
-
-function describePreparedComponentBatch(
-  ctx: CodegenContext,
-  component: PreparedComponentDependencyEvidence,
-  entries: readonly PreparedComponentArtifactEntry[],
-  callableAllocatorsByArtifactUnitId: ReadonlyMap<IrUnitId, WasmFunction>,
-  callableImports: ReadonlyMap<string, Import>,
-  classIdByBindingId: ReadonlyMap<IrBindingId, IrClassId>,
-): PreparedComponentBatchDescription | undefined {
-  const describeExportAliases = (preparedAllocatorTargets: Iterable<object> = []) => {
-    const terminalIds = new Set(component.terminalUnitIds);
-    const targets = new Set<object>();
-    for (const { artifactUnitId, terminalOwnerUnitId } of entries) {
-      if (!terminalIds.has(terminalOwnerUnitId)) continue;
-      const allocator = callableAllocatorsByArtifactUnitId.get(artifactUnitId);
-      if (allocator === undefined) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          `prepared component ${component.id} lost callable allocator ${artifactUnitId} before export description`,
-        );
-      }
-      targets.add(allocator);
-    }
-    for (const dependency of component.abiDependencies) {
-      for (const bindingId of [dependency.bindingId, dependency.canonicalBindingId]) {
-        const allocator = ctx.programAbiSession?.locatorObjectForBinding(bindingId);
-        if (allocator !== undefined) targets.add(allocator);
-      }
-    }
-    for (const allocator of preparedAllocatorTargets) targets.add(allocator);
-    const dependencyKeys = new Set([
-      ...component.abiDependencies.map(({ structuralReferenceKey }) => structuralReferenceKey),
-      ...component.failures.flatMap(({ structuralReferenceKey }) =>
-        structuralReferenceKey === undefined ? [] : [structuralReferenceKey],
-      ),
-    ]);
-    for (const name of ["__typeof_number", "__unbox_number"] as const) {
-      if (!dependencyKeys.has(irCallableBindingKey(irRuntimeFuncRef(name).binding))) continue;
-      const index = ctx.funcMap.get(name);
-      const helper = index === undefined ? undefined : definedFuncAt(ctx, index);
-      if (helper) targets.add(helper);
-    }
-    return ctx.programAbiExports?.describePrepared(targets);
-  };
-  if (component.status === "complete") {
-    const exportAliases = describeExportAliases();
-    return exportAliases
-      ? Object.freeze({ requestedStructuralReferenceKeys: Object.freeze([]), exportAliases })
-      : undefined;
-  }
-  if (component.status !== "blocked" || component.failures.length === 0) return undefined;
-  const importRegistry = ctx.programAbiCallableImports;
-  const providerRegistry = ctx.programAbiCallableProviders;
-  const typeRegistry = ctx.programAbiTypes;
-  const selectedImports = new Set<Import>();
-  const selectedProviderKeys = new Set<string>();
-  const selectedClassIds = new Set<IrClassId>();
-  const requestedKeys = new Set<string>();
-
-  for (const failure of component.failures) {
-    const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
-    if (classId !== undefined) {
-      if (!typeRegistry) return undefined;
-      const classRecord = ctx.programAbiSession?.inventory.classes.find(({ id }) => id === classId);
-      if (!classRecord) return undefined;
-      selectedClassIds.add(classId);
-      requestedKeys.add(irTypeBindingKey(irClassTypeRef(classId, classRecord.displayName).binding));
-      continue;
-    }
-    const key = failure.structuralReferenceKey;
-    if (failure.code !== "unplanned-abi-binding" || key === undefined) return undefined;
-    const imported = callableImports.get(key);
-    const providerImports = providerRegistry?.importsForPreparedProviders(new Set([key]));
-    if (imported === undefined && providerImports === undefined) return undefined;
-    requestedKeys.add(key);
-    if (imported) selectedImports.add(imported);
-    if (providerImports) {
-      selectedProviderKeys.add(key);
-      for (const providerImport of providerImports) selectedImports.add(providerImport);
-    }
-  }
-
-  if (selectedImports.size > 0 && !importRegistry) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "resolve",
-      "prepared callable dependencies require one canonical callable-import registry",
-    );
-  }
-  if (selectedProviderKeys.size > 0 && !providerRegistry) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "resolve",
-      "prepared callable dependencies require one canonical callable-provider registry",
-    );
-  }
-  const exactImports =
-    selectedImports.size === 0
-      ? undefined
-      : importRegistry!.describePrepared(
-          new Set(
-            [...selectedImports].sort((left, right) => {
-              const leftIndex = ctx.mod.imports.indexOf(left);
-              const rightIndex = ctx.mod.imports.indexOf(right);
-              return leftIndex - rightIndex;
-            }),
-          ),
-        );
-  const exactProviders =
-    selectedProviderKeys.size === 0
-      ? undefined
-      : providerRegistry!.describePrepared(new Set([...selectedProviderKeys].sort()), exactImports);
-  const exactClasses =
-    selectedClassIds.size === 0
-      ? undefined
-      : typeRegistry!.describePreparedClassLayouts(new Set([...selectedClassIds].sort()));
-  if (!exactImports && !exactProviders && !exactClasses) return undefined;
-  const preparedExportTargets = new Set<object>(selectedImports);
-  if (exactProviders) {
-    for (const allocator of providerRegistry!.preparedDescriptorAllocatorObjects(exactProviders)) {
-      preparedExportTargets.add(allocator);
-    }
-  }
-  const exportAliases = describeExportAliases(preparedExportTargets);
-  const requestedStructuralReferenceKeys = Object.freeze([...requestedKeys].sort());
-  if (requestedStructuralReferenceKeys.length !== component.failures.length) {
-    // Multiple identical failures are valid evidence, but the complete blocker
-    // set must still project to one exact structural request per dependency.
-    const uniqueFailureRequests = new Set(
-      component.failures.map((failure) => {
-        const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
-        if (classId !== undefined) {
-          const record = ctx.programAbiSession!.inventory.classes.find(({ id }) => id === classId)!;
-          return irTypeBindingKey(irClassTypeRef(classId, record.displayName).binding);
-        }
-        return failure.structuralReferenceKey!;
-      }),
-    );
-    if (uniqueFailureRequests.size !== requestedStructuralReferenceKeys.length) return undefined;
-  }
-  return Object.freeze({
-    requestedStructuralReferenceKeys,
-    ...(exactImports ? { callableImports: exactImports } : {}),
-    ...(exactProviders ? { callableProviders: exactProviders } : {}),
-    ...(exactClasses ? { classLayouts: exactClasses } : {}),
-    ...(exportAliases ? { exportAliases } : {}),
-  });
 }
 
 function assertOverlaidComponent(
@@ -560,38 +404,12 @@ export function prepareDependencyCompletePreparedComponents(
     );
   }
   const terminalUnitIds = new Set(entries.map((entry) => entry.terminalOwnerUnitId));
-  const callableAllocatorsByArtifactUnitId = new Map<IrUnitId, WasmFunction>();
-  for (const entry of entries) {
-    const terminalUnitId = entry.terminalOwnerUnitId;
-    const isTerminal = entry.artifactUnitId === terminalUnitId && !entry.derivedUnit;
-    const func = isTerminal
-      ? (() => {
-          const funcIdx = entry.moduleInit
-            ? ctx.programAbiModuleInitCallables?.handleForUnit(terminalUnitId)
-            : entry.classMember
-              ? ctx.programAbiClassCallables?.handleForUnit(terminalUnitId)
-              : ctx.programAbiSourceCallables?.handleForUnit(terminalUnitId);
-          return funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
-        })()
-      : ctx.irUnitFuncMap.get(entry.artifactUnitId);
-    const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
-    if (!func || !signature || signature.kind !== "func") {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `dependency preparation has no exact allocated callable for artifact ${entry.artifactUnitId}`,
-      );
-    }
-    const bindingId = planProgramAbiUnitCallable(ctx, { ref: irUnitFuncRef(entry.fn), signature, func });
-    if (bindingId !== irUnitCallableBindingId(entry.artifactUnitId)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `dependency preparation could not plan the exact callable for artifact ${entry.artifactUnitId}`,
-      );
-    }
-    callableAllocatorsByArtifactUnitId.set(entry.artifactUnitId, func);
+  const preparation = ctx.programAbiComponentPreparation;
+  if (!preparation) {
+    throw new IrInvariantError("selection-preparation-mismatch", "resolve", "missing component candidate adapter");
   }
+  preparation.assertContext(ctx);
+  const candidates = preparation.observeCallables(entries, inventory);
 
   const derivedUnits = [
     ...new Map(
@@ -613,13 +431,10 @@ export function prepareDependencyCompletePreparedComponents(
       );
     },
   );
-  const committedAbi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = Object.freeze({
-    get: (id: IrBindingId) => session.getDraft(id),
-    bindingIdsForStructuralReference: (key: string) => session.bindingIdsForStructuralReference(key),
-  });
+  const { abi: candidateAbi, supportAbi } = candidates.observeDependencies();
   const derive = (
     candidateTerminalUnitIds: ReadonlySet<IrUnitId>,
-    abi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = committedAbi,
+    abi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = candidateAbi,
   ): PreparedComponentDependencyReport =>
     derivePreparedComponentDependencies({
       module: { functions: entries.map((entry) => entry.fn) },
@@ -634,9 +449,6 @@ export function prepareDependencyCompletePreparedComponents(
       abi,
     });
   const candidateTerminalUnitIds = new Set(terminalUnitIds);
-  const classIdByBindingId = new Map(
-    inventory.classes.map((record) => [irClassTypeRef(record.id, record.displayName).binding.bindingId, record.id]),
-  );
   let report = derive(candidateTerminalUnitIds);
   const injectedComponentIds = resolvePreparedSealFailureTargets(failureSelector, report);
   const injectedInternalErrorComponentIds = resolvePreparedSealFailureTargets(internalErrorSelector, report);
@@ -651,33 +463,47 @@ export function prepareDependencyCompletePreparedComponents(
         "prepared dependency report omitted remaining candidate terminals",
       );
     }
-    const describedBatch = describePreparedComponentBatch(
-      ctx,
-      component,
-      entries,
-      callableAllocatorsByArtifactUnitId,
-      input.callableImports,
-      classIdByBindingId,
-    );
-    const batch =
-      input.preparedModuleCallableAliasDescriptor !== undefined
-        ? {
-            ...(describedBatch ?? { requestedStructuralReferenceKeys: Object.freeze([]) }),
-            moduleCallableAliases: input.preparedModuleCallableAliasDescriptor,
-          }
-        : describedBatch;
+    const demand: PreparedComponentCandidateDemand = {
+      componentId: component.id,
+      terminalUnitIds: component.terminalUnitIds,
+      callableBindingIds: entries
+        .filter(
+          (entry) =>
+            component.terminalUnitIds.includes(entry.terminalOwnerUnitId) &&
+            (entry.artifactUnitId !== entry.terminalOwnerUnitId || entry.derivedUnit) &&
+            !entry.classMember &&
+            !entry.moduleInit,
+        )
+        .map((entry) => irUnitCallableBindingId(entry.artifactUnitId)),
+      supportBindingIds: [
+        ...new Set(
+          component.abiDependencies.flatMap((dependency) =>
+            [dependency.bindingId, dependency.canonicalBindingId].filter((id) => supportAbi.get(id) !== undefined),
+          ),
+        ),
+      ],
+    };
     let failure: IrUnsupportedError | undefined;
     let diagnosticVisibility: IrIntegrationDiagnosticVisibility = "report";
     try {
       const scope = session.beginPreparedComponentScope(component.id, component.terminalUnitIds);
       let sealStarted = false;
       try {
+        ctx.programAbiCallableProviders?.assertUndefinedValueComponent(component);
+        const batch = candidates.describe(
+          component,
+          demand,
+          input.callableImports,
+          input.preparedModuleCallableAliasDescriptor,
+        );
         let sealedComponent = component;
         if (batch) {
           scope.stagePreparedComponentBatch({
             scopeId: component.id,
             terminalUnitIds: component.terminalUnitIds,
             requestedStructuralReferenceKeys: batch.requestedStructuralReferenceKeys,
+            unitCallables: batch.unitCallables,
+            supportTypes: batch.supportTypes,
             ...(batch.callableImports ? { callableImports: batch.callableImports } : {}),
             ...(batch.callableProviders ? { callableProviders: batch.callableProviders } : {}),
             ...(batch.classLayouts ? { classLayouts: batch.classLayouts } : {}),
@@ -701,13 +527,14 @@ export function prepareDependencyCompletePreparedComponents(
             component.failures,
           );
         }
-        includePreparedDependencies(
-          scope,
-          sealedComponent,
-          component.terminalUnitIds.flatMap((terminalUnitId) => [
+        includePreparedDependencies(scope, sealedComponent, [
+          ...component.terminalUnitIds.flatMap((terminalUnitId) => [
             ...(input.preparedBindingIdsByTerminalUnitId?.get(terminalUnitId) ?? []),
           ]),
-        );
+          ...(batch?.callableProviders
+            ? ctx.programAbiCallableProviders!.preparedUndefinedValueResourceBindingIds(batch.callableProviders)
+            : []),
+        ]);
         if (injectedInternalErrorComponentIds.has(component.id)) {
           throw new Error(`injected internal prepared ABI seal error for ${component.id}`);
         }

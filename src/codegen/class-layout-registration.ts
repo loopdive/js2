@@ -3,6 +3,7 @@
 import { ts } from "../ts-api.js";
 import type { FieldDef, StructTypeDef } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { recordClassFieldProvenance } from "./class-field-provenance.js";
 
 /**
  * Install one completed class struct and expose that exact allocator object to
@@ -15,6 +16,7 @@ export function commitClassStructLayout(
   typeIndex: number,
   type: StructTypeDef,
   fields: FieldDef[],
+  fieldCollection?: Parameters<typeof recordClassFieldProvenance>[2],
 ): void {
   ctx.mod.types[typeIndex] = type;
   ctx.structFields.set(displayName, fields);
@@ -22,4 +24,5 @@ export function commitClassStructLayout(
     throw new TypeError(`program ABI class layout ${displayName} has no planning identity context`);
   }
   ctx.programAbiTypes?.observeClass(declaration, displayName, type);
+  if (fieldCollection) recordClassFieldProvenance(ctx, type, fieldCollection);
 }

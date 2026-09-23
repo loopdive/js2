@@ -130,33 +130,46 @@ export function registerStringExoticHasOwn(
   ];
 
   const body: Instr[] = [
-    // A String exotic object is a `$Object`; anything else is not ours.
+    // ToObject on a primitive string has the same derived own properties as
+    // its wrapper. The temporary wrapper need not escape this predicate.
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.tee", index: L_ANY },
     { op: "ref.test", typeIdx: objectTypeIdx },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
-    // …carrying a [[PrimitiveValue]] whose value is a string.
-    { op: "local.get", index: L_ANY },
-    { op: "ref.cast", typeIdx: objectTypeIdx },
-    ...nativeStringLiteralInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
-    { op: "extern.convert_any" },
-    { op: "call", funcIdx: objFindIdx },
-    { op: "local.tee", index: L_SLOT },
-    { op: "ref.is_null" },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
-    { op: "local.get", index: L_SLOT },
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
-    { op: "ref.test", typeIdx: anyStr },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
-    { op: "local.get", index: L_SLOT },
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
-    { op: "ref.cast", typeIdx: anyStr },
-    { op: "local.set", index: L_STR },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        ...nativeStringLiteralInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: objFindIdx },
+        { op: "local.tee", index: L_SLOT },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: returnZero },
+        { op: "local.get", index: L_SLOT },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+        { op: "ref.test", typeIdx: anyStr },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: returnZero },
+        { op: "local.get", index: L_SLOT },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "local.set", index: L_STR },
+      ],
+      else: [
+        { op: "local.get", index: L_ANY },
+        { op: "ref.test", typeIdx: anyStr },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: returnZero },
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "local.set", index: L_STR },
+      ],
+    },
     // A BOXED-NUMBER key (`s.hasOwnProperty(0)`) never reaches the character
     // scan: ToPropertyKey would stringify it and the scan would re-parse it, so
     // answer it directly from the f64. Canonicality is free here — a number's

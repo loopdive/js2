@@ -8,9 +8,16 @@ import type {
   ProgramAbiClosureSupportLayoutRequest,
   ProgramAbiClosureSupportRole,
   ProgramAbiRefCellSupportRequest,
+  ProgramAbiTypeRegistry,
+  ClosureDynamicCarrierLookup,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
+import { objectFieldsHashKey } from "./object-method-key.js";
+import { canonicalProgramAbiRefCellKey } from "./core/support-key.js";
+import type { ClosureDynamicCarrierDemand } from "./program/closure-dynamic-carrier.js";
+import { ProgramAbiInvariantError } from "../shared/contracts/program-abi-error.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
+import { orderedObjectFields } from "./object-layout.js";
 import type { IrUnitId } from "./identity.js";
 import type { PreparedComponentClosureSupportEvidence } from "./prepared-component-dependencies.js";
 import { IrInvariantError } from "./outcomes.js";
@@ -40,12 +47,93 @@ export interface PreparedRefCellRegistry {
   resolveIr(inner: IrType): IrRefCellLowering | null;
 }
 
-function preparedObjectLegacyKey(fields: readonly FieldDef[]): string {
-  return fields
-    .map(({ name, type }) =>
-      type.kind === "ref" || type.kind === "ref_null" ? `${name}:${type.kind}:${type.typeIdx}` : `${name}:${type.kind}`,
-    )
-    .join("|");
+/** Census final prepared types by terminal identity, including nested/nominal graphs. */
+export function collectClosureDynamicCarrierDemands(
+  entries: readonly { readonly terminalOwnerUnitId: IrUnitId; readonly fn: IrFunction }[],
+): readonly ClosureDynamicCarrierDemand[] {
+  const demands = new Map<string, ClosureDynamicCarrierDemand>();
+  for (const { terminalOwnerUnitId, fn } of entries) {
+    const seen = new Set<object>();
+    const signature = (sig: IrClosureSignature): void => {
+      if (seen.has(sig)) return;
+      seen.add(sig);
+      sig.params.forEach(visit);
+      if (sig.returnType) visit(sig.returnType);
+    };
+    const visit = (type: IrType): void => {
+      if (seen.has(type)) return;
+      seen.add(type);
+      switch (type.kind) {
+        case "dynamic": {
+          const logicalTypeKey = canonicalProgramAbiRefCellKey(type);
+          const demand = Object.freeze({
+            terminalUnitId: terminalOwnerUnitId,
+            logicalTypeKey,
+            role: "closure-dynamic-payload" as const,
+          });
+          demands.set(JSON.stringify([terminalOwnerUnitId, logicalTypeKey, demand.role]), demand);
+          return;
+        }
+        case "object":
+          type.shape.fields.forEach((field) => visit(field.type));
+          return;
+        case "closure":
+        case "callable":
+          signature(type.signature);
+          return;
+        case "boxed":
+          visit(type.inner);
+          return;
+        case "union":
+          type.members.forEach(visit);
+          return;
+        case "vec":
+          visit(type.elementType);
+          return;
+        case "class":
+        case "fnctor":
+          if (seen.has(type.shape)) return;
+          seen.add(type.shape);
+          type.shape.fields.forEach((field) => visit(field.type));
+          if (type.kind === "class") {
+            type.shape.constructorParams.forEach(visit);
+            type.shape.methods.forEach((method) => signature(method));
+            if (type.shape.parent) visit({ kind: "class", shape: type.shape.parent });
+          } else {
+            type.shape.captures.forEach((capture) => visit(capture.type));
+            type.shape.userParamTypes.forEach(visit);
+          }
+          return;
+        case "val":
+        case "support-ref":
+        case "string":
+        case "extern":
+          return;
+        default: {
+          const exhaustive: never = type;
+          throw new Error(`unknown closure dynamic demand type ${(exhaustive as IrType).kind}`);
+        }
+      }
+    };
+    fn.params.forEach((param) => visit(param.type));
+    fn.resultTypes.forEach(visit);
+    if (fn.closureSubtype) {
+      signature(fn.closureSubtype.signature);
+      fn.closureSubtype.captureFieldTypes.forEach(visit);
+    }
+    for (const block of fn.blocks) {
+      block.blockArgTypes.forEach(visit);
+      for (const instr of block.instrs)
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.resultType) visit(nested.resultType);
+          if (nested.kind === "closure.new") {
+            signature(nested.signature);
+            nested.captureFieldTypes.forEach(visit);
+          }
+        });
+    }
+  }
+  return Object.freeze([...demands.values()]);
 }
 
 /**
@@ -59,13 +147,21 @@ function prepareClosureObjectType(
   type: Extract<IrType, { readonly kind: "object" }>,
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
+  dynamicCarriers: ProgramAbiTypeRegistry | undefined = ctx.programAbiTypes,
+  dynamicLookup?: ClosureDynamicCarrierLookup,
 ): ValType {
-  const fields: FieldDef[] = type.shape.fields.map((field) => {
-    let physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
-    if (physical.kind === "ref") physical = { kind: "ref_null", typeIdx: physical.typeIdx };
+  const fields: FieldDef[] = orderedObjectFields(type.shape).map((field) => {
+    const physical = lowerPreparedClosureSupportType(
+      ctx,
+      field.type,
+      refCells,
+      closures,
+      dynamicCarriers,
+      dynamicLookup,
+    );
     return { name: field.name, type: physical, mutable: true };
   });
-  const key = preparedObjectLegacyKey(fields);
+  const key = objectFieldsHashKey(type.shape, fields);
   const existingName = ctx.anonStructHash.get(key);
   if (existingName !== undefined) {
     const existingIdx = ctx.structMap.get(existingName);
@@ -74,6 +170,9 @@ function prepareClosureObjectType(
   }
 
   const name = `__anon_${ctx.anonTypeCounter++}`;
+  for (const field of fields) {
+    if (field.type.kind === "ref") field.type = { kind: "ref_null", typeIdx: field.type.typeIdx };
+  }
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name, fields } as StructTypeDef);
   ctx.structMap.set(name, typeIdx);
@@ -88,8 +187,38 @@ export function lowerPreparedClosureSupportType(
   type: IrType,
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
+  dynamicCarriers: ProgramAbiTypeRegistry | undefined = ctx.programAbiTypes,
+  dynamicLookup?: ClosureDynamicCarrierLookup,
 ): ValType {
+  if (type.kind === "val" && type.typeRef) {
+    if (type.val.kind !== "ref" && type.val.kind !== "ref_null") {
+      throw new Error("prepared closure symbolic physical type ref is attached to a scalar");
+    }
+    const ref = type.typeRef;
+    const session = ctx.programAbiSession;
+    const draft = session?.getDraft(ref.binding.bindingId);
+    if (
+      draft?.intent.kind !== "type" ||
+      draft.slotPolicy === "none" ||
+      draft.structuralReferenceKey !== irTypeBindingKey(ref.binding)
+    ) {
+      throw new Error("prepared closure physical carrier has no exact Program ABI type plan");
+    }
+    return {
+      kind: type.val.kind,
+      typeIdx: session!.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding)),
+    };
+  }
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
+  if (type.kind === "dynamic") {
+    if (!dynamicCarriers || dynamicCarriers.ctx !== ctx || dynamicCarriers.session !== ctx.programAbiSession) {
+      throw new ProgramAbiInvariantError(
+        "context-session-mismatch",
+        "prepared closure dynamic payload requires authenticated registry evidence",
+      );
+    }
+    return dynamicCarriers.resolveClosureDynamicCarrier(type, undefined, dynamicLookup);
+  }
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
   if (type.kind === "string" && type.carrierRef && ctx.programAbiSession) {
     const ref = type.carrierRef;
@@ -118,7 +247,8 @@ export function lowerPreparedClosureSupportType(
       ),
     };
   }
-  if (type.kind === "object") return prepareClosureObjectType(ctx, type, refCells, closures);
+  if (type.kind === "object")
+    return prepareClosureObjectType(ctx, type, refCells, closures, dynamicCarriers, dynamicLookup);
   if (type.kind === "closure" && closures) {
     if (!closures.resolveBase(type.signature)) {
       throw new Error("prepared object field cannot allocate its closure signature");
@@ -138,9 +268,10 @@ export function prepareDerivedCallableTypeIdx(
   ctx: CodegenContext,
   registry: PreparedClosureRegistry,
   fn: IrFunction,
+  refCells: PreparedRefCellRegistry,
 ): number {
   const lower = (type: IrType): ValType => {
-    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, undefined, registry);
+    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, refCells, registry);
     if (!registry.resolveBase(type.signature)) {
       throw new Error("prepared callable signature cannot allocate its closure type");
     }
@@ -175,6 +306,7 @@ export function allocatePreparedDerivedCallableSlots(
   }[],
   originalArtifactUnitIds: ReadonlySet<IrUnitId>,
   registry: PreparedClosureRegistry,
+  refCells: PreparedRefCellRegistry,
 ): readonly PreparedDerivedCallableSlot[] {
   const slots: PreparedDerivedCallableSlot[] = [];
   for (const entry of entries) {
@@ -186,7 +318,7 @@ export function allocatePreparedDerivedCallableSlots(
     const physicalName = ctx.funcMap.has(entry.name) ? `__\0js2_ir_prepared_derived_${slots.length}` : entry.name;
     const func: WasmFunction = {
       name: physicalName,
-      typeIdx: prepareDerivedCallableTypeIdx(ctx, registry, entry.fn),
+      typeIdx: prepareDerivedCallableTypeIdx(ctx, registry, entry.fn, refCells),
       locals: [],
       body: [],
       exported: entry.fn.exported,
@@ -346,7 +478,7 @@ export function prepareDependencyCompleteClosureSupport(
       );
     }
     const requests = [...objectTypes].map(([objectType, structType]) => ({ objectType, structType }));
-    const support = programAbiTypes.prepareObjectSupportTypes(requests);
+    const support = programAbiTypes.prepareObjectSupportTypes(requests, true);
     support.forEach((entry, index) => typeRefs.set(requests[index]!.objectType, [entry.objectTypeRef]));
   }
 
@@ -482,7 +614,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared closure support requires one canonical Program ABI type registry",
       );
     }
-    const layouts = programAbiTypes.prepareClosureSupportLayouts(pending.map(({ request }) => request));
+    const layouts = programAbiTypes.prepareClosureSupportLayouts(
+      pending.map(({ request }) => request),
+      true,
+    );
     if (layouts.length !== pending.length) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -505,7 +640,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared ref-cell support requires one canonical Program ABI type registry",
       );
     }
-    const support = programAbiTypes.prepareRefCellSupportTypes(pendingRefCells.map(({ request }) => request));
+    const support = programAbiTypes.prepareRefCellSupportTypes(
+      pendingRefCells.map(({ request }) => request),
+      true,
+    );
     support.forEach((entry, index) => pendingRefCells[index]!.publish(Object.freeze([entry.cellTypeRef])));
   }
   return Object.freeze({ typeRefs, instructionRefs, functionRefs });

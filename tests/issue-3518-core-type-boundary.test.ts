@@ -10,8 +10,11 @@ const core = ["types", "fnctor-shapes", "value-references", "capability-provenan
   (name) => `src/ir/core/${name}.ts`,
 );
 const foundation = ["src/shared/contracts/ir-identity.ts", "src/shared/contracts/source-origin.ts"];
+// Pinned main already needs binding-key-primitives; composition adds object-layout.
+// Retain all original fixture inputs and add deletion controls for both leaves.
+const coreLeaves = ["src/ir/core/binding-key-primitives.ts", "src/ir/core/object-layout.ts"];
 const model = "src/wasm/model/instructions.ts";
-const clean = [...core, ...foundation, model];
+const clean = [...core, ...coreLeaves, ...foundation, model];
 const old = "src/ir/nodes.ts";
 const roots: string[] = [];
 afterEach(() => {
@@ -55,7 +58,7 @@ function fixture() {
       { id: "legacy", status: "debt", roots: [old] },
     ],
     files: [
-      ...core.map((path) => ({ path, state: "clean", layer: "ir-core" })),
+      ...[...core, ...coreLeaves].map((path) => ({ path, state: "clean", layer: "ir-core" })),
       ...foundation.map((path) => ({ path, state: "clean", layer: "foundation" })),
       { path: model, state: "clean", layer: "wasm-model" },
       { path: old, state: "unmigrated", layer: "legacy" },
@@ -103,15 +106,16 @@ function fixture() {
 function positive(f: ReturnType<typeof fixture>) {
   const result = f.run();
   expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
-  expect(result.report.counts.total).toBe(9);
-  expect(result.report.resolvedEdgeCount).toBe(12);
+  expect(result.report.counts.total).toBe(11);
+  expect(result.report.modules.map((row: { path: string }) => row.path).sort()).toEqual([...clean, old].sort());
+  expect(result.report.resolvedEdgeCount).toBe(16);
   expect(result.report.unknownEdges).toEqual([]);
   expect(result.report.unresolvedEdges).toEqual([]);
   return result;
 }
 
 describe("#3518 core types retain an enforced dependency boundary", () => {
-  it("resolves the eight real clean modules while retaining unfinished nodes debt", () => {
+  it("retains eight original clean modules, the two required leaves and unfinished nodes debt", () => {
     const f = fixture();
     expect(positive(f).report.architectureComplete).toBe(false);
     expect(f.run("complete").status).toBe(1);
@@ -131,7 +135,7 @@ describe("#3518 core types retain an enforced dependency boundary", () => {
     expect(result.report.errors.map((error: { code: string }) => error.code)).toContain("forbidden-clean-edge");
   });
 
-  it.each(core)("cannot lose required canonical entry %s", (file) => {
+  it.each([...core, ...coreLeaves])("cannot lose required canonical entry %s", (file) => {
     const f = fixture();
     positive(f);
     rmSync(resolve(f.root, file));
@@ -166,7 +170,7 @@ describe("#3518 core types retain an enforced dependency boundary", () => {
   it("pins five actual activations, narrow model access and the unfinished full-node destination", () => {
     const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
     expect(policy.layers.find((layer: { id: string }) => layer.id === "ir-core")).toEqual(
-      expect.objectContaining({ status: "active", entries: expect.arrayContaining(core), minModules: 12 }),
+      expect.objectContaining({ status: "active", entries: expect.arrayContaining(core), minModules: 21 }),
     );
     expect(policy.activationHistory).toContainEqual(
       expect.objectContaining({ layer: "ir-core", entries: core, minModules: 5 }),

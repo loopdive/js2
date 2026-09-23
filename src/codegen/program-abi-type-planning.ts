@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irClassTypeRef, irFnctorLayoutTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
-import { irCallableBindingKey } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncTypeDef, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { describeProgramAbiSupportType } from "./program-abi-support-type-description.js";
+import type { PreparedProgramAbiProvisionalBinding } from "./program-abi-prepared-transaction.js";
 import type { CodegenContext } from "./context/types.js";
 // (#4241) The closure header layout is defined ONCE, in a leaf module both
 // this validator and the mint sites can import — see closure-header-layout.ts.
@@ -25,6 +26,27 @@ import {
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import { DOM_CALLBACK_AUTHORITY_FIELD } from "../dom-capability-contract.js";
+import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+import {
+  canonicalClosureDynamicCarrierDemands,
+  closureDynamicCarrierAuthenticationPopulation,
+  type ClosureDynamicCarrierDemand,
+  type ClosureDynamicCarrierEvidence,
+} from "../ir/program/closure-dynamic-carrier.js";
+import type { PreparedComponentAbiLookup } from "../ir/program/abi-lookup.js";
+import type { PreparedProgramAbiScopeLookup } from "./program-abi-prepared-scope-lookup.js";
+import {
+  canonicalProgramAbiClosureSignatureKey,
+  canonicalProgramAbiClosureLayoutKey,
+  canonicalProgramAbiRefCellKey,
+  canonicalProgramAbiObjectShapeKey,
+} from "../ir/core/support-key.js";
+export {
+  canonicalProgramAbiClosureSignatureKey,
+  canonicalProgramAbiClosureLayoutKey,
+  canonicalProgramAbiRefCellKey,
+  canonicalProgramAbiObjectShapeKey,
+} from "../ir/core/support-key.js";
 
 const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   retainedModuleType: 0,
@@ -45,10 +67,20 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   classLayout: 0,
 } as const);
 
+function closureDynamicFailure(message: string): never {
+  throw new ProgramAbiInvariantError("type-remap-mismatch", message);
+}
+
 export interface ProgramAbiDynamicCarrierSupport {
   readonly carrierRef: IrTypeRef;
   readonly valueType: string;
 }
+
+export type ClosureDynamicCarrierLookup = Pick<
+  PreparedProgramAbiScopeLookup,
+  "resolveCurrentIndex" | "locatorObjectForBinding"
+> &
+  Pick<PreparedComponentAbiLookup, "get">;
 
 export type ProgramAbiClosureSupportRole = "carrier" | "invoke" | "allocate";
 
@@ -132,122 +164,6 @@ function strongestClosureSupportRequest(
   return closureSupportRoleRank(right.request.role) > closureSupportRoleRank(left.request.role) ? right : left;
 }
 
-function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unknown {
-  if (active.has(type)) {
-    throw new ProgramAbiInvariantError(
-      "unknown-order-anchor",
-      "closure support semantic type contains a recursive anonymous IR layout",
-    );
-  }
-  active.add(type);
-  try {
-    switch (type.kind) {
-      case "val":
-        if (type.val.kind === "ref" || type.val.kind === "ref_null") {
-          throw new ProgramAbiInvariantError(
-            "unknown-order-anchor",
-            "closure support semantic types cannot contain module-relative ref type indices",
-          );
-        }
-        return {
-          kind: type.kind,
-          value: canonicalProgramAbiValType(type.val),
-          ...(type.val.kind === "i32" ? { signed: type.signed ?? true } : {}),
-        };
-      case "string":
-        return { kind: type.kind };
-      case "vec":
-        return {
-          kind: type.kind,
-          elementType: canonicalClosureSupportIrType(type.elementType, active),
-          nullable: type.nullable,
-        };
-      case "object":
-        return {
-          kind: type.kind,
-          fields: type.shape.fields.map((field) => ({
-            name: field.name,
-            type: canonicalClosureSupportIrType(field.type, active),
-          })),
-        };
-      case "closure":
-      case "callable":
-        return {
-          kind: type.kind,
-          signature: canonicalClosureSupportSignature(type.signature, active),
-        };
-      case "class":
-        return { kind: type.kind, classId: type.shape.classId };
-      case "extern":
-        return { kind: type.kind, className: type.className };
-      case "fnctor":
-        return {
-          kind: type.kind,
-          sourceId: type.shape.sourceId,
-          constructorUnitId: type.shape.constructorUnitId,
-          constructorTarget: irCallableBindingKey(type.shape.constructorTarget.binding),
-          reservedLayout: irTypeBindingKey(type.shape.reservedLayout.binding),
-        };
-      case "union":
-        return {
-          kind: type.kind,
-          members: type.members.map((member) => canonicalClosureSupportIrType(member, active)),
-        };
-      case "boxed":
-        return { kind: type.kind, inner: canonicalClosureSupportIrType(type.inner, active) };
-      case "dynamic":
-        return { kind: type.kind, tag: type.tag ?? null };
-    }
-  } finally {
-    active.delete(type);
-  }
-}
-
-function canonicalClosureSupportSignature(signature: IrClosureSignature, active = new Set<object>()): unknown {
-  if (active.has(signature)) {
-    throw new ProgramAbiInvariantError("unknown-order-anchor", "closure support contains a recursive IR signature");
-  }
-  active.add(signature);
-  try {
-    return {
-      params: signature.params.map((type) => canonicalClosureSupportIrType(type, active)),
-      returnType: signature.returnType === null ? null : canonicalClosureSupportIrType(signature.returnType, active),
-    };
-  } finally {
-    active.delete(signature);
-  }
-}
-
-/** Backend-neutral semantic key for one caller-visible closure signature. */
-export function canonicalProgramAbiClosureSignatureKey(signature: IrClosureSignature): string {
-  return JSON.stringify(canonicalClosureSupportSignature(signature));
-}
-
-/** Backend-neutral semantic key for one signature plus ordered capture layout. */
-export function canonicalProgramAbiClosureLayoutKey(
-  signature: IrClosureSignature,
-  captureFieldTypes: readonly IrType[],
-  domCallbackAuthorityKey?: string,
-): string {
-  const ordinary = {
-    signature: canonicalClosureSupportSignature(signature),
-    captures: captureFieldTypes.map((type) => canonicalClosureSupportIrType(type, new Set<object>())),
-  };
-  return JSON.stringify(
-    domCallbackAuthorityKey === undefined ? ordinary : { ...ordinary, domCallbackAuthority: domCallbackAuthorityKey },
-  );
-}
-
-/** Backend-neutral semantic key for one mutable-capture cell payload. */
-export function canonicalProgramAbiRefCellKey(innerType: IrType): string {
-  return JSON.stringify(canonicalClosureSupportIrType(innerType, new Set<object>()));
-}
-
-/** Backend-neutral semantic key for one closed IR object layout. */
-export function canonicalProgramAbiObjectShapeKey(objectType: Extract<IrType, { readonly kind: "object" }>): string {
-  return JSON.stringify(canonicalClosureSupportIrType(objectType, new Set<object>()));
-}
-
 /** True when every index-bearing edge can participate in Program-ABI remapping. */
 export function isEarlyPreparableClassLayout(type: StructTypeDef): boolean {
   // `-1` is the module IR's explicit "no supertype" sentinel for hierarchy
@@ -325,6 +241,11 @@ function vectorLogicalOrdinal(logicalKey: string): number {
  * generic retained-type entry.
  */
 export class ProgramAbiTypeRegistry {
+  private readonly closureDynamicProofs = new WeakMap<
+    ClosureDynamicCarrierEvidence,
+    { readonly cell?: ProgramAbiTypeCell; readonly shape: string }
+  >();
+  private readonly closureDynamicEvidence = new Map<string, ClosureDynamicCarrierEvidence>();
   private readonly classes = new Map<IrClassId, PreparedClassLayoutObservation[]>();
   private readonly vectorLayouts = new Map<
     string,
@@ -352,6 +273,24 @@ export class ProgramAbiTypeRegistry {
     readonly cell: ProgramAbiTypeCell;
   };
   private closureSupportBatchPlanned = false;
+  private readonly candidateSupportTypes = new Map<IrBindingId, PreparedProgramAbiProvisionalBinding>();
+  private readonly candidateTypeOwners = new Map<ProgramAbiTypeCell, IrBindingId>();
+
+  /** Read-only candidate view used before a prepared scope publishes ownership. */
+  provisionalSupportTypes(): readonly PreparedProgramAbiProvisionalBinding[] {
+    return [...this.candidateSupportTypes.values()];
+  }
+
+  private publishCandidateSupportRefs(refs: readonly IrTypeRef[]): void {
+    for (const ref of refs) {
+      const contribution = this.candidateSupportTypes.get(ref.binding.bindingId);
+      if (!contribution) continue;
+      this.session.ensurePlan(contribution.draft);
+      this.session.registerStructuralReference(contribution.draft.id, contribution.structuralReferenceKey!);
+      if (contribution.locator?.kind === "type-cell")
+        this.attachTypeLocator(contribution.draft.id, contribution.locator.cell);
+    }
+  }
   private refCellSupportBatchPlanned = false;
   private objectSupportBatchPlanned = false;
   private planned = false;
@@ -546,6 +485,117 @@ export class ProgramAbiTypeRegistry {
     const support = Object.freeze({ carrierRef: ref, valueType });
     this.dynamicCarrierSupport = Object.freeze({ support, ...(nativeType ? { type: nativeType, cell: cell! } : {}) });
     return support;
+  }
+
+  /** Prepare every terminal demand before allocating closure or derived-callable types. */
+  prepareClosureDynamicCarriers(
+    demands: readonly ClosureDynamicCarrierDemand[],
+  ): readonly ClosureDynamicCarrierEvidence[] {
+    this.session.assertModule(this.ctx.mod);
+    if (this.ctx.programAbiSession !== this.session || this.ctx.programAbiTypes !== this) {
+      throw new ProgramAbiInvariantError("context-session-mismatch", "dynamic evidence requires its owning registry");
+    }
+    if (this.planned) {
+      throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare closure dynamic evidence after planning");
+    }
+    const checked = canonicalClosureDynamicCarrierDemands(demands, this.session.inventory.terminalUnits);
+    if (checked.length === 0) return Object.freeze([]);
+    const physical = resolveIrDynamicCarrierType(this.ctx);
+    const support = this.prepareDynamicCarrier(physical);
+    const state = this.dynamicCarrierSupport!;
+    const carrier = Object.freeze(
+      physical.kind === "externref"
+        ? { kind: "externref" as const, carrierTypeRef: support.carrierRef }
+        : { kind: "reference" as const, carrierTypeRef: support.carrierRef, nullable: physical.kind === "ref_null" },
+    );
+    const shape = state.cell?.current
+      ? canonicalProgramAbiTypeDef(state.cell.current)
+      : canonicalProgramAbiValType(physical);
+    const evidence = checked.map((demand) => {
+      const proof = Object.freeze({ ...demand, carrier });
+      this.closureDynamicProofs.set(proof, { cell: state.cell, shape });
+      return proof;
+    });
+    // Keep every consumer of a shared payload, including earlier accepted terminals.
+    for (const proof of evidence) {
+      this.closureDynamicEvidence.set(JSON.stringify([proof.terminalUnitId, proof.logicalTypeKey]), proof);
+    }
+    return Object.freeze(evidence);
+  }
+
+  /** Authenticate complete current peers AND original receipts, then resolve the exact current carrier. */
+  resolveClosureDynamicCarrier(
+    type: Extract<IrType, { readonly kind: "dynamic" }>,
+    evidence: readonly ClosureDynamicCarrierEvidence[] = [...this.closureDynamicEvidence.values()],
+    lookup?: ClosureDynamicCarrierLookup,
+    originalReceipts?: readonly ClosureDynamicCarrierEvidence[],
+  ): ValType {
+    this.session.assertModule(this.ctx.mod);
+    if (this.ctx.programAbiSession !== this.session || this.ctx.programAbiTypes !== this) {
+      throw new ProgramAbiInvariantError("context-session-mismatch", "dynamic evidence requires its owning registry");
+    }
+    const key = canonicalProgramAbiRefCellKey(type);
+    const consumers = [...this.closureDynamicEvidence.values()].filter((proof) => proof.logicalTypeKey === key);
+    const supplied = evidence.filter((proof) => proof.logicalTypeKey === key);
+    const proofs = closureDynamicCarrierAuthenticationPopulation(
+      consumers,
+      supplied,
+      originalReceipts?.filter((proof) => proof.logicalTypeKey === key),
+    );
+    let resolved: ValType | undefined;
+    for (const proof of proofs) {
+      const record = this.closureDynamicProofs.get(proof);
+      const state = this.dynamicCarrierSupport;
+      const ref = proof.carrier.carrierTypeRef;
+      const id = ref.binding.bindingId;
+      const structuralKey = irTypeBindingKey(ref.binding);
+      const draft = lookup ? lookup.get(id) : this.session.getDraft(id);
+      if (
+        !record ||
+        !state ||
+        proof.role !== "closure-dynamic-payload" ||
+        ref !== state.support.carrierRef ||
+        draft?.intent.kind !== "type" ||
+        draft.structuralReferenceKey !== structuralKey ||
+        draft.intent.shapeKey !== record.shape
+      ) {
+        closureDynamicFailure("closure dynamic evidence lost its exact type plan");
+      }
+      let value: ValType;
+      if (proof.carrier.kind === "externref") {
+        if (record.cell || draft.slotPolicy !== "none" || record.shape !== '{"kind":"externref"}') {
+          closureDynamicFailure("closure dynamic externref requires its slotless plan");
+        }
+        value = { kind: "externref" };
+      } else {
+        const cell = record.cell;
+        const current = cell?.current;
+        const owner = lookup ? lookup.locatorObjectForBinding(id) : this.session.locatorObjectForBinding(id);
+        if (
+          !cell ||
+          !current ||
+          cell !== state.cell ||
+          owner !== cell ||
+          this.session.typeCellFor(current) !== cell ||
+          canonicalProgramAbiTypeDef(current) !== record.shape ||
+          draft.slotPolicy !== "required"
+        ) {
+          closureDynamicFailure("closure dynamic evidence has a stale cell or changed shape");
+        }
+        const index = lookup
+          ? lookup.resolveCurrentIndex(id, "type", structuralKey)
+          : this.session.resolveCurrentIndex(id, "type", structuralKey);
+        if (this.ctx.mod.types[index] !== current) {
+          closureDynamicFailure("closure dynamic lookup resolved a foreign carrier");
+        }
+        value = { kind: proof.carrier.nullable ? "ref_null" : "ref", typeIdx: index };
+      }
+      if (resolved && canonicalProgramAbiValType(resolved) !== canonicalProgramAbiValType(value)) {
+        closureDynamicFailure("closure terminals selected different dynamic carriers");
+      }
+      resolved = value;
+    }
+    return resolved!;
   }
 
   /**
@@ -793,6 +843,7 @@ export class ProgramAbiTypeRegistry {
    */
   prepareClosureSupportLayouts(
     requests: readonly ProgramAbiClosureSupportLayoutRequest[],
+    provisional = false,
   ): readonly ProgramAbiClosureSupportLayout[] {
     if (this.planned) {
       throw new ProgramAbiInvariantError(
@@ -830,6 +881,13 @@ export class ProgramAbiTypeRegistry {
               "the canonical batch was planned",
           );
         }
+        if (!provisional)
+          this.publishCandidateSupportRefs([
+            observed.layout.wrapperRootRef,
+            observed.layout.allocationWrapperRef,
+            observed.layout.liftedFuncRef,
+            observed.layout.capturedSubtypeRef,
+          ]);
         return observed.layout;
       });
     }
@@ -888,13 +946,17 @@ export class ProgramAbiTypeRegistry {
 
     const signatureOrdinals = new Map([...bySignature.keys()].sort().map((key, index) => [key, index] as const));
     const layoutOrdinals = new Map([...byLayout.keys()].sort().map((key, index) => [key, index] as const));
-    const rootRef = this.planClosureSupportType({
-      semanticRole: "wrapper-root",
-      adapterName: "__ir_closure_wrapper_root",
-      type: first.request.wrapperRootType,
-      roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureWrapperRoot,
-      derivedOrdinal: 0,
-    });
+    const rootRef = this.closureSupportTypeRef(
+      {
+        semanticRole: "wrapper-root",
+        adapterName: "__ir_closure_wrapper_root",
+        type: first.request.wrapperRootType,
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureWrapperRoot,
+        derivedOrdinal: 0,
+      },
+      true,
+      provisional,
+    );
 
     const resultByLayout = new Map<string, ProgramAbiClosureSupportLayout>();
     for (const [signatureKey, candidate] of [...bySignature].sort(([left], [right]) => left.localeCompare(right))) {
@@ -913,6 +975,7 @@ export class ProgramAbiTypeRegistry {
                 derivedOrdinal: signatureOrdinal,
               },
               allocatesSignature,
+              provisional,
             );
       const liftedFuncRef = this.closureSupportTypeRef(
         {
@@ -923,6 +986,7 @@ export class ProgramAbiTypeRegistry {
           derivedOrdinal: signatureOrdinal,
         },
         invokesSignature,
+        provisional,
       );
 
       for (const [layoutKey, layoutCandidate] of [...byLayout]
@@ -942,6 +1006,7 @@ export class ProgramAbiTypeRegistry {
                   derivedOrdinal: layoutOrdinal,
                 },
                 allocatesLayout,
+                provisional,
               );
         resultByLayout.set(
           layoutKey,
@@ -974,6 +1039,7 @@ export class ProgramAbiTypeRegistry {
    */
   prepareRefCellSupportTypes(
     requests: readonly ProgramAbiRefCellSupportRequest[],
+    provisional = false,
   ): readonly ProgramAbiRefCellSupport[] {
     if (this.planned) {
       throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare ref-cell support after retained planning");
@@ -1014,6 +1080,7 @@ export class ProgramAbiTypeRegistry {
             `ref-cell support ${semanticInnerTypeKey} maps to different physical type objects`,
           );
         }
+        if (!provisional) this.publishCandidateSupportRefs([observed.support.cellTypeRef]);
         return observed.support;
       });
     }
@@ -1042,7 +1109,14 @@ export class ProgramAbiTypeRegistry {
           ordinal,
         );
         const cell = this.session.typeCellFor(request.cellType) ?? this.session.createTypeCell(request.cellType);
-        this.planPreparedSupportType(cellTypeRef, request.cellType, cell, PROGRAM_ABI_TYPE_ROLE.refCell, ordinal);
+        this.planPreparedSupportType(
+          cellTypeRef,
+          request.cellType,
+          cell,
+          PROGRAM_ABI_TYPE_ROLE.refCell,
+          ordinal,
+          provisional,
+        );
         const support = Object.freeze({ semanticInnerTypeKey, cellTypeRef });
         this.refCellSupport.set(semanticInnerTypeKey, Object.freeze({ request, support }));
         supportByKey.set(semanticInnerTypeKey, support);
@@ -1052,7 +1126,10 @@ export class ProgramAbiTypeRegistry {
   }
 
   /** Plan closed object layouts referenced by prepared closure signatures. */
-  prepareObjectSupportTypes(requests: readonly ProgramAbiObjectSupportRequest[]): readonly ProgramAbiObjectSupport[] {
+  prepareObjectSupportTypes(
+    requests: readonly ProgramAbiObjectSupportRequest[],
+    provisional = false,
+  ): readonly ProgramAbiObjectSupport[] {
     if (this.planned) {
       throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare object support after retained planning");
     }
@@ -1084,6 +1161,7 @@ export class ProgramAbiTypeRegistry {
             `object support ${semanticShapeKey} maps to different physical type objects`,
           );
         }
+        if (!provisional) this.publishCandidateSupportRefs([observed.support.objectTypeRef]);
         return observed.support;
       });
     }
@@ -1118,6 +1196,7 @@ export class ProgramAbiTypeRegistry {
           cell,
           PROGRAM_ABI_TYPE_ROLE.objectLayout,
           ordinal,
+          provisional,
         );
         const support = Object.freeze({ semanticShapeKey, objectTypeRef });
         this.objectSupport.set(semanticShapeKey, Object.freeze({ request, support }));
@@ -1237,26 +1316,24 @@ export class ProgramAbiTypeRegistry {
     cell: ProgramAbiTypeCell,
     roleOrdinal: number,
     derivedOrdinal: number,
+    provisional = false,
   ): void {
-    const entrySourceId = canonicalEntrySource(this.session);
-    const structuralReferenceKey = irTypeBindingKey(ref.binding);
-    this.session.ensurePlan({
-      id: ref.binding.bindingId,
-      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
-        domain: "type",
-        roleOrdinal,
-        derivedOrdinal,
-      }),
-      structuralReferenceKey,
-      displayName: ref.name,
-      slotPolicy: "required",
-      slotSpace: "type",
-      intent: {
-        kind: "type",
-        shapeKey: canonicalProgramAbiTypeDef(type),
-      },
+    const contribution = describeProgramAbiSupportType({
+      session: this.session,
+      entrySourceId: canonicalEntrySource(this.session),
+      ref,
+      type,
+      cell,
+      roleOrdinal,
+      derivedOrdinal,
     });
-    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    if (provisional) {
+      this.candidateSupportTypes.set(contribution.draft.id, contribution);
+      this.candidateTypeOwners.set(cell, contribution.draft.id);
+      return;
+    }
+    this.session.ensurePlan(contribution.draft);
+    this.session.registerStructuralReference(ref.binding.bindingId, contribution.structuralReferenceKey!);
     this.attachTypeLocator(ref.binding.bindingId, cell);
   }
 
@@ -1382,6 +1459,7 @@ export class ProgramAbiTypeRegistry {
       readonly derivedOrdinal: number;
     },
     plan = true,
+    provisional = false,
   ): IrTypeRef {
     const entrySourceId = canonicalEntrySource(this.session);
     const ref = irSupportTypeRef(
@@ -1392,9 +1470,10 @@ export class ProgramAbiTypeRegistry {
     );
     if (!plan) return ref;
     const cell = this.session.typeCellFor(input.type) ?? this.session.createTypeCell(input.type);
-    const previousOwner = this.session.locatorBindingId(cell);
+    const previousOwner = this.session.locatorBindingId(cell) ?? this.candidateTypeOwners.get(cell);
     if (previousOwner !== undefined && previousOwner !== ref.binding.bindingId) {
-      const previousDraft = this.session.getDraft(previousOwner);
+      const previousDraft =
+        this.session.getDraft(previousOwner) ?? this.candidateSupportTypes.get(previousOwner)?.draft;
       if (previousDraft?.intent.kind !== "type") {
         throw new ProgramAbiInvariantError(
           "type-remap-mismatch",
@@ -1413,17 +1492,7 @@ export class ProgramAbiTypeRegistry {
       }
       return canonicalRef;
     }
-    this.planPreparedSupportType(ref, input.type, cell, input.roleOrdinal, input.derivedOrdinal);
+    this.planPreparedSupportType(ref, input.type, cell, input.roleOrdinal, input.derivedOrdinal, provisional);
     return ref;
-  }
-
-  private planClosureSupportType(input: {
-    readonly semanticRole: string;
-    readonly adapterName: string;
-    readonly type: TypeDef;
-    readonly roleOrdinal: number;
-    readonly derivedOrdinal: number;
-  }): IrTypeRef {
-    return this.closureSupportTypeRef(input);
   }
 }

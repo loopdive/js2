@@ -21,8 +21,11 @@ import { compile } from "../src/index.js";
 
 const HOST_GEN_ITER_RE = /^(__gen_|__create_generator|__create_async_generator)/;
 
-async function compileStandalone(src: string): Promise<{ binary: Uint8Array; imports: string[] }> {
-  const r = await compile(src, { fileName: "test.ts", target: "wasi" });
+async function compileStandalone(
+  src: string,
+  target: "standalone" | "wasi",
+): Promise<{ binary: Uint8Array; imports: string[] }> {
+  const r = await compile(src, { fileName: "test.ts", target });
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const imports = WebAssembly.Module.imports(mod)
@@ -31,7 +34,7 @@ async function compileStandalone(src: string): Promise<{ binary: Uint8Array; imp
   return { binary: r.binary, imports };
 }
 
-describe("#6651 A2 — suspension inside a for-of body (native generator)", () => {
+describe.each(["standalone", "wasi"] as const)("#6651 A2 — suspension inside a for-of body (%s)", (target) => {
   it("runs exactly one loop iteration per .next(), in source order", async () => {
     // The shape of language/statements/for-of/yield.js: an eager buffer reports
     // i === 2 after the FIRST next(); the state machine must report 1.
@@ -49,7 +52,7 @@ export function test(): number {
   const d = i * 100 + j * 10 + k;
   return a * 1000000 + b * 1000 + d;
 }`;
-    const { binary, imports } = await compileStandalone(src);
+    const { binary, imports } = await compileStandalone(src, target);
     expect(imports, "no __gen_* host import in standalone").toEqual([]);
     const { instance } = await WebAssembly.instantiate(binary, {});
     // 100 = (i1,j0,k0) · 210 = (i2,j1,k0) · 221 = (i2,j2,k1)
@@ -69,7 +72,7 @@ export function test(): number {
   const b = it.next().value as number;
   return a * 100 + b;
 }`;
-    const { binary, imports } = await compileStandalone(src);
+    const { binary, imports } = await compileStandalone(src, target);
     expect(imports).toEqual([]);
     const { instance } = await WebAssembly.instantiate(binary, {});
     expect((instance.exports as { test(): number }).test()).toBe(608);
@@ -89,7 +92,7 @@ export function test(): number {
   a.return();
   return closed;
 }`;
-    const { binary, imports } = await compileStandalone(src);
+    const { binary, imports } = await compileStandalone(src, target);
     expect(imports).toEqual([]);
     const { instance } = await WebAssembly.instantiate(binary, {});
     expect((instance.exports as { test(): number }).test()).toBe(1);

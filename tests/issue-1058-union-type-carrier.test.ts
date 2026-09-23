@@ -74,6 +74,11 @@ import type {
   VariableDeclarationList,
 } from "./types.js";
 
+let lastAllocated: Node | undefined;
+export function getLastAllocated(): Node | undefined {
+  return lastAllocated;
+}
+
 function NodeConstructor(this: Mutable<Node>, kind: number, pos: number, end: number): void {
   this.kind = kind;
   this.pos = pos;
@@ -87,7 +92,9 @@ function createBaseNodeFactory(): BaseNodeFactory {
 
   function createBaseNode(kind: number): Node {
     Ctor ||= NodeConstructor as unknown as new (kind: number, pos: number, end: number) => Node;
-    return new Ctor(kind, -1, -1);
+    const node = new Ctor(kind, -1, -1);
+    lastAllocated = node;
+    return node;
   }
 }
 
@@ -193,16 +200,37 @@ export function parseIntersection(factory: NodeFactory): TypeNode {
   return parseUnionOrIntersectionType(factory.createIntersectionTypeNode);
 }
 
+export function parseConcreteUnion(factory: NodeFactory): TypeNode {
+  return parseUnionOrIntersectionType(factory.createConcreteUnionTypeNode);
+}
+
+export function parseConcreteIntersection(factory: NodeFactory): TypeNode {
+  return parseUnionOrIntersectionType(factory.createConcreteIntersectionTypeNode);
+}
+
 export function parseAmbientConst(factory: NodeFactory): VariableDeclarationList {
   return finishNode(factory.createVariableDeclarationList(2), 23, 1 << 25);
 }
 `,
   "./src/compiler/entry.ts": `
-import { createNodeFactory } from "./factory.js";
-import { parseAmbientConst, parseIntersection, parseUnion } from "./parser.js";
+import { createNodeFactory, getLastAllocated } from "./factory.js";
+import { parseAmbientConst, parseIntersection, parseUnion, parseConcreteUnion, parseConcreteIntersection } from "./parser.js";
 import type { IntersectionTypeNode, UnionTypeNode } from "./types.js";
 
 const factory = createNodeFactory();
+
+export function unionAliasIdentity(intersection: boolean): number {
+  const node = intersection ? factory.createIntersectionTypeNode([]) : factory.createUnionTypeNode([]);
+  const base = getLastAllocated();
+  if (base !== node) return -1;
+  (base as any).types = [{ kind: 150, pos: 0, end: 1 }];
+  if (node.types.length !== 1) return -2;
+  (node as any).types = [];
+  if ((base as any).types.length !== 0) return -3;
+  (base as any).pos = 37;
+  if (node.pos !== 37) return -4;
+  return 1;
+}
 
 function fingerprint(node: UnionTypeNode | IntersectionTypeNode): number {
   return node.kind * 100_000 + node.pos * 1_000 + node.end * 10 + node.types.length;
@@ -214,6 +242,14 @@ export function unionFingerprint(): number {
 
 export function intersectionFingerprint(): number {
   return fingerprint(parseIntersection(factory) as IntersectionTypeNode);
+}
+
+export function concreteUnionCallback(): number {
+  return fingerprint(parseConcreteUnion(factory) as UnionTypeNode);
+}
+
+export function concreteIntersectionCallback(): number {
+  return fingerprint(parseConcreteIntersection(factory) as IntersectionTypeNode);
 }
 
 export function directUnionFingerprint(): number {
@@ -245,6 +281,9 @@ export function ambientConstFlags(): number {
 } as const;
 
 interface CarrierExports {
+  unionAliasIdentity(intersection: number): number;
+  concreteUnionCallback(): number;
+  concreteIntersectionCallback(): number;
   ambientConstFlags(): number;
   concreteIntersectionFingerprint(): number;
   concreteUnionFingerprint(): number;
@@ -257,7 +296,7 @@ interface CarrierExports {
 async function compileCarrier(target: "gc" | "standalone"): Promise<CarrierExports> {
   const result = await compileMulti(SOURCES, "./src/compiler/entry.ts", {
     target,
-    platform: "node",
+    ...(target === "gc" ? { platform: "node" as const } : {}),
     skipSemanticDiagnostics: true,
     experimentalIR: false,
   });
@@ -267,10 +306,27 @@ async function compileCarrier(target: "gc" | "standalone"): Promise<CarrierExpor
   const imports = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+  if (target === "standalone") {
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    return instance.exports as unknown as CarrierExports;
+  }
   return wrapExports(instance, { signatures: result.exportSignatures }) as unknown as CarrierExports;
 }
 
 describe("#1058 TypeScript union result carrier", () => {
+  it.each(["gc", "standalone"] as const)("preserves union allocation identity and writes in %s", async (target) => {
+    const exports = await compileCarrier(target);
+    expect(exports.unionAliasIdentity(0)).toBe(1);
+    expect(exports.unionAliasIdentity(1)).toBe(1);
+  });
+  it.each(["gc", "standalone"] as const)(
+    "exports concrete callback results through the erased union ABI in %s",
+    async (target) => {
+      const exports = await compileCarrier(target);
+      expect(exports.concreteUnionCallback()).toBe(19_223_992);
+      expect(exports.concreteIntersectionCallback()).toBe(19_323_992);
+    },
+  );
   it("keeps production-shaped union and intersection results on the host TypeNode carrier", async () => {
     const exports = await compileCarrier("gc");
 
@@ -286,5 +342,7 @@ describe("#1058 TypeScript union result carrier", () => {
 
     expect(exports.concreteUnionFingerprint()).toBe(19_198_991);
     expect(exports.concreteIntersectionFingerprint()).toBe(19_298_991);
+    expect(exports.unionFingerprint()).toBe(19_223_992);
+    expect(exports.intersectionFingerprint()).toBe(19_323_992);
   });
 });

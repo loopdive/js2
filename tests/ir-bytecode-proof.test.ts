@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { BytecodeEmitter, BytecodeSink, BytecodeTypeConverter, OP } from "../src/ir/backend/bytecode-emitter.js";
 import { runSink } from "../src/ir/backend/bytecode-vm.js";
-import type { IrObjectStructLowering } from "../src/ir/backend/handles.js";
 import { irUnitFuncRef } from "../src/ir/callable-bindings.js";
+import type { IrObjectStructLowering } from "../src/ir/backend/handles.js";
 import { type IrFunction, type IrLowerResolver, asBlockId, asValueId, irVal } from "../src/ir/index.js";
 // #1584 (a0-tail): the REAL production lowerer, generic over the sink. The arm
 // at the bottom of this file drives it (not a hand-lowerer) through a
