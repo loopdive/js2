@@ -507,6 +507,19 @@ loc-budget-allow:
 # function every inline field ladder asks for its candidates; with it the access
 # falls to `__extern_get`/`__extern_set`, whose carrier arms own the property.
   - src/codegen/property-access.ts
+  # 2026-09-23 — cluster G, slice G3. `expressions/assignment.ts` +39: the
+  # 9-line `isTupleShapedStruct` predicate, one early route in each of the two
+  # array-assignment readers (top-level and nested) that treated EVERY non-vec
+  # struct as a tuple, and the `structIterable` parameter of
+  # `compileExternrefArrayDestructuringAssignment` that picks the host's strict
+  # GetIterator twin for that route. The predicate and both routes sit next to
+  # the two tuple readers they gate; the readers live only in this file.
+  # `property-access.ts` +6: one import and a two-line hand-off at each of the
+  # two reference-element OOB-widen sites to `tryEmitAnyValueArrayUndefinedOobGet`
+  # (the mechanism is the new leaf `src/codegen/any-value-element-read.ts`).
+  # `object-runtime.ts` +6: the `$AnyValue` arm of `boxVecElementToExternref`,
+  # the one recipe every vec-family reader (`__iterator`, `__extern_get_idx`)
+  # uses to lift an element to externref; the arm must sit in that recipe.
 func-budget-allow:
   # 2026-09-23 — cluster D slice D2b: `compileNamespaceStaticCall` +4, the
   # dispatch line described under the LOC grant (dynamic-iterable all/race →
@@ -693,6 +706,13 @@ func-budget-allow:
   # to `installRegExpLastIndexCarrierArms`, placed between the B4 accessor arm and
   # the proto-cache arm.
   - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  # 2026-09-23 — cluster G, slice G3: `compileArrayDestructuringAssignment` +9
+  # (the non-tuple-struct route to the externref GetIterator path; it has to
+  # precede the tuple field reader in this function) and
+  # `compileElementAccessBody` +5 (the `$AnyValue`-element hand-off at the vec
+  # OOB-widen site, see the loc rationale above).
+  - src/codegen/expressions/assignment.ts::compileArrayDestructuringAssignment
+  - src/codegen/property-access.ts::compileElementAccessBody
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -5971,6 +5991,142 @@ Two probe findings outside the manifest, recorded so they are not rediscovered:
   the same resolve over a LITERAL argument (`Promise.race([1, 2])`, probe
   `p15`, a byte-identical compile path) fails with the same message. #5197
   R3-7 territory.
+
+### 2026-09-23 — Cluster G, slice G3: a struct iterable on the right of an array assignment, and the `$AnyValue` element box that leaked into the externref plane
+
+- **Branch** `g3`, base `claude/es2015-test262-plan-54tooh` @ `e76ae6991c`
+  (G2 + B6). Not pushed. Engine `quickjs` for every verdict below.
+- **Manifest** `plan/agent-context/6651/G-forof-destructuring-iterators.txt`
+  (134 rows), `--standalone --isolate`, 24-row chunks in fresh processes, all
+  chunk exits `0`. Before measured here (`.tmp/g3/before-chunk-00N.log`).
+
+| standalone, 134 rows | pass | non-pass |
+| --- | ---: | ---: |
+| before (measured here, = G2's after) | 31 | 103 |
+| after | **35** | 99 |
+
+**+4, 0 lost**: `for-of/{array, Array.prototype.entries, map-expand,
+map-contract-expand}`. The after column is derived, not re-run: the 44 manifest
+rows inside the control scan below were verdict-run base vs new; the other 90
+were compile-scanned with the fire counters (next section) and none reaches new
+code, so their bytes are the base's. `for-of/map.js` moved to a later assertion
+(iteration 3, `«null» vs «false»`: `first = second` copies a `[true,false]`
+array into a binding the checker typed from `[0,'a']`, a separate
+variable-retyping defect).
+
+#### Defect 1 — a non-tuple struct on the right of an array ASSIGNMENT pattern
+
+`compileArrayDestructuringAssignment` treated every non-vec struct as a tuple,
+so `[a, b] = { [Symbol.iterator]() {…} }` bound the struct's FIELDS; the nested
+reader (`emitArrayDestructureFromLocal`) only null-guarded such a struct and
+bound nothing. Both now route a struct that is not tuple-shaped (`_0.._n`
+fields, or a registered empty tuple — `isTupleShapedStruct`) through
+`extern.convert_any` into the externref GetIterator path, which is what the
+declaration lane (`var [a,b] = it`) already did (#2033). On the **host** that
+path's lenient `__array_from_iter_n` cannot see a compiled `@@iterator` (it
+answered `[]`), so this route alone takes the strict twin
+`__array_from_iter_n_strict` the binding lane uses (#3643), registering
+`__iterator` so the `__call_@@iterator` export exists. Standalone keeps its
+native drain. No new host import on standalone.
+
+Probes (module scope, original harness): `[a,b] = it` gave `0|…` (standalone)
+and `undefined` (host) on base, `10|20` on both now; nested `[[a,b]] = [it]`
+via a holder and `({p:[c,d]} = {p: it})` likewise.
+
+#### Defect 2 — the premise was wrong: the literal was already right
+
+`var a = [0, 'a']` is ALREADY a per-element-tagged `$AnyValue` vec on
+standalone (#6631 boxes each element honestly at construction), and
+`typeof a[0]` answered `"number"` on base. What answered `"string"` was
+`var w = a[0]; typeof w`. Two leaks, both READS of an `$AnyValue` element:
+
+1. The unproven element read (`emitReferenceArrayUndefinedOobGet`) widens to
+   externref and converted the present element with a bare
+   `extern.convert_any` — handing the BOX to the externref plane as if it were
+   the value. A `string | number` binding (an `$AnyValue` local) then boxes
+   that externref through `__any_box_extern_s1`, which recognises only a tag-1
+   box and wraps anything else as tag 5 (the #1888 lie) → `typeof w` "string",
+   `w === 0` false. The same leaked box is what `ToNumber` inside the harness's
+   `isSameValue` could not read (`1/b` NaN), which is why `for-of/array.js`
+   failed at index 0 with `«0» vs «0»`. **Fix:** new leaf
+   `src/codegen/any-value-element-read.ts` — an `$AnyValue` element keeps its
+   box (no widening needed: the tag-1 `$undefined` singleton encodes the OOB /
+   empty-slot `undefined`), and every consumer converts through the ordinary
+   `$AnyValue` coercions, which project by tag. Standalone/WASI only; host
+   bytes cannot move.
+2. `boxVecElementToExternref` (the recipe every vec-family reader —
+   `__iterator`'s carriers, `__extern_get_idx` — uses) did the same
+   `extern.convert_any`. Fixing only (1) **regressed**
+   `for-of/Array.prototype.Symbol.iterator.js` in the first control run: the
+   iterator side still yielded the raw box, the index side now a projected
+   value, and `__extern_strict_eq`'s identity shortcut (which exempts
+   `$BoxedNumber` for `NaN`, #3174, but not a tag-3 `$AnyValue`) made the raw
+   `NaN` box equal to itself. **Fix:** an `$AnyValue` arm projecting through
+   `__any_to_extern` (used only when that helper is already registered).
+   With both, that row is green again and the 4 gains hold.
+
+Not changed, deliberately: the generic `externref → $AnyValue` boxing
+(`__any_box_extern_s1`) still wraps a boxed number as tag 5 — the #1888/#2141
+regime whose global flip measured −788. So
+`var v = arr[Symbol.iterator]().next().value; v === 0` is still `false` on
+standalone (the value is honest; the union-typed binding re-boxes it). Pure
+numeric and pure string literals never take either new arm (f64 / string
+element carriers).
+
+#### Controls — zero pass → non-pass
+
+Fire detection, not a neighbourhood: temporary counters on all four new arms
+(defect-1 top-level and nested routes; the element read; the vec-reader arm)
+in a **snapshot copy** of `src/` (`.tmp/g3/snap/`, so the measurement was never
+exposed to a later edit), compiled body-only over a 4,835-row scan list on
+**both** targets: the C3 2,370-row parameter-default set (sha256 `3e8d80a0…`,
+unchanged) ∪ every test262 file with a mixed-kind array literal (AST scan,
+1,991) ∪ every file with an array/object ASSIGNMENT pattern (638). 0 compile
+throws. Harness validity: all 32 `test262/harness/*.js` compiled alone are
+byte-identical base vs new on both targets **except `testIntl.js` on
+standalone** (it owns an `$AnyValue` vec), so all 175 rows that include it were
+added to the verdict set. Fired: 179 rows standalone, 4 host (defect 1 only).
+
+Verdict set **354 rows**, base vs new, both targets, in-process 200-row chunks,
+one runner at a time, all chunk exits `0` (`.tmp/g3/ctl-d2/`):
+
+| target | before pass | after pass | pass → non-pass | non-pass → pass |
+| --- | ---: | ---: | ---: | ---: |
+| standalone | 59 | 63 | **0** | **4** (the manifest four) |
+| host | 154 | 154 | **0** | 0 |
+
+No other status change. Defect 1 alone was also byte-diffed over its 638
+assignment-pattern rows (6 changed standalone, 4 host; all 6 verdict-identical,
+4 pass / 2 skip, `.tmp/g3/ctl-d1/`) — defect 1 moves no test262 row; it is a
+correctness fix for the probe shapes and the pins.
+
+- 32/32 `website/playground/examples/` + `benchmarks/` files compile
+  **byte-identically** on host and standalone (`.tmp/g3/corpus-{base,new}-*.txt`).
+- `equivalence-gate`: 22 failing / 1,720 passing, 22 known, **no new**.
+  `check:ir-fallbacks` OK.
+- Pins: new `tests/issue-6651-g3-struct-iterable-and-any-element.test.ts`,
+  7 cases, **6 RED on base** (file-copy A/B), 7/7 new. 97 related suites
+  (`dstr|destruct|for-of|iterator|union|anyvalue|1888|2106|745|6631|4774|
+  6613|42xx`, G1/G2/C4/js-defaulted-param-slot) run one process per file: 84
+  green; the 13 failing suites fail with **identical test names on base**
+  (`generator-method-destructuring`, `issue-3522`, `issue-3643` (2),
+  `issue-43-fexp`, `issue-dstr-requireobj`, `null-destructure-param-object`,
+  `symbol-async-iterator`, plus whole-file failures in `host-destructuring-
+  regressions`, `issue-2934-…-iterator-get`, `issue-4376`, `issue-4758`,
+  `issue-5738`, `issue-745`).
+- Gates, run bare: typecheck, biome (errors), loc/func budgets local and
+  `LOC_GATE_BASE=origin/main` (grants above, dated), coercion-sites,
+  oracle-ratchet, dead-exports, compiler-boundaries inventory (the new leaf is
+  classified).
+
+#### Residuals / not attempted
+
+| rows | finding |
+| ---: | --- |
+| 1 | `for-of/map.js` — a binding typed from its first `[0,'a']` initializer later receives a `[true,false]` array and coerces it into the old carrier (`«null» vs «false»` at iteration 3). Variable-retyping, not iteration. |
+| 3 | G2's step-loop rows (`iterator-next-reference`, `iterator-next-result-type`, `array-key-get-error`): the native `__iterator_next` OBJ arm re-reads `next` per step and has no non-Object-result TypeError; caching `next` needs a new `$IterRec` field. Time-boxed out. |
+| — | Standalone `[a] = { x: 1 }` still binds `undefined` instead of throwing: the native `__array_from_iter_n` passes a non-drainable struct through (#2904 rationale). The host now throws on the new route. |
+| — | Standalone self-iterator (`[Symbol.iterator]() { return this; }` on a literal that also has `next`): the values are right but the `@@iterator` call is skipped (log `next,next`), in the declaration lane as well — a native `__iterator` shortcut. |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
