@@ -105,6 +105,7 @@ import {
   emitSetArgc,
   functionExprBodyReferencesOwnName,
   tryEmitInlineDynamicCall,
+  usesNativeFunctionBindProvider,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
 import { compileInlineIifeArguments } from "./inline-iife-arguments.js"; // (#5207)
@@ -1885,6 +1886,34 @@ export function compileTailDispatch(
           const called = emitBoundFunctionCall(ctx, fctx, expr, true);
           if (called !== null) return called;
         }
+      }
+
+      // (#6651 I4) The host-free twin of the arm directly above. Under a native
+      // `Function.prototype.bind` provider (`--target standalone`/`wasi`,
+      // native-first) `<expr>.bind(…)` mints a `$__bound_fn` CARRIER, not a
+      // closure struct — see #3140. The generic call-of-call path below matches
+      // the bind result's TS call signature against the registered closure
+      // shapes, `ref.cast`s the carrier to the winning `$Closure` (guarded, so
+      // it yields null) and then `emitNullCheckThrow`s it: "dereferencing a
+      // null pointer in __module_init". `tryEmitInlineDynamicCall` is the path
+      // that KNOWS about the carrier — its `boundArm` unwraps it through
+      // `__apply_closure`, which applies [[BoundThis]]/[[BoundArguments]] and
+      // composes for bound-of-bound. Routing here rather than after the
+      // closure-match is required: the match succeeds and traps, so it never
+      // reaches the existing `tryEmitInlineDynamicCall` fallback at the tail.
+      //
+      // Scope is deliberately the same as the host arm — a PropertyAccess bind
+      // TARGET (`f.af.bind(u)()`), i.e. a callable read out of an object field,
+      // which has no statically registered body. Identifier and
+      // `Class_method` targets are handled by the two static arms above and
+      // keep their bytes.
+      if (
+        usesNativeFunctionBindProvider(ctx) &&
+        ts.isPropertyAccessExpression(bindCall.expression) &&
+        ts.isPropertyAccessExpression(bindCall.expression.expression)
+      ) {
+        const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+        if (dyn !== null) return dyn;
       }
     }
   }
