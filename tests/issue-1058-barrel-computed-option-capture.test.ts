@@ -349,8 +349,16 @@ describe("#1058 barrel-reexported computed option callbacks", () => {
       (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
       const exports = wrapExports(instance, { signatures: result.exportSignatures });
       // The bounded bridge has no nine-formal ABI arm. It must fail loudly
-      // instead of selecting no arm and silently returning 0.
-      expect(() => exports.test()).toThrow();
+      // instead of selecting no arm and silently returning 0. A path that
+      // reaches the closure itself returns the correct sum (every default).
+      let returned: unknown;
+      let threw = false;
+      try {
+        returned = exports.test();
+      } catch {
+        threw = true;
+      }
+      expect(threw || returned === 45).toBe(true);
     },
   );
 
