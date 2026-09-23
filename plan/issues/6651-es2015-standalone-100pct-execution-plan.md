@@ -4746,6 +4746,14 @@ shape is what matters for defect 1 — a TS-typed local takes a different arm.
   objects, so the step-10 SameValue comparison fails and a COMPLIANT trap throws
   `Proxy trap result violates a Proxy invariant`. Worth its own task; the
   blast radius is every `X.prototype` identity comparison in a function.
+  - **Update 2026-09-23, from the #2917 lane (PR #6036): the freshness half is
+    fixed and the row still does NOT flip.** In-function reads are now stable
+    (`f() === f()`), but `Array.prototype` has **two internal
+    representations** — a vec alias and the native-proto singleton — which
+    compare unequal, so `ap() === Array.prototype` is still `false`. Unifying
+    them is nobody's work; #2917 records it as a known limit. Plan on
+    `not-extensible-same-proto.js` staying red unless a slice takes the
+    unification on deliberately.
 - **The §10.5 guards are dispatch-shape-sensitive, not realm-sensitive** (see
   the realm table above). One mechanism — "a `$Proxy` the compiler only knows at
   runtime reaches a dispatch without the §10.5.6 / §10.5.14 post-trap checks" —
