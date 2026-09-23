@@ -6,6 +6,7 @@ import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.j
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
+import { isConstructedFnctorName } from "./fnctor-instance-names.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
@@ -12885,7 +12886,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
       const fnDecl = sym?.valueDeclaration;
       const isFnCtorType =
-        (sym?.name !== undefined && ctx.funcConstructorMap.has(sym.name)) ||
+        (sym?.name !== undefined && isConstructedFnctorName(ctx, sym.name)) ||
         (!!fnDecl &&
           (ts.isFunctionDeclaration(fnDecl) ||
             ts.isFunctionExpression(fnDecl) ||
