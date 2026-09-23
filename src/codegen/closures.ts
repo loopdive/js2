@@ -2013,7 +2013,8 @@ export function computeClosureWrapperSig(
   arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
 ): { params: ValType[]; returnType: ValType | null; hasRestParam: boolean } {
   const isGenerator =
-    (ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined;
+    ((ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined) ||
+    isNativeGeneratorMethodClosure(ctx, arrow);
   const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
 
   // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
@@ -3089,7 +3090,7 @@ export function compileLiftedClosureBody(
     isGenerator &&
     !isAsync &&
     (ctx.standalone || ctx.wasi) &&
-    ts.isFunctionExpression(arrow) &&
+    (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow)) &&
     ts.isBlock(body) &&
     isNativeGeneratorCandidate(ctx, arrow)
   ) {
@@ -3155,7 +3156,12 @@ export function compileLiftedClosureBody(
     // free from the aliased-condition `const isGenerator =
     // ts.isFunctionExpression(arrow) && …`, which no longer reaches this scope
     // now that `isGenerator` arrives via `opts`.
-  } else if (isGenerator && ts.isBlock(body) && nativeGenExprInfo && ts.isFunctionExpression(arrow)) {
+  } else if (
+    isGenerator &&
+    ts.isBlock(body) &&
+    nativeGenExprInfo &&
+    (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow))
+  ) {
     // (#3164) Emit the native state-struct factory (mirrors the class-method /
     // object-literal wiring, #2571/#2581): construct `$GenState_<closure>` from
     // the lifted wasm params (param 0 = `__self`, threaded as a leading
@@ -3498,6 +3504,34 @@ function captureOwningDirectEvalState(
   });
 }
 
+/**
+ * (#6651 A3) An object-literal generator METHOD that reaches the closure lane —
+ * `emitObjectLiteralMethodFn` passes the MethodDeclaration in as if it were a
+ * function expression when the literal lowers to an open `$Object` (e.g. its
+ * `var` binding was first declared `{}`, so the checker types it from that
+ * declaration). Every generator test here used to be spelled
+ * `ts.isFunctionExpression(arrow)`, so such a method compiled as a PLAIN
+ * closure: calling it ran the body at once and returned `undefined`.
+ *
+ * Admitted only when the native lowering will take it (standalone/WASI, not
+ * async, and the one candidate gate `isNativeGeneratorCandidate` agrees).
+ * Anything else keeps the historical plain-closure lowering rather than the
+ * eager-buffer generator path, whose `__gen_*` host imports a no-JS-host module
+ * cannot satisfy — that trade (a loud leak for a silent wrong value) is what a
+ * bare widening of the two generator tests produced (#6651 C4).
+ */
+function isNativeGeneratorMethodClosure(ctx: CodegenContext, arrow: ts.Node): arrow is ts.MethodDeclaration {
+  return (
+    ts.isMethodDeclaration(arrow) &&
+    arrow.asteriskToken !== undefined &&
+    (ctx.standalone || ctx.wasi) &&
+    ts.isObjectLiteralExpression(arrow.parent) &&
+    !arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) &&
+    arrow.body !== undefined &&
+    isNativeGeneratorCandidate(ctx, arrow)
+  );
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -3519,8 +3553,10 @@ export function compileArrowAsClosure(
     ensureCurrentThisGlobal(ctx);
   }
 
-  // Check if this is a generator function expression (function*() { ... })
-  const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+  // Check if this is a generator function expression (function*() { ... }), or
+  // (#6651 A3) an object-literal generator METHOD routed here as a closure.
+  const isGenerator =
+    (ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) || isNativeGeneratorMethodClosure(ctx, arrow);
   if (isGenerator) ctx.generatorFunctions.add(closureName);
   // `isAsync` is still consumed below (generator-create name selection); the
   // return-type derivation moved into computeClosureWrapperSig.

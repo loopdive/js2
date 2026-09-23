@@ -8,6 +8,7 @@ import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js
 import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#6651 F4)
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
@@ -4200,6 +4201,33 @@ function compilePropertyAssignment(
     ? ctx.classDeclarationMap.get(foreignStaticPrivateClassName)!
     : target.expression;
   const objType = ctx.checker.getTypeAtLocation(objTypeNode);
+
+  // (#6651 F4) The WRITE twin of the read arm in `property-access.ts`. Same
+  // cause: `new Proxy([1,2,3],{})` is statically `number[]`, so `p.length = 0`
+  // took the §10.4.2.4 ArraySetLength vec arm below and wrote field 0 of a
+  // `$Proxy` struct — measured on base, the backing array was untouched AND a
+  // `set` trap installed on the proxy ran ZERO times. `forceRuntimeSet` routes
+  // it to `__extern_set`, whose `$Proxy` front-guard enters §10.5.9 [[Set]];
+  // for a trap-absent proxy that forwards to the target's ordinary set, which
+  // is the array arm again — now with the right receiver.
+  //
+  // `__proto__` is EXCLUDED, and that exclusion is measured, not defensive:
+  // §B.2.2.1 makes `o.__proto__ = v` an accessor call that performs
+  // `[[SetPrototypeOf]]`, not an ordinary [[Set]], and the arm that owns it
+  // already carries the proxy front-guard (`object-proto-proto-accessor.ts` →
+  // `__object_setPrototypeOf`). Routing it here instead turned
+  // `built-ins/Object/prototype/__proto__/set-abrupt.js` from PASS to FAIL in
+  // the 487-row control — the `setPrototypeOf` trap stopped running, so the
+  // throw it is supposed to propagate never happened. That row is the only
+  // thing this whole slice regressed, and it is the reason for this clause.
+  if (
+    ctx.standalone &&
+    !ts.isPrivateIdentifier(target.name) &&
+    target.name.text !== "__proto__" &&
+    tracesToProxyValue(ctx, target.expression)
+  ) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
+  }
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;

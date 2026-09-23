@@ -23,10 +23,13 @@ import {
   emitArrayIteratorPrototypeSingleton,
   emitIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
-  emitGeneratorFunctionPrototypeSingleton,
   emitTypedArrayIntrinsicCtorObject,
   isWiredTypedArrayViewName,
 } from "../array-object-proto.js";
+import {
+  emitGeneratorFunctionPrototypeSingleton,
+  isStaticSyncGeneratorFunctionValue,
+} from "../generator-function-intrinsic.js";
 import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import {
@@ -2438,6 +2441,16 @@ export function compileBuiltinStaticCall(
     // Same shape for `async function*`. Tests rely on this:
     //   var GeneratorPrototype = Object.getPrototypeOf(g).prototype;
     //   GeneratorPrototype.next.call(non_gen);  // → TypeError
+    //
+    // (#6651 A3) The same answer for a sync generator function EXPRESSION —
+    // `Object.getPrototypeOf(function*() {})`, the spelling every
+    // `built-ins/GeneratorFunction/**` row uses — and for a provably unchanged
+    // object-literal generator METHOD (`o.m`, see the predicate). Neither
+    // operand evaluation is observable, so neither is compiled.
+    if ((ctx.standalone || ctx.wasi) && isStaticSyncGeneratorFunctionValue(ctx, arg0)) {
+      const t = emitGeneratorFunctionPrototypeSingleton(ctx, fctx);
+      if (t) return t;
+    }
     if (ts.isIdentifier(arg0)) {
       const argName = arg0.text;
       const isGen = ctx.generatorFunctions.has(argName);
