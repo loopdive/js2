@@ -1084,6 +1084,10 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // to `emitProtoMemberBodyRefusal`, so a borrowed `slice` threw
   // "not yet implemented in --target standalone".
   if (member === "slice") return emitStringSubstringMemberBody(ctx, fctx, "slice");
+  // (#6651 I3) `substr` (Annex B B.2.2.1) — third member of the same family;
+  // see string-proto-substring.ts for why the absent-bound sentinel carries
+  // over unchanged to a LENGTH second bound.
+  if (member === "substr") return emitStringSubstringMemberBody(ctx, fctx, "substr");
   // (#4220) `split` (§22.1.3.23) returns an ARRAY, not a string/index/boolean,
   // so it owns a body rather than joining a family above; a null refusal keeps
   // the pre-#4220 behaviour via the shared refusal.
