@@ -1507,21 +1507,21 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1006,
-    "fail": 518,
+    "pass": 1016,
+    "fail": 508,
     "ce": 493,
     "skip": 18,
     "total": 2035,
-    "pct": 49,
+    "pct": 50,
     "features": [
       {
         "name": "BigInt",
-        "pass": 598,
-        "fail": 372,
+        "pass": 608,
+        "fail": 362,
         "ce": 78,
         "skip": 0,
         "total": 1048,
-        "pct": 57
+        "pct": 58
       },
       {
         "name": "TypedArray",

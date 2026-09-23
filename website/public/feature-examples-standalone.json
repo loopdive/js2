@@ -93,7 +93,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 989,
+      "passCount": 999,
       "totalCount": 1083,
       "editionSpread": [
         {
@@ -108,7 +108,7 @@
         },
         {
           "edition": "ES2020",
-          "pass": 58,
+          "pass": 68,
           "total": 135
         },
         {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 598,
+      "passCount": 608,
       "totalCount": 1048
     },
     {
