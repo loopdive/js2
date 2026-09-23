@@ -4307,7 +4307,16 @@ export function compileSuperCall(
     }
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     const importName = getParentConstructorImportName(ctx, builtinParent);
-    const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
+    // (#2917) The native standalone Array ctor is registered per arity and
+    // honours every argument (§23.1.1.1 `Array(...values)`), so forward them
+    // all: at the declared arity 1, `super(42, "foo")` built `Array(42)`.
+    const forwardArity =
+      (ctx.standalone || ctx.wasi) && builtinParent === "Array"
+        ? Math.max(
+            getBuiltinConstructorForwardArity(ctx, builtinParent),
+            (hasSpread ? flattenStaticallyKnownArgs(args) : args)?.length ?? 0,
+          )
+        : getBuiltinConstructorForwardArity(ctx, builtinParent);
     const forceCollectionArrayVec = builtinParent === "Map" || builtinParent === "Set";
     const forwardParams = externrefParams(forwardArity);
     // Standalone / WASI: explicit `super(...)` routes through the same shared
