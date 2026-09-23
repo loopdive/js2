@@ -16,12 +16,12 @@ import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import {
   emitAsyncGeneratorFunctionPrototypeSingleton,
-  emitGeneratorFunctionPrototypeSingleton,
   emitIteratorPrototypeSingleton,
   emitTypedArrayIntrinsicCtorObject,
   isWiredTypedArrayViewName,
   type NativeIteratorPrototypeKind,
 } from "../array-object-proto.js";
+import { emitGeneratorFunctionPrototypeSingleton } from "../generator-function-intrinsic.js";
 import { isPristineArrayPrototypeIteratorCall } from "../array-methods.js";
 import {
   emitStandalonePromiseReject,
