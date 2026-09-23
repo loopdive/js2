@@ -131,6 +131,16 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     in front of the `__extern_length` read the source's `length` getter ran
 #     0 times; behind it, 1 — §23.2.2.1 performs the array-like length read
 #     before TypedArrayCreate, so a throwing getter must win.
+# 2026-09-22 (cluster F, slice F2) — `call-namespace-static.ts` +107, all of it
+# inside the Reflect block: the §28.1.2 step-1 `IsConstructor(target)` predicate
+# and its throw arm, plus a comment block recording why the STATIC half is the
+# only sound one here (a runtime `__reflect_is_constructor` probe would have to
+# spill the target into a local, and `compileNewExpression` then evaluates the
+# same expression a SECOND time — a real break for `Reflect.construct(f(), [])`).
+# The predicate cannot move to a leaf module without also moving
+# `targetIsStaticallyNullish` and the `fctx` shadowing checks it shares with the
+# neighbouring §28.1.x guards, which is the opposite of keeping one spec section
+# readable in one place. ~60 % of the growth is that comment.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
@@ -173,6 +183,19 @@ loc-budget-allow:
 # keys this same change-set needs).
   - src/codegen/class-bodies.ts
   - src/codegen/destructuring-params.ts
+# 2026-09-23 — cluster I, slice I2 (`instanceof` consults `@@hasInstance`).
+# `expressions/identifiers.ts` +12, of which 7 are comment. The MECHANISM — the
+# whole §13.10.2 step 2-4 handler dispatch — is in `native-dynamic-instanceof.ts`
+# as a new wrapper native (`__instanceof_operator`), and the module-scope
+# predicate stays in `native-ordinary-instanceof.ts`. What cannot move is the
+# one-line DECLINE on the #2998 primitive-LHS fold: that fold sits inside
+# `emitDynamicInstanceOf` and answers `false` before any lowering below it runs,
+# so "a primitive left operand does not end this operator" has to be readable at
+# the fold itself. Measured: with the fold first, `0 instanceof F` called the
+# installed handler 0 times (`symbol-hasinstance-invocation.js`, callCount 0 vs
+# 1). The comment records that measurement in place, next to the bail it
+# reverses.
+  - src/codegen/expressions/identifiers.ts
   - src/codegen/expressions/identifiers.ts
 # 2026-09-21 — cluster B, slice B2 (observable RegExpExec substrate).
 # `regexp-standalone.ts` +47, all of it in `emitRegExpProtoMemberBody`'s new
@@ -322,7 +345,32 @@ loc-budget-allow:
 # ladder it pre-empts) and before `unshiftExternGetProtoCacheArm` (which has to
 # stay the body's prefix or `inlineExternGetCallSites` declines wholesale) —
 # an ORDERING constraint that is only statable in the ordered pass list.
+# 2026-09-23 — cluster H, slice H2 (symbol property keys on an array carrier).
+# `src/codegen/vec-overlay.ts` +153 (already listed above; restated here so the
+# grant is not stranded in a file this change-set does not touch). Four arms,
+# all inside `fillVecOverlayHelpers`: the symbol lanes of `__vec_dp_value`,
+# `__vec_dp_accessor` and `__vec_gopd`, plus the symbol-safe variant of the
+# `"length"` wrapper used by the `__extern_get` / `__vec_prop_get` read
+# prologue. Roughly two thirds is comment, and the comments are the measured
+# before-state at each bail — the four answers the base tree gave
+# (`gOPD(arr, sym) === undefined` while `arr[sym]` read 9 from the other table)
+# are what justify reversing a guard whose own rationale sits at the same line.
+# Honest about the shape of the grant: unlike H1's, this growth is NOT reducible
+# to a call site. Each arm is an alternative CONTINUATION of a guard whose bail
+# instruction list is built from the enclosing closure (`core.ensureIdx`,
+# `bailMiss`, `bailReturnVec`, the per-native local-index map), so extracting it
+# means first parameterising that closure. That extraction — a
+# `vec-symbol-key-overlay.ts` leaf taking the four dependencies explicitly — is
+# the right follow-up and is recorded as such in this slice's receipt; it is not
+# mixed into a change whose whole value is a measured behaviour fix.
 func-budget-allow:
+  # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
+  # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
+  # fills each reserved native's body in turn; every arm this slice adds is a
+  # continuation of a guard built from that pass's own closure, so the split
+  # that would satisfy this gate is the `vec-symbol-key-overlay.ts` extraction
+  # named in the LOC rationale — a refactor, not part of a behaviour fix.
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -456,6 +504,17 @@ coercion-sites-allow:
 # be tested without being converted, and the native is emitted at FINALIZE where
 # no `FunctionContext` exists to coerce into.
   - src/codegen/regexp-accessor-get-arm.ts
+# 2026-09-23 — cluster I, slice I2: `native-dynamic-instanceof.ts` gains
+# `__is_truthy` ×1 (`+1` net). It is §13.10.2 step 4.a's ToBoolean, written in
+# the spec as `ToBoolean(Call(instOfHandler, C, «O»))`, and `__is_truthy` IS the
+# engine's ToBoolean for an arbitrary externref — the same call every array HOF
+# predicate makes (#2915). `coerceType` is not available here: the value is the
+# handler's RETURN value, which must be tested without being converted, and the
+# `__instanceof_operator` native is built with no `FunctionContext` to coerce
+# into. Measured coverage: `symbol-hasinstance-to-boolean.js` exercises nine
+# return values (undefined / null / true / NaN / 1 / "" / "string" / a symbol /
+# an object) through this one call.
+  - src/codegen/native-dynamic-instanceof.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -2004,6 +2063,191 @@ unusable no-provider run, kept as the evidence for the engine warning),
 `.tmp/6651/I-buckets.txt`. Probes: `.tmp/6651/{selfimport,selfimport2,hasinst,probe}.mts`.
 None of the probes is committed.
 
+
+### 2026-09-23 — Cluster H (builtins misc, standalone), slice H2: the measured bucket table, and symbol property keys on an array carrier
+
+- **Branch** `worktree-agent-a9af718294905d3d7`, base `main` @ `6190e961`.
+  **Worktree** `/home/claude/js2/.claude/worktrees/agent-a9af718294905d3d7`.
+  A pristine `git archive HEAD` extract at `.tmp/base-tree/` carried every
+  before-state measurement, so `src/` in the worktree was never edited under a
+  running sweep.
+- **Manifest** `plan/agent-context/6651/H-builtins-misc.txt`, sha256
+  `f1eb655415155ac7e7d262ffbaa50a479f8a495bdeb297fad7292169811c104f`, 217 rows.
+
+#### The bucket table — the deliverable, ahead of the fix
+
+214 of the 217 rows had no current breakdown, which made cluster H the largest
+un-ranked residual in the plan. Measured here, standalone, under
+`JS2WASM_EVAL_ENGINE=quickjs`, with a **host-lane probe of every row**:
+
+| class (by test SOURCE, not by symptom) | rows | host pass | host fail |
+| --- | ---: | ---: | ---: |
+| uses `$262.createRealm` | 58 | 14 | 44 |
+| uses `Proxy` (and not `createRealm`) | 53 | 27 | 26 |
+| core — neither | 103 | 35 | 68 |
+| **total residual** | **214** | **76** | **138** |
+
+**The number that should drive the next dispatch is 35.** A row that fails on
+the HOST too cannot be reached by fixing standalone lowering, and a row whose
+body calls `$262.createRealm` has no standalone representation at all. So the
+set a standalone-lowering slice can actually close is *core ∧ host-pass* — 35
+rows, not 214. The other 179 are: realm work (or a `wont-fix` with the realm
+reason), cluster F's Proxy lane, or engineering needed in both lanes.
+
+Top signature buckets (`.tmp/6651/H2-buckets.txt` has all of them plus the
+per-row table):
+
+| rows | signature | host pass | realm | proxy | what it is |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 37 | `TypeError: Cannot access property on null or undefined at N:N` | 17 | 31 | 2 | `$262.createRealm()` answers null — the realm family, one symptom |
+| 30 | bare `SameValue` mismatch | 4 | 6 | 7 | heterogeneous; no single mechanism |
+| 17 | `Expected a TypeError … no exception` | 12 | 1 | 11 | mostly Proxy invariant checks |
+| 7 | `Expected a Test262Error but got a TypeError` | 2 | 0 | 2 | |
+| 6 | `Conforms to NativeFunction Syntax` | 6 | 0 | 6 | `Function.prototype.toString` over a Proxy |
+| 6 | `newTarget.prototype is undefined` | 0 | 6 | 0 | `proto-from-ctor-realm*`, all realm |
+| 5 | `Object.prototype.toString is not yet implemented in --target standalone` | 2 | 0 | 2 | see the probe below |
+| 4 | `0 value should be N` | 4 | 0 | 0 | `*/target-array-with-non-writable-property.js` — **the best core bucket** |
+| 4 | `Cannot access property on null or undefined` (no line) | 2 | 3 | 0 | |
+| 4 | `Expected a Test262Error … no exception` | 1 | 0 | 3 | |
+| 3 each | `RuntimeError: illegal cast` · `Array.prototype.flat()` CE · `Expected a RangeError …` · `Cannot read properties of undefined` · `Cannot convert undefined or null to object` | | | | |
+| 79 | 3 two-row buckets + 73 singleton signatures | | | | the long tail |
+
+Compiler REFUSALS inside the cluster, which are the cleanest targets because
+they name themselves: `Array.prototype.flat()` (3 CE), `Array.prototype.{entries,
+keys,values}` not callable as a value (3), `Object.prototype.toString` (5),
+`Array.prototype.flatMap` non-array-returning callback (1), `Date.prototype.toJSON`
+(1), `JSON.stringify` of this value (1), standalone `Reflect.construct` (1).
+
+**Two mechanisms probed and root-caused here, neither fixed** (probes in
+`.tmp/probe/`, none committed):
+
+- **`Object.prototype.toString` ignores `@@toStringTag` entirely and refuses
+  three receiver kinds.** Measured standalone on base: `{}` → `[object Object]`,
+  `[]` → `[object Array]`, Math/JSON → `[object Object]`, but WeakMap, WeakSet
+  and a Symbol receiver all THROW the #4119 refusal, and an object carrying
+  `o[Symbol.toStringTag] = "Custom"` still answers `[object Object]`. §20.1.3.6
+  step 15's `Get(O, @@toStringTag)` is not implemented at all — so this bucket
+  needs the runtime Get *and* real deletable builtin tag properties, not just a
+  `delete` fix as the round-2 table assumed.
+- **`__extern_length` answers 0 for String-wrapper and function carriers.**
+  Spreadable `new String("yuck")` concats to `[]` though `.length` is 4; a
+  spreadable function with `length` 3 spreads nothing. RegExp and plain-object
+  carriers are CORRECT (2 and 3), which narrows the gap from "non-`$Object`
+  carriers" to exactly the wrapper and closure carriers, and `Object("hi").length`
+  is 0 while `new String("xy").length` is 2 — the ToObject path builds a
+  different carrier from the constructor path. Worth 2 manifest rows; it changes
+  the array-like length of every such receiver, so it needs its own control set.
+
+#### What landed: §10.4.2.1 step 1 — a SYMBOL key on an Array is an ORDINARY property
+
+The overlay guarded all four of its natives with `stringKeyGuard`, whose bail
+RETURNS. Four measured consequences on the base tree, one standalone module:
+
+| question | base | spec |
+| --- | --- | --- |
+| `Object.defineProperty(arr, sym, {get})` then `arr[sym]` | `undefined`, getter never ran | getter runs |
+| `gOPD(arr, sym)` after that define | `undefined` | a descriptor |
+| `Object.defineProperty(arr, sym, {value:11})` then `arr[sym]` | `undefined` | `11` |
+| `arr[sym] = 9` then `gOPD(arr, sym)` | `undefined` (while `arr[sym]` read **9**) | a descriptor |
+
+The same descriptors on a PLAIN object were always correct, which is what makes
+this a carrier bug: the `$Object` natives were right and the array overlay was
+refusing to reach them. Fixed by routing a symbol key to the companion
+`$Object` in `__vec_dp_value` / `__vec_dp_accessor`, delegating `__vec_gopd`'s
+symbol lane to `__getOwnPropertyDescriptor` **and then to the #3537 bag** (the
+#4010 two-table seam — an expando written by assignment lands in the bag, not
+the companion), and widening the `__extern_get` / `__vec_prop_get` read
+prologue's key gate so a symbol key reaches the consult that now has something
+to find. All four are inside `fillVecOverlayHelpers`, which returns early
+unless `ctx.standalone`.
+
+One trap worth recording: the gOPD symbol arm must end in a `return` on EVERY
+path. Falling through reaches the `"length"` guard, which `ref.cast`s the key to
+`$AnyString` and TRAPS on a symbol — caught by the pin file's miss case, which
+went `THREW` on the first draft.
+
+**Manifest, standalone, before → after** (chunked in-process runner, 3 × ~73
+rows, one fresh process per chunk; logs `.tmp/6651/H2-sa-inproc-{before,after}-*.log`,
+per-row TSVs `.tmp/6651/sa-{before,after}-rows.tsv`):
+
+| | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before | 3 | 208 | 6 |
+| after | **4** | 207 | 6 |
+
+Per-row set diff: **1 gained, 0 lost, 0 other verdict changes** —
+`built-ins/Array/prototype/concat/is-concat-spreadable-get-order.js`, which is
+the residual #6485 recorded. **+1 on the manifest is the honest number**; the
+capability closed is wider than the row count, and the bucket table above is
+why the rest of the cluster did not follow.
+
+**On the runner method.** The `--isolate` sweep the acceptance recipe asks for
+was started first and abandoned after ~40 rows in ~40 minutes: three other
+lanes were sweeping the same 4-core box (load 14–17), which puts a 217-row
+isolate pass at 3–4 hours per side. The chunked in-process runner was used
+instead, and it is cross-validated rather than assumed: its before-state
+reproduces H1's isolated after-state **exactly** (3 pass / 208 fail / 6 CE, the
+same per-row set), which is the strongest available evidence that the two
+methods agree on this manifest.
+
+#### Controls
+
+- **Host lane is a byte-identity proof, by construction.** Every edit is inside
+  `fillVecOverlayHelpers`, which returns early unless `ctx.standalone`. A
+  15-module corpus (the 13 `website/playground/examples` sources plus two
+  inline modules — one exercising exactly this construct, one with no symbol at
+  all) compiles **15/15 sha256-identical on gc**, before vs after
+  (`.tmp/6651/shas-{before,after}.txt`).
+- On **standalone** 6 of those 15 move, including the no-symbol control — the
+  three define/gOPD arms are unconditional, so this slice is NOT
+  standalone-byte-neutral. Stated because the first draft of the code comment
+  claimed it was, and the sha corpus is what caught that.
+- **Neighbourhood**, 1,655 rows — all of `built-ins/Array/prototype/concat`,
+  `Object/{defineProperty,getOwnPropertyDescriptor,getOwnPropertySymbols}`,
+  `Array/prototype/Symbol.unscopables`, `Array/length` and `built-ins/Symbol` —
+  standalone, before vs after, 11 chunks of 165 in fresh processes
+  (`.tmp/6651/nb-sa-{before,after}-*.log`, per-row TSVs
+  `.tmp/6651/nb-{before,after}-rows.tsv`): `1,589 pass / 65 fail / 1 CE` →
+  `1,590 / 64 / 1`. The per-row set diff is **one line long** — the same
+  `is-concat-spreadable-get-order.js`, fail → pass. **Zero pass → non-pass,
+  zero other verdict changes.** No separate host sweep was run for this
+  neighbourhood: the byte-identity proof above is stronger than a sample, since
+  the host lane provably cannot reach any changed code.
+- Pin file `tests/issue-6651-vec-symbol-key-overlay.test.ts`, 6 cases —
+  **3 verified RED on the base tree** via the file-copy A/B, 3 are guards green
+  on both sides (the plain-object control, the gOPD miss, and the negative
+  direction: a STRING key keeps its index / `"length"` semantics).
+
+Gates, run bare: loc-budget OK and func-budget OK with the +153 grants added to
+this file's frontmatter above, dated; coercion-sites OK; oracle-ratchet OK
+(`getTypeAtLocation +0`, `ctx.checker +0`); dead-exports OK; typecheck OK.
+`node scripts/equivalence-gate.mjs`: **22 failing / 1,720 passing, all 22 already
+in the baseline — no new equivalence regressions.**
+
+#### For the next owner, in rows-per-effort order
+
+1. **`*/target-array-with-non-writable-property.js` (4 rows, all core, all
+   host-pass)** — filter/map/slice/splice write into a species-created target
+   whose index 0 is non-writable; §23.1.3's `CreateDataPropertyOrThrow` must
+   define, not assign. Caveat measured here: a hand-written probe of the same
+   shape already answers CORRECTLY (`r[0] === 2`, descriptor all-true), so the
+   failure only appears with `propertyHelper.js` included — diagnose against the
+   original-harness assembly, not a reduced repro.
+2. **`Object.prototype.toString` §20.1.3.6 step 15** (5 rows + ripple) — see the
+   probe above; it is a mechanism, not a `delete` fix.
+3. **Symbol-keyed own-key visibility** (4 rows) —
+   `getOwnPropertyDescriptors/{order-after-define-property,symbols-included}`,
+   `getOwnPropertySymbols/order-after-define-property`, `entries/symbols-omitted`:
+   `Object.getOwnPropertySymbols` answers `[]` for symbol-keyed defines even on a
+   PLAIN object, which this slice did not touch.
+4. **Symbol wrapper objects** (4 rows) — `Object(sym)`, `Object.assign(Symbol(),…)`,
+   `Symbol.prototype.{toString,@@toPrimitive}` on a wrapper receiver. ToObject has
+   no Symbol-wrapper carrier.
+5. **Classify the 58 realm rows** against the definition of done rather than
+   lane-ing them: `$262.createRealm` has no standalone representation, and 44 of
+   them fail on the host too.
+6. Extract `vec-symbol-key-overlay.ts` from `fillVecOverlayHelpers` and hand the
+   two budget grants back.
 
 ### 2026-09-21 — Cluster G (for-of / destructuring residuals / iterators, standalone), slice G1: spec-ordered ArrayAssignmentPattern + IteratorClose
 
@@ -4126,6 +4370,173 @@ left is in the row's own shape — a script-scope `var` receiver whose property
 slot loses a later string — not in the getter. Next owner: treat these as an
 object-runtime/property-slot row family, not a RegExp one.
 
+### 2026-09-22 — Cluster F (Proxy / Reflect, standalone), slice F2: the realm verdict, and three checks that declined
+
+- **Branch** `issue-6651-cluster-F2-proxy-reflect`, based on `origin/main`
+  @ `6190e961`. **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-afd428375de50fa97`.
+- **Manifest** `plan/agent-context/6651/F-proxy-reflect.txt`, 89 rows, sha256
+  `3edd7052b503ee48f0022a8bc2f5c041a116228d19ef65d31bf2aeb54cf80dd7`
+  (unchanged from F1).
+
+| standalone, `--isolate`, 89 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/F2-before.log`, `.tmp/6651/nb-pr-before.log`) | **7** | 77 | 5 |
+| after (`.tmp/6651/nb-pr-after.log`) | **9** | 75 | 5 |
+
+**+2 rows; zero lost; zero other verdict changes** — a per-PATH join, not a
+count comparison. The before-state was measured TWICE, three hours apart: once
+in the worktree before any edit, and once from a `git archive HEAD` extract
+(`.tmp/base-tree`) while the branch sweep ran beside it. The two agree row for
+row, so the delta is not measurement drift.
+
+#### The 23 `*-realm*` rows: measurable, and NOT environment
+
+F1 recorded them as "unmeasurable in this container — `$262.createRealm` needs a
+built QuickJS provider". **That classification is retired.** The provider is
+built (`.test262-cache/quickjs-eval-adapter-d4799bda84cfed0d.wasm`), QUICKJS is
+now the runner's DEFAULT engine, and all 23 rows execute and fail with specific,
+deep assertion messages — none says "provider is not built". `$262.createRealm`
+works; `new OProxy(t, h)` through a foreign-realm `Proxy` constructor really does
+mint a `$Proxy` (probed: its `get` trap runs, exactly once). So these are
+ordinary compiler defects, and their causes are NOT realm-specific:
+
+| rows | signature | root cause as probed |
+| ---: | --- | --- |
+| 5 | `Proxy/defineProperty/targetdesc-*-realm`, `defineProperty/trap-is-not-callable-realm` | a foreign-realm proxy's `[[DefineOwnProperty]]` skips the §10.5.6 checks the same shape gets natively. Probed side by side: `new Proxy({}, {defineProperty:{}})` throws, `new OProxy({}, {defineProperty:{}})` does not — the proxy VALUE is real, the dynamic dispatch it reaches is the one without the guards |
+| 6+1 | `Proxy/construct/return-not-object-throws-*-realm`, `trap-is-not-callable-realm` | same asymmetry on `[[Construct]]`: `new P()` on a top-level foreign-realm proxy binding does not run §10.5.14 step 11, while the native spelling does. Shape-sensitive, not realm-sensitive — the native spelling ALSO loses the defineProperty guard when the proxy is built inside a helper function |
+| 1 | `getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm` | **not a realm defect at all** — the native spelling fails identically. The trap returns `null`, and `__proxy_inv_gopd`'s `isAbsent` treats a null externref as "the trap answered undefined" (§10.5.5 step 11). Deliberately not fixed: `__getOwnPropertyDescriptor` answers a genuine MISS with either null or the undefined singleton (#2106), so branding null as "not undefined" would throw for a legal `return undefined` trap. This needs a null/undefined-distinct value representation, not a guard tweak |
+| 2 | `Proxy/get-fn-realm{,-recursive}` | `Reflect.construct newTarget is not a constructor` — #3371's lane |
+| 4 | `apply/arguments-realm`, `construct/arguments-realm`, `construct/trap-is-undefined-proto-from-*-realm` | reading a foreign realm's intrinsic (`f().constructor`, `Object.getPrototypeOf(p)`) answers null |
+| 3 | `defineProperty/desc-realm`, `ownKeys/return-not-list-object-throws-realm`, `revocable/tco-fn-realm` | one each: a descriptor object with a null prototype; an `undefined` ownKeys result through the `new other.Proxy(…)` spelling; a cross-realm `TypeError` identity |
+
+Log: `.tmp/6651/F2-before.tsv` carries every row's verdict and reason.
+
+#### What landed — three checks that declined on a value they should have rejected
+
+None of the three is a new mechanism; each is an existing check whose admission
+test let the wrong value through.
+
+1. **`Object.getPrototypeOf(<integrity-marked binding>)` folded to
+   `%Object.prototype%` for every marked identifier.** The arm's own comment
+   scopes it to "closed standalone plain objects [that] keep their ordinary
+   prototype implicit" — exact for `var o = {}`, wrong for a binding whose
+   prototype was chosen at creation. Measured on base, one module:
+   `var a = Object.create(proto)` reads back `proto` BEFORE
+   `Object.preventExtensions(a)` and `%Object.prototype%` after. The order
+   sensitivity is the tell: `ctx.nonExtensibleVars` is filled as statements are
+   COMPILED, so only later-compiled sites see the mark. The runtime link is
+   untouched throughout — the same query through a helper function, through
+   `Reflect.getPrototypeOf`, through `proto.isPrototypeOf(a)` and through an
+   alias `var z = a` all answer `proto`. Only the folded spelling was wrong.
+   `bindingHasExplicitPrototype` now excludes an `Object.create(…)` /
+   `Object.setPrototypeOf(…)` / `Reflect.setPrototypeOf(…)` initializer and a
+   colon-form `__proto__` literal. **Deliberately not widened past the
+   DECLARATION**: a prototype written by a later `setPrototypeOf` STATEMENT
+   keeps the fold, because `Reflect/setPrototypeOf/return-false-*` asserts
+   exactly that singleton after a REFUSED set on a `var o = {}` carrier.
+2. **§28.1.1 step 2 (CreateListFromArrayLike) declined a LITERAL `null` /
+   `undefined` argumentsList.** `emitNativeReflectNonObjectGuard` refuses to
+   brand a null carrier at runtime — this compiler's alias widening nulls
+   ordinary objects — so `Reflect.apply(fn, null, null)` called `fn` with an
+   empty list. That hazard is about VALUES; this is a question about the
+   EXPRESSION, and `guardReflectTargetIsObjectOrNullish` (built for exactly
+   this in #6494 S3) already answers it. Measured: the row's other eight
+   assertions — number, boolean, symbol, `Infinity`, `NaN`, and the throwing
+   `length` getter — already passed.
+3. **§28.1.2 step 1 `IsConstructor(target)` was never checked.** The arm checks
+   IsConstructor on the NEWTARGET and nothing on the target, so
+   `Reflect.construct(1, [])` reached `compileNewExpression(new 1())` and
+   answered without throwing. Only the STATICALLY decidable half is taken, and
+   that restriction is the design, not a shortcut: a runtime
+   `__reflect_is_constructor` probe has to spill the target into a local, and
+   `compileNewExpression` then evaluates the same expression a SECOND time —
+   a real break for `Reflect.construct(f(), [])`. The static half never needs
+   the duplicate, because it fires only where the program is guaranteed to
+   throw. Three admitted classes: a primitive by the oracle's own type fact; an
+   object/array literal or arrow function written in place; and a BUILT-IN
+   METHOD through an unshadowed ambient global (`Date.now`), recognised by its
+   lib declaration being a `MethodSignature` in a `.d.ts` interface — every ES
+   constructor is `declare var X: XConstructor` instead, so the two separate
+   exactly without a hand-kept name table. TypeScript construct signatures are
+   NOT usable here: `function f() {}` has none and IS a constructor.
+   Evaluation order is preserved, not short-circuited — the target and each
+   argument-list element are compiled and dropped ahead of the throw.
+
+#### Controls
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| `built-ins/Proxy/**` + `built-ins/Reflect/**`, standalone (`.tmp/6651/nb-pr-{before,after}.log`) | 464 | 381 / 78 / 5 | **383** / 76 / 5 | +2, **0 lost, 0 other** |
+| corpus-wide integrity∩prototype rows (every test262 file mentioning `preventExtensions`/`seal`/`freeze` AND `getPrototypeOf`/`__proto__`, 30) + a deterministic 1-in-6 sample of the 820 `Reflect.apply`/`Reflect.construct` users OUTSIDE the neighbourhood (137), standalone (`.tmp/6651/nb-extra-{before,after}.log`) | 167 | 107 / 52 / 8 | **108** / 51 / 8 | **+1** (`built-ins/Object/prototype/__proto__/set-non-extensible.js`), 0 lost |
+| the 89-row manifest ∪ the 167 above, HOST (default target) (`.tmp/6651/nb-host-{before,after}.log`) | 252 | 138 / 113 / 1 | 138 / 113 / 1 | **none** |
+
+**Host byte-identity corpus** (`.tmp/6651/sha-{before,after}.txt`): ten programs
+— a Proxy/Reflect-free control, the four changed prototype shapes, the kept
+plain-literal fold, a nullish and a real `Reflect.apply`, a non-constructor and
+a real `Reflect.construct`, and a proxy module — compiled for BOTH targets.
+**All 10 `gc` binaries are byte-identical**; on standalone exactly the five
+programs that exercise a changed arm move and the other five are identical.
+That is the intended shape for a lane-gated change: the `getPrototypeOf` arm is
+guarded by `ctx.standalone`, and the two Reflect arms are not reached on the
+host lane (empirically, on these shapes).
+
+Also green, all run bare: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` — +0 `getTypeAtLocation`, +0 `ctx.checker` — and
+`check:dead-exports`); `node scripts/equivalence-gate.mjs` (22 failing / 1720
+passing, all 22 in the committed baseline); `biome lint
+--diagnostic-level=error`; and the new pin file
+`tests/issue-6651-cluster-f2-proxy-reflect.test.ts`, 7/7 — **5 of the 7 verified
+RED on the base commit**, 2 guards green on both sides.
+
+The pin file compiles module-scope **JavaScript** (`allowJs`,
+`deferTopLevelInit`) rather than the ORIGINAL-HARNESS assembly, and that is a
+deliberate, stated trade: the harness assembly reproduces all three defects (it
+is how they were found) but compiling it exceeds the 512 MB
+`VITEST_FORK_MAX_OLD_SPACE_SIZE` the unit lane runs under. The JS module-scope
+shape is what matters for defect 1 — a TS-typed local takes a different arm.
+
+#### Newly root-caused, NOT taken
+
+- **`Array.prototype` is not identity-stable inside a function body.** Probed on
+  base and on this branch: `function rd() { return Array.prototype; }` gives
+  `rd() !== Array.prototype` AND `rd() !== rd()` — every in-function read mints
+  a FRESH empty array (`Array.isArray` true, `length` 0). `Object.prototype`,
+  `Function.prototype`, `RegExp.prototype` and a user object are all stable, so
+  this is specific to `Array.prototype`. **This, and not the §10.5.1 invariant,
+  is what blocks `Proxy/getPrototypeOf/not-extensible-same-proto.js`**: the
+  target's real prototype and the value the trap returns are two different
+  objects, so the step-10 SameValue comparison fails and a COMPLIANT trap throws
+  `Proxy trap result violates a Proxy invariant`. Worth its own task; the
+  blast radius is every `X.prototype` identity comparison in a function.
+- **The §10.5 guards are dispatch-shape-sensitive, not realm-sensitive** (see
+  the realm table above). One mechanism — "a `$Proxy` the compiler only knows at
+  runtime reaches a dispatch without the §10.5.6 / §10.5.14 post-trap checks" —
+  is worth ~12 rows in this manifest alone. That is the best rows-per-effort
+  left in cluster F and it is now measured rather than guessed.
+- **`Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js`** is
+  NOT fixed by the narrowing above: its failing assertion reads
+  `Object.getPrototypeOf(outro)` where `outro = {}` and the prototype is written
+  inside a trap through the PARAMETER name `t`. The receiver-name scan sees `t`,
+  not `outro`, so the literal fold still claims it. Closing it needs the fold to
+  yield whenever a module contains a `setPrototypeOf` whose receiver is not
+  statically resolvable — a broad widening, not a call-site one.
+
+#### Residual sub-buckets (80 rows), updated
+
+| rows | status | sub-bucket | what it needs |
+| ---: | --- | --- | --- |
+| 23 | fail | `*-realm*` / `cross-realm` | **no longer environment** — re-classified above. 12 of them are the one dispatch-shape mechanism; 1 is the `null`-vs-`undefined` representation; 2 belong to #3371; 8 are foreign-intrinsic reads |
+| 24 | fail | `*-target-is-proxy.js` | nested-proxy forwarding over EXOTIC targets (array `length`, `new String("str")`, RegExp `lastIndex`, function `prototype`). Several mechanisms per row; 6 of 24 fail on host too |
+| 7 | fail | `has/call-in-prototype*`, `set/call-parameters-prototype*`, `defineProperty/call-parameters` | a proxy reached through the PROTOTYPE CHAIN never runs its trap — `$Object.$proto` is `ref null $Object` and `$Proxy` is not a subtype. Type-graph change, unchanged from F1 |
+| 4+3 | fail/CE | `Proxy/construct/*` NewTarget | #3371's lane, unchanged |
+| 4 | fail | `deleteProperty` family | #4745 tombstone/closed-struct gap, unchanged |
+| 4 | fail | `getOwnPropertyDescriptor/*` "X should be an own property" | gOPD trap-absent forward over exotic targets; 3 of 4 fail on host |
+| 2 | fail | `Reflect/ownKeys/{order-after-define-property,return-on-corresponding-order-large-index}` | unchanged from F1 |
+| 1 | fail | `Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js` | still blocked at its FIRST assertion (the refusal is invisible for a JS `var o = {}` carrier — F1's carrier-promotion finding). Its later `Object.getPrototypeOf(Object.create(null))` assertion is fixed by this slice, so the row is one defect closer |
+| 8 | fail/CE | singletons | `Proxy/getPrototypeOf/not-extensible-same-proto` (→ the `Array.prototype` identity defect above), `Reflect.hasOwnProperty` CE (`Reflect/enumerate/undefined.js`; `Reflect.enumerate === undefined` already answers correctly, so this row is one static fold away), `Reflect/construct/arguments-list-is-not-array-like.js` (non-array-literal argsList is still a hard compile error), `Proxy/enumerate`, `Proxy/set/trap-is-null-receiver` (prototype-chain), the `Proxy/apply/*-target-is-proxy` pair, `Proxy/get/trap-is-undefined-receiver` |
+
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
 ### What landed
@@ -4240,6 +4651,210 @@ unchanged. **Before starting any further slice of this plan, run
 `git log origin/main --grep=6651` and diff the files you intend to touch against
 main** — the two lanes working this issue produce twins in the same files, and a
 twin is far cheaper to avoid than to resolve.
+
+### 2026-09-23 — Cluster I (language misc, standalone), slice I2: `instanceof` consults `@@hasInstance`
+
+- **Branch** `worktree-agent-ad69a5dbc13ab8a8e`, base `main` @ `6190e961`.
+  **Worktree** `/home/claude/js2/.claude/worktrees/agent-ad69a5dbc13ab8a8e`.
+  Not pushed; the round-3 owner integrates it.
+- **Manifest** `plan/agent-context/6651/I-language-misc.txt`, 114 rows,
+  sha256 `f94fe9f129c0bcc5e5e52ce798cbeedfa6cae99f7506f5547af54717a71cdd68`
+  (unchanged from the triage pass).
+
+| standalone, `--isolate`, engine **quickjs** | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/I2-before.log`) | **3** | 100 | 11 |
+| after (`.tmp/6651/I2-after.log`) | **6** | 97 | 11 |
+
+**Per-row set diff (not a count comparison): +3 gained, 0 lost, 0 other
+verdict changes.**
+
+```
++ language/expressions/instanceof/symbol-hasinstance-get-err.js
++ language/expressions/instanceof/symbol-hasinstance-invocation.js
++ language/expressions/instanceof/symbol-hasinstance-to-boolean.js
+```
+
+**The triage's before-state is stale by 3 rows — measure your own.** The
+2026-09-21 triage entry above records `0 / 103 / 11`; on `main` @ `6190e961`
+the same manifest, same engine, same runner reads `3 / 100 / 11`. Three rows
+were fixed by other lanes' landed work between the two runs. Nothing was wrong
+with the triage; the manifest simply is not a constant.
+
+#### What landed, and the one design decision worth reading
+
+Three edits, `noJsHost`-only, ~215 lines of which most is comment:
+
+1. **`native-dynamic-instanceof.ts` — a new wrapper native
+   `__instanceof_operator(value, target) -> i32`.** It performs §13.10.2
+   InstanceofOperator steps 2-4 (`GetMethod(C, @@hasInstance)`, then
+   `ToBoolean(Call(handler, C, «O»))` through the existing `__apply_closure`
+   bridge with a one-element `__objvec`) and otherwise delegates, unchanged, to
+   `__instanceof_dynamic`. Same 0/1/2 tri-state, so the caller's
+   `emitInstanceofThrowGuard` is untouched.
+2. **`native-ordinary-instanceof.ts` — `moduleInstallsCallableHasInstance` is
+   exported and widened** to count `Object.defineProperty(X,
+   Symbol.hasInstance, <desc>)` / `Reflect.defineProperty(…)`.
+3. **`expressions/identifiers.ts` — the #2998 primitive-LHS fold declines**
+   when that predicate is true.
+
+**The decision: the handler dispatch is a WRAPPER, not an arm inside
+`__instanceof_dynamic`.** The round-2 dispatch table called I2 "a lowering
+change in one function"; putting it in that one function would have been a
+correctness bug. `__instanceof_dynamic` IS §7.3.20 OrdinaryHasInstance, and
+`function-proto-has-instance.ts` calls it directly as the body of
+`%Function.prototype%[@@hasInstance]`. OrdinaryHasInstance never consults
+`@@hasInstance` — an arm inside the helper would make
+`Function.prototype[Symbol.hasInstance].call(F, x)` re-enter `F`'s own handler,
+which no step of the spec does. One level up is the only place the dispatch is
+correct.
+
+Two measurements that set the other two edits, recorded so they are not
+re-derived:
+
+- `symbol-hasinstance-get-err.js` failed with **"Expected a Test262Error but
+  got a TypeError"** — i.e. `tryEmitNonCallableRhsThrow` fired. The gate's
+  syntactic scan matched `F[Symbol.hasInstance] = …` and
+  `{ [Symbol.hasInstance]: … }` but not the `Object.defineProperty` accessor
+  spelling, so the step-5 throw beat the step-2 read. That is edit 2.
+- `symbol-hasinstance-invocation.js` failed with **`callCount === 0`** — the
+  handler was never called, because the primitive-LHS fold answered `false`
+  first. That is edit 3, and it is why the change could not be confined to
+  `native-*-instanceof.ts`.
+
+The wrapper is built **only for a source file that installs a possibly-callable
+`@@hasInstance`**, so `__apply_closure` and the argument-vector runtime stay out
+of every other standalone binary. Documented residual: in a multi-file
+compilation where the first dynamic `instanceof` site is in a file without an
+installation and a later site is in one with it, the wrapper is minted once,
+from the first site, and the later site keeps the ordinary helper — a missed
+conversion, never a wrong answer.
+
+#### Controls — both targets, per-row, zero pass→non-pass
+
+Control manifest: every `language/expressions/instanceof/**` row plus every
+`built-ins/{Symbol/hasInstance,Function/prototype/Symbol.hasInstance}/**` row
+plus every file in the corpus that mentions `Symbol.hasInstance` at all
+(`grep -rl`, minus `intl402/`) — **85 rows**, i.e. the whole blast radius of
+both the widened gate and the declined fold. `.tmp/6651/I2-control.txt`.
+
+| control | before | after | row diff |
+| --- | --- | --- | --- |
+| standalone (`I2-control-standalone-{before,after}.log`) | 66 pass / 12 fail / 3 CE / 4 skip | **69** pass / 9 fail / 3 CE / 4 skip | +3 gained, **0 lost**, 0 other changes |
+| host, default target (`I2-control-host-{before,after}.log`) | 59 pass / 22 fail / 4 skip | 59 pass / 22 fail / 4 skip | **0 changes of any kind** |
+
+The +3 in the standalone control are the same three manifest rows; nothing
+outside them moved. The host lane is unchanged row-for-row, as the `noJsHost`
+gating predicts.
+
+Gates, run bare and chained before the commit: loc ✓ (after the grant below),
+func ✓, coercion ✓ (after the grant below), oracle-ratchet ✓ (+0 raw checker
+calls), dead-exports ✓, lint ✓, prettier ✓, `check:compiler-boundaries:inventory`
+✓, `node scripts/equivalence-gate.mjs` → **22 failing / 1720 passing, all 22 in
+the committed baseline, "No new equivalence regressions"**. Two allowances are
+in this file's frontmatter, dated 2026-09-23: `loc-budget-allow`
+`expressions/identifiers.ts` (+12, 7 of them comment — the decline has to be
+readable at the fold it reverses) and `coercion-sites-allow`
+`native-dynamic-instanceof.ts` (`__is_truthy` +1 — literally §13.10.2 step
+4.a's `ToBoolean`).
+
+#### Residuals — all 114 rows, re-bucketed on THIS base
+
+`.tmp/6651/I2-after.log` is the authority. 108 rows still non-pass. The
+triage's bucket table above still holds shape-for-shape; what changed is the
+count and three specifics worth recording:
+
+| bucket | rows left | note vs. the triage |
+| --- | ---: | --- |
+| `with` + `@@unscopables` | 15 | unchanged, still XL (a dynamic `with` environment record) |
+| singletons | ~13 | unchanged in kind |
+| `module-code/namespace/internals` | 12 | unchanged — I3, still wants a spec, see below |
+| direct `eval` (spread / caller scope / class-in-eval) | 10 | unchanged |
+| parameter defaults / destructuring params | 9 | unchanged |
+| global-object declaration descriptors | 7 | unchanged |
+| arrow `this` / `new.target` / `super` | 7 | unchanged |
+| tagged template | 7 | unchanged |
+| cross-realm | 6 | **wont-fix, reason below** |
+| `instanceof` | **3** | was 6. The `@@hasInstance` half is CLOSED by this slice; the `Function.prototype.prototype` half is re-root-caused below |
+| `arguments` object | 5 | unchanged |
+| `module-code` generator exports | 5 | still `env::g` — **still cluster A's, not I's** |
+| annexB | 4 | unchanged |
+| TDZ in closures / block scope | 4 | unchanged |
+| proper tail calls | 3 | unchanged |
+
+**Re-root-caused: the other three `instanceof` rows
+(`primitive-prototype-with-object`, `prototype-getter-with-object{,-throws}`).**
+All three are `[] instanceof Function.prototype`. They do NOT fail on the
+prototype walk — they fail because `__typeof_function` does not classify the
+canonical `Function.prototype` carrier as callable, so `__instanceof_dynamic`
+takes its documented "NOT CALLABLE ⇒ conservative false" tail and returns `0`
+without ever performing `Get(C, "prototype")`. The getter therefore runs zero
+times and no TypeError is raised. Closing them needs **two** things, and the
+second is the expensive one: (a) an exact-identity probe for the
+`Function.prototype` `$NativeProto` carrier in that tail, in the same
+reserve-then-fill shape as `__instanceof_object_prototype`; and (b)
+`__extern_get` on a `$NativeProto` carrier having to INVOKE an accessor
+installed by `Object.defineProperty(Function.prototype, "prototype", {get})` —
+the same "the expando table stores values, not attributes" limitation the
+slice-E2 handoff records for TypedArray carriers. Without (b), (a) alone turns
+a silent `false` into a silent `false` plus a wasted probe. **Deliberately not
+attempted here:** widening `__typeof_function` instead would be corpus-wide,
+and a wrong `true` on that classifier is observable everywhere.
+
+#### `$262.createRealm` — the wont-fix, with the spec-level reason
+
+Six rows, all of them calling `$262.createRealm()`:
+
+```
+built-ins/ThrowTypeError/distinct-cross-realm.js
+language/eval-code/indirect/realm.js
+language/expressions/call/eval-realm-indirect.js
+language/expressions/tagged-template/cache-realm.js
+language/types/reference/get-value-prop-base-primitive-realm.js
+language/types/reference/put-value-prop-base-primitive-realm.js
+```
+
+They are **not** an `instanceof`/eval/tagged-template gap that happens to use a
+realm; the realm IS the assertion. `distinct-cross-realm` asserts
+`%ThrowTypeError%` is a *different function object* in the second realm;
+`cache-realm` asserts the template-object cache is per-realm;
+`get-value-prop-base-primitive-realm` asserts a primitive's wrapper resolves
+against the *other* realm's `Number.prototype`. Each test's subject is the
+existence of two realms.
+
+The spec-level reason a no-host standalone target cannot honour them:
+
+1. **`$262.createRealm` is a HOST hook, not an ECMAScript feature.** test262's
+   INTERPRETING.md defines it as "a new ECMAScript Realm ... created by the
+   host"; §9.6 InitializeHostDefinedRealm is host-defined by construction. A
+   standalone binary has, by definition, no host to define it.
+2. **A standalone module instance IS exactly one realm, materialised at compile
+   time.** The intrinsics are WasmGC structs and module globals minted by
+   codegen and instantiated once per module instance. There is no runtime
+   operation that mints a second set — creating one would mean instantiating a
+   second module, which needs an embedder.
+3. **Even given a second instance, the two realms could not exchange object
+   references usefully.** Each instance has its own rec-group type identities,
+   so a value from instance B does not satisfy any `ref.test` in instance A;
+   every brand check, every `__typeof_*` classifier and the whole prototype
+   substrate would answer "foreign". The cross-realm *identity* assertions
+   these six rows make are precisely the ones that depend on those checks.
+
+So the honest verdict is **wont-fix for `--target standalone`**, not "not yet".
+The JS-host lane keeps whatever `$262.createRealm` support the runner gives it;
+nothing here changes that. Filed as
+[#6657](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6657-standalone-262-createrealm-wontfix)
+(`status: wont-fix`) on 2026-09-23, which converts 6 of cluster I's 108
+residual rows into documented done under this issue's definition of done.
+
+#### Logs and artefacts
+
+All under `.tmp/6651/` in the worktree (gitignored, not committed):
+`I2-before.log`, `I2-after.log`, `I2-control.txt`,
+`I2-control-standalone-{before,after}.log`,
+`I2-control-host-{before,after}.log`, `rowdiff.mjs` (the per-row set-diff
+tool), `gate-*.txt` (one file per gate, run bare — never piped), and
+`.tmp/base/` copies of all three edited files taken at the first edit.
 
 ## Handoff — 2026-09-22, the project-thread lane (PR #6026) signs off
 

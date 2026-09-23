@@ -150,10 +150,24 @@ export function tryEmitNonCallableRhsThrow(
  * this issue flips to pass; excluding it here would give the row back for no
  * correctness gain. Every other value — a function, an identifier, a call
  * result — is treated as possibly callable.
+ *
+ * ## Why `Object.defineProperty` counts too (#6651 I2)
+ *
+ * The third installation spelling is `Object.defineProperty(F,
+ * Symbol.hasInstance, { get() {…} })` — `symbol-hasinstance-get-err.js`, which
+ * wants the ACCESSOR's `Test262Error` and measured
+ * "Expected a Test262Error but got a TypeError" on this branch's base: the
+ * syntactic scan matched neither the assignment nor the computed-key shape, so
+ * the step-1 arm threw before §13.10.2 step 2 could read the property. Any
+ * `defineProperty` naming `@@hasInstance` counts, whatever the descriptor
+ * says: a descriptor is an arbitrary object expression, so "this descriptor
+ * installs nothing callable" is not statically decidable in general, and the
+ * consequence of over-counting is only that a module DECLINES a static fold it
+ * could have taken.
  */
 const HAS_INSTANCE_INSTALL_CACHE = new WeakMap<ts.SourceFile, boolean>();
 
-function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
+export function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
   const cached = HAS_INSTANCE_INSTALL_CACHE.get(file);
   if (cached !== undefined) return cached;
   let found = false;
@@ -185,6 +199,19 @@ function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
         found = true;
         return;
       }
+    }
+    // (#6651 I2) `Object.defineProperty(X, Symbol.hasInstance, <descriptor>)` /
+    // `Reflect.defineProperty(…)` — the accessor spelling. Matched on the KEY
+    // argument alone; see the "Why `Object.defineProperty` counts too" section.
+    if (
+      ts.isCallExpression(node) &&
+      node.arguments.length >= 3 &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "defineProperty" &&
+      isSymbolHasInstanceKey(node.arguments[1]!)
+    ) {
+      found = true;
+      return;
     }
     ts.forEachChild(node, visit);
   };
