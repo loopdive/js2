@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-05
+updated: 2026-09-23
 priority: high
 feasibility: hard
 model: fable
@@ -75,6 +75,10 @@ loc-budget-allow:
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
+  # 2026-09-23: the dynamic-call arm ladder moves verbatim out of
+  # tryEmitInlineDynamicCall (which shrinks by the same amount) so a large
+  # ladder can be emitted once as a shared helper instead of per call site.
+  - src/codegen/expressions/calls.ts::buildInlineDynamicDispatch
   # 2026-09-01: the standalone apply bridge rejects a local closure whose live
   # declared arity exceeds its fixed eight-position ABI while preserving the
   # existing full-vector linked/native fallback.
@@ -1572,6 +1576,59 @@ the binder slice must be `const x: number = "str"` producing TS2322; `1 +
 "str"` is valid TypeScript and is not a checker-negative control. Printer
 equivalence should be a separate `createPrinter().printFile` slice before full
 emit and self-hosting.
+
+## Parser on current main: compile time and runtime crashes (2026-09-23)
+
+Measured on the pinned TypeScript 5.9.3 checkout with
+`dogfood:typescript-parser-source` (JS host, consumer-driven barrels).
+
+**Compile time.** Main took about **28 min** and emitted a **70 MB** module.
+Two changes bring that to **~2.4 min** (143,046 ms wall, 1,650 MiB peak RSS) and
+**7.64 MB**:
+
+- *Deferred throw-message strings.* Every positioned `TypeError` message minted
+  during the body phase used to register its own string import and shift every
+  module global mid-body. They are now placeholders registered in one batch and
+  patched in `fixupModuleGlobalIndices`.
+- *Outlined dynamic-call ladders.* A dynamic call site with 16 or more candidate
+  closure types used to inline the whole `ref.test` ladder. It now calls one
+  shared `__dyn_call_N` helper per distinct candidate plan.
+
+**Barrel regression from PR #5963.** Four `issue-1058-barrel-*` tests failed on
+main. The #6491 under-applied-call widening padded formals whose type cannot
+hold `undefined`. `closurePadSafe` now gates it (externref, nullable ref, f64,
+i32 only).
+
+**Runtime crashes, both in the identifier-callee closure ladder
+(`call-identifier.ts`).** The parser calls NodeFactory functions through
+destructured bindings (`const { createNodeArray: factoryCreateNodeArray } =
+factory`), so every call dispatches on the runtime funcref type.
+
+1. `factoryCreateNodeArray(elements)` trapped with `illegal cast`. The generic
+   formal is erased to externref, and the candidate arm cast it straight to its
+   own vec type while the caller held a vec with a different element
+   representation. The arm now uses the reserved `__vec_from_extern_<vec>`
+   materializer.
+2. `factoryCreateVariableDeclaration(...)` and
+   `factoryCreateVariableDeclarationList(...)` ended in the ladder's TypeError
+   terminal. The `NodeFactory` interface declares `x?: T`, which the call site
+   widens to externref. The implementation declares `x: T | undefined` (a
+   nullable ref) or `x = default` (a number), so no candidate had its funcref
+   type. The site now adds that one restored signature and hands the slot over
+   as null or the default sentinel when it is `undefined`, else a cast or unbox.
+
+**Result:** all three parser fingerprints (`builderStatePublic.ts`,
+`corePublic.ts`, `performanceCore.ts`) match exactly. Before, all three
+crashed. Regression tests: `issue-1058-erased-vec-closure-arg`,
+`issue-1058-optional-slot-closure-arg`, `issue-1058-deferred-throw-strings`,
+`issue-1058-outlined-dynamic-call`.
+
+**Known separate gap.** A `T | undefined` struct field holding an absent value
+reads back as `null`, so `d.init === undefined` is false even on a direct call.
+Truthiness checks are unaffected. This does not block the parser fingerprints.
+
+**Next:** rerun the binder probe (const-local = 65,792; duplicate-let =
+131,330).
 
 ## Acceptance criteria
 

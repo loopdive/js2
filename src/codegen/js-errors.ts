@@ -17,7 +17,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
-import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobal, deferrableStringConstantGlobalGet, ensureExnTag } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 /**
@@ -76,13 +76,14 @@ export function buildThrowJsErrorInstrs(
 ): Instr[] {
   const inModule = opts?.forceInModuleCtor === true || usesNativeJsErrors(ctx);
   if (inModule) emitWasiErrorConstructor(ctx, kind, 1);
-  addStringConstantGlobal(ctx, message);
+  const deferredMessage = deferrableStringConstantGlobalGet(ctx, message);
+  if (!deferredMessage) addStringConstantGlobal(ctx, message);
   const ctorIdx = opts?.forceInModuleCtor
     ? ctx.funcMap.get(`__new_${kind}`)
     : ensureLateImport(ctx, `__new_${kind}`, [{ kind: "externref" }], [{ kind: "externref" }]);
   if (opts?.flush) flushLateImportShifts(ctx, opts.flush);
   const tagIdx = ensureExnTag(ctx);
-  const instrs: Instr[] = [...stringConstantExternrefInstrs(ctx, message)];
+  const instrs: Instr[] = deferredMessage ?? [...stringConstantExternrefInstrs(ctx, message)];
   // If the constructor isn't available, the message externref is still on the
   // stack — degrade to throwing a string. Both paths produce the same tag.
   if (ctorIdx !== undefined) {
@@ -90,6 +91,18 @@ export function buildThrowJsErrorInstrs(
   }
   instrs.push({ op: "throw", tagIdx });
   return instrs;
+}
+
+/**
+ * Push a throw-message string constant as externref. During the body phase a
+ * new message's import registration is batched (#1058); otherwise it is
+ * registered immediately.
+ */
+export function throwMessageExternrefInstrs(ctx: CodegenContext, message: string): Instr[] {
+  const deferred = deferrableStringConstantGlobalGet(ctx, message);
+  if (deferred) return deferred;
+  addStringConstantGlobal(ctx, message);
+  return stringConstantExternrefInstrs(ctx, message);
 }
 
 /**

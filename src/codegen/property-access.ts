@@ -64,6 +64,7 @@ import {
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
+import { throwMessageExternrefInstrs } from "./js-errors.js";
 import {
   buildThrowJsErrorInstrs,
   classifyPrivateMember,
@@ -1444,9 +1445,9 @@ export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node, flush?
   // Register the literal: in legacy mode this adds a `string_constants` global
   // import; in nativeStrings mode it just records the value with sentinel -1
   // so call sites can materialize it inline (#1174).
-  addStringConstantGlobal(ctx, message);
+  const messageInstrs = throwMessageExternrefInstrs(ctx, message);
   const tagIdx = ensureExnTag(ctx);
-  return [...stringConstantExternrefInstrs(ctx, message), { op: "throw", tagIdx }];
+  return [...messageInstrs, { op: "throw", tagIdx }];
 }
 
 /**
@@ -1648,6 +1649,8 @@ export function findAlternateStructsForField(
     // `findFnctorResidStructsForField` — hiding a carrier from the arms is
     // correct; hiding it from the vote is the #4217 `generator` defect.
     if (typeName.endsWith("__resid") || isFnctorLayoutStructName(typeName)) continue;
+    // (#6651 B6) A RegExp's `lastIndex` is two slots (f64 + deferred raw); a field arm sees only the f64.
+    if (propName === "lastIndex" && typeName === "__StandaloneRegExp") continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);

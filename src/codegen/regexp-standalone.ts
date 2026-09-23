@@ -1042,6 +1042,12 @@ export const RE_FIELD_LASTINDEX = 6;
 // numeric reflection site.
 export const RE_FIELD_LASTINDEX_RAW = 7;
 export const RE_FIELD_LASTINDEX_RAW_PRESENT = 8;
+// (#6651 B6) [[Writable]] of the own `lastIndex` data property, inverted so a
+// fresh carrier's default `0` is the spec's `writable: true` (§22.2.3.3). Set
+// only by `Object.defineProperty(re, "lastIndex", {writable: false})`; read by
+// the runtime `[[Set]]` arms in `regexp-lastindex-carrier.ts`. `$`-prefixed so
+// the closed-struct ladders never expose it as a property.
+export const RE_FIELD_LASTINDEX_NONWRITABLE = 9;
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
@@ -1135,6 +1141,7 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
     { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
     { name: "lastIndexRaw", type: { kind: "externref" } as ValType, mutable: true },
     { name: "lastIndexRawPresent", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "$lastIndexNonWritable", type: { kind: "i32" } as ValType, mutable: true },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -1945,6 +1952,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 { op: "f64.const", value: 0 }, // lastIndex
                 { op: "ref.null.extern" }, // raw lastIndex
                 { op: "i32.const", value: 0 }, // raw present
+                { op: "i32.const", value: 0 }, // lastIndex writable
                 { op: "struct.new", typeIdx: structTypeIdx },
                 { op: "return" },
               ],
@@ -2439,6 +2447,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "f64.const", value: 0 },
     { op: "ref.null.extern" },
     { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: structTypeIdx },
   ];
 
@@ -2522,8 +2531,8 @@ function emitStandaloneRegExpStruct(
   fctx.body.push({ op: "i32.const", value: compiled.nScratch });
   // field 6: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
   fctx.body.push({ op: "f64.const", value: 0 });
-  // fields 7/8: no deferred raw value on a fresh object.
-  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 });
+  // fields 7/8: no deferred raw value on a fresh object; field 9: writable.
+  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 }, { op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -2797,6 +2806,7 @@ export function compileStandaloneRegExpConstructor(
         { op: "f64.const", value: 0 },
         { op: "ref.null.extern" },
         { op: "i32.const", value: 0 },
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: structTypeIdx },
       );
     }
@@ -2867,6 +2877,7 @@ export function compileStandaloneRegExpConstructor(
     fctx.body.push(
       { op: "f64.const", value: 0 },
       { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: structTypeIdx },
     );
@@ -3314,7 +3325,26 @@ export function emitRegexSearchCall(
     // 9.e / 15), then restore the match flag for the caller.
     const matchedTmp = allocLocal(fctx, `__re_matched_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.set", index: matchedTmp });
+    // (#6651 B6) The reflective/protocol route has no receiver expression for
+    // the compile-time guard, so it consults the carrier's runtime
+    // [[Writable]] bit: `? Set(R, "lastIndex", e, true)` throws on a
+    // non-writable `lastIndex` (§22.2.7.2 steps 12.a.i.1 / 12.c.i.1 / 16).
+    const runtimeWritableGuard: Instr[] =
+      options.gyLastIndex === "runtime"
+        ? [
+            { op: "local.get", index: regexpLocal },
+            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+                flush: fctx,
+              }),
+            },
+          ]
+        : [];
     const updateLastIndex: Instr[] = [
+      ...runtimeWritableGuard,
       ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, regexpExpr ?? undefined),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedTmp },
@@ -6013,6 +6043,17 @@ function emitRegExpCompileInPlace(
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
     );
   }
+  // (#6651 B6) §22.2.3.3.1 step 11 — `? Set(obj, "lastIndex", +0, true)`, AFTER
+  // the matcher was replaced: a non-writable `lastIndex` throws with the new
+  // program already installed (`pattern-regexp-immutable-lastindex`).
+  const readOnlyThrow = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+    flush: fctx,
+  });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+    { op: "if", blockType: { kind: "empty" }, then: readOnlyThrow },
+  );
   fctx.body.push(
     { op: "local.get", index: regexpLocal },
     { op: "f64.const", value: 0 },

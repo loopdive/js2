@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 9028,
-    "fail": 1,
+    "pass": 9027,
+    "fail": 2,
     "ce": 0,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10772,
-    "fail": 781,
+    "pass": 10784,
+    "fail": 769,
     "ce": 151,
     "skip": 0,
     "total": 11704,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 526,
-        "fail": 81,
+        "pass": 528,
+        "fail": 79,
         "ce": 2,
         "skip": 0,
         "total": 609,
-        "pct": 86
+        "pct": 87
       },
       {
         "name": "arrow-function",
@@ -192,12 +192,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 70,
-        "fail": 13,
+        "pass": 72,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 83,
-        "pct": 84
+        "pct": 87
       },
       {
         "name": "let",
@@ -210,21 +210,21 @@
       },
       {
         "name": "Symbol.match",
-        "pass": 60,
-        "fail": 16,
+        "pass": 63,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 79
+        "pct": 83
       },
       {
         "name": "Symbol.replace",
-        "pass": 70,
-        "fail": 4,
+        "pass": 72,
+        "fail": 2,
         "ce": 1,
         "skip": 0,
         "total": 75,
-        "pct": 93
+        "pct": 96
       },
       {
         "name": "rest-parameters",
@@ -237,12 +237,12 @@
       },
       {
         "name": "Symbol.split",
-        "pass": 49,
-        "fail": 8,
+        "pass": 51,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 57,
-        "pct": 86
+        "pct": 89
       },
       {
         "name": "iterator-chunking",
@@ -309,12 +309,12 @@
       },
       {
         "name": "Symbol.search",
-        "pass": 27,
-        "fail": 7,
+        "pass": 30,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 34,
-        "pct": 79
+        "pct": 88
       },
       {
         "name": "Set",
