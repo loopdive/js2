@@ -7401,6 +7401,35 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext, mapHook?: TaFro
 }
 
 /**
+ * (#6651 E6) `fill` / `copyWithin` re-validate AFTER their argument coercions
+ * (ES2024 MakeTypedArrayWithBufferWitnessRecord + IsTypedArrayOutOfBounds): a
+ * `valueOf` that detaches the buffer must surface as a TypeError, not as a
+ * silent no-op over the post-detach length of 0. `extraCond` (i32, may be empty)
+ * narrows it — copyWithin checks only when `count > 0`.
+ */
+function taDynDetachedAfterCoercionThrow(
+  ctx: CodegenContext,
+  dvLocal: number,
+  dynIdx: number,
+  byteVecIdx: number,
+  extraCond: Instr[],
+): Instr[] {
+  return [
+    { op: "local.get", index: dvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: byteVecIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    ...(extraCond.length > 0 ? [...extraCond, { op: "i32.and" } as Instr] : []),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Cannot perform operation on a detached ArrayBuffer"),
+    },
+  ];
+}
+
+/**
  * (#2872) Mint the native `__ta_dyn_fill(recv, value, start, end, argc) →
  * externref` helper — `%TypedArray%.prototype.fill` (§23.2.3.8) over a
  * `$__ta_dyn_view` receiver (a dynamically-constructed TA view reached through
@@ -7609,6 +7638,8 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
       ],
     });
   }
+  // (#6651 E6) §23.2.3.9 steps 13-14: the coercions above may have detached it.
+  fctx.body.push(...taDynDetachedAfterCoercionThrow(ctx, dvLocal, dynIdx, byteVecIdx, []));
 
   // arr = dv.buf.data ; bo = dv.byteOffset ; le = 1.
   fctx.body.push({ op: "local.get", index: dvLocal });
@@ -8464,6 +8495,13 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
     fctx.body.push({ op: "select" }); // a<b ? a : b
     fctx.body.push({ op: "local.set", index: countLocal });
   }
+  // (#6651 E6) §23.2.3.6 step 17: count > 0 re-checks the (possibly detached) buffer.
+  const countPositive: Instr[] = [
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+  ];
+  fctx.body.push(...taDynDetachedAfterCoercionThrow(ctx, dvLocal, dynIdx, byteVecIdx, countPositive));
 
   // arr = dv.buf.data ; bo = dv.byteOffset.
   fctx.body.push({ op: "local.get", index: dvLocal });
