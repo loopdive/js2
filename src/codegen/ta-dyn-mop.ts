@@ -57,6 +57,8 @@ import { nativeStringLiteralInstrs } from "./native-strings.js";
 // glue singleton a static `<View>.prototype` value read yields.
 import { ensureDataViewNativeProtoGlue, ensureTypedArrayViewNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
+// (#6651 E4) the ONE `%TypedArray%.{from,of}` singleton the intrinsic carrier seeds
+import { buildTaCtorInheritedFromOfGetArm } from "./ta-static-from-of-body.js";
 
 /** Fresh synthetic FunctionContext for a native helper (the #2872 pattern). */
 function makeFctx(name: string, params: { name: string; type: ValType }[], returnType: ValType): FunctionContext {
@@ -1333,6 +1335,12 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: cAny }]),
       { op: "if", blockType: { kind: "empty" }, then: inner },
     );
+
+    // (#6651 E4) §23.2.2 `from` / `of`, INHERITED from `%TypedArray%`. Built in
+    // `ta-static-from-of-body.ts` beside the bodies those values run, not here:
+    // the arm is the CONSUMING half of the same mechanism, and this function is
+    // already at its size budget.
+    getFn.body.unshift(...buildTaCtorInheritedFromOfGetArm(ctx, getFn, tpkIdx, anyStrTypeIdx, keyIs));
   }
 
   // ── (#3177 slice 4) Descriptor MOP arms — §10.4.5.3 [[DefineOwnProperty]] /
