@@ -118,6 +118,7 @@ import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import { tryEmitVecLinkedInstanceOf } from "../vec-proto-link.js"; // (#2917)
 import {
   tryEmitCompiledModuleNamespaceObject,
   tryEmitCompiledRuntimeNamespaceFunctionObject,
@@ -3214,6 +3215,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // modeled (#1325, distinct $__Date / $__StandaloneRegExp structs). NEVER emit
   // the host import here.
   if (noJsHost(ctx)) {
+    const vecLinked = tryEmitVecLinkedInstanceOf(ctx, fctx, expr, ctorName); // (#2917) `extends Array` link
+    if (vecLinked) return vecLinked;
     if (ctx.standalone && isStandaloneWrapperConstructorName(ctorName)) {
       return emitNativeWrapperInstanceOf(ctx, fctx, expr, ctorName);
     }

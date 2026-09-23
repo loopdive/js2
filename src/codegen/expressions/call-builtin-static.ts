@@ -149,6 +149,7 @@ import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
 import { isStandaloneArraySubclass } from "../array-subclass-receiver.js"; // (#2917)
+import { emitArrayRootedProtoParent } from "../vec-proto-link.js"; // (#2917)
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -2413,6 +2414,8 @@ export function compileBuiltinStaticCall(
       if (parentClassName && emitLazyProtoGet(ctx, fctx, parentClassName)) {
         return { kind: "externref" };
       }
+      // (#2917) `class J extends Array`: J.prototype's [[Prototype]] is Array.prototype.
+      if (emitArrayRootedProtoParent(ctx, fctx, childClassName)) return { kind: "externref" };
       // Base class with no parent: return null (Object.prototype not modeled)
       fctx.body.push({ op: "ref.null.extern" });
       return { kind: "externref" };
