@@ -3882,7 +3882,15 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
   };
   const isProxyFactory = (value: ts.Expression): boolean => {
     const current = unwrap(value);
-    if (ts.isNewExpression(current) && ts.isIdentifier(current.expression) && current.expression.text === "Proxy") {
+    // (#6651 F3) `new <Proxy-constructor value>(t, h)` — not just the spelling
+    // `new Proxy(t, h)`. `var P = new OProxy(f, h); new P()` reached NO proxy
+    // arm at all: this admission declined, so `tryCompileNativeConstructFromValue`
+    // returned `undefined` and the §10.5.14 dispatch (which the driver already
+    // carries, and which answers correctly when the SAME proxy arrives through a
+    // parameter) was never reached. Probed on base: `new P()` direct ran zero
+    // trap calls and threw nothing, while `function nn(x){return new x();}
+    // nn(P)` ran the trap and threw the step-11 TypeError.
+    if (ts.isNewExpression(current) && tracesToProxyConstructorValue(ctx, current.expression)) {
       return true;
     }
     if (
