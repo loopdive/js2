@@ -18,6 +18,7 @@ import {
   recordLiftedCaptureBox,
 } from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitI64ToStringCall } from "../bigint-string-context.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import {
   candidateFixedFormalCount,
@@ -1500,6 +1501,9 @@ export function compileIdentifierCall(
         coerceType(ctx, fctx, argType, { kind: "externref" }, "string");
         return { kind: "externref" };
       }
+      // (#6656) i64: exact bigint formatter, else the number route.
+      if (argType?.kind === "i64" && emitI64ToStringCall(ctx, fctx, argType))
+        return emitStringBuiltinNumberResult(ctx, fctx);
 
       return argType ?? { kind: "externref" };
     }

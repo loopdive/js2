@@ -17,10 +17,14 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/declarations.ts
   - src/codegen/binary-ops.ts
+  - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
   - src/codegen/string-ops.ts::compileStringBinaryOp
   - src/codegen/declarations/import-collector.ts::unifiedVisitNode
   - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+coercion-sites-allow:
+  - src/codegen/bigint-string-context.ts
 ---
 
 <!--
@@ -45,6 +49,16 @@ functions) down to what is listed here. What remains cannot move:
 - `binary-ops.ts` +7 — the numeric-hint branch (the hint local and its
   ternary arm) and two one-line calls into the leaf. The hint is computed from
   six sibling flags that exist only in `compileBinaryExpression`.
+-->
+
+<!--
+2026-09-23 budget rationale (slice 4 groundwork). `String(x)` needs an i64
+arm at its own call site in `compileIdentifierCall` (+3 lines: the guard and
+its comment; +1 import). The formatter choice itself lives in the leaf
+`bigint-string-context.ts`, whose unbranded-i64 fallback is the one
+`number_toString` site the coercion gate counts: a native `type i64 = number`
+has no exact bigint formatter to route to, and before this it produced an
+invalid module rather than a string.
 -->
 
 <!--
@@ -580,3 +594,44 @@ The run was OOM-killed once after `F-methoddef` (exit 137 on a 16 GB box with
 four lanes active) and resumed cleanly — `run-batch.mts` skips any pair whose
 out-file exists — with `NODE_OPTIONS=--max-old-space-size=3072`. That bound is
 worth keeping for the next lane.
+
+### Slice 4 probe (2026-09-23) — the NaN / "[object Object]" rows are NOT a limb problem
+
+Before building `$BigIntVal`, the five non-`RangeError` rows in section C were
+traced into the polyfill. Result: **native limbs would not move them.**
+
+- The vendored `@js-temporal/polyfill` does all of its large arithmetic in
+  **JSBI** (`class JSBI extends Array`, 30-bit digits, pure JS). Native BigInt
+  appears only at the API edge (`globalThis.BigInt(t.toString(10))`).
+- Compiled standalone, JSBI's **arithmetic is correct**: `.tmp/s74c/jsbi.mts`
+  gets `toNumber(9007199254740991 * 1e9 + 999999999)`, the quotient and the
+  comparison right. Only its **ToString** fails: `x.toString(10)` is right,
+  `x.toString()` answers `"null"`.
+- Minimal repro (`.tmp/s74c/tostr5.mts`, `.tmp/s74c/shape.mts`):
+  ```js
+  class J extends Array { constructor(n, s) { super(n); this.sign = s; } toString(i = 10) { return "G" + i; } }
+  const x = J.make(5);   // any-typed: make() can return its argument
+  x.toString()           // "null"   (spec "G10")
+  x.toString(undefined)  // "G10"
+  x instanceof J         // false
+  J.prototype.toString.call(x)  // traps: null dereference
+  ```
+  A standalone `class X extends Array` instance is a plain `$Vec` with its own
+  fields in the expando bag. It carries **no link to `X`**, so any dispatch
+  that is not statically resolved to `X` (an `any` receiver, implicit
+  ToString, `instanceof`, `X.prototype.m.call`) misses the subclass. A
+  zero-argument `.toString()` on `any` goes to `__extern_toString`, whose vec
+  arm runs `Array.prototype.toString`.
+- That substrate gap is **#2917 / #3240** (standalone faithful `extends
+  <Builtin>`, Array slice), not this issue. The `«NaN»` rows (a JSBI `total`
+  read back through ToString/ToNumber) and the `«[object Object]»` rows (a
+  JSBI rendered through the generic ToString) both sit on it. The two
+  `RangeError` rows and the `cannot convert number to bigint` row remain the
+  genuine >2^63 native-BigInt cases.
+
+Landed alongside as groundwork: `String(x)` for a statically bigint-typed `x`
+had no i64 arm and returned the raw i64 as a string (`String(123n) === "123"`
+false; `String(123n).length` failed validation on main `95b9eee151`). Fixed in
+`src/codegen/bigint-string-context.ts::emitI64ToStringCall`, witness
+`tests/issue-6656-string-call-bigint.test.ts` (fails on base with the
+validation error, passes after).

@@ -59,7 +59,7 @@
  * after the call is unchanged.
  */
 import type { ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { usesNativeNumberFormat } from "./number-format-native.js";
 
 /**
@@ -87,4 +87,37 @@ export function registerBigIntToStringDemand(ctx: CodegenContext, needed: Set<st
   if (!isBigIntOperand) return;
   if (!usesNativeNumberFormat(ctx)) return;
   needed.add("bigint_toString");
+}
+
+/**
+ * (#6656 slice 4) `String(x)` for an i64 operand — the one ToString context
+ * slice 2 did not reach, because the builtin lives in `call-identifier.ts`, not
+ * `string-ops.ts`.
+ *
+ * That builtin had arms for i32, f64, externref and refs, and none for i64, so
+ * it fell through to `return argType` and handed back the RAW i64 as if it
+ * were a string. Measured on main `95b9eee151`, standalone:
+ * `String(123n) === "123"` answered false, and `String(123n).length` produced
+ * an invalid module (`struct.get` on an `i64.const`). The demand half was
+ * already right — `import-collector.ts` registers `bigint_toString` for
+ * `String(bigint)` — so only the call site was missing.
+ *
+ * Emits the formatter call and answers true; the caller then applies its
+ * ordinary number-result tail, since both formatters share the
+ * `(scalar) -> externref` ABI. A branded bigint gets the exact formatter; an
+ * unbranded i64 (a native `type i64 = number`) keeps the f64 route every other
+ * numeric string context uses. Answers false — emitting nothing — when neither
+ * formatter is registered, leaving the caller's existing fallthrough intact.
+ */
+export function emitI64ToStringCall(ctx: CodegenContext, fctx: FunctionContext, argType: ValType): boolean {
+  const exact = bigIntToStringIdx(ctx, argType);
+  if (exact !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: exact });
+    return true;
+  }
+  const viaNumber = ctx.funcMap.get("number_toString");
+  if (viaNumber === undefined) return false;
+  fctx.body.push({ op: "f64.convert_i64_s" });
+  fctx.body.push({ op: "call", funcIdx: viaNumber });
+  return true;
 }
