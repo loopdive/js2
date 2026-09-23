@@ -172,7 +172,7 @@ loc-budget-allow:
   # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
   # not as its TARGET's static shape). `property-access.ts` +13 — three lines
   # at the dot-property arm in `compilePropertyAccess`, three at its computed
-  # twin in `compileElementAccess`, and the import; `assignment.ts` +13 for the
+  # twin in `compileElementAccess`, and the import; `assignment.ts` +28 for the
   # write arm; `object-ops.ts` +15 and `new-super.ts` +12 for the
   # helper-returned-proxy hop. The lowering itself and all of its rationale
   # live in the NEW leaf `src/codegen/proxy-receiver-generic-read.ts` — the
@@ -443,7 +443,11 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/ta-dyn-mop.ts
 func-budget-allow:
-  # 2026-09-23 — cluster F slice F4: +4 inside `compileElementAccess`, which is
+  # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
+  # the WRITE arm plus the `__proto__` exclusion and the measurement that
+  # forced it (see the LOC rationale above; the exclusion is the one thing
+  # this slice regressed and then closed, so it is recorded at the clause).
+  # And +4 inside `compileElementAccess`, which is
   # the WHOLE arm — a three-line call to `tryProxyReceiverElementRead` plus its
   # pointer comment. The mechanism, the measurements and every line of
   # rationale live in the NEW leaf `src/codegen/proxy-receiver-generic-read.ts`
