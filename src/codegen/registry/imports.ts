@@ -217,7 +217,11 @@ export function addStringConstantGlobal(ctx: CodegenContext, value: string): voi
  * prohibitively expensive for finalize-time producers such as
  * `__struct_field_names` (one CSV per visible struct shape).
  */
-export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<string>): void {
+export function addStringConstantGlobals(
+  ctx: CodegenContext,
+  values: Iterable<string>,
+  opts?: { deferFixup?: boolean },
+): void {
   const pending: string[] = [];
   const seen = new Set<string>();
   for (const value of values) {
@@ -266,9 +270,62 @@ export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<s
     ctx.mod.stringPool.push(value);
   }
   const addedImportGlobals = ctx.numImportGlobals - oldNumImportGlobals;
-  if (hasModuleGlobals && addedImportGlobals > 0) {
+  if (hasModuleGlobals && addedImportGlobals > 0 && !opts?.deferFixup) {
     fixupModuleGlobalIndices(ctx, oldNumImportGlobals, addedImportGlobals);
   }
+}
+
+/** A `global.get` whose string-constant import is registered at the end of bodies. */
+type DeferredStringConstantGet = Instr & { op: "global.get"; index: number; deferredStringConst?: string };
+
+/**
+ * (#1058) Emit `global.get` of a string-constant import whose registration may
+ * be deferred to the end of the body phase.
+ *
+ * Every string registered after module globals exist rewalks the whole module
+ * (`fixupModuleGlobalIndices`). Throw sites embed their source position in the
+ * message (`Cannot access property on null or undefined at L:C`), so a large
+ * program mints one string per guarded access: the TypeScript parser graph
+ * adds ~11,500 of them, and the rewalks were a third of its compile time.
+ *
+ * While `ctx.deferredStringConstants` is active the read is emitted against a
+ * PLACEHOLDER — an existing string-constant import, so every body-time type
+ * query still sees an immutable externref global, and it lies below the
+ * import/module threshold, so no shift ever moves it. The instr carries its
+ * value; `resolveDeferredStringConstants` registers all pending values in one
+ * batch and patches the marked reads in the same walk that shifts module
+ * globals. That walk has exactly the coverage the eager path relied on, and a
+ * marked read survives cloning because the marker is an own property.
+ */
+export function deferrableStringConstantGlobalGet(ctx: CodegenContext, value: string): Instr[] | undefined {
+  const pending = ctx.deferredStringConstants;
+  if (!pending || ctx.nativeStrings || ctx.strictNoHostImports || ctx.stringGlobalMap.has(value)) return undefined;
+  let placeholder: number | undefined;
+  for (const idx of ctx.stringGlobalMap.values()) {
+    if (idx >= 0 && idx < ctx.numImportGlobals) {
+      placeholder = idx;
+      break;
+    }
+  }
+  if (placeholder === undefined) return undefined;
+  pending.add(value);
+  const get: DeferredStringConstantGet = { op: "global.get", index: placeholder, deferredStringConst: value };
+  return [get];
+}
+
+/** Start deferring throw-message string constants (see `deferrableStringConstantGlobalGet`). */
+export function beginDeferredStringConstants(ctx: CodegenContext): void {
+  ctx.deferredStringConstants ??= new Set();
+}
+
+/** Register every deferred string constant and patch its placeholder reads. */
+export function resolveDeferredStringConstants(ctx: CodegenContext): void {
+  const pending = ctx.deferredStringConstants;
+  ctx.deferredStringConstants = undefined;
+  if (!pending || pending.size === 0) return;
+  const oldNumImportGlobals = ctx.numImportGlobals;
+  addStringConstantGlobals(ctx, pending, { deferFixup: true });
+  fixupModuleGlobalIndices(ctx, oldNumImportGlobals, ctx.numImportGlobals - oldNumImportGlobals, true);
 }
 
 /**
@@ -371,7 +428,7 @@ export function exportedExnTagIndex(
  * Fix up module-global absolute indices in all compiled function bodies when
  * new import globals are inserted after module globals already exist.
  */
-function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta: number): void {
+function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta: number, patchDeferred = false): void {
   // Dedupe per-call: an instr (or nested array node) reachable from multiple
   // top-level bodies must only be shifted once per fixup call. The `shifted`
   // Set below dedupes top-level Instr[] arrays, but nested arrays (if.then,
@@ -447,6 +504,14 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     // overhead on arrays this small and this numerous. Semantics unchanged.
     for (let i = 0; i < instrs.length; i++) {
       const instr = instrs[i]!;
+      const deferred = patchDeferred ? (instr as DeferredStringConstantGet).deferredStringConst : undefined;
+      if (deferred !== undefined) {
+        // The resolved import index is already final; never shift it.
+        (instr as DeferredStringConstantGet).index = ctx.stringGlobalMap.get(deferred)!;
+        (instr as DeferredStringConstantGet).deferredStringConst = undefined;
+        visitedInstrs.add(instr as object);
+        continue;
+      }
       if ((instr.op === "global.get" || instr.op === "global.set") && instr.index >= threshold) {
         if (!visitedInstrs.has(instr as object)) {
           visitedInstrs.add(instr as object);
