@@ -3,6 +3,7 @@ import * as path from "path";
 import { ts } from "./ts-api.js";
 import type { CompileOptions } from "./index.js";
 import { rewriteCjsRequire } from "./cjs-rewrite.js";
+import { foldStandaloneProcessEnvBranches } from "./cjs-standalone-env-fold.js";
 import { getDefaultEnvironment } from "./env.js";
 import { resolveConsumerDrivenImports } from "./resolve/consumer-driven-barrels.js";
 
@@ -39,6 +40,12 @@ export class ModuleResolver {
   private diagnostics: ModuleResolutionDiagnostic[] = [];
   /** Whether pure barrels may be expanded from their consumers' named demand. */
   readonly consumerDrivenBarrels: boolean;
+  /**
+   * (#6563) Target-dependent source fold applied to every file as it is read,
+   * before the CJS rewrite and the dependency scan. Identity except under
+   * `--target standalone`, whose `process.env` is always empty.
+   */
+  readonly foldSource: (source: string) => string;
 
   /**
    * Create a resolver rooted at a directory.
@@ -53,6 +60,11 @@ export class ModuleResolver {
     this.externals = new Set(options?.externals ?? []);
     this.extensions = options?.resolve?.extensions ?? [".ts", ".tsx", ".d.ts"];
     this.consumerDrivenBarrels = options?.resolve?.consumerDrivenBarrels === true;
+    const define = options?.define;
+    this.foldSource =
+      options?.target === "standalone"
+        ? (source) => foldStandaloneProcessEnvBranches(source, define)
+        : (source) => source;
 
     // Build compiler options for TS resolver
     const moduleDirs = options?.resolve?.modules ?? ["node_modules"];
@@ -625,7 +637,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
       const synthesized = resolver.getStaticJsonSource(filePath);
       if (synthesized !== undefined) return synthesized;
       try {
-        return getFs()!.readFileSync(filePath, "utf-8");
+        return resolver.foldSource(getFs()!.readFileSync(filePath, "utf-8"));
       } catch {
         return undefined;
       }
@@ -644,7 +656,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     let content = resolver.getStaticJsonSource(canonicalPath);
     if (content === undefined) {
       try {
-        content = getFs()!.readFileSync(canonicalPath, "utf-8");
+        content = resolver.foldSource(getFs()!.readFileSync(canonicalPath, "utf-8"));
       } catch {
         // File not found — skip (TS will report errors)
         onStack.delete(canonicalPath);
