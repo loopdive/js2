@@ -23,6 +23,11 @@ import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
+import {
+  PROXY_READ_DECLINE,
+  tryProxyReceiverElementRead,
+  tryProxyReceiverPropertyRead,
+} from "./proxy-receiver-generic-read.js"; // (#6651 F4)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -4008,6 +4013,10 @@ export function compilePropertyAccess(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
+  // (#6651 F4) proxy receiver → generic `__extern_get`; proxy-receiver-generic-read.ts
+  const __f4p = tryProxyReceiverPropertyRead(ctx, fctx, expr, propName);
+  if (__f4p !== PROXY_READ_DECLINE) return __f4p;
+
   recordDynamicClassAccessorRead(ctx, resolveWasmType(ctx, objType), propName);
   // (#6457) The standalone twin, for `prototype` only: a dynamic receiver has no
   // class to resolve the name against, so this read lowers to
@@ -5105,6 +5114,10 @@ export function compileElementAccess(
 
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;
+
+  // (#6651 F4) the computed twin; proxy-receiver-generic-read.ts
+  const __f4e = tryProxyReceiverElementRead(ctx, fctx, expr);
+  if (__f4e !== PROXY_READ_DECLINE) return __f4e;
 
   // (#4491) `this["p"]` / `globalThis["p"]` on a `var`-declared script global —
   // the bracket twin of the #4500 Slice A dot arm.
