@@ -22,6 +22,7 @@ import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
+import { tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
@@ -1115,8 +1116,21 @@ export function compileObjectDefineProperty(
   // lose the struct-accessor compiled-getter wiring).
   if (ctx.standalone) {
     const isProxyReceiver = (() => {
+      // (#6651 F3) The callee test is "does this `new` MAKE a proxy", not "is it
+      // spelled `Proxy`". `var p = new OProxy(t, h)` (`OProxy` =
+      // `$262.createRealm().global.Proxy`) mints a real `$Proxy` — the construct
+      // driver's carrier-identity arm does it — so `Object.defineProperty(p, …)`
+      // has to take the same dispatch route the literal spelling takes. On base
+      // it took the inline `__defineProperty_value` store instead and the define
+      // trap ran ZERO times (probed: `trapruns[A]` for four proxies, only the
+      // literal spelling). The §19.1.2.4-step-1 null hazard the surrounding
+      // comment guards against cannot reach this widening: the receiver's
+      // declaration is a `new`, which never evaluates to null or a primitive.
+      // Unshadowed `new Proxy(…)` is subsumed — the predicate answers
+      // `text === "Proxy"` for an un-aliased binding — and an alias hop is
+      // admitted only under its own single-assignment proof.
       const isNewProxy = (e: ts.Expression): boolean =>
-        ts.isNewExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Proxy";
+        ts.isNewExpression(e) && tracesToProxyConstructorValue(ctx, e.expression);
       // (#6494 S2) `Proxy.revocable(t, h)` returns `{proxy, revoke}`, so a
       // `<r>.proxy` READ is as provably a proxy as `new Proxy(...)` is — and it
       // is the ONLY spelling the revocation tests use. Without it a revoked
