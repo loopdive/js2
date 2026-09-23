@@ -169,6 +169,27 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
+  # not as its TARGET's static shape). `property-access.ts` +13 — three lines
+  # at the dot-property arm in `compilePropertyAccess`, three at its computed
+  # twin in `compileElementAccess`, and the import; `assignment.ts` +28 for the
+  # write arm; `object-ops.ts` +15 and `new-super.ts` +12 for the
+  # helper-returned-proxy hop. The lowering itself and all of its rationale
+  # live in the NEW leaf `src/codegen/proxy-receiver-generic-read.ts` — the
+  # first cut inlined them and cost +78 here. Comment-dominated in every case:
+  # the executable part of each arm is the same six-line "compile the receiver,
+  # push the key, call `__extern_get`" the foreign-eval lane a few hundred
+  # lines above already uses, and the rest records the measurement that
+  # overturns the fast path —
+  # `new Proxy([1,2,3],{}).length` answered **0** and
+  # `new Proxy(new String("str"),{}).length` **trapped with a null-pointer
+  # dereference** on this branch's base, while `p["length"]` on the SAME tree
+  # answered 3. The mechanism (the provenance predicate and the new
+  # return-expression hop) lives in the leaf
+  # `src/codegen/proxy-value-provenance.ts`. What cannot move is the admission
+  # itself: it has to be readable at the point the target-shaped lowering is
+  # chosen, which is the top of each of these four dispatchers.
+  - src/codegen/property-access.ts
   # 2026-09-23 — cluster F slice F3 (proxy dispatch follows the value, not the
   # spelling). +14 in `object-ops.ts` and +8 in `expressions/new-super.ts`, and
   # in both files the executable change is ONE line: a hardcoded
@@ -422,6 +443,23 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/ta-dyn-mop.ts
 func-budget-allow:
+  # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
+  # the WRITE arm plus the `__proto__` exclusion and the measurement that
+  # forced it (see the LOC rationale above; the exclusion is the one thing
+  # this slice regressed and then closed, so it is recorded at the clause).
+  # And +4 inside `compileElementAccess`, which is
+  # the WHOLE arm — a three-line call to `tryProxyReceiverElementRead` plus its
+  # pointer comment. The mechanism, the measurements and every line of
+  # rationale live in the NEW leaf `src/codegen/proxy-receiver-generic-read.ts`
+  # (the first cut inlined them here and cost +28 / +44, and pushed the dot
+  # twin `compilePropertyAccess` over the 300-line threshold for the first
+  # time; extracting brought that one back under budget entirely). What cannot
+  # move is the call itself: the decision "this receiver is a proxy, so do not
+  # read the target's native representation" has to be taken BEFORE the
+  # vec/index arms below, and those arms are what it overrides. The extraction
+  # was verified byte-neutral — all 30 binaries of the 15-program dual-target
+  # corpus are identical before and after it.
+  - src/codegen/property-access.ts::compileElementAccess
   # 2026-09-23 — cluster F slice F3: +13 inside `compileObjectDefineProperty`,
   # the same comment-dominated one-line change as the LOC grant above. The
   # function is already 1.5k lines of §19.1.2.4 arms in a fixed spec order, and
@@ -5395,6 +5433,224 @@ executable line changed per site.
 - F2's `getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm`
   verdict is unchanged: it needs a null/undefined-distinct value representation,
   not a dispatch fix.
+
+### 2026-09-23 — Cluster F (Proxy / Reflect, standalone), slice F4: a proxy read as its TARGET's shape, and the largest bucket measured to its floor
+
+- **Branch** `issue-6651-f4-proxy-target-shape`, based on
+  `claude/project-thread-yhj9pp` @ `86943b93` (round 4, which carries F3 —
+  deliberate predecessor-stacking, not `origin/main`). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a7b37f84e6c9538f4`. Not pushed; the
+  integrator owns the push and the PR.
+- **Manifest** `plan/agent-context/6651/F-proxy-reflect.txt`, 89 rows, sha256
+  `3edd7052b503ee48f0022a8bc2f5c041a116228d19ef65d31bf2aeb54cf80dd7`
+  (unchanged since F1 — re-hashed here, not inherited).
+
+**Headline, stated plainly: this slice moves ZERO manifest rows.** It fixes
+three real standalone defects — one of them a hard wasm trap — and loses
+nothing, but the `*-target-is-proxy` bucket it was aimed at does not yield a
+single row, and the receipt below says why with measurements rather than
+impressions.
+
+| standalone, `--isolate`, 89 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/F4-base.log`) | **21** | 63 | 5 |
+| after (`.tmp/6651/F4-after2.log`) | **21** | 63 | 5 |
+
+Per-PATH set diff (`.tmp/6651/rowdiff.mjs`), not a count comparison: **0
+gained, 0 lost, 0 other verdict changes.** The before-state is this lane's own
+run of the unmodified branch tip; it happens to agree with F3's after-state at
+21. No row reported `error` and none reported "provider is not built".
+
+#### The host probe the brief asked for, first — it halves the bucket
+
+All 24 `*-target-is-proxy.js` rows fail on standalone. Run on the DEFAULT
+target (`.tmp/6651/F4-host-base.log`, plus a re-measure of two rows that came
+back `error` on a transient ENOENT and are really passes —
+`.tmp/6651/F4-host-apply2.log`):
+
+| lane | pass | fail |
+| --- | ---: | ---: |
+| host (default target), 24 rows | **10** | 14 |
+| standalone, 24 rows | **0** | 24 |
+
+So 14 of the 24 are front-end work that a standalone slice cannot reach, and
+the reachable bucket is the 10 host-passing rows. Their standalone failures, on
+base, are **ten different first assertions**:
+
+| row (`built-ins/Proxy/…-target-is-proxy.js`) | standalone first failure on base |
+| --- | --- |
+| `apply/trap-is-missing` | `Object.prototype.hasOwnProperty is not yet implemented in --target standalone` |
+| `apply/trap-is-null` | wasm trap: dereferencing a null pointer, calling the nested function proxy |
+| `defineProperty/trap-is-null` | array `length` define invariant answered `undefined`, expected `2` |
+| `defineProperty/trap-is-undefined` | `Object.defineProperty(arrayProxy,"0",…)` did not reach the array |
+| `deleteProperty/trap-is-null` | `Reflect.deleteProperty(stringProxy,"length")` did not refuse |
+| `get/trap-is-undefined` | `Object.create(plainObjectProxy)[0]` — inherited index read |
+| `getOwnPropertyDescriptor/trap-is-missing` | `new String("str")` own index descriptors |
+| `has/trap-is-missing` | `Reflect.has(regExpProxy,"ignoreCase")` |
+| `ownKeys/trap-is-missing` | `new String` ownKeys order, symbol key missing |
+| `set/trap-is-missing` | a `set` accessor through a two-hop proxy |
+
+**Nested-proxy forwarding itself is NOT the defect.** Probed on base
+(`.tmp/6651/p1.js`), a proxy over a proxy over a PLAIN object forwards `get`,
+`has`, `ownKeys` and `getOwnPropertyDescriptor` correctly, and an inner trap
+runs exactly once through an outer handler whose trap is absent, `undefined`
+or `null` — all three spellings. The `__extern_*` front-guards already recurse.
+What the bucket actually exercises is EXOTIC targets — array `length`/index,
+`new String("str")` own indices, RegExp prototype accessors, function `name` /
+`length` / `prototype` — one to four independent mechanisms per row. F2's
+"several mechanisms per row" is exact, and the bucket is not a bucket; it is
+ten singletons behind one filename pattern.
+
+#### What landed — the receiver's static type is the TARGET's type
+
+TypeScript types `new Proxy(t, h)` as `typeof t`: its lib signature is
+`new <T extends object>(target: T, handler: ProxyHandler<T>): T`. So a proxy
+over an array is statically `number[]`, and every codegen arm keyed off that
+type lowers a read or a write of the TARGET's native representation against a
+`$Proxy` struct, which has none of those fields. Measured on base, standalone
+(`.tmp/6651/p8.js`, `.tmp/6651/p9.js`, `.tmp/6651/p5.js`):
+
+| program | base | node |
+| --- | --- | --- |
+| `new Proxy([1,2,3],{}).length` | `0` | `3` |
+| `new Proxy([1,2,3],{})[0]` | `NaN` | `1` |
+| `new Proxy(new String("str"),{}).length` | **wasm trap, "dereferencing a null pointer"** | `3` |
+| `p.length = 0`, `p` over `[1,2,3]` | array untouched | `[]` |
+| …with a `set` trap installed | **0 trap calls** | 1 |
+| `new Proxy([1,2,3],{})["length"]` (same tree) | **`3`** | `3` |
+
+The last row is the whole argument: the string-literal ELEMENT spelling already
+answered correctly on base, because it reaches `__extern_get`, whose
+`ref.test $Proxy` front-guard enters the §10.5 dispatch. **The runtime was never
+wrong; the dot and numeric-index spellings never asked it.** That is F2's and
+F3's defect shape a third time — an admission that follows the SPELLING, not
+the VALUE — and it is closed with the same predicate, `tracesToProxyValue`.
+
+Three call sites, all `ctx.standalone`-gated:
+
+1. `compilePropertyAccess` (`property-access.ts`) — `p.name`.
+2. `compileElementAccess` (same file) — `p[k]`.
+3. `compilePropertyAssignment` (`expressions/assignment.ts`) — `p.name = v`.
+
+The lowering and every line of its rationale live in the NEW leaf
+`src/codegen/proxy-receiver-generic-read.ts`; the god-files carry three lines
+each. The first cut inlined them and cost +78 LOC in `property-access.ts` and
+pushed `compilePropertyAccess` over the 300-line function threshold for the
+first time. **The extraction was verified byte-neutral before it was kept**: all
+32 binaries of the 16-program dual-target corpus below are identical across it.
+
+Routing to `__extern_get` / `__extern_set` is conservative in the safe
+direction — both are the ordinary property access for every non-proxy value
+too, so a false positive would cost a fast path, never a wrong answer.
+
+**`__proto__` is excluded from the write arm, and that exclusion is measured,
+not defensive.** §B.2.2.1 makes `o.__proto__ = v` an accessor call performing
+`[[SetPrototypeOf]]`, not an ordinary [[Set]], and the arm that owns it already
+carries the proxy front-guard. Routing it through the new arm turned
+`built-ins/Object/prototype/__proto__/set-abrupt.js` from **PASS to FAIL** in
+the 487-row control — the `setPrototypeOf` trap stopped running, so the throw it
+must propagate never happened. That one row is the only thing this slice ever
+regressed; it was caught by the control, not by the manifest, and the narrowing
+restores the base lowering byte-for-byte (corpus row 16).
+
+#### …and the helper-returned proxy F3 named
+
+F3 recorded `function mk(){return new Proxy(t,h);}` as invisible to both
+admissions. Re-measured on this branch's base (`.tmp/6651/p11.js`): the define
+trap ran **0** times for `Object.defineProperty(mk(), …)` and for the one-hop
+`var m = mk()`, and the construct trap ran **0** times for `var mc = mkc(); new
+mc()`, while the direct spelling ran both. `singleReturnExpressionOfCall` adds
+the return-expression hop in `proxy-value-provenance.ts` under three
+restrictions, each load-bearing: the body must be exactly one `return <expr>`
+(a multi-statement body can CHOOSE between values, and this predicate cannot
+say "sometimes"); the callee binding must be single-assignment-equivalent,
+including a hoisted `function` declaration, which the #5196 R3 name scan
+covers; and the returned expression is re-traced, never trusted. The hop is
+consumed by the read, write, construct (`new-super.ts`) and define
+(`object-ops.ts`) sites, so all four now ask one question.
+
+`new (mkc())()` — the call written directly in callee position — is still NOT
+covered: `tryCompileNativeConstructFromValue` gates on
+`ts.isIdentifier(calleeExpr)` before the proxy admission is reached, and
+widening that gate is a far larger blast radius than this slice.
+
+#### Controls
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| `built-ins/Proxy/**` + `built-ins/Reflect/**`, standalone (`.tmp/6651/nb-pr-{before,after2}.log`) | 464 | 395 / 64 / 5 | 395 / 64 / 5 | **0 gained, 0 lost, 0 other** |
+| every test262 row OUTSIDE that neighbourhood mentioning `new Proxy` / `Proxy.revocable` (382) ∪ `Array/length`, `Array.prototype.push`, `String.prototype.charAt`, `language/expressions/property-accessors` (105) — the array/index fast paths this slice reorders — standalone (`.tmp/6651/nb-extra-{before,after2}.log`) | 487 | 319 / 148 / 20 | 319 / 148 / 20 | **0 gained, 0 lost, 0 other** |
+| the 89-row manifest ∪ both sets above, HOST (default target) (`.tmp/6651/nb-host-{before,after}.log`) | 951 | 694 / 257 | 694 / 257 | **none** |
+
+Every log was checked for `error` rows and for "provider is not built": **zero
+of each**, in all six.
+
+**Host byte-identity corpus** (`.tmp/6651/sha-{before,after}.txt`): 16 programs
+compiled for BOTH targets — a proxy-free control, a plain array read/write, the
+five proxy read/write shapes, the `p["length"]` twin, the direct / helper /
+reassigned-helper `defineProperty` trio, the helper construct, `Array.isArray`
+over a proxy, a plain object read/write, a proxy stored in an object FIELD (the
+trace deliberately does not follow that hop), and the `__proto__` write.
+**All 16 `gc` binaries are byte-identical.** On standalone exactly 7 move —
+the five reads/writes through a proxy binding, `p["length"]` (which now
+compiles to the SAME bytes as `p.length`, the two spellings having converged on
+one route), and the helper-returned `defineProperty`. Every control is
+identical, including the reassigned helper, the field-stored proxy and
+`__proto__`.
+
+Also green, all run **bare**: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` — +0 `getTypeAtLocation`, +0 `ctx.checker` — and
+`check:dead-exports`); `node scripts/equivalence-gate.mjs` (22 failing / 1720
+passing, all 22 in the committed baseline); `biome lint
+--diagnostic-level=error`; `prettier --check` on every changed file; and the
+new pin `tests/issue-6651-cluster-f4-proxy-target-shape.test.ts`, 10/10 —
+**7 verified RED on the base tree** by a pristine `git archive HEAD` extract
+(`.tmp/ab-tree`), 3 controls green on both sides. LOC/function growth is
+granted in this file's frontmatter.
+
+#### Newly root-caused, NOT taken
+
+- **`Reflect.construct(<proxy>, [])` ALREADY WORKS on this base.** The round-5
+  brief carried it from F3 as "never reaches proxy construct dispatch on any
+  spelling". Probed directly (`.tmp/6651/p10.js`, standalone): the construct
+  trap runs, and a trap returning a non-object throws the §10.5.14 step-9
+  TypeError. F3's own fix closed it; the note is stale and is retired here.
+- **`Reflect.get(<String object>, "length")` answers `NaN`** where the direct
+  `s.length` answers 3. This is what still makes
+  `new Proxy(new String("str"),{}).length` wrong (it no longer TRAPS, which is
+  this slice's contribution, but the value is NaN): the dynamic get route has
+  no String-object own-`length` arm. Worth its own slice; it is a value-read
+  gap, not a proxy gap.
+- **`Reflect.has` and `in` disagree, in BOTH directions, on both targets.**
+  Measured (`.tmp/6651/p4-{sa,host}.txt`): standalone `Reflect.has({a:1},"a")`
+  is `true` and host is **`false`**; standalone `Reflect.has(/re/,"exec")` is
+  `false` and host is `true`; `'exec' in <proxy over regexp>` is `false` on
+  standalone and `true` on host — while the raw `'exec' in re` is `true` on
+  both. Two independent defects (a `Reflect.has` implementation on each lane,
+  and a proxy-`has` walk that misses built-in prototypes) sit behind
+  `has/trap-is-{missing,undefined}-target-is-proxy.js`.
+- **`Object.prototype.hasOwnProperty` is unimplemented on standalone** — the
+  first assertion of `apply/trap-is-missing-target-is-proxy.js`, and a
+  self-contained missing builtin rather than a proxy question.
+- **A proxy stored in an object FIELD keeps the old behaviour**:
+  `var b = {v: new Proxy([1,2,3],{})}; b.v.length` still answers `0`. The trace
+  follows single-assignment variable bindings, not object fields; widening it
+  there needs a different proof and is left deliberately.
+- **`built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js`** was out of
+  scope by the brief (the `Array.prototype` two-representation limit owned by
+  #2917) and this slice never entered it.
+
+#### Residual sub-buckets — what a next F slice should NOT expect
+
+The 24-row `*-target-is-proxy` bucket was F2's largest and is now measured to
+its floor: **14 rows are host-lane work**, and the remaining **10 are ten
+distinct mechanisms**, at least four of which (String-object own properties,
+`Reflect.has`, `Object.prototype.hasOwnProperty`, array-`length` define
+invariants) are general standalone gaps that happen to be observed through a
+proxy. There is no shared mechanism left in it. A future slice should pick the
+underlying gaps by name — the `new String` own-property MOP is the one that
+appears in three rows — rather than the filename pattern.
 
 ### 2026-09-23 — Cluster I (language misc, standalone), slice I2: `instanceof` consults `@@hasInstance`
 
