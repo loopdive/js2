@@ -1648,6 +1648,8 @@ export function findAlternateStructsForField(
     // `findFnctorResidStructsForField` — hiding a carrier from the arms is
     // correct; hiding it from the vote is the #4217 `generator` defect.
     if (typeName.endsWith("__resid") || isFnctorLayoutStructName(typeName)) continue;
+    // (#6651 B6) A RegExp's `lastIndex` is two slots (f64 + deferred raw); a field arm sees only the f64.
+    if (propName === "lastIndex" && typeName === "__StandaloneRegExp") continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);

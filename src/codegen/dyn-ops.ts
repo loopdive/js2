@@ -449,8 +449,10 @@ function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void
       { op: "f64.const", value: 0 },
       // Deferred `lastIndex` storage was added to the standalone RegExp
       // carrier after this helper was introduced. Keep the dynamic literal
-      // constructor in lockstep with `emitStandaloneRegExpStruct`.
+      // constructor in lockstep with `emitStandaloneRegExpStruct`; the last
+      // field is (#6651 B6) `$lastIndexNonWritable`, 0 = writable.
       { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: regexpTypeIdx },
       { op: "extern.convert_any" },
