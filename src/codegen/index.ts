@@ -11549,6 +11549,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // These reserve/fill drivers require the receiver-aware arity-0 bridge,
     // which is only registered by the loop above in the multi-source path.
     profilePhase("fill-proto-iterator-driver", () => fillProtoIteratorDriver(ctx));
+    // Declared-arity classifier. (#2917) BEFORE fillAccessorDrivers, as on the
+    // primary path — without it the driver bakes a bare `__call_fn_method_0`.
+    profilePhase("emit-closure-arity-export", () => emitClosureArityExport(ctx));
     // (#4098) Error sidecar accessors reserve receiver-aware drivers while the
     // MOP is built. Refill them only after multi-source method dispatchers exist.
     profilePhase("fill-accessor-drivers", () => fillAccessorDrivers(ctx));
@@ -11556,10 +11559,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // DisposableStack additionally uses the public __call_fn_0/1 exports
     // emitted above, so fill its LIFO driver only after both bridge families.
     fillDisposableStackDisposeDriver(ctx);
-
-    // Unknown-arity host wrappers use this classifier to choose a dispatcher
-    // wide enough for the closure's declared parameters.
-    profilePhase("emit-closure-arity-export", () => emitClosureArityExport(ctx));
 
     // Fill multi-source constructor method drivers after all closure tables.
     profilePhase("fill-host-fnctor-method-drivers", () => fillHostFnctorMethodDrivers(ctx));

@@ -1150,6 +1150,24 @@ export function normalizeNaNToZero(fctx: FunctionContext, f64Local: number): voi
   fctx.body.push({ op: "local.set", index: f64Local });
 }
 
+/** Resolve the user class (or struct) named by a `.call`/`.apply` member owner's type. */
+function resolveReceiverClassName(ctx: CodegenContext, objType: ts.Type): string | undefined {
+  let className = objType.getSymbol()?.name;
+  if (className && !ctx.classSet.has(className)) {
+    className = ctx.classExprNameMap.get(className) ?? className;
+  }
+  if (!className || !ctx.classSet.has(className)) {
+    className = resolveStructName(ctx, objType) ?? undefined;
+  }
+  return className;
+}
+
+/** (#2917) `X.prototype.<m>` names a compiled user-class method `X_<m>`. */
+function isUserClassPrototypeMethod(ctx: CodegenContext, objType: ts.Type, methodName: string): boolean {
+  const className = resolveReceiverClassName(ctx, objType);
+  return className !== undefined && ctx.classSet.has(className) && ctx.funcMap.has(`${className}_${methodName}`);
+}
+
 /**
  * Look up closure info for a variable by checking if its local type
  * is a ref to a known closure struct. Handles cases like:
@@ -9126,7 +9144,16 @@ function compileCallExpression(
           //     prototype-chain helper. Array/Number/Boolean/Function have no
           //     clean native borrowed path yet → refuse-loud below (Array brand
           //     arm rides on #2177). Never a silent-wrong answer.
-          if (ctx.standalone && expr.arguments.length >= 1 && !isBuiltinRegExpPrototype) {
+          // (#2917) A USER class's `X.prototype.<m>.call(recv)` is not a
+          // borrowed builtin method: it has a compiled `X_<m>` and is lowered
+          // by the class-method arm below. Refusing it here was silently
+          // rolled back to a default value (0 / ref.null → trap).
+          if (
+            ctx.standalone &&
+            expr.arguments.length >= 1 &&
+            !isBuiltinRegExpPrototype &&
+            !isUserClassPrototypeMethod(ctx, objType, methodName)
+          ) {
             // Native String methods whose __str_* helper + return marshaling
             // round-trip correctly standalone (verified end-to-end). Methods
             // outside this set refuse-loud rather than risk a wrong result.
@@ -9330,16 +9357,7 @@ function compileCallExpression(
           }
         }
 
-        // Resolve class name from the object's type
-        let className = objType.getSymbol()?.name;
-        if (className && !ctx.classSet.has(className)) {
-          className = ctx.classExprNameMap.get(className) ?? className;
-        }
-
-        // Also try struct name
-        if (!className || !ctx.classSet.has(className)) {
-          className = resolveStructName(ctx, objType) ?? undefined;
-        }
+        const className = resolveReceiverClassName(ctx, objType);
 
         if (className && (ctx.classSet.has(className) || ctx.funcMap.has(`${className}_${methodName}`))) {
           const fullName = `${className}_${methodName}`;

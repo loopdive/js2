@@ -147,6 +147,13 @@ import {
 // `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+// (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
+import {
+  emitTaStaticFromOfBody,
+  isTaStaticFromOfMember,
+  taStaticFromOfIsVariadic,
+  taStaticFromOfSpecLength,
+} from "./ta-static-from-of-body.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -2747,7 +2754,16 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): 
     dataProps: isIntrinsic || bytesPerElement === undefined ? undefined : [["BYTES_PER_ELEMENT", bytesPerElement]],
     memberKind: (member) =>
       TYPED_ARRAY_PROTO_GETTERS.has(member) || member === TYPED_ARRAY_PROTO_TO_STRING_TAG_MEMBER ? "getter" : "method",
-    memberLength: (member) => TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // (#6651 E4) `from`/`of` are §23.2.2 STATICS of the intrinsic, not prototype
+    // members — they are deliberately absent from `memberCsv`, and reach the
+    // factory only through the explicit seeding below in
+    // `emitTypedArrayIntrinsicCtorObject`. Their §17 `length` (1 and 0) is not
+    // in the prototype table, so it is answered here.
+    memberLength: (member) =>
+      (isIntrinsic ? taStaticFromOfSpecLength(member) : undefined) ?? TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // Both take the packed variadic ABI: `from` must see whether `mapfn` was
+    // SUPPLIED (§23.2.2.1 step 3), which fixed slots cannot express.
+    memberIsVariadic: (member) => isIntrinsic && taStaticFromOfIsVariadic(member),
     // §23.2.3.36: the `@@iterator` value IS the `values` function object.
     memberAliasOf: (member) => (member === "@@1" ? "values" : undefined),
     // §23.2.3.32: `%TypedArray%.prototype.toString` IS `Array.prototype.toString`
@@ -2756,7 +2772,12 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): 
     // (#2893 PR-1) The `length`/`byteLength`/`byteOffset` accessor getters now
     // emit real reflective bodies (brand-recover the view → read/compute the
     // field → throw on non-view); `buffer` + all methods stay a catchable refusal.
-    emitMemberBody: (c, fctx, member) => emitTypedArrayProtoMemberBody(c, fctx, member, name),
+    emitMemberBody: (c, fctx, member) =>
+      // (#6651 E4) The two §23.2.2 statics get their REAL bodies. A decline
+      // (non-standalone, or a missing runtime dependency) falls through to the
+      // prototype-member emitter, whose refusal is the pre-E4 answer.
+      (isIntrinsic && isTaStaticFromOfMember(member) ? emitTaStaticFromOfBody(c, fctx, member) : null) ??
+      emitTypedArrayProtoMemberBody(c, fctx, member, name),
   };
 }
 

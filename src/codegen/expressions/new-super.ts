@@ -57,7 +57,8 @@ import {
   getOrRegisterDvWindowType,
   nativeBufferBuiltinOf,
 } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper; (#3054 B1/B2) shared-backing TA views + windowing; (#3054 D) dynamic ctor construct
-import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { compileArrayMethodCall, emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "../array-subclass-receiver.js"; // (#2917)
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
 import { COLLECTION_KIND } from "../collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
 import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
@@ -101,7 +102,7 @@ import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
 import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
-import type { InnerResult } from "../shared.js";
+import { VOID_RESULT, type InnerResult } from "../shared.js";
 import {
   emitDynamicNewFunctionHostEval,
   emitStandaloneDynamicFunctionStub,
@@ -1316,6 +1317,27 @@ function compileSuperMethodCallCore(
   }
 
   if (funcIdx === undefined) {
+    // (#2917) Standalone `class X extends Array`: `super.m(…)` is the builtin
+    // Array method on `this` (a real vec) — array-subclass-receiver.ts.
+    const selfLocal = fctx.localMap.get("this");
+    const propAccess = expr.expression;
+    if (
+      selfLocal !== undefined &&
+      ts.isPropertyAccessExpression(propAccess) &&
+      isStandaloneArraySubclass(ctx, currentClassName)
+    ) {
+      const arrayResult = withArraySubclassReceiverAsVec(
+        ctx,
+        fctx,
+        propAccess.expression,
+        () => {
+          fctx.body.push({ op: "local.get", index: selfLocal });
+          return getLocalType(fctx, selfLocal) ?? null;
+        },
+        () => compileArrayMethodCall(ctx, fctx, propAccess, expr, undefined, methodName),
+      );
+      if (arrayResult !== undefined) return arrayResult === VOID_RESULT ? null : arrayResult;
+    }
     // (#1614) The parent may be a builtin extern class (Set/Map/Array/...)
     // whose methods are host-backed, not compiled into funcMap. Dispatch
     // `super.method(args)` dynamically via __extern_method_call(this, name, args).
