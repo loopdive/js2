@@ -39,6 +39,8 @@
  * shared contract between them.
  */
 import type { Instr } from "../ir/types.js";
+import { ts } from "../ts-api.js";
+import { TYPED_ARRAY_NAMES } from "./index.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
@@ -194,4 +196,31 @@ export function taStaticFromOfSingletonInstrs(ctx: CodegenContext, member: strin
   const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, "method", { refusalBodyFallback: true });
   if (!closure) return undefined;
   return [...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" }];
+}
+
+/**
+ * (#6651 E5) `<ConcreteTA>.from.call(C, …)` / `.of.apply(C, …)` — the result is
+ * whatever `Construct(C, «len»)` answered (§23.2.4.6), not necessarily a
+ * `<ConcreteTA>`. TypeScript still types it as the receiver's instance type, so
+ * an unannotated binding would get that TypedArray's vec slot and the
+ * declaration store would MATERIALIZE a copy: `result === target` went false and
+ * a Float64Array result was truncated to Int32 elements. The binding keeps the
+ * externref the call returned instead.
+ */
+export function taStaticFromOfReflectiveCallNeedsExternref(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): boolean {
+  if (!ctx.standalone || !initializer || !ts.isCallExpression(initializer)) return false;
+  const callee = initializer.expression;
+  if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) {
+    return false;
+  }
+  const member = callee.expression;
+  return (
+    ts.isPropertyAccessExpression(member) &&
+    (member.name.text === "from" || member.name.text === "of") &&
+    ts.isIdentifier(member.expression) &&
+    TYPED_ARRAY_NAMES.has(member.expression.text)
+  );
 }

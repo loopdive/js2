@@ -456,7 +456,29 @@ loc-budget-allow:
 # knows the tuple's width) and a 7-line module-level adapter that hands the leaf
 # the recursion (`destructureParamObject`/`destructureParamArray`), so the leaf
 # does not import its own importer.
+# 2026-09-23 — cluster E, slice E5 (`%TypedArray%.from` mapping fidelity + the
+# static `<TA>.from`/`.of` value). `expressions/call-builtin-static.ts` +8: the
+# static `Int32Array.from(src)` element loop ToNumber's an externref element to
+# f64 BEFORE the store coercion (externref→i32 was `__unbox_number`, which reads
+# an object as 0 without calling valueOf — `iterated-array-changed-by-tonumber`).
+# It has to sit inside that loop, the only place that knows the element's
+# source and store ValTypes. The other E5 edits land in paths already granted
+# above (`dataview-native.ts` +10: an optional per-element hook on the shared
+# `__ta_from_arraylike` builder; `call-receiver-method.ts`; `property-access-
+# dispatch.ts` +6; `statements/variables.ts` +2), restated here so the grant is
+# dated for this change-set; the mechanisms live in `ta-static-from-of-body.ts`
+# / `ta-static-from-of-spec.ts`.
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/statements/variables.ts
 func-budget-allow:
+  # 2026-09-23 — cluster E, slice E5: `compileBuiltinStaticCall` +8 (the
+  # externref-element ToNumber in the static `<TA>.from(src)` loop, see the LOC
+  # grant) and `tryIdentifierNamespaceAndStaticReceiverRead` +6 (the one arm
+  # that answers `Int32Array.from` / `.of` with the inherited `%TypedArray%`
+  # singleton before the generic static-closure ladder, which would otherwise
+  # fall to the expando read and answer `undefined`).
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
   # 2026-09-23 — cluster F slice F3: +13 inside `compileObjectDefineProperty`,
   # the same comment-dominated one-line change as the LOC grant above. The
   # function is already 1.5k lines of §19.1.2.4 arms in a fixed spec order, and
@@ -5380,6 +5402,82 @@ f64-vec element-access result type. That is corpus-wide and moves the ABI
 wherever the result reaches a signature (`function-types.ts` keys on the
 brand). It needs its own slice and its own control. No row in this manifest
 depends on it.
+
+### 2026-09-23 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E5: `%TypedArray%.from` mapping fidelity, and `<TA>.from` / `.of` as static values
+
+- **Branch** `e5` (local, not pushed), base `claude/es2015-test262-plan-54tooh`
+  @ `bb2fb835c4` (origin/main + the pending B5+C4 PR #6038).
+- **Engine for every verdict: QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`, artifact
+  `073742801ba7`, adapter `d4799bda84cfed0d`), `--standalone`. Manifest: 24-row
+  `--isolate` chunks in fresh processes, one runner at a time, source frozen from
+  first to last chunk of each arm (`.tmp/e5/{base,after}/`). Base/after swaps by
+  file copy (`.tmp/base/` ⇄ `.tmp/e5/final/`).
+
+#### What landed (four mechanisms, each measured on its own probe first)
+
+1. **Mapping happens per element, after TypedArrayCreate** (§23.2.2.1 steps
+   7.e / 11). Both lowerings — the call-site two-arm `tryEmitTaStaticOfFrom`
+   and E4's value body — mapped the WHOLE source up front through
+   `__array_from_mapped` (= `__hof_map`), then converted. Three defects, one
+   cause: the callback got `map`'s three arguments (`arguments.length` 3 —
+   the "called once too often" in E4's table was this, not an extra call;
+   probe `mapargs=3/42/0`); every mapfn call ran before element 0's ToNumber,
+   so an abrupt ToNumber no longer stopped the mapping of the next element
+   (`abrupt … false`); and the abstract-`%TypedArray%` TypeError came after
+   the mapfn calls. Fix: an optional per-element hook on the shared
+   `__ta_from_arraylike` builder (`dataview-native.ts`, +10) mints
+   `__ta_from_arraylike_mapped(ctor, carrier, mapfn, thisArg)`, which calls
+   `__apply_closure(mapfn, thisArg, [kValue, k])` between the carrier read and
+   the ToNumber that IS that element's Set. The ordinary-constructor arm of the
+   value body got the same per-element step. The source is drained UNMAPPED
+   (`__array_from_iter_n`). `__array_from_mapped` had no other caller and is
+   deleted (the dead-export gate caught it).
+2. **`Int32Array.from` / `.of` read as a VALUE** answer the inherited
+   `%TypedArray%` singleton (`emitTaStaticFromOfInheritedValue`, one arm in
+   `tryIdentifierNamespaceAndStaticReceiverRead`). E4's arm only served a
+   dynamic read and never mints (it runs at finalize); this static spelling is
+   compiled in a body, where minting is the ordinary reserve-time operation.
+   Before: `typeof Int32Array.from` said `function` (a static fold) while
+   `Int32Array.from.call` read `undefined`. After: `Int32Array.from ===
+   TypedArray.from`.
+3. **The binding of `<TA>.from.call(C, …)` keeps the externref.** TypeScript
+   types the result as `Int32Array`, so an unannotated `let result = …` got the
+   Int32 vec slot and the store MATERIALIZED a copy: `result === target` false,
+   a Float64Array result truncated to Int32 (`call-f64=1` for `[1.5]`).
+   `taStaticFromOfReflectiveCallNeedsExternref` joins the existing
+   `transferredArrayLikeResultNeedsExternref` predicate, which every slot typer
+   (local, hoisted, module global) already consults.
+4. **Static `Int32Array.from(src)` ToNumbers an object element.** The
+   compile-time vec-copy loop coerced an externref element straight to i32
+   (`__unbox_number`, which reads an object as 0 and never calls `valueOf`;
+   `calls0`). It now goes externref → f64 (ToNumber) → store type.
+
+#### Measurements
+
+| subset | rows | pass before | pass after |
+| --- | ---: | ---: | ---: |
+| manifest `E-typedarray-buffers.txt` (isolate) | 144 | 39 | **42** |
+| control: every `TypedArray*`/`ArrayBuffer`/`DataView` row whose source spells `.from`/`.of`/`mapfn` — standalone, in-process | 117 | 92 | **96** |
+| same control — host (gc) lane | 117 | 96 | 96 |
+
+- Manifest gains: `TypedArray/from/iterated-array-changed-by-tonumber`,
+  `TypedArrayConstructors/from/{mapfn-arguments,set-value-abrupt-completion}`.
+  Control adds `from/BigInt/mapfn-arguments`. **Zero pass→non-pass on either
+  target; host verdicts unchanged.**
+- Byte identity: 32/32 (`website/playground/examples/**` + three
+  `benchmarks/*.ts`, both targets) sha-identical.
+- Pin suite `tests/issue-6651-e5-typedarray-from-mapping.test.ts`: 5/5 red on
+  base (`.tmp/e5/pin-base.log`), 5/5 green after.
+
+#### Residuals (measured, not attempted or declined)
+
+| rows | first failure after E5 | what it needs |
+| --- | --- | --- |
+| `from-{array,typedarray}-mapper-detaches-result` (2, manifest) | `Expected SameValue(«10,11,12», «,,»)` | the ordinary-ctor arm now runs and returns `target` (`call-custom=true`), but `$DETACHBUFFER(ab)` does not detach a view built over a module-scope `new ArrayBuffer(3)`: after it `target.length` still reads 3 (`.tmp/e5/p/p5.js`). A detach-reaches-the-view gap for the static carrier, not a `from` gap |
+| `from-typedarray-into-itself-mapper-detaches-result` (1, manifest) | CE `env::__unwrap_for_wasm` | the import comes from `compileTypedArraySet` (`array-methods.ts` ~L9565) on `target.set([0,1,2])` with an externref receiver. Declining under `noJsHost` removes the import, but the fallback then CEs on `__get_builtin` and, past that, the row needs `Array.prototype.values` as a value. Reverted: no row gained, and a CE-for-CE swap is not a fix |
+| `internals/Set/*` (7) | receiver-aware `[[Set]]` | unchanged from E3: a 4-argument `Reflect.set` plus the §10.1.9.2 cascade — a mechanism, not attempted |
+| BigInt `from`/`of` element kinds (brief target 4) | not attempted | `__ta_from_arraylike`'s element codec is f64-only (`TA_CTOR_KINDS` has no BigInt kinds); needs an i64/BigInt value path, i.e. new representation work — ES2020 scope |
+| `from/BigInt/custom-ctor-returns-other-instance` | `Array.prototype.values` not callable as a value | a separate built-in-value gap (recorded, out of scope per brief) |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
