@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10120,
-    "fail": 1533,
+    "pass": 10121,
+    "fail": 1532,
     "ce": 51,
     "skip": 0,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3873,
-        "fail": 246,
+        "pass": 3874,
+        "fail": 245,
         "ce": 34,
         "skip": 0,
         "total": 4153,
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3699,
-    "fail": 1106,
+    "pass": 3701,
+    "fail": 1104,
     "ce": 18,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2753,
-        "fail": 1040,
+        "pass": 2755,
+        "fail": 1038,
         "ce": 17,
         "skip": 0,
         "total": 3810,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 999,
-        "fail": 384,
+        "pass": 1001,
+        "fail": 382,
         "ce": 2,
         "skip": 0,
         "total": 1385,

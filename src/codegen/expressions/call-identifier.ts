@@ -18,6 +18,7 @@ import {
   recordLiftedCaptureBox,
 } from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitBigIntCtorCarrier } from "../bigint-wide-parse.js";
 import { emitI64ToStringCall } from "../bigint-string-context.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import {
@@ -1294,6 +1295,8 @@ export function compileIdentifierCall(
           return { kind: "externref" };
         }
       }
+      // (#6656) A reference result keeps a value past 64 bits exact.
+      if (emitBigIntCtorCarrier(ctx, fctx, expectedType)) return { kind: "externref" };
       const ctorIdx = ctx.funcMap.get("__bigint_ctor");
       if (ctorIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: ctorIdx });

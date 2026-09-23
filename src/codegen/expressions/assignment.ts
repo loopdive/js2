@@ -3140,7 +3140,7 @@ function emitExternrefObjectPatternWrites(
 }
 
 /** Destructure an object from a local variable (used for nested patterns) */
-function emitObjectDestructureFromLocal(
+export function emitObjectDestructureFromLocal(
   ctx: CodegenContext,
   fctx: FunctionContext,
   pattern: ts.ObjectLiteralExpression,

@@ -14,6 +14,7 @@
   "codegen/array-tolocalestring.ts": 1,
   "codegen/async-scheduler.ts": 3,
   "codegen/bigint-string-context.ts": 1,
+  "codegen/bigint-wide.ts": 1,
   "codegen/binary-ops-typed-dispatch.ts": 21,
   "codegen/binary-ops.ts": 13,
   "codegen/bound-fn-meta.ts": 1,

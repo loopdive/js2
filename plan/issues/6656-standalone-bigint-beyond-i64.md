@@ -18,14 +18,49 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/binary-ops.ts
   - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/string-ops.ts::compileStringBinaryOp
   - src/codegen/declarations/import-collector.ts::unifiedVisitNode
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions.ts::compileExpressionInner
+  - src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 coercion-sites-allow:
   - src/codegen/bigint-string-context.ts
+  - src/codegen/bigint-wide.ts
 ---
+
+<!--
+2026-09-23 budget rationale (slice 4, wide carrier). Everything that decides
+or emits wide-BigInt code lives in the two new leaves
+`src/codegen/bigint-wide.ts` and `src/codegen/bigint-wide-parse.ts`. What is
+left in the god-files is one guarded call per entry point, plus its import:
+
+- `expressions.ts::compileExpressionInner` +4: the constant-fold hook, placed
+  before the BigInt-literal arm. It has to come before that arm, because the
+  arm lowers a literal straight to an i64.
+- `call-receiver-method.ts::compileReceiverMethodCall` +2: the narrowed
+  `x.toString(r)` hook. It sits inside the static-bigint arm, which owns the
+  `radixLocalIdx` it forwards.
+- `call-identifier.ts::compileIdentifierCall` +2: the `BigInt(x)` hook, which
+  needs that function's `expectedType`.
+- `registry/imports.ts::addUnionImportsAsNativeFuncs` +3: `$BigInt` loses
+  `final`, and `$BigIntWide` is registered in the same block that mints
+  `$BigInt`. Doing both in that one block is what keeps a provider and its
+  consumer canonically identical across a link.
+- `context/types.ts` +3: the two optional type-index fields and their doc
+  comment.
+- coercion-sites `bigint-wide.ts` `__unbox_number` +1: the Number branch of
+  `__bigint_carrier_neg`. Unary `-` on an operand the checker typed as bigint
+  but that holds a Number (a JSDoc cast) must still be ToNumeric, then
+  negated. It is a runtime-helper body, not a codegen coercion, so it cannot
+  go through the codegen coercion engine.
+-->
+
 
 <!--
 2026-09-21 budget rationale (slice 3). All three decisions — which operand
@@ -635,3 +670,110 @@ false; `String(123n).length` failed validation on main `95b9eee151`). Fixed in
 `src/codegen/bigint-string-context.ts::emitI64ToStringCall`, witness
 `tests/issue-6656-string-call-bigint.test.ts` (fails on base with the
 validation error, passes after).
+
+### Slice 4 (2026-09-23) — `$BigIntWide`: the three >2^63 Temporal rows
+
+Base `aaf6fa3685`. **Landed.** All 8 briefed standalone Temporal rows now pass
+(base: 5 pass / 3 fail). I rebuilt the provider into a private cache for this
+run, because the shared cache key ignores compiler changes.
+
+**Root causes (line numbers are on base):**
+
+| Row | Wrong operation |
+| --- | --- |
+| `Duration/compare/throws-when-target-zoned-date-time-outside-valid-limits` | `864n * 10n ** 19n` goes through the i64 lowering (`binary-ops.ts:3464` `compileI64BinaryOp`, `i64.mul` at :3478). It wraps to `6923773503929843712`, which is a valid instant, so no RangeError. |
+| `ZonedDateTime/prototype/add/overflow-adding-months-to-max-year` | The first assertion was already correct. The failing half is `-(864n * 10n ** 19n)`, the same wrap. |
+| `ZonedDateTime/prototype/add/throw-when-intermediate-datetime-outside-valid-limits` | Two defects. (1) `var nsMinInstant = -nsMaxInstant` negates an externref script global through `coerceType(…, f64)` + `f64.neg` (`expressions/unary.ts:180-184`). That answers the NUMBER `NaN`, and the polyfill then throws "cannot convert number to bigint". (2) Behind it, the same wrap. |
+
+Inside the linked provider, a wide value was also reduced to its low 64 bits
+wherever the checker narrowed it. `typeof n === "bigint"` unboxes the
+reference slot through `call __to_bigint` (`identifiers.ts:2414`). Then
+`n.toString(10)` (`call-receiver-method.ts:2970`) or `String(n)` formats that
+i64.
+
+**Representation.** `$BigIntWide <: $BigInt` holds three fields: the low 64
+bits, a sign, and `(array (mut i32))` base-2^32 magnitude limbs. `$BigInt`
+loses `final`. Every existing `ref.test $BigInt` site keeps accepting a wide
+value and reads field 0. Field 0 is exactly the value the i64 lane computed
+before this slice, so a site that does not know the wide form degrades to the
+old wrapped answer, never to a wrong type.
+
+The form is canonical: a value that fits in i64 is always a plain `$BigInt`.
+The i64 fast path is untouched, since no i64 slot or op changed. Both types
+are minted in the block that mints `$BigInt`, so a provider and its consumer
+stay canonically identical across the link.
+
+**What produces or consumes a wide value** (leaves `bigint-wide.ts` and
+`bigint-wide-parse.ts`):
+- **Constant folding.** A bigint constant expression is evaluated exactly at
+  compile time whenever a step of it leaves i64. That covers literals,
+  `+ - * / % ** & | ^ << >>`, unary `- ~`, `BigInt("…")` and
+  `BigInt.asIntN/asUintN(<int literal>, <const>)`.
+  - A result that fits becomes its exact `i64.const`.
+  - A comparison becomes an `i32.const`.
+  - A wide result becomes a `$BigIntWide` wherever the context holds a
+    reference.
+- **Unary `-` on a bigint carrier in a reference slot** is exact both ways
+  across ±2^63 (`__bigint_carrier_neg`).
+- **ToString.** The narrowed `x.toString(r)`/`String(x)` sites and the dynamic
+  `__extern_method_call`/any-ToString arms format the carrier exactly in radix
+  2–36.
+- **`===`/`==`.** The extern-eq and any-helpers BigInt arms compare sign and
+  limbs.
+- **`BigInt(x)` into a reference slot** (`__bigint_ctor_carrier`). A runtime
+  string past 2^63 is re-scanned into limbs after `__bigint_ctor` has
+  validated it, and `BigInt(wide)` returns the value itself. Every error path
+  is unchanged.
+- **64-bit TypedArray and DataView reads into a reference slot.**
+  - `BigUint64Array[i]` and `DataView#getBigUint64` box through
+    `__bigint_from_u64`, so v ≥ 2^63 comes back as its unsigned value.
+  - `BigInt64Array[i]` now boxes as a BigInt. Its unbranded i64 read used to
+    box as a Number; that was a separate bug, present on base too.
+
+**Results:**
+- The 8 Temporal rows: 5/3 → **8/0**.
+- Witness `tests/issue-6656-bigint-wide-carrier.test.ts`: 25 rows including
+  the controls. I measured base on the 19-row version, where it failed 16 and
+  passed 3; after the change, all 25 pass.
+- `tests/*bigint*` plus `tests/issue-6656*`: the only failures are the same 4
+  in `issue-6619-f64-arg-symbol-bigint.test.ts`, on both base and after.
+- Standalone test262, `built-ins/BigInt/**` plus every `language/**`
+  bigint-named file (225 rows): **115 → 125, 0 regressions**.
+  - Gained: `{equals,does-not-equals,strict-equals,strict-does-not-equals,
+    less-than,less-than-or-equal,greater-than,greater-than-or-equal}/bigint-and-bigint`,
+    `{division,modulus}/bigint-arithmetic`.
+- Standalone test262, every other file with `features: [..BigInt..]` outside
+  Temporal (1096 rows): 630 pass after. **0 regressions.** I ran base on every
+  row that does not pass after, and each of them fails on base too. I did not
+  measure gains in this set.
+- Ten rows passed on base only by coincidence: both sides of `sameValue`
+  wrapped to the same 64 bits.
+  - `asIntN/arithmetic`, `asUintN/arithmetic`,
+    `constructor-from-{binary,decimal,hex}-string` and
+    `constructor-trailing-leading-spaces`.
+  - `DataView/…/getBigUint64/return-values{,-custom-offset}`, and
+    `bigint-tobiguint64` in both `ctors-bigint/object-arg` and
+    `internals/Set/BigInt`.
+
+  Once the literal side became exact, each failed honestly partway through
+  this slice. The `BigInt(…)`/`asIntN` folds, `__bigint_ctor_carrier` and the
+  unsigned reads are what make them pass for real.
+
+**What remains (this slice does not do):**
+- **Runtime arithmetic still wraps.** `+ - * / % **`, shifts and bitwise ops on
+  a runtime value lower to i64 ops, and an i64 slot cannot hold a wide value.
+  Limb arithmetic on carriers is the next slice: the ops, relational `< >` on
+  carriers, and `~` on a carrier.
+- **Wide constants in i64 contexts still wrap.** That covers function locals,
+  i64 params and results, and kernel-inferred i64 params. Only reference slots
+  hold the wide form.
+- `BigInt.asIntN/asUintN` with a non-constant argument still reads the low 64
+  bits, which is wrong for `bits > 64`. So is `Number(wide)`.
+- An unsigned 64-bit read that lands in an i64 slot is still the signed bit
+  pattern, e.g. `u64[0] === 2n ** 63n` compared in the i64 lane. So is a
+  dynamic read of a `BigUint64Array` through `any`, because both views share
+  one i64 vec type and the runtime cannot tell them apart.
+- `"" + x` and template-literal ToString of a narrowed carrier still format
+  the low 64 bits. Only `x.toString(r)` and `String(x)` were rerouted.
+- `$BigInt` is now non-final in every standalone module that mints it. That is
+  a type-section byte change with no behavioural effect.

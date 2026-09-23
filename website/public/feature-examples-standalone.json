@@ -93,7 +93,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 989,
+      "passCount": 999,
       "totalCount": 1083,
       "editionSpread": [
         {
@@ -108,7 +108,7 @@
         },
         {
           "edition": "ES2020",
-          "pass": 58,
+          "pass": 68,
           "total": 135
         },
         {
@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1145,
+      "passCount": 1147,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -657,7 +657,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 262,
+          "pass": 264,
           "total": 277
         },
         {
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1779,
+      "passCount": 1788,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -907,7 +907,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 239,
+          "pass": 248,
           "total": 278
         },
         {
@@ -1013,7 +1013,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 4222,
+      "passCount": 4223,
       "totalCount": 4290
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1700,
+      "passCount": 1711,
       "totalCount": 1955
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2947,
+      "passCount": 2949,
       "totalCount": 3812
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 598,
+      "passCount": 608,
       "totalCount": 1048
     },
     {
