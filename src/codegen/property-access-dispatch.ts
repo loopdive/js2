@@ -95,6 +95,7 @@ import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constr
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitRegExpOwnConstructorRead } from "./regexp-split-protocol.js";
 import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
@@ -545,6 +546,9 @@ export function tryConstructorPrototypeIdentity(
       (isBuiltinConstructorIdentityName(builtinName) || isWasiErrorName(builtinName)) &&
       isExternalDeclaredClass(objType, ctx.checker)
     ) {
+      // (#6651 B5) An own `constructor` on a RegExp instance wins over the fold.
+      const ownCtor = tryEmitRegExpOwnConstructorRead(ctx, fctx, expr, builtinName);
+      if (ownCtor !== undefined) return ownCtor;
       // Evaluate the receiver for spec side effects before returning its identity.
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {

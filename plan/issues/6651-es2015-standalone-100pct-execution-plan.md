@@ -370,7 +370,6 @@ loc-budget-allow:
   - src/codegen/declarations/param-return-inference.ts
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/expressions/calls.ts
-  - src/codegen/expressions/new-super.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/statements/variables.ts
 # 2026-09-21 — cluster B, slice B4 (§22.2.6 accessor READS on a native RegExp
@@ -418,9 +417,45 @@ loc-budget-allow:
 # measurement that justifies it — `readIt([10,20], 0)` answered `undefined`
 # where `readIt([10,20], "0")` answered `10` — next to the `$AnyString` gate
 # that caused it.
-  - src/codegen/object-runtime.ts
-  - src/codegen/array-object-proto.ts
   - src/codegen/ta-dyn-mop.ts
+# 2026-09-23 — cluster B, slice B5 (`RegExp.prototype[@@split]`, §22.2.6.14).
+# The MECHANISM is the new module `src/codegen/regexp-split-protocol.ts` (the
+# whole generic body: SpeciesConstructor, the default-lane splitter clone, the
+# sticky walk, ToUint32(limit), and the own-`constructor` read). Three
+# irreducible call sites travel, restated here so the grants are not stranded
+# in the earlier slices' rationales:
+#   - `regexp-standalone.ts` +54: the `@@10` arm in `emitRegExpProtoMemberBody`
+#     (same placement fact as B2's `@@7`/`@@9` arm — it must sit BEFORE the
+#     brand-recovery prologue), the builtin-exec callback those arms now share
+#     lifted to one named function (it recovers the struct from a LOCAL, which
+#     `@@split` needs for its splitter), and the direct-spelling ROUTING
+#     decision in `tryCompileStandaloneRegExpSymbolCall` (B3's argument: the
+#     gate has to be readable where the static core is entered).
+#   - `property-access-dispatch.ts` +4: one call in the #3006 standalone
+#     `.constructor` fold, which must consult an OWN `constructor` before
+#     answering the `%RegExp%` carrier — the decline can only live where the
+#     fold is taken.
+#   - `expressions/assignment.ts` +5: the no-JS-host decline on an inherited
+#     `Object` member write (`re.constructor = f`), which otherwise binds the
+#     `Object_set_constructor` HOST import — a compile error in standalone. It
+#     has to sit in `compileExternPropertySet`, the function that binds it.
+# 2026-09-23 — cluster B, slice B5b (`RegExp.prototype[@@replace]`, §22.2.6.11).
+# `regexp-standalone.ts` +23 more (+77 over the slice): the `@@8` arm joins the
+# `@@10` one in `emitRegExpProtoMemberBody` and the direct `re[Symbol.replace]`
+# spelling gets the same ROUTING decision as `@@split` in
+# `tryCompileStandaloneRegExpSymbolCall` — both the B2/B3 placement facts
+# restated above. The mechanism (the collect loop, the per-result reads and an
+# inline GetSubstitution over captured strings) is the new module
+# `src/codegen/regexp-replace-protocol.ts`.
+# 2026-09-23 — cluster C, slice C4 (array patterns over a tuple-struct source).
+# `destructuring-params.ts` +12 (path listed just above, restated here so the
+# grant is dated for this change-set). The MECHANISM — the exhausted-element
+# binding and the sentinel-aware field box — lives in the 90-line leaf
+# `tuple-rest.ts`, which already owned the exhausted REST element. What stays in
+# the god-file is the 5-line call arm inside the tuple loop (the only place that
+# knows the tuple's width) and a 7-line module-level adapter that hands the leaf
+# the recursion (`destructureParamObject`/`destructureParamArray`), so the leaf
+# does not import its own importer.
 func-budget-allow:
   # 2026-09-23 — cluster F slice F3: +13 inside `compileObjectDefineProperty`,
   # the same comment-dominated one-line change as the LOC grant above. The
@@ -572,6 +607,16 @@ func-budget-allow:
   # what is left here is one `unshift` call plus the four lines explaining why
   # it is a separate arm from the `$__ta_ctor` one directly above it.
   - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+# 2026-09-23 — cluster B, slice B5: `tryConstructorPrototypeIdentity` +3 — the
+# one call (plus its comment) described under the LOC grant above. The
+# mechanism, its gate and its receiver compile are all inside
+# `regexp-split-protocol.ts::tryEmitRegExpOwnConstructorRead`.
+  - src/codegen/property-access-dispatch.ts::tryConstructorPrototypeIdentity
+  # 2026-09-23 — cluster C slice C4: `destructureParamArray` +4, the call arm
+  # for a non-rest element past the tuple's width (see the loc rationale). It
+  # has to sit inside the tuple-struct loop: that loop is the only code that
+  # holds `tupleDef.fields.length`, and the old `break` it replaces was there.
+  - src/codegen/destructuring-params.ts::destructureParamArray
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -598,6 +643,28 @@ coercion-sites-allow:
 # return values (undefined / null / true / NaN / 1 / "" / "string" / a symbol /
 # an object) through this one call.
   - src/codegen/native-dynamic-instanceof.ts
+# 2026-09-23 — cluster B, slice B5: `regexp-split-protocol.ts` names
+# `__to_primitive` ×1 and `__unbox_number` ×1. Neither is a new matrix: it is
+# the canonical standalone ToNumber provider set, obtained from
+# `prepareStandaloneExternrefToNumberProviders` (the fused `__to_number` when
+# fusion is enabled; the `[__to_primitive(v, "number"), __unbox_number]` pair is
+# only the fallback when it is not) — the identical chain B3's §22.2.6.8 loop
+# uses in `regexp-exec-protocol.ts`. The three sites it feeds are the spec's
+# ToUint32(limit), ToLength(Get(splitter, "lastIndex")) and
+# LengthOfArrayLike(z), each on a value a user object supplied, and each must
+# run `valueOf`/`@@toPrimitive` with hint "number"
+# (`str-coerce-lastindex`, `str-result-coerce-length`, `coerce-limit-err`).
+  - src/codegen/regexp-split-protocol.ts
+# 2026-09-23 — cluster B, slice B5b: `regexp-replace-protocol.ts` names the same
+# `__to_primitive` ×1 / `__unbox_number` ×1 fallback pair as
+# `regexp-split-protocol.ts` above, for the same reason (the canonical provider
+# set from `prepareStandaloneExternrefToNumberProviders`; the fused
+# `__to_number` when fusion is on). Its sites are §22.2.6.11's
+# ToLength(Get(rx, "lastIndex")), LengthOfArrayLike(result) and
+# ToIntegerOrInfinity(Get(result, "index")) — each on a user value whose
+# `valueOf` / `@@toPrimitive` must run with hint "number"
+# (`result-coerce-index-undefined` asserts the hint).
+  - src/codegen/regexp-replace-protocol.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -4933,6 +5000,386 @@ Known narrowing, stated in the code: the inherited-value arm sits in FRONT of
 the receiver's own lookup, so a user `Int16Array.of = f` shadow is not
 observed. It is not a regression: the base answered `false` for that probe too
 (`.tmp/e4/p3.js`, `shadow`).
+
+### 2026-09-23 — Cluster B (RegExp `@@` protocol, standalone), slice B5: `RegExp.prototype[@@split]` (§22.2.6.14)
+
+- **Base** `claude/es2015-test262-plan-54tooh` @ `1b24a5e3a2` (origin/main + E4,
+  open as PR #6033). `git log 4a9df53cae..origin/main -- src/codegen` touches
+  no RegExp module, so this slice is collision-free with main.
+- **Manifest** `plan/agent-context/6651/B-regexp-protocol.txt` **minus the 35
+  rows B1–B4 landed** = 112 rows (`.tmp/b5/manifest.txt`, sha256
+  `62cbd3d3c6fc1ec3cba0336b8bd8e82503e44a6f851de7261e192cce122ddee7`). The
+  subtraction was re-measured, not taken on trust: the full 147-row file on the
+  source-clean base came back **35 pass / 104 fail / 8 compile_error**, and the
+  112 non-pass rows ARE the manifest.
+- **Engine** `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter key
+  `d4799bda84cfed0d`, rebuilt for this run), `--standalone --isolate`, 60-row
+  chunks in fresh processes, one runner at a time, sources hash-checked
+  unchanged across the whole after-sweep (`.tmp/b5/after-src.sha`).
+
+`@@split` was taken first, per the brief: its 33 manifest rows are one
+mechanism (SpeciesConstructor + the splitter walk), while `@@replace` needs a
+second one (GetSubstitution over captured strings) on top of its loop.
+
+#### What changed
+
+One new module, `src/codegen/regexp-split-protocol.ts` (~780 LOC incl. the
+rationale), wired onto B2's `RegExpExec` substrate (whose builders are now
+exported rather than duplicated). **No new host import.**
+
+- **`emitRegExpSymbolSplitBody`** — §22.2.6.14 in full over an arbitrary
+  Object receiver: `Type(rx) is Object` (no brand check — as in B2, the brand
+  lives in RegExpExec step 5, here on the SPLITTER), `ToString(string)` once,
+  **SpeciesConstructor** (`Get(rx,"constructor")`: undefined ⇒ default, a
+  primitive or explicit `null` ⇒ TypeError, `Get(C,@@species)`: nullish ⇒
+  default, non-constructor ⇒ TypeError), `ToString(Get(rx,"flags"))`, `y`
+  appended exactly when absent, `Construct(C, «rx, newFlags»)` through the
+  ordinary-constructor driver `__native_construct_2` (#3981), ToUint32(limit)
+  (`lim = 0` returns before any exec), the empty-subject arm, and the walk —
+  `Set(splitter,"lastIndex",q)` per position, `e = min(ToLength(lastIndex),
+  size)`, unicode-aware AdvanceStringIndex, captures pushed through
+  `Get(z, ToString(i))` for `i ≤ LengthOfArrayLike(z) - 1`, and `lengthA = lim`
+  returning mid-walk.
+- **The default lane is decided by IDENTITY.** In standalone `/a/.constructor`
+  IS the reified `RegExp` carrier and `RegExp[Symbol.species]` answers that same
+  carrier (measured), so a species value SameValue to the `%RegExp%` identity
+  global is the default lane — exactly §10.1.13's answer, and it keeps the
+  ordinary-function `[[Construct]]` driver away from the RegExp carrier.
+- **The default splitter** (`Construct(%RegExp%, «rx, newFlags»)`) performs
+  `IsRegExp`'s observable `Get(rx, @@match)` first (Annex B
+  `Symbol.match-getter-recompiles-source` recompiles the receiver inside that
+  getter), then CLONES a genuine `$NativeRegExp` (same program/source/groups,
+  `lastIndex` 0, flag bits `| y`) and sends anything else through the runtime
+  compiler `RegExpInitialize(ToString(rx), newFlags)`. Deliberate narrowing,
+  recorded in the function: the clone keeps the receiver's own `i/m/s/u` bits
+  rather than re-parsing `newFlags`, because the program is compiled for them.
+- **Both spellings, one body.** The reflective closure (`@@10`) and the DIRECT
+  `re[Symbol.split](…)` spelling (B3's `__apply_closure` route, generalised to
+  0–2 arguments) reach the same function. The direct route's gate is B3's
+  whole-file predicate widened by `ctx.arraySpeciesDirty` (the module mentions
+  `species` or assigns a `.constructor` — the only ways SpeciesConstructor can
+  answer anything but `%RegExp%`), by a file that spells `Symbol.match`
+  (IsRegExp), and by operands the static core cannot type (missing/non-string
+  subject, non-number limit). Checked before the arity test, since
+  `re[Symbol.split]()` is legal.
+
+Two defects OUTSIDE the method had to be fixed for any `species-ctor-*` row to
+reach it, both measured:
+
+1. **`re.constructor = f` bound the `Object_set_constructor` HOST import**
+   (`compileExternPropertySet` resolved `constructor` on the inherited `Object`
+   extern class) — a compile error in standalone, 6 of B2's "7 CE rows". Under
+   no JS host an inherited `Object` member write now declines to the native
+   ordinary `[[Set]]` (`__extern_set`). This is also why 7 `@@matchAll/
+   species-constructor*` controls move compile_error → fail.
+2. **The static `re.constructor` read ignored an OWN property.** The #3006
+   standalone fold answers the `%RegExp%` carrier unconditionally, so
+   `re.constructor[Symbol.species] = …` wrote `@@species` onto `%RegExp%`
+   itself and the split body's real `[[Get]]` never saw it (probe:
+   `re.constructor === f` false after `re.constructor = f`, while `re[k] === f`
+   was true). In a module that writes/deletes/defines a `constructor`
+   (`moduleTouchesConstructorProp`), the read is now `__hasOwnProperty(re,
+   "constructor") ? __extern_get(re, "constructor") : %RegExp%`
+   (`tryEmitRegExpOwnConstructorRead`; `__extern_get` alone answers `undefined`
+   for an unmodified RegExp).
+
+One latent hazard caught before measuring, worth keeping: the first cut shared
+ONE `toNumber` Instr array across its three splice sites. The finalize walks
+remap every Instr object they reach, so a shared object is remapped once per
+position — a wrong `funcIdx` whenever a late import lands after the body. It
+now is a builder returning fresh objects; the rule is written at the top of the
+builder section.
+
+#### Receipt — manifest
+
+| 112 rows, `--standalone --isolate`, QuickJS | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/b5/before-full-0{0,1,2}.log`, full 147-row file) | **0** | 104 | 8 |
+| after (`.tmp/b5/after-m-0{0,1}.log`) | **27** | 84 | 1 |
+
+**+27, zero regressions**, joined row-by-row (`.tmp/b5/join.mjs` →
+`.tmp/b5/join-manifest.txt`): 29 rows changed status, 27 non-pass → pass and 2
+`compile_error → fail` (`species-ctor`, `splitter-proto-from-ctor-realm` — both
+now compile and run; see residuals). The 27: 26 of the 33 `@@split` rows
+(`coerce-{flags,limit-err,string}`, `get-flags-err`,
+`last-index-exceeds-str-size`, `limit-0-bail`, the six
+`species-ctor-{ctor-get-err,ctor-undef,err,species-get-err,species-non-ctor,
+species-undef}` + `species-ctor-y`, all twelve `str-*`, and Annex B
+`Symbol.match-getter-recompiles-source`), plus
+`built-ins/RegExp/call_with_regexp_not_same_constructor.js`, which was the
+`Object_set_constructor` compile error and now passes.
+
+#### Controls — zero pass → non-pass
+
+Control set = B4's 326-row recipe rebuilt against THIS manifest (so B4's 8
+landed rows rejoin it), WIDENED with `built-ins/String/prototype/{replace,
+replaceAll,split}/**` in full: **544 rows** (`.tmp/b5/controls.txt`, sha256
+`c6d11df45dfff8984d715a8a3b2273fafc2478373bae998df0e4cba9b4e51346`, built by
+`.tmp/b5/mkctrl-b5.mjs`; all 326 of B4's rows are in it) — plus the 15
+`built-ins/RegExp/prototype/Symbol.split/**` rows that are in neither list.
+
+| lane | rows | result |
+| --- | ---: | --- |
+| standalone, after (`.tmp/b5/after-c-0{0..9}.log`) | 544 | 470 pass / 60 fail / 14 compile_error |
+| standalone, after — `Symbol.split/**` extras (`.tmp/b5/after-x-00.log`) | 15 | 15 pass |
+| standalone, before — the **74 non-pass-after rows** on `cp`-reverted sources (`.tmp/b5/base-rerun-0{0,1}.log`) | 74 | **0 pass**; statuses identical except 7 `@@matchAll/species-constructor*` `compile_error → fail` (the host-import fix above) |
+| host — compiled-binary sha256 of 22 programs (`.tmp/b5/hostsha-{base,c1}.txt`) | 22 | **all 22 byte-identical** |
+| standalone — the same 22 (`.tmp/b5/sasha-{base,c1}.txt`) | 22 | **21 byte-identical**, incl. the ungated `"a,b".split(",")`, `"abc".replace(/b/,"x")`, `"a1b2c".split(/\d/,2)`, `re[Symbol.split]("a,b,c")` and `re[Symbol.split]("a,b,c", 2)`; only `species-ctor-write` (the admitted shape) differs |
+
+The 74-row before-side is COMPLETE for the regression question, not a sample: a
+pass→non-pass regression is by definition non-pass after.
+
+#### Gates (bare, exit codes read directly)
+
+`check-loc-budget` · `check-func-budget` · `check-coercion-sites` ·
+`check:oracle-ratchet` · `check:dead-exports` — all `0`, and the two budget
+gates also `0` with `LOC_GATE_BASE=origin/main` (`6cb630798e`). Grants in this
+file's frontmatter, dated. `check-compiler-boundaries --mode inventory --base
+origin/main` — `0` (`regexp-split-protocol.ts` classified). `npm run -s
+typecheck` — `0`. `npx biome lint src tests scripts --diagnostic-level=error` —
+`0`. `scripts/equivalence-gate.mjs` — `0`, **22 failing / 1720 passing, all 22
+in the committed baseline**. Pin suites: B1–B4 **49/49** (the process exits 1
+on the known `[vitest-worker]: Timeout calling "onTaskUpdate"` RPC flake; every
+test reports PASS), and the new `tests/issue-6651-regexp-split-protocol-b5.test.ts`
+**12/12** — **verified red on the reverted base** (`.tmp/b5/pin-b5-ONBASE.log`:
+every test262 row and every inline case failed there, the one green being the
+static-spelling control). The suite carries 7 of the 26 rows, not all of them:
+with 11 in-process test262 compiles the single 512 MB vitest fork ran out of
+heap, and the inline cases cover what the dropped rows pinned.
+
+#### Residuals (85 rows) and their mechanisms
+
+| rows | bucket | what it needs |
+| ---: | --- | --- |
+| 31 | `@@replace` (30) + `String.prototype.replace/cstm-replace-get-err` (CE) | §22.2.6.11's collect loop + GetSubstitution over captured strings — **landed in B5b** (next entry): 28 of the 30 now pass |
+| 2 | `@@split/coerce-{flags,string}-err` | `ToString(Symbol)` must throw a TypeError (§7.1.17); `__extern_toString` answers a string. The recorded object-runtime gap (B3's `@@search/coerce-string-err`) |
+| 1 | `@@split/species-ctor-ctor-non-obj` | the default splitter's runtime compile of `"[object Object]"` (a character class) is outside `__regex_compile_dynamic_simple`'s grammar |
+| 1 | `@@split/species-ctor` | **not a RegExp defect**: `new S()` for a first-class function value links `this` to the wrong prototype — `t instanceof F` and `getPrototypeOf(t) === F.prototype` are both false after `new ([F][0])()` (probe). The `#3981` driver's prototype link |
+| 1 | `@@split/splitter-proto-from-ctor-realm` | `$262.createRealm` |
+| 2 | `String.prototype.split/{limit-touint32-error,this-value-tostring-error}` | `String.prototype.split`'s own step order (§22.1.3.23), not `@@split` |
+| 47 | unchanged buckets from B4 | constructor/statics, `compile`, flag-getter `coercion-*`, the strict-`[[Set]]` `*-set-lastindex-err` family, cross-realm, `String.prototype.*` |
+
+### 2026-09-23 — Cluster B (RegExp `@@` protocol, standalone), slice B5b: `RegExp.prototype[@@replace]` (§22.2.6.11)
+
+- **Base** this branch immediately after B5 (`e60aa7753a`). Same manifest file
+  as B5, same engine and runner discipline; the BEFORE state of every row below
+  is B5's own measured AFTER state (`.tmp/b5/after-{m,c,x}-*.log`), with sources
+  hash-checked unchanged between B5's sweep and its commit, so the join needs no
+  re-run.
+
+#### What changed
+
+One new module, `src/codegen/regexp-replace-protocol.ts` (~1,100 LOC incl. the
+rationale), on the same substrate; `@@8` joins `@@10` in
+`emitRegExpProtoMemberBody`, and the direct `re[Symbol.replace](s, v)` spelling
+takes the same `__apply_closure` route when the file observes the protocol (B3's
+predicate) or an operand is one the static core cannot type (missing/non-string
+subject, missing replacement). **No new host import.**
+
+- **Collect, then substitute** — §22.2.6.11 steps 10-12 run RegExpExec to
+  completion (global: an empty match advances `lastIndex` from
+  `ToLength(Get(rx, "lastIndex"))`, computed in f64 so `2^53 - 1 + 1` survives),
+  and only then does step 15 read each result. Every read is a `[[Get]]` on the
+  RESULT object — `length` (LengthOfArrayLike), `0` (ToString), `index`
+  (ToIntegerOrInfinity, clamped to `[0, lengthS]`), `n` (ToString unless
+  undefined), `groups` — because each `result-{get,coerce}-*` row poisons or
+  coerces exactly one of them.
+- **A functional replacer** gets `«matched, …captures, position, S[, groups]»`
+  with `this` undefined through `__apply_closure`, and its result is ToString'd.
+- **GetSubstitution is emitted inline over captured STRINGS.** The existing
+  `__regex_get_substitution` expands against a capture-OFFSET array; the generic
+  method only has whatever the result object's properties coerced to. The inline
+  walk handles `$$`, `$&`, `` $` ``, `$'`, `$n`/`$nn` (two digits when that index
+  is in `1..m`, else one digit when THAT is, else literal — so `$0`, `$00` and an
+  out-of-range `$3` stay literal) and `$<name>` (literal with no named captures;
+  otherwise `Get(groups, name)`, undefined ⇒ ""), copying the literal runs
+  between substitutions as O(1) substring views.
+- The locals that are assigned on only one arm of an `if` (the template, the
+  replacement) are NULLABLE and read through `ref.as_non_null`: a non-defaultable
+  local initialised inside a branch is not initialised after the join, and the
+  module would not validate.
+
+#### Receipt — manifest
+
+| 112 rows, `--standalone --isolate`, QuickJS | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before = B5 after (`.tmp/b5/after-m-0{0,1}.log`) | 27 | 84 | 1 |
+| after (`.tmp/b5/a2-m-0{0,1}.log`) | **55** | 56 | 1 |
+
+**+28, zero regressions**, joined row-by-row (`.tmp/b5/join2-manifest.txt`):
+exactly 28 rows changed status, all `fail → pass`, all in
+`built-ins/RegExp/prototype/Symbol.replace/` — 28 of its 30 manifest rows.
+**Slice total (B5 + B5b): 112-row manifest 0 → 55 pass.**
+
+#### Controls — zero pass → non-pass
+
+The B5 control set (544 rows + the 15 `Symbol.split/**` rows) plus the 40
+`built-ins/RegExp/prototype/Symbol.replace/**` rows in neither list
+(`.tmp/b5/controls-extra-r.txt`, measured on B5's after-state before this
+slice's first edit).
+
+| lane | rows | result |
+| --- | ---: | --- |
+| standalone, `Symbol.{split,replace}/**` extras, B5 → B5b (`.tmp/b5/{after,a2}-x-0{0,1}.log`) | 55 | 48 → **53 pass**, 0 regressions; the 5 gains are `named-groups-fn`, `result-get-groups-err`, `result-get-groups-prop-err`, `result-coerce-groups-prop{,-err}` — the named-capture half of the same body |
+| standalone, the 544-row set, B5 → B5b (`.tmp/b5/a2-c-0{0..9}.log`) | 544 | 470 → **471 pass**, **0 pass → non-pass**, every other row's status identical (`.tmp/b5/join2-controls.txt`); the gain is `String.prototype.replace/regexp-prototype-replace-v-u-flag` |
+| host — compiled-binary sha256 of the 22 programs (`.tmp/b5/hostsha-c2.txt`) | 22 | **all 22 byte-identical to the base** |
+| standalone — the same 22 (`.tmp/b5/sasha-c2.txt`) | 22 | **all 22 byte-identical to B5**, incl. `direct-replace-static` (`re[Symbol.replace]("abcb","x")`), `direct-replace-fn` (an arrow replacer), `"abc".replace(/b/,"x")` and `"a-b".replace(/-/,"$&$&")` — the ungated spellings keep the static core |
+
+#### Gates
+
+Every B-slice control is a join against the PREVIOUS slice's measured state,
+and a regression is by definition non-pass AFTER, so the B5 → B5b joins above
+are complete for this slice, and B5's own base re-run covers the chain back to
+the source-clean branch tip. The whole-slice claim therefore holds: **0 → 55
+manifest, +1 and +5 outside it, zero pass → non-pass across 599 control rows.**
+
+`check-loc-budget` · `check-func-budget` · `check-coercion-sites` ·
+`check:oracle-ratchet` · `check:dead-exports` — all `0` (with and without
+`LOC_GATE_BASE=origin/main`). Boundaries inventory — `0`
+(`regexp-replace-protocol.ts` classified). `npm run -s typecheck`, `npx biome
+lint src tests scripts --diagnostic-level=error` — `0`.
+`scripts/equivalence-gate.mjs` — `0`, **22 failing / 1720 passing, all 22 in
+the committed baseline**. Pin suites: B1–B4 **49/49**, B5 `@@split` **12/12**,
+and the new `@@replace` suite **11/11** — **verified red on B5's state: 10 of 11
+fail there** (`.tmp/b5/pin-b5r-ONBASE.log`), the one green being the
+static-spelling control.
+
+**One measured side effect, and the test-layout change it forced.** With the
+`@@replace` body joining `@@split`'s in the RegExp glue, every module that
+materialises that glue emits both, and B5's `@@split` suite (7 in-process
+test262 compiles + 5 inline programs in ONE 512 MB vitest fork) ran out of heap
+deterministically — while the rows alone and the inline cases alone each pass.
+Both suites are therefore split into a test262-rows file and an `-inline` file
+(`tests/issue-6651-regexp-{split,replace}-protocol-b5{,-inline}.test.ts`, 23/23
+across the four). The binary-size side is bounded by the sha table above: only
+a program that READS a RegExp.prototype member reflectively (or takes the gated
+route) registers the glue, and none of the 22 ungated shapes changed.
+
+#### Residuals (57 rows)
+
+| rows | bucket | what it needs |
+| ---: | --- | --- |
+| 2 | `@@replace/coerce-lastindex{,-err}` | a `$NativeRegExp`'s `lastIndex` is two slots (the f64 fast slot + a raw value for a deferred-ToLength object assignment); the dynamic `[[Get]]`/`[[Set]]` (`__extern_get`/`__extern_set`'s closed-struct ladder) reads and writes only the f64 slot, so after `r.lastIndex = {valueOf}` a dynamic read never runs `valueOf` and a dynamic write leaves the static read answering the stale object. One carrier fix, both ladders — not a RegExp-method defect |
+| 1 | `String.prototype.replace/cstm-replace-get-err` | B1's recorded one-argument `replace` refusal (#1474) |
+| 7 | `@@split` | see the B5 entry |
+| 47 | unchanged buckets from B4 | see the B5 entry |
+
+### 2026-09-23 — Cluster C, slice C4 (array patterns over a tuple-struct source: the `dflt-obj-ptrn-prop-ary` family)
+
+- **Branch** `c4`, base `origin/main` @ `6cb630798e`. **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a4e3be6d143ec3400`. Not pushed.
+- **Manifest** `.tmp/c4/manifest.txt` — every `dflt` row of the C/G/I
+  manifests, 42 rows. Engine `quickjs`, `--standalone --isolate`, 24-row
+  chunks in fresh processes, all chunk exits `0`.
+
+| standalone, `--isolate`, engine quickjs | pass | non-pass |
+| --- | ---: | ---: |
+| before (`.tmp/c4/before-0{0,1}.log`) | 21 | 21 |
+| after (`.tmp/c4/after-0{0,1}.log`) | **31** | 11 |
+
+Per-row: **10 non-pass → pass (all ten `dstr/*dflt-obj-ptrn-prop-ary`), 0 lost.**
+(The brief expected ~35 on the base; the measured base is 21.)
+
+#### C3b's two-defect diagnosis, re-measured: right about the location, wrong about defect (a)
+
+- **(b) is real and was the loop, not the default path.** `destructureParamArray`'s
+  tuple-struct lane `break`s at the first element past the tuple's width. A
+  parameter default `{ w: [7, 8] }` types `w` as `[number, number]`, so
+  `[a, b, c]` never wrote `c` — it kept its zero-initialised externref local,
+  which is JS `null` in the standalone value model. Only the parameter-default
+  path showed it because that is where the checker hands the pattern a TUPLE
+  (an argument goes through the vec lane). The same `break` also skipped the
+  element's own default (`[a, b, c = 9]` gave `0`), a nested default
+  (`[a, b, [c] = [5]]` gave `null`), and the TypeError for a nested pattern with
+  no default. Fix: `emitExhaustedTupleElement` (in `tuple-rest.ts`, beside its
+  rest-element twin) binds `undefined`, then that element's own default, for
+  every non-rest element past the width.
+- **(a) is NOT a literal-representation defect, and the suggested fix makes it
+  worse — measured.** `[7, undefined]` already stores the `UNDEF_F64_BITS`
+  sentinel in its f64 slot, and the `===`/`typeof` observers read it correctly.
+  The value is lost when a slot read is BOXED to externref: `String(y)` answered
+  `"NaN"` while `y === undefined` answered `true` in the same function. I tried
+  the brief's gate (JS file + `undefined` element ⇒ externref carrier, in
+  `compileArrayLiteral`'s `hasNullLiteral` arm). Every probe got WORSE: the
+  binding's checker type is still `number[]`, so the externref vec is coerced back
+  to an f64 vec at the assignment, and that coercion writes a plain NaN — the
+  sentinel is gone and `typeof`, `=== undefined` and destructuring defaults all
+  broke too (`var [p = 5, q = 6] = [7, undefined]` gave `q = NaN`). Reverted,
+  not committed.
+- **What fixes the manifest rows is the tuple FIELD box.** The tuple lane had the
+  sentinel-aware read only for an element WITH a default (#2574). The
+  no-default arm boxed the f64 field with the generic `__box_number`, which #3315
+  deliberately keeps sentinel-blind: a fresh Math result can carry the sentinel
+  bits. `coerceTupleBindingElement` now boxes an f64 FIELD into an externref
+  binding through the existing `undefSentinel` brand. That is the decode site
+  #3315 names as the right one ("slot reads"), and the vec lane already does
+  this (`vec-access-exports.ts`).
+
+#### Control — every row that can reach the new code, both targets
+
+The C3 2,370-row list controls an array-literal change, and this slice has none.
+So the control asks a stricter question: which rows reach either edited branch
+at all? Both branches are new arms. A row that reaches neither compiles to the
+same bytes as base by construction.
+
+1. **AST scan** (`.tmp/c4/scan.mjs`) of all of `test262/test`: 7,447 files contain
+   an `ArrayBindingPattern` or an array-literal assignment target. That syntax is
+   the only way into `destructureParamArray`. `test262/harness` has none.
+2. **Fire detection** (`.tmp/c4/detect2.mts`) compiled all 7,447 with a counter
+   on both branches, on **both** targets. The counter was temporary and was
+   removed before any verdict run. Body-only compiles, validated first: on the
+   first 518 rows the fire set was identical to full-harness compiles. Zero
+   compile throws. **464 rows fire, and it is the same 464 on standalone and
+   host** (`.tmp/c4/fired.txt`, sha256 `551c4ac5…`).
+3. **Verdicts** for those 464: before and after on both targets, engine
+   quickjs, in-process 200-row chunks, one runner at a time. All chunk exits
+   `0`, and `counted=464` on all four passes.
+
+| target | before non-pass | after non-pass | pass → non-pass | non-pass → pass |
+| --- | ---: | ---: | ---: | ---: |
+| standalone (`.tmp/c4/ctl/ctl-{before,after}-standalone.log`) | 31 | 4 | **0** | **27** |
+| host (`.tmp/c4/ctl/ctl-{before,after}-host.log`) | 44 | 17 | **0** | **27** |
+
+The 27 are the whole `dflt-obj-ptrn-prop-ary` family (class `meth` / `gen-meth`
+/ `async-gen-meth` / `private-*` × static, plus `function`, `generators` and
+`async-generator`). The manifest carries 10 of them. No other verdict changed,
+including the non-pass status kinds.
+
+The helper moved from the god-file into `tuple-rest.ts` after the control ran.
+To show the move changed nothing, all 464 fired rows were compiled under both
+trees on both targets: **928/928 binaries identical**. Other gates, on the
+final tree:
+- 32/32 playground + benchmark files compile to **byte-identical** binaries
+  (`.tmp/c4/corpus-{base,new}.txt`).
+- `equivalence-gate`: 22 failing / 1,720 passing, 22 known, **no new**.
+- Green: `check:ir-fallbacks`; loc/func budgets, both local and
+  `LOC_GATE_BASE=origin/main` (grants in the frontmatter); coercion-sites;
+  oracle-ratchet (+0/+0); dead-exports; compiler-boundaries inventory; biome;
+  typecheck.
+- C-family pins stay green. All 40 `dstr|destruct|tuple` suites were run one
+  process per file. `tests/issue-4655.test.ts` (5) and 8 of those suites fail
+  identically on base: `issue-3643` (2), `illegal-cast-vec-tuple-648` (5),
+  `issue-3522` (2), `generator-method-destructuring` (1), `issue-43-fexp` (1),
+  plus whole-file failures in `issue-4376`, `issue-4758` and `issue-5738`. Every
+  failure is pre-existing, with the same test names on both trees.
+- New pin `tests/issue-6651-c4-tuple-dstr-undefined.test.ts`: 4 cases, all RED
+  on base (standalone 7 / host 1 / 32 / 32 against 63).
+
+#### Residuals in the manifest (11)
+
+| rows | signature | finding |
+| ---: | --- | --- |
+| 6 | `Cannot access property on null or undefined` — `params-dflt-ref-arguments` ×5, `params-dflt-meth-ref-arguments` | unchanged from C3/C3b: `arguments` in the PARAMETER scope (cluster I's B11). |
+| 2 | `Cannot read properties of undefined (reading 'next')` — object `gen-meth-dflt-params-arg-val-not-undefined`, `dstr/gen-meth-dflt-obj-ptrn-empty` | **Root-caused, not fixed.** Both tests declare `var obj = {}`, then `var obj = { *method… }`. The checker types the binding from the first declaration, so the literal takes the open-object lane. There, `emitObjectLiteralMethodFn` passes the MethodDeclaration to `compileArrowAsClosure`, whose generator test is `ts.isFunctionExpression(arrow) && asteriskToken`. So a `*method` becomes a plain closure: the body runs eagerly and returns `undefined`. Repro: `var p = {}; var p = { *m() {} }; p.m()`. Widening the two `isGenerator` tests to MethodDeclaration made the module emit `env::` host imports under `--target standalone`. The native generator lowering keys on `FunctionExpression` in more places, so this is not a one-site fix. It belongs with cluster A's generator lane. |
+| 3 | `standalone target emitted host imports: env::g (#2961)` — `module-code/*-dflt-*gen*` | module-code default-export generators, unrelated to parameters. |
+
+**Still open from C3b's list: the non-destructuring read of defect (a).** In
+`var a = [7, undefined]; String(a[1])` an f64-vec ELEMENT read is boxed without
+the sentinel decode. The fix is the same brand as this slice's, applied to the
+f64-vec element-access result type. That is corpus-wide and moves the ABI
+wherever the result reaches a signature (`function-types.ts` keys on the
+brand). It needs its own slice and its own control. No row in this manifest
+depends on it.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

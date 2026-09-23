@@ -64,7 +64,7 @@ import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
-import { coerceTupleBindingElement, emitExhaustedTupleRest } from "./tuple-rest.js";
+import { coerceTupleBindingElement, emitExhaustedTupleElement, emitExhaustedTupleRest } from "./tuple-rest.js";
 // (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
 // imports `destructureParamArray` from here. ESM resolves the cycle because the
 // references are used only at call time (inside
@@ -1802,6 +1802,14 @@ function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContex
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
 }
 
+/** (#6651 C4) The recursion `emitExhaustedTupleElement` needs for a nested pattern over an externref local. */
+function nestedExternrefDestructurer(ctx: CodegenContext, fctx: FunctionContext, opts: DestructureOpts) {
+  return (tmp: number, p: ts.BindingPattern): void =>
+    ts.isObjectBindingPattern(p)
+      ? destructureParamObject(ctx, fctx, tmp, p, { kind: "externref" }, opts)
+      : destructureParamArray(ctx, fctx, tmp, p, { kind: "externref" }, opts);
+}
+
 /**
  * Destructure a function parameter that is an ArrayBindingPattern.
  * The parameter value (a vec struct ref) is at param index `paramIdx`.
@@ -2421,6 +2429,10 @@ export function destructureParamArray(
       for (let i = 0; i < pattern.elements.length; i++) {
         const element = pattern.elements[i]!;
         if (ts.isOmittedExpression(element)) continue;
+        if (i >= tupleDef.fields.length && ts.isBindingElement(element) && !element.dotDotDotToken) {
+          emitExhaustedTupleElement(ctx, fctx, element, isDecl, nestedExternrefDestructurer(ctx, fctx, opts));
+          continue;
+        }
         if (emitExhaustedTupleRest(ctx, fctx, element, i >= tupleDef.fields.length)) break;
 
         const fieldType = tupleDef.fields[i]!.type;

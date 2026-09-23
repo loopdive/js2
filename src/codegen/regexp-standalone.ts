@@ -97,7 +97,13 @@ import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
-import { emitRegExpSymbolProtocolApply, fileObservesRegExpExecProtocol } from "./regexp-symbol-protocol-call.js";
+import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
+import { emitRegExpSymbolSplitBody } from "./regexp-split-protocol.js";
+import {
+  emitRegExpSymbolProtocolApply,
+  fileMentionsSymbolMatch,
+  fileObservesRegExpExecProtocol,
+} from "./regexp-symbol-protocol-call.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
@@ -4905,6 +4911,50 @@ export function tryCompileStandaloneRegExpSymbolCall(
     return undefined;
   }
 
+  // (#6651 B5) `re[Symbol.split](s, lim)` routes through the reified
+  // `RegExp.prototype[@@split]` — the §22.2.6.14 body with SpeciesConstructor
+  // and the splitter walk — under the same whole-file gate as B3's route,
+  // widened by `arraySpeciesDirty` (the module mentions `species` or assigns a
+  // `.constructor`, the only ways SpeciesConstructor can answer anything but
+  // %RegExp%) and by an operand the static core cannot type: a missing or
+  // non-string subject, or a non-number limit. Checked BEFORE the arity test
+  // below, because `re[Symbol.split]()` is legal (S = "undefined").
+  if (symbolMethod === "split" && expr.arguments.length <= 2) {
+    const [subject, limit] = expr.arguments;
+    const observed =
+      ctx.arraySpeciesDirty ||
+      fileObservesRegExpExecProtocol(expr) ||
+      fileMentionsSymbolMatch(expr) ||
+      subject === undefined ||
+      !isStringLikeArg(ctx, subject) ||
+      (limit !== undefined && (regExpArgType(ctx, limit).flags & ts.TypeFlags.NumberLike) === 0);
+    const splitId = getWellKnownSymbolId("split");
+    if (observed && splitId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, splitId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
+  // (#6651 B5) `re[Symbol.replace](s, v)` takes the same route to the reified
+  // §22.2.6.11 body when the program can observe the protocol (B3's whole-file
+  // predicate) or an operand is one the static core cannot type (a missing or
+  // non-string subject, a missing replacement).
+  if (symbolMethod === "replace" && expr.arguments.length <= 2) {
+    const [subject, replacement] = expr.arguments;
+    const observed =
+      fileObservesRegExpExecProtocol(expr) ||
+      subject === undefined ||
+      replacement === undefined ||
+      !isStringLikeArg(ctx, subject);
+    const replaceId = getWellKnownSymbolId("replace");
+    if (observed && replaceId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, replaceId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
   // arg[0] is the subject string in every form; string-coercion
   // (`re[Symbol.match](42)`) falls through to the host path which does ToString.
   if (expr.arguments.length < 1) return undefined;
@@ -4925,7 +4975,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
       ensureRegExpNativeProtoGlue(ctx);
       const symbolId = getWellKnownSymbolId(symbolMethod);
       if (symbolId !== undefined) {
-        const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, strExpr, symbolId);
+        const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, [strExpr], symbolId);
         if (routed !== undefined) return routed;
       }
     }
@@ -5607,6 +5657,41 @@ export function ensureRegExpNativeProtoGlue(ctx: CodegenContext): number | undef
 }
 
 /**
+ * RegExpExec steps 5-6 (§22.2.7.1) for the externref RegExp held in `rxLocal`:
+ * the brand recovery (a catchable TypeError on a non-RegExp) plus
+ * `RegExpBuiltinExec`, leaving an externref match object or null. Shared by the
+ * `@@match` / `@@search` bodies (where `rxLocal` is `this`) and `@@split`
+ * (where it is the constructed SPLITTER).
+ */
+function emitRegExpBuiltinExecFromLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rxLocal: number,
+  sLocal: number,
+): void {
+  const builtin = recoverRegExpStructFromExternref(ctx, fctx, rxLocal);
+  if (builtin === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return;
+  }
+  const subjLocal = flattenExternrefArgToString(ctx, fctx, sLocal);
+  const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+    gyLastIndex: "runtime",
+    readLastIndex: true,
+    inputOverride: () => {
+      fctx.body.push({ op: "local.get", index: subjLocal });
+      return nativeStringType(ctx);
+    },
+    regexpOverride: { regexpLocal: builtin.regexpLocal, structTypeIdx: builtin.structTypeIdx },
+  });
+  if (emitted === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return;
+  }
+  fctx.body.push({ op: "extern.convert_any" });
+}
+
+/**
  * Emit a RegExp.prototype method/getter closure body. The closure params are:
  *   index 0: the `__fn_wrap` self struct,
  *   index 1: the externref `this` receiver,
@@ -5698,31 +5783,23 @@ function emitRegExpProtoMemberBody(
   // brand check first answered TypeError for that shape before the user's
   // `exec` could run — see `regexp-exec-protocol.ts`. The builtin arm below IS
   // the old prologue, moved to where the spec puts it.
+  // RegExpExec steps 5-6 for a genuine RegExp receiver: the brand recovery that
+  // used to run first, plus `RegExpBuiltinExec`, leaving an externref.
+  const emitBuiltinExec = (rxLocal: number, sLocal: number): void =>
+    emitRegExpBuiltinExecFromLocal(ctx, fctx, rxLocal, sLocal);
+  // (#6651 B5) `@@10` = `RegExp.prototype[@@split]`, §22.2.6.14 — same
+  // placement rule as `@@9`/`@@7`: step 2 is `Type(rx) is Object`, and the
+  // brand requirement lives in RegExpExec step 5 on the SPLITTER, so the
+  // builtin arm recovers the struct from the splitter local, not from `this`.
+  if (member === "@@10" || member === "@@8") {
+    const result =
+      member === "@@10"
+        ? emitRegExpSymbolSplitBody(ctx, fctx, 1, 2, 3, emitBuiltinExec)
+        : emitRegExpSymbolReplaceBody(ctx, fctx, 1, 2, 3, emitBuiltinExec);
+    // A decline emits nothing and falls to the placeholder below, unchanged.
+    if (result !== null) return result;
+  }
   if (member === "@@9" || member === "@@7") {
-    // RegExpExec steps 5-6 for a genuine RegExp `this`: the brand recovery that
-    // used to run first, plus `RegExpBuiltinExec`, leaving an externref.
-    const emitBuiltinExec = (_rxLocal: number, sLocal: number): void => {
-      const builtin = recoverRegExpStructFromExternref(ctx, fctx, 1);
-      if (builtin === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-        return;
-      }
-      const subjLocal = flattenExternrefArgToString(ctx, fctx, sLocal);
-      const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
-        gyLastIndex: "runtime",
-        readLastIndex: true,
-        inputOverride: () => {
-          fctx.body.push({ op: "local.get", index: subjLocal });
-          return nativeStringType(ctx);
-        },
-        regexpOverride: { regexpLocal: builtin.regexpLocal, structTypeIdx: builtin.structTypeIdx },
-      });
-      if (emitted === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-        return;
-      }
-      fctx.body.push({ op: "extern.convert_any" });
-    };
     const protocolResult =
       member === "@@9"
         ? emitRegExpSymbolSearchBody(ctx, fctx, 1, 2, emitBuiltinExec)
