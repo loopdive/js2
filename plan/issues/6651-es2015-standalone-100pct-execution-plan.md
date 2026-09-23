@@ -335,7 +335,32 @@ loc-budget-allow:
 # ladder it pre-empts) and before `unshiftExternGetProtoCacheArm` (which has to
 # stay the body's prefix or `inlineExternGetCallSites` declines wholesale) —
 # an ORDERING constraint that is only statable in the ordered pass list.
+# 2026-09-23 — cluster H, slice H2 (symbol property keys on an array carrier).
+# `src/codegen/vec-overlay.ts` +153 (already listed above; restated here so the
+# grant is not stranded in a file this change-set does not touch). Four arms,
+# all inside `fillVecOverlayHelpers`: the symbol lanes of `__vec_dp_value`,
+# `__vec_dp_accessor` and `__vec_gopd`, plus the symbol-safe variant of the
+# `"length"` wrapper used by the `__extern_get` / `__vec_prop_get` read
+# prologue. Roughly two thirds is comment, and the comments are the measured
+# before-state at each bail — the four answers the base tree gave
+# (`gOPD(arr, sym) === undefined` while `arr[sym]` read 9 from the other table)
+# are what justify reversing a guard whose own rationale sits at the same line.
+# Honest about the shape of the grant: unlike H1's, this growth is NOT reducible
+# to a call site. Each arm is an alternative CONTINUATION of a guard whose bail
+# instruction list is built from the enclosing closure (`core.ensureIdx`,
+# `bailMiss`, `bailReturnVec`, the per-native local-index map), so extracting it
+# means first parameterising that closure. That extraction — a
+# `vec-symbol-key-overlay.ts` leaf taking the four dependencies explicitly — is
+# the right follow-up and is recorded as such in this slice's receipt; it is not
+# mixed into a change whose whole value is a measured behaviour fix.
 func-budget-allow:
+  # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
+  # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
+  # fills each reserved native's body in turn; every arm this slice adds is a
+  # continuation of a guard built from that pass's own closure, so the split
+  # that would satisfy this gate is the `vec-symbol-key-overlay.ts` extraction
+  # named in the LOC rationale — a refactor, not part of a behaviour fix.
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -2028,6 +2053,191 @@ unusable no-provider run, kept as the evidence for the engine warning),
 `.tmp/6651/I-buckets.txt`. Probes: `.tmp/6651/{selfimport,selfimport2,hasinst,probe}.mts`.
 None of the probes is committed.
 
+
+### 2026-09-23 — Cluster H (builtins misc, standalone), slice H2: the measured bucket table, and symbol property keys on an array carrier
+
+- **Branch** `worktree-agent-a9af718294905d3d7`, base `main` @ `6190e961`.
+  **Worktree** `/home/claude/js2/.claude/worktrees/agent-a9af718294905d3d7`.
+  A pristine `git archive HEAD` extract at `.tmp/base-tree/` carried every
+  before-state measurement, so `src/` in the worktree was never edited under a
+  running sweep.
+- **Manifest** `plan/agent-context/6651/H-builtins-misc.txt`, sha256
+  `f1eb655415155ac7e7d262ffbaa50a479f8a495bdeb297fad7292169811c104f`, 217 rows.
+
+#### The bucket table — the deliverable, ahead of the fix
+
+214 of the 217 rows had no current breakdown, which made cluster H the largest
+un-ranked residual in the plan. Measured here, standalone, under
+`JS2WASM_EVAL_ENGINE=quickjs`, with a **host-lane probe of every row**:
+
+| class (by test SOURCE, not by symptom) | rows | host pass | host fail |
+| --- | ---: | ---: | ---: |
+| uses `$262.createRealm` | 58 | 14 | 44 |
+| uses `Proxy` (and not `createRealm`) | 53 | 27 | 26 |
+| core — neither | 103 | 35 | 68 |
+| **total residual** | **214** | **76** | **138** |
+
+**The number that should drive the next dispatch is 35.** A row that fails on
+the HOST too cannot be reached by fixing standalone lowering, and a row whose
+body calls `$262.createRealm` has no standalone representation at all. So the
+set a standalone-lowering slice can actually close is *core ∧ host-pass* — 35
+rows, not 214. The other 179 are: realm work (or a `wont-fix` with the realm
+reason), cluster F's Proxy lane, or engineering needed in both lanes.
+
+Top signature buckets (`.tmp/6651/H2-buckets.txt` has all of them plus the
+per-row table):
+
+| rows | signature | host pass | realm | proxy | what it is |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 37 | `TypeError: Cannot access property on null or undefined at N:N` | 17 | 31 | 2 | `$262.createRealm()` answers null — the realm family, one symptom |
+| 30 | bare `SameValue` mismatch | 4 | 6 | 7 | heterogeneous; no single mechanism |
+| 17 | `Expected a TypeError … no exception` | 12 | 1 | 11 | mostly Proxy invariant checks |
+| 7 | `Expected a Test262Error but got a TypeError` | 2 | 0 | 2 | |
+| 6 | `Conforms to NativeFunction Syntax` | 6 | 0 | 6 | `Function.prototype.toString` over a Proxy |
+| 6 | `newTarget.prototype is undefined` | 0 | 6 | 0 | `proto-from-ctor-realm*`, all realm |
+| 5 | `Object.prototype.toString is not yet implemented in --target standalone` | 2 | 0 | 2 | see the probe below |
+| 4 | `0 value should be N` | 4 | 0 | 0 | `*/target-array-with-non-writable-property.js` — **the best core bucket** |
+| 4 | `Cannot access property on null or undefined` (no line) | 2 | 3 | 0 | |
+| 4 | `Expected a Test262Error … no exception` | 1 | 0 | 3 | |
+| 3 each | `RuntimeError: illegal cast` · `Array.prototype.flat()` CE · `Expected a RangeError …` · `Cannot read properties of undefined` · `Cannot convert undefined or null to object` | | | | |
+| 79 | 3 two-row buckets + 73 singleton signatures | | | | the long tail |
+
+Compiler REFUSALS inside the cluster, which are the cleanest targets because
+they name themselves: `Array.prototype.flat()` (3 CE), `Array.prototype.{entries,
+keys,values}` not callable as a value (3), `Object.prototype.toString` (5),
+`Array.prototype.flatMap` non-array-returning callback (1), `Date.prototype.toJSON`
+(1), `JSON.stringify` of this value (1), standalone `Reflect.construct` (1).
+
+**Two mechanisms probed and root-caused here, neither fixed** (probes in
+`.tmp/probe/`, none committed):
+
+- **`Object.prototype.toString` ignores `@@toStringTag` entirely and refuses
+  three receiver kinds.** Measured standalone on base: `{}` → `[object Object]`,
+  `[]` → `[object Array]`, Math/JSON → `[object Object]`, but WeakMap, WeakSet
+  and a Symbol receiver all THROW the #4119 refusal, and an object carrying
+  `o[Symbol.toStringTag] = "Custom"` still answers `[object Object]`. §20.1.3.6
+  step 15's `Get(O, @@toStringTag)` is not implemented at all — so this bucket
+  needs the runtime Get *and* real deletable builtin tag properties, not just a
+  `delete` fix as the round-2 table assumed.
+- **`__extern_length` answers 0 for String-wrapper and function carriers.**
+  Spreadable `new String("yuck")` concats to `[]` though `.length` is 4; a
+  spreadable function with `length` 3 spreads nothing. RegExp and plain-object
+  carriers are CORRECT (2 and 3), which narrows the gap from "non-`$Object`
+  carriers" to exactly the wrapper and closure carriers, and `Object("hi").length`
+  is 0 while `new String("xy").length` is 2 — the ToObject path builds a
+  different carrier from the constructor path. Worth 2 manifest rows; it changes
+  the array-like length of every such receiver, so it needs its own control set.
+
+#### What landed: §10.4.2.1 step 1 — a SYMBOL key on an Array is an ORDINARY property
+
+The overlay guarded all four of its natives with `stringKeyGuard`, whose bail
+RETURNS. Four measured consequences on the base tree, one standalone module:
+
+| question | base | spec |
+| --- | --- | --- |
+| `Object.defineProperty(arr, sym, {get})` then `arr[sym]` | `undefined`, getter never ran | getter runs |
+| `gOPD(arr, sym)` after that define | `undefined` | a descriptor |
+| `Object.defineProperty(arr, sym, {value:11})` then `arr[sym]` | `undefined` | `11` |
+| `arr[sym] = 9` then `gOPD(arr, sym)` | `undefined` (while `arr[sym]` read **9**) | a descriptor |
+
+The same descriptors on a PLAIN object were always correct, which is what makes
+this a carrier bug: the `$Object` natives were right and the array overlay was
+refusing to reach them. Fixed by routing a symbol key to the companion
+`$Object` in `__vec_dp_value` / `__vec_dp_accessor`, delegating `__vec_gopd`'s
+symbol lane to `__getOwnPropertyDescriptor` **and then to the #3537 bag** (the
+#4010 two-table seam — an expando written by assignment lands in the bag, not
+the companion), and widening the `__extern_get` / `__vec_prop_get` read
+prologue's key gate so a symbol key reaches the consult that now has something
+to find. All four are inside `fillVecOverlayHelpers`, which returns early
+unless `ctx.standalone`.
+
+One trap worth recording: the gOPD symbol arm must end in a `return` on EVERY
+path. Falling through reaches the `"length"` guard, which `ref.cast`s the key to
+`$AnyString` and TRAPS on a symbol — caught by the pin file's miss case, which
+went `THREW` on the first draft.
+
+**Manifest, standalone, before → after** (chunked in-process runner, 3 × ~73
+rows, one fresh process per chunk; logs `.tmp/6651/H2-sa-inproc-{before,after}-*.log`,
+per-row TSVs `.tmp/6651/sa-{before,after}-rows.tsv`):
+
+| | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before | 3 | 208 | 6 |
+| after | **4** | 207 | 6 |
+
+Per-row set diff: **1 gained, 0 lost, 0 other verdict changes** —
+`built-ins/Array/prototype/concat/is-concat-spreadable-get-order.js`, which is
+the residual #6485 recorded. **+1 on the manifest is the honest number**; the
+capability closed is wider than the row count, and the bucket table above is
+why the rest of the cluster did not follow.
+
+**On the runner method.** The `--isolate` sweep the acceptance recipe asks for
+was started first and abandoned after ~40 rows in ~40 minutes: three other
+lanes were sweeping the same 4-core box (load 14–17), which puts a 217-row
+isolate pass at 3–4 hours per side. The chunked in-process runner was used
+instead, and it is cross-validated rather than assumed: its before-state
+reproduces H1's isolated after-state **exactly** (3 pass / 208 fail / 6 CE, the
+same per-row set), which is the strongest available evidence that the two
+methods agree on this manifest.
+
+#### Controls
+
+- **Host lane is a byte-identity proof, by construction.** Every edit is inside
+  `fillVecOverlayHelpers`, which returns early unless `ctx.standalone`. A
+  15-module corpus (the 13 `website/playground/examples` sources plus two
+  inline modules — one exercising exactly this construct, one with no symbol at
+  all) compiles **15/15 sha256-identical on gc**, before vs after
+  (`.tmp/6651/shas-{before,after}.txt`).
+- On **standalone** 6 of those 15 move, including the no-symbol control — the
+  three define/gOPD arms are unconditional, so this slice is NOT
+  standalone-byte-neutral. Stated because the first draft of the code comment
+  claimed it was, and the sha corpus is what caught that.
+- **Neighbourhood**, 1,655 rows — all of `built-ins/Array/prototype/concat`,
+  `Object/{defineProperty,getOwnPropertyDescriptor,getOwnPropertySymbols}`,
+  `Array/prototype/Symbol.unscopables`, `Array/length` and `built-ins/Symbol` —
+  standalone, before vs after, 11 chunks of 165 in fresh processes
+  (`.tmp/6651/nb-sa-{before,after}-*.log`, per-row TSVs
+  `.tmp/6651/nb-{before,after}-rows.tsv`): `1,589 pass / 65 fail / 1 CE` →
+  `1,590 / 64 / 1`. The per-row set diff is **one line long** — the same
+  `is-concat-spreadable-get-order.js`, fail → pass. **Zero pass → non-pass,
+  zero other verdict changes.** No separate host sweep was run for this
+  neighbourhood: the byte-identity proof above is stronger than a sample, since
+  the host lane provably cannot reach any changed code.
+- Pin file `tests/issue-6651-vec-symbol-key-overlay.test.ts`, 6 cases —
+  **3 verified RED on the base tree** via the file-copy A/B, 3 are guards green
+  on both sides (the plain-object control, the gOPD miss, and the negative
+  direction: a STRING key keeps its index / `"length"` semantics).
+
+Gates, run bare: loc-budget OK and func-budget OK with the +153 grants added to
+this file's frontmatter above, dated; coercion-sites OK; oracle-ratchet OK
+(`getTypeAtLocation +0`, `ctx.checker +0`); dead-exports OK; typecheck OK.
+`node scripts/equivalence-gate.mjs`: **22 failing / 1,720 passing, all 22 already
+in the baseline — no new equivalence regressions.**
+
+#### For the next owner, in rows-per-effort order
+
+1. **`*/target-array-with-non-writable-property.js` (4 rows, all core, all
+   host-pass)** — filter/map/slice/splice write into a species-created target
+   whose index 0 is non-writable; §23.1.3's `CreateDataPropertyOrThrow` must
+   define, not assign. Caveat measured here: a hand-written probe of the same
+   shape already answers CORRECTLY (`r[0] === 2`, descriptor all-true), so the
+   failure only appears with `propertyHelper.js` included — diagnose against the
+   original-harness assembly, not a reduced repro.
+2. **`Object.prototype.toString` §20.1.3.6 step 15** (5 rows + ripple) — see the
+   probe above; it is a mechanism, not a `delete` fix.
+3. **Symbol-keyed own-key visibility** (4 rows) —
+   `getOwnPropertyDescriptors/{order-after-define-property,symbols-included}`,
+   `getOwnPropertySymbols/order-after-define-property`, `entries/symbols-omitted`:
+   `Object.getOwnPropertySymbols` answers `[]` for symbol-keyed defines even on a
+   PLAIN object, which this slice did not touch.
+4. **Symbol wrapper objects** (4 rows) — `Object(sym)`, `Object.assign(Symbol(),…)`,
+   `Symbol.prototype.{toString,@@toPrimitive}` on a wrapper receiver. ToObject has
+   no Symbol-wrapper carrier.
+5. **Classify the 58 realm rows** against the definition of done rather than
+   lane-ing them: `$262.createRealm` has no standalone representation, and 44 of
+   them fail on the host too.
+6. Extract `vec-symbol-key-overlay.ts` from `fillVecOverlayHelpers` and hand the
+   two budget grants back.
 
 ### 2026-09-21 — Cluster G (for-of / destructuring residuals / iterators, standalone), slice G1: spec-ordered ArrayAssignmentPattern + IteratorClose
 
