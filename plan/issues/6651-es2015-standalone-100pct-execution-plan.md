@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-21
+updated: 2026-09-23
 priority: high
 horizon: xl
 feasibility: hard
@@ -141,7 +141,17 @@ assignee: "ttraenkler/fable-es2015-plan"
 # `targetIsStaticallyNullish` and the `fctx` shadowing checks it shares with the
 # neighbouring §28.1.x guards, which is the opposite of keeping one spec section
 # readable in one place. ~60 % of the growth is that comment.
+# 2026-09-23 — cluster I slice I3: `src/codegen/array-object-proto.ts` +4.
+# `substr` (Annex B B.2.2.1) gains a reflective closure body by joining the
+# `substring`/`slice` family; the BODY is the existing
+# `string-proto-substring.ts` leaf, which already emits this exact shape for its
+# two siblings and grows by the one ternary arm that names `__str_substr`. What
+# cannot move is the god-file's `emitStringProtoMemberBody` DISPATCH line plus
+# the three comment lines stating why a LENGTH second bound still takes the
+# family's shared absent-bound sentinel — that is the one non-obvious fact about
+# the join, and it has to be readable where the member is routed.
 loc-budget-allow:
+  - src/codegen/array-object-proto.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/statements/for-of-destructuring.ts
@@ -364,6 +374,12 @@ loc-budget-allow:
 # the right follow-up and is recorded as such in this slice's receipt; it is not
 # mixed into a change whose whole value is a measured behaviour fix.
 func-budget-allow:
+  # 2026-09-23 — cluster I slice I3: `emitStringProtoMemberBody` +4 (3 comment,
+  # 1 dispatch line) for the `substr` member — same grant, same reason as the
+  # LOC entry above. The function is a flat routing ladder, one arm per String
+  # prototype member; splitting it to absorb a fourth line of an existing family
+  # would scatter the routing this gate exists to keep in one readable place.
+  - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
   # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
   # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
   # fills each reserved native's body in turn; every arm this slice adds is a
@@ -4855,6 +4871,252 @@ All under `.tmp/6651/` in the worktree (gitignored, not committed):
 `I2-control-host-{before,after}.log`, `rowdiff.mjs` (the per-row set-diff
 tool), `gate-*.txt` (one file per gate, run bare — never piped), and
 `.tmp/base/` copies of all three edited files taken at the first edit.
+
+### 2026-09-23 — Cluster I (language misc, standalone), slice I3: the host-lane probe redraws the cluster, and the two reachable mechanisms it named
+
+- **Branch** `issue-6651-cluster-I3`, base `claude/project-thread-yhj9pp` @
+  `584b231f` (round 3 / PR #6032, which carries slice I2 — deliberate
+  predecessor-stacking). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a4868e7895dff149e`. Not pushed; the
+  round-4 owner integrates it.
+- **Manifest** `plan/agent-context/6651/I-language-misc.txt`, 114 rows,
+  sha256 `f94fe9f129c0bcc5e5e52ce798cbeedfa6cae99f7506f5547af54717a71cdd68`
+  (unchanged since the triage pass).
+
+| standalone, `--isolate`, engine **quickjs** | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/I3-sa-before.log`) | **6** | 97 | 11 |
+| after (`.tmp/6651/I3-sa-after.log`) | **9** | 94 | 11 |
+
+**Per-row set diff: +3 gained, 0 lost, 0 other verdict changes.**
+
+```
++ annexB/built-ins/String/prototype/substr/this-to-str-err.js
++ language/expressions/instanceof/primitive-prototype-with-object.js
++ language/expressions/instanceof/prototype-getter-with-object-throws.js
+```
+
+The before-run reproduces I2's after-run exactly (6 / 97 / 11), which is the
+cheapest available confirmation that this branch really is stacked on I2.
+
+#### The host-lane probe — the deliverable that should drive the next dispatch
+
+Every one of the 114 rows was also run on the DEFAULT (host) target, same
+runner, same engine. **15 pass on host. 99 do not.** A row that fails on host
+cannot be fixed by standalone-only lowering, so the standalone-reachable set for
+this cluster is not 108 rows — it is **9**, and two of those are the
+already-wont-fixed realm rows.
+
+| bucket | rows | host PASS | host non-pass | standalone PASS (this base) |
+| --- | ---: | ---: | ---: | ---: |
+| `with` / @@unscopables | 14 | **1** | 13 | 0 |
+| module namespace internals | 12 | **0** | 12 | 0 |
+| singletons | 11 | **1** | 10 | 0 |
+| parameter defaults / destructuring params | 10 | **3** | 7 | 3 |
+| direct eval | 10 | **0** | 10 | 0 |
+| arrow `this` / `new.target` / `super` | 10 | **1** | 9 | 0 |
+| tagged template | 7 | **0** | 7 | 0 |
+| global-object declaration descriptors | 7 | **0** | 7 | 0 |
+| cross-realm (wont-fix, #6657) | 6 | **2** | 4 | 0 |
+| `instanceof` | 6 | **5** | 1 | 3 |
+| `arguments` object | 5 | **0** | 5 | 0 |
+| module-code generator exports (cluster A's) | 5 | **0** | 5 | 0 |
+| annexB | 4 | **2** | 2 | 0 |
+| TDZ / block scope | 4 | **0** | 4 | 0 |
+| proper tail calls | 3 | **0** | 3 | 0 |
+| **total** | **114** | **15** | **99** | **6** |
+
+(The bucketing is by path family and differs by a row or two from the triage
+table's hand bucketing — `tco-non-eval-with.js` and `with-base-obj.js` are
+counted under `with`, the arrow bucket absorbs `rest-parameters/*`. The column
+that matters is unaffected.)
+
+The 15 host-passing rows, with their standalone verdict on THIS base:
+
+```
+fail           annexB/built-ins/String/prototype/substr/this-to-str-err.js          ← taken
+compile_error  annexB/language/literals/regexp/identity-escape.js
+pass           language/expressions/arrow-function/dflt-params-arg-val-not-undefined.js
+fail           language/expressions/arrow-function/lexical-this.js
+fail           language/expressions/call/eval-realm-indirect.js                     ← wont-fix #6657
+pass           language/expressions/function/dflt-params-arg-val-not-undefined.js
+fail           language/expressions/instanceof/primitive-prototype-with-object.js   ← taken
+fail           language/expressions/instanceof/prototype-getter-with-object-throws.js ← taken
+pass           language/expressions/instanceof/symbol-hasinstance-get-err.js        (I2)
+pass           language/expressions/instanceof/symbol-hasinstance-invocation.js     (I2)
+pass           language/expressions/instanceof/symbol-hasinstance-to-boolean.js     (I2)
+fail           language/expressions/tagged-template/cache-realm.js                  ← wont-fix #6657
+fail           language/expressions/typeof/symbol.js
+pass           language/statements/function/dflt-params-arg-val-not-undefined.js
+fail           language/statements/with/set-mutable-binding-…-typed-array-in-proto-chain.js
+```
+
+**What this overturns.** The round-4 dispatch ordered the residual buckets by
+row count and told this slice to take "the best core bucket, biased toward one
+shared mechanism". By row count the answer would have been `with`/@@unscopables
+(15) or module-namespace internals (12). Both are **zero-yield for a
+standalone-only slice**: 13 of 14 `with` rows and **all 12** namespace rows
+fail on the host lane too, so a dynamic `with` environment record or a
+self-import namespace would have been built and still not moved a single row on
+either target. The same holds for direct `eval` (0/10), tagged template (0/7),
+global-code descriptors (0/7), `arguments` (0/5), TDZ (0/4) and proper tail
+calls (0/3) — **seven consecutive buckets, 46 rows, with no host-passing row
+between them.**
+
+The honest reading is that cluster I is almost entirely a **front-end** cluster,
+not a standalone-lowering one. Under #6651's definition of done (ES2015 → 100 %
+on `--target standalone`) those 99 rows still have to close, but they close in
+the shared front-end, where the blast radius is both lanes and the work is
+sized accordingly. **A future cluster-I dispatch should state which lane it is
+funding before it names a bucket.** The three parameter-default rows are the
+worked example of why the probe is worth its ~50 minutes: the triage called them
+"9 rows, M, three tests × three function forms", and on this base all three
+`dflt-params-arg-val-not-undefined` rows already **pass on both lanes** — they
+were fixed by another lane's landed work and were never available to take.
+
+#### What landed
+
+Two mechanisms, both measured red on this base by a file-copy A/B before a line
+was written.
+
+**1. `V instanceof Function.prototype` (2 rows).**
+`%Function.prototype%` IS a function object (§20.2.3), but it is the one
+callable this backend models as a `$NativeProto` carrier rather than as a
+closure. `__typeof_function` therefore answers `false` for it, and
+`__instanceof_dynamic` fell straight to its documented "not callable ⇒
+conservative false" tail — every §7.3.20 step past IsCallable was skipped, so
+the `prototype` read never happened at all.
+
+The fix is a third reserve/fill identity probe next to the two that were already
+there (`__instanceof_function_prototype_target`, an exact `$NativeProto`
+Function-brand match, filled at finalize), consulted **only on the not-callable
+tail**, whose arm runs §7.3.20 step 3 and then steps 5-7 through the existing
+`requireObjectValue` / `ordinaryHasInstanceTail` helpers. Nothing the classifier
+already answers for changes path.
+
+**Widening `__typeof_function` was rejected, not overlooked** — the same call
+this slice's predecessor made for `@@hasInstance`: a wrong `true` out of that
+classifier is observable corpus-wide (`typeof`, every callable gate, every brand
+check), whereas an exact-brand probe on the tail can only convert a silent
+`false` into the spec answer.
+
+**The I2 handoff's blocker (b) is not real, and that is what made the slice
+small.** I2 recorded that closing these rows needs `__extern_get` on a
+`$NativeProto` carrier to invoke an accessor installed by
+`Object.defineProperty(Function.prototype, "prototype", {get})`, "the same
+limitation the slice-E2 handoff records for TypedArray carriers", and called it
+"the expensive one". Probed directly on this base before any edit
+(`.tmp/6651/probe1.mts`): the accessor **is** invoked, exactly once, and returns
+its value. The E2 limitation is real for TypedArray carriers; it does not hold
+for this one. So (b) cost nothing and only (a) had to be built.
+
+**2. A borrowed `String.prototype.substr` (1 row).**
+`substr` had no reflective closure body: it was absent from
+`TRANSFERRED_STRING_PROTO_MEMBERS` and had no arm in
+`emitStringProtoMemberBody`, so `String.prototype.substr.call(x)` hit the
+borrowed-method refusal and threw a **TypeError before running the receiver's
+`toString`** — which is exactly what `annexB/…/substr/this-to-str-err.js`
+measures. The sibling `slice` propagated the receiver's own error correctly,
+which is what named this as a missing member rather than a coercion-order bug.
+
+`__str_substr` already exists with full Annex B B.2.2.1 semantics and the
+IDENTICAL `(ref $NativeString, i32, i32) -> ref $NativeString` shape as
+`__str_substring` / `__str_slice`, so the member joins the family that
+`string-proto-substring.ts` already serves. The one fact worth stating in place:
+the second bound is a **LENGTH**, not an end index, and the family's shared
+`0x7fffffff` absent-bound sentinel is still the right value, because the
+helper's `min(length, tail)` turns it into "to the end of the string" — exactly
+B.2.2.1 step 4's `length === undefined ⇒ +∞`. Negative and NaN lengths clamp to
+`0` inside the helper, i.e. the empty string, also per spec. Eleven borrowed and
+direct spellings were checked against those semantics before the member was
+wired (`.tmp/6651/probe5.mts`); all eleven answer the spec value.
+
+#### Controls — both lanes, per-row, zero pass→non-pass
+
+Control manifest `.tmp/6651/I3-control.txt`, **159 rows** = every
+`language/expressions/instanceof/**` row, every `built-ins/Function/prototype/*`
+row, every `built-ins/String/prototype/{substring,slice}/**` and
+`annexB/…/substr/**` row, plus every corpus file that mentions
+`instanceof Function.prototype` or calls `.substr` — i.e. the whole blast radius
+of both edits.
+
+| control | before | after | row diff |
+| --- | --- | --- | --- |
+| standalone (`I3-ctl-sa-{before,after}.log`) | 150 pass / 9 fail | **153** pass / 6 fail | +3 gained, **0 lost**, 0 other changes |
+| host, default target (`I3-ctl-host-{before,after}.log`) | 144 pass / 15 fail | 144 pass / 15 fail | **0 changes of any kind** |
+
+The +3 in the standalone control are the same three manifest rows; nothing else
+in 159 rows moved.
+
+**Host-lane byte identity** (`.tmp/6651/byteid-{base,new}.txt`): every `.ts`
+under `website/playground/examples` plus all 159 control rows compiled on the
+DEFAULT target, base vs. new — **172 modules, 0 bytes different**. The
+instanceof arm is inside the `noJsHost` dynamic helper and the `substr` member
+is inside the standalone reflective-closure substrate, and this is the
+measurement rather than the argument.
+
+**Pin test** `tests/issue-6651-i3-function-proto-instanceof-and-borrowed-substr.test.ts`
+— 19 cases. On the BASE files (file-copy A/B): **10 fail, 9 pass**. On the new
+files: **19 pass**. The 9 that were green on base are the deliberate regression
+locks (`{} instanceof Object`, `fn instanceof Function`, `[] instanceof Array`,
+a non-Function `$NativeProto` RHS, the §7.3.20 step-3 ordering case, and the
+three direct `.substr` lowerings the reflective path must not disturb).
+
+Gates, run bare and chained before the commit: loc ✓ (after the grant below),
+func ✓ (after the grant below), coercion ✓ (+0), oracle-ratchet ✓ (+0 raw
+checker calls over 4 changed `src/codegen` files), dead-exports ✓,
+`check:compiler-boundaries:inventory` ✓, lint ✓, prettier ✓,
+`node scripts/equivalence-gate.mjs` → **22 failing / 1720 passing, all 22 in the
+committed baseline, "No new equivalence regressions"**. Two allowances are in
+this file's frontmatter, dated 2026-09-23, both for
+`src/codegen/array-object-proto.ts` (+4: the `substr` dispatch line and three
+comment lines); the mechanism itself is in the `string-proto-substring.ts` leaf.
+`ensureNativeDynamicInstanceOf` crossed the 300-LOC function threshold in the
+first cut and was brought back under it by moving the arm's rationale to the
+module-level `reserveFunctionPrototypeTargetHelper` docstring — no allowance
+needed for it.
+
+#### Root-caused and deliberately NOT taken
+
+- **`language/expressions/instanceof/prototype-getter-with-object.js`** (the
+  third row of that family, the one where the getter returns `Array.prototype`
+  and the answer should be `true`). After this slice the getter IS invoked,
+  exactly once — measurably a step forward — but the chain walk still answers
+  `false`, so the row's verdict is unchanged. It is **out of this lane by the
+  probe's own rule: it fails on the host target too.**
+- **`language/expressions/typeof/symbol.js`** — `typeof Object(Symbol())` must
+  be `"object"`. Probed: `Object(prim)` does not box **any** primitive in
+  standalone — `Object(5)`, `Object("a")`, `Object(true)` and `Object(Symbol())`
+  all keep their primitive `typeof`. That is a missing wrapper-object
+  materialisation, corpus-wide, not a one-row `typeof` fix; taking it inside a
+  singleton slice would have been the wrong size.
+- **`annexB/language/literals/regexp/identity-escape.js`** — the `\P{…}`
+  Unicode-property-escape compile error, already owned by #1539 Phase 2d.
+- **`language/expressions/arrow-function/lexical-this.js`** — host-passing and
+  genuinely standalone-only, but the failure is `dereferencing a null pointer in
+  __module_init`, i.e. a miscompile in the arrow-`this` capture path rather than
+  a missing feature. It is the single best remaining standalone-only row in
+  cluster I and it wants its own slice, not a corner of this one.
+- **`language/statements/with/set-mutable-binding-…-typed-array-in-proto-chain.js`**
+  — the one host-passing `with` row. It asserts
+  `Object.getOwnPropertyDescriptor(env, "NaN") === undefined` after a delete
+  through a TypedArray proto chain; it needs the same descriptor/attribute model
+  the E2 handoff names, and it is one row.
+
+#### Logs and artefacts
+
+All under `.tmp/6651/` in the worktree (gitignored, not committed):
+`I3-host-before.log` + `I3-host-retry.log` (the host probe; the first 26 rows of
+the first pass raced the harness populating `test262/`, reported `ENOENT`
+**errors**, and were re-run — an `error` is not a verdict, so the retry is the
+authority for those rows and the merge in `xtab.py` prefers it),
+`I3-sa-{before,after}.log`, `I3-control.txt`,
+`I3-ctl-{sa,host}-{before,after}.log`, `I3-probe.json` (the host × standalone
+cross-tab), `byteid-{base,new}.txt`, `probe{1..5}.mts` (the five root-cause
+probes), `gate-*.txt` (one file per gate, run bare — never piped), `ab.sh` (the
+file-copy A/B switch) and `.tmp/base-tree/` (a `git archive HEAD` extract taken
+at the first edit, so a base run is always one `cp` away).
+
 
 ## Handoff — 2026-09-22, the project-thread lane (PR #6026) signs off
 
