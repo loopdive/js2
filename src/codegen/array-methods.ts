@@ -130,6 +130,7 @@ import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // 
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
 import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
+import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js"; // (#6651 E6) join/toLocaleString
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -5592,6 +5593,13 @@ function compileArrayJoinExternNative(
   fctx.body.push({ op: "call", funcIdx: externLenIdx });
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: lenTmp });
+  // (#6651 E6) §23.2.3.18/.32 ValidateTypedArray on a dyn view: a detached
+  // buffer throws BEFORE the separator's ToString (`join/detached-buffer.js`
+  // hands in an object whose `toString` throws). After the argument is
+  // EVALUATED (§13.3.6), before it is coerced; stack-neutral, empty when the
+  // module has no dyn view.
+  const detachedGuard = (): Instr[] =>
+    taDynDetachedGuardPrologue(ctx, fctx, localized ? "toLocaleString" : "join", recvTmp);
 
   // Separator: explicit arg (coerced to a native string) or the spec default
   // ",". (#4655) `toLocaleString`'s arguments are the reserved locales/options,
@@ -5604,6 +5612,7 @@ function compileArrayJoinExternNative(
     // TypeError, else ToString) instead of trapping on `ref.cast $AnyString`.
     const coerce = ts.isStringLiteral(sepArg) ? null : buildJoinSeparatorToString(ctx, fctx, anyStrTypeIdx);
     const argType = compileExpression(ctx, fctx, sepArg, { kind: "externref" });
+    fctx.body.push(...detachedGuard());
     if (argType === null) {
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
     } else if (coerce !== null) {
@@ -5613,7 +5622,7 @@ function compileArrayJoinExternNative(
       fctx.body.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
     }
   } else {
-    fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    fctx.body.push(...detachedGuard(), ...nativeStringLiteralInstrs(ctx, ","));
   }
   fctx.body.push({ op: "local.set", index: sepTmp });
 
