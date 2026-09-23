@@ -161,9 +161,46 @@ export function fileObservesRegExpExecProtocol(node: ts.Node): boolean {
   return found;
 }
 
+/** Per-source-file answer of {@link fileMentionsSymbolMatch}. */
+const symbolMatchByFile = new WeakMap<ts.SourceFile, boolean>();
+
 /**
- * Emit `re[Symbol.<match|search>](arg)` as
- * `__apply_closure(RegExp.prototype[@@<id>], re, «arg»)`.
+ * (#6651 B5) Does this SOURCE FILE spell `Symbol.match` anywhere?
+ *
+ * §22.2.6.14 step 8 constructs the splitter through `%RegExp%`, whose
+ * §22.2.4.1 step 1 `IsRegExp(pattern)` reads `pattern[@@match]` — so a program
+ * that installs an `@@match` (Annex B `Symbol.match-getter-recompiles-source`
+ * recompiles the receiver from inside that getter) can observe the direct
+ * `re[Symbol.split](s)` spelling, and the static core never performs that read.
+ */
+export function fileMentionsSymbolMatch(node: ts.Node): boolean {
+  const sf = node.getSourceFile();
+  const cached = symbolMatchByFile.get(sf);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isPropertyAccessExpression(n) &&
+      n.name.text === "match" &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === "Symbol"
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  symbolMatchByFile.set(sf, found);
+  return found;
+}
+
+/**
+ * Emit `re[Symbol.<match|search|split>](…args)` as
+ * `__apply_closure(RegExp.prototype[@@<id>], re, «…args»)`. (#6651 B5: `@@split`
+ * passes zero, one or two arguments; a missing one reaches the body as
+ * `undefined`, which is what §22.2.6.14 step 3 / step 11 read.)
  *
  * Returns `undefined` when the reified member is unavailable (no glue / a
  * refusing body), in which case the caller keeps its existing lowering; the
@@ -177,7 +214,7 @@ export function emitRegExpSymbolProtocolApply(
   ctx: CodegenContext,
   fctx: FunctionContext,
   regexExpr: ts.Expression,
-  argExpr: ts.Expression,
+  argExprs: readonly ts.Expression[],
   symbolId: number,
 ): ValType | undefined {
   const brand = getBuiltinBrand(ctx, "RegExp");
@@ -204,11 +241,13 @@ export function emitRegExpSymbolProtocolApply(
   const argsLocal = allocLocal(fctx, `__rxs_args_${fctx.locals.length}`, EXTERNREF);
   fctx.body.push({ op: "call", funcIdx: objVecNew });
   fctx.body.push({ op: "local.set", index: argsLocal });
-  fctx.body.push({ op: "local.get", index: argsLocal });
-  const argType = compileExpression(ctx, fctx, argExpr, EXTERNREF);
-  if (argType === null) return undefined;
-  if (argType.kind !== "externref") coerceType(ctx, fctx, argType, EXTERNREF);
-  fctx.body.push({ op: "call", funcIdx: objVecPush });
+  for (const argExpr of argExprs) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    const argType = compileExpression(ctx, fctx, argExpr, EXTERNREF);
+    if (argType === null) return undefined;
+    if (argType.kind !== "externref") coerceType(ctx, fctx, argType, EXTERNREF);
+    fctx.body.push({ op: "call", funcIdx: objVecPush });
+  }
 
   fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, resolved.closure));
   fctx.body.push({ op: "extern.convert_any" });
