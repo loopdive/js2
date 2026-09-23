@@ -169,6 +169,18 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-23 — cluster D slice D2b (driven `Promise.all`/`race` over a dynamic
+  # iterable). The mechanism — the spec-ordered GetIterator/IteratorStep drive,
+  # the growable `$CombinatorDriveState` and its three reaction bodies — is the
+  # NEW module `src/codegen/promise-combinator-drive.ts`. What is left in the
+  # god-files: `promise-combinators.ts` +19, the `ObservableElementCarrier`
+  # parameter that lets the existing observable element pipeline (#5197 R3-2)
+  # write a drive state instead of `$CombinatorState` — re-implementing that
+  # 230-line Get/Call/Invoke pipeline in the new module would fork it — plus
+  # `export` on the six internals the drive composes; `call-namespace-static.ts`
+  # +5, the one dispatch line (and its comment) at the dynamic-argument exit,
+  # which has to sit where `__combinator_to_vec` would otherwise be chosen.
+  # Both paths are already listed below (D2 / F2).
   # 2026-09-23 — cluster G slice G2: `statements/for-of-destructuring.ts` +22 —
   # the `emitHoleBoundaryBeforeDefault` helper (a 1-line body under a comment
   # naming the #2001 invariant it enforces) and its four call sites, each placed
@@ -479,6 +491,10 @@ loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/statements/variables.ts
 func-budget-allow:
+  # 2026-09-23 — cluster D slice D2b: `compileNamespaceStaticCall` +4, the
+  # dispatch line described under the LOC grant (dynamic-iterable all/race →
+  # `emitStandalonePromiseCombinatorDrive`, with the legacy drain as fallback).
+  # The key is already listed below.
   # 2026-09-23 — cluster G, slice G2: `compileForOfAssignDestructuring` +4, the
   # four one-line `emitHoleBoundaryBeforeDefault` calls. Each has to follow the
   # specific `array.get` whose value the next line's default test reads; the
@@ -5692,6 +5708,115 @@ plus `assignment/destructuring/default-expr-throws-iterator-return-get-throws`
 - An accessor object literal delivered as an iterator's `value` reads as
   nullish in a nested object pattern (`Cannot destructure 'null'`). This
   happens on the base as well.
+
+### 2026-09-23 — Cluster D (native Promise combinators), slice D2b: the dynamic-iterable drive (R3-4) and H1
+
+- **Branch** `d2b` (worktree `agent-a3b8871d9d1acc69a`), **base** `origin/main` @
+  `10902f7c8d` (carries #6038, #6040, #6042). Engine for every run below:
+  `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter
+  `d4799bda84cfed0d`). Before-state measured on that base by file-copy A/B
+  (`.tmp/d2b/base/`), not inherited from D2's receipt — it reproduces D2's
+  after-state exactly (47 / 40 / 14, zero per-row differences).
+
+- **Manifest** `plan/agent-context/6651/D-promise-combinators.txt` (101 rows),
+  `--standalone --isolate`, 24-row chunks, one fresh process each:
+
+  | | pass | fail | compile_error |
+  | --- | ---: | ---: | ---: |
+  | before (`.tmp/d2b/b2-chunk-*.log`) | 47 | 40 | 14 |
+  | after (`.tmp/d2b/a2-chunk-*.log`) | **61** | 26 | 14 |
+
+  **+14, zero regressions, zero message changes on the 40 rows still open**
+  (per-row join, `.tmp/d2b/score.mjs`). The 14:
+  `{all,race}/invoke-{resolve,then}-error-close`,
+  `{all,race}/invoke-then-get-error-close`, `{all,race}/invoke-resolve-get-error`,
+  `{all,race}/iter-step-err-reject`, `{all,race}/iter-next-val-err-reject`,
+  `all/S25.4.4.1_A5.1_T1`, `race/S25.4.4.3_A4.1_T1`.
+
+#### What landed — a step-wise drive, and H1 falls out of it
+
+New module `src/codegen/promise-combinator-drive.ts`
+(`emitStandalonePromiseCombinatorDrive`), taken at the ONE place the legacy
+dynamic path was chosen (`compileNamespaceStaticCall`'s dynamic-argument exit,
++5): `Promise.all`/`race` over an argument that is not an array literal, not an
+externref/f64 vec and not a Set/Map, on a non-subclass receiver. It emits, in
+§27.2.4.1 order: the capability; `GetPromiseResolve(C)` (observable modules
+only — the #5197 R3-2 source gate); `GetIterator` through `__iterator`; then per
+element `IteratorStep`/`IteratorValue` through `__iterator_next`, and either the
+existing R3-2 `Call(resolve)` / `Invoke(then)` pipeline (observable) or the
+subscribe reaction (not observable). Every abrupt step rejects the capability;
+an abrupt element step with `[[Done]]` false runs `__iterator_return` first, its
+own throw swallowed (§7.4.9 — the original completion wins). No new host import.
+
+- **H1 is fixed by construction, not by touching the dispatcher.** GetIterator
+  now goes through `__iterator`, the same native `for…of` and G1's destructuring
+  drive use; its OBJ arm (#3119) reads the symbol-keyed expando. The legacy
+  `__combinator_to_vec` drain is **untouched**, exactly as D2 required (fixing
+  H1 inside the drain would have turned the `*-close` rows into hangs: they
+  never report `done`).
+- **`[[Done]]` is raised before each step and lowered only on a normal
+  return** (G1's rule): a throwing `next()` / `done` getter / `value` getter
+  leaves it true, which is what suppresses the close
+  (`iter-step-err-reject` asserts `return` is never reached).
+- **`all` needs a growable results list**, and a resolve-element function can
+  run synchronously inside `Invoke(then)`. `$CombinatorState` has an immutable
+  `resultsArr`/`length`, so the drive registers `$CombinatorDriveState` (same
+  field order, mutable) and its subscribe / fulfil / reject bodies — built by
+  the SAME `combinator-bodies.ts` builders the legacy runtime uses,
+  parameterised only by type index — plus a `$__combinator_drive_resolve_cap`
+  resolve-element function object (the R3-2 carrier shape). The R3-2 element
+  pipeline gained one defaulted parameter (`ObservableElementCarrier`) so it can
+  write that state; its literal/direct-vector callers pass nothing and emit the
+  same bytes. `race` needs none of it. The remaining-elements count keeps R3-2's
+  completion sentinel, and the array grows geometrically before each element
+  (§27.2.4.1.2 step 6.f).
+- **Non-observable modules also take the drive** (they are where
+  `iter-step-err-reject`, `iter-next-val-err-reject` and the two `S25…` rows
+  live — none of them writes `resolve`/`then`). With the intrinsics
+  unobservable, each element subscribes directly, so only the iterator protocol
+  changes.
+
+#### Controls
+
+| control | result |
+| --- | --- |
+| manifest, 101 rows, standalone isolate | 47 → **61**, 0 pass→non-pass |
+| all 729 `built-ins/Promise/**`, standalone, 183-row in-process chunks (`.tmp/d2b/nbsa-{b2,a2}-*`) | pass 421 → **435**, fail 174 → 160, CE 134 → 134; per-row: **+14, 0 lost, 0 message changes** — the 14 are exactly the manifest rows |
+| same 729, host (gc) lane | the in-process run dies on the realm-poisoning row in every chunk on BOTH base and branch (`PROMISE_INTRINSICS.all?.call`, D1/D2's finding), so it is not a measurement. Substituted a whole-directory byte-identity proof: every row compiled through the runner's own original-harness assembly and options, both variants — **797 / 797 compiled variants byte-identical** (729 rows + 68 strict reruns, `.tmp/d2b/pbytes-gc-{base,new}.txt`). The drive is only reachable under `isStandalonePromiseActive`, and the bytes say so |
+| same 729, standalone bytes | 728 of 797 variants byte-identical; the **69 that move** are all `all/` or `race/` rows with a non-literal, non-vec argument (`iter-arg-is-*`, `iter-assigned-*`, `iter-returns-*`, `iter-{step,next-val}-err-*`, `invoke-*`, `resolve-non-callable`, `S25.4.4.1_A3.1_T*`, `S25.4.4.3_A2.2_T*`, …) — every one of them is inside the standalone run above, which lost none |
+| byte corpus (D2's 8 programs + `website/playground/examples/**` 13 + `benchmarks/suites/*` 4 + 3 dynamic shapes, both targets, `.tmp/d2b/bytes-{before,after}.txt`) | **54/56 identical**; the only two that move are the dynamic `all`/`race` shapes on standalone. Dynamic `allSettled`, every D2 observable/literal/vec/custom-ctor shape, and all 17 example/benchmark programs are byte-identical on both targets |
+| D2b probe programs (14, `.tmp/d2b/probes/`, original-harness assembly at module scope) | 2 → **10** pass; the 4 still open are recorded below |
+| pin suite `tests/issue-6651-promise-combinator-drive.test.ts` | 10/10; on base (file-copy revert) the **8 behaviour cases are RED**, the array-literal control is green, and the lane control is red only through its standalone half (it asserts standalone DOES name a drive function, which is what makes its gc-side and the array-literal negative checks meaningful) |
+| D-family pins | `issue-6651-promise-custom-combinator` 8/8, `issue-5197-promise-observable-combinator-r3-2` 13/13, `issue-5197-promise-generic-catch`, `issue-4682`, `issue-2671-promise-executor`, `deno-safe-promise-combinators` green; one file per vitest process. The failures are **identical on base** (source files reverted, `.tmp/d2b/units-{base,after}.txt`): `promise-combinators.test.ts` "Promise.all/race with resolved values" (2) and `issue-2671-promise-capability` "wasm thenable element's then…" (1) — D2's three — plus `issue-5197-promise-generic-capability`, whose vitest worker OOMs in this container on both sides |
+| gates | `check-loc-budget`, `check-func-budget` (both also with `LOC_GATE_BASE=origin/main`), `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`, `check-compiler-boundaries --mode inventory --base origin/main` (new module classified; `inventoryValid: true`), `npm run -s typecheck`, `biome lint --diagnostic-level=error`, `check:ir-fallbacks` (OK) and `scripts/equivalence-gate.mjs` (22 failing / 1,720 passing / 22 known — no new) all pass. Grants: dated D2b notes at the head of this file's `loc-budget-allow` / `func-budget-allow` (the paths were already listed by D2/F2) |
+
+#### Residuals (26 fail + 14 CE on the manifest)
+
+| rows | status | bucket | why it is still open |
+| ---: | --- | --- | --- |
+| 8 | CE | `{all,race,allSettled,any}/resolve-throws-iterator-return-*` | `class BadPromise {}` receiver: no `Construct(C, «executor»)` for a compiled class (#5197 G10). Target 3 was checked for a single localized cause and has none: these rows ALSO need the custom-`C` path to drive (their iterator never reports `done`, so a drain hangs), iterate a `return` that is `0`, `0n`, `true`, `"string"`, `{}`, `Symbol()`, and use `for…of` over that list — three mechanisms, not one |
+| 6 | CE | `{all,race,resolve,reject}/ctx-ctor`, `{all,race}/invoke-resolve-on-promises-every-iteration-of-custom` | `class X extends Promise` receiver (#5197 G9) — same verdict |
+| 1 | fail | `all/capability-resolve-throws-no-close` | H1 on the custom-`C` `.call` path (`promise-custom-combinator.ts` still drains through `__combinator_to_vec`). The fix is to give that module the same drive; left out because its capability/resolve-element machinery is separate (D1's), and doing it well means parameterising this drive over a custom `C`, not a one-line swap |
+| 1 | fail | `all/iter-arg-is-string-resolve` | NOT a combinator defect: `Promise.all("")` now settles correctly, then the `.then` callback's parameter — typed `string[]` by the checker — is cast from the externref result vec to the native-string vec and traps (`illegal cast`). Same for an `any`-held `number[]` (probe `p04`). A value-representation coercion at the closure boundary (#2867 "Gap 4"), not this lane |
+| ~10 | fail | `prototype/then/*`, `prototype/catch/*` | #5197 R3-6 / R3-9, out of scope |
+| rest | fail | `resolve-poisoned-then`, `resolve-thenable`, `race/resolve-self`, `resolve/arg-uniq-ctor`, `resolve-element-function-prototype`, `executor-function-prototype`, `Object.prototype.toString` tag, `proto-from-ctor-realm`, `promise.js`, `exception-after-resolve-*`, `regular-subclassing` | #5197 R3-5/R3-7, #4119, realm — out of scope |
+
+Two probe findings outside the manifest, recorded so they are not rediscovered:
+
+- **A native-generator argument (`Promise.all(g())`) still compiles to the
+  `env::Promise_all` host import** (probe `p05`, CE on both sides):
+  `isDynamicCombinatorArgEligible` excludes native generator subjects because
+  the DRAIN could not step them. `__iterator` can (its GENSTATE arm), so
+  admitting them to the drive is likely a one-line widening — not taken here
+  because no test262 row in `built-ins/Promise` uses a generator, so it is
+  unmeasured.
+- **`Promise.resolve = function (v) { … return new Promise(function () {}); }`
+  as the observable resolve makes `Invoke(then)` report "then is not
+  callable"** (probe `p13`) — the returned native `$Promise` is not recognised
+  by the R3-2 native-invoke arm. Pre-existing and NOT specific to the drive:
+  the same resolve over a LITERAL argument (`Promise.race([1, 2])`, probe
+  `p15`, a byte-identical compile path) fails with the same message. #5197
+  R3-7 territory.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
