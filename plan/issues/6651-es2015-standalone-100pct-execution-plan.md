@@ -141,6 +141,24 @@ assignee: "ttraenkler/fable-es2015-plan"
 # `targetIsStaticallyNullish` and the `fctx` shadowing checks it shares with the
 # neighbouring §28.1.x guards, which is the opposite of keeping one spec section
 # readable in one place. ~60 % of the growth is that comment.
+# 2026-09-22 (cluster E, slice E4) — `%TypedArray%.{from,of}` as inherited
+# first-class values. Two god-files, and both grants are call SITES rather than
+# mechanism: the §23.2.2.1/§23.2.2.2 bodies and the `__extern_get` inheritance
+# arm (~470 LOC together) live in the NEW module
+# `src/codegen/ta-static-from-of-body.ts`.
+#   - `array-object-proto.ts` +21: the `%TypedArray%` glue descriptor is the one
+#     place that can say these two members are STATICS of the intrinsic — their
+#     §17 `length` (1 and 0) is not in the prototype table, both need the packed
+#     variadic ABI (`from` must see whether `mapfn` was SUPPLIED), and the
+#     `emitMemberBody` hook is what routes them to a real body instead of the
+#     `refusalBodyFallback` degrade. Moving any of it would split one member's
+#     ABI across two files.
+#   - `ta-dyn-mop.ts` +8 (and `fillTaDynViewMopArms` +6): a single
+#     `getFn.body.unshift(...buildTaCtorInheritedFromOfGetArm(...))` plus the
+#     four comment lines that say why the arm is not folded into the existing
+#     `$__ta_ctor` arm a few lines above it (that one casts the receiver to
+#     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
+#     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
@@ -195,7 +213,6 @@ loc-budget-allow:
 # installed handler 0 times (`symbol-hasinstance-invocation.js`, callCount 0 vs
 # 1). The comment records that measurement in place, next to the bail it
 # reverses.
-  - src/codegen/expressions/identifiers.ts
   - src/codegen/expressions/identifiers.ts
 # 2026-09-21 — cluster B, slice B2 (observable RegExpExec substrate).
 # `regexp-standalone.ts` +47, all of it in `emitRegExpProtoMemberBody`'s new
@@ -363,6 +380,8 @@ loc-budget-allow:
 # `vec-symbol-key-overlay.ts` leaf taking the four dependencies explicitly — is
 # the right follow-up and is recorded as such in this slice's receipt; it is not
 # mixed into a change whose whole value is a measured behaviour fix.
+  - src/codegen/array-object-proto.ts
+  - src/codegen/ta-dyn-mop.ts
 func-budget-allow:
   # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
   # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
@@ -489,6 +508,11 @@ func-budget-allow:
 # `__object_keys` dyn-view arm (`ta-dyn-mop.ts`) and the generic `$__vec_base`
 # arm (`vec-overlay-keys.ts::fillGopnVecArm`). Routing it anywhere else would
 # make the three key producers disagree about how an index becomes a key.
+  # (#6651 E4, 2026-09-22) +6 over the 1300 ceiling — see the E4 note above the
+  # `loc-budget-allow` list: the arm BODY is in `ta-static-from-of-body.ts`, and
+  # what is left here is one `unshift` call plus the four lines explaining why
+  # it is a separate arm from the `$__ta_ctor` one directly above it.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -4536,6 +4560,135 @@ shape is what matters for defect 1 — a TS-typed local takes a different arm.
 | 2 | fail | `Reflect/ownKeys/{order-after-define-property,return-on-corresponding-order-large-index}` | unchanged from F1 |
 | 1 | fail | `Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js` | still blocked at its FIRST assertion (the refusal is invisible for a JS `var o = {}` carrier — F1's carrier-promotion finding). Its later `Object.getPrototypeOf(Object.create(null))` assertion is fixed by this slice, so the row is one defect closer |
 | 8 | fail/CE | singletons | `Proxy/getPrototypeOf/not-extensible-same-proto` (→ the `Array.prototype` identity defect above), `Reflect.hasOwnProperty` CE (`Reflect/enumerate/undefined.js`; `Reflect.enumerate === undefined` already answers correctly, so this row is one static fold away), `Reflect/construct/arguments-list-is-not-array-like.js` (non-array-literal argsList is still a hard compile error), `Proxy/enumerate`, `Proxy/set/trap-is-null-receiver` (prototype-chain), the `Proxy/apply/*-target-is-proxy` pair, `Proxy/get/trap-is-undefined-receiver` |
+
+### 2026-09-22 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E4: `%TypedArray%.{from,of}` as first-class values
+
+- **Branch** `e4-resume` (local, not pushed), base `origin/main` @ `4a9df53cae`.
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a93cf1bd507687ecc`.
+  Resumed from the previous E4 owner's uncommitted worktree
+  (`agent-a015751dd3923189e`, died mid-control); its files were copied across
+  and re-measured here. None of its numbers are quoted as this slice's
+  measurements.
+- **Engine for every verdict below: QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`,
+  artifact `073742801ba7`, adapter key `d4799bda84cfed0d`), `--standalone`,
+  `--isolate`, 24-row chunks in fresh processes, one runner at a time. Before
+  and after were run on the same row list, with the E4 files swapped by
+  file copy (`.tmp/base/` ⇄ `.tmp/new/`). No source edits between the first
+  and the last chunk of either arm.
+
+#### What landed
+
+1. **Real bodies behind the `from` / `of` values** (new module
+   `src/codegen/ta-static-from-of-body.ts`). The intrinsic carrier already
+   exposed `%TypedArray%.from` / `.of` as values. Their closures, though, were
+   minted with `refusalBodyFallback`, so any call through the value threw
+   "not yet implemented". E3's triage (c) found this was the hole. The body
+   works in three steps:
+   - **IsConstructor(C).** This is `__reflect_is_constructor` OR'd with the
+     three TypedArray-constructor carriers, which are not callables.
+   - **TypedArrayCreate.** A recognized TypedArray constructor (including the
+     abstract intrinsic, whose TypeError comes after the source drain) goes
+     through the shared `__ta_from_arraylike`. An ordinary user constructor
+     goes through the `__native_construct_1` driver, then ValidateTypedArray,
+     the "smaller than requested" check and `__extern_set` writes.
+   - **The element writes.**
+2. **Inheritance with one identity** (spec (a) + (b)). An `__extern_get` arm,
+   built in the new module and unshifted in `fillTaDynViewMopArms`, answers
+   `from` / `of` on a `$__ta_ctor` receiver or on the Int8Array `$Object`
+   carrier. It answers with the SAME lazily-initialised singleton the
+   intrinsic carrier stores, which is what makes `TA.of === TypedArray.of`.
+   It answers only through `__extern_get` and never through `get_meta`, so
+   `TA.hasOwnProperty("of")` stays false. It never mints at finalize: it
+   probes `funcMap` first and declines on a miss, so a module that never
+   touches the intrinsic keeps its bytes.
+3. **The correctness fix the previous owner stopped for.** Its `from` took
+   three fixed param slots. Through the closure ABI an omitted slot arrives as
+   `ref.null.extern`, which is also JS `null`. So `TypedArray.from.call(C, src,
+   null)` silently mapped nothing instead of throwing, a wrong answer where
+   the base had thrown a refusal. Now `from` takes the packed variadic ABI, like
+   `of`. Omitted arguments are padded with `undefined` from the vector length,
+   and §23.2.2.1 step 3 tests "is not undefined". Probe `.tmp/e4/p3.js`:
+   `from-null-mapfn` answered `no-throw` before the fix and a TypeError after.
+   The same unpack also makes a nullish `source` throw at step 5 (GetV). Before,
+   the iterable drain read it as empty (`.tmp/e4/p4.js`, `from-noargs`).
+4. Every native the body calls is registered before any index is resolved or
+   any instruction is pushed.
+
+#### Measurements
+
+Verdict run: 360 rows (`.tmp/e4/verdict-rows.txt`). They are the target family
+(107), the 144-row manifest, the previous owner's 73 after-state non-pass
+control rows, the 111 rows whose bytes changed and whose source spells
+`.from` / `.of` / `["from"|"of"]`, and a seeded (6651) 48-row sample of the
+other byte-changed rows. Logs are in `.tmp/e4/v-base/` and `.tmp/e4/v-new/`.
+
+| subset | rows | pass before | pass after |
+| --- | ---: | ---: | ---: |
+| target `TypedArray/from/**`, `TypedArrayConstructors/{from,of}/**` | 107 | 73 | **86** |
+| manifest `E-typedarray-buffers.txt` | 144 | 31 | **39** |
+| seeded sample of other byte-changed rows | 48 | 32 | 32 |
+| all 360 | 360 | 136 | **149** |
+
+- **Result: 13 rows went from non-pass to pass, and 0 went from pass to
+  non-pass.** No non-pass row changed status. The 13, all under
+  `TypedArrayConstructors/`: `from/{inherited,custom-ctor,custom-ctor-returns-other-instance,new-instance-using-custom-ctor}`,
+  `from/BigInt/{inherited,custom-ctor}`,
+  `of/{inherited,custom-ctor,custom-ctor-returns-other-instance,new-instance-using-custom-ctor}`,
+  `of/BigInt/{inherited,custom-ctor,custom-ctor-returns-other-instance}`.
+- **Byte-level control over all four control families** (`TypedArray/**`,
+  `TypedArrayConstructors/**`, `ArrayBuffer/**`, `DataView/**`, 2966 rows).
+  The probe `.tmp/e4/bytediff.mts` compiles the primary and the strict-rerun
+  assembly with the runner's exact options (`.tmp/e4/bd-{base,new}.tsv`).
+  - 779 rows are byte-identical. 2187 differ, almost all because
+    `testTypedArray.js` touches the intrinsic, which now carries real bodies.
+  - **0 rows gained a compile error.**
+  - One row, `TypedArray/prototype/subarray/coerced-begin-end-shrink.js`, is a
+    compiler runaway (>3 GB heap) on BOTH arms. It is pre-existing and not
+    from this slice.
+  - A single long-lived compile process also leaks to about 8 GB over about
+    2000 rows. That is why the byte-diff runs in 150-row processes.
+- **Not verdict-checked:** 1,851 byte-changed control rows outside the 360
+  (336 of the 360 are byte-changed). The sampled 48 were flat. The only runtime paths this change adds that
+  such a row could reach are the new `__extern_get` front arm (one
+  `ToPropertyKey` and two string compares on a TA-constructor receiver) and
+  the unused `from` / `of` bodies. Treat the rest as unmeasured, not as "0".
+- **Host lane: byte-identical.** Both new code paths are gated on
+  `noJsHost` / `ctx.standalone`.
+  - All 107 target rows compiled for the host lane match by sha on both arms
+    (`.tmp/e4/host-{base,new}.tsv`).
+  - The 13 representative programs in `.tmp/e4/sha.mts` match on host. On
+    standalone, only `ta-intrinsic` and `ta-inherited-of` differ.
+- **Gates (all on the final source):**
+  - Equivalence gate: 22 failing, all 22 known, none new.
+  - `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+    `check:oracle-ratchet`, `check:dead-exports`: OK.
+  - LOC and function budgets re-run with `LOC_GATE_BASE=4a9df53cae`: OK.
+  - `check-compiler-boundaries --mode inventory`: valid.
+    `ta-static-from-of-body.ts` is classified.
+  - `typecheck` and `biome lint` (error level): clean.
+  - The E2/E3/E typedarray pin suites plus the new E4 suite: 43/43 pass.
+- **Pin suite** `tests/issue-6651-e4-typedarray-static-from-of.test.ts`: all 6
+  cases fail on the base (`.tmp/e4/pin-base.log`, 6 failed) and pass after.
+  Every case pairs a value only the real body can produce with its assertion,
+  so the refusal's TypeError cannot satisfy a throws-case.
+
+#### Residuals in the target family (21 non-pass after, each measured, none attempted here)
+
+| rows | first failure | what it needs |
+| --- | --- | --- |
+| `TypedArray/from/from-{array,typedarray}-mapper-*`, `…into-itself-mapper-makes-result-out-of-bounds` (5) | `Cannot read properties of undefined (reading 'call')` | a STATIC `Int32Array.from` value read (`Int32Array.from.call(fn, …)`, no `testTypedArray.js`) still answers `undefined`: the module never materializes the intrinsic, so the inherited-value arm declines by design; needs a static-member value path that mints the singleton at compile time |
+| `TypedArray/from/from-typedarray-into-itself-mapper-detaches-result` | compile_error: host import `env::__unwrap_for_wasm` | standalone lowering of the helper |
+| `TypedArray/from/iterated-array-changed-by-tonumber` | length 0 vs 3 | the drain must observe a source mutated by ToNumber mid-iteration |
+| `TypedArrayConstructors/{from,of}/BigInt/new-instance*`, `from/BigInt/set-value-abrupt-completion` (8) | `42n` reads 0 / "Cannot convert value to a BigInt" / "Cannot mix BigInt" | BigInt element kinds in `__ta_from_arraylike` and the custom-ctor write path |
+| `{from,of}/custom-ctor-returns-immutable-arraybuffer` (2) | "no arg factories match include immutable" | immutable-ArrayBuffer harness, outside ES2015 |
+| `from/mapfn-arguments`, `from/BigInt/mapfn-arguments` | 3 calls observed vs 2 | the mapping drain calls mapfn once too often |
+| `from/set-value-abrupt-completion` | source iteration not interrupted | the element-write abrupt completion must close the source iterator |
+| `from/BigInt/custom-ctor-returns-other-instance` | `Array.prototype.values` not callable as a value | a separate built-in-value gap |
+
+Known narrowing, stated in the code: the inherited-value arm sits in FRONT of
+the receiver's own lookup, so a user `Int16Array.of = f` shadow is not
+observed. It is not a regression: the base answered `false` for that probe too
+(`.tmp/e4/p3.js`, `shadow`).
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
