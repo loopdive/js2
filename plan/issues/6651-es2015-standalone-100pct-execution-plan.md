@@ -142,6 +142,20 @@ assignee: "ttraenkler/fable-es2015-plan"
 # neighbouring §28.1.x guards, which is the opposite of keeping one spec section
 # readable in one place. ~60 % of the growth is that comment.
 loc-budget-allow:
+  # 2026-09-23 — cluster F slice F3 (proxy dispatch follows the value, not the
+  # spelling). +14 in `object-ops.ts` and +8 in `expressions/new-super.ts`, and
+  # in both files the executable change is ONE line: a hardcoded
+  # `e.expression.text === "Proxy"` becomes
+  # `tracesToProxyConstructorValue(ctx, e.expression)`. Everything else is the
+  # comment recording WHY the narrower test was wrong and why the widening is a
+  # proof rather than a guess — the probe (`trapruns[A]` for four proxies, only
+  # the literal spelling), and the reason the §19.1.2.4 null hazard the
+  # surrounding comment guards against cannot reach it. The predicate itself
+  # lives in the leaf `src/codegen/proxy-value-provenance.ts`; what cannot move
+  # is the admission test, which has to be readable at the point the dispatch
+  # route is chosen.
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/new-super.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/statements/for-of-destructuring.ts
@@ -364,6 +378,15 @@ loc-budget-allow:
 # the right follow-up and is recorded as such in this slice's receipt; it is not
 # mixed into a change whose whole value is a measured behaviour fix.
 func-budget-allow:
+  # 2026-09-23 — cluster F slice F3: +13 inside `compileObjectDefineProperty`,
+  # the same comment-dominated one-line change as the LOC grant above. The
+  # function is already 1.5k lines of §19.1.2.4 arms in a fixed spec order, and
+  # the admission this slice widens (`isProxyReceiver`) is the FIRST of them —
+  # splitting it out would move the proxy decision away from the null/array/
+  # accessor arms it is ordered against, which is precisely what the
+  # surrounding comment warns about. A split of this function is a refactor of
+  # its own, not part of a measured behaviour fix.
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
   # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
   # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
   # fills each reserved native's body in turn; every arm this slice adds is a

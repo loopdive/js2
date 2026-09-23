@@ -70,7 +70,16 @@ function tracesToRevocableHandle(ctx: CodegenContext, expr: ts.Expression, depth
 export function tracesToProxyValue(ctx: CodegenContext, expr: ts.Expression, depth = 0): boolean {
   if (depth > TRACE_DEPTH_LIMIT) return false;
   const e = unwrap(expr);
-  if (ts.isNewExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Proxy") return true;
+  // (#6651 F3) The callee question is `tracesToProxyConstructorValue`, not the
+  // spelling `Proxy`. `new OProxy(t, h)` — where `var OProxy =
+  // $262.createRealm().global.Proxy` — is the shape every `*-realm*` row uses,
+  // and `fillNativeConstructDrivers`' carrier-identity arm ALREADY makes that
+  // `new` mint a real `$Proxy` (probed: its `get`/`has`/`getOwnPropertyDescriptor`
+  // traps all run). So the value IS a proxy by construction here; the narrower
+  // name test just could not see it. The bare `Proxy` identifier is subsumed
+  // (that predicate answers `text === "Proxy"` for an un-aliased binding), and
+  // an alias hop is admitted only under its single-assignment proof.
+  if (ts.isNewExpression(e) && tracesToProxyConstructorValue(ctx, e.expression, depth + 1)) return true;
   if (ts.isPropertyAccessExpression(e) && e.name.text === "proxy") {
     return tracesToRevocableHandle(ctx, e.expression, depth + 1);
   }
