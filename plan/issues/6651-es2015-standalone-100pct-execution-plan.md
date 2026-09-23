@@ -4675,6 +4675,136 @@ unchanged. **Before starting any further slice of this plan, run
 main** — the two lanes working this issue produce twins in the same files, and a
 twin is far cheaper to avoid than to resolve.
 
+### 2026-09-23 — Cluster F (Proxy / Reflect, standalone), slice F3: the §10.5 dispatch follows the VALUE, not the spelling
+
+- **Branch** `issue-6651-f3-proxy-dispatch-guards`, commit `605f2af0`, based on
+  `claude/project-thread-yhj9pp` @ `584b231f` (F2's merge — deliberate
+  predecessor-stacking, not `origin/main`). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-ace93b4ccd7a7e79b`. Not pushed; the
+  integrator owns the push and the PR.
+- **Manifest** `plan/agent-context/6651/F-proxy-reflect.txt`, 89 rows, sha256
+  `3edd7052b503ee48f0022a8bc2f5c041a116228d19ef65d31bf2aeb54cf80dd7`
+  (unchanged since F1 — re-hashed, not inherited).
+
+| standalone, `--isolate`, 89 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/F3-base.log`) | **9** | 75 | 5 |
+| after (`.tmp/6651/F3-patched.log`) | **21** | 63 | 5 |
+
+**+12 rows; zero lost; zero other verdict changes** — a per-PATH join
+(`.tmp/6651/rowdiff.mjs`), not a count comparison. The before-state is this
+lane's own run of the unmodified branch tip, not F2's number; the two happen to
+agree at 9. No row reported `error` and none reported "provider is not built",
+so every row is a measurement.
+
+#### The mechanism F2 measured, root-caused
+
+F2 left this as "a `$Proxy` the compiler only knows at runtime reaches a
+dispatch that skips the §10.5.6 / §10.5.14 post-trap checks", worth ~12 rows.
+It is narrower than that, and it is not about post-trap checks at all: **the
+proxy dispatch was never entered.** Probed on base, one module, four proxies
+over the same handler:
+
+| spelling | `defineProperty` trap calls | `new p()` construct trap |
+| --- | ---: | --- |
+| `var p = new Proxy(t, h)` | 1 | runs |
+| `var PP = Proxy; var p = new PP(t, h)` | **0** | runs, but no step-11 check |
+| `var p = new OProxy(t, h)` (`OProxy` = `$262.createRealm().global.Proxy`) | **0** | **does not run** |
+| `function mk(){return new Proxy(t,h);} var p = mk()` | **0** | does not run |
+
+`Object.defineProperty` on the three non-literal spellings took the inline
+`__defineProperty_value` store — it wrote the value onto the proxy and returned.
+The runtime was never the problem: the SAME proxies dispatch `get`, `has` and
+`getOwnPropertyDescriptor` correctly, dispatch through
+`Reflect.defineProperty`, and — reached through a helper
+(`function nn(x){return new x();} nn(p)`) — run the construct trap AND throw the
+§10.5.14 step-11 TypeError. Six probe cases covering all five failing families
+answered correctly through the dynamic route **on base**, before any edit. So
+every guard already existed; two STATIC admissions declined to route to them.
+
+#### What landed — two predicates that asked the wrong question
+
+Both sites tested the identifier TEXT (`e.expression.text === "Proxy"`) where
+the question is "does this `new` MAKE a proxy". Both now call
+`tracesToProxyConstructorValue`, which already existed and is **the same proof
+`fillNativeConstructDrivers`' carrier-identity arm uses to MINT the proxy** — so
+the creator and the dispatcher now agree by construction rather than by
+coincidence of spelling.
+
+1. `object-ops.ts::compileObjectDefineProperty`'s `isProxyReceiver`. The
+   surrounding comment warns that a bare `any` reroute swallowed the
+   §19.1.2.4-step-1 non-object throw for `const o: any = null`. That hazard
+   cannot reach this widening and the reason is structural, not empirical: the
+   admission requires the receiver's DECLARATION to be a `new`, which never
+   evaluates to null or a primitive. The accessor-literal exclusion is kept.
+2. `new-super.ts::resolvesToNativeProxyValue`. Declining here made
+   `tryCompileNativeConstructFromValue` return `undefined`, so `new p()` reached
+   no proxy arm at all.
+3. `proxy-value-provenance.ts::tracesToProxyValue` got the same widening for
+   consistency. **This one earns no rows and is reported as such**: its only
+   consumer is `Array.isArray`, behind `ctx.standalone`, and the 94-row control
+   below is flat. It is kept because a predicate named "may evaluate to a Proxy"
+   that answers `false` for a proxy is a trap for the next reader — but it is
+   scope beyond the 12 rows, and a reviewer who wants the minimal diff can drop
+   this hunk without touching the result.
+
+An alias hop is admitted only under the existing single-assignment proof, so
+`var P = Proxy; P = K; new P(5)` still declines — and that program is one of the
+byte-identity controls.
+
+#### Controls
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| `built-ins/Proxy/**` + `built-ins/Reflect/**`, standalone (`.tmp/6651/nb-pr-{before,after}.log`) | 464 | 383 / 76 / 5 | **395** / 64 / 5 | +12 (the same 12), **0 lost, 0 other** |
+| `built-ins/Array/isArray/**` ∪ every `Object` / `Array.from` / `Array.prototype.concat` / `language/expressions/new` row mentioning `new Proxy` or `Proxy.revocable`, standalone (`.tmp/6651/nb-extra-{before,after}.log`) | 94 | 61 / 33 | 61 / 33 | **none** |
+| the 89-row manifest ∪ both sets above, HOST (default target) (`.tmp/6651/nb-host-{before,after}.log`) | 346 | 195 / 150 / 1 | 195 / 150 / 1 | **none** |
+
+**Host byte-identity corpus** (`.tmp/6651/sha3-{before,after}.txt`): 15 programs
+compiled for BOTH targets — a Proxy-free control, plain `Object.defineProperty`,
+`new F()`, `Object.defineProperty(new Array(3), "length", …)`, the reassigned
+alias that must decline, the literal-spelling proxy twins, the alias-spelling
+twins, and the `Array.isArray` / `Object.keys` proxy readers. **All 15 `gc`
+binaries are byte-identical.** On standalone exactly four move, all of them
+proxies reached through a non-literal constructor spelling; every control
+program — including the reassigned alias and the array-`length` define — is
+identical. The one host-reachable consumer was also checked for BEHAVIOUR, not
+just bytes: `Array.isArray` over a live alias proxy, a revocable handle and a
+non-array proxy answers `r=11` on both trees and both targets
+(`.tmp/6651/isarr-{before,after}.txt`), i.e. the route changed and the answer
+did not. (The revoked-handle throw is absent on both sides — a pre-existing gap
+this slice neither fixes nor worsens.)
+
+Also green, all run **bare**: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` — +0 raw-checker calls — and `check:dead-exports`);
+`node scripts/equivalence-gate.mjs` (22 failing / 1720 passing, all 22 in the
+committed baseline); `biome lint --diagnostic-level=error`; `prettier --check`
+on every changed file; and the new pin
+`tests/issue-6651-cluster-f3-proxy-dispatch.test.ts`, 7/7 — **3 verified RED on
+the base tree** by file-copy A/B, 4 green on both sides. LOC/function growth is
+granted in this file's frontmatter: +14 / +8 / +13, comment-dominated, one
+executable line changed per site.
+
+#### Newly root-caused, NOT taken
+
+- **A proxy returned from a HELPER is still invisible to both admissions.**
+  `function mk(){return new Proxy(t,h);} Object.defineProperty(mk(), …)` runs
+  zero trap calls on this branch too — neither predicate traces a function's
+  RETURN value. Zero rows in this manifest use that spelling, which is why it is
+  left; the fix is a return-expression hop in `tracesToProxyConstructorValue`,
+  and it needs its own single-assignment-equivalent proof for the function.
+- **`Reflect.construct(<proxy>, [])` does not reach the proxy construct
+  dispatch** (probed: no trap call, no throw), on ANY spelling including the
+  literal one. Distinct from the `new` site fixed here, and distinct from #3371.
+  Not in this manifest's failing set, so not taken.
+- **`Array.prototype` identity stability** (F2's finding) is **owned by #2917**
+  and deliberately untouched here — recorded as a dependency, not as work. This
+  slice's path never entered it.
+- F2's `getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm`
+  verdict is unchanged: it needs a null/undefined-distinct value representation,
+  not a dispatch fix.
+
 ### 2026-09-23 — Cluster I (language misc, standalone), slice I2: `instanceof` consults `@@hasInstance`
 
 - **Branch** `worktree-agent-ad69a5dbc13ab8a8e`, base `main` @ `6190e961`.
