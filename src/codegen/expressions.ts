@@ -84,6 +84,7 @@ import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
 import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
+import { boxNullRefAsUndefined } from "./null-ref-undefined-box.js"; // (#1058)
 
 import { compileConditionalExpression, compileYieldExpression } from "./expressions/misc.js";
 
@@ -925,6 +926,7 @@ function compileExpressionBody(
         }
       }
       coerceType(ctx, fctx, result, expectedType);
+      if (expectedType.kind === "externref") boxNullRefAsUndefined(ctx, fctx, expr, result);
       return expectedType;
     }
     if (

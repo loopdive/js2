@@ -86,6 +86,7 @@ import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
+import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -1082,8 +1083,14 @@ export function compileBinaryExpression(
         // write. Fields whose annotation admits `null` are excluded inside the
         // predicate — there `ref.null` is ambiguous.
         if (isStrictEqOp || isStrictNeqOp) {
+          // (#1058) A `let` declared without an initializer, or reset with
+          // `undefined!`, holds `undefined` in its null ref too. `=== null`
+          // keeps its test, so both strict arms stay runtime `ref.is_null`.
           const nullRepresentsUndefined =
-            nonNullUnionHasUndefined || isNullableNativeString || isUninitialisedFieldSlot;
+            nonNullUnionHasUndefined ||
+            isNullableNativeString ||
+            isUninitialisedFieldSlot ||
+            (nullSideIsUndefinedId && readsUndefinedHoldingVariable(ctx, nonNullExpr));
           const nullRepresentsNull =
             nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString && !isUninitialisedFieldSlot);
           const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;

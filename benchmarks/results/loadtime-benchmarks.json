@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-23T10:31:36.071Z",
+  "timestamp": "2026-09-23T21:51:41.745Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -202,6 +202,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -284,16 +294,6 @@
         },
         {
           "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "__call_function_1",
           "kind": "func",
           "intent": {
@@ -359,11 +359,10 @@
         "fib(30)",
         "Recursive — pure i32/f64 math, no host calls",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
+        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
         "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
+        "RangeError: toFixed() digits argument must be between 0 and 100"
       ]
     },
     {
@@ -567,6 +566,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -649,16 +658,6 @@
         },
         {
           "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "__call_function_1",
           "kind": "func",
           "intent": {
@@ -723,11 +722,10 @@
         "Loop: 1M Int32 sum",
         "Tight i32 loop with explicit | 0 wrap, no allocations",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
+        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
         "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
+        "RangeError: toFixed() digits argument must be between 0 and 100"
       ]
     },
     {
@@ -931,6 +929,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -1023,16 +1031,6 @@
         },
         {
           "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "__call_function_1",
           "kind": "func",
           "intent": {
@@ -1098,12 +1096,11 @@
         "String: concat 1k",
         "wasm:js-string concat per iteration",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
-        "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
         "repeat",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
+        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
+        "RangeError: toFixed() digits argument must be between 0 and 100"
       ]
     },
     {
@@ -1307,6 +1304,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -1389,16 +1396,6 @@
         },
         {
           "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "__call_function_1",
           "kind": "func",
           "intent": {
@@ -1463,11 +1460,10 @@
         "Array: fill+sum 10k",
         "Wasm GC array — push / get loop",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
+        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
         "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
+        "RangeError: toFixed() digits argument must be between 0 and 100"
       ]
     },
     {
@@ -1683,6 +1679,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -1765,16 +1771,6 @@
         },
         {
           "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "__call_function_1",
           "kind": "func",
           "intent": {
@@ -1841,11 +1837,10 @@
         "DOM: 100 elements",
         "Host boundary — createElement + appendChild",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
+        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
         "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
+        "RangeError: toFixed() digits argument must be between 0 and 100"
       ]
     },
     {
@@ -2073,6 +2068,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -2165,16 +2170,6 @@
         },
         {
           "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "__call_function_1",
           "kind": "func",
           "intent": {
@@ -2243,11 +2238,10 @@
         "Style: 100 updates",
         "Host boundary — style.background per iteration",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
+        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
         "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
+        "RangeError: toFixed() digits argument must be between 0 and 100"
       ]
     },
     {
@@ -2482,6 +2476,16 @@
         },
         {
           "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
           "name": "__js_array_new",
           "kind": "func",
           "intent": {
@@ -2581,16 +2585,6 @@
             "name": "__throw_reference_error"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -2755,10 +2749,6 @@
         "saved ",
         "-",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "Cannot access property on null or undefined at 31:15",
-        "TypeError: Cannot access property on null or undefined at 31:15",
-        "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
         "padding:8px 4px;text-align:center;font-size:0.8rem;color:#555;font-style:italic",
         "padding:6px 4px;text-align:center;font-size:0.8rem;cursor:pointer;border-radius:4px;background:",
         ";border:",
@@ -2776,6 +2766,9 @@
         "display:flex;align-items:center;justify-content:space-between;margin-top:0.5rem",
         "totalEl is not defined",
         "padding:8px 28px;background:#fff;color:#111;border-radius:999px;cursor:pointer;font-size:0.9rem;font-weight:600",
+        "Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
         "timestamp",
         "\u0000js2_data_struct_host_bridge_token",
         "__\u0000js2_call_fn_method_argc_0,__\u0000js2_call_fn_method_argc_1,__\u0000js2_call_fn_method_argc_2,__\u0000js2_call_fn_method_argc_3,__\u0000js2_call_fn_method_argc_4,__\u0000js2_call_fn_method_argc_5,__call_fn_0,__call_fn_1,__call_fn_2,__call_fn_3,__call_fn_4,__call_fn_method_0,__call_fn_method_1,__call_fn_method_2,__call_fn_method_3,__call_fn_method_4,__call_fn_method_5,__cb_0,__cb_1,__cb_2,__cb_3,__cb_4,__cb_5,__cb_6,__cb_7,__closure_arity,__is_closure,__is_data_struct,__sget_timestamp,__struct_field_names"
