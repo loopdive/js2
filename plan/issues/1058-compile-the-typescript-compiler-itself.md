@@ -74,7 +74,18 @@ loc-budget-allow:
   # 2026-08-31: projected NodeArray vecs retain their host-backed sidecar/MOP
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
+  # 2026-09-23: the binder symbol-table slice adds small hooks to
+  # call-identifier.ts, property-access.ts, binary-ops.ts, assignment.ts,
+  # expressions.ts and runtime.ts (all listed above); the logic lives in new
+  # subsystem modules (declaration-bound-callee, undefined-holding-variable,
+  # null-ref-undefined-box, unmatched-closure-host-call).
 func-budget-allow:
+  # 2026-09-23: binder slice. compileIdentifierCall's body moves verbatim into
+  # compileBoundIdentifierCall behind the declaration-bound callee wrapper; the
+  # numeric-key switch learns enum keys and an undefined miss.
+  - src/codegen/expressions/call-identifier.ts::compileBoundIdentifierCall
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions.ts::compileExpressionBody
   # 2026-09-23: the dynamic-call arm ladder moves verbatim out of
   # tryEmitInlineDynamicCall (which shrinks by the same amount) so a large
   # ladder can be emitted once as a shared helper instead of per call site.
@@ -1629,6 +1640,58 @@ Truthiness checks are unaffected. This does not block the parser fingerprints.
 
 **Next:** rerun the binder probe (const-local = 65,792; duplicate-let =
 131,330).
+
+## Binder oracles pass (2026-09-23)
+
+`dogfood:typescript-binder-source` now matches both oracles:
+const-local = **65,792** and duplicate-let = **131,330**. The run took about
+**155 s** and produced an **8.26 MB** module; peak RSS was **2,280 MiB**.
+
+Before this change, the binder bound no symbols and reported no
+redeclarations. There were six causes:
+
+1. **`undefined`-holding typed variables.** A `let x: T` that has no
+   initializer, or is reset with `x = undefined!`, stores `undefined` as a
+   null ref. `x === undefined` used to fold to `false`, so the binder ran
+   `for (const d of jsDocImports)` over null.
+   - Fix: `undefined-holding-variable.ts` keeps both strict comparisons as a
+     runtime null test.
+2. **Enum-typed table keys.** `forEachChildTable[node.kind]` has a key typed
+   as a numeric enum union. It skipped the static numeric-key switch and
+   missed every entry.
+   - Fix: the switch now accepts number-like unions.
+   - A missing key now reads as `undefined`, where it was `null`. This fixes
+     `fn === undefined` for plain number keys too.
+3. **Same-name functions across modules.** Module-level function expressions
+   in parser.ts's table called visitorPublic's exported `visitNodes` instead
+   of the private one, both by call and by call-site inlining.
+   - Fix: `declaration-bound-callee.ts` binds the checker-resolved
+     declaration's own slot for the call and withholds the name-keyed inline
+     entry.
+4. **`Map.get` returned the host view of a stored struct.** A typed read of
+   that view turned it into null, so `symbolTable.get(name)` never found a
+   symbol.
+   - Fix: the keyed-collection shim in runtime.ts unwraps results.
+5. **Generic rest parameters.** A generic function's call-site-resolved
+   signature never registered its rest parameter, so
+   `addRelatedInfo(diag, ...relatedInformation)` expanded the array
+   positionally.
+   - Fix: `resolved-rest-param.ts` registers it.
+6. **Vec type mismatch at the rest slot.** A spread passed into a rest slot
+   is now projected onto the rest vec type when its element type differs. It
+   used to hit a bare `ref.cast` between unrelated vec types.
+
+Regression tests: `issue-1058-binder-symbol-table` (5 cases),
+`issue-1058-null-ref-undefined-box`, and
+`issue-1058-unmatched-closure-host-call`.
+
+**Known separate gap.** Inside a generic `f<T extends D>(d: T)`, a write such
+as `d.list = []` followed by `d.list.push(...)` does not reach the struct
+field when the caller reads it afterwards. This does not affect the binder
+oracles, because the duplicate path's related-information list is empty.
+
+**Next:** extend the binder workload beyond the two fixtures, then move on to
+the checker.
 
 ## Acceptance criteria
 

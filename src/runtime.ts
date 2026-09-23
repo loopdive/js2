@@ -12136,7 +12136,11 @@ function resolveImport(
             return callable !== arg ? callable : _wrapForHost(arg, exports);
           });
           const fn = self[m] ?? _sidecarGet(self, m);
-          if (typeof fn === "function") return fn.call(self, ...wrappedArgs);
+          // (#1058) The stored value is the host view minted above, so a
+          // `get` hands that view back. Unwrap it to the raw struct, or the
+          // caller's `ref.test` against its struct type fails and the value
+          // reads as null (TypeScript's binder lost every symbol-table hit).
+          if (typeof fn === "function") return _unwrapForHost(fn.call(self, ...wrappedArgs), callbackState);
           return undefined;
         };
       }

@@ -132,6 +132,8 @@ import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { buildUnmatchedClosureHostCall, reserveUnmatchedClosureHostCall } from "./unmatched-closure-host-call.js"; // (#1058)
+import { withDeclarationBoundCallee } from "./declaration-bound-callee.js"; // (#1058)
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
@@ -684,6 +686,17 @@ function emitShadowCalleeSelect(ctx: CodegenContext, fctx: FunctionContext, call
 }
 
 export function compileIdentifierCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  expectedType?: ValType,
+): InnerResult | undefined {
+  // (#1058) Resolve a same-named top-level function by declaration, not by the
+  // graph-wide bare-name binding (see declaration-bound-callee.ts).
+  return withDeclarationBoundCallee(ctx, expr, () => compileBoundIdentifierCall(ctx, fctx, expr, expectedType));
+}
+
+function compileBoundIdentifierCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
@@ -2811,6 +2824,8 @@ export function compileIdentifierCall(
             }
             if (reservedVecMaterializer) flushLateImportShifts(ctx, fctx);
           }
+          const unmatchedClosureHostCall =
+            funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr.arguments.length) : undefined;
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one
@@ -3224,8 +3239,20 @@ export function compileIdentifierCall(
             const retBlockType =
               expectedReturn === null ? ({ kind: "empty" } as const) : ({ kind: "val", type: expectedReturn } as const);
 
-            // Build dispatch chain bottom-up (innermost = throw TypeError)
-            let funcDispatch: Instr[] = typeErrorThrowInstrs(ctx, expr.expression);
+            // Build dispatch chain bottom-up (innermost = a live closure no arm
+            // names goes through the host, see unmatched-closure-host-call.ts;
+            // otherwise throw TypeError)
+            let funcDispatch: Instr[] =
+              (unmatchedClosureHostCall &&
+                buildUnmatchedClosureHostCall(
+                  ctx,
+                  unmatchedClosureHostCall,
+                  closureLocal,
+                  actualArgExternLocals,
+                  expectedReturn,
+                  (from, to) => dispatchBridgePlan(from, to, true, true),
+                )) ??
+              typeErrorThrowInstrs(ctx, expr.expression);
 
             // (#2933) Innermost fallback BEFORE the TypeError: the variadic
             // builtin value-closure arm. Its lifted func type has ONE
