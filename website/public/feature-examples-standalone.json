@@ -1074,7 +1074,7 @@
         "built-ins/WeakMap",
         "built-ins/WeakSet"
       ],
-      "passCount": 124,
+      "passCount": 126,
       "totalCount": 129
     },
     {

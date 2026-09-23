@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10798,
-    "fail": 756,
+    "pass": 10802,
+    "fail": 752,
     "ce": 150,
     "skip": 0,
     "total": 11704,
@@ -408,12 +408,12 @@
       },
       {
         "name": "Map",
-        "pass": 19,
-        "fail": 3,
+        "pass": 21,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 22,
-        "pct": 86
+        "pct": 95
       },
       {
         "name": "String.fromCodePoint",
