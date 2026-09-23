@@ -799,6 +799,25 @@ coercion-sites-allow:
 # `valueOf` / `@@toPrimitive` must run with hint "number"
 # (`result-coerce-index-undefined` asserts the hint).
   - src/codegen/regexp-replace-protocol.ts
+# 2026-09-23 — cluster E, slice E6: `object-runtime-ordinary-set.ts` names
+# `__str_to_number` / `number_toString` ×1 each and `__to_primitive` /
+# `__unbox_number` ×1 each (+4 net). The first pair IS §7.1.21
+# CanonicalNumericIndexString (`ToString(ToNumber(P)) === P`), the same
+# round-trip `ta-dyn-mop.ts`'s `keyIsCanonical` spells — duplicated rather than
+# shared because the static-carrier arm must also install in a module with no
+# dyn view, where that builder never runs. The second pair is §10.4.5.16 step 2
+# ToNumber(value) for a static `Int32Array` receiver, the pair
+# `__ta_dyn_set_elem` already uses. All four run in a finalize-time native with
+# no `FunctionContext` to coerce into. Same slice: `ta-dyn-mop.ts` +8 /
+# `fillTaDynViewMopArms` +6 (the two fill calls and their comments),
+# `dataview-native.ts` +38 (the post-coercion detach check and its two call
+# sites inside the `fill`/`copyWithin` helpers it guards) and
+# `call-namespace-static.ts` +2 / `compileNamespaceStaticCall` +1 (the one
+# `noteReflectSetReceiverCall` line at the 4-argument `Reflect.set` site) and
+# `array-methods.ts` +9 (the detached-view guard spliced into the native
+# externref `join`, which has to sit between the separator's evaluation and its
+# coercion) — all five paths/functions already listed above.
+  - src/codegen/object-runtime-ordinary-set.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -6512,6 +6531,130 @@ correctness fix for the probe shapes and the pins.
 | 3 | G2's step-loop rows (`iterator-next-reference`, `iterator-next-result-type`, `array-key-get-error`): the native `__iterator_next` OBJ arm re-reads `next` per step and has no non-Object-result TypeError; caching `next` needs a new `$IterRec` field. Time-boxed out. |
 | — | Standalone `[a] = { x: 1 }` still binds `undefined` instead of throwing: the native `__array_from_iter_n` passes a non-drainable struct through (#2904 rationale). The host now throws on the new route. |
 | — | Standalone self-iterator (`[Symbol.iterator]() { return this; }` on a literal that also has `next`): the values are right but the `@@iterator` call is skipped (log `next,next`), in the declaration lane as well — a native `__iterator` shortcut. |
+
+### 2026-09-23 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E6: the integer-indexed `[[Set]]` with a Receiver, and four places a detached buffer read as an empty one
+
+- **Branch** `e6` (local, not pushed), measured on `origin/main` @ `e71c881b23`
+  (round-3 #6038/#6040/#6042/#6043/#6048 in); `origin/main` @ `59dbeb1e8a`
+  (#6050 G3, #6049, #6051–#6053) fast-forwarded in before the commit — none
+  of them touches a file this slice edits. After the merge: typecheck, lint,
+  the E-family pins (incl. E6's), the gates and the 14 gained rows (14/14,
+  isolate) were re-run; the sweeps and controls were not.
+- **Engine for every verdict: QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`, adapter
+  `d4799bda84cfed0d`, rebuilt), `--standalone`. Base = a `git archive` extract
+  of the base (`.tmp/basetree`), after = the same extract plus the six edited
+  files (`.tmp/aftertree`), so `src/` never moved under a sweep. Manifest: 24-row
+  `--isolate` chunks in fresh processes, one runner at a time.
+
+#### Bucket table on the base (the 102 non-pass manifest rows, by first failure)
+
+The E5 residual table named `internals/Set/*` (7) and `$DETACHBUFFER` over a
+module-scope buffer (2). Measuring first found a larger detach family nobody
+had bucketed: **17 rows whose callback or argument coercion detaches the
+buffer** — `<hof>/callbackfn-detachbuffer` ×5 (one callback call instead of
+two), `fill/coerced-*-detach` ×3 and `copyWithin/coerced-*-detached*` ×3 (no
+TypeError), plus `join`/`toString`/`toLocaleString`/`subarray` ×2 detached and
+`DataView/custom-proto-access-detaches-buffer`. The module-scope-buffer pair
+turned out to be a different defect than recorded (see residuals).
+
+#### What landed (four mechanisms, each probed first)
+
+1. **§10.4.5.5 in `Reflect.set`'s receiver walk** (`object-runtime-ordinary-set.ts`,
+   `fillOrdinarySetTypedArrayArm`). The 4-argument `Reflect.set` already had a
+   receiver-threaded §10.1.9.2 walk (#5316); it had no integer-indexed arm, so
+   an out-of-range canonical key on a TypedArray hopped to `TA.prototype` and
+   ran the accessor the test installed there (`1 setter should be
+   unreachable!`), and a static `Int32Array` with a primitive receiver answered
+   `false`. Now, for a TypedArray in the `O` position (first iteration or a
+   later prototype hop) and a canonical numeric key: `SameValue(O, Receiver)` ⇒
+   TypedArraySetElement (ToNumber first) and `true`; an invalid index ⇒ `true`,
+   nothing coerced or created; a valid index falls through to OrdinarySet. Two
+   carriers: `$__ta_dyn_view` (its `__ta_dyn_set_elem` / `__ta_dyn_has_idx`)
+   and the packed static vecs no array shares (`i8_byte`/`i16_byte`/`i32_elem`
+   — a Float view's `$__vec_f64` IS `number[]`, so it is left alone).
+   Installed at finalize ONLY in a module whose source has a 4-argument
+   `Reflect.set` (`noteReflectSetReceiverCall` at the one call site): the walk
+   is *reserved* in every object-runtime module, and the first cut changed the
+   bytes of 8 of 40 sampled `ArrayBuffer` rows that never call it.
+2. **§23.2.3 HOFs do not consult HasProperty** (`hof-native.ts`,
+   `fillHofTaDynViewPresenceBypass`). The shared `__hof_<m>` loops carry the
+   #4160 per-index HasProperty gate (Array semantics); a dyn view's
+   `__extern_has_idx` answers IsValidIntegerIndex, false once detached, so the
+   second index was skipped. `%TypedArray%.prototype.<m>` visits every
+   `k < len` with `Get` (undefined after detach). The helper is CLONED as
+   `__hof_ta_<m>` with a `ref.test $__ta_dyn_view` OR'd into each gate, and only
+   the method dispatchers `__call_m_<m>_*` are re-pointed at the clone —
+   `Array.prototype.<m>.call(ta)`, which DOES ask HasProperty (§23.1.3), keeps
+   the original. (The first cut patched `__hof_<m>` in place, which would have
+   changed `Array/prototype/*/resizable-buffer*` rows too; not measured, replaced
+   before any sweep that counted.)
+3. **`fill` / `copyWithin` re-validate after their coercions**
+   (`dataview-native.ts`, `taDynDetachedAfterCoercionThrow`). ES2024
+   MakeTypedArrayWithBufferWitnessRecord + IsTypedArrayOutOfBounds after the
+   value/start/end ToNumber: a `valueOf` that detaches is a TypeError
+   (`copyWithin` only when `count > 0`, §23.2.3.6 step 17). Both helpers
+   answered from the post-detach length of 0 and returned normally.
+4. **`join` validates a detached view before its separator's ToString**
+   (`array-methods.ts`, `compileArrayJoinExternNative`). `x.join(sep)` on an
+   `any` receiver never reaches a `__call_m_*` dispatcher (it is the native
+   externref join, #3155), so #5961's dispatcher guard never ran and the
+   separator's throwing `toString` won. The existing
+   `taDynDetachedGuardPrologue` (#6501) is spliced after the argument is
+   evaluated and before it is coerced — empty when the module has no dyn view,
+   a `ref.test` miss for every other receiver. `toString`/`toLocaleString`
+   take yet other routes (probe `j1`: both still return normally) and are left.
+
+#### Measurements
+
+| subset | rows | pass before | pass after |
+| --- | ---: | ---: | ---: |
+| manifest `E-typedarray-buffers.txt` (isolate, standalone) | 144 | 42 | **56** |
+
+- Gains (14): `internals/Set/key-is-canonical-invalid-index-reflect-set`,
+  `internals/Set/key-is-out-of-bounds-receiver-is-not-object`,
+  `{every,forEach,reduce,reduceRight,some}/callbackfn-detachbuffer`,
+  `fill/coerced-{start,end,value}-detach`,
+  `copyWithin/coerced-values-{start,end}-detached`,
+  `copyWithin/coerced-values-end-detached-prototype`, `join/detached-buffer`.
+  **Zero pass→non-pass.** (The full 144-row sweep ran before mechanism 4 was
+  written and read 55; mechanism 4 can only change a row that spells `.join(`,
+  and the five such manifest rows were re-run on the final tree: +1.)
+- **Control, standalone** (in-process, 200-row chunks). Not the full
+  3,029-row union (TypedArray/, TypedArrayConstructors/, ArrayBuffer/,
+  DataView/, Reflect/set/ + every `$DETACHBUFFER`/`detachArrayBuffer` row):
+  compiling it twice costs ~2.5 h here (1.45 s/row). Instead, the rows whose
+  BEHAVIOUR each mechanism can change: every row of that union whose own source
+  calls `Reflect.set(`, `.fill(`, `.copyWithin(` or a HOF, plus every
+  `prototype/{hof,fill,copyWithin}/` row — 783 rows — on the after tree; the
+  188 non-pass ones re-run on the base tree; plus 76 rows on BOTH trees: the
+  union's `.join(` rows and every test262 row outside the union that calls
+  `Reflect.set(` (Proxy/Reflect/Array/dynamic-import namespace). **Zero
+  pass→non-pass**; the extra set also gains `join/BigInt/detached-buffer`.
+  Why the rest cannot move: mechanism 1 installs only where a source
+  `Reflect.set` has 4 arguments; 2 changes behaviour only for a dyn-view
+  receiver of a dynamic HOF method call (the clone's extra test is false for
+  every other value, and `Array.prototype.<m>.call` keeps the original); 3 is
+  inside the `fill`/`copyWithin` dyn-view helpers; 4 is a `ref.test` miss for
+  any non-dyn-view `join` receiver.
+- **Host lane**: every mechanism is gated on `ctx.standalone`/`noJsHost`; 60/60
+  sampled TypedArray rows (1 in 30, the same sample where the first cut changed
+  18 standalone binaries) compile sha-identical on the gc target.
+- Byte identity: 32/32 (`website/playground/examples/**` + three
+  `benchmarks/*.ts`, both targets) sha-identical.
+- Pin suite `tests/issue-6651-e6-typedarray-set-detach.test.ts`: 7/7 red on the
+  base tree, 7/7 green after; E-family pins (`issue-6651-e*`) 55/55.
+
+#### Residuals (measured, not attempted or declined)
+
+| rows | first failure after E6 | what it needs |
+| --- | --- | --- |
+| `internals/Set/key-is-in-bounds-receiver-is-not-typed-array`, `…/key-is-valid-index-reflect-set`, `…/key-is-valid-index-prototype-chain-set` (3) | `receiver[0] === value` false | NOT a `[[Set]]` gap: an object literal with a ToPrimitive method (`{ valueOf() {…} }`) is MATERIALIZED to a fresh `$Object` copy every time it crosses to externref (#2358, `type-coercion.ts` → `materializeStructAsDynamicObject`), so identity is lost for ANY dynamic store: `r[0] = v; r[0] === v` is false with no TypedArray involved (probe `r4`). A value-representation decision, cross-cluster |
+| `internals/Set/key-is-out-of-bounds-receiver-is-proto`, `…/key-is-canonical-invalid-index-prototype-chain-set` (2) | valueOf count 0 / receiver key created | `Object.create(x)` / `setPrototypeOf` store a non-`$Object` prototype as `Object.prototype`: `$Object.$proto` is `ref null $Object`, so a TypedArray — or a plain ARRAY (`Object.getPrototypeOf(Object.create([1,2])) === arr` is false, probe `r6`) — cannot be a prototype. The E6 arm is ready for it (it runs on a prototype hop); the link is what is missing |
+| `from-{array,typedarray}-mapper-detaches-result` (2) | `SameValue(«10,11,12», «,,»)` | Re-diagnosed: `new Int8Array(ab)` over a static buffer is a static `$__ta_view` held in an externref slot (the harness's module scope). The generic MOP has no `$__ta_view` arm: `.length` reads `$__vec_base` field 0 through `__extern_length` (no detach check — function-scope locals are fine, they take the typed `pushTaViewEffectiveLen`), element reads answer `undefined` even BEFORE the detach, and `from.call(() => target)` returns a copy (E5's `r2same=false`). Needs `$__ta_view` arms in `__extern_length`/`__extern_get(_idx)` or a dyn view at an externref-bound construction — not attempted |
+| `from-typedarray-into-itself-mapper-detaches-result` (1) | illegal cast (was the `__unwrap_for_wasm` CE) | unchanged; not reached (brief target 3 was conditional on 1–2) |
+| `toString`/`toLocaleString` `detached-buffer` (2) | no TypeError | the #5961 dispatcher guard works (`sort` throws, probe `j1`); these two spellings take neither the dispatcher nor the native join, so the same `taDynDetachedGuardPrologue` needs splicing at their own call routes (`__call_toString` family) |
+| `subarray/{detached-buffer,byteoffset-with-detached-buffer}` (2), `DataView/custom-proto-access-detaches-buffer` (1) | `observable ToInteger(begin)` / a TypeError where none is due / no TypeError | not investigated this slice |
+| BigInt element kinds | — | ES2020, out of scope |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

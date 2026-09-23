@@ -59,6 +59,8 @@ import { ensureDataViewNativeProtoGlue, ensureTypedArrayViewNativeProtoGlue } fr
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 // (#6651 E4) the ONE `%TypedArray%.{from,of}` singleton the intrinsic carrier seeds
 import { buildTaCtorInheritedFromOfGetArm } from "./ta-static-from-of-body.js";
+import { fillHofTaDynViewPresenceBypass } from "./hof-native.js"; // (#6651 E6)
+import { fillOrdinarySetTypedArrayArm } from "./object-runtime-ordinary-set.js"; // (#6651 E6)
 
 /** Fresh synthetic FunctionContext for a native helper (the #2872 pattern). */
 function makeFctx(name: string, params: { name: string; type: ValType }[], returnType: ValType): FunctionContext {
@@ -359,7 +361,11 @@ const NAMED_PROPS: readonly NamedProp[] = [
 export function fillTaDynViewMopArms(ctx: CodegenContext): void {
   if (!ctx.standalone) return; // host imports own the dynamic path
   const dynIdx = ctx.taDynViewTypeIdx;
-  if (dynIdx < 0) return;
+  if (dynIdx < 0) {
+    fillOrdinarySetTypedArrayArm(ctx); // (#6651 E6) static TA carriers only
+    return;
+  }
+  fillHofTaDynViewPresenceBypass(ctx); // (#6651 E6) §23.2.3 HOFs: no HasProperty
   const helpers = ensureTaDynMopElemHelpers(ctx);
   if (!helpers) return;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
@@ -539,6 +545,8 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     ];
     fn.body.unshift(...arm);
   }
+  // (#6651 E6) §10.4.5.5 in `Reflect.set`'s receiver-threaded walk.
+  fillOrdinarySetTypedArrayArm(ctx, { typeIdx: dynIdx, setElemIdx: helpers.setElem, hasIdxIdx: helpers.hasIdx });
 
   // ── Shared string-key arm builder for get/has/set-like natives. ──
   // Layout: params 0=obj 1=key [2=value]; appends locals; the arm:
