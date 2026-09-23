@@ -240,6 +240,8 @@ const TRANSFERRED_STRING_PROTO_MEMBERS = [
   "charAt",
   "slice",
   "substring",
+  "substr", // (#6651 I3) Annex B B.2.2.1, same closure ABI as its two siblings
+
   "toUpperCase",
   "toLowerCase",
   "toLocaleUpperCase",
