@@ -8652,6 +8652,12 @@ export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType)
   // behaviour to those paths.
   if (elemType.kind === "ref" || elemType.kind === "ref_null") {
     const ti = (elemType as { typeIdx: number }).typeIdx;
+    // (#6651 G3) A tagged `$AnyValue` element is a BOX, not the JS value: project
+    // it by tag (`__any_to_extern`) so a vec reader hands on the value the
+    // element read (`any-value-element-read.ts`) does. `extern.convert_any` of
+    // the box leaked it — `ToNumber` and the `===` identity arm do not know it.
+    const anyToExtern = ti >= 0 && ti === ctx.anyValueTypeIdx ? ctx.funcMap.get("__any_to_extern") : undefined;
+    if (anyToExtern !== undefined) return [{ op: "call", funcIdx: anyToExtern }];
     // (#3244) GENERALISED from the string-only arm this replaces. A homogeneous
     // reference-element array — `[{ x: 777 }]` (element = object STRUCT ref) or a
     // nested `[[10, 20, 30]]` (element = inner `__vec_<k>` STRUCT ref) — compiles
