@@ -25,8 +25,20 @@ import {
   type RuntimeHostCapabilityRecord,
   type RuntimeHostCapabilityValueType,
 } from "./runtime/host-capabilities.js";
-import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
+import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./core/async-callables.js";
 import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
+import {
+  assertNativeAsyncCallableDemands,
+  assertNativeAsyncRuntimeCallables,
+  nativeAsyncCallablePolicyMismatch,
+  nativeAsyncProviderMismatch,
+  type IrNativeAsyncCallableDemand,
+} from "./runtime/native-async-callables.js";
+import {
+  assertVectorCallableDemands,
+  vectorCallablePolicyMismatch,
+  type IrVectorCallableDemand,
+} from "./runtime/vector-callables.js";
 import type { IrStringConcatMode } from "./core/string-types.js";
 import { intrinsicEffectEvidence } from "./analysis/intrinsics.js";
 import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
@@ -55,6 +67,7 @@ import {
   HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
+  RuntimeManifestInvariantError,
   projectRuntimeBackendRequirements,
   type RuntimeFeature,
   type RuntimeManifestPolicy,
@@ -65,7 +78,7 @@ import {
 
 /** Project the semantic standalone clock intent without adding a helper call. */
 function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
-  const nested = mapNestedBuffers(instr, (buffer) => buffer.map(projectStandaloneAsyncStateInstr));
+  const nested = mapNestedBuffers(instr, (buffer) => mapArray(buffer, projectStandaloneAsyncStateInstr));
   if (
     nested.kind !== "call" ||
     nested.target.binding.kind !== "intrinsic" ||
@@ -81,12 +94,15 @@ function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
   ) {
     throw new Error("standalone async clock snapshot has a malformed semantic call");
   }
+  if (Object.hasOwn(nested, "alloc")) {
+    throw new Error("standalone async clock snapshot cannot carry allocation metadata");
+  }
   return {
     kind: "const",
     value: { kind: "f64", value: 0 },
     result: nested.result,
     resultType: nested.resultType,
-    ...(nested.site ? { site: nested.site } : {}),
+    ...(Object.hasOwn(nested, "site") ? { site: nested.site } : {}),
   };
 }
 
@@ -623,9 +639,11 @@ function attachProviders(
   fn: IrFunction,
   providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>,
   capabilityRecords: readonly RuntimeHostCapabilityRecord[],
+  projectClocks = false,
 ): IrFunction {
   const blocks = mapArray(fn.blocks, (block) => {
-    const instrs = attachProvidersToBuffer(block.instrs, providers, capabilityRecords);
+    const attached = attachProvidersToBuffer(block.instrs, providers, capabilityRecords);
+    const instrs = projectClocks ? mapArray(attached, projectStandaloneAsyncStateInstr) : attached;
     return instrs === block.instrs ? block : { ...block, instrs };
   });
   return blocks === fn.blocks ? fn : { ...fn, blocks };
@@ -750,6 +768,10 @@ export interface PrepareIrRuntimeManifestInput extends IrRuntimeManifestDemands 
   readonly sourceLocationsByUnit?: ReadonlyMap<IrFunction["unitId"], IntrinsicSourceLocation>;
   /** A whole program publishes an explicit frozen manifest even with no runtime demand. */
   readonly includeEmpty?: true;
+  /** Explicit complete whole-program scan. Omission retains historical automatic demand behavior. */
+  readonly builtinDemands?: readonly IrNativeAsyncCallableDemand[];
+  /** Separate complete vector-callable occurrence census; omission preserves legacy selection. */
+  readonly vectorDemands?: readonly IrVectorCallableDemand[];
 }
 
 /** Preserve the exact semantic owner when a per-function producer rejects. */
@@ -768,6 +790,8 @@ export function prepareIrRuntimeManifest(
 ): PreparedIrRuntimeManifest;
 export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): PreparedIrRuntimeManifest | undefined;
 export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): PreparedIrRuntimeManifest | undefined {
+  if (input.builtinDemands) assertNativeAsyncCallableDemands(input.functions, input.builtinDemands);
+  if (input.vectorDemands) assertVectorCallableDemands(input.functions, input.vectorDemands);
   const uses: Array<{
     readonly unitId: IrFunction["unitId"];
     readonly location: IntrinsicSourceLocation;
@@ -799,7 +823,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
           forEachInstrDeep(root, (instr) => {
             if (instr.kind === "call" || instr.kind === "closure.new") {
               const declaration = irRuntimeCallableDeclaration(instr.kind === "call" ? instr.target : instr.liftedFunc);
-              if (declaration) runtimeCallFeatures.add(declaration.feature);
+              if (declaration?.feature === "error.reference.construct") runtimeCallFeatures.add(declaration.feature);
             }
             if (instr.kind !== "intrinsic") return;
             const argumentTypes = instr.args.map((arg) => {
@@ -827,6 +851,20 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
       throw new IrRuntimeFunctionPreparationError(fn.unitId, error);
     }
   }
+  for (const demand of input.builtinDemands ?? [])
+    for (const use of demand.uses) {
+      const mismatch = nativeAsyncCallablePolicyMismatch(use.feature, input.policy);
+      if (mismatch)
+        throw new RuntimeManifestInvariantError("provider-target-unavailable", mismatch, use.feature, use.feature);
+      runtimeCallFeatures.add(use.feature);
+    }
+  for (const demand of input.vectorDemands ?? [])
+    for (const use of demand.uses) {
+      const mismatch = vectorCallablePolicyMismatch(use.feature, input.policy);
+      if (mismatch)
+        throw new RuntimeManifestInvariantError("provider-target-unavailable", mismatch, use.feature, use.feature);
+      runtimeCallFeatures.add(use.feature);
+    }
   if (
     !input.includeEmpty &&
     uses.length === 0 &&
@@ -892,6 +930,23 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
     }
   }
   const manifest = builder.freeze();
+  // The explicit whole-program demand vector is the compatibility boundary.
+  // Authenticate the selected frozen row by contents, not catalogue object identity.
+  const projectClocks =
+    input.builtinDemands?.some((demand) => demand.uses.some((use) => use.feature === "async.native.clock-zero")) ??
+    false;
+  if (projectClocks) {
+    const clockProviders = manifest.providers.filter(
+      (provider) =>
+        provider.feature === "async.native.clock-zero" ||
+        provider.id === "native.async.clock-zero" ||
+        provider.implementation.kind === "standalone-clock-zero",
+    );
+    const mismatch = nativeAsyncCallablePolicyMismatch("async.native.clock-zero", manifest.policy);
+    if (mismatch) throw new Error(mismatch);
+    if (clockProviders.length !== 1 || nativeAsyncProviderMismatch(clockProviders[0]!) !== undefined)
+      throw new Error("standalone async clock snapshot requires the unique canonical frozen clock provider");
+  }
   const providers = new Map<IrInstrIntrinsic["id"], RuntimeProviderPlan>();
   for (const use of manifest.intrinsicUses) {
     providers.set(use.id, builder.resolveProvider(INTRINSIC_DEFINITIONS[use.id].feature));
@@ -933,7 +988,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
     const states = Object.freeze(
       plan.states.map((state) => {
         const attached = attachProvidersToBuffer(state.body, providers, manifest.hostCapabilityRecords);
-        const body = nativeProjection ? attached.map(projectStandaloneAsyncStateInstr) : attached;
+        const body = nativeProjection ? mapArray(attached, projectStandaloneAsyncStateInstr) : attached;
         return body === state.body ? state : Object.freeze({ ...state, body });
       }),
     );
@@ -974,7 +1029,11 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
     functions: Object.freeze(
       input.functions.map((fn) => {
         try {
-          return attachAsyncRuntime(attachProviders(fn, providers, manifest.hostCapabilityRecords));
+          const attached = attachAsyncRuntime(
+            attachProviders(fn, providers, manifest.hostCapabilityRecords, projectClocks),
+          );
+          if (input.builtinDemands) assertNativeAsyncRuntimeCallables(attached);
+          return attached;
         } catch (error) {
           if (!input.sourceLocationsByUnit) throw error;
           throw new IrRuntimeFunctionPreparationError(fn.unitId, error);

@@ -4,6 +4,7 @@
  * property method calls, IIFEs, and conditional callees.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot, widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
@@ -35,11 +36,7 @@ import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#40
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from; (#3149) native Map.groupBy
 import { isCollectionReflectiveCallShape, tryCompileCollectionReflectiveCall } from "../collections-brand.js"; // (#2604/#3171) {Map,Set,WeakMap,WeakSet}.prototype.METHOD.call brand-check
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js"; // (#1983 / #3123)
-import {
-  ensureIterStepScratchGlobal,
-  ensureNativeArrayFromMapped,
-  ensureNativeIteratorRuntime,
-} from "../iterator-native.js"; // (#2169c) native Array.from drain / (#3146) Iterator-statics intrinsics / (#3206) native Array.from(src, mapFn)
+import { ensureIterStepScratchGlobal, ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain / (#3146) Iterator-statics intrinsics / (#3206) native Array.from(src, mapFn)
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
@@ -481,7 +478,7 @@ import {
   flushLateImportShifts,
   shiftLateImportIndices,
 } from "./late-imports.js";
-import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
+import { canonicalUndefinedExternInstrs, ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
 import {
@@ -532,7 +529,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  resolveNamedThisCallTarget,
+  resolveUndefinedReceiverTrampoline,
+  tryReshapeApplyToNamedThisCall,
+} from "../named-this-call.js";
 import {
   emitClosureReceiverInstall,
   finishClosureReceiverCall,
@@ -1145,6 +1146,24 @@ export function normalizeNaNToZero(fctx: FunctionContext, f64Local: number): voi
   fctx.body.push({ op: "local.set", index: f64Local });
 }
 
+/** Resolve the user class (or struct) named by a `.call`/`.apply` member owner's type. */
+function resolveReceiverClassName(ctx: CodegenContext, objType: ts.Type): string | undefined {
+  let className = objType.getSymbol()?.name;
+  if (className && !ctx.classSet.has(className)) {
+    className = ctx.classExprNameMap.get(className) ?? className;
+  }
+  if (!className || !ctx.classSet.has(className)) {
+    className = resolveStructName(ctx, objType) ?? undefined;
+  }
+  return className;
+}
+
+/** (#2917) `X.prototype.<m>` names a compiled user-class method `X_<m>`. */
+function isUserClassPrototypeMethod(ctx: CodegenContext, objType: ts.Type, methodName: string): boolean {
+  const className = resolveReceiverClassName(ctx, objType);
+  return className !== undefined && ctx.classSet.has(className) && ctx.funcMap.has(`${className}_${methodName}`);
+}
+
 /**
  * Look up closure info for a variable by checking if its local type
  * is a ref to a known closure struct. Handles cases like:
@@ -1489,6 +1508,13 @@ export function emitReflectiveNativeProtoClosureCall(
   // runtime predicate. Other builtin families retain their existing ABI.
   const arrayBufferUndefinedPad =
     getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
+  // `String.prototype.normalize` has an optional form parameter even though
+  // its public `.length` is 0. Its closure body must distinguish an omitted
+  // form (and written `undefined`) from explicit `null`: only the former
+  // defaults to NFC. Keep this padding local to the one native String member;
+  // every other reflective ABI retains its existing null/undefined policy.
+  const nativeStringNormalize =
+    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (nativeProtoVariadic && i === 1) {
@@ -1516,9 +1542,24 @@ export function emitReflectiveNativeProtoClosureCall(
         coerceType(ctx, fctx, aType, pType);
       }
     } else if (pType.kind === "externref") {
-      fctx.body.push(...(arrayBufferUndefinedPad ?? [{ op: "ref.null.extern" }]));
+      // The receiver is always supplied by the caller. Only normalize's
+      // optional *form* slot (index 1) represents an omitted argument as the
+      // canonical undefined singleton; explicit null is still a real value.
+      const missingPad =
+        nativeStringNormalize && i === 1 ? canonicalUndefinedExternInstrs(ctx) : arrayBufferUndefinedPad;
+      fctx.body.push(...(missingPad ?? [{ op: "ref.null.extern" }]));
     } else {
       pushDefaultValue(fctx, pType, ctx);
+    }
+  }
+  // Native closure ABI carries only normalize's receiver and optional form.
+  // JavaScript still evaluates every surplus argument before entering the
+  // builtin, even though NormalizeString ignores them. Preserve those effects
+  // after the form slot and before call_ref; no other native member is widened.
+  if (nativeStringNormalize) {
+    for (let i = paramTypes.length; i < userArgs.length; i++) {
+      const extraType = compileExpression(ctx, fctx, userArgs[i]!);
+      if (extraType !== null) fctx.body.push({ op: "drop" });
     }
   }
 
@@ -2728,6 +2769,41 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   if (ctx.skippedClosureRecastDecls?.has(decl)) return true;
 
   return false;
+}
+
+/**
+ * (#6490) Is `expr` an identifier resolving to a **callable parameter of a
+ * separately-linked provider module**?
+ *
+ * In a linked graph (`src/package-linker.ts`, #2527 — the Temporal provider and
+ * the #3451 test262 harness provider) the provider is compiled as its own Wasm
+ * module and its callers live in a DIFFERENT module. A callback the consumer
+ * passes in therefore arrives as an `externref` whose wasm closure struct
+ * belongs to the consumer's type group, so the provider's guarded
+ * `ref.test`/`ref.cast` to ITS wrapper root misses and yields `ref.null` — and
+ * the callable-param dispatch then `struct.get`s a null and TRAPS with
+ * "dereferencing a null pointer". A wasm trap is not catchable, so it takes the
+ * whole program down.
+ *
+ * This is exactly the #1941 invariant — "pure local closures / function params
+ * are always wrapped into the closure struct, so the host arm would be dead
+ * code" — and it is FALSE by construction for a provider: the value did not
+ * come from this module. Measured on the test262 linked lane, where every call
+ * of `testTypedArray.js`'s `testWithTypedArrayConstructors(f)` trapped inside
+ * the provider (~1,340 corpus rows). The same reasoning #4616 applied to
+ * host-reachable METHOD params applies here to every param, because a
+ * provider's exports are its whole reason to exist.
+ *
+ * Gated on `ctx.exportsConsumedByWasm` (set only by the linker, #5247), so a
+ * single-module compile — every ordinary and honest-lane build — is
+ * byte-identical.
+ */
+export function calleeIsLinkedProviderParam(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (ctx.exportsConsumedByWasm !== true) return false;
+  if (ctx.standalone || ctx.wasi) return false;
+  if (!ts.isIdentifier(expr)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(expr);
+  return decl !== undefined && ts.isParameter(decl);
 }
 
 /**
@@ -8733,7 +8809,12 @@ function compileCallExpression(
               getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
             );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
-            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });
+            // (#6436) `.call(undefined, …)` dropped its receiver here.
+            const undefinedThis =
+              namedThisCall === undefined
+                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])
+                : undefined;
+            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });
 
             // Use actual Wasm return type — TS checker reports `any` for .call()/.apply()
             // which resolves to externref, but the actual function may return f64/i32/ref.
@@ -8814,7 +8895,9 @@ function compileCallExpression(
                 elements.length,
                 getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
               );
-              fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.
+              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);
+              fctx.body.push({ op: "call", funcIdx: applyThis ?? finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
               return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;
@@ -9057,7 +9140,16 @@ function compileCallExpression(
           //     prototype-chain helper. Array/Number/Boolean/Function have no
           //     clean native borrowed path yet → refuse-loud below (Array brand
           //     arm rides on #2177). Never a silent-wrong answer.
-          if (ctx.standalone && expr.arguments.length >= 1 && !isBuiltinRegExpPrototype) {
+          // (#2917) A USER class's `X.prototype.<m>.call(recv)` is not a
+          // borrowed builtin method: it has a compiled `X_<m>` and is lowered
+          // by the class-method arm below. Refusing it here was silently
+          // rolled back to a default value (0 / ref.null → trap).
+          if (
+            ctx.standalone &&
+            expr.arguments.length >= 1 &&
+            !isBuiltinRegExpPrototype &&
+            !isUserClassPrototypeMethod(ctx, objType, methodName)
+          ) {
             // Native String methods whose __str_* helper + return marshaling
             // round-trip correctly standalone (verified end-to-end). Methods
             // outside this set refuse-loud rather than risk a wrong result.
@@ -9261,16 +9353,7 @@ function compileCallExpression(
           }
         }
 
-        // Resolve class name from the object's type
-        let className = objType.getSymbol()?.name;
-        if (className && !ctx.classSet.has(className)) {
-          className = ctx.classExprNameMap.get(className) ?? className;
-        }
-
-        // Also try struct name
-        if (!className || !ctx.classSet.has(className)) {
-          className = resolveStructName(ctx, objType) ?? undefined;
-        }
+        const className = resolveReceiverClassName(ctx, objType);
 
         if (className && (ctx.classSet.has(className) || ctx.funcMap.has(`${className}_${methodName}`))) {
           const fullName = `${className}_${methodName}`;
@@ -9976,7 +10059,7 @@ function compileExpressionCallee(
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
       const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-      sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+      sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
     }
 
     // (#4394) Exact-first (typeIdx-aware) matching — the old kind-only linear
@@ -10102,6 +10185,29 @@ function compileExpressionCallee(
 }
 
 /**
+ * (#6651 C3) The value a lifted IIFE's MISSING externref argument is padded
+ * with. §9.2.12 FunctionDeclarationInstantiation pads the argument list with
+ * `undefined`, and `emitDefaultParamInit`'s externref arm tests exactly that
+ * (`__extern_is_undefined`); a bare `ref.null.extern` is JS **`null`** under
+ * the standalone value model (#2864), so the default never fired and the
+ * parameter kept the null.
+ *
+ * The bug is PRE-EXISTING and was latent: measured on the base tree,
+ * `(function (f: any = 123) { init = f; }())` already left `init` null. Only
+ * defaulted parameters reach the new arm — for a parameter with no
+ * initializer `ref.null.extern` still means "absent reference", which is the
+ * distinction `canonicalUndefinedExternInstrs` asks callers to preserve.
+ */
+function missingIIFEArgExternref(
+  ctx: CodegenContext,
+  funcExpr: ts.FunctionExpression | ts.ArrowFunction,
+  index: number,
+): Instr[] {
+  if (funcExpr.parameters[index]?.initializer === undefined) return [{ op: "ref.null.extern" }];
+  return canonicalUndefinedExternInstrs(ctx);
+}
+
+/**
  * Compile an IIFE (Immediately Invoked Function Expression):
  *   (function(params) { body })(args)
  *
@@ -10131,7 +10237,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   const paramTypes: ValType[] = [];
   for (const p of funcExpr.parameters) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    paramTypes.push(resolveWasmType(ctx, paramType));
+    paramTypes.push(widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType)));
   }
 
   // Determine return type
@@ -10404,7 +10510,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     const pt = paramTypes[i] ?? { kind: "f64" as const };
     if (pt.kind === "f64") fctx.body.push({ op: "f64.const", value: NaN });
     else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
-    else if (pt.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+    else if (pt.kind === "externref") fctx.body.push(...missingIIFEArgExternref(ctx, funcExpr, i));
     else if (pt.kind === "ref" || pt.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: pt.typeIdx });
   }
 

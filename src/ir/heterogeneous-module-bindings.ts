@@ -70,6 +70,26 @@ function assignmentWidens(oracle: HeterogeneousBindingOracle, declTag: JsTag, as
   return assignedTag === "mixed" || assignedTag !== declTag;
 }
 
+/** True when `expression` is a literal `void <expr>`, ignoring parentheses. */
+function isSyntacticVoidPlaceholder(expression: ts.Expression): boolean {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return ts.isVoidExpression(current);
+}
+
+/**
+ * Assignment operators that store into their left operand.
+ *
+ * The logical forms store conditionally, but "conditionally an object" is the
+ * same representation question as "always an object" for a Wasm slot.
+ */
+const WIDENING_ASSIGNMENT_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
 /** True when `node` sits in the dynamically-resolved body of a `with`. */
 function isInsideWithBody(node: ts.Node): boolean {
   let previous: ts.Node | undefined;
@@ -138,6 +158,13 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
       // and inferred TypeScript declarations remain fully flow-widened.
       const candidate = oracle.staticJsTypeOf(declaration.initializer);
       if (candidate !== "mixed" && HETEROGENEOUS_PRIMITIVE_SLOT_TAGS.has(candidate)) tag = candidate;
+      // A SYNTACTIC `void 0` is the downlevelled shape of an unassigned `let`
+      // (`var x = void 0;`), and it lands on the same specialized numeric slot
+      // an unadorned `var x;` would have escaped. It is admitted here so a
+      // later heterogeneous assignment widens it, while "the initializer's
+      // type happens to be undefined" (optional reads, delete sentinels) keeps
+      // its slot — those are real values, not a placeholder for one.
+      else if (candidate === "undefined" && isSyntacticVoidPlaceholder(declaration.initializer)) tag = candidate;
     }
     declTagCache.set(declaration, tag);
     return tag;
@@ -159,7 +186,7 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      WIDENING_ASSIGNMENT_OPERATORS.has(node.operatorToken.kind) &&
       ts.isIdentifier(node.left) &&
       !widened.has(node.left.text)
     ) {

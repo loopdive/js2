@@ -24,6 +24,7 @@ import type {
 import type { IrModuleBindingRefusal } from "../../ir/module-bindings.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
+import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param.js"; // (#6602)
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
@@ -327,6 +328,13 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * does not unmap sloppy (`noStrict`) arguments. See `CompileOptions`.
    */
   inferModuleStrictArguments?: boolean;
+  /**
+   * (#6474) Opt-in: `generateMultiModule` derives `ctx.sourceIsModule` from the
+   * entry file's own `externalModuleIndicator` instead of forcing `true`. Off
+   * by default ⇒ every existing multi-file caller is byte-identical. See
+   * `CompileOptions.entryScriptGoal`.
+   */
+  entryScriptGoal?: boolean;
 }
 
 /** Info about an externally declared class. */
@@ -843,6 +851,14 @@ export interface FunctionContext {
    * while a native generator continuation state recompiles that expression.
    */
   nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
+  /**
+   * (#6504 round 31) The async twin of the field above: one-time PRE-AWAIT
+   * operand values for original expression AST nodes, consulted while an async
+   * resume state recompiles the argument expression that contained the await.
+   * Kept separate from the generator map rather than shared, so each lane owns
+   * its own lifetime and a stale entry from one can never be read by the other.
+   */
+  asyncOperandValueLocals?: Map<ts.Expression, number>;
   /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
@@ -1930,6 +1946,31 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arraySpeciesDirty: boolean;
   /**
+   * (#6485) The module can make `@@isConcatSpreadable` OBSERVABLE — it mentions
+   * `isConcatSpreadable` anywhere (identifier, string literal, property name),
+   * lets the `Symbol` intrinsic escape as a VALUE (`var S = Symbol`,
+   * `f(Symbol)`, `Symbol[k]`, `Symbol(d)`), or contains dynamic code.
+   *
+   * Consumer: `concatMustConsultIsConcatSpreadable` in `array-concat-carrier.ts`,
+   * which is the third routing gate on `Array.prototype.concat`. §23.1.3.1 step
+   * 5.b performs `Get(E, @@isConcatSpreadable)` on every operand; the typed
+   * `array.copy` fast path spreads unconditionally and never performs it, so a
+   * module that can install the symbol must take the spec loop. Clear — the
+   * common case — ⇒ THIS GATE is never reached. (That is a statement about the
+   * gate, not about the commit: the §23.1.3.1.1 step-1 fix inside the spec loop
+   * is ungated, so a module already routed there by another gate does move.)
+   *
+   * Why the scan keys on the NAME and on the INTRINSIC rather than
+   * over-approximating every computed member write: in a single-module
+   * standalone program the global `Symbol` binding is the root of every route
+   * to the well-known symbol, so a module that neither names it nor lets that
+   * binding escape cannot install it. Arming on every `o[k] = v` instead would
+   * fire on ordinary loop code and turn a conformance fix into module-wide byte
+   * growth — the hazard this flag exists to avoid. `array-holes.ts` names the
+   * two routes the scan therefore misses.
+   */
+  isConcatSpreadableDirty: boolean;
+  /**
    * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
    * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a
    * two-argument `create`, `getOwnPropertyNames`, `ownKeys`,
@@ -2519,6 +2560,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** (#5147) the `$__IterRec` identity arm was already prepended to `__iterator`. */
   iterRecIdentityArmDone?: boolean;
   /**
+   * (#6484 S3 review) A TYPED-ARRAY `[Symbol.iterator]()` in this module took the
+   * live-`$__IterRec` route instead of the snapshot vec. The record does not model
+   * `[[Prototype]]`, so `Object.getPrototypeOf` on an `any`-typed binding of it
+   * answered `null`; this flag arms the finalize step that teaches
+   * `__getPrototypeOf` to answer the `%ArrayIteratorPrototype%` singleton for a
+   * kind-VEC record. Compile-time scoped: a module with no typed-array iterator
+   * keeps its pre-change `__getPrototypeOf` byte-for-byte.
+   */
+  typedArrayIterRecProtoPending?: boolean;
+  /**
    * Static property initializer expressions to compile into __module_init.
    * `className` (#1395) is the owning class name — used to set
    * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
@@ -2626,6 +2677,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arrayMapCallbackFirstParamOverride?: ValType;
   /**
+   * (#6602 / #5383 S15) Transient carrier for the receiver's REAL element type
+   * — and WHICH callback parameter receives it — while an array-HOF callback
+   * closure is compiled (`setupArrayCallback` window:
+   * `every`/`some`/`filter`/`forEach`/`find*`/`reduce`/`reduceRight`, i.e. the
+   * whole family except `map`, which has the unconditional override above).
+   *
+   * Only ever set for a `ref_null` element type, and only consulted through
+   * `applyNullableElemParamOverride`, which replaces the checker's answer when
+   * it is the exact NON-NULL twin. `RegExpExecArray extends Array<string>` is
+   * that lie: an unmatched capture group is a null native string, so the
+   * checker's `ref $anyStr` parameter made `buildClosureCallInstrs` emit a
+   * `ref.as_non_null` that trapped on the first `undefined` group.
+   *
+   * The parameter index travels with the type because `reduce`/`reduceRight`
+   * pass the element as parameter **1** (parameter 0 is the accumulator).
+   */
+  arrayHofNullableElemParamOverride?: NullableElemParamOverride;
+  /**
    * (#3137) True while compiling a native `.then`/`.catch` callback closure
    * (`compileStandalonePromiseThenCallback` window). TUPLE-typed callback
    * params widen to externref in `computeClosureWrapperSig`: the native
@@ -2707,6 +2776,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standaloneRuntimeKeyClassProtos: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
+
+  /**
+   * (#6656 slice 3) Functions whose wasm RESULT was proven to be a
+   * bigint-branded i64 even though TypeScript types their return `number` — a
+   * BigInt kernel in untyped JS (`function mul(a, b) { return a * b; }`).
+   * `typeof` folds from the static type, so without this record
+   * `typeof mul(6n, 7n)` answered the constant `"number"` for a call that
+   * returns a real BigInt.
+   */
+  bigIntKernelFunctions: Set<string>;
   /** Rest parameter info per function (functions with ...rest syntax) */
   funcRestParams: Map<string, RestParamInfo>;
   /**
@@ -2715,6 +2794,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * runtime args beyond the formal param count (#1053).
    */
   funcUsesArguments: Set<string>;
+  /**
+   * (#6436) Named function declarations whose own `this` reads the ambient
+   * `__current_this` module global, minus the ones that take an explicit
+   * `this` parameter.
+   *
+   * A PLAIN `f(x)` call installs no receiver, so inside a window where some
+   * dispatcher has parked one in `__current_this` (a host-facing closure
+   * method call, an array-HOF `thisArg`) the callee read the DISPATCHER's
+   * receiver instead of the `undefined` §10.2.1.2 specifies. Callers consult
+   * this set to route such a call through a per-target trampoline that
+   * installs `undefined` for the duration.
+   *
+   * Populated at COLLECT time (alongside `funcUsesArguments`), because call
+   * sites compile before hoisted bodies do.
+   */
+  funcReadsOwnThis: Set<string>;
   /**
    * Object-literal method declaration → the function handle containing that
    * literal's body. Struct-shape deduplication can fork a method body while
@@ -2736,6 +2831,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * to functions that use `arguments`. -1 = not yet created.
    */
   argcGlobalIdx: number;
+  /**
+   * (#6491) Absolute Wasm global index for the `__host_argc` (mut i32) module
+   * global — the host's one-shot channel for the REAL call-site argument count
+   * of a widened under-applied closure call. -1 = not yet created.
+   */
+  hostArgcGlobalIdx: number;
   /**
    * (#2933) Canonical VARIADIC builtin value-closure convention, set when a
    * genuinely-variadic builtin static method (`Math.max`/`Math.min`) is
@@ -3194,6 +3295,46 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * for subclasses of host-constructible builtins.
    */
   classExternrefBackedSet: Set<string>;
+  /**
+   * (#6623, #5383 S36) Classes whose `extends` heritage expression could NOT be
+   * resolved to a known local class — a property-access into a linked/foreign
+   * namespace (`class S extends NS.PD {}`) or an identifier bound to a runtime
+   * value (`class S extends someParam {}`) under `--target standalone`/`wasi`.
+   * Such a class is registered as an independent ROOT struct (no genuine
+   * ancestor relationship), and when it declares no own fields its struct
+   * canonicalizes to the SAME WasmGC type as any other field-less class —
+   * including one exported by a LINKED PROVIDER module, whose `__tag` values
+   * are assigned independently (both start counting from 0). The dispatchers
+   * that disambiguate same-shape classes by `__tag` alone
+   * (`standalone-class-instance-proto.ts`) have no cross-module uniqueness
+   * guarantee to lean on, so a class in this set is excluded from claiming
+   * getPrototypeOf answers entirely rather than risk a false-positive match on
+   * an unrelated provider instance. See #6623.
+   */
+  classDynamicUnresolvedHeritageSet: Set<string>;
+  /**
+   * (#6640, #5383 S64) Classes whose `extends` heritage is a PROPERTY/ELEMENT
+   * ACCESS into a linked provider namespace (`class S extends NS.PD {}`), in a
+   * standalone/WASI module that consumes a wasm provider. Such a class is
+   * externref-backed and its `super(...)` constructs through the provider's own
+   * constructor via the dynamic `__native_construct_<N>` driver; the recorded
+   * expression is re-compiled at the super-call site to obtain the parent class
+   * VALUE. See `standalone-dynamic-parent-class.ts`.
+   */
+  classLinkedDynamicParentExpr: Map<string, ts.Expression>;
+  /**
+   * (#6644) For a class whose linked-provider heritage is an IDENTIFIER that
+   * only has a value at run time (a function PARAMETER — test262's
+   * `class MySubclass extends construct {}`), the module global that CAPTURES
+   * that value at ClassDefinitionEvaluation.
+   *
+   * A property-access heritage (`NS.Base`) needs no entry here: it is a pure
+   * read of a module-level binding, so every consuming site can simply
+   * re-compile the expression. A parameter is in scope ONLY at the class
+   * declaration's own statement, and the synthesized constructor and the
+   * static-inheritance arms are separate wasm functions that cannot see it.
+   */
+  classLinkedDynamicParentGlobal: Map<string, number>;
   /**
    * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
    * class OBJECT can cross to the host and be constructed there. Exactly the
@@ -3655,6 +3796,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /**
+   * (#6651 cluster C) `__new_<Error>` bodies whose message operand still needs
+   * the §20.5.1.1 step-3 `undefined` test woven in at FINALIZE — the
+   * `$AnyValue` carrier the test reads is not reserved when those
+   * constructors are emitted. Drained by `fillErrorCtorUndefinedMessage`.
+   */
+  errorCtorMessageSlots?: { funcIdx: number; argCount: number }[];
+  /**
    * Extra properties for empty object variables.
    *
    * (#3364) Keyed by a PER-DECLARATION key (`widenedVarKey`, name + decl start
@@ -3882,6 +4030,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   nativeBoxNumberTypeIdx: number;
   nativeBoxBooleanTypeIdx: number;
   nativeBigIntTypeIdx: number;
+  /** (#6656) `$BigIntWide` (subtype of `$BigInt`) and its limb array; see bigint-wide.ts. */
+  nativeBigIntWideTypeIdx?: number;
+  nativeBigIntLimbsTypeIdx?: number;
   /** Cache for function reference wrappers: signature key → ClosureInfo */
   funcRefWrapperCache: Map<string, ClosureInfo>;
   /** #3371: constructible ordinary-function wrapper subtypes, keyed by signature. */
@@ -4160,6 +4311,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * recorded indices together with every emitted `global.get`.
    */
   nativeProtoGlobals?: Map<number, number>;
+  /**
+   * (#5383 S23 / #6610) Some source file in the realm CALLS a
+   * `Number.prototype` numeric-format method by name, so
+   * `unshiftExternMethodCallNumberPrimitiveArm` may pay for the
+   * `%Number.prototype%` singleton. Set by the early AST scan
+   * (`noteNumberPrimitiveMethodDemand`); read at finalize. Absent ⇒ the arm is
+   * not emitted and the module is byte-identical.
+   */
+  numberPrimitiveMethodCallDemand?: boolean;
+  /**
+   * (#5383 S23 / #6610) The stashed `%Number.prototype%` singleton read, built
+   * by `prepareNumberPrimitiveMethodCallArm` BEFORE `__extern_get`'s per-brand
+   * member ladder is assembled, and consumed by the `__extern_method_call` arm
+   * unshifted after it.
+   */
+  numberPrimitiveMethodProtoInstrs?: Instr[];
   /** (#2175 S0) Builtin-brand id table — a reserved high-negative i32 band
    *  disjoint from `classTagMap`'s range, so a `$NativeProto.$brand` (or the
    *  `$ClassMeta.$parentTag` externref-backed-subclass slot from #2101) is a

@@ -81,7 +81,8 @@ import {
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-method-shadow.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
-import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
+import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
+import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -94,6 +95,7 @@ import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constr
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitRegExpOwnConstructorRead } from "./regexp-split-protocol.js";
 import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
@@ -103,8 +105,10 @@ import {
 import {
   emitNativeGlobalThisObject,
   emitTypedArrayIntrinsicCtorObject,
+  ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
 } from "./array-object-proto.js";
+import { emitTaStaticFromOfInheritedValue, isTaStaticFromOfMember } from "./ta-static-from-of-body.js";
 import {
   buildInt8ArrayCarrierMatch,
   dvDetachedThrowInstrs,
@@ -135,6 +139,7 @@ import {
   getOrRegisterVecType,
   isTaViewTypeIdx,
   TA_CTOR_KINDS,
+  taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
 import {
@@ -218,7 +223,9 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
+import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -412,8 +419,11 @@ export function tryConstructorPrototypeIdentity(
           fctx.body = saved;
           if (ok) int8Proto = emitted;
         }
-        fctx.body.push({ op: "local.get", index: anyLocal });
-        fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
+        // (#5383 S39 R-other-bare-ref-test) See registry/types.ts's
+        // `taCtorIdentityTestInstrs` doc — a field-less class's compiled root
+        // shares `$__ta_ctor`'s shape (#6620), so a bare `ref.test` here
+        // misclassified it too.
+        fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocal }]));
         fctx.body.push({
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },
@@ -538,6 +548,9 @@ export function tryConstructorPrototypeIdentity(
       (isBuiltinConstructorIdentityName(builtinName) || isWasiErrorName(builtinName)) &&
       isExternalDeclaredClass(objType, ctx.checker)
     ) {
+      // (#6651 B5) An own `constructor` on a RegExp instance wins over the fold.
+      const ownCtor = tryEmitRegExpOwnConstructorRead(ctx, fctx, expr, builtinName);
+      if (ownCtor !== undefined) return ownCtor;
       // Evaluate the receiver for spec side effects before returning its identity.
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {
@@ -1458,6 +1471,14 @@ export function tryNativeErrorMemberRead(
           : { kind: "externref" };
 
       if (isErrorLhs) {
+        // (#6651 cluster C, C2) `message` is the one field that can legitimately
+        // be ABSENT (§20.5.1.1 step 3), so a null field must continue down the
+        // prototype chain instead of answering. Measurement and the `name` /
+        // `stack` exclusion: error-message-proto-read.ts.
+        if (propName === "message") {
+          emitErrorMessageReadWithProtoFallback(ctx, fctx, structIdx, fieldIdx, propName, resultType);
+          return resultType;
+        }
         // Static Error type — the value is always an `$Error` struct, so cast
         // unconditionally (a runtime non-Error would mean a miscompile elsewhere).
         fctx.body.push({ op: "ref.cast", typeIdx: structIdx });
@@ -1956,6 +1977,12 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
           return { kind: "externref" };
         }
       }
+      // (#6651 E5) `Int32Array.from` / `.of` — the INHERITED `%TypedArray%` singleton.
+      if (TYPED_ARRAY_NAMES.has(builtinName) && isTaStaticFromOfMember(propName)) {
+        const brand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+        const inherited = emitTaStaticFromOfInheritedValue(ctx, fctx, brand, propName);
+        if (inherited !== undefined) return inherited;
+      }
       const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
       if (closure) {
         // (#2963) Reified builtin values use identity-stable singleton globals.
@@ -2388,6 +2415,26 @@ function emitClassStaticMemberRead(
       fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       return { kind: "externref" };
     }
+  }
+  // (#6644) LAST arm — §15.7.14 step 6 across the wasm→wasm link. Every own
+  // static surface above has already declined, so a class that `extends` a
+  // LINKED provider class (#6640) puts the question to its parent's class
+  // object. A module with no linked provider never reaches this, and neither
+  // does any own member: `linkedStaticParentHeritage` answers only for a class
+  // in `classLinkedDynamicParentExpr`, and only for a name a derived class does
+  // not own outright.
+  const linkedHeritage = linkedStaticParentHeritage(ctx, resolvedClass, propName);
+  if (
+    linkedHeritage !== undefined &&
+    emitLinkedStaticMemberRead(ctx, fctx, resolvedClass, propName, (heritageExpr) => {
+      const heritageType = compileExpression(ctx, fctx, heritageExpr, { kind: "externref" });
+      if (heritageType === undefined) return false;
+      if (heritageType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (heritageType.kind !== "externref") coerceType(ctx, fctx, heritageType, { kind: "externref" });
+      return true;
+    })
+  ) {
+    return { kind: "externref" };
   }
   return PA_FALLTHROUGH;
 }
@@ -3774,7 +3821,8 @@ export function tryNamespaceConstantAndSymbolReads(
       // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
       // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
       // stays unbranded for the #4626 index-shift reason recorded there.
-      return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+      const branded = usesNativeSymbolProvider(ctx) || linkBrandRoleOf(ctx) !== undefined; // (#6482 r2)
+      return branded ? { kind: "i32", symbol: true } : { kind: "i32" };
     }
   }
 

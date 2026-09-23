@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { IR_STRING_CONCAT_MANY_PREFIX } from "./core/string-callables.js";
+
 /** String operations whose observable behavior is shared by every IR backend. */
 export type IrStringRuntimeIntrinsic =
   | "constant"
@@ -17,7 +19,11 @@ export type IrStringRuntimeOperand = "string" | "number-index" | "number-count";
 export type IrStringRuntimeResult = "string" | "number" | "boolean";
 
 /** Backend-neutral callable intents attached during final IR preparation. */
-export const IR_STRING_CONCAT_FN = "__ir_string_concat";
+export {
+  IR_STRING_CONCAT_FN,
+  IR_STRING_CONCAT_MANY_PREFIX,
+  irStringConcatManySymbol,
+} from "./core/string-callables.js";
 export const IR_STRING_CONCAT_OWNED_FN = "__ir_string_concat_owned";
 /** Full `String.prototype.repeat` semantics over the backend's string carrier. */
 export const IR_STRING_REPEAT_FN = "__ir_string_repeat";
@@ -38,8 +44,6 @@ export function irCountedStringRepeatFitsNativeKernel(tripCount: number, fragmen
     BigInt(tripCount) * BigInt(fragmentCodeUnits) <= BigInt(IR_COUNTED_STRING_REPEAT_NATIVE_MAX_RESULT_CODE_UNITS)
   );
 }
-/** Semantic prefix for an exact host-provided fixed-arity concat operation. */
-export const IR_STRING_CONCAT_MANY_PREFIX = "string.concat$arity";
 export const IR_STRING_EQUALS_FN = "__ir_string_equals";
 export const IR_STRING_CHAR_AT_FN = "__ir_string_char_at";
 export const IR_STRING_CHAR_CODE_AT_FN = "__ir_string_char_code_at";
@@ -61,13 +65,6 @@ export const IR_NUMBER_TO_STRING_FN = "__ir_number_to_string";
  * `externref` result back to the lane's `(ref $AnyString)` carrier.
  */
 export const IR_NUMBER_TO_FIXED_FN = "__ir_number_to_fixed";
-
-export function irStringConcatManySymbol(arity: number): string {
-  if (!Number.isInteger(arity) || arity < 3) {
-    throw new RangeError(`string concat-many arity must be an integer >= 3, got ${arity}`);
-  }
-  return `${IR_STRING_CONCAT_MANY_PREFIX}${arity}`;
-}
 
 export function parseIrStringConcatManyArity(symbol: string): number | null {
   if (!symbol.startsWith(IR_STRING_CONCAT_MANY_PREFIX)) return null;

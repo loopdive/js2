@@ -11,6 +11,14 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-18 (S46, #6632) — `compileTypeofExpression`'s ref/ref_null operand
+  #   arm now routes through `coerceType` (like the f64/undefSentinel arm
+  #   immediately above it, #5378) instead of a bare `extern.convert_any`, so a
+  #   nullable `$AnyString` slot (a `string | undefined` field) resurrects as
+  #   the canonical `undefined` extern instead of host `null` — see the #6632
+  #   comment at the call site. +14 lines is the comment explaining why the
+  #   ref/ref_null branch needed the same treatment as the f64 branch.
+  - src/codegen/typeof-delete.ts
   # 2026-09-12 (S2p) — outlining the standalone realm-global lazy-init seed.
   #   The mechanism itself lives in the NEW module
   #   `src/codegen/native-globalthis-outline.ts`, deliberately not in the
@@ -184,6 +192,23 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-18 (S46, #6632) — `compileTypeofExpression` +14: the ref/ref_null
+  #   operand arm now calls `coerceType` (routing through the #4741
+  #   $AnyString-null resurrection) instead of a bare `extern.convert_any`,
+  #   with a comment explaining why — mirrors the f64/undefSentinel arm
+  #   immediately above it (#5378), which already does this.
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  # 2026-09-18 (S46, #6632) — `fillMemberGetDispatch` +1: one extra line in
+  #   the box-selection ternary (`nullableAnyStringResurrectionBox(...) ??
+  #   coercionInstrs(...)`) for the same resurrection, applied to the generic
+  #   dynamic member-get dispatcher's per-candidate field box (the
+  #   computed-key read route `obj[key]` takes, as opposed to a statically
+  #   typed direct member access) — that call site has no `FunctionContext`
+  #   available (it is a finalize-time, hand-tracked-locals fill, not the
+  #   push-style `coerceType` engine), so it could not reach the #4741 arm at
+  #   all before this change; see `nullableAnyStringResurrectionBox`'s own
+  #   docstring for why local 1 (`__any`) is safe to reuse as scratch.
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
   # 2026-09-12 (S2o) — `ensureStructForType` +30. The CODE is a two-line guard
   # ("never register a struct for `typeof globalThis`"); the other 28 lines are
   # the rationale, and they are load-bearing because the guard looks redundant
@@ -4281,3 +4306,8525 @@ and `.tmp/s11/{c1..c5,ab-base,ab-new,rerun-ce}.out` in this worktree
 `.tmp/s11/family.mts` (a copy of S10's, label `s11`) and compared against
 `.tmp/s11fam/{pd,du,zdt}-s10.tsv` (copies of the S10 worktree's TSVs) with
 `.tmp/s11/table.mjs`.
+
+## S12 findings (2026-09-13) — the brief's attribution did not reproduce; the fixed cause is `new` with a spread, and the SCORE does not move
+
+**#6460 is the slice.** Two things are worth more than the delta.
+
+### 1. The hand-off attribution was wrong AGAIN, in the other direction this time
+
+S11 handed S12 "property-bag FIELD EXTRACTION inside the provider
+(`PrepareCalendarFields` / `ToIntegerWithTruncation`)". Measured module-locally
+— one standalone module, no provider, no link — **every constituent of that
+path answers correctly**: `Object.create(null)` computed writes read back
+through a dot; `bag[k]` with `k` taken from a `concat`ed and then `sort`ed key
+array; `["year","month"].concat(["day"],[]).sort()` → `3:day,month,year`; and
+the whole `tn` shape with untyped parameters → `y=1976 m=11 mc=D d=18`.
+
+Where the previous three slices were handed a LINK attribution and found
+module-local codegen, this one was handed a MODULE-LOCAL attribution and the
+residual is cross-module. The lesson survives inverted: **the census, in one
+module, is what decides — not the direction of the previous correction.**
+
+### 2. The dominant residual, named and reduced but deliberately not started
+
+Every `X.from(…)` hands back an object whose accessor and method reads answer
+`null`: `PlainDate.from("1976-11-18").day` → `null`, `String(…)` → `null`, and
+likewise `PlainDateTime.from`, `PlainTime.from`, `Instant.from`,
+`ZonedDateTime.from`. The control `new Temporal.PlainDate(1976,11,18).day`
+answers `18`. The polyfill builds `from`'s results with
+`Object.create(intrinsic.prototype)` + WeakMap slots (`pn`, bundle L1946), not
+with `new` — and the single-module control (`Object.create(C.prototype)` where
+`C` has a getter) answers `18` correctly, so this is boundary identity.
+Attributed **~40 of the 360 rows** (PlainDate `canonicalizeCalendarEra` 21 +
+`year is required` 7, ZonedDateTime `timeZone` 7 + `reading 'equals'` 6).
+
+Cheapest handle for the next slice:
+`Object.getOwnPropertyNames(Temporal.PlainDate.prototype)` **TRAPS**
+(`illegal cast`). That trap is upstream of everything else in the list.
+
+### What was fixed
+
+A spread whose source is a `const` array binding has no STATIC arity, and two
+lowerings were asking the same too-narrow question (`flattenCallArgs`, which only
+recognises an inline array literal). The construct drivers are minted one per
+call-site arity, so the site declined and `new Temporal.Duration(...args)`
+evaluated to **`null`**; and the ordinary-function `new` path put the whole
+ARRAY in the first parameter. Fixed in `src/codegen/static-spread-arity.ts`
+(standalone/WASI-gated), with the refusal rules and the byte A/B in #6460.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, FRESH `JS2WASM_TEMPORAL_CACHE` per label
+(`.tmp/s12famcache-{base,new}`), quickjs eval provider + adapter present as real
+files. Every run log carries `Temporal provider (standalone)
+js2wasm:npm:@js-temporal/polyfill:2c0506a30fe8f23d (3314480 B) … cacheHit=true`,
+and `__temporal_*` leaks are **0** in all three TSVs.
+
+**The base column is this worktree's own base run** (file-copy revert of the
+three touched files), not S11's numbers: S11's Duration figure was 43 and this
+tree's base sample scored 42, a one-row compile-budget artifact that the solo
+re-runs below resolve to 43. Comparing a new run against another worktree's
+number would have manufactured a +1.
+
+| family | rows | base pass | **S12 pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 62 | **62** | 56 | 2 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 43 | **43** | 72 | 5 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 65 | **65** | 52 | 3 | **0** |
+| **total** | **360** | **170** | **170** | **180** | **10** | **0** |
+
+**The score does not move, and that is the finding.** What moves is the bucket:
+Duration's `Cannot access property on null or undefined at 164:22` goes
+**9 → 4**, and five rows advance to `explicit: years result: Expected
+SameValue(«undefined», «1»)` — i.e. the constructor now returns a real Duration
+and the row dies one step later, on the residual above. Of the four rows left in
+the bucket, two (`microseconds-undefined.js`, `nanoseconds-undefined.js`) spread
+8 elements plus a trailing `undefined` = arity 9, over
+`MAX_NATIVE_CONSTRUCT_ARITY` (8); the other two use no spread at all.
+
+**Every CE↔fail/pass flip in the sample was a compile-budget artifact, and this
+was established by running the SAME six rows solo at 60 s on BOTH trees**, not
+by re-running the branch alone and reasoning about the base:
+
+| row | base solo | S12 solo |
+| --- | --- | --- |
+| `PlainDate/from/argument-plaindate.js` | fail 18.1 s | fail 18.2 s |
+| `Duration/call-builtin.js` | fail 13.7 s | fail 15.3 s |
+| `Duration/compare/order-of-operations.js` | fail 16.2 s | fail 15.7 s |
+| `Duration/from/argument-string-fractional-precision.js` | **pass 29.4 s** | **pass 30.2 s** |
+| `Duration/from/argument-string-fractional-units-rounding-mode.js` | fail 14.0 s | fail 13.7 s |
+| `ZonedDateTime/prototype/add/constrain-when-ambiguous-result.js` | fail 15.4 s | fail 15.4 s |
+
+All six agree across trees. Had only the branch been re-run, the
+`fractional-precision` row (29 s against the sample's 15 s budget) would have
+been reported as a +1 in Duration; it is not one.
+
+### Top error buckets, LINKED, S12
+
+PlainDate (56 fail): 20 `calendar must be string in canonicalizeCalendarEra` ·
+2 `illegal cast in __class_construct_dispatch()` · 2 `year is required` ·
+2 `prototype Expected SameValue(«null», «[object Function]»)`.
+
+Duration (72 fail): 5 `dereferencing a null pointer in sn()` ·
+5 `explicit: years result: Expected SameValue(«undefined», «N»)` (NEW — the five
+rows this slice advanced) · 5 `years result: Expected SameValue(«undefined»,
+«N»)` · 4 `Cannot access property on null or undefined at 164:22` (was 9).
+
+ZonedDateTime/prototype (52 fail): 7 `required property 'timeZone' missing` ·
+6 `Cannot read properties of undefined (reading a class field)` · 6 `reading
+'equals'` · 4 `dereferencing a null pointer in sn()` · 3 `Expected a RangeError
+but got a undefined`.
+
+### Two standalone samples that must NOT move, and did not
+
+`--target standalone`, base by file-copy revert on the same tree. Both tied to
+what this slice touched (the `new` lowering and the dynamic object surface its
+drivers use):
+
+| sample | base | S12 | pass→fail | flips |
+| --- | --- | --- | --- | --- |
+| `language/expressions/new/**` (59 rows — the whole directory) | 56 pass / 3 fail | 56 / 3 | **0** | **0** |
+| `built-ins/Object/**` (first 120) | 106 pass / 14 fail | 106 / 14 | **0** | **0** |
+
+### Order preservation
+
+Two corpora, base captured by file copy at the FIRST edit
+(`.tmp/base-{new-super,fnctor-constructor-identity}.ts`):
+
+- 40 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone}: **80/80 sha256-identical**. That corpus contains no
+  spread-into-`new`, so it is a no-collateral control, not a positive one.
+- a targeted 11-shape corpus supplies the positive control: **all 11 `gc`
+  artifacts identical**, and on standalone exactly three move — the three
+  spread-into-function-constructor shapes this slice repairs. Every refusal
+  control (mutated source, `let` source, non-literal elements), the class-`new`
+  shape, the dynamic-call shape and the plain controls are byte-identical.
+
+### Traps, carried forward and added to
+
+- All prior traps still bite. This worktree arrived with `test262` **absent**
+  and no `node_modules`.
+- **NEW, and it cost a full round of family measurements: `JS2WASM_EVAL_ENGINE=quickjs`
+  with no built artifact fails EVERY row**, with an error that names the missing
+  `libquickjs.wasm` — so a first base run scored PlainDate **0 pass / 119 fail**
+  and looked like a catastrophic regression. Copying the artifact from a sibling
+  worktree's `.test262-cache/` restored the expected 62. Check
+  `ls -la .test262-cache/quickjs-artifact-*/libquickjs.wasm` before believing
+  any family number, base or branch.
+- **NEW: `git push` exit status is not the hook's.** The first push of this
+  branch ran the pre-push `typecheck` before `pnpm install` had been run in the
+  fresh worktree, printed `Fix typecheck errors before pushing` and pushed
+  nothing — while the backgrounded wrapper still reported `[exited with code 0]`.
+  The branch looked pushed for two hours. Verify with
+  `git ls-remote origin <branch>`, never with the exit code of a backgrounded
+  push.
+- **The S11 "new namespace hash" tell does not exist.** `temporalProviderCacheKey`
+  fingerprints the polyfill source and the compile options, so after a codegen
+  change the namespace hash and the artifact BYTE COUNT are both unchanged. The
+  only usable tell is `cacheHit=false` against a FRESH cache directory, which is
+  what this slice used.
+
+### Artifacts
+
+`.tmp/s12fam/{pd,du,zdt,mnm-new,mnm-obj}-{base,new}.tsv` (+ `.log`),
+`.tmp/s12/{census1..6,byteab-{base,new},byteab2-{base,new}}.*` and the probe sets
+`.tmp/s12/p-*.mjs` in this worktree
+(`/home/user/js2/.claude/worktrees/agent-a07c5e7da05114ff6`), produced by
+`.tmp/s12/family.mts` (a copy of S11's, label `s12`) and compared with
+`.tmp/s12/table.mjs`.
+
+### Acceptance criterion 4 — S12 update
+
+Unchanged in substance: MET-for-the-sample at 170/360, measured on the same
+three families, with **0 pass→fail** and both must-not-move samples flat. The
+S12 run adds one qualification that the earlier updates could not make — the
+base column was measured **on this tree**, by file-copy revert, so the 170 is a
+self-consistent before/after and not a comparison across worktrees. No
+full-corpus number is claimed; a corpus run remains the tech lead's to schedule.
+
+## S13 findings (2026-09-13) — the `from()` results are repaired; the linked lane goes 170 → 177, and the defect was never at the link
+
+**#6464 is the slice.**
+
+### 1. The hand-off attribution was wrong for the FIFTH slice running, and the pattern is now nameable
+
+S13 was handed "boundary identity: the consumer reads a provider-created
+`Object.create(proto)` object through the link". It is neither a link defect nor
+an `Object.create` defect in general. It reproduces in ONE standalone module
+with no provider, no package edge and no linker, and the variable is the
+**spelling of the prototype argument** (`.tmp/s13/c7.out`):
+
+| carrier, `--target standalone`, one module | `o.self() === o` | `o.day` |
+| --- | --- | --- |
+| `Object.create(K.prototype)`, `K` a VALUE | **false** | **−1** |
+| `Object.create(C.prototype)`, `C` a class identifier | true | 18 |
+| `new C()` | true | 18 |
+
+The pattern across S10–S13 is not "the brief points the wrong way"; it is that
+**the brief names the place the symptom was OBSERVED, and the census finds the
+place the decision was MADE.** Those are different in four of the last four
+slices, and they are different in opposite directions (S12 was handed
+module-local and found cross-module; S13 was handed cross-module and found
+module-local). The only procedure that survives both is: reduce, and let the
+single-module control decide.
+
+### 2. A harness property that makes a whole class of census UNATTRIBUTABLE
+
+The first two probe sets of this slice put every probe in one consumer module,
+and they **disagreed with each other over the same provider** — `NS.num()`
+answered `18` in one set and `null` in another. Module CONTENT decides the
+answer (the #6432 action-at-a-distance hazard), so a shared-module census cannot
+attribute anything. Every number in #6464 comes from `.tmp/s13/pair2.mjs`, which
+builds the provider once and compiles **one probe per consumer module**. The
+shared-module harness is kept only as the record of why.
+
+### 3. Root cause
+
+`tryCompileObjectCreateStaticPrototype` lowers the *syntactic*
+`<ClassIdentifier>.prototype` to `struct.new $C`. A dynamic `K.prototype` misses
+it and falls to the native `__object_create`, which returns a plain `$Object`
+that merely inherits from the class prototype — and a compiled class member takes
+`this` as a concrete `(ref $C)`, which a plain `$Object` can never satisfy, so
+the bridge binds the PROTOTYPE as the receiver. Every WeakMap slot keyed on the
+created object then misses.
+
+#5239 fixed exactly this for the JS-host lane. Its emitter opens
+`if (ctx.wasi || ctx.standalone || noJsHost(ctx)) return;` — it is an export the
+JS runtime's `__object_create` calls back into, so it has no meaning without a
+host — and **nothing ever replaced it**. The polyfill emits the dynamic spelling
+seven times, once per `X.from(…)` result builder:
+
+```js
+function pn(e,t){ const n = ce("%Temporal.PlainDate%");
+                  const r = Object.create(n.prototype); return yn(r,e,t), r; }
+```
+
+(`Object.create(<var>.prototype)` ×7; `Object.create(null)` ×14, untouched; no
+`Object.create(<ClassIdentifier>.prototype)` at all.)
+
+### 4. What was fixed
+
+New module `src/codegen/standalone-object-create-class-instance.ts`: a native
+dispatcher that answers a freshly defaulted `struct.new $C` when its argument IS
+the class's prototype singleton and `ref.null.extern` for every other shape.
+Reserved at the call site (`mintDefinedFunc`, a stable handle), filled at both
+finalize sites where `ctx.protoGlobals` is complete. Two deliberate differences
+from #5239 and the reasons they are load-bearing are in #6464.
+
+Real linked provider, fresh cache (`cacheHit=false`, namespace
+`js2wasm:npm:@js-temporal/polyfill:065e8cd918020d98`):
+
+| probe | base | S13 |
+| --- | --- | --- |
+| `PlainDate.from("1976-11-18").day` | `null` | **18** |
+| `PlainDate.from(…).calendarId` | `null` | **"iso8601"** |
+| `typeof PlainDate.from(…).calendarId` | **`"object"`** | **`"string"`** |
+| `PlainDate.from(…).year` | `null` | **1976** |
+| `PlainDate.from({year,month,day}).day` | `null` | **18** |
+| `PlainTime.from("12:30").hour` | `null` | **12** |
+| `Instant.from(…).epochNanoseconds` | `null` | a value |
+| `new Temporal.PlainDate(1976,11,18).day` | 18 | 18 |
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, FRESH `JS2WASM_TEMPORAL_CACHE` per label
+(`.tmp/s13famcache-{base,new}`), quickjs eval provider **and adapter** present as
+real files. The base column is **this worktree's own base run**, taken by
+file-copy revert of the two edited source files on this tree.
+
+| family | rows | base pass | **S13 pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 62 | **64** | 52 | 4 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 43 | **43** | 71 | 6 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 65 | **70** | 46 | 4 | **0** |
+| **total** | **360** | **170** | **177** | **169** | **14** | **0** |
+
+`fail→pass`: 7 — PlainDate `from/argument-string-calendar-case-insensitive.js`,
+`from/options-basic.js`; ZonedDateTime `prototype/day/basic.js`,
+`prototype/daysInYear/basic.js`, `prototype/equals/argument-object.js`,
+`prototype/equals/argument-valid.js`,
+`prototype/equals/constructed-from-equivalent-parameters-are-equal.js`.
+`__temporal_*` leaks: **0** in all six TSVs.
+
+Every CE↔fail flip in the sample (9 rows) was re-run **solo at 60 s on BOTH
+trees** and every one agrees across trees, so all nine are compile-budget
+artifacts, not movement:
+
+| row | base solo | S13 solo |
+| --- | --- | --- |
+| `PlainDate/compare/argument-plaindatetime.js` | fail 18.5 s | fail 19.0 s |
+| `PlainDate/from/argument-propertybag-calendar-string.js` | fail 14.0 s | fail 13.5 s |
+| `PlainDate/from/overflow-undefined.js` | fail 14.5 s | fail 14.6 s |
+| `PlainDate/from/argument-object-valid.js` | fail 15.0 s | fail 14.3 s |
+| `Duration/from/argument-existing-object.js` | fail 13.9 s | fail 13.1 s |
+| `Duration/microseconds-undefined.js` | fail 14.9 s | fail 14.0 s |
+| `Duration/compare/relativeto-propertybag-infinity-throws-rangeerror.js` | fail 13.2 s | fail 13.3 s |
+| `ZonedDateTime/prototype/add/cross-epoch.js` | fail 15.1 s | fail 14.4 s |
+| `ZonedDateTime/prototype/add/math-order-of-operations-add-none.js` | fail 13.2 s | fail 13.3 s |
+
+Every one lands at 13–19 s against a 15 s sample budget, which is the artifact
+itself.
+
+### Top error buckets, LINKED, S13
+
+PlainDate (52 fail): 20 `calendar must be string in canonicalizeCalendarEra` ·
+3 compilation timeout · 2 `illegal cast in __class_construct_dispatch()` ·
+2 `year is required` · 2 `prototype Expected SameValue(«null», «[object Function]»)`.
+
+Duration (71 fail): 5 `years result: Expected SameValue(«undefined», «N»)` ·
+5 `explicit: years result …` · 5 `dereferencing a null pointer in sn()` (two
+distinct call paths) · 5 compilation timeout.
+
+ZonedDateTime/prototype (46 fail): 7 `required property 'timeZone' missing` ·
+5 `Cannot read properties of undefined (reading 'equals')` (was 6) ·
+4 `dereferencing a null pointer in sn()` · 4 compilation timeout ·
+3 `Expected a RangeError but got a undefined`.
+
+### The 20-row `canonicalizeCalendarEra` bucket did NOT move, and that is a finding
+
+S12 attributed ~40 rows to this residual and this slice repaired the mechanism
+those 20 rows sit on — `typeof PlainDate.from(…).calendarId` answers `"string"`
+now, measured directly against the linked provider — yet the bucket is still
+exactly 20. So the harness's `assert.sameValue(typeof calendarId, "string")` is
+failing on a value that answers `"string"` when the same read is spelled inline
+in the consumer. The difference is that the harness passes it through its own
+function PARAMETER first (`TemporalHelpers.canonicalizeCalendarEra(date.calendarId, …)`).
+
+That is a second, independent defect, and it is the single largest remaining
+bucket in the sample. It should be the next slice's census target, reduced as:
+a provider-owned string read in the consumer, passed into a consumer function
+with an untyped parameter, and `typeof`-ed there. Do not assume it is the same
+mechanism as this one — that assumption is what cost the last five slices.
+
+### Two standalone samples that must NOT move, and a third, and none did
+
+`--target standalone`, base by file-copy revert on the same tree, 120 rows each.
+Tied to what this slice touches: the `Object.create` lowering itself, the dynamic
+object surface around it, and the class surface whose prototype singleton the
+dispatcher compares against.
+
+| sample | base | S13 | pass→fail | flips |
+| --- | --- | --- | --- | --- |
+| `built-ins/Object/create/**` (first 120 of 320) | 120 pass / 0 fail | 120 / 0 | **0** | **0** |
+| `built-ins/Object/**` (first 120) | 106 pass / 14 fail | 106 / 14 | **0** | **0** |
+| `language/expressions/class/**` (first 120) | 70 pass / 38 fail / 12 CE | 70 / 38 / 12 | **0** | **0** |
+
+### Order preservation
+
+Base captured by file copy at the FIRST edit
+(`.tmp/base-{call-builtin-static,index}.ts`):
+
+- 40 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone}: **80/80 sha256-identical**. That corpus contains no dynamic
+  `Object.create`, so it is a no-collateral control.
+- a targeted 9-shape corpus supplies the positive control: **all 9 `gc`
+  artifacts identical**, and on standalone exactly two move — `ocDynProto` and
+  `ocDynProtoCall`, the two shapes this slice repairs. Every control is
+  byte-identical: `ocStaticProto`, `ocNull`, `ocPlainObject`,
+  `ocNoClassInModule`, `ocDescriptors`, `classesOnly`, `plainArith`.
+
+### Traps, carried forward and added to
+
+- All prior traps still bite. This worktree arrived with `test262` **absent**
+  and no `node_modules`.
+- **NEW, and it cost a full round of family measurements: the S12 note to check
+  `.test262-cache/quickjs-artifact-*/libquickjs.wasm` is necessary but NOT
+  sufficient.** The runner also needs
+  `.test262-cache/quickjs-eval-adapter-<hash>.wasm`. With the artifact directory
+  present and the adapter missing, every row fails with a message naming the
+  adapter and PlainDate scores **0 pass / 118 fail** — indistinguishable at a
+  glance from a catastrophic regression. Check for BOTH before believing any
+  family number.
+- **NEW: `pkill` on a measurement sweep leaves ORPHANS that keep writing your
+  TSVs.** Killing the driver script does not kill the `family.mts` child it had
+  already spawned, and two writers of one TSV (one at limit 400, one at 120)
+  produce a file whose row count means nothing. Kill the children by their own
+  pids and re-check with `ps` before restarting; a duplicate sweep also doubles
+  the load and manufactures compile-timeout flips.
+- **The S12 note that the provider namespace hash does not change after a
+  codegen edit is not general.** This slice's fix moved it
+  (`2c0506a30fe8f23d` → `065e8cd918020d98`). `cacheHit=false` against a FRESH
+  cache directory remains the tell that actually works.
+
+### Artifacts
+
+`.tmp/s13fam/{pd,du,zdt,mnm-oc,mnm-obj,mnm-cls}-{base,new}.tsv` (+ `.log`),
+`.tmp/s13fam/solo-{base,new}.tsv`,
+`.tmp/s13/{c1..c7,t1}*.out`, `.tmp/s13/byteab{,2}-{base,new}.tsv`, and the probe
+sets `.tmp/s13/{c1..c7,t1}.mjs` in this worktree
+(`/home/user/js2/.claude/worktrees/agent-a85a674efc7243492`), produced by
+`.tmp/s13/{pair2.mjs,family.mts,rerun13.mts,byteab.mts,byteab2.mts}` and compared
+with `.tmp/s13/table13.mjs`.
+
+### Acceptance criterion 4 — S13 update
+
+MET-for-the-sample at **177/360** (was 170), measured on the same three
+families, with **0 pass→fail**, all three must-not-move samples flat and 0
+`__temporal_*` leaks. Base and branch were both measured on this tree by
+file-copy revert, so the delta is a self-consistent before/after. No full-corpus
+number is claimed; a corpus run remains the tech lead's to schedule.
+
+## S14 findings (2026-09-13) — the harness itself was the input; ONE `new <value>()` poisoned every provider value, and the linked lane goes 177 → 199
+
+**#6601 is the slice.**
+
+### 1. The attribution was wrong for the SIXTH slice running, and this time the census procedure itself was at fault
+
+S14 was handed "a second, independent defect on the parameter path:
+`canonicalizeCalendarEra` sees `undefined` because the harness reads
+`date.calendarId` through its own function PARAMETER". Against the real linked
+provider, **every** spelling of that shape answers `"string"` — value through a
+plain parameter, value through an object-literal METHOD parameter, object
+through a parameter read inside, the full two-hop `assertPlainDate` →
+`canonicalizeCalendarEra`, an 8-parameter method (3 defaulted) called with 5 / 6
+/ 8 arguments, and the `for (const [input, ...rest] of tests)` +
+`m(recv, ...rest, trailing)` loop the failing tests actually use.
+
+The defect only appears when the **real `test262/harness/temporalHelpers.js` is
+in the module**. That is the addition to S13's lesson:
+
+> **When the failing program includes a harness, the harness is part of the
+> input.** Five slices of probes that omitted it were measuring a different
+> program.
+
+S13 wrote "reduce in ONE standalone module first". That is still right, but it
+is not sufficient: the one-module control has to be the one-module control **of
+the program that actually fails**, harness and all. Every probe set from S10 to
+S13 reduced a hand-written stand-in for the harness, and every one of them
+passed.
+
+### 2. Root cause
+
+`$__ta_ctor` is two immutable i32 fields (`kind`, `brand`) — exactly the shape
+#2158/#2009 gives a **field-less class ROOT** (`$__tag` + `$__shape_brand`).
+WasmGC canonicalizes structurally-identical struct types, so a bare
+`ref.test $__ta_ctor` cannot answer a NOMINAL question. Two arms asked it that
+way:
+
+- `tryEmitTaStaticOfFrom` (`expressions/call-receiver-method.ts`) —
+  `%TypedArray%.of` / `.from` on an `any` receiver. It claimed
+  `Temporal.PlainDate.from("2020-12-24")` and built a typed array out of the
+  argument list.
+- the `$__ta_ctor` arm of `tryCompileNativeConstructFromValue`
+  (`expressions/new-super.ts`) — the `[[Construct]]` twin, which is why
+  `new Temporal.Duration(1).years` broke alongside it.
+
+The discriminator already existed and its own comment records this exact
+collision, measured on this exact provider: `taCtorIdentityTestInstrs`
+(#5383 S2f R11) adds the `brand` FIELD-VALUE check. Three call sites used it;
+these two did not. **Twelve** bare `ref.test $__ta_ctor` sites remain
+(`dataview-native.ts` ×5, `ta-ctor-meta.ts` ×2, `expressions/calls.ts`,
+`property-access-dispatch.ts`); none was on a path this slice could measure
+moving, so they are written down in #6601 rather than changed blind.
+
+### 3. Why ONE never-called function is the whole input
+
+```js
+function mk(K) { return new K(); }          // NEVER CALLED
+typeof Temporal.PlainDate.from("2020-12-24").calendarId   // "undefined"
+```
+
+The spelling is what arms the module pre-scan's dyn-view flag, which is what
+makes the consumer register `$__ta_ctor` at all. `temporalHelpers.js` contains
+it — `new construct(...constructArgs)` in `checkSubclassConstructorNotObject` —
+so **every Temporal test that `includes:` the harness inherited the failure**,
+called or not.
+
+Scale, counted over the S13 three-family TSVs by whether the test file contains
+`temporalHelpers.js`:
+
+| family | rows that include it | of those FAIL | of those PASS |
+| --- | --- | --- | --- |
+| PlainDate | 35 | **34** | 1 |
+| Duration | 26 | **24** | 2 |
+| ZonedDateTime/prototype | 13 | **13** | 0 |
+| **total** | **74** | **71** | **3** |
+
+71 of the sample's 169 failures; 3 of its 177 passes.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families **sequential**,
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`.tmp/s14famcache-{base,new}`,
+`cacheHit=false` on both prewarms), quickjs artifact **and** adapter present.
+The base column is **this worktree's own base run**, taken by file-copy revert
+of the two edited source files on this tree.
+
+| family | rows | base pass | **S14 pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 64 | **78** | 41 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 43 | **49** | 66 | 5 | 2 † |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 70 | **72** | 46 | 2 | **0** |
+| **total** | **360** | **177** | **199** | **153** | **8** | **2 †** |
+
+`fail→pass`: **24** (PlainDate 14, Duration 8, ZonedDateTime 2).
+`__temporal_*` leaks: **0** in all six TSVs.
+
+† **Both pass→fail rows were VACUOUS passes on base, and that is measured, not
+argued.** `Duration/from/argument-propertybag-optional-properties.js` and
+`Duration/from/argument-string-fractional-precision.js` compare two
+`Duration.from(…)` results field by field. On the base tree, with the real
+harness in the module:
+
+| probe, base tree, real harness | answer |
+| --- | --- |
+| `Duration.from({hours:1}).hours` | `undefined` |
+| `Duration.from(<all 10 props>).hours` | `undefined` |
+| `typeof a.hours + "/" + typeof b.hours + "/" + (a.hours === b.hours)` | `undefined/undefined/true` |
+
+The assertion passed because both sides were `undefined`. On the fixed tree the
+same three read `1`, `1`, `number/number/true` — the values are real and the
+equality still holds. The rows now fail **further downstream**, on the known
+`instanceof`-across-the-link residual: `Temporal.Duration.from({hours:1})
+instanceof Temporal.Duration` is `false`, so the harness's own
+`assert(actual instanceof Temporal.Duration)` throws (`"x: instanceof"`), and
+`assertDurationsEqual`'s re-`from` of a Duration object reports
+`invalid duration-like`. That residual is the next slice's target.
+
+The one `fail→ce` row
+(`Duration/compare/relativeto-propertybag-infinity-throws-rangeerror.js`) is a
+compile-budget artifact: re-run **solo at 60 s on BOTH trees** it is `fail` on
+both (base 14.5 s, S14 13.9 s). The two pass→fail rows were re-run the same way
+and are real status changes, not budget (base pass 17.7 s / 14.0 s; S14 fail
+17.9 s / 14.6 s).
+
+### Top error buckets, LINKED, S14
+
+PlainDate (41 fail): 6 `year is required` · 3 `Object method called on null or
+undefined` · 3 `dereferencing a null pointer in __closure_N()` · 2 `illegal cast
+in __class_construct_dispatch()`. **The 20-row `calendar must be string in
+canonicalizeCalendarEra` bucket is GONE.**
+
+Duration (66 fail): 16 `dereferencing a null pointer in sn()` (two call paths) ·
+5 compilation timeout · 3 `prototype Expected SameValue(«null», «[object
+Function]»)` · 3 `Cannot access property on null or undefined`. **The 10-row
+`years result … undefined` bucket is gone.**
+
+ZonedDateTime/prototype (46 fail): 7 `required property 'timeZone' missing` ·
+6 `dereferencing a null pointer in sn()` · 3 `Expected a RangeError but got a
+undefined` · 2 compilation timeout · 2 `prototype Expected SameValue(…)`.
+The `timeZone` bucket did not move; with the harness present it now answers
+correctly in isolation (`ZonedDateTime.from(…).timeZoneId` → `"UTC"`), so those
+7 rows are a different cause and are the next census target alongside
+`instanceof`.
+
+### Symptom reads, with the REAL harness in the module
+
+Every read below is against the real linked provider. The point of the table is
+that the harness column now EQUALS the no-harness column:
+
+| read | base + harness | S14 + harness | S14 no harness |
+| --- | --- | --- | --- |
+| `PlainDate.from(…).calendarId` typeof | `undefined` | **`string`** | `string` |
+| `Duration.from({years:1}).years` | `undefined` | **`1`** | `1` |
+| `new Duration(1).years` | `undefined` | **`1`** | `1` |
+| `ZonedDateTime.from(…).timeZoneId` | `undefined` | **`UTC`** | `UTC` |
+| `ZonedDateTime.from(…).equals` typeof | `undefined` | **`function`** | `function` |
+| `PlainTime.from("12:30").hour` | `undefined` | **`12`** | `12` |
+| `Instant.from(…).epochNanoseconds` | `undefined` | **a value** | a value |
+| `Duration.from("P1Y").years` | `undefined` | TRAP `sn()` | TRAP `sn()` |
+
+The last row is the pre-existing `sn()` bucket: it reproduces with no harness at
+all, so it is not this slice's and was not made worse.
+
+### Must-not-move samples, and none moved
+
+`--target standalone`, base by file-copy revert on the same tree. Tied to what
+this slice touches — the two arms are the TypedArray static `of`/`from` claim
+and the dynamic-`new` TA claim, so the samples are the TypedArray surface those
+arms exist for. Row counts are the whole directory where it is smaller than 120.
+
+| sample | rows | base | S14 | pass→fail | flips |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/TypedArray/from/**` | 21 | 8 pass / 12 fail / 1 CE | 8 / 12 / 1 | **0** | **0** |
+| `built-ins/TypedArray/of/**` | 8 | 7 pass / 1 fail | 7 / 1 | **0** | **0** |
+| `built-ins/TypedArrayConstructors/**` (first 120) | 120 | 116 pass / 4 fail | 116 / 4 | **0** | **0** |
+
+### Order preservation
+
+Base captured by file copy at the FIRST edit
+(`.tmp/s14/base-{call-receiver-method,new-super}.ts`):
+
+- 40 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone}: **80/80 sha256-identical**.
+- a targeted 9-shape corpus supplies the positive control: **all 9 `gc`
+  artifacts identical**, and on standalone exactly the four shapes that carry
+  the two re-guarded arms move — `taStaticFromAnyRecv`, `taStaticOfAnyRecv`,
+  `taDynNewAnyCallee`, `dynNewNoTa`. Every control is byte-identical:
+  `taNoCtorValue`, `taStaticDirect`, `classesOnly`, `plainArith`,
+  `objectsOnly`.
+- The linked provider artifact is byte-identical across the two labels (same
+  namespace `js2wasm:npm:@js-temporal/polyfill:61b30b6f2d1d6da9`, same 3 314 089
+  bytes), so the whole delta is consumer-side.
+
+### Traps, carried forward and added to
+
+- All prior traps still bite.
+- **NEW, and it cost a full base run: the family runner needs the Temporal
+  PRE-WARM STAMP, not just a cache directory.** With `JS2WASM_TEMPORAL_CACHE`
+  set but no stamp written, `runTest262File` does not link the provider at all:
+  PlainDate scores **3 pass / 69 fail / 48 CE** with `Temporal is not defined`
+  and `standalone target emitted host imports:
+  env::__temporal_plain_date_from_string_field`. That is indistinguishable at a
+  glance from a catastrophic regression and is NOT what a missing quickjs
+  adapter looks like. Run `prewarm` (which calls `writeTemporalPrewarmStamp`)
+  first, and check the log line `[test262] Temporal provider (standalone) …`
+  before believing any family number.
+- **NEW: do not swap source files while a background measurement is running.**
+  Two runs were discarded for this. The driver script owns one label end to end;
+  nothing under `src/` changes until it prints `LABEL <x> COMPLETE`.
+- **NEW: a pass→fail is not automatically a regression, and a pass is not
+  automatically a pass.** Two of this slice's three flips were VACUOUS base
+  passes (`undefined === undefined`). The check that settles it is cheap —
+  evaluate the test's own comparison operands on the base tree — and it is the
+  difference between "this slice regressed two rows" and "this slice removed two
+  false passes and exposed the next defect".
+
+### Artifacts
+
+`.tmp/s14fam/{pd,du,zdt,mnm-tafrom,mnm-taof,mnm-tactor}-{base,new}.tsv` (+ logs),
+`.tmp/s14fam/solo-{base,new}.tsv`, `.tmp/s14/byteab{,2}-{base,new}.tsv`, the
+probe sets `.tmp/s14/{r1..r4,t2..t4,b1..b6,c1..c9,h1..h5,w1,w2}.mjs` and the
+drivers `.tmp/s14/{one,pair2,probe,harness,harness2,harness3,split-th,bisect-th,bisect2,bisect3,family,rerun14,byteab,byteab2,table14,bytediff,run-all}.{mjs,mts,sh}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a61a68efa14de71e0`).
+
+### Acceptance criterion 4 — S14 update
+
+MET-for-the-sample at **199/360** (was 177), measured on the same three
+families, with **2 pass→fail that were measured to be vacuous base passes**, all
+three must-not-move samples flat, the `gc` lane byte-identical on both corpora,
+and 0 `__temporal_*` leaks. Base and branch were both measured on this tree by
+file-copy revert, so the delta is a self-consistent before/after. No full-corpus
+number is claimed; a corpus run remains the tech lead's to schedule.
+
+### S15 findings (2026-09-13) — `sn()` did not need a Temporal fix; it needed the array-HOF callback to stop asserting a nullable element non-null. 199 → 201, and the whole 22-row `sn()` bucket moved one step
+
+**#6602 is the slice.** Full write-up, tables and residuals in the issue file
+`plan/issues/6602-standalone-nullable-vec-element-callback-param.md`.
+
+#### 1. Root cause, and why six slices of Temporal work never reached it
+
+The largest remaining bucket — 16 Duration + 6 ZonedDateTime rows reading
+`dereferencing a null pointer in sn()` — had **nothing Temporal-specific in
+it**. `sn` is the minified `ToTemporalDuration`, and its first act on a
+duration STRING is
+
+```js
+const t = Ye.exec(e);
+if (t.every((e, t) => t < 2 || void 0 === e)) throw new RangeError(…);
+```
+
+Standalone `exec` returns a vec whose element type is `ref_null $anyStr` — an
+unmatched capture group is a NULL native string, the compiler's `undefined` for
+that slot. TypeScript types the same array `RegExpExecArray extends
+Array<string>`, i.e. NON-null. So the callback's element parameter resolved to
+`ref $anyStr`, the call site coerced the loaded element with a bare
+`ref.as_non_null`, and the first unmatched group trapped.
+
+The reduction is ten lines and needs no provider, no link and no harness:
+`/^(a)?(b)$/.exec("b").every((e, i) => i < 2 || true)` traps; `.map(…)` and
+`m[1]` do not. `map` is the one arm that already pins its callback's first
+parameter to the receiver's real element type (#4527/#5319) — the asymmetry was
+sitting in the compiler the whole time.
+
+**Method note, and it is the same one S13 and S14 wrote down from the other
+side.** S13 learned "reduce in ONE standalone module"; S14 learned "the harness
+is part of the input". S15 adds the third: **a trace frame names the function
+that traps, not the mechanism that is wrong.** `sn()` in the trace made six
+slices read this as a Temporal/provider defect. The question that broke it open
+was not "what does `sn` do" but "what is the FIRST compiler mechanism `sn`
+touches", and that question is answerable without the provider at all.
+
+#### 2. Fix
+
+One mechanism: `setupArrayCallback` windows the receiver's real element type —
+and the index of the parameter that receives it — over the callback compile;
+the closure wrapper signature honours it only where the checker handed back
+that type's exact non-null twin. `map` keeps its own unconditional override.
+
+The parameter INDEX is load-bearing: `reduce`/`reduceRight` pass the element as
+parameter **1**. The first cut pinned parameter 0, fixed 7 of 8 arms and left
+`reduce` trapping — measured, not reasoned.
+
+#### 3. The measurement, and the honest version of the win
+
+| family | rows | base pass | **S15 pass** | pass→fail |
+| --- | --- | --- | --- | --- |
+| `PlainDate/**` | 120 | 78 | 78 | 0 |
+| `Duration/**` | 120 | 49 | **51** | 0 |
+| `ZonedDateTime/prototype/**` | 120 | 72 | 72 | 0 |
+| **total** | **360** | **199** | **201** | **0** |
+
+Base reproduces S14's 199/360 exactly on this tree. `__temporal_*` leaks: 0.
+Must-not-move (120 `Array.prototype` HOF rows, standalone): 54/66 on both, 0
+flips. `gc` lane: 84/84 + 14/14 artifacts byte-identical.
+
+**+2 rows understates it and the bucket movement is the real number.** All 22
+`sn()` rows stopped trapping at the `every`; **18 of them now trap one step
+later in the same function**, at `__str_flatten`, on a genuinely different
+defect. The row count will move properly when that one goes.
+
+#### 4. Next target, already reduced
+
+**Implicit truthiness of a null native string traps; the explicit
+`Boolean(…)` call does not.** `t[4] ? "T" : "F"` and `t[4] || "x"` trap;
+`Boolean(t[4])` answers `"false"` correctly; `"" + t[4]` answers `"undefined"`
+correctly. The polyfill hits it at `if (d ?? h ?? u ?? l) …` inside `sn`.
+Worth 13 Duration + 5 ZonedDateTime rows in this sample — more than this slice
+was — and it is the same family of defect: a null native string IS `undefined`,
+and each lowering that forgets it has to be taught separately.
+
+Still open behind it: `instanceof` across the provider link with a dynamic RHS
+(S11 residual, gates 2 Duration rows), ZonedDateTime's 7-row
+`required property 'timeZone' missing`, PlainDate's 6-row `year is required`
+and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6602
+family**, since PlainDate did not move at all.
+
+#### 5. Traps, carried forward
+
+All S11–S14 traps still bite (provider cache not keyed on the compiler; the
+pre-warm STAMP, without which rows read `Temporal is not defined`; both quickjs
+artifacts as real files; never swap source files during a measurement; re-run
+every flip solo at 60 s on both trees). Two additions:
+
+- **A `vitest` run can exit 1 with every test passing.** The first suite batch
+  reported `Test Files 5 passed (5) / Tests 95 passed` and exit 1, on an
+  unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"` — an RPC timeout
+  under load, not a failure. Read the summary, not only the status.
+- **A targeted byte A/B earns its keep by falsifying the plan's own claim.**
+  This one showed a CONTROL moving (`["x","y"].every(…)`), because a plain
+  string array's element type in standalone is already nullable. The claim
+  "nothing else can move a byte" was wrong; the mechanism was right. A corpus
+  hash alone would have said "84/84 identical" and told nobody.
+
+### Artifacts
+
+`.tmp/s15fam/{pd,du,zdt}-{base,new}.tsv` (+ logs and prewarm logs),
+`.tmp/s15fam/mnm-{base,new}.tsv`, `.tmp/s15/byteab{,2}-{base,new}.tsv`, the
+reduction `.tmp/s15/red.mjs`, the residual census `.tmp/s15/q8.mjs`, the
+revert copies `.tmp/s15base/*.ts` and the drivers
+`.tmp/s15/{run-fam.sh,family.mts,prewarm.mts,mnm.mts,byteab.mts,byteab2.mts,table15.mjs,localpre.mjs}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a743fbf47ab9ca4bb`).
+
+### Acceptance criterion 4 — S15 update
+
+MET-for-the-sample at **201/360** (was 199), same three families, **0
+pass→fail** (none, vacuous or otherwise), the must-not-move Array-HOF sample
+flat at 54/66 with 0 flips, the `gc` lane byte-identical on both corpora, and 0
+`__temporal_*` leaks. Base and branch were both measured on this tree by
+file-copy revert. No full-corpus number is claimed; a corpus run remains the
+tech lead's to schedule.
+
+### S16 findings (2026-09-13/14) — the `sn()` bucket is fully retired; two general standalone correctness bugs, 201 → 202, and the row count is the least interesting number here
+
+**Two slices: #6603 (the nullable native-string BINDING) and #6604 (`void 0` in
+a nullish comparison).** Full write-ups in
+`plan/issues/6603-standalone-nullable-native-string-element-binding.md` and
+`plan/issues/6604-standalone-void-0-undefined-comparison.md`.
+
+#### 1. The hand-off attribution was wrong for the SEVENTH slice running, and this time it named the wrong LAYER
+
+S15 handed over "implicit truthiness of a null native string traps; the explicit
+`Boolean(…)` call does not", with `t[4] ? "T" : "F"` and `t[4] || "x"` as the
+evidence. Both probes actually **bind first** (`const a = t[4]; a ? …`), and
+the difference is the binding, not the operator:
+
+| source, base tree, standalone | answer |
+| --- | --- |
+| `m[1] ? "T" : "F"` (INLINE) | `"F"` ✓ |
+| `const a = m[1]; a ? "T" : "F"` | **TRAP** |
+| `"" + m[1]` (INLINE) | `"undefined"` ✓ |
+| `const a = m[1]; "" + a` | **TRAP** |
+| `const a: string \| undefined = m[1]; a ? …` | `"F"` ✓ |
+| `(a) => a ? "T" : "F"` applied to `m[1]` | `"F"` ✓ |
+
+Every inline read was already right, and so were a parameter and an annotated
+binding. `emitToBoolean` already had the correct arm (#3548's `__str_truthy`);
+it simply never saw a `ref_null`. **The named mechanism (ToBoolean) was not
+broken at all.** The pattern across S11–S16 now has a name: a symptom read
+through ONE call site attributes to that call site. The question that works is
+"what is the first thing that differs between the form that works and the form
+that does not", and here that is one `const`.
+
+> **Correction, from S17 — read this heading as too harsh.** "Wrong for the
+> seventh slice running" lumps together two failures that cost very different
+> amounts. A hand-off that names the wrong **area** costs the slice: you spend it
+> in the wrong module. A hand-off that names the right area and the wrong
+> **mechanism** costs one probe set. Every hand-off in S11–S16, including the one
+> this heading is about, was of the second kind — **right area, wrong mechanism,
+> which is the shape of a GOOD hand-off**, not a failed one. S17's own inherited
+> attribution was wrong in the same way (`link_member_get` on a foreign
+> `$Object`) and it still paid for itself, because the area was right. The
+> reusable instruction is therefore not "distrust the hand-off" but "take the
+> AREA from it and re-derive the mechanism", and the re-derivation is cheap —
+> see S17's note on shape + did-not-move as a reduction method, not merely an
+> attribution one. Stated here rather than only in S17's section because the
+> misleading framing is *this* sentence, and a correction only a later reader
+> reaches has not corrected anything.
+
+#### 2. Root causes, both general standalone bugs rather than Temporal ones
+
+**#6603** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
+its cascade at `resolveWasmType`, which answers the NON-null `ref $anyStr` for
+an element the checker types `string`. The store does not fail (a `ref` local
+gets a defaultable nullable slot), so the null is written and kept; every later
+READ is misinformed and dereferences it. Fixed by a post-filter applied at both
+declaration cascades, narrowed to the exact non-null-twin pair for a
+native-string element — `resolveWasmType` returns a non-null `ref` for class
+and object structs too, and re-typing every `const x = objArray[i]` in both
+lanes is a blast radius this defect does not justify.
+
+**#6604** — the null-and-undefined comparison shortcut recognised the undefined
+literal as the IDENTIFIER `undefined` only, so a `void 0` operand fell into the
+generic reference equality, which on standalone compares carriers structurally
+and answers `void 0 !== undefined` as TRUE. **Every minifier emits `void 0`**,
+so this is the only form a bundled dependency uses. `sn` guards each fractional
+capture group with `if (void 0 !== c) { … (c + "000000000").slice(0, 9) … }`:
+the guard admitted a NULL group and the concatenation dereferenced it.
+
+Applied on the native-semantics lane only, and that is **measured**: with a JS
+host the fallback this arm replaces hands both operands to the host `===`,
+which already answers all seven probed shapes correctly BEFORE the fix
+(`.tmp/s16/gcprobe.mjs`, run on both trees). Widening it there would move bytes
+for an answer that is already right.
+
+#### 3. The bucket, through all three states — this is the real result
+
+| bucket, in `sn` | base (S15 head) | +#6603 | +#6603 +#6604 |
+| --- | --- | --- | --- |
+| `null pointer in __str_flatten` | **18** (13 Du, 5 ZDT) | 0 | 0 |
+| `null pointer in __str_concat` | 0 | **11** (8 Du, 3 ZDT) | **0** |
+| spurious `only the smallest unit can be fractional` | **4** (3 Du, 1 ZDT) | 4 | **0** |
+
+The 22-row `sn()` family that has gated every string-argument Duration entry
+point since S10 is now **entirely retired**. #6603 alone moved it one step and
+scored nothing; the pair retires it.
+
+#### 4. The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families **sequential**,
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit=false` on every prewarm),
+quickjs artifact **and** adapter present. Base is this worktree's own base run,
+taken by file-copy revert of the three edited source files on this tree. The
+provider binary differs between labels (3,324,826 vs 3,325,244 bytes), which is
+independent proof the compiler change reached the linked artifact.
+
+| family | rows | base pass | #6603 only | **S16 pass** | fail | ce | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 78 | 78 | **78** | 41 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 51 | 51 | **52** | 65 | 3 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 72 | 72 | **72** | 46 | 2 | **0** |
+| **total** | **360** | **201** | **201** | **202** | **152** | **6** | **0** |
+
+`fail→pass`: **1** (Duration). `__temporal_*` leaks: **0** in all nine TSVs.
+
+**+1 row is an honest but misleading headline, and the honest reading is in the
+bucket table above.** 18 rows stopped trapping; 17 of them now fail further
+downstream, at `Missing internal slot slot-<unit>` (1 → 10 across the sample)
+and `called value is not a function` (10 → 17). Those two are the next causes,
+and they are reached only because the parse now completes.
+
+#### 5. Top error buckets, LINKED, S16 (all three families pooled, 152 fail)
+
+8 `called value is not a function` · 7 `required property 'timeZone' missing` ·
+7 `Missing internal slot slot-years` · 7 `prototype Expected SameValue(«null»,
+«[object Function]»)` · 5 compilation timeout · 5 `Object method called on null
+or undefined` · 5 `Expected a RangeError but got a undefined` · 5
+`__closure_N()` null pointer · 4 `year is required` · 4 `Proxy get trap is not
+callable`.
+
+**The `timeZone missing` (7) and `year is required` (4) buckets are ONE cause,
+reduced to shape.** Every row in both is a `*-propertybag-calendar-*` test that
+builds a plain object literal in the CONSUMER module and passes it across the
+link:
+
+```js
+const arg = { year: 1976, monthCode: "M11", day: 18, calendar };
+Temporal.PlainDate.compare(arg, new Temporal.PlainDate(1976, 11, 18));
+```
+
+`year` IS present, and the polyfill's `Get(bag, "year")` answers `undefined` —
+so this is the link-boundary dynamic-read family (#6460 / #6464), not a
+Temporal defect and not the nullability family. Neither bucket moved in S16
+(7→7, and 15→15 counting all three families), which is consistent with that
+attribution.
+
+**CONFIRMED by S17 (#6600), which is worth stating because it is the first time
+in this stack that a hand-off attribution held.** S17 found the link boundary to
+be one-directional — a consumer-owned object literal or class instance is
+undecodable inside a linked provider — installed a reverse channel, and reports
+both buckets going to **zero**, with the three families at 202 → 232. The
+attribution above was made from the test SHAPE (`*-propertybag-calendar-*`
+builds its argument in the consumer) plus the fact that the buckets did not move
+under a fix that was definitely not theirs. Neither half is strong alone; the
+pair is, and that is the cheap form of attribution worth reusing.
+
+#### 6. Residuals of THIS family, each already reduced
+
+The nullability lie survives at three further boundaries, all measured on the
+S16 tree (`.tmp/s16/{red2,red3}.mjs`):
+
+| residual | probe | answers | should be |
+| --- | --- | --- | --- |
+| checker-keyed `+` | `const a = m[1]; "" + a` | **TRAP** | `"undefined"` |
+| checker-keyed `Boolean()` | `const a = m[1]; Boolean(a)` | **TRAP** | `false` |
+| checker-keyed `typeof` | `const a = m[1]; typeof a` | `"string"` | `"undefined"` |
+| `&&` / `??` RESULT carrier | `const a = m[1]; String(a && "y")` | **TRAP** | `"undefined"` |
+| REASSIGNMENT, not declaration | `let a = "z"; a = m[1]; a ? …` | **TRAP** | `"F"` |
+| non-inert `void` | `void f() === undefined` | `false` (effect preserved) | `true` |
+
+The first three share one shape: the operator dispatches on the CHECKER's
+static `string`, not on the operand's emitted ValType, so the null is asserted
+non-null on the way in. The inline forms of all three are correct, which is
+what makes them reducible. The reassignment case needs the slot widened by a
+whole-function scan rather than at the declaration.
+
+#### 7. Two samples that must NOT move, and neither did
+
+| sample | rows | base | S16 | flips |
+| --- | --- | --- | --- | --- |
+| `RegExp/prototype/exec` + `expressions/{conditional,logical-or,coalesce}` | 94 | 91 pass / 2 fail / 1 ce | identical | **0** |
+| `String/prototype/{split,match}` + `Array/prototype/{join,indexOf}` | 113 | 95 pass / 18 fail | identical | **0** |
+
+The second sample exists because the targeted byte A/B falsified the narrow
+reading of #6603: a PLAIN string array's element type is nullable in standalone
+too, so `const s = a[0]` re-types there as well. A sample chosen only from the
+RegExp surface would not have covered that.
+
+#### 8. Order preservation
+
+Byte A/B on a 42-file fixed corpus (`website/playground/examples` +
+`tests/fixtures`) × {gc, standalone}: **no artifact moves on either lane, for
+either slice.** A targeted 23-shape A/B: the `gc` lane is byte-identical
+throughout; on standalone exactly the intended shapes move (6 for #6603, 5 for
+#6604) and every control — an inline element read, a `var`, an annotated
+binding, a number/object element, a matched group, the identifier `undefined`
+form, `void f()` — is identical.
+
+Equivalence gate at baseline (22 failing / 1720 passing) on both slices.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S15 traps still bite. The provider suite's `onTaskUpdate` RPC timeout
+reproduced again (exit 1 with `81 passed | 3 todo`). Three additions:
+
+- **The `test262` submodule is NOT checked out in a fresh agent worktree**, and
+  `HARNESS_ROOT` is `<PROJECT_ROOT>/test262/harness` — so every linked family
+  run resolves against the worktree's OWN copy and silently has nothing to run.
+  `git submodule update --init test262` is instant here (the objects are
+  already in `.git/modules/test262`), and the gitlink stays clean afterwards.
+- **The provider cache key does not change when the compiler does** (it hashes
+  the polyfill source + compile options), so a per-label cache directory is not
+  a nicety, it is the whole measurement. The *evidence* that the label actually
+  differed is the provider BYTE COUNT in the prewarm stamp, not `cacheHit`.
+- **A "control" that moves is a mislabelled teeth row, not a regression.** The
+  #6604 witness's `void "x" === a` row failed the base run as a control; it is
+  an inert literal, so the fix covers it by design. Reading the diff rather
+  than re-expecting the observed value is what caught it.
+
+#### 9a. The hand-picked ids COLLIDED with main, and the whole stack was renumbered 6474–6477 → 6601–6604
+
+`claim-issue.mjs --allocate` has exited **6** (`open-PR id scan DEGRADED — gh
+offline/unauthenticated`) for this entire session and pushes are 403, so S14,
+S15 and S16 all hand-picked their ids. While those branches sat unpushed, `main`
+landed the whole `linked-harness` family on **6474, 6475, 6476 and 6477**, and
+`check:issue-ids:against-main` went red on all four at once (reported by the S17
+lane, reproduced here on a fresh catch-up merge). They are now:
+
+| was | is | slice |
+| --- | --- | --- |
+| 6474 | **6601** | S14 — dynamic `new` poisons provider values |
+| 6475 | **6602** | S15 — nullable vec element at the HOF callback |
+| 6476 | **6603** | S16 — nullable native-string element BINDING |
+| 6477 | **6604** | S16 — `void 0` in a nullish comparison |
+
+6600 is left to the S17 lane. Issue files, test filenames and every `#NNNN`
+reference in `src/` and `tests/` were rewritten with them.
+
+**One thing the renumber nearly missed, and it is the reusable lesson.** The
+rename was done per-slice, so the *cross-slice* references survived: five
+`#6475` mentions in S16's own issue file plus one each in
+`src/codegen/nullable-native-string-elem-binding.ts` and its witness still
+pointed at the old id — which on `main` is now an unrelated
+`linked-provider-realm-error-constructors`. `check:issue-ids:against-main` went
+**green** with all seven still stale, because it compares FILENAMES, not prose.
+A renumber has to be swept repo-wide (`grep -rn '#<old>'`) after the gate passes,
+not before it.
+
+**This is the #2531 hazard in its documented form**, and the narrow lesson is
+not "the tool was down": an id hand-picked from a `--dry-run` preview is a
+point-in-time guess, and the window between picking it and pushing is exactly
+how long it stays a guess. With `--allocate` unavailable there is no way to
+close that window — so keep the picked ids contiguous and few, because every
+stacked branch below has to be rewritten with them.
+
+#### 10. One gate was red before the catch-up merge, on the base tree too, and main fixed it
+
+`node scripts/check-compiler-boundaries.mjs --mode inventory --base origin/main`
+exited 1 for most of this slice with `invalid-inventory / activation-demoted:
+backend-wasmgc`, naming `src/codegen/prepared-async-frame-adapter.ts` and
+`src/backend/wasmgc/async/prepared-async-frame-adapter.ts` as `external-unbound`
+— neither file existed in the tree. Measured identical on the S15 base by
+file-copy revert, so S16 neither introduced nor changed it; merging `origin/main`
+(39 commits, which land that module) makes it **green**. Recorded because the
+red would otherwise have looked like this slice's, and because it is a concrete
+case of a gate that only a catch-up merge can clear. Both new modules are
+classified in `scripts/compiler-boundaries.json` and are bound in the report.
+
+### Artifacts
+
+`.tmp/s16fam/{pd,du,zdt}-{base,new,new4}.tsv` (+ logs and prewarm logs),
+`.tmp/s16fam/{mnm,mnm2}-{base,new}.tsv`,
+`.tmp/s16/byteab{,2}-{base,new,base2,new2,new3}.tsv`, the reductions
+`.tmp/s16/{red,red2,red3,red4}.mjs`, the residual census
+`.tmp/s16/{q8,runq}.mjs`, the gc-lane probe `.tmp/s16/gcprobe.mjs`, the revert
+copies `.tmp/s16base/*` and the drivers
+`.tmp/s16/{run-fam.sh,family.mts,prewarm.mts,mnm.mts,mnm2.mts,byteab.mts,byteab2.mts,table.mjs}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a13e1501115f31e8e`).
+
+### Acceptance criterion 4 — S16 update
+
+MET-for-the-sample at **202/360** (was 201), same three families, **0
+pass→fail**, both must-not-move samples flat with 0 flips, the `gc` lane
+byte-identical on both corpora AND on the targeted shapes, the equivalence gate
+at baseline, and 0 `__temporal_*` leaks. Base and branch were both measured on
+this tree by file-copy revert, with an intermediate #6603-only label, so the
+attribution between the two slices is measured rather than argued. No
+full-corpus number is claimed; a corpus run remains the tech lead's to
+schedule.
+
+### S17 findings (2026-09-14) — the boundary attribution was RIGHT for the first time in eight slices; the link turns out to be ONE-DIRECTIONAL, and the linked lane goes 202 → 232
+
+Full write-up in `plan/issues/6600-standalone-link-reverse-peer-read.md`.
+
+#### 1. The hand-off attribution reproduced, and the reduction took one probe set
+
+S16 handed over "the provider's `Get(bag, "year")` on a consumer-built bag
+answers `undefined`", with three candidate mechanisms: `link_member_get` on a
+foreign `$Object`, string-key identity across modules, and module-local
+hidden-class tables. **None of the three.** The first host-free linked-pair probe
+set (`.tmp/s17/c1.mjs`, `c2.mjs`) split the answer on the CARRIER:
+
+| consumer-built carrier, read by the PROVIDER | linked, base | single module |
+| --- | --- | --- |
+| object literal `{ year: 1976 }` → `o[k]` / `o.year` | **`undefined`** | `1976` |
+| class instance → `o[k]` | **`undefined`** | `1976` |
+| `Object.keys(bag)` | **`""`** | `year,monthCode,day` |
+| `k in bag` | **`false`** | `true` |
+| `{}` then a COMPUTED write · `Object.create(null)` bag | `1976` | `1976` |
+| array `length`/index, string `length` | ok | ok |
+
+A generic `$Object` is a canonical runtime type, so the provider decodes it; an
+object literal and a class instance are CLOSED structs the CONSUMER declared and
+appear in no other module's ladder. The key was never the variable — literal,
+dot, `const`-bound and sorted-array-element keys all behave identically.
+
+After seven wrong attributions, the one that reproduced is also the one where the
+reduction disagreed with all three NAMED mechanisms while confirming the AREA.
+"The boundary" was right; "`link_member_get`" was not, because the miss is on the
+side that has no peer at all.
+
+**That distinction is worth more than the tally, and it corrects how S11–S16
+were written up here.** "The hand-off attribution was wrong for the Nth slice
+running" reads as though hand-offs are unreliable. They are not — a wrong AREA
+and a wrong MECHANISM inside the right area are different failures with
+different costs: a wrong area spends the whole slice in the wrong module, a
+wrong mechanism costs one probe set. **Right area, wrong mechanism is the shape
+of a GOOD hand-off**, and it is what S16 handed over. Agreed with the S16 lane,
+which proposed the correction to its own write-up.
+
+The corollary is about method rather than tone. S16 attributed these 11 rows on
+two signals that are weak alone — the test SHAPE (every row a
+`*-propertybag-calendar-*` case that builds its argument in the CONSUMER) and
+the bucket NOT MOVING under a fix that was definitely not its cause — and
+stopped at "not mine". The same pair is also what made the reduction cheap
+here: the shape says what to build (a consumer bag handed to a provider `get`),
+the not-moving says the mechanism is upstream of everything the previous slice
+touched. So it is a cheap REDUCTION method, not merely a cheap attribution one,
+and reduction is the expensive half of these slices.
+
+#### 2. Root cause
+
+`standalone-link-boundary.ts` (S2d) is consumer→provider ONLY: the provider
+exports its generic terminals, the consumer imports them on a miss. A provider
+has no peer, so its own miss arms have nothing to call. That shape cannot be
+mirrored — wasm imports may not be cyclic, and the provider is compiled and
+CACHED before any consumer exists.
+
+**Fix (#6600): install the channel at runtime instead of linking it.** The
+provider exports one setter and holds nullable typed-funcref globals; the
+consumer calls the setter from the top of `__module_init` with `ref.func` of its
+own normalising terminals; the provider's miss arms `call_ref` through the
+globals. A funcref across a wasm→wasm link IS the callee, so nothing is copied,
+and a provider whose consumer never installs is unchanged.
+
+Two design points that are load-bearing rather than decorative:
+
+- **The re-entrancy guard is on the reverse hop, not on "am I serving a consumer
+  request".** The obvious guard refuses exactly the reads this exists to serve:
+  the provider is normally already inside a consumer-initiated call when it reads
+  the bag (`PlainDate.from(bag)` runs provider code for its whole duration). It
+  is restored through `try`/`catch_all` + `rethrow`, because a provider throw
+  propagating out of a reverse call is ordinary (S2m) and a leaked flag is a
+  wrong ANSWER for the rest of the instance's life.
+- **`__extern_get` needed its OWN arm shape, and the first cut of this slice was
+  WRONG without it.** The forward arm reads `null` as "not the peer's"; a bag
+  field whose VALUE is `null` arrives as the same `ref.null.extern`. The first
+  measured run turned `{ calendar: null }` into an ABSENT key, the polyfill's
+  `!== undefined` guard admitted it, and three
+  `*-propertybag-calendar-wrong-type` rows stopped throwing. The hop now asks a
+  second, consumer-side question on exactly that path
+  (`__extern_get(o,k) is null && __extern_has(o,k)`, computed where the raw
+  answer is still visible) and the arm returns the null only then. **No gate
+  caught that; the three-family run did.**
+
+#### 3. The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families **sequential**,
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit=false` on both prewarms),
+quickjs artifact **and** adapter present. Base is this worktree's own base run,
+taken by file-copy revert of the two edited source files ON THIS TREE; it
+reproduces S16's published numbers exactly (78 / 52 / 72), which is what makes
+the delta attributable. The provider binary differs between labels —
+3,277,227 B (base) vs 3,277,717 B (S17) — independent proof the compiler change
+reached the linked artifact.
+
+| family | rows | base pass | **S17 pass** | fail | ce | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 78 | **92** | 25 | 3 | 2 |
+| `built-ins/Temporal/Duration/**` | 120 | 52 | **56** | 61 | 3 | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 72 | **84** | 34 | 2 | 1 |
+| **total** | **360** | **202** | **232** | **120** | **8** | **3** |
+
+`fail→pass`: **33**. `__temporal_*` leaks: **0** in all six TSVs.
+
+**Two CE flips are load artifacts, and the solo re-run says so.** Both labels ran
+with the must-not-move and byte-A/B jobs alongside them (symmetric, by design),
+and two files crossed the 15 s compile budget in one label only. Re-run SOLO at
+60 s on BOTH trees they agree exactly: `PlainDate/basic.js` **passes** on both,
+`PlainDate/compare/argument-plaindatetime.js` **fails** on both with the
+identical message. Counting those verdicts the S17 total is **233**.
+
+#### 4. The three `pass→fail`, and why they are not this slice's
+
+All three are the same test, `*-propertybag-calendar-wrong-type.js`, which loops
+over ten wrong-typed `calendar` values and fails at the first that does not throw
+a TypeError. They now fail at the LAST entry, `new Temporal.Duration()` — a
+PROVIDER-owned instance.
+
+The base-tree control (`.tmp/s17/t2.mjs`, run on both trees) settles it:
+
+| probe, real linked provider | base | S17 |
+| --- | --- | --- |
+| bound bag, `calendar: null` / `true` / `1` / `{}` / `Symbol()` | THREW TypeError | THREW TypeError |
+| bound bag, `calendar: "iso8601"` (**must not throw**) | **THREW TypeError** | NO-THROW ✓ |
+| bound bag, `calendar: new Duration()` | THREW TypeError | THREW **RangeError** |
+| **INLINE** bag, `calendar: new Duration()` | THREW **RangeError** | THREW **RangeError** |
+| **`Object.create(null)`** bag, same | THREW **RangeError** | THREW **RangeError** |
+| `typeof <provider Duration instance>` | `"function"` | `"function"` |
+
+On base every BOUND-bag row throws TypeError including the control that must not
+— the bag was simply unreadable, so an unrelated TypeError always came out and
+the test passed by accident. The two paths that never used this channel already
+answered RangeError on base, so the wrong error KIND for a provider-owned
+instance is **pre-existing**: it is the S11 `typeof` residual (`"function"`)
+reaching a different polyfill branch. S17 replaces an accidental pass with an
+exposure of that defect.
+
+#### 5. Top error buckets, LINKED, S17 (all three families pooled, 120 fail)
+
+15 `called value is not a function` (two call sites, 8 + 7) · 7 `prototype
+Expected SameValue(«null», «[object Function]»)` · 7 `Missing internal slot
+slot-years` · 5 `Object method called on null or undefined` · 5 `__closure_N()`
+null pointer · 5 `Expected a RangeError but got a undefined` · 4 `Calling as
+constructor Expected a TypeError` · 4 `Proxy get trap is not callable`.
+
+**The two buckets S16 attributed to this cause are GONE**: `required property
+'timeZone' missing` **7 → 0** and `year is required` **15 → 0** (S16 counted 4
+in one family; pooled over all three it was 15). Total fails 151 → 120, and no
+bucket grew.
+
+#### 6. Residuals of THIS family, each reduced
+
+| residual | probe | answers | should be |
+| --- | --- | --- | --- |
+| provider WRITES a consumer bag | `.tmp/s17/c2.mjs` | old value | new value |
+| provider calls a consumer method (15 rows) | `.tmp/s17/c3.mjs` | `called value is not a function` | `7` |
+| `typeof <provider instance>` | `.tmp/s17/t2.mjs` | `"function"` | `"object"` |
+| `PlainDate#add(bag)` / `#until(…, options)` | `.tmp/s17/t1.mjs` | `""` on BOTH trees | a value |
+
+**The `called value is not a function` bucket — now the LARGEST at 15 pooled
+rows — is one step from fixable.**
+After this slice `typeof o.m` inside the provider answers `"function"` — the
+reverse GET hands the consumer's closure back correctly — and the CALL still
+throws, from the `wantIsCallableGuard` in `emitDynamicCall`
+(`expressions/calls.ts` ~L4851): `__is_callable` is a module-local ladder that
+cannot recognise a foreign closure and refuses before `__apply_closure` is
+reached. A consumer closure passed as a plain ARGUMENT and called already works,
+which is what makes the guard — not the apply — the attributed terminal. The
+forward direction answered the same question with the `callableKind` terminal;
+the reverse needs its twin spliced ahead of `__is_callable`'s terminal `0`.
+
+**A reverse `methodCall` hop was built and then REMOVED.** With the guard
+throwing first it never fired in any probed shape, and an unexercised arm in a
+provider's hot terminal is not worth its global.
+
+#### 7. Two samples that must NOT move, and neither did
+
+| sample | rows | base | S17 | flips |
+| --- | --- | --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 81 | 77 pass / 4 fail | identical | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 101 | 81 pass / 20 fail | identical | **0** |
+
+Per-file status diff, not just counts.
+
+#### 8. Order preservation
+
+- **Corpus byte A/B** (42 modules × {gc, standalone} = 84 artifacts):
+  **84/84 sha256-identical.** No single-module artifact moves on either lane.
+- **Targeted byte A/B** — the LINKED PAIR, because the corpus contains none: on
+  `gc` a linked npm package produces no separate wasm provider at all (the host
+  mirror owns it), so those rows are absent on both labels; on standalone the
+  provider and all five consumers move. That is the mechanism, and it is
+  **per-linked-module rather than per-shape**: the `noCarrier` and `nullProtoBag`
+  controls move too. Stated rather than hidden — any object literal in a consumer
+  can cross, so only an escape analysis would narrow it, and it would buy bytes,
+  not answers.
+- Equivalence gate at baseline: 22 failing / 1720 passing.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S16 traps still bite; three were paid again here.
+
+- **The `test262` submodule and the quickjs artifacts are BOTH per-worktree.**
+  The submodule trap is S16's; the new half is that `.test262-cache/` must also
+  carry `quickjs-artifact-*/libquickjs.wasm` **and** the matching
+  `quickjs-eval-adapter-<hash>.wasm`. Without them the first 39 rows of the base
+  family run scored 0 pass / 38 fail with `the quickjs provider is not built` — a
+  result that looks like a catastrophic regression and is a missing file. Copying
+  the sibling worktree's `.test262-cache/` is instant.
+- **Run the two labels under the SAME background load.** Compile-budget timeouts
+  are wall-clock, so a label measured alone and a label measured beside other
+  jobs are not comparable. Both labels here ran with the same companions, and
+  every CE flip was re-run solo at 60 s on both trees.
+- **A fix that opens a previously-dead path can introduce a WRONG answer in the
+  same commit.** The null-vs-absent collapse became reachable only because the
+  bag became readable; the census, the witness and every gate were green while
+  three test262 rows silently stopped throwing. The three-family run caught it —
+  an argument for running it BEFORE writing the issue file, not after.
+
+### Artifacts
+
+`.tmp/s17fam/{pd,du,zdt}-{base,new}.tsv` (+ logs and prewarm stamps),
+`.tmp/s17fam/{mnm,mnm2}-{base,new}.tsv`, `.tmp/s17/byteab{,2}-{base,new}.tsv`,
+the censuses `.tmp/s17/c{1,2,3,4}.mjs` with their `-base`/`-new` outs, the
+real-provider reductions `.tmp/s17/{t1,t2}.mjs` with both labels' outs, the solo
+re-runs `.tmp/s17/solo-{base,new}.out`, the revert copies `.tmp/s17base/*` and
+the drivers
+`.tmp/s17/{run-fam.sh,family.mts,prewarm.mts,mnm.mts,mnm2.mts,byteab.mts,byteab2.mts,pair2.mjs,probe.mjs,solo.mts}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a3013ae2096b93c10`).
+
+### Acceptance criterion 4 — S17 update
+
+MET-for-the-sample at **232/360** (solo-corrected **233**; was 202), same three
+families, **33 `fail→pass`**, **3 `pass→fail`** whose cause is measured to be
+pre-existing and independent of this channel (base-tree control above), both
+must-not-move samples flat with 0 flips, the `gc` lane byte-identical on the
+corpus, the equivalence gate at baseline, and 0 `__temporal_*` leaks. Base and
+branch were both measured on this tree by file-copy revert. No full-corpus number
+is claimed; a corpus run remains the tech lead's to schedule.
+
+### S18 findings (2026-09-14) — the `called value is not a function` attribution was wrong again, and the real Temporal cause is a literal-vs-computed member-name split
+
+Full write-up in `plan/issues/6605-standalone-link-reverse-method-call.md`.
+
+#### 1. The hand-off attribution did not reproduce, and it took three probe sets to say why
+
+S17 handed over: "the reverse GET now hands the consumer closure back correctly,
+and the CALL still throws, from the `wantIsCallableGuard` in `emitDynamicCall`
+(`expressions/calls.ts` ~L4851) — `__is_callable` is a module-local ladder that
+cannot recognise a foreign closure." **That is not where the throw comes from.**
+
+The first probe set (`.tmp/s18/c5.mjs`) refuted it outright: a consumer closure
+obtained through the reverse GET and then called dynamically inside the provider
+answers **7**, in every shape — plain argument, bag field, array element,
+get-then-pass. If the guard refused foreign closures, none of those could work.
+
+The message has **four** emitters in `src/codegen`. Tagging each one
+(`A` `emitDynamicCall`, `B` `new-super`, `C` `resolved-callee-guard`,
+`D` `fnctor-missing-method-dispatch`) and re-running says **C**, every time, for
+every probe and for the real provider. `resolved-callee-guard.ts` is the terminal
+miss of `__extern_method_call` — the resolve-then-apply native — and not a
+callability test on a value at all.
+
+A second tag (`C-PROV` / `C-CONS`, keyed on `ctx.exportsConsumedByWasm`) split
+the bucket into two independent defects:
+
+| tag | the module that threw | what it was doing |
+| --- | --- | --- |
+| **C-PROV** | the PROVIDER | `o.m()` on a CONSUMER-owned carrier |
+| **C-CONS** | the CONSUMER | `Temporal.Duration.from(…)` on a PROVIDER-owned receiver |
+
+**Why the earlier attribution looked right.** S17's census provider contains
+`o.m()`, so the failing rows all *mention* a call — but the throw was raised one
+frame out, by the consumer's own method call INTO the provider. And the answers
+move with provider module CONTENT (the #6432 action-at-a-distance hazard):
+adding one provider-own closure to an otherwise identical provider flipped
+`f = o.m; f()` from a throw to `7` (`.tmp/s18/c6{a,b,c}.mjs`). Any single-probe
+reading of this family is unreliable; only the emitter tag was stable.
+
+#### 2. C-PROV — root cause, and the fix this slice ships
+
+`__extern_method_call`'s non-`$Object` receiver arm consults
+`boundaryObjectCallIdx ?? peerMethodCallIdx` — the JS-host boundary call and the
+CONSUMER's forward `__js2wasm_link_method_call` terminal (S2h). **A provider has
+neither**, so the arm is empty and control falls through to the terminal miss,
+which correctly throws for a method it could not resolve. The provider had no way
+to resolve it, because the only module that can is the consumer.
+
+S17 built a reverse `methodCall` hop and REMOVED it, reasoning that "with the
+guard throwing first it never fired in any probed shape". The guard that threw
+first was this one, and the hop was never placed in the arm that reaches it. The
+hop was the fix; it was removed for the wrong reason.
+
+#6605 adds it: `__js2wasm_link_reverse_method_call` plus the consumer-side
+`__js2wasm_link_local_method_call`, a fifth funcref slot on
+`__js2wasm_link_install_peer`.
+
+| probe, host-free linked pair | base | S18 |
+| --- | --- | --- |
+| provider `o.m()` on a consumer bag | TypeError | **7** |
+| the same method reading `this` | TypeError | **42** |
+| absent method (control) | TypeError | TypeError |
+| provider calling its own method (control) | 5 | 5 |
+
+Base and branch both measured on this tree by file-copy revert
+(`.tmp/s18/witness-base.out` vs `witness-new3.out`).
+
+#### 3. Two things this slice built, measured, and then reverted
+
+Both looked correct and both introduced a silent wrong value where the base tree
+threw. Neither would have been caught without running the base.
+
+- **The forward null-vs-owned fix.** The forward terminal's `ref.null.extern` is
+  THREE states: not-my-receiver, resolved-but-apply-declined, and the method
+  legitimately returned `null`. `NS.retnull()` proves the third is real — it
+  throws `called value is not a function` while `NS.retundef()` is correct
+  (`.tmp/s18/c7`). A consumer-side arm re-asked `memberGet` + `callableKind` on
+  the null path and adopted the null when the member was callable. Measured
+  (`.tmp/s18/c3-new.out`): six probes went from a TypeError to `"null"`, because
+  the apply-declined state passes that test too. **Reverted.** Fixing it properly
+  needs a provider-side "I really did run it" channel, i.e. a forward ABI
+  addition.
+- **Null-adoption in the reverse arm.** The same mistake, mirrored. The first cut
+  copied `reverseGetArmInstrs`' `callOwned` shape; `o.add(3, 4)` became `null`
+  and `this.v` became `undefined` where both had thrown
+  (`.tmp/s18/witness-new.out`). The shipped arm returns **only** a non-null
+  answer, which makes it strictly throw-reducing and never answer-changing.
+
+A third defect was found the same way and FIXED rather than reverted:
+`localMethodCall` composed `__extern_get` + `__apply_closure` by hand and did not
+bind the receiver for an object-LITERAL method — `{ v: 42, readSelf() { return
+this.v; } }` answered `NaN` through the hop and `42` in a single module
+(`.tmp/s18/c10-new.out`). A class instance bound correctly either way, so the gap
+was invisible in half the shapes. It now installs and restores `__current_this`
+around the apply, through `try`/`catch_all` + `rethrow`.
+
+#### 4. C-CONS — the real Temporal bucket, localised but NOT fixed here
+
+**This slice does not move the `called value is not a function` bucket.** The
+real-provider reduction is identical before and after, character for character
+(`.tmp/s18/r1-base.out` vs `r1-new.out`, 16 probes). Said plainly rather than
+buried: criterion 4's "the bucket must move" is **not met**.
+
+What the slice delivers instead is where the bucket actually lives. With the
+forward terminal instrumented to return a marker string on each of its resolve
+exits (`.tmp/s18/r4-inst.out`):
+
+| probe, real linked provider | answer |
+| --- | --- |
+| `Temporal.Duration.from("P0Y")` | **TypeError** |
+| `Temporal.Duration[k]("P0Y")`, `k = "from"` | **works** |
+| `const f = Temporal.Duration.from; f("P0Y")` | works |
+| `typeof Temporal.Duration.from` | `"function"` |
+| `Temporal.Duration.from({[u]: 0}).years` / `.toJSON()` | `0` / `"PT0S"` |
+| `f.call(undefined, "P0Y")` | `MC-EXIT-UNDEFGET` |
+
+The literal-name call throws while the computed-key call on the same receiver,
+the same member and the same argument answers correctly — and **no marker string
+appears on the literal path, so the forward terminal is never consulted there at
+all.** A member call written with a literal name takes a per-name dispatch path
+(the `__call_m_<name>` family the S2h comment names) that has no link-boundary
+arm; only the computed form reaches the generic `__extern_method_call` where the
+peer arm lives. That is the next slice, and it is in a third file again.
+
+`f.call` / `f.apply` on a provider-owned closure is a separate residual with its
+own evidence: the provider resolves `call` on its own closure as `undefined`, so
+`Function.prototype.call` is not reachable across the boundary.
+
+#### 5. Regression sample — two families, 120 rows each, per FILE
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact and adapter
+present. Both labels on this tree by file-copy revert. The provider binary differs
+between labels — 3,277,717 B (base) vs 3,277,842 B (new) — independent proof the
+change reached the linked artifact.
+
+| family | rows compared | base pass | S18 pass | flips | pass→fail |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 93 | **93** | 1 (CE↔fail) | **0** |
+| `built-ins/Temporal/Duration/**` | 91 (intersection) | 44 | 44 | **0** | **0** |
+
+`__temporal_*` leaks: **0** in all four TSVs.
+
+This is a REGRESSION GUARD, not an improvement measurement: the change provably
+cannot move these rows (§4), so a pass delta was never the question. It is
+reported as flat because it is flat.
+
+The one PlainDate flip is `compare/argument-plaindatetime.js`, `compile_error` on
+base and `fail` on the branch — the SAME file S17 recorded as a compile-budget
+load artifact. Re-run **solo at 60 s on both trees** it agrees exactly: `fail` on
+both, with the identical message (`TypeError: Object method called on null or
+undefined | at L24`). Counting the solo verdicts, PlainDate is 93/93 with **zero**
+flips.
+
+**The Duration base label is 91 rows, not 120, and that is a shortfall rather
+than a finding.** The base run stalled on a row that ran far past the family's
+15 s per-row budget and was stopped; the comparison is therefore over the 91-row
+intersection, which is where the "0 flips" applies. The branch label completed all
+120. Stated rather than presented as a full family.
+
+#### 6. Traps, carried forward and added to
+
+All S11–S17 traps still bite. New this slice:
+
+- **An error MESSAGE is not a call site.** `called value is not a function` has
+  four emitters, and the one everybody reaches for (`emitDynamicCall`'s
+  IsCallable guard) is not the one that fires for this family. Tagging each
+  emitter took one edit and one run and overturned an attribution that had
+  survived a whole slice. Do that FIRST, before reasoning about which guard
+  "should" be responsible.
+- **Tag the MODULE as well as the site in a linked pair.** `C` alone still
+  pointed at one file; `C-PROV` vs `C-CONS` is what split one bucket into two
+  unrelated defects, one of which was not a provider problem at all.
+- **Measure the base of your own witness before you write its assertions.** The
+  #6605 witness was first written asserting "every one of these threw on base",
+  taken from the hand-off narrative. Run against base, three of the seven had
+  never thrown, and one of the two the slice "fixed" was actually a regression
+  (a throw turned into `undefined`). One `cp` and one run; it changed what
+  shipped.
+- **Apply to your own code the standard you applied to someone else's.** The
+  forward null-adoption was rejected for collapsing a three-state answer; the
+  reverse arm shipped with the identical collapse until the same test was turned
+  on it.
+
+### Artifacts (S18)
+
+`.tmp/s18fam/{pd,du}-{base,new}.tsv` (+ logs and prewarm stamps), the censuses
+`.tmp/s18/c{5,6a,6b,6c,7,8,9,10}.mjs` with their `-base`/`-new` outs, the
+real-provider reductions `.tmp/s18/r{1,2,3,4}.mjs` with their instrumented outs,
+the witness probe `.tmp/s18/witness-probe.mts` with
+`witness-{base,new,new2,new3}.out`, the solo re-runs, the revert copies
+`.tmp/s18base/*` and the drivers
+`.tmp/s18/{run-fam.sh,family.mts,prewarm.mts,pair2.mjs,probe.mjs,solo.mts,table.mjs}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-ac05c86996312c107`).
+
+### Acceptance criterion 4 — S18 update
+
+**NOT met for this slice, and deliberately not claimed.** The
+`called value is not a function` bucket does not move (§4 — identical
+real-provider reduction before and after). What S18 delivers instead is the
+corrected attribution (the bucket is `resolved-callee-guard.ts`; it is two
+independent defects; the Temporal half is a literal-vs-computed member-name split
+whose dispatch path has no link-boundary arm) plus the C-PROV half fixed and
+witnessed. The regression sample is flat with 0 `pass→fail` and 0 `__temporal_*`
+leaks over 211 compared rows. No full-corpus number is claimed.
+
+### S19 findings (2026-09-14) — the bucket is not at the link, not in the dispatchers, and not even in `from`: it ends at the polyfill's own intrinsic registry
+
+Full write-up in
+[#6606](6606-standalone-class-static-dynamic-dispatch.md). **No compiler change
+ships this slice**, deliberately — §4.
+
+#### 1. The hand-off was wrong in every clause, for the ninth slice running
+
+S18 handed over: "a literal-named member call takes a per-name
+`__call_m_<name>` dispatch path with no link-boundary arm; only the computed
+form reaches the generic native where the peer arm lives, and the forward
+terminal is never consulted on the literal path."
+
+Measured on S18's own tip, which is this branch's base:
+
+| S18's claim | what the base tree does |
+| --- | --- |
+| literal call takes `__call_m_from_1` | the consumer WAT emits `call $__extern_method_call` **directly** (`.tmp/s19/w1-names.txt`, func 228) |
+| the forward terminal is never consulted | it IS consulted and exits through its **apply** |
+| `Temporal.Duration[k]("P0Y")` works | **`null`** — a silent wrong value |
+| `const f = Temporal.Duration.from; f("P0Y")` works | **`null`** |
+
+S18's own marker legend already said what the missing marker meant ("a thrown
+TypeError ⇒ it resolved AND applied, and `__apply_closure` answered null"); the
+prose recorded the opposite. **An absent marker is evidence about WHICH exit
+fired, never evidence that the function was not entered** — that inversion cost
+a whole slice, and it is the trap to carry forward.
+
+A synthetic linked pair refused the attribution in the first ten minutes: a
+provider-owned class whose static is called by LITERAL name across the link
+answers correctly (`"F:x"`), while the COMPUTED form answers `null`
+(`.tmp/s19/c1-base.out`) — the exact inverse of the hand-off.
+
+#### 2. The chain, instrumented layer by layer
+
+Seven separate instrumented builds of the real linked provider, fresh
+`JS2WASM_TEMPORAL_CACHE` per label, `cacheHit=false` on every prewarm:
+
+| layer | marker | verdict |
+| --- | --- | --- |
+| consumer `__extern_method_call` `$Object` arm | `MC-OBJARM` | not taken |
+| provider forward terminal, resolve exits | `MC-NULLGET` / `MC-UNDEFGET` | neither — the member RESOLVED |
+| provider forward terminal, apply exit | `MC-APPLYNULL` | **fires** |
+| provider `__apply_closure` | `AC-NULLRES-1` | **fires** — the arity-1 arm ran and returned null |
+| provider `__call_fn_method_1` ladder terminal | `MD-MISS-1` | not reached — an arm matched |
+| provider native-proto front arm (`S19_NO_NP`) | — | not the culprit |
+
+Every dispatch layer is correct. **The callee returns null on its own.**
+
+#### 3. Below the dispatch — one module, no link, no consumer
+
+A diagnostic injected into the polyfill's frozen `Temporal` namespace literal
+lets the provider answer questions about itself (`.tmp/s19/diag3.out`):
+
+| probe, provider-internal | answer |
+| --- | --- |
+| `Duration.from("P0Y")` | **`null`** |
+| `sn("P0Y")` — the entire body of `Duration.from` | **`null`** (`=== null` is `true`) |
+| `Ye.exec("P0Y")` | a 12-element match — the parse works |
+| `Ae("P0Y")` / `lt("P0Y")` | `false` / `false` — `sn` takes its string branch |
+| `new (ce("%Temporal.Duration%"))(1)` `.toJSON()` | **`invalid receiver: method called with the wrong type of this-object`** |
+| `new Duration(1).toJSON()` | `P1Y` — the real class is fine |
+| the exact `iife + destructure + captured-const new` shape `sn` uses | correct, 7/7 (`.tmp/s19/c6-base.out`) |
+
+So the bucket ends at **`ce()`, the polyfill's intrinsic registry**: `new` on the
+value it returns for `%Temporal.Duration%` yields an object that fails its own
+brand check. Single-module, standalone, several layers below the link. That is
+the next slice and the one that moves rows.
+
+#### 4. Why nothing was changed, said plainly
+
+Criterion 4 asks the `called value is not a function` bucket to move. **It does
+not move this slice, and no link-side change could move it** — the boundary
+already resolves and already applies; the applied callee answers null. Three
+independent single-module defects were found on the way (§5), each real, none on
+the failing rows' critical path. Shipping a codegen change into the hottest path
+in the compiler, under a hard "0 legitimate `pass→fail`" bar, that provably
+cannot move the bucket it is measured against, is not worth the regression risk.
+
+**No family measurement is reported and none was needed.** The branch's source
+tree is byte-identical to its base — the diff touches nothing outside
+`plan/issues/` — so there is provably nothing to measure, and a run quoted here
+would be attribution dressed as measurement. The corpus byte A/B and the
+equivalence gate are flat for the same reason.
+
+#### 5. Three reductions handed forward, each ~10 lines, one standalone module
+
+- **A — the receiver is passed as argument 0.** `C[k]("A")` with a
+  compile-time-foldable key on a class object emits
+  `global.get <class singleton>; call $C_one` — the class lands in the first
+  formal and the real arguments shift right. `C[k2]("A","B")` answers
+  `two:function () { [native code] },A`. A silent wrong answer. Visible in the
+  real provider as `Temporal.PlainDate[k]("1976-11-18")` →
+  `Options parameter must be an object, not string`.
+- **B — the call emits nothing.** `function callDyn(o,k,a){return o[k](a);}`
+  compiles to `ref.null extern; return`.
+- **C — a class-derived method value fails every receiver-bearing apply.**
+  `f("A")` and `Reflect.apply(f,C,["A"])` are correct; `b.g("A")` answers
+  `null` and `f.call(C,"A")` / `f.apply(C,["A"])` throw
+  `called value is not a function`. A plain function value is correct in all
+  five shapes. This retires #6605's residual 2 as a boundary property — it
+  reproduces with no link at all.
+
+#### 6. Traps, carried forward and added to
+
+All S11–S18 traps still bite. New:
+
+- **An absent marker says WHICH EXIT fired, not that the function was skipped.**
+  §1. Put a marker on the SUCCESS path too, or the negative space is
+  unreadable.
+- **`typeof <call>` hides a null.** S18 read `typeof Temporal.Duration[k](…)`
+  as "works"; the value was `null` and `typeof null` is `"object"`. Stringify
+  the value, never its `typeof`, when the question is whether a call worked.
+- **Ask the PROVIDER about itself before blaming the boundary.** Injecting one
+  function into the polyfill's namespace literal took ten minutes and moved the
+  attribution four layers. Three consecutive slices blamed the link for a
+  defect that reproduces in one module.
+- **A reduction that disagrees with the brief is the finding.** The synthetic
+  pair refuted the hand-off before any compiler file was opened; everything
+  after that was confirmation.
+
+### Artifacts (S19)
+
+`.tmp/s19/` and `.tmp/s19base/` in
+`/home/user/js2/.claude/worktrees/agent-a93eeeb2d60f16ed8`: censuses `c1`–`c6`
+with their `-base` outs, the real-provider reductions `r1-base.out` and
+`r1-inst{1,2,3,4,5}.out`, the provider-internal diagnostics `diag{1,2,3}.out`,
+the WAT dumps `w1-names.txt` / `sw-{opaque,cmp,c4,c4b}.txt`, and the drivers
+`{single,swat,watnames,diag,probe,pair2}.mjs`.
+
+### Acceptance criterion 4 — S19 update
+
+**NOT met, and deliberately not claimed.** The
+`called value is not a function` bucket does not move. What S19 delivers is the
+corrected attribution — the bucket is not at the link, not in the dispatchers,
+and not in `Duration.from`; it ends at `ce("%Temporal.Duration%")` inside the
+provider — plus three single-module reductions and a named next target. No
+source file changed, so no conformance number is claimed in either direction.
+
+### S20 findings (2026-09-14) — the brand check was the symptom; no instance was ever created, and the arguments were never evaluated
+
+Full write-up in
+[#6607](6607-standalone-dynamic-new-call-callee.md). **A container restart
+killed the first S20 lane mid-slice**; what survived was an uncommitted 54-line
+change to `src/codegen/expressions/new-super.ts` plus its probe outputs in
+`.tmp/s20/`. Those were salvaged, re-verified from scratch on a fresh branch
+(`issue-5383-standalone-temporal-s20b`, based on S19's tip), and everything
+below was re-measured here — no number is inherited from the dead lane's run.
+
+#### 1. The hand-off's mechanism was wrong; its symptom was real
+
+S20's brief read S19's ending state — `new (ce("%Temporal.Duration%"))(1)`
+producing an object that fails its own class's brand check — as an instance
+IDENTITY defect, and named the candidates: prototype identity, a WeakMap keyed
+on the struct vs a boxed carrier, `fnctor-constructor-identity.ts`.
+
+**No instance existed to have an identity.** `compileNewExpression` reaches the
+dynamic-`new` dispatch for a bare IDENTIFIER callee, and (JS-host lane only,
+#4616) for a MEMBER-ACCESS callee. A **CALL-expression** callee matched neither,
+fell through to the `__new___unknown` host import — which exists in no lane and
+cannot exist in standalone — and emitted a bare `ref.null.extern`.
+
+Two consequences, and the second is the one no reading of the downstream symptom
+would have predicted: the `new` evaluates to **null**, and because the legacy arm
+returns **before** the argument loop, **the argument expressions are never
+evaluated at all**. The polyfill then calls a prototype method on that null and
+its internal-slot lookup reports the wrong-receiver message, several layers away.
+
+The clause of the hand-off that WAS right, and is a different defect: see §4.
+
+#### 2. Reduction — 16 probes, one standalone module, no polyfill, no link
+
+`.tmp/s20/c6.mjs` via `.tmp/s20/single.mjs`, one compiled module per probe. The
+prelude is the registry shape the polyfill actually has — a bare `{}`, so `ce`
+returns `any`.
+
+| probe | base | S20 |
+| --- | --- | --- |
+| `new (ce("%C%"))(1).tag` | `undefined` | **`T1`** |
+| `new (ce("%D%"))(1, 2).tag` | `undefined` | **`D12`** |
+| arg order, `new (ce("%D%"))(mark("a"), mark("b"))` | `/undefined` — **no effects ran** | **`ab/Dab`** |
+| literal / named-const spread | `undefined` | **`D12`** |
+| zero args · nested · 3-iteration loop | `undefined` | **`Tundefined` · `TT1` · `T0T1T2`** |
+| method-call callee `new (({g: ce}).g("%C%"))(1)` | `undefined` | **`T1`** |
+| callee side effect, once | `""` | **`k`** |
+| 10 args (Duration's real arity) | `undefined` | **`D12`** |
+| null / number / plain-fn / missing-key callee (controls) | `undefined` | `undefined` |
+
+The four controls are unchanged **by design**: `plainNullNoMatchBase` pins this
+arm's no-match outcome to the pre-existing `ref.null.extern`, so a
+non-constructor callee has no new outcome to regress against.
+
+#### 3. Provider-internal, the real polyfill, one module
+
+Diagnostic injected into the frozen `Temporal` namespace literal
+(`.tmp/s20/diag2-{base,new}.out`), fresh cache, `cacheHit=false`:
+
+| probe, provider-internal | base | S20 |
+| --- | --- | --- |
+| `Duration.from("P0Y") === null` | **`true`** | **`false`** |
+| `Duration.from("P1Y").years` | throws (null) | **`1`** |
+| `Duration.from("P1Y2M")` → months / years / sign | throws | **`2` / `1` / `1`** |
+| `Duration.from("P1Y").blank` | throws | **`false`** |
+| `Duration.from(Duration.from("P1Y")).years` | throws | **`1`** |
+| `new (ce("%Temporal.Duration%"))(1).years` | `undefined` | **`1`** |
+| `PlainDate.from("1976-11-18")` → y-m-d | correct | correct (control) |
+
+#### 4. What is still broken, and it is NOT this
+
+`Duration.from("P1Y").toJSON()` still throws *invalid receiver*. The receiver is
+NOT the problem — a probe method installed on `Duration.prototype` and called on
+that very object reports `this === r`, `slots: yes`, `brand: true`
+(`.tmp/s20/diag4-new.out`). The method being **found** is wrong.
+
+`.tmp/s20/c9.mjs` isolates it in ten lines: three classes each declaring
+`toJSON`, and a method call by name on a statically-unknown receiver resolves to
+the **LAST-declared** class that declares the name, every time. `uniqB()` called
+on an `A` instance returns `"UB"` — a method the object does not have. It is a
+per-name ladder with **no runtime class test**.
+
+**This is pre-existing and untouched by S20**: the same probe through an
+`any`-typed parameter holding a *statically* constructed instance gives the
+identical wrong answer on base (`.tmp/s20/c9-base.out`, rows 11–14). It is why
+`toString()` on a Temporal object reports *toString() radix argument must be
+between 2 and 36* — `Number.prototype.toString`. It is the next slice, and the
+first one where the fix is in the hottest dispatch path in the compiler.
+
+Two smaller residuals recorded on the way, both identical on base:
+`Object.getPrototypeOf(x) === C.prototype` is **false** for a dynamic-`new`
+instance while `instanceof` and `.constructor` are both correct; and
+`new WeakMap().set(x, 9)` with such an `x` emits **invalid Wasm**
+(`call[1] expected type (ref null 6), found call of type anyref`).
+
+#### 5. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact + adapter
+present. Both labels on this tree by file-copy revert of `new-super.ts`. The
+provider binary differs between labels — **3,277,842 B (base) vs 3,291,080 B
+(S20)** — independent proof the change reached the linked artifact.
+
+| family | rows | base pass | S20 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 93 | 93 | 0 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 56 | **64** | 8 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 84 | **88** | 4 | **0** | 0 |
+| total | 360 | 233 | **245** | **12** | **0** | **0** |
+
+**Six of the eight Duration gains are the `called value is not a function`
+bucket** — `from/argument-string.js`, `from/lower-limit.js`,
+`from/string-with-skipped-units.js`, `from/argument-string-fractional-precision.js`,
+`from/argument-string-fractional-units-rounding-mode.js`,
+`from/argument-string-negative-fractional-units.js`. The other two, and three of
+the four ZonedDateTime gains, are `Missing internal slot slot-years`. This is the
+bucket S17–S19 chased through four wrong attributions; it moves.
+
+**Four rows flipped between `compile_error` and a status, in both directions.**
+Every one is a compile-budget artifact of the 15 s per-row cap, not a status
+change. Re-run **solo at 60 s on both trees** they agree exactly, row for row
+(`.tmp/s20fam/solo-{base,new}.tsv`):
+
+| row | in-sample base | in-sample S20 | solo base | solo S20 |
+| --- | --- | --- | --- | --- |
+| `Duration/milliseconds-undefined.js` | pass | compile_error (15.1 s) | **pass** (18.4 s) | **pass** (18.5 s) |
+| `Duration/months-undefined.js` | pass | compile_error (15.6 s) | **pass** (14.7 s) | **pass** (14.9 s) |
+| `ZonedDateTime/prototype/add/overflow.js` | pass | compile_error (15.2 s) | **pass** (14.9 s) | **pass** (14.3 s) |
+| `Duration/compare/order-of-operations.js` | compile_error | fail | **fail** (16.7 s) | **fail** (15.8 s), identical message |
+
+The table above already counts the solo verdicts. Said plainly rather than
+buried: **this change does make consumer compiles measurably slower** — three
+rows that sat just under the cap now sit just over it under parallel load. The
+margin is sub-second on rows already at 14–15 s, and it is why
+`plainNullNoMatchBase` exists (§7).
+
+#### 6. Must-not-move samples — 286 rows, per FILE, 0 flips
+
+`Object/keys` + `expressions/object` + `Reflect/{get,has}` (140 rows) and
+`Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` (146 rows),
+diffed per file: **0 flips**, both labels on this tree.
+
+Corpus byte A/B — 42 modules × {gc, standalone}: **0 artifacts move on either
+lane**, including `gc`. That is the expected result and also a weak probe: the
+corpus contains no `new (<call>)(…)` in a host-free module, so the positive
+control for "the change reaches an artifact" is the provider byte delta in §5,
+not the corpus. Equivalence gate at baseline: **22 failing / 1720 passing**.
+
+#### 7. The `plainNullNoMatchBase` parameter, measured rather than argued
+
+The identifier arm's standalone no-match base inlines a TypedArray construct
+plus an `IsConstructor` guard (#2872). A value out of an intrinsic registry can
+never be a `$__ta_ctor`, so for this shape that arm could only ever decline —
+and it is not free. Three prewarm builds of the real provider, fresh cache,
+`cacheHit=false` on each:
+
+| provider build | bytes | vs base |
+| --- | --- | --- |
+| base (no call-callee arm) | 3,277,842 | — |
+| S20, pinned `ref.null.extern` no-match base | 3,291,080 | +13,238 (+0.40 %) |
+| S20, TypedArray no-match base | 3,435,885 | +158,043 (+4.8 %) |
+
+~145 KB in an artifact that links into **every** consumer compile, to serve a
+shape that cannot reach it. The parameter is the difference between the two.
+
+#### 8. Gates
+
+`typecheck`, `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:issue-ids:against-main`, `biome` (changed files), `update-issues --check`
+— all green. Two **inherited** reds, both verified present with the branch's own
+change reverted:
+
+- `check:compiler-boundaries` → `inventory-valid-architecture-incomplete`
+  (`src/ir/program/errors.ts`), as handed over.
+- `LOC_GATE_BASE=origin/main` LOC/func gates fail on **`src/runtime.ts`**
+  (19,822 vs a 19,601 ceiling; `buildImports` 308 > 300). S20's own commits
+  touch two files and neither is `runtime.ts` — the growth arrived with the
+  S12–S17 merge commits and current `origin/main` (14 commits ahead) no longer
+  carries it. It resolves when the stack merges `origin/main`; that merge was
+  deliberately NOT done here because it would have invalidated every base
+  measurement above.
+
+The issue id **#6607** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6607 is unassigned (read origin/issue-assignments)`) and is
+free on `origin/main` and in every local worktree. The claim WRITE could not be
+taken: `claim-issue.mjs` exits **5** after every retry — heavy contention on the
+ref, nothing written. GitHub pushes return 403 for all lanes today, so no branch
+or PR exists yet either.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S19 traps still bite. New:
+
+- **A brand-check failure is not evidence that an instance exists.** Four
+  candidate mechanisms in the hand-off all presumed one did. The ten-line
+  reduction — a class in a plain object registry, fetched by key, `new`-ed —
+  answered `undefined` on the FIRST run and none of the four were reachable.
+  Reduce before choosing between mechanisms, not after.
+- **Check whether the ARGUMENTS ran.** The null was visible; the dropped
+  argument evaluation was not, and it is the half a refactor will silently
+  reintroduce. One `effects += x` in the probe made it visible.
+- **A unique method name is a different test from a colliding one.** The
+  prototype probe that proved the receiver was correct used a name only one
+  class declared, which is exactly why it passed — and for one run that looked
+  like "receiver fine, mystery elsewhere". Naming the probe `toJSON` would have
+  found §4 immediately.
+- **Verify the number in the comment you are shipping.** The salvaged patch
+  justified `plainNullNoMatchBase` with a byte figure from a run that no longer
+  existed. Re-measuring it cost one 72 s provider build and turned an inherited
+  claim into §7.
+- **A commit survives a container restart; a working tree does not.** The dead
+  lane had a correct, complete fix and zero commits. Recovering it cost an hour
+  of re-derivation that a 30-second WIP commit would have made free.
+
+### Artifacts (S20)
+
+`.tmp/s20/` and `.tmp/s20base/` in
+`/home/user/js2/.claude/worktrees/agent-ab770147db3a03c0f`: the censuses
+`c6`–`c9` with their `-base`/`-new` outs, the provider-internal diagnostics
+`diag2`–`diag4` with `-base`/`-new` outs, `test-{base,new}.out` (the witness file
+run on both trees), `corpus-{base,new}.jsonl`, the revert copies
+`new-super.{base,new}.ts` and the drivers
+`{single.mjs,family.mts,prewarm.mts,fam.sh,solo.mts,solo.sh,mnm.sh,flips.mjs,corpus.mts,waitfor.sh}`;
+the samples in `.tmp/s20fam/` and `.tmp/s20mnm/`.
+
+### Acceptance criterion 4 — S20 update
+
+**MET.** The `called value is not a function` / `Duration.from` bucket moves: six
+of those rows go `fail → pass`, plus six more on `Missing internal slot`, for
+**233 → 245** over the 360-row three-family sample, with **0 legitimate
+`pass→fail`**, **0 `__temporal_*` leaks**, 286 must-not-move rows flat per file,
+both corpus lanes byte-identical and the equivalence gate at baseline.
+
+### S21 findings (2026-09-14) — the ladder DID have a class test; it was `ref.test`, and `ref.test` is structural
+
+Full write-up in
+[#6608](6608-standalone-per-name-method-ladder-no-class-test.md). Branch
+`issue-5383-standalone-temporal-s21`, based on S20b's tip `2e36ca346a`. Every
+number below was measured on this tree, both labels, by file-copy revert of the
+three changed files (`.tmp/s21base/`); nothing is inherited from S20's run.
+
+#### 1. The hand-off's diagnosis was right about WHERE and wrong about WHAT
+
+S20 handed over "a per-name ladder with **no runtime class test**; add a
+`ref.test` per declaring class". The ladder already emits one `ref.test` per
+declaring class, and has since #2151. **`ref.test $C` is not a class test.** It
+is a *shape* test: WasmGC canonicalizes struct types structurally, field NAMES
+do not exist in wasm, and the three probe classes — which keep their state in a
+`WeakMap` and therefore have no fields at all beyond the compiler's own
+`__tag` — are ONE runtime type. Every arm claims every instance; the ladder's
+assembly order then decides which body runs.
+
+The compiler's own registry does keep them apart (`__call_m_toJSON_0 entries:
+A#55 | B#59 | E#63`, with distinct tags 0/1/2), which is exactly why reading
+the emitter does not show the defect. Canonicalization happens below it.
+
+Two ladders, two different wrong answers, and the second was not in the
+hand-off's model at all:
+
+| ladder | assembly | wrong answer |
+| --- | --- | --- |
+| `__call_m_<name>_<arity>` (closed-method dispatch, fixed + vararg) | later arms wrap outermost | the **LAST** declarer |
+| `__call_toString` / `__call_valueOf` (ToPrimitive) | first arm that matches | the **FIRST** declarer |
+
+That is why the hand-off's two symptoms read as unrelated: `toJSON` picked the
+last declarer (E), `toString` picked the first (A, and
+`Number.prototype.toString` in the real provider). Same defect, opposite
+direction, because the two ladders are built in opposite orders.
+
+#### 2. It is a re-run of #4618, which fixed exactly this — for other ladders
+
+#4618 hit the same canonicalization on the JS-host class-member bridge
+(React's repeated `class Foo` declarations running a later sibling's
+`UNSAFE_componentWillMount`) and introduced a `__tag` guard. That guard was
+written as a **local helper inside `index.ts`, twice**, and applied to the two
+host ladders only. The standalone any-receiver ladder and the ToPrimitive
+ladder never got it. S21 moves the helper to `src/codegen/class-arm-tag-guard.ts`
+(index.ts **net −95 lines**) and applies it to both.
+
+The guard declines — emitting the caller's previous two instructions, so the
+bytes do not move — unless another emitted struct shares this one's layout.
+That is the byte-preservation property the hand-off asked for, and it is a
+property of the guard rather than of a flag.
+
+#### 3. Reduction — one standalone module, no polyfill, no link
+
+`.tmp/s21/c9.mjs` (S20's, re-run), `c10.mjs`, `c11.mjs` via `.tmp/s21/single.mjs`.
+
+| probe | base | S21 |
+| --- | --- | --- |
+| `f(new A(1))`, `f(new B(2))`, `f(new E(3))` → `o.toJSON()`, fieldless classes | `!invalid receiver E` ×2, `EJ3` | **`AJ1` / `BJ2` / `EJ3`** |
+| same through a dynamic-`new` receiver | `!invalid receiver E` ×2 | **`AJ1` / `BJ2`** |
+| `x.uniqB()` on an `A` — a member A does NOT declare | **`UB`** (B's body ran) | **throws** |
+| same-shape classes, DIFFERENT field names (`{p}` / `{q}` / `{r}`) | last declarer's body, wrong field read | **`GA1` / `GB2` / `GC3`** |
+| `o.toString()` on `A` / `B` (ToPrimitive ladder) | `AS1` / `!invalid receiver A` | **`AS1` / `BS2`** |
+| DISTINCT-layout classes (1 / 2 / 3 fields) — control | already correct | identical |
+| number `toString()`, string `toUpperCase()`, array `join()`, Map `get()`, `valueOf` via `+` — controls | — | identical, base and S21 (`c11-{base,new}.out`) |
+| subclass inherits parent's method / subclass overrides — controls | `PM/PM`, `PM/QM` | identical |
+
+#### 4. Provider-internal, the real polyfill, linked, fresh cache (`cacheHit=false`)
+
+`.tmp/s21/diag-{base,new}.out` — the S20 diagnostic injected into the frozen
+`Temporal` namespace, both labels built on this tree:
+
+| probe | base | S21 |
+| --- | --- | --- |
+| `Duration.from("P1Y").toJSON()` | **`!invalid receiver`** | **`P1Y`** |
+| `Duration.from("P1Y").toString()` | **`!toString() radix argument must be between 2 and 36`** | **`P1Y`** |
+| `"" + Duration.from("P1Y")` | `!…radix…` | **`P1Y`** |
+| `Duration.from({years:1})` → years / toJSON | `!invalid receiver` | **`1` / `P1Y`** |
+| `new (ce("%Temporal.Duration%"))(1).toJSON()` (inline and via a const) | `!invalid receiver` ×2 | **`P1Y`** ×2 |
+| `PlainDate.from("1976-11-18").toJSON()` | `!invalid receiver` | **`1976-11-18`** |
+| `new Duration(1)` toJSON/toString (static `new` — control) | `P1Y` / `P1Y` | identical |
+| `Object.getPrototypeOf(r) === Duration.prototype` | `false` | `false` (#6607 residual 2, unchanged) |
+
+Both hand-off symptom texts are present on base and **absent** on S21.
+
+#### 5. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact + adapter
+present, both labels on this tree. Provider bytes **3,291,080 (base) vs
+3,302,429 (S21)**, +11,349 (+0.34 %) — the positive control that the change
+reaches the linked artifact (the corpus A/B cannot provide one, §7).
+
+| family | rows | base pass | S21 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 92 | **94** | 2 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 64 | **65** | 1 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 88 | **90** | 2 | **0** | 0 |
+| total | 360 | 244 | **249** | **5** | **0** | **0** |
+
+The five gains are all `…-propertybag-{calendar,timezone}-wrong-type` rows
+(PlainDate `compare`/`from`, Duration `compare/relativeTo`, ZonedDateTime
+`equals` ×2) — the shape where the polyfill reads a bag field and dispatches a
+method on a value whose class is not static.
+
+**Nine rows flipped between `compile_error` and a status, in both directions.**
+Every one is a compile-budget artifact of the 15 s per-row cap. Re-run **solo at
+60 s on both trees** they agree exactly, row for row, with identical error
+messages (`.tmp/s21fam/solo-{base,new}.tsv`): six pass on both, three fail on
+both (`PlainDate/from/argument-plaindatetime.js`,
+`PlainDate/from/overflow-wrong-type.js`,
+`ZonedDateTime/prototype/add/constrain-when-ambiguous-result.js`). The table
+above already counts the solo verdicts on BOTH labels, which is why the base
+column reads 92/64/88 rather than the in-sample 89/62/87.
+
+Said plainly: this slice does **not** make consumer compiles slower — the S21
+rows ran 1–3 s FASTER than base on the same files under the same load (a
+narrower arm short-circuits earlier), which is why the CE drift moved mostly in
+the improving direction. That is an observation from two runs, not a benchmark.
+
+The `invalid receiver` text appears once on base and **zero** times on S21
+across all 360 rows; `radix` appears in neither — in the sample both are
+upstream of the row's reported error, which is why the provider-internal table
+in §4 is the load-bearing evidence and the row counts are not.
+
+#### 6. Must-not-move samples — 406 rows, per FILE, 0 flips
+
+Both labels on this tree, diffed per file:
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 140 | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 146 | **0** |
+| `language/expressions/call/**` + `built-ins/Object/prototype/**` | 120 | **0** |
+
+The third sample was added for this slice because it exercises method dispatch
+itself rather than the property paths the previous two cover.
+
+#### 7. Order preservation
+
+Corpus byte A/B — 42 modules × {gc, standalone}, 84 artifacts: **0 move on
+either lane.** Expected, and a WEAK probe: the corpus has no module with two
+same-layout classes declaring one name reached through an unknown receiver, so
+it cannot show the change arriving anywhere. The provider byte delta in §5 is
+the positive control. Equivalence gate at baseline: **22 failing / 1720
+passing**.
+
+#### 8. Gates
+
+`typecheck`, `lint`, `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:issue-ids:against-main`,
+`update-issues --check`, prettier — all green. The two **inherited** reds
+handed over by S20 reproduce unchanged and are not from this slice:
+`check:compiler-boundaries` → `inventory-valid-architecture-incomplete`, and
+under `LOC_GATE_BASE=origin/main` the `src/runtime.ts` ceiling (19,822 vs
+19,601) plus `buildImports` 308 > 300.
+
+The id **#6608** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6608 is unassigned (read origin/issue-assignments)`). The
+allocate WRITE could not be taken: `--allocate` exits **6** (`open-PR id scan
+FAILED … gh offline`), nothing reserved. GitHub pushes return 403 for every
+lane today, so there is no branch or PR yet.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S20 traps still bite. New:
+
+- **A `ref.test`-per-class ladder is not a class dispatch.** Two readings —
+  S20's hand-off, and the first reading of this slice — looked at a ladder that
+  emits `ref.test $A / $B / $E` and concluded the class test was missing
+  elsewhere. The test is there and it is the wrong test. The one-minute
+  discriminator: give the classes DIFFERENT field shapes and watch the bug
+  disappear (`c10.mjs`, rows 04–06 correct while 01–03 are wrong).
+- **The same defect can point in opposite directions in one program.** `toJSON`
+  answered the LAST declarer and `toString` the FIRST, which reads as two
+  independent bugs and cost a detour into the extern-class resolver. Ladder
+  ORDER, not cause, is what differs.
+- **Look for the fix that already exists.** #4618 solved this, named the
+  mechanism correctly in its own comment, and left the helper private in
+  `index.ts`. Grepping for the *phenomenon* ("canonicaliz") rather than the
+  *symptom* found it in one search and turned a design question into a move.
+- **`biome check --write` is NOT this repo's formatter.** `npm run format` is
+  prettier; `npm run lint` is `biome lint` only. One `biome check --write` on
+  the changed files reflowed `index.ts` to 80 columns — a 6,000-line diff that
+  looked like a merge accident. Recovered from the `.tmp` revert copies in
+  seconds, *because they were taken at the first edit*.
+- **A per-row 15 s cap invents status flips in BOTH directions.** Nine of the
+  fourteen apparent flips here were budget artifacts; re-running them solo at
+  60 s on both trees is not bookkeeping, it is the difference between
+  "+5, 0 regressions" and "+11 with three regressions".
+
+### Artifacts (S21)
+
+`.tmp/s21/`, `.tmp/s21base/`, `.tmp/s21fam/`, `.tmp/s21mnm/` in
+`/home/user/js2/.claude/worktrees/agent-ad35392e138689617`: the probes
+`c9`–`c11` with their `-base`/`-new` outs, `diag-{base,new}.out`, the corpus
+hashes `corpus-{base,new}.jsonl`, the per-chunk family TSVs
+`{pd,du,zdt}-{base,new}.p{0,60}.tsv`, `solo-{base,new}.tsv`, the ten
+must-not-move TSVs per label, the revert copies in `.tmp/s21base/`, and the
+drivers `{single,dump,diag}.mjs`, `{famdiff,mnmdiff,buckets}.py`,
+`{fam,mnm,solo}.sh`, `{family,solo,prewarm,corpus}.mts`.
+
+### Acceptance criterion 4 — S21 update
+
+**MET.** The wrong-class-method bucket moves: provider-internal,
+`Duration.from("P1Y").toJSON()` and `.toString()` go from *invalid receiver* /
+*radix argument must be between 2 and 36* to `P1Y`, and seven of the nineteen
+provider probes flip from throwing to a correct answer. Over the 360-row
+three-family sample that is **244 → 249**, with **0 legitimate `pass→fail`**,
+**0 `__temporal_*` leaks**, **406** must-not-move rows flat per file across
+three samples, both corpus lanes byte-identical and the equivalence gate at
+baseline.
+
+### Next top bucket after S21
+
+With the wrong-class-method bucket retired, the residuals the S21 sample leaves
+are, in order: `Test262Error: prototype Expected SameValue(«null», «[object
+Function]»)` (7 rows across two line numbers — a prototype-descriptor read),
+`TypeError: Object method called on null or undefined` (5), `Calling as
+constructor … no TypeError thrown` (4), and the three PlainDate/ZonedDateTime
+`compile_error` rows that survive a 60 s solo budget. The two structural
+residuals named by #6608 — `__call_@@toPrimitive`'s ladder (same defect, its
+entries carry no struct name) and same-shaped OBJECT LITERALS (no `__tag` to
+test) — are unmeasured in this sample and are the cheapest next codegen slice.
+
+#### 8b. One gate red was NOT inherited, and is fixed here
+
+`check:compiler-boundaries` reported the new module as `unclassified-module` /
+`unclassified-target` — a NEW red, caused by this slice, and easy to wave
+through as "the boundaries gate was already red". It is not the same red.
+`scripts/compiler-boundaries.json` now classifies
+`src/codegen/class-arm-tag-guard.ts` with the entry of
+`src/codegen/class-proto-lookup.ts`, the sibling whose mechanism it
+generalizes, and the gate is back to the inherited
+`inventory-valid-architecture-incomplete` with `inventoryValid: true`.
+
+#### 10. #6606 is NOT this ladder — measured, not assumed
+
+The hand-off asked whether S19's reduction A (`C[k]("A","B")` with a foldable
+key shifting its arguments, #6606) is the same defect. It is not.
+`.tmp/s21/c12-{base,new}.out`, seven probes, both labels on this tree: the
+STATIC computed-key rows are **identical** on base and S21 — still
+`"s2:function () { [native code] },A"`, i.e. the callee value arriving as
+argument 0 — for both `C[k2](…)` and the literal-key `C["s2"](…)`, and for a
+second class. Exactly one row moved, `o.m2("A","B")` through an `any`-typed
+parameter, which is this slice's ladder. #6606 is a separate static
+computed-member CALL lowering and keeps its own slice.
+
+### S22 findings (2026-09-14) — the bucket was not a descriptor read; it was `Object.getPrototypeOf` of a FUNCTION, and the answer was `null`
+
+Full write-up in
+[#6609](6609-standalone-dynamic-callable-getprototypeof.md). Branch
+`issue-5383-standalone-temporal-s22`, based on S21's FINAL tip `ebfe5aa8de`.
+Every number below was measured on this tree, both labels, by file-copy revert
+of the two changed files (`.tmp/s22base/`); nothing is inherited from S21's run
+except the S21 row itself, which this slice's base run REPRODUCES exactly
+(249/360 — see §5).
+
+#### 1. The hand-off named the wrong assertion, and therefore the wrong mechanism
+
+The brief described the 7 rows as `prop-desc`/`verifyProperty` rows:
+"`Object.getOwnPropertyDescriptor(Temporal.X, "prototype")` … the S11-era
+`gOPD(K, "prototype")` residual", with `"prototype" in K` and the `constructor`
+back-link as the two suspects. **None of that is in these files.** All seven are
+`built-ins/Temporal/*/builtin.js`, and their failing line is the THIRD
+assertion:
+
+```js
+assert.sameValue(Object.getPrototypeOf(Temporal.PlainDate.compare),
+  Function.prototype, "prototype");
+```
+
+The message in the bucket name is that assertion's third argument. The two the
+brief predicted are the FOURTH assertion (`hasOwnProperty("prototype")`, which
+**passes**) and nothing at all. Measured on base
+(`.tmp/s22/link.mjs`, real provider, linked, fresh cache):
+`isExtensible` → `true`, `Object.prototype.toString.call` → `[object Function]`,
+`hasOwnProperty("prototype")` → `false`. Three of the four assertions were
+already right; only `getPrototypeOf` answered `null`.
+
+The one-minute discriminator was reading the error's VALUES rather than its
+text: «null» vs «[object Function]». A `hasOwnProperty` assertion can only
+report «true»/«false», so it could not have been the failing one.
+
+#### 2. Root cause — the callable arm is compile-time-only
+
+`object-get-prototype-of.ts` answers `Function` when `ctx.oracle.signatureOf`
+proves the argument callable. Across a link every namespace member is `any`, so
+there is no signature, and the query fell to the native `__getPrototypeOf` —
+whose `$proto` walk decodes `$Object` receivers only. A closure carrier is not
+one; the walk hit its terminal and returned `ref.null.extern`.
+
+Fix: one runtime arm on the fallback path, standalone/WASI only —
+`__is_callable(v) ? Function.prototype : __getPrototypeOf(v)`, with
+`Function.prototype` compiled as the EXPRESSION so its identity is the same
+object the static arm and the test's right-hand side both read.
+
+**`__is_callable`, not `__typeof_function`** — the difference is the whole
+safety argument. The boundary's `callable_kind` sets bit 1 ([[Construct]]) for a
+provider-owned INSTANCE as well, which is exactly why `typeof <provider
+instance>` still answers `"function"` (the standing residual). `typeof`'s
+predicate masks `& 3` and would have handed every Temporal instance
+`%Function.prototype%`; `__is_callable` masks `& 1`. Verified rather than
+assumed: `link.mjs` row 19 (`gPO(PlainDate.from(…)) === null`) reads `true` on
+both trees.
+
+#### 3. Reduction — one standalone module, no polyfill, no link
+
+`.tmp/s22/{c1,c2,c3}.mjs` via `.tmp/s22/single.mjs`.
+
+| probe | base | S22 |
+| --- | --- | --- |
+| `gPO(f)` through an `any` param, `f` a function decl | **`null`** | **`Function.prototype`** |
+| `gPO(C.prototype.m)` through an `any` param | `false` | **`true`** |
+| `gPO(registry["%m%"])` (dynamic lookup) | `false` (`null`) | **`true`** |
+| `gPO(<arrow>)`, `gPO(<fn expr>)`, `gPO(C.s)`, `gPO(lit.m)`, `gPO(Math.max)` — static arms | already `true` | identical |
+| `gPO({})`, `gPO([])`, `gPO(new C())` — STATIC receivers | `true` | identical |
+| array / string / number / Map / instance through an `any` param — 10 controls | `null` | identical (`c3-{base,new}.out`) |
+| `gPO(<top-level fn DECL>) === Function.prototype` | `false` | `false` (residual, §7) |
+| `gPO(<class value>) === Function.prototype` | `false` | `false` (by design) |
+
+#### 4. The real polyfill, linked, consumer-side, fresh cache (`cacheHit=false`)
+
+`.tmp/s22/link.mjs`, 20 probes, both labels built on this tree. This is the
+CONSUMER side — where the test262 rows actually run — not the provider-internal
+diagnostic S19–S21 used.
+
+| probe | base | S22 |
+| --- | --- | --- |
+| `gPO(Temporal.PlainDate.compare) === Function.prototype` | **false** | **true** |
+| same for `PlainDate.from`, `Duration.compare`, `Duration.from`, `Duration.prototype.abs`, `ZonedDateTime.prototype.add`, `…equals` | **false** ×6 | **true** ×6 |
+| `gPO(Temporal.PlainDate.compare) === null` | **true** | **false** |
+| `isExtensible` / `O.p.toString.call` / `hasOwnProperty("prototype")` — the row's other three assertions | `true` / `[object Function]` / `false` | identical |
+| `gPO(Temporal.PlainDate.prototype) === Object.prototype` | `true` | identical |
+| `gPO(Temporal.PlainDate) === Function.prototype` (class value) | `false` | identical (residual) |
+| `gPO(PlainDate.from("1976-11-18")) === PlainDate.prototype` / `=== null` | `false` / `true` | identical — the instance is NOT claimed |
+| `typeof Temporal.PlainDate.compare` / `typeof <instance>` | `function` / `function` | identical (the `typeof` residual is untouched) |
+| `gPO({})`, `gPO([])` in the consumer | `true` | identical |
+
+Consumer artifact **311,806 → 312,638 bytes (+832)**; the provider artifact is
+byte-identical at 3,302,429 (the polyfill's own `getPrototypeOf` calls are all
+statically provable, so it never reaches the new arm). The consumer delta is the
+positive control that the change arrives where the rows are.
+
+#### 5. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact + adapter present
+as real files, both labels on this tree.
+
+| family | rows | base pass | S22 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 94 | **96** | 2 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 65 | **68** | 3 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 90 | **92** | 2 | **0** | 0 |
+| total | 360 | **249** | **256** | **7** | **0** | **0** |
+
+The seven gains are exactly the seven `builtin.js` rows. The
+`prototype Expected SameValue` text appears **7 times on base and 0 times on
+S22** across all 360 rows — the bucket is retired, not displaced.
+
+The base column reads 249, which REPRODUCES S21's reported row on an
+independently prewarmed cache. That is the only cross-slice number here and it
+was re-measured, not copied.
+
+**Twenty-one rows flipped between `compile_error` and a status, in both
+directions** — more than S21's nine, and the new label's in-sample CE count was
+higher (PlainDate 11 vs 6). Re-run **solo at 60 s on both trees** all 21 agree
+**row for row, with identical error messages** (`.tmp/s22fam/solo-{base,new}.{a,b}.tsv`,
+0 disagreements): 12 pass on both, 9 fail on both. The table above counts the
+solo verdict on BOTH labels, which is why base reads 94/65/90 rather than the
+in-sample 92/62/89. Every row's solo compile time is 13.5–19.7 s against a 15 s
+sampled budget — i.e. this family sits ON the cap, and which side of it a row
+lands on is noise. Two runs are not a benchmark, but across the 21 the two
+labels' solo times differ by −1.4 s to +3.0 s with no consistent sign.
+
+#### 6. Must-not-move samples — 692 rows, per FILE, 0 flips
+
+Both labels on this tree, diffed per file (`.tmp/s22/mnmdiff.out`):
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `built-ins/Object/getOwnPropertyDescriptor/**` | 150 | **0** |
+| `built-ins/Object/defineProperty/**` | 150 | **0** |
+| `language/statements/class/**` | 150 | **0** |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 121 | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 121 | **0** |
+
+The first three were added for this slice because it touches the prototype half
+of the MOP; the descriptor samples are the ones that would show a
+`%Function.prototype%` singleton leaking into a descriptor answer.
+
+#### 7. Order preservation
+
+Corpus byte A/B — 42 modules × {gc, standalone}, 84 artifacts: **0 move on
+either lane.** Expected, and a WEAK probe for the same reason S21's was: the
+corpus has no module that asks `Object.getPrototypeOf` about a value whose
+callability is only known at runtime, so it cannot show the change arriving
+anywhere. The +832-byte consumer delta in §4 is the positive control. The arm is
+gated on `ctx.standalone || ctx.wasi` AND on reaching the fallback (every static
+arm declined), so the gc lane cannot reach it and a module whose `gPO` arguments
+are all provable never pays. Equivalence gate at baseline: **22 failing / 1720
+passing**.
+
+#### 8. Gates
+
+`typecheck`, `lint`, prettier, `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:issue-ids:against-main`,
+`update-issues --check` — all green. **No new budget grant was needed**: neither
+changed file crosses a ceiling on either base. The inherited reds handed over by
+S21 reproduce unchanged and are not from this slice:
+`check:compiler-boundaries` → `inventory-valid-architecture-incomplete`, and
+under `LOC_GATE_BASE=origin/main` `src/runtime.ts` 19,822 > 19,601 plus
+`buildImports` 308 > 300.
+
+The id **#6609** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6609 is unassigned (read origin/issue-assignments)`). The
+allocate WRITE could not be taken: `--allocate` exits **6**
+(`open-PR id scan FAILED … gh offline`), nothing reserved — and its `--dry-run`
+preview offered **#6600**, which THIS BRANCH ALREADY USES
+(`tests/issue-6600-standalone-link-reverse-peer-read.test.ts`, landed in S17).
+With `gh` offline the scan cannot see the stack's own unmerged ids, so the
+dry-run preview is not a safe id on a stacked branch; the brief's
+"6474–6608 are TAKEN" is what kept this slice off a collision. GitHub pushes
+return 403 for every lane today, so there is no branch or PR yet.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S21 traps still bite. New:
+
+- **Read the assertion's VALUES, not its message.** The bucket is named after
+  `assert.sameValue`'s third argument, which here is the string `"prototype"` —
+  and two different assertions in the same file mention "prototype". «null» vs
+  «[object Function]» identifies which one in one glance; the message alone sent
+  the hand-off (and the first ten minutes of this slice) at a descriptor read
+  that does not exist in these files.
+- **A predicate that is nearly right is the dangerous kind.** `__typeof_function`
+  and `__is_callable` differ by one bit and agree on every genuine closure. That
+  one bit is the ONLY thing standing between this fix and handing
+  `%Function.prototype%` to every provider-owned Temporal instance — silently,
+  because those rows already fail for other reasons and would not have
+  reported it. The residual that made this a hazard (`typeof <instance>` ===
+  `"function"`) was already written down; what was missing was checking whether
+  the predicate about to be reused was the one that carries it.
+- **Capture the revert copies AND the new copies.** `.tmp/s22base/` was taken at
+  the first edit as the rules say — and then the first A/B flip overwrote the
+  NEW files, which existed only in the editor's history. Re-applying cost ten
+  minutes. A file-copy A/B needs BOTH ends on disk before the first flip.
+- **A family that sits ON the compile budget invents flips at ~6 % of rows.**
+  Twenty-one of 360 here (S21 saw nine). Every one was noise, in both
+  directions, and the in-sample numbers alone would have read as "+7 with two
+  regressions and five new compile errors". The solo re-run at 60 s on BOTH
+  trees is the measurement; the sampled run is a screen.
+
+### Artifacts (S22)
+
+`.tmp/s22/`, `.tmp/s22base/`, `.tmp/s22fam/`, `.tmp/s22mnm/` in
+`/home/user/js2/.claude/worktrees/agent-a9d4f1d7c86f72460`: the probes `c1`–`c3`
+with their `-base`/`-new` outs, `link.mjs` with its two label runs, the corpus
+hashes `corpus-{base,new}.jsonl`, the per-chunk family TSVs
+`{pd,du,zdt}-{base,new}.p{0,60}.tsv`, `solo-{base,new}.{a,b}.tsv`, the 22
+must-not-move TSVs per label, the revert copies in `.tmp/s22base/` and the new
+copies in `.tmp/s22/*.new.ts`, and the drivers `{single,link}.mjs`,
+`{famdiff,famdiff2,mnmdiff}.py`, `{fam,mnm2,solo2,mk}.sh`,
+`{family,solo,prewarm,corpus}.mts`.
+
+### Acceptance criterion 4 — S22 update
+
+**MET.** The `prototype Expected SameValue(«null», «[object Function]»)` bucket
+moves from 7 rows to **0**: consumer-side, `Object.getPrototypeOf(
+Temporal.PlainDate.compare)` goes from `null` to `Function.prototype`, and all
+seven `builtin.js` rows flip fail→pass. Over the 360-row three-family sample
+that is **249 → 256**, with **0 legitimate `pass→fail`**, **0 `__temporal_*`
+leaks**, **692** must-not-move rows flat per file across five samples, both
+corpus lanes byte-identical and the equivalence gate at baseline.
+
+### Next top bucket after S22
+
+Re-counted over the 360 rows on the new label, with the solo verdicts
+substituted (so the CE-capped rows are counted where they actually land):
+
+| bucket | rows |
+| --- | --- |
+| `TypeError: called value is not a function` | **9** |
+| `TypeError: expected a string, not null` | 8 |
+| `TypeError: Object method called on null or undefined` | 6 |
+| `Test262Error: Expected a RangeError but got a undefined` | 6 |
+| `RuntimeError: dereferencing a null pointer in __closure_N()` | 5 |
+| `Test262Error: Calling as constructor … Expected a TypeError` | 4 |
+| `Test262Error: property bag where milliseconds balance into seconds` | 4 |
+| `TypeError: Proxy get trap is not callable` | 4 |
+
+Two things worth saying plainly. **`called value is not a function` is the top
+bucket again at 9** — S18/S20/S21 each retired one of its causes, so what is
+left is a fourth, not a relapse; it needs its own census before anyone assumes
+which. And the three `calendar-temporal-object` rows (`PlainDate/compare`,
+`Duration/compare`, `ZonedDateTime/prototype/equals`) are the cheapest next
+target: one file name, three families, all three answering
+`Object method called on null or undefined`, and all three invisible in a
+sampled run because the 15 s cap scores them `compile_error`.
+
+Structurally, #6608's two named residuals (the `__call_@@toPrimitive` ladder's
+unnamed entries and same-shaped OBJECT LITERALS) remain the cheapest codegen
+slice, and this slice adds two of its own: `gPO(<top-level function
+declaration>)` answers a different object from `Function.prototype`, and
+`gPO(<class value>)` answers neither.
+
+### S23 findings (2026-09-14) — the fourth cause is ONE missing member on ONE receiver brand: `Number.prototype.toPrecision` on a number PRIMITIVE
+
+Full write-up in
+[#6610](6610-standalone-number-primitive-dynamic-method-call.md). Branch
+`issue-5383-standalone-temporal-s23`, based on S22's FINAL tip `cd4a115386`.
+Every number below was measured on this tree, both labels, by file-copy revert
+of the three changed files (`.tmp/s23base/`; the new copies in
+`.tmp/s23/*.new.ts`).
+
+#### 1. Census — all nine rows, one emitter site, one property name
+
+The brief asked which of `resolved-callee-guard.ts`'s sites fires. Instrumenting
+every emitter of `called value is not a function` with a distinct marker
+(the guard's four splice points, plus `calls.ts`'s `wantIsCallableGuard`,
+`new-super.ts` and `fnctor-missing-method-dispatch.ts`) answered it in one run:
+
+```
+all 9 rows → TypeError: called value is not a function [RCG-null-PROTO-TERMINAL]
+```
+
+— `buildProtoNamedMethodMissArm`'s terminal miss, ABSENT (null) arm, inside
+`__extern_method_call`. No other site fires for any row.
+
+A second instrumentation pass replaced that site's constant message with the
+NAME local (param 1), which is the whole census:
+
+```
+all 9 rows → TypeError: toPrecision
+```
+
+One property, one receiver brand. The nine rows split across
+`Duration/compare` (5), `Duration/from` (1), `ZonedDateTime/prototype/add` (2)
+and `…/day` (1), and the shared input is large-magnitude arithmetic: the
+polyfill's exact-arithmetic helper does
+
+```js
+var o = n.toPrecision(a);
+return { div: r * Number.parseInt(o.slice(0, a - t), 10), … };
+```
+
+on a number PRIMITIVE reached through an `any` parameter.
+
+**Which clauses of the hand-off were wrong.** The brief offered three plausible
+fourth causes from S19's #6606 — the foldable-key `C[k]("A","B")` arg shift, the
+`o[k](a)` → `ref.null.extern` return, and the class-derived method VALUE — plus
+the `typeof <provider instance>` residual. **None of them is this bucket.** All
+four are about resolving a CALLEE through a dynamic key or a class value; this
+is a receiver-brand routing gap with a literal member name, and the census
+settles it before any of those hypotheses costs a probe. The brief's framing
+"instrument the sites as S18 did" was exactly right; its candidate list was not.
+
+#### 2. Root cause
+
+`__extern_method_call` dispatches `ref.test $Object` → resolve-and-apply, ELSE
+the vec / closure-prop arms, ELSE the terminal miss, whose consult is the
+#4160/#4176 proto-index store — the table of members a MODULE installed on a
+builtin prototype. A bare number primitive (`$box_number` / i31) is none of the
+first three, and `Number.prototype`'s BUILTIN members are not in the store, so
+the consult answered null and #4221's absent-callee guard turned that into the
+TypeError.
+
+The answer machinery was never missing. On the same base:
+
+| probe (`.tmp/s23/c1.mjs`, one module, no polyfill, no link) | base |
+| --- | --- |
+| `(1234.5678).toPrecision(3)` — static receiver | `"1.23e+3"` |
+| `f(x,p){return x.toPrecision(p)}; f(1234.5678,3)` | **TypeError** |
+| `Number.prototype["toPrecision"]` through an `any` binding | `"function"` |
+| that value `.call(1234.5678, 3)` | **`"1.23e+3"`, PRIMITIVE `this`** |
+
+So both halves of the route already work; only the routing for one receiver
+brand was absent.
+
+#### 3. Fix — `src/codegen/number-primitive-method-call.ts`
+
+A `block` + `br_if 0` arm unshifted onto `__extern_method_call`, in the
+`native-proto-method-call.ts` / `ta-dyn-method-call.ts` shape:
+`__typeof_number(recv)` → decline if the proto-index store answers (a module's
+own `Number.prototype` write, §10.5) → `__extern_get(%Number.prototype%, name)`
+→ decline if null → `__apply_closure(m, recv, args)` with the primitive as
+`this`.
+
+Two ordering facts, both measured rather than reasoned:
+
+- The singleton must be built **after** `__protoidx_companion` exists (so not
+  during the source scan) and **before** `unshiftExternGetProtoMethodArm` (so the
+  brand is in that pass's minted/seeded set). It therefore lives in its own
+  `prepareNumberPrimitiveMethodCallArm` pass between the two. **The first cut got
+  the second half wrong and measured as a complete no-op**: the arm was emitted,
+  the receiver test passed (verified by splicing a probe throw into the arm), and
+  resolution answered null on every call.
+- The arm must also take #4619's `ensureWrapperProtoDynamicMember` mint.
+  `__extern_get`'s `$NativeProto` ladder is assembled from MINTED members, and a
+  module that only CALLS `x.toPrecision(p)` never names
+  `Number.prototype.toPrecision`.
+
+#### 4. The one way a prepended arm can be WRONG, and it fired
+
+A member the MODULE installs on `Number.prototype` must outrank the builtin
+(§10.5). Without the store consult, `.tmp/s23/c5.mjs` measured
+`Number.prototype.toPrecision = f; x.toPrecision(2)` going from `"user2"` on
+base to the builtin's `"5.0"` — a wrong answer where the base was right. That is
+the only regression this slice produced, it was produced by the obvious version
+of the arm, and it is caught only by a probe that asserts the OVERRIDE, not the
+builtin. It has its own module in `tests/issue-6610-*.test.ts`.
+
+#### 5. Reduction — one standalone module (`.tmp/s23/c8.mjs`, both labels)
+
+| probe | base | S23 |
+| --- | --- | --- |
+| `f(1234.5678, 3)` | threw | **`"1.23e+3"`** |
+| `f0(1234.5678)` — no argument (§21.1.3.5 step 2) | threw | **`"1234.5678"`** |
+| `f(NaN, 3)` — non-finite before the range check (step 4) | threw | **`"NaN"`** |
+| `f(-1234.5678, 5)` | threw | **`"-1234.6"`** |
+| `f(0.0000001234, 3)` — `e < -6` | threw | **`"1.23e-7"`** |
+| `f(7, 2)` — i31 receiver | threw | **`"7.0"`** |
+| `f(new Number(1234.5678), 3)` — WRAPPER | threw | **`"1.23e+3"`** |
+| `f(1, 0)` — out of range (step 5) | **TypeError** | **RangeError** |
+| `(1234.5678).toPrecision(3)` static · `"abc"`/`true` receiver · `(5).nosuch()` | — | identical |
+
+The wrapper row is not this arm (`__typeof_number` is false for a `$Object`); it
+is the #4619 mint reaching `__extern_get`'s ladder, which the wrapper's existing
+`$Object` route already consults.
+
+`toFixed` / `toExponential` were tried in the member list and measured: they
+resolve to `refusalBodyFallback`'s stand-in and answer
+`"Number.prototype.toFixed is not yet implemented in --target standalone"` — a
+different TypeError, not a working call. Only `toPrecision` has a reflective
+native body (#5269 J-1), so the list is exactly one name and the other two are
+left on their base behaviour.
+
+#### 6. The real polyfill, linked, fresh cache (`cacheHit=false` on both prewarms)
+
+`.tmp/s23/link23.mjs`, 12 probes, both labels built on this tree.
+
+| probe | base | S23 |
+| --- | --- | --- |
+| `Duration.compare({days: 104249991374, …}, new Duration())` | TypeError | **`1`** |
+| `Duration.compare({milliseconds: 4.5e18, microseconds: 4.5e21}, same)` | TypeError | **`0`** |
+| `Duration.compare(d1, d2, {relativeTo: "1970-01-01T00:00-00:45:00[-00:45]"})` | TypeError | **`0`** |
+| `new ZonedDateTime(86400000000001n, "-00:02").day` | TypeError | **`1`** |
+| `new ZonedDateTime(1580511600000000000n, "-08:00").add({months: 1})` | TypeError | **answers** |
+| `PlainDate.from(…).toString()` · `Duration.from("P1Y").toJSON()` · `typeof PlainDate.compare` · `gPO(PlainDate.compare) === Function.prototype` | — | identical |
+
+Provider artifact **3,302,429 → 3,307,526 bytes (+5,097)**; consumer
+**259,458 → 273,050 (+13,592)**. Both are positive controls that the change
+arrives on both sides of the link — the provider is where the polyfill's own
+`n.toPrecision(k)` lives.
+
+#### 7. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH
+`JS2WASM_TEMPORAL_CACHE` per label (`cacheHit=false` on both prewarms), quickjs
+artifact + adapter present as real files, both labels on this tree.
+
+| family | rows | base pass | S23 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 97 | 97 | 0 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 68 | **77** | 9 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 93 | **97** | 4 | **0** | 0 |
+| total | 360 | **258** | **271** | **13** | **0** | **0** |
+
+The `called value is not a function` text appears **10 times on base and 0 times
+on S23** across all 360 rows — retired, not displaced. (Ten, not nine: the tenth
+row, `Duration/from/argument-existing-object.js`, was scored `compile_error`
+under the 15 s cap in the post-S22 census and only its solo re-run shows the
+text. It flips fail→pass here too.)
+
+**Thirty rows needed a solo re-run** and every one was taken at 60 s on BOTH
+trees: the 16 CE↔status flips, plus the 14 rows that scored `compile_error` on
+BOTH labels — those cannot flip by construction, but leaving them capped
+understates both columns and makes the base incomparable with S22's row. All 30
+agree **row for row, with identical error messages** (0 status disagreements,
+0 message disagreements), so the table above has **no `compile_error` cell at
+all**. Per-row solo compile times are 13.2–24.6 s (base) and 13.4–26.5 s (S23)
+against the 15 s sampled budget — this family still sits ON the cap.
+
+The base column reads **258**, where S22 reported **256** for the same tree. The
+difference is method, not drift: S22 solo-corrected 21 rows, this slice 30, and
+the 9 extra are all in the both-CE set (2 of them pass solo). The delta is
+unaffected — both columns were measured here, the same way, on the same tree.
+
+#### 8. Must-not-move samples — 474 rows, per FILE, 0 flips
+
+Both labels on this tree, diffed per file (`.tmp/s23/mnmdiff.out`):
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 101 | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 102 | **0** |
+| `language/expressions/call/**` (first 150) | 92 | **0** |
+| `language/expressions/new/**` (first 100) | 59 | **0** |
+| `built-ins/Number/prototype/**` | 120 | **0** |
+
+The call/new samples are there because this touches call dispatch; the
+`Number/prototype` sample was added for this slice because it touches
+`Number.prototype`'s member ladder. (The first two roots yield fewer files than
+their limits — 92 and 59 — because those trees are smaller than the cap.)
+
+#### 9. Order preservation
+
+Corpus byte A/B — 42 modules × {gc, standalone}, 84 artifacts: **0 move on
+either lane.** Expected and WEAK for the same reason S21's and S22's were: no
+corpus module calls a Number format method through a dynamic receiver, so the
+demand scan never fires, and the gc lane cannot reach the arm at all
+(`ctx.standalone`). The §6 byte deltas are the positive control. Equivalence
+gate at baseline: **22 failing / 1720 passing**.
+
+#### 10. Gates
+
+`typecheck`, `lint`, prettier, `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:issue-ids:against-main`, `check:issues` —
+all green. **No new budget grant was needed.** The new module is classified in
+`scripts/compiler-boundaries.json` (`unmigrated` / `mixed-needs-split` /
+`backend-wasmgc`, matching its neighbours); the gate reports
+`inventoryValid: true` and fails only on the inherited
+`inventory-valid-architecture-incomplete`. Under `LOC_GATE_BASE=origin/main` the
+two inherited reds reproduce unchanged and are not from this slice:
+`src/runtime.ts` 19,822 > 19,601 and `buildImports` 308 > 300.
+
+The id **#6610** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6610 is unassigned (read origin/issue-assignments)`). The
+allocate WRITE could not be taken — `--allocate` exits **6**
+(`open-PR id scan FAILED … gh offline`), nothing reserved — and its `--dry-run`
+preview again offered **#6600**, which this branch has used since S17. That is
+the same trap S22 recorded, one slice later, unchanged: **with `gh` offline the
+dry-run preview is not a safe id on a stacked branch.** GitHub pushes return 403
+for every lane, so there is no branch or PR yet; `.tmp/pr-body.md` is ready.
+
+#### 11. Traps, carried forward and added to
+
+All S11–S22 traps still bite. New:
+
+- **Instrument the emitter, then instrument the NAME.** Two five-minute
+  instrumentation passes — one distinguishing the seven emitters of the message,
+  one replacing the message with `__extern_method_call`'s name parameter —
+  reduced a nine-row bucket to a single property name before any hypothesis was
+  tested. The hand-off's three candidate causes were all plausible and all
+  wrong; none survived contact with the marker.
+- **A finalize-time arm has TWO ordering constraints, and one of them is
+  invisible.** "Build it late enough that the runtime exists" is the obvious one.
+  "Build it early enough that the pass which assembles the lookup table can see
+  your brand" is not, and getting it wrong produces a fix that emits, passes its
+  own receiver test, and answers null — i.e. measures as a perfect no-op with no
+  error anywhere. The probe that found it was a throw spliced into the arm; a
+  byte diff would have shown the arm present and told you nothing.
+- **When a prepended arm answers a builtin, ask what the MODULE may have put
+  there.** The proto-index store exists precisely because a module can install
+  its own `Number.prototype.toPrecision`, and the terminal miss this arm runs
+  ahead of consults it. Prepending without that consult is a silent
+  wrong-answer, and the probe that catches it has to assert the user's value —
+  a probe asserting "the call works" passes either way.
+- **A module-local control is only valid in the module you measured it in.**
+  `(1234.5678).toPrecision(3)` answers correctly in a module without a
+  `class C { toPrecision(p) }`, and TRAPS in a module with one — identically on
+  both trees. The first draft of this slice's test asserted the correct value
+  and failed on the branch for a reason that had nothing to do with the branch.
+  Measure the control in the exact module the test compiles.
+
+### Artifacts (S23)
+
+`.tmp/s23/`, `.tmp/s23base/`, `.tmp/s23fam/`, `.tmp/s23mnm/` in
+`/home/user/js2/.claude/worktrees/agent-a06a4b559afff05cd`: probes `c1`–`c8`
+with their `-base`/`-new` outs, `link23.mjs` / `link24.mjs` with both label runs,
+the corpus hashes `corpus-{base,new}.jsonl`, the per-chunk family TSVs
+`{pd,du,zdt}-{base,new}.p{0,60}.tsv`, `solo-{base,new}.{a,b}.tsv`,
+`soloce-{base,new}.{a,b}.tsv`, `nine-{base,instr,instr2,new}.tsv`, the 22
+must-not-move TSVs per label, the revert copies in `.tmp/s23base/` and the new
+copies in `.tmp/s23/*.new.ts`, and the drivers `{single,link23,link24}.mjs`,
+`{flips,famdiff3,mnmdiff}.py`, `{fam,nine,solo3,soloce,mnm2}.sh`,
+`{family,solo,prewarm,corpus}.mts`.
+
+### Acceptance criterion 4 — S23 update
+
+**MET.** The `TypeError: called value is not a function` bucket moves from
+**10 rows to 0** — the whole of it, not a share. Over the 360-row three-family
+sample that is **258 → 271**, with **0 legitimate `pass→fail`**, **0
+`__temporal_*` leaks**, **474** must-not-move rows flat per file across five
+samples, both corpus lanes byte-identical, and the equivalence gate at baseline.
+
+### Next top bucket after S23
+
+Re-counted over the 360 rows on the new label, with the solo verdicts
+substituted (so no row is scored `compile_error`):
+
+| bucket | rows |
+| --- | --- |
+| `TypeError: expected a string, not null` | **9** |
+| `TypeError: Object method called on null or undefined` | 6 |
+| `Test262Error: Calling as constructor … Expected a TypeError` | 4 |
+| `TypeError: Proxy get trap is not callable` | 4 |
+| `TypeError: Cannot access property on null or undefined at 164:22` | 4 |
+| `RuntimeError: dereferencing a null pointer in __closure_N()` | 4 |
+| `TypeError: Cannot read properties of undefined (reading 'apply'/'abs')` | 4 |
+| `Test262Error: Built-in objects must be extensible.` | 2 |
+
+(89 non-pass rows in total; a further 13 are bare `Test262Error:` assertion
+texts with no shared message, which is a grab-bag rather than a bucket.)
+
+`called value is not a function` is **gone from the list for the first time in
+six slices**. The top bucket is now `expected a string, not null` at 9.
+
+The `calendar-temporal-object` family the S22 hand-off flagged as the cheap trio
+is **four rows, not three** — `PlainDate/compare`, `PlainDate/from`,
+`Duration/compare` and `ZonedDateTime/prototype/equals` — and all four answer the
+SAME error, `TypeError: Object method called on null or undefined`. That is four
+of the six rows in the second bucket, so one cause plausibly retires two thirds
+of it. All four were scored `compile_error` under the 15 s cap in the sampled
+run and only show their real verdict solo, which is why the count has been wrong
+twice; the solo re-runs here agree on both labels, so it is a real target.
+
+Two residuals this slice adds, both reduced and neither fixed: `x.toFixed(d)` /
+`x.toExponential(d)` through an `any` receiver still throw, because their
+REFLECTIVE bodies refuse (`number-proto-format.ts` answers `toPrecision` only) —
+wiring §21.1.3.2/§21.1.3.3 there would make the member list a three-name
+constant and cost nothing else. And `x.toString(radix)` through an `any`
+receiver still throws while `x.toString()` does not.
+
+### S24 findings (2026-09-14) — the fifth cause is an ARITY CEILING, not a lookup: `new <foreign ctor>(…)` above eight arguments answered null and never evaluated its arguments. 271 → 300
+
+Full write-up in
+[#6611](6611-standalone-dynamic-new-arity-above-eight.md). Branch
+`issue-5383-standalone-temporal-s24b`, based on S23's tip; the code is the
+salvaged S24 commit `8d11a10336`.
+
+**This slice was interrupted.** The container restarted mid-measurement and
+killed the S24 lane. Salvaged from its worktree, unchanged: the WIP fix commit
+(`src/codegen/native-construct.ts`, `src/codegen/expressions/new-super.ts`, both
+byte-verified against its validated copies), the #6611 issue file, its probes,
+and four of six family halves. Re-measured here: `du-base` p60, `zdt-base` p0
+and p60, and every solo correction on both trees. The base column below was
+produced on THIS tree by file-copy revert (`.tmp/s24base/`), and it lands on
+**271** — S23's number, independently reproduced, which is the strongest
+available check that the salvage did not disturb the base.
+
+#### 1. The brief's bucket and the cause are the same thing, one frame apart
+
+The brief asked for the 9-row `TypeError: expected a string, not null` bucket.
+That message is the POLYFILL's own guard, several frames downstream: with ten
+arguments `new Temporal.Duration(…)` evaluated to `null`, and the polyfill
+carried the null into `ToTemporalDuration`, whose string branch called
+`RequireString(null)`. So the bucket is a symptom of the construct, not a
+separate mechanism — and it is **fully retired**:
+
+| `expected a string, not null` | base | new |
+| --- | --- | --- |
+| rows in the three-family sample | **9** | **0** |
+
+Seven of the nine flip to `pass`. The other two
+(`ZonedDateTime/prototype/add/math-order-of-operations-add-{constrain,none}`)
+stop producing a null, construct correctly, and then fail LATER and
+differently — `TypeError: Cannot read properties of undefined (reading
+'equals')`. That is a new, separate residual, not this one persisting.
+
+#### 2. Root cause — the ceiling was the WRONG CONSTANT
+
+`tryCompileNativeConstructFromValue` declined above
+`MAX_NATIVE_CONSTRUCT_ARITY` (8). That constant is not a property of the
+construct driver: it is the range over which `closure-exports.ts` emits the
+`__call_fn_method_<N>` dispatcher family (`/^__call_fn_method_([0-8])$/`), used
+only by the driver's ordinary module-local-closure tail. Every other arm —
+class, link-boundary, proxy, runtime-marker — already packs an argument VECTOR
+and is arity-generic.
+
+Declining is not a graceful fallback. For a callee the compiling module does not
+own — every linked-provider class — `emitDynamicNewFallback` has no candidate
+classes to tag-dispatch on, so the site lands on the pre-existing
+`ref.null.extern` no-match base, and that base is emitted *instead of* the
+argument evaluation. The arguments are dropped too. A module-local class takes
+the per-class tag-dispatch fallback and is correct at any arity, which is why no
+single-module probe ever showed this.
+
+`Temporal.Duration` takes **ten** parameters; `Temporal.PlainDateTime` takes
+nine. The corpus's most ordinary spelling sat one argument past the ceiling.
+
+Same signature as S20's #6607 (`new (<call>)(…)`), one ceiling further out.
+
+#### 3. Fix
+
+`MAX_DYNAMIC_CONSTRUCT_ARITY = 16` becomes the call-site admission ceiling and
+the fill/scan bound; `MAX_NATIVE_CONSTRUCT_ARITY = 8` keeps its real meaning.
+Above 8 the ordinary tail packs an argv and calls `__apply_closure` — the same
+terminal the runtime-marker arm already used. Gated strictly on
+`arity > MAX_NATIVE_CONSTRUCT_ARITY`, so the long-standing
+`methodCallIdx === undefined` case at arities ≤ 8 (a driver reserved only for
+Proxy → admitted-JS construction) keeps its exact previous null tail.
+
+#### 4. Three-family sample — 120 rows each, standalone, provider linked, sequential, fresh cache, solo-corrected
+
+| family | rows | base | new | Δ | pass→fail | fail→pass | `compile_error` cells |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 120 | 97 | 101 | **+4** | 0 | 4 | 0 |
+| `Duration/**` | 120 | 77 | 97 | **+20** | 0 | 20 | 0 |
+| `ZonedDateTime/prototype/**` | 120 | 97 | 102 | **+5** | 0 | 5 | 0 |
+| **total** | **360** | **271** | **300** | **+29** | **0** | **29** | **0** |
+
+`__temporal_*` host-import leaks: **0**.
+
+**The partial `pd` table the dead lane left behind was noise, and it is worth
+saying why.** Its first-half PlainDate rows read base 48 / new 46 — a two-row
+apparent REGRESSION, which is what made this the first thing to re-check. Every
+one of those flips was `pass → compile_error` with a `compilation timeout
+(15.0–15.5 s)` detail, against a 15 s batch budget; the base column carried its
+own mirror artifacts (`compile_error → fail`). This family sits ON the cap, so
+at batch budget the cap decides the cell, not the compiler. Solo-corrected at
+60 s, PlainDate is 97 → 101 and the sample contains **no `compile_error` cell on
+either tree and no pass→fail row at all**. A batch-budget delta on this family
+is not a measurement.
+
+#### 5. Controls — what did NOT move, and the byte story
+
+**Must-not-move samples, per file, base vs branch: 331 rows, 0 flips.**
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `Object/keys` + `language/expressions/object` + `Reflect/{get,has}` | 101 | 0 |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 121 | 0 |
+| `language/expressions/new/**` + `Function/prototype/apply/**` + `Reflect/construct/**` | 109 | 0 |
+
+The third group is the one this slice owes: it touches construct arity, so
+`new`, `apply` and `Reflect.construct` are where an arity change would surface.
+
+**Corpus byte A/B — 42 modules × {gc, standalone} = 84 artifacts, 0 move.**
+That is a NULL control, and saying only "0 moved" would overstate it: no module
+in that corpus has a `new <runtime ctor value>(…)` site above arity 8, so the
+corpus can only show the change is not a broad perturbation. It cannot show the
+change does anything. The evidence that it does is a separate, deliberate byte
+control (`.tmp/s24/bytes6489.mts`), one linked pair, three consumers:
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| provider (`Wide`/`Narrow` classes) | `5989617a8d3a63a1` 155,718 B | **identical** | the PRODUCING side never moves |
+| consumer with an above-8 dynamic `new` | `1f9219d64ce45c52` 132,000 B | `12ba8ca9b7256c5b` 134,060 B | **+2,060 B** — the only thing that moves |
+| consumer with an arity-**8** dynamic `new` | `21b7a98164941aa7` 133,803 B | **identical** | the gate on `arity > MAX_NATIVE_CONSTRUCT_ARITY` holds |
+| consumer with no dynamic `new` | `3d67dc7d87ef1933` 48,980 B | **identical** | |
+
+The real provider says the same thing at scale: the compiled
+`@js-temporal/polyfill` artifact is **3,307,526 B with the same cache key
+`a11c84e5…` under BOTH labels**. The fix is entirely on the consumer side, in
+exactly the modules that construct above arity 8.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — the
+baseline exactly.
+
+**`__temporal_*` host-import leaks**: 0.
+
+#### 6. The reduction that does NOT reproduce — worth knowing before the next slice
+
+Across the link, only the MEMBER-ACCESS spelling `new NS.wide(…)` is this
+defect. Binding the class to a local first — `const C = NS.wide; new C(…)` —
+answers null on BOTH trees, and it answers null at arity **eight** as well
+(`.tmp/s24/probe6489.mts`). Being arity-independent, it is a different,
+pre-existing mechanism, and it DOES evaluate its arguments, so it is not even
+the same failure shape. A `new (<call>)(…)` callee whose class is foreign is
+null on both trees too.
+
+The first linked reduction written for this slice used the bound-identifier
+spelling and failed identically before and after the fix — which would have read
+as "the fix does not work" rather than "the reduction is the wrong spelling".
+All four residuals are pinned in
+`tests/issue-6611-dynamic-new-arity.test.ts` so the distinction is not
+rediscovered. `new Temporal.Duration(…)` — the real corpus spelling — is the
+member form.
+
+#### 7. Next bucket
+
+With the sample's `expected a string, not null` retired, the largest remaining
+groups in the 360 rows are `Calling as constructor Expected a TypeError` (4) and
+`TypeError: Proxy get trap is not callable` (4), then a spread of 2-row groups
+including two `RuntimeError: illegal cast in __class_construct_dispatch()`. No
+single dominant cause remains in this sample.
+
+
+### S25 findings (2026-09-15) — the sixth cause is a MISSING SPEC STEP, not a lookup or a ceiling: `new <value>` never ran §13.3.5.1 step 5. Four families, 404 → 410, and the hand-off's "no single dominant cause remains" was the clause that was wrong
+
+Full write-up in
+[#6612](6612-standalone-dynamic-new-not-a-constructor.md). Branch
+`issue-5383-standalone-temporal-s25b`, based on S24's tip; the code is the
+salvaged S25 commit `50db519d23`.
+
+**This slice was interrupted too.** The container restarted mid-measurement and
+killed the S25 lane, the second slice in a row to be cut that way. Salvaged from
+its worktree, unchanged: the WIP fix commit (`src/codegen/native-construct.ts`,
+`src/codegen/expressions/new-super.ts`, plus the new module
+`src/codegen/construct-is-constructor-guard.ts`; all three byte-verified against
+its validated copies), the `.tmp/s25` probes `p1`–`p4`, and **all four family
+halves on both labels** — 960 cells, already complete. What was missing was
+everything downstream of the numbers: the per-file diff, the must-not-move new
+labels, the corpus and byte controls, the equivalence gate, the witness test and
+both issue files. Those were produced here.
+
+Two things the salvage let this slice check rather than assume: the four family
+halves were run **solo at a 60 s budget from the start** (the dead lane's
+`fam.mts` passes `60000`, and `run.sh` passes it through), so there is **no
+`compile_error` and no `timeout` cell anywhere in the 960** — the brief's
+instruction to "solo-correct every CE-involved row" had nothing to correct, and
+that is a measured statement, not an assumption: the slowest cell in the matrix
+is 22.6 s. And the provider is byte-identical under both labels (cache key
+`a11c84e5…`, 3,307,526 B, `cacheHit: false` on a FRESH cache per label), so no
+cell was served a stale artifact.
+
+#### 1. The defect — `new` on a callable with no [[Construct]] quietly returned an object
+
+`__native_construct_<N>` implements §10.2.2 OrdinaryCallEvaluateBody and nothing
+else. Its tail — `Object.create(callee.prototype)`, run the body, return the
+object — is unconditional. Every arm above it answers for a callee that HAS
+[[Construct]]; nothing answered for one that does not. So an arrow, a static or
+prototype method, an object-literal method, a built-in function, or a foreign
+function whose `callableKind` publishes bit 1 without bit 2 fell into the tail
+and **constructed successfully**, where §13.3.5.1 EvaluateNew step 5 requires a
+TypeError.
+
+The fix is one new module, `src/codegen/construct-is-constructor-guard.ts`,
+spliced immediately before that tail — after every arm that answers for a
+constructible callee has declined. It reads `__reflect_is_constructor`, the same
+predicate test262's own `isConstructor.js` harness reads, with three
+narrowings (must present as `typeof "function"`; the runtime-eval
+interpreted-callback marker is exempt; no-JS-host lanes only) because a
+wrongly-firing guard turns working code into a hard throw — a worse regression
+than the defect.
+
+**Why inside the driver, not at the call site**: §13.3.5.1 evaluates the
+argument list (step 4) BEFORE the IsConstructor test (step 5). The call site has
+already spilled callee and every argument into locals by the time it emits
+`call <driver>`, so the driver's entry is the first program point where that
+order holds — and it is one place instead of one per call site. The witness pins
+it: the arguments still run, once, left to right, before the throw.
+
+#### 2. The result — four families, and a histogram that moves in exactly one place
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 101 | 103 | +2 | 0 | 2 |
+| `Duration/**` | 97 | 99 | +2 | 0 | 2 |
+| `PlainDateTime/**` | 104 | 106 | +2 | 0 | 2 |
+| `ZonedDateTime/prototype/**` | 102 | 102 | 0 | 0 | 0 |
+| **total** | **404** | **410** | **+6** | **0** | **6** |
+
+Zero pass→fail, so there is nothing to explain. The stronger statement is the
+histogram: aggregating all 480 base rows and all 480 branch rows by
+digit-normalised message, the bucket `Calling as constructor Expected a
+TypeError to be thrown but no exception was thrown` goes **6 → 0**. The base
+histogram has 41 buckets; one retires and **the other 40 are unchanged, count
+for count**. A one-bucket delta across 41 is a sharper safety claim than the row
+count.
+
+ZonedDateTime is flat because its sample is the `prototype/**` subtree, which
+contains no `not-a-constructor.js` file — not because the fix missed it.
+
+#### 3. Which clause of the hand-off was wrong
+
+S24's §7 listed four candidates and closed with **"No single dominant cause
+remains in this sample."** That sentence is the wrong clause, and it is wrong in
+kind rather than in size.
+
+`Calling as constructor Expected a TypeError` was presented as a **4-row**
+residual, tied with `Proxy get trap is not callable` for the top of a flat
+distribution. It is not a 4-row residual. It is a **missing spec step**:
+`not-a-constructor.js` is **123 files under `built-ins/Temporal/**` alone and
+536 files corpus-wide**, and the same defect is reachable from plain
+`language/expressions/new/**` with no Temporal in sight — this slice's
+must-not-move group C caught exactly that (see §4). The "4" measured the
+SAMPLE, not the defect, and reading it as a tie between two equally-sized
+leftovers is what made it look like the sample had gone flat.
+
+The size correction is real too, and it points the same way: on the widened
+480-row four-family sample **every** listed candidate is bigger than the
+hand-off's three-family figure —
+
+| hand-off candidate (360-row sample) | stated | measured on 480 rows | fixed here |
+| --- | --- | --- | --- |
+| non-constructor `new` not throwing TypeError | 4 | **6** | **yes, → 0** |
+| `Proxy get trap is not callable` | 4 | **6** | no |
+| `illegal cast in __class_construct_dispatch()` | 2 | **4** | no |
+| `const C = NS.wide; new C(…)` → null residual | — | unchanged | no, and still correct |
+
+The last row is the clause that **held**: S24 pinned that spelling as a
+different, pre-existing, arity-independent mechanism, and
+`tests/issue-6611-dynamic-new-arity.test.ts` still passes unchanged on this
+branch, its `-2` residual intact. Widening the sample corrected the sizes; it
+did not overturn that attribution.
+
+#### 4. Controls
+
+**Must-not-move — 314 rows, per file.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `language/expressions/object` + `Reflect/{get,has}` | 100 | 95 | 95 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` | 45 | 25 | 25 | 0 |
+| C: `language/expressions/new/**` (59) + `Reflect/construct/**` (10) + `language/statements/class/subclass/**` (100) | 169 | 119 | **120** | **1, fail→pass** |
+
+A and B are the insensitive controls and are flat to the file. C is the
+deliberately SENSITIVE group — the core-language corpus for the exact path this
+change touches — and it is the one that moved:
+`language/expressions/new/non-ctor-err-realm.js`, **fail → pass**. Nothing moved
+the other way. That single row is the best evidence in the slice that the guard
+implements the spec rule rather than a Temporal-shaped special case, and it is
+why §3 calls the hand-off's framing wrong in kind.
+
+Method note worth keeping: the second label was driven from the FIRST label's
+own row list (`.tmp/s25/list.mts`), not from a `root:limit` spec re-walked per
+label. A limit that clipped a directory differently between runs would otherwise
+compare two different populations and report the difference as flips.
+
+Two `compile_error` cells survive (one in A, one in C). Both are **feature**
+compile errors — "native generator lowering currently supports only sequential
+numeric yields", "standalone Reflect.construct currently requires …" — identical
+on both labels. A longer budget cannot remove them and they say nothing about
+this change.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**.
+As in S24 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus compiles a dynamic `new <value>` site, so it can show the
+change is not a broad perturbation but cannot show it does anything.
+
+**Byte control** (`.tmp/s25/bytes6490.mts`) — the evidence the corpus cannot
+give, and it answers in both directions:
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| provider (no `new <value>` site) | `12f3866d…` 165,069 B | identical | |
+| consumer with no `new` at all | `af0b92c7…` 48,980 B | identical | |
+| ONE module, statically-resolved `new K(5)` | `93c494e1…` 137,661 B | identical | the unarmed case |
+| consumer, `new <param>()` across the link | `6a607192…` 164,097 B | `b0e3b74e…` 164,088 B | moved |
+| consumer, `new NS.PD(5)` across the link | `5429282b…` 133,138 B | `112a461e…` 133,230 B | moved |
+| ONE module, `new <param>(5)` | `d61b742d…` 246,044 B | `c74c651c…` 245,995 B | moved |
+
+Exactly the three artifacts that compile a dynamic `new <value>` site move;
+every artifact that does not is byte-identical. That is reserve-then-fill proven
+in both directions, not only the safe one.
+
+**One row of that table was written expecting the opposite answer and is kept as
+measured.** `new NS.PD(5)` was labelled "directly-named `new`" and predicted
+byte-identical. It moved — `NS.PD` is a member access on a runtime namespace, so
+it IS a dynamic `new <value>` site. The single-module named case was added
+afterwards precisely because no linked fixture can express a statically-resolved
+callee. (Two of the three moved artifacts got SMALLER, −9 B and −49 B, though
+the guard only adds instructions; function-index and LEB widths shift around the
+driver bodies. Noted, not chased.)
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 5. The witness, and the spelling trap that made the first cut vacuous
+
+`tests/issue-6612-dynamic-new-is-constructor.test.ts`, six cases, measured on
+both trees by file-copy revert: base **3 fail / 3 pass**, branch **6 pass**.
+
+Unlike #6611, BOTH the single-module and the linked arms are witnesses. This
+defect is a property of the DRIVER, not of callee ownership, so it reproduces
+with no link at all; the linked arm additionally covers the foreign-function
+path, where the callable/constructible distinction arrives as a `callableKind`
+bitmask rather than as a closure the module owns.
+
+The trap, which cost a full cycle and is the reason this is written down: the
+callee must arrive as a **function PARAMETER** (`nw0(F) { return new F(); }`).
+The obvious alternative — a registry read, `const C = reg["%K%"]; new C()` — does
+NOT reach this driver in a single module. It falls to `emitDynamicNewFallback`'s
+tag dispatch, whose only candidates are module-local CLASSES, so a plain
+function or a built-in answers `null` there on BOTH trees. The first cut of the
+witness was written that way and **four of its six cases were vacuous** — they
+asserted `null` and never exercised the guard. Measured, not reasoned.
+
+A second discipline point from the same file: the linked `it` now asserts the
+argument-ORDER expectation FIRST. An expectation placed after a failing one is
+never reached on the base tree, so its inline "base tree: …" note would have
+been written from inference rather than from a run. Reordering made 146 and 5 a
+measurement.
+
+#### 6. Next bucket — chosen from the widened sample
+
+`PlainDateTime/**` residual, branch tree, solo-corrected (14 rows):
+
+| bucket | rows |
+| --- | --- |
+| `TypeError: Proxy get trap is not callable` | 2 |
+| `year result: Expected SameValue(«N», «N,N,MN,…»)` | 2 |
+| `RuntimeError: illegal cast in __class_construct_dispatch()` | 2 |
+| `RuntimeError: dereferencing a null pointer in __closure_N()` | 2 |
+| six singletons | 6 |
+
+Across all four families (70 branch-tree residual rows, 40 buckets) the three
+largest are `Proxy get trap is not callable` (**6**), `dereferencing a null
+pointer in __closure_N()` (**6**) and `illegal cast in
+__class_construct_dispatch()` (**4**). The tail is genuinely flat — 33 of the 40
+buckets have ≤2 rows.
+
+So the honest read of "next" is the opposite of picking the biggest number, and
+S25 is the cautionary case for it: `Proxy get trap is not callable` and
+`illegal cast in __class_construct_dispatch()` are both **shaped like spec
+steps** (a MOP invariant and a brand/cast invariant), and this slice just showed
+that a spec-step cause's corpus footprint is invisible in a Temporal-only
+sample — six rows here, 536 files corpus-wide. Size the candidate by counting
+its test262 FAMILY corpus-wide before committing a slice to it, not by its row
+count in this sample.
+
+### S26 findings (2026-09-15) — the seventh cause is a CARRIER hole an existing proof documents and declines, not a lookup, a ceiling or a spec step. Four families, 410 → 411, and BOTH of the hand-off's named hypotheses were wrong
+
+Full write-up in
+[#6613](6613-standalone-heterogeneous-array-literal-carrier.md). Branch
+`issue-5383-standalone-temporal-s26`, based on S25b's tip `3e0825eb09`; the fix
+is commit `e80ee7c571`.
+
+The headline number is small and the slice is deliberately reported that way:
+**+1 row on the 480-row sample, 0 pass→fail, exactly one of 38 message buckets
+moves.** What makes it worth a slice is the shape of what moved — a hard TRAP
+during array-literal CONSTRUCTION, on four lines of ordinary JavaScript with no
+Temporal, no provider and no link in sight.
+
+#### 1. The defect — a heterogeneous array literal trapped while being built
+
+```js
+const obj = { year: -271821, month: 4, day: 18 };
+[obj, "str"].length; // RuntimeError: dereferencing a null pointer
+```
+
+`.length` is enough; the elements are never read. `compileArrayLiteral` keys the
+vec to element zero's carrier — here the closed `$__anon_N` struct for `obj` —
+and guard-casts every later element into it. A string, number, boolean or
+nested vec cannot inhabit that struct, so the guard emits
+`ref.test` → `ref.null`, and the non-nullable element slot hits the null with
+`ref.as_non_null`. Disassembled, it is four instructions:
+
+```wat
+(array.new_fixed $13 2
+  (ref.as_non_null (global.get $global$9))
+  (ref.as_non_null
+    (if (result (ref null $7))
+      (ref.test (ref $7) (local.tee $0 (global.get $global$14)))
+      (then (ref.cast (ref null $7) (local.get $0)))
+      (else (ref.null none)))))
+```
+
+The fix is one predicate, `hasNonStructElementForStructCarrier`, added beside
+#4289/#5327's `hasIncompatibleElementCarrier` in
+`src/codegen/struct-carrier-inhabits.ts` and called from the same decision table
+in `literals.ts`, standalone/WASI-gated.
+
+**The most useful thing in this slice is that the gap was already written
+down.** #4289's doc comment says, in its own words, that it "stays narrow on
+purpose: only elements that themselves resolve to a closed data struct are
+consulted (**a string / number / vec element is another widening's
+business**)". There was no other widening. A documented deferral with no owner
+read as a documented decision for two slices.
+
+Two adjacent measurements explain why nobody tripped over it sooner:
+
+- the INLINE spelling `[{ year: 1 }, "str"]` already widened (the first-object
+  arm rejects any non-object sibling outright) — only the BINDING spelling
+  reached the hole, because `unwrapObjectLiteralElement` does not resolve an
+  identifier to its initializer. The two spellings of the same array disagreed;
+- the JS-host/GC lane does not trap for a STRING sibling (a string is plain
+  `externref` there), which is why the standalone lane owned this alone.
+
+#### 2. The result — four families, and a histogram that moves in exactly one place
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 103 | 104 | +1 | 0 | 1 |
+| `Duration/**` | 99 | 99 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 106 | 106 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 102 | 102 | 0 | 0 | 0 |
+| **total** | **410** | **411** | **+1** | **0** | **1** |
+
+The base total **reproduces S25's 410 family for family** (103/99/102/106) on a
+freshly prewarmed cache, so the two slices' numbers are directly comparable.
+
+Aggregating all 480 base rows and all 480 branch rows by digit-normalised
+message: 38 buckets on each side, and **exactly one moves** —
+`dereferencing a null pointer in __closure_N()` **7 → 6**. The other 37 are
+unchanged, count for count. The moved row is
+`Temporal/PlainDate/from/limits.js`, whose `[tooEarly, tooLate,
+"-271821-04-18", "+275760-09-14"]` is the defect written in test262's house
+style.
+
+Runs were solo, sequential, at a **60 s** per-row budget from the start, on a
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` on both prewarms,
+key `a11c84e5…`, 3,307,526 B). There is **no `compile_error` and no `timeout`
+cell anywhere in the 960**.
+
+#### 3. Which clauses of the hand-off were wrong — both named hypotheses
+
+The brief ranked three candidates and named a mechanism for the first. Both
+named mechanisms are wrong, and the ranking inverted once the buckets were
+reduced rather than counted.
+
+**(a) `illegal cast in __class_construct_dispatch()` — "the construct ladder
+tests classes structurally (S21's problem on the CONSTRUCT side)".** It does
+not. `ensureStandaloneClassConstructDispatch` discriminates by **identity**:
+`ref.eq` against each class-object singleton global, each arm guarded by a
+`ref.test` on the lazily-materialised global. Its own header says why —
+"keyed by the class's IDENTITY … the same discriminator #5383 S2f R13 had to
+use for `typeof`". S21's structural hazard cannot exist here, and the `__tag`
+guard has nothing to attach to.
+
+The real cause, reduced to ONE module with no link: `externArgCoercionInstrs`'
+ref arm emits a **hard** `ref.cast` into the formal's type. `f64`/`i32` formals
+are lenient (NaN / 0); a ref formal traps. A parameter typed by INFERENCE from
+its default (`calendar = "iso8601"` ⇒ `string`) is unsound for a dynamic
+caller:
+
+```js
+class PD { constructor(y, m, d, cal = "iso8601") { this.cal = cal; } }
+mk(PD, 2020, 12, 24, undefined);  // TRAP illegal cast
+mk(PD, 2020, 12, 24, 1);          // TRAP illegal cast
+mk(PD, 2020, 12, 24, "gregory");  // "gregory" — only a matching type survives
+```
+
+**(b) `dereferencing a null pointer in __closure_N()` — "a closure-call null …
+if it is one mechanism".** It is not one mechanism; it is at least two, and the
+BIG half is not a closure defect at all. Bisecting `limits.js` reached a variant
+with **no Temporal in the file** that still trapped — the array-literal carrier
+hole this slice fixes. The remaining 6 rows
+(`infinity-throws-rangeerror.js`) reduce to something else entirely:
+`TemporalHelpers.toPrimitiveObserver`, an object-literal METHOD returning an
+object whose GETTERS return closures over the method's parameters. Three
+distinct defects sit on that one shape, all measured standalone:
+
+| spelling | answer |
+| --- | --- |
+| object-literal METHOD form (the harness's own) | `Cannot access property on null or undefined` |
+| plain FUNCTION form | right value, but the getter's side effect is LOST (`calls` stays empty) |
+| single-getter form | `o.valueOf()` answers `[object Object]` |
+
+**(c) The sizing instruction was right and it is what picked this slice.** The
+hand-off said to size a candidate by its test262 family corpus-wide before
+committing. Doing that showed the three candidates' file-name footprints —
+`infinity-throws-rangeerror.js` 74 files, `order-of-operations.js` 64,
+`overflow-wrong-type.js` 20, `limits.js` 23, against `calendar-undefined.js` 5
+and `calendar-wrong-type.js` 8 — and then reduction showed the name counts were
+attached to the WRONG mechanisms. The lesson S25 wrote ("size by the FAMILY, not
+the row count") needs one amendment after this slice: **size by the family, then
+REDUCE before you believe the size**, because a bucket's rows can belong to two
+or three unrelated causes and the name count then measures a coalition, not a
+defect.
+
+#### 4. Controls
+
+**Must-not-move — 604 rows, six groups, per file, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 100 | 94 | 94 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 116 | 93 | 93 | 0 |
+| C1: `class/subclass` + `Reflect/construct` + `new.target` | 133 | 80 | 80 | 0 |
+| C2: `expressions/arrow-function` (first 100) | 100 | 96 | 96 | 0 |
+| **D1: `language/expressions/array` + `Array/prototype/join`** | 75 | 69 | 69 | 0 |
+| **D2: `Array/prototype/{map,forEach}` (first 40 each)** | 80 | 54 | 54 | 0 |
+
+A/B/C are the hand-off's groups and are the INSENSITIVE controls here — they
+were chosen for the construct-ladder hypothesis this slice did not take. **D is
+the group this change actually needs** and was added for it: the core-language
+array-literal corpus plus the HOFs that read a widened vec back. Running only
+the inherited groups would have produced a flat table that proved nothing about
+the change that was made.
+
+Four `compile_error` cells (2 in C1, 2 in C2) are identical on both labels and
+are feature compile errors, not budget artefacts.
+
+**Byte A/B — the control the corpus cannot give, and it answers in both
+directions:**
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, `[obj, "str"]` | `de5b9fe1…` 51,209 B | `68da276d…` 50,859 B | **moved** |
+| standalone, `[obj, 7]` | `0693c3ec…` 51,161 B | `be25d351…` 50,889 B | **moved** |
+| standalone, `[obj, obj]` (homogeneous) | `1a6399b8…` 51,165 B | identical | |
+| standalone, `[{year:1}, "str"]` (inline elem 0) | `ee6bfe28…` 136,190 B | identical | |
+| standalone, no array literal | `fb2f7abd…` 49,625 B | identical | |
+| **gc lane, the SAME armed source** | `97d908fc…` 2,856 B | identical | the lane gate |
+| linked provider (no mixed literal) | `f9c3d1e4…` 155,696 B | identical | |
+
+Exactly the two armed artifacts move; every unarmed one is byte-identical,
+including the gc lane compiled from the same source — that row is the lane gate
+proved rather than asserted. Both armed artifacts got SMALLER (−350 B, −272 B):
+the externref vec drops the per-element guard-cast-and-assert sequence the
+closed carrier needed.
+
+**Temporal provider**: the cached artifact is byte-identical between the two
+labels (same sha256, 3,307,526 B), so no family cell was served a differently
+compiled polyfill — the whole family delta is in the TEST module.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**.
+As in S24/S25 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus writes a mixed array literal, so it can show the change is
+not a broad perturbation but cannot show it does anything. The byte table above
+is what shows that.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 5. The witness
+
+`tests/issue-6613-heterogeneous-array-literal.test.ts`, four `it`s, measured on
+both trees by file-copy revert: base **3 fail / 1 pass**, branch **4 pass**.
+
+Both arms have teeth. The single-module arm is the defect itself; the linked arm
+compiles the same consumer-local literal in a module that also links a provider,
+proving the widening survives a linked build where the rec group and the type
+indices are not the single-module ones. Its FOREIGN-element case is labelled a
+control, not a witness, because a provider-built object crosses the link as
+`externref`, which this predicate skips by construction — and the control
+assertions run FIRST, so their "base tree: …" notes are measurements rather than
+inference (the #6612 discipline point, applied).
+
+The spelling trap here is the mirror of #6612's: element zero must be an
+IDENTIFIER bound to an object. Written inline (`[{ year: 1 }, "str"]`) every
+case passes on BOTH trees and the witness is vacuous.
+
+#### 6. Next bucket — and an inherited red that must be cleared first
+
+**BLOCKER, not this slice's, and it wedges the merge queue if ignored:**
+`npm run -s check:issue-ids:against-main` FAILS on this stack. Main has since
+taken ids **6600, 6601 and 6602**, which S17/S15/S16 also used
+(`6600-standalone-link-reverse-peer-read.md`,
+`6601-standalone-dynamic-new-poisons-provider-values.md`,
+`6602-standalone-nullable-vec-element-callback-param.md`). Three renames plus
+their in-branch references are needed before this stack can be enqueued. Note
+also that `claim-issue.mjs --allocate --dry-run --no-pr-scan` answers **#6606**
+on this box — it cannot see the stack's unpushed issue files — so do NOT take
+its suggestion; #6613 was verified free on `origin/main` and `UNASSIGNED` on
+`origin/issue-assignments` before use.
+
+Residual buckets, branch tree, all four families (69 rows, 38 buckets):
+
+| bucket | rows | reduced to |
+| --- | --- | --- |
+| `dereferencing a null pointer in __closure_N()` | 6 | the `toPrimitiveObserver` getter/closure cluster (§3b) — three defects, one shape |
+| `Proxy get trap is not callable` | 6 | not reduced; standalone Proxy support, a slice of its own |
+| `illegal cast in __class_construct_dispatch()` | 4 | a hard `ref.cast` in `externArgCoercionInstrs` for a formal typed by inference from its default (§3a) |
+| `Built-in objects must be extensible` | 3 | not reduced |
+| `constructor.js: Expected a TypeError` | 3 | not reduced |
+| `null pointer in __anon_N_checkStringOptionWrongType` | 3 | same cluster as row 1 |
+| 32 further buckets | ≤2 each | |
+
+Recommended next slice: **the `toPrimitiveObserver` getter cluster** — 9 rows
+across two buckets, one reduction, and the three symptoms (a null return, a lost
+getter side effect, a getter that answers the receiver) suggest a single
+accessor-lowering cause rather than three.
+
+Filed but not fixed here, each with a reduction in
+[#6613](6613-standalone-heterogeneous-array-literal-carrier.md): a
+numeric-first mixed vec read through a HOF answers `"nullnull"` and, in two
+spellings, produces an **INVALID MODULE** (`typeof a[0]` on `[1, "a"]`;
+`for (const v of [1, true])`). An invalid module is strictly worse than a trap —
+nothing in it runs at all — and neither spelling appears in any current bucket,
+which is its own warning about sizing by symptom.
+
+### S27 findings (2026-09-15) — the eighth cause is ONE existing rule reaching ONE spelling of "function". Four families, 411 → 419; corpus-wide the two target families go 14 → 79 of 93
+
+Full write-up in
+[#6614](6614-standalone-accessor-literal-return-carrier.md). Branch
+`issue-5383-standalone-temporal-s27`, based on S26's tip `528db1579e`; the fix
+is commit `9b41de035e`.
+
+The 480-row sample moves **+8, 0 pass→fail**, and the eight rows that move are
+exactly the eight `__closure_N` / `checkStringOptionWrongType` rows S26
+recommended. The number worth reporting, though, is the **corpus-wide** one: the
+two test262 families those rows belong to are 93 files, and they go **14 → 79
+pass (+65, 0 pass→fail)**. The 120-row-per-family sample sees 8 of that 65
+because it clips each family at its first 120 files.
+
+#### 1. The defect — an accessor object is null-dropped by the RETURN slot
+
+```js
+const M = { mk(pv) { return { get g() { return pv; } }; } };
+const r = M.mk(5);
+r.g;   // TypeError: Cannot access property on null or undefined
+       // spec, and the JS-host/WasmGC lane: 5
+```
+
+`compileObjectLiteralWithAccessors` builds such a literal as a HOST object
+(`__new_plain_object` + `__defineProperty_accessor`, an externref). The checker
+types the enclosing function's return as the anonymous shape the accessor
+implies, so the receiving binding is laid out as a **closed struct**; the store
+guard (`ref.test $__anon_N` on a host object) always fails, `ref.null` is
+written, and the first read is a `struct.get` on null. Disassembled:
+
+```wat
+(global $global$10 (mut (ref null $27)) (ref.null none))   ;; r — a CLOSED struct
+(struct.get $27 0 (local.get $0))                          ;; r.g — on the null
+```
+
+**The rule that prevents this already exists and is 300 lines away.**
+`declarations.ts::functionReturnsHostObjectLiteralCarrier` walks a function's
+returns for exactly this literal and registers its return type in
+`ctx.objectHashConsumerTypes`, which `resolveWasmType` answers `externref` for.
+It is reached from two call sites that both take a **`ts.FunctionDeclaration`**
+and both walk **source-file-level statements only**. So it fired for one
+spelling of "a function that returns an object":
+
+| spelling | base | branch |
+| --- | --- | --- |
+| top-level `function mk() { … }` | **correct** | correct |
+| `const mk = function () { … }` | trap | correct |
+| `const mk = () => ({ … })` | trap | correct |
+| `{ mk() { … } }` object-literal method | trap | correct |
+| `class C { mk() { … } }` | trap | correct |
+| `function` NESTED in another function | trap | correct |
+| IIFE | trap | correct |
+
+`TemporalHelpers.toPrimitiveObserver` is the object-literal-METHOD row.
+
+#### 2. Why seven wrong hypotheses preceded it, and what the reduction actually cost
+
+S26's symptom table named three distinct defects on one shape (a null return, a
+LOST getter side effect in the plain-function spelling, and a single-getter
+version answering `[object Object]`) and inferred "a single accessor-lowering
+cause". Reduced one module at a time, that resolves differently:
+
+- the **null return** and the **lost side effect** are the SAME defect — the
+  return-slot null-drop. `+obs` on a null answers `0` with `calls` empty, which
+  is what "the side effect is lost" looked like. The hand-off's note that the
+  plain-FUNCTION form kept the value and lost only the effect did **not**
+  reproduce: a top-level `function` spelling is the one spelling that was always
+  correct, side effect included (measured, `.tmp/s27/p1.mjs`);
+- the **`[object Object]`** symptom is a genuinely separate defect, and it is
+  **lane-INDEPENDENT** — the JS-host/WasmGC lane gives the same wrong answer.
+  It is therefore out of a standalone-only slice (see §7a).
+
+**What found it was a spelling matrix, not a deeper trace.** Thirteen one-line
+spellings of the same three-line program, each compiled as its OWN module
+(module CONTENT changes answers), split "object-literal method" from "function
+declaration" in one run and made the rule-with-one-spelling visible. The
+diagnostic cost was two `console.error` lines in `moduleGlobalWasmType` printing
+the chosen ValType and each named arm's answer; every arm reported `false` on
+both trees, which is what pointed at `resolveWasmType`'s type-identity set
+rather than at any of the widening arms.
+
+#### 3. The fix
+
+`src/codegen/accessor-literal-return-carrier.ts` — a standalone/WASI-gated
+pre-pass, driven from `index.ts` at the same deterministic point as
+`collectDynamicObjectReturnCarrierTypes` (before `collectDeclarations`, so
+before any binding is typed), in both the single- and multi-source paths. It
+mirrors the existing body scan for every function-LIKE node.
+
+It also registers the **call-site** type, and that second step is not
+belt-and-braces: a class method's declaration return type and its call site's
+resolved type are **two different `ts.Type` objects that both print
+`{ readonly g: any; }`**, and `objectHashConsumerTypes` is keyed by identity —
+so with only the first step, `new C().mk()` kept the closed-struct slot while
+`C_mk` already returned externref (measured; it is the one case of the matrix
+that stayed broken until the consult was added). That is the
+`oracle-ratchet-allow` in #6614's frontmatter, and the reason it is a genuine
+ValType-lowering question.
+
+Narrowed to **accessor** literals, the same scoping #5376 chose for the
+struct-FIELD twin of this defect; the other `objectLiteralForcesHostPath`
+reasons stay a separate, separately-measured change.
+
+#### 4. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 104 | 107 | +3 | 0 | 3 |
+| `Duration/**` | 99 | 100 | +1 | 0 | 1 |
+| `PlainDateTime/**` | 106 | 109 | +3 | 0 | 3 |
+| `ZonedDateTime/prototype/**` | 102 | 103 | +1 | 0 | 1 |
+| **total** | **411** | **419** | **+8** | **0** | **8** |
+
+The base total **reproduces S26's 411 family for family** (104/99/106/102) on a
+freshly prewarmed cache, so the two slices' numbers are directly comparable.
+
+**Corpus-wide, the two target families:** every `infinity-throws-rangeerror.js`
+and `overflow-wrong-type.js` under `Temporal` — **93 files**, run per file on
+both labels at 60 s, solo:
+
+| | base | branch | Δ |
+| --- | --- | --- | --- |
+| 93 files, both target families | **14 pass** | **79 pass** | **+65, 0 pass→fail** |
+
+Aggregating the 480 sample rows by digit-normalised message: **exactly three
+buckets move**, and the other 36 are unchanged count for count:
+
+| bucket | base | branch |
+| --- | --- | --- |
+| `dereferencing a null pointer in __closure_N()` | 6 | **0** |
+| `dereferencing a null pointer in __anon_N_checkStringOptionWrongType` | 3 | **0** |
+| `object with toString … «[object Object]n»` (new) | 0 | 1 |
+
+Both target buckets are retired outright. The single new row is
+`ZonedDateTime/prototype/add/overflow-wrong-type.js`, which clears this defect
+and lands on a **BigInt** one: `assert.sameValue(result.epochNanoseconds,
+1_000_086_400_987_654_321n)` renders the expected value as `[object Object]n`.
+Unrelated to accessors, and counted as fail→fail.
+
+Runs were solo, sequential, at a **60 s** per-row budget from the start, on a
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` on both prewarms,
+key `a11c84e5…`, 3,307,526 B). There is **no `compile_error` and no `timeout`
+cell anywhere in the 960**.
+
+#### 5. Controls
+
+**Must-not-move — 497 rows, five groups, per file, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 100 | 94 | 94 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 116 | 93 | 93 | 0 |
+| **E1: `language/expressions/object/accessor-*`** | 24 | 23 | 23 | 0 |
+| **E2: `built-ins/Object/defineProperty` (first 150)** | 150 | 150 | 150 | 0 |
+| **E3: `template-literal` + `Symbol/toPrimitive` + `addition`** | 107 | 99 | 99 | 0 |
+
+A/B are the inherited groups and are the INSENSITIVE controls here. **E is the
+group this change needs** and was chosen for it: the accessor corpus itself, the
+descriptor-install corpus that mints the same host objects, and the two
+ToPrimitive consumers (`` `${obj}` `` and `+obj`) that read them back. The one E1
+`compile_error` cell is identical on both labels.
+
+**Byte A/B — the control the corpus cannot give, and it answers in both
+directions:**
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, object-literal METHOD carrier | `044dd6a1…` 145,362 B | `2e79bfcf…` 144,270 B | **moved** |
+| standalone, ARROW carrier | `fbc1fbc8…` 144,562 B | `65900e54…` 143,547 B | **moved** |
+| standalone, CLASS-METHOD carrier | `06d40ec2…` 146,121 B | `b76862ae…` 145,489 B | **moved** |
+| standalone, top-level `function` carrier (already correct) | `cb8b7068…` 142,014 B | identical | |
+| standalone, same shape with NO accessor | `5dd93d63…` 142,469 B | identical | |
+| standalone, top-level accessor literal, no carrier | `d5576819…` 143,101 B | identical | |
+| **gc lane, the SAME armed method source** | `adfa13cf…` 6,604 B | identical | the lane gate |
+| **gc lane, the SAME armed arrow source** | `e2dea7b2…` 6,359 B | identical | the lane gate |
+| linked provider (no accessor carrier) | `ce50b3f3…` 155,696 B | identical | |
+
+Exactly the three armed artifacts move; every unarmed one is byte-identical,
+including both gc-lane artifacts compiled from the same armed sources — the lane
+gate proved rather than asserted. All three armed artifacts got SMALLER (−1,092 /
+−1,015 / −632 B): an externref slot drops the guarded-cast-and-store sequence the
+closed struct needed.
+
+**Temporal provider**: the cached artifact is byte-identical between the two
+labels — and byte-identical to S26's (`dc159623…`, 3,307,526 B) — so no family
+cell was served a differently compiled polyfill and the whole delta is in the
+TEST module.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**. As
+in S24–S26 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus returns an accessor literal from a function, so it shows
+the change is not a broad perturbation but cannot show it does anything. The byte
+table above is what shows that.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 6. The witness
+
+`tests/issue-6614-accessor-literal-return-carrier.test.ts`, four `it`s, measured
+on both trees by file-copy revert of `src/codegen/index.ts`: base **3 fail /
+1 pass**, branch **4 pass**.
+
+The side-effect arm is separate on purpose. A fix that merely stops the
+null-drop could still hand back an object whose accessor became a DATA property
+— right value, no side effect — and that is exactly what
+`checkStringOptionWrongType`'s `assert.compareArray(actual, expected, "order of
+operations")` catches. The arm asserts the getter is observed **exactly once, in
+spec order**, for `+obs` (valueOf first), for `` `${obs}` `` (toString first) and
+for a double read (4 log entries, not 0 and not 8).
+
+#### 7. Residuals, each reduced
+
+**(a) `o.valueOf()` as a DIRECT call answers the receiver.** LANE-INDEPENDENT —
+the gc lane gives the same wrong answer, so fixing it would move gc bytes and it
+is out of a standalone-only slice.
+
+```js
+const o = { get valueOf() { return function () { return 11; }; } };
+o.valueOf();                                           // "[object Object]"  spec: 11
+(function () { var f = o.valueOf; return f(); })();    // 11 — correct
+```
+
+Name-specific: `o.toString()`, `o.zz()` and `o.f()` are all correct with the
+identical shape, and a DATA-property or METHOD `valueOf` is correct too. A
+`valueOf` call fast path is reaching the receiver's builtin without first asking
+whether the own property is an accessor. No row in the current buckets depends
+on it.
+
+**(b) The reverse peer GET does not dispatch an ACCESSOR.** A provider reading
+`o.g` off a consumer-built object gets `undefined` where the consumer installed
+a getter; the DATA-property twin reads back correctly. Measured on BOTH trees
+with a TOP-LEVEL accessor literal — a spelling that was already correct locally
+— which pins it to the reverse channel and not to the return slot. Pinned as an
+expectation in the witness so it cannot rot silently. This answers the brief's
+"check the reverse GET honours accessors": it does not.
+
+#### 8. Residual buckets, branch tree, all four families (61 rows, 37 buckets)
+
+| bucket | rows | file-name footprint corpus-wide | reduced to |
+| --- | --- | --- | --- |
+| `Proxy get trap is not callable` | 6 | `order-of-operations.js` 64 + `observable-get-overflow-argument-primitive.js` 5 | not reduced; standalone Proxy support, a slice of its own |
+| `illegal cast in __class_construct_dispatch()` | 4 | `calendar-undefined.js` 5 + `calendar-wrong-type.js` 8 | S26 §3a: a hard `ref.cast` in `externArgCoercionInstrs` for a formal typed by INFERENCE from its default (`calendar = "iso8601"` ⇒ `string`), unsound for a dynamic caller |
+| `Built-in objects must be extensible` | 3 | `builtin.js` 129 | not reduced |
+| `constructor.js: Expected a TypeError` | 3 | `constructor.js` 16 | not reduced |
+| `Expected a RangeError … no exception` | 3 | mixed | not reduced |
+| 32 further buckets | ≤2 each | | |
+
+**Read the footprint column with S26's amendment applied**: a file-name count
+measures a COALITION, not a defect — `builtin.js` is 129 files of which 3 fail
+here. This slice is the counter-example that makes the amendment cut both ways:
+the two families it retired footprint at 93 files and **65 of them really did
+move**, because there the name and the mechanism happened to coincide. Size by
+the family, reduce before you believe the size, and then MEASURE the family.
+
+**Recommended next slice: the `illegal cast in __class_construct_dispatch()`
+bucket.** It is the only remaining bucket already reduced to a named mechanism
+in one module with no link, S26 did that reduction, and the shape (a parameter
+whose type is INFERRED from its default, hard-cast at a dynamic call) is general
+rather than Temporal-specific. `Proxy get trap is not callable` is larger (6
+rows, 69 files) but is unreduced standalone-Proxy work.
+
+#### 9. Traps, carried forward and added to
+
+Everything in S26 §Traps still holds. Two additions:
+
+- **`wabt` cannot read this tree's modules** (`readWasm failed: unexpected type
+  form (got -0x30)`). Use `./node_modules/.bin/wasm-dis -all` (binaryen), which
+  is already in `node_modules/.bin`. A disassembler that refuses is not a signal
+  about the module.
+- **A probe file with a SHARED prelude is one module**, so a single case that
+  fails to compile poisons every other case's answer — the first `p4` run
+  reported a uniform `stack-balance (#2090)` CE for all ten cases and said
+  nothing about any of them. Drive each case as its own module
+  (`.tmp/s27/each.mjs`); it costs one compile per case and is the only form in
+  which a spelling matrix means anything.
+
+### S28 findings (2026-09-15) — the ninth cause is a marshal that answers a DECLARED type where the caller supplied a DYNAMIC value. Four families, 419 → 423; corpus-wide the two target families go 3 → 13 of 13
+
+Full write-up in
+[#6615](6615-standalone-dynamic-ref-arg-hard-cast.md). Branch
+`issue-5383-standalone-temporal-s28`, based on S27's tip `1438da85ab`; the fix
+is commits `a306c24168` + `8828ace5a5` + `0406214506`.
+
+The 480-row sample moves **+4, 0 pass→fail**, and the four rows that move are
+exactly the four `illegal cast in __class_construct_dispatch()` rows S27
+recommended. Corpus-wide the two target families are **13 files and they go
+3 → 13 pass** — every one of them.
+
+#### 1. The defect — a hard `ref.cast` into a formal typed by its own default
+
+```js
+class PD { constructor(y, m, d, cal = "iso8601") { this.t = typeof cal; } }
+function mk(C, a, b, c, d) { return new C(a, b, c, d); }
+
+mk(PD, 2020, 12, 24, undefined);  // TRAP illegal cast — spec: run the default
+mk(PD, 2020, 12, 24, null);       // TRAP illegal cast
+mk(PD, 2020, 12, 24, 1);          // TRAP illegal cast
+mk(PD, 2020, 12, 24, {});         // TRAP illegal cast
+mk(PD, 2020, 12, 24, Symbol());   // TRAP illegal cast
+mk(PD, 2020, 12, 24, "gregory");  // "gregory" — only a MATCHING type survives
+mk3(PD, 2020, 12, 24);            // "iso8601" — a MISSING argument is fine
+```
+
+`externArgCoercionInstrs`' ref arm was two instructions — `any.convert_extern`
++ a NON-null `ref.cast` — and a failed `ref.cast` is a wasm **trap**, which
+kills the instance so no `catch` in the program can see it. The formal is
+whatever the checker inferred, and `cal = "iso8601"` makes that `string`
+(lowered to `(ref null $string)`). **The declared type describes the DEFAULT,
+not the argument**, and a dynamic caller is under no obligation to honour it.
+
+S26 reduced this in one module and named the mechanism; that reduction
+reproduced exactly, line for line (`.tmp/s28/cases-a.mjs`, 16 spellings, each
+its own module).
+
+#### 2. The fix — three arms, and arms 1 and 3 are reachable ONLY where the cast already trapped
+
+`src/codegen/extern-arg-marshal.ts` mints, per formal type, a lenient
+replacement for the inline cast: `__extern_arg_ref_<typeIdx>[_opt]
+(externref) -> (ref [null] $T)`.
+
+1. **`undefined` into a DEFAULTED nullable formal → `ref.null`.** The callee's
+   parameter prologue fires a ref-typed default on `ref.is_null`
+   (`function-body.ts`), so a typed null IS the "run your default" signal — the
+   ref-lane twin of #5380's f64 sNaN sentinel.
+2. **A value that inhabits `$T` → the same cast as before**, byte for byte.
+   `ref.test (ref $T)` succeeds exactly where `ref.cast (ref $T)` does.
+3. **Anything else → a catchable `TypeError` INSTANCE** (`e instanceof
+   TypeError` **and** `e.constructor === TypeError`, measured — `assert.throws`
+   reads both). It is also what the callee itself would have done for all ten
+   values `calendar-wrong-type.js` passes: the polyfill's `Ve` is
+   `if ("string" != typeof e) throw new TypeError(…)`.
+
+**That structure is the whole safety argument, and it is a proof rather than a
+sample**: arm 2 is the old behaviour, and arms 1 and 3 are reached only for
+values that previously TRAPPED. A trap always fails a test262 row, so the change
+is monotone — 0 pass→fail is not a measurement that came out lucky.
+
+A helper FUNCTION rather than inline instructions, for the reason
+`ensureUnboxNumberOrOmitted` already is one: the argument may come from
+`__extern_get_idx`, so the sequence must not evaluate it twice — and a function
+needs no scratch local in callers whose local layout was fixed at reserve time.
+Being in the one shared marshal, it reaches BOTH finalize-time callers (the
+construct trampolines and the closed-method dispatchers), which is what that
+module exists for.
+
+#### 3. What the hand-off got right, and the one clause that was wrong
+
+The brief's mechanism was **right** — this is the first slice in the S9–S28 run
+where the inherited attribution survived reduction intact. Its two suggested
+fixes split, though:
+
+- **"a `ref.test`-guarded cast that falls back to the extern carrier"** — the
+  fallback cannot be the extern carrier. The callee's formal is
+  `(ref null $string)`; there is no way to put a number or a symbol in it, so
+  "carry the value as the boxed/any carrier and let the body's own checks run"
+  is unavailable without changing the callee's SIGNATURE.
+- **"widening the formal to the any-carrier for dynamically-invoked callees"**
+  is the semantically correct fix and was rejected on measurement, not taste:
+  the checker still types the parameter `string`, and every use site inside the
+  body resolves its ValType from that type. The established widening mechanism
+  (`ctx.objectHashConsumerTypes`, keyed by `ts.Type` IDENTITY — S27's fix) cannot
+  express it, because the identity in question is the SHARED primitive `string`.
+  Registering it would make every string in the module an externref.
+
+  The compiler already contains the widened answer for one spelling, which is
+  what makes the tradeoff concrete: an ARROW with a defaulted string parameter
+  called through a value answers `"number"` correctly, because an arrow's
+  closure formals are externref. A `function` declaration with the identical
+  body traps.
+
+So arm 3 throws where a widened formal would have let the body decide. That is
+a deliberate approximation, and it is stated as one: for THIS corpus it is
+exactly right, and everywhere else it replaces a trap with a catchable error.
+
+#### 4. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 107 | 109 | +2 | 0 | 2 |
+| `Duration/**` | 100 | 100 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 109 | 111 | +2 | 0 | 2 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **419** | **423** | **+4** | **0** | **4** |
+
+The base total **reproduces S27's 419 family for family** (107/100/109/103), so
+the two slices' numbers are directly comparable.
+
+**Corpus-wide, the two target families:** every `calendar-undefined.js` and
+`calendar-wrong-type.js` under `Temporal` — **13 files**, run per file on both
+labels at 60 s, solo:
+
+| | base | branch | Δ |
+| --- | --- | --- | --- |
+| 13 files, both target families | **3 pass** | **13 pass** | **+10, 0 pass→fail** |
+
+Aggregating the 480 base rows and the 480 branch rows by digit-normalised
+message: 37 buckets on the base side, 36 on the branch side, and **exactly one
+moves** — `illegal cast in __class_construct_dispatch()` **4 → 0**. The other 36
+are unchanged, count for count.
+
+Runs were solo, sequential, at a **60 s** per-row budget from the start, on a
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` on both prewarms,
+key `a11c84e5…`). There is **no `compile_error` and no `timeout` cell anywhere
+in the 960**, and no `__temporal_*` leak in any row of any label.
+
+#### 5. Controls
+
+**Must-not-move — 356 rows, three groups, per file, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 81 | 79 | 79 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 97 | 77 | 77 | 0 |
+| **F: `class/dstr` (150) + `function`/`arrow-function` `dflt-params-*` (18) + `Reflect/construct` (10)** | 178 | 143 | 143 | 0 |
+
+A/B are the inherited INSENSITIVE controls. **F is the group this change needs**
+and was chosen for it: the parameter-DEFAULT corpus (the semantics arm 1
+changes) plus the dynamic-CONSTRUCT corpus (`Reflect/construct`, the other way
+into the same trampolines). Its 3 `compile_error` cells are identical on both
+labels.
+
+**Byte A/B — the control the corpus cannot give, in both directions:**
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, dynamic `new` + defaulted STRING formal | `ffbf7bc2…` 210,032 B | `766f1ee9…` 210,375 B | **moved** |
+| standalone, dynamic `new` + defaulted OBJECT formal | `688fa998…` 210,398 B | `f96abaa9…` 210,748 B | **moved** |
+| standalone, dynamic `new`, `f64` formals ONLY | `792a1803…` 210,205 B | identical | the arming gate |
+| standalone, same class, NO dynamic `new` site | `9f9cb3bb…` 138,431 B | identical | |
+| **gc lane, the SAME armed string-formal source** | `096400ac…` 5,704 B | identical | the lane gate |
+| **gc lane, the SAME armed object-formal source** | `b9463566…` 6,236 B | identical | the lane gate |
+| **linked provider, class with a defaulted ref formal** | `e8af7103…` 155,982 B | `1147f0ee…` 156,546 B | **moved** |
+| linked provider, no class at all | `f765e43d…` 157,098 B | identical | |
+
+Exactly the three armed artifacts move; every unarmed one is byte-identical,
+including both gc-lane artifacts compiled from the same armed sources.
+
+**The `f64`-formals-only row is a fix, not a decoration.** The first cut armed
+at every dynamic `new <value>` site and that module moved **+232 B** — a
+TypeError message string it could never reach. `moduleHasRefTypedConstructFormal`
+now gates both arming sites; it reads `structMap` (filled by
+`collect-declarations`) rather than `classObjectGlobals`, which is materialised
+LAZILY and is still empty at the expression site that arms the guard.
+
+**Temporal provider**: `dc159623…` 3,307,526 B → `a7bd3c5f…` 3,308,117 B
+(**+591 B**) — the provider artifact is SUPPOSED to move here, and that is the
+second half of a finding, not a caveat: see §6.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**. As
+in S24–S27 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus constructs from a runtime value into a ref formal. The
+byte table above is what shows the change does anything.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 6. The arming site the expression could not reach — and how it announced itself
+
+The first working cut fixed the single-module reduction completely and moved
+**nothing** across the link: all 13 corpus-wide rows still trapped in
+`__class_construct_dispatch`. The tell was one number in the prewarm stamp —
+the provider artifact was **byte-identical** to S26's and S27's.
+
+`classConstructWanted` turns the construct trampolines on for *two* reasons: a
+`new <value>` site in THIS module, or `ctx.exportsConsumedByWasm` — and in the
+second case the dynamic caller is in another module entirely
+(`__js2wasm_link_construct`, provider side). The `@js-temporal/polyfill` provider
+compiles **no dynamic `new <value>` site of its own**, so arming at the
+expression site never fired in the artifact that needed it.
+
+`armExternRefArgTypeGuardForLinkedProvider` runs post-bodies in BOTH codegen
+paths. Post-bodies rather than at finalize because building the throw
+materialises an error constructor; no `fctx` to flush against because no body is
+live there, and none is needed: under `semanticProviders: "native-first"`
+`__new_TypeError` routes to `emitWasiErrorConstructor` (a DEFINED function, no
+import, no index shift), and with `nativeStrings` the message adds a string-pool
+entry rather than an imported global.
+
+**Generalisation worth carrying**: for anything gated on "this module compiles
+X", ask whether the PROVIDER spelling of the same feature has an X at all. Three
+slices' worth of link-boundary work (S17, S18, S24) each turned on a
+provider-side path whose trigger lived on the consumer side.
+
+#### 7. Residuals, each reduced rather than listed
+
+**(a) The same hard cast has at least three more homes, and they are NOT this
+module's** (measured, `.tmp/s28/cases-b.mjs`, one module per case, unchanged by
+this slice):
+
+| dynamic entry | defaulted `string` formal given `1` |
+| --- | --- |
+| class construct trampoline | **fixed here** |
+| `o.m(1)` closed-method dispatcher | fixed here **when the module is armed**; otherwise still traps |
+| `f(1)` through a plain-`function` value | traps — the closure bridge, a different marshal |
+| `K.s(1)` static method through a value | traps — same closure bridge |
+| `(x = "a") => …` arrow through a value | **already correct** — arrow formals are externref |
+
+The arming gate is a CONSTRUCT-formal predicate, so the method dispatcher rides
+along only when some class in the module also has a ref-typed constructor
+formal. That is arbitrary, and it is stated as arbitrary: it is strictly better
+than the previous trap everywhere it fires, and never worse anywhere it does
+not.
+
+**(b) A defaulted ref formal still cannot express `null`, and this is
+structural.** The callee's prologue fires a ref-typed default on `ref.is_null`,
+so a typed null is indistinguishable from "absent" — passing null would silently
+apply the default, which is exactly what the spec forbids. Arm 3 therefore
+throws for `null`, which is also what `calendar-wrong-type.js` wants. Pinned as
+an executable expectation in the witness so a future widening that CAN carry
+null has to update it.
+
+**(c) The secondary candidate the brief named is TWO mechanisms, and neither is
+this one** (`constructor.js: Expected a TypeError`, 3 rows / 16 files —
+reduced, `.tmp/s28/cases-d.mjs`):
+
+- the 3 `constructor.js` rows are `Temporal.PlainDate(1970, 1, 2)` — a class
+  called AS A FUNCTION, which must throw because NewTarget is undefined. In ONE
+  module that **already throws TypeError correctly**, so the rows are the
+  CROSS-LINK spelling: a class reached through a provider namespace and called,
+  not constructed. That is the call-side twin of #6612's IsConstructor guard,
+  at the link boundary;
+- the 2 `invalid-type.js` rows in the same bucket ARE this marshal — on the
+  **f64** lane, failing in the opposite direction. `new Temporal.Duration(Symbol())`
+  and `(1n)` answer `NaN` where ToNumber must throw a TypeError, because
+  `__unbox_number` is silently lenient. Deliberately untouched here: making the
+  f64 arm throw changes the bytes of every numeric dynamic argument in every
+  module, which is a slice of its own.
+
+The S26 amendment applies again — a bucket NAME measures a coalition. This time
+the coalition split 3/2 across two unrelated causes.
+
+#### 8. Residual buckets, branch tree, all four families (57 rows, 37 buckets)
+
+| bucket | rows | file-name footprint corpus-wide | reduced to |
+| --- | --- | --- | --- |
+| `Proxy get trap is not callable` | 6 | `order-of-operations.js` 63 + `observable-get-overflow-argument-primitive.js` 5 | not reduced; standalone Proxy support, a slice of its own |
+| `Built-in objects must be extensible` | 3 | `builtin.js` 129 | not reduced |
+| `Expected a TypeError … no exception` | 3 | `constructor.js` 16 | §7c: a class CALLED as a function across the link — correct module-locally |
+| `Expected a RangeError … no exception` | 3 | mixed | not reduced |
+| `Cannot read properties of undefined (reading 'apply'/'equals')` | 4 | `subclassing-ignored.js` 45 + `math-order-of-operations-*.js` | not reduced |
+| 33 further buckets | ≤2 each | | |
+
+**Recommended next slice: the `Proxy get trap is not callable` bucket** (6 rows,
+68 files corpus-wide). It is now the largest by both measures and the only one
+left whose size and mechanism plausibly coincide — but it is unreduced
+standalone-Proxy work, so **size it by reducing one `order-of-operations.js` row
+in a single module before committing to it** (the S26 amendment). The cheaper
+alternative with a named mechanism already in hand is §7c's f64-lane twin:
+`__unbox_number` must throw a TypeError for a Symbol or a BigInt instead of
+answering `NaN`. Small, reduced, and it is the same defect family this slice
+only half-closed.
+
+#### 9. Traps, carried forward and added to
+
+Everything in S26 §Traps and S27 §9 still holds. One addition:
+
+- **A prewarm stamp's `bytes` is a free before/after check on the PROVIDER
+  half of any linked fix, and it is the fastest one available.** A provider
+  artifact that is byte-identical to the previous slice's means the compiler
+  change did not reach it — a complete answer in ~30 s, before any test262 row
+  runs. It is how §6 was found; running the 13-file corpus first would have cost
+  12 minutes to say the same thing less precisely.
+
+### S29 findings (2026-09-15) — the tenth cause is a missing argument ABI: a spread into a STATIC or OBJECT-LITERAL method was bound as ONE argument. Four families 423 → 423; the 45-file target family is now ONE cause away, and that cause is named
+
+Full write-up in
+[#6616](6616-standalone-static-objlit-spread-and-static-rest-abi.md). Branch
+`issue-5383-standalone-temporal-s29`, based on S28's tip `11fcafe07c`; the fix
+is commits `349b3f3c66` + `433d83525f`.
+
+**The headline is flat and that is the finding, not a failure to report one.**
+The dispatched bucket is retired to zero corpus-wide, the 45-file target family
+moves as a body — but it moves from one failure to the NEXT failure, because a
+second, unrelated cause sits behind the first. Reporting +0 with the successor
+cause named and sized is the honest result; reporting the bucket retirement as a
+win would not be.
+
+#### 1. The defect — two halves of the known-callee argument ABI, missing from four arms
+
+test262's `temporalHelpers.js` forwards through its own object literal:
+
+```js
+checkSubclassingIgnoredStatic(...args) { this.checkStaticInvalidReceiver(...args); }
+checkStaticInvalidReceiver(construct, method, methodArgs) {
+  const result = construct[method].apply(value, methodArgs);
+```
+
+`TemporalHelpers` is an OBJECT LITERAL, so `this.checkStaticInvalidReceiver(...args)`
+is an object-literal method reached with a spread — and that arm never flattened
+it. Each argument NODE was bound to one formal, so `construct` received the whole
+rest ARRAY and `method` received `undefined`; `construct[method]` was therefore
+`undefined` and the closed-method dispatcher's nullish-receiver guard threw
+
+    TypeError: Cannot read properties of undefined (reading 'apply')
+
+which is the bucket name — raised at the CALL SITE, not at the member read
+everyone (including this brief) assumed.
+
+Reduced to ONE module, no link, no Temporal:
+
+```js
+const H = { m2(a, b) { … }, fwd(...args) { return this.m2(...args); } };
+H.fwd(1, 2);                 // base: "1,2/undef"
+H.m3(...[1, 2, 3]);          // base: "[object Object]/undef/undef" — a TUPLE struct
+class K { static s2(a, b) { … } } K.s2(...xs);   // base: "1,2/undef"
+class K2 { static f(...args) { return args.length; } } K2.f(1, 2);
+                             // base: TRAP dereferencing a null pointer
+```
+
+The last line is the second half: the static-through-a-class-object arm also
+never materialised the hidden REST vec, so a `static f(...rest)` formal arrived
+**null** — with no spread at the call site at all. Object-literal methods, plain
+functions and instance methods were all already correct; only the static arm was
+missing it.
+
+**The two halves had to ship together, and that is a result rather than a
+convenience.** Fixing the spread alone turned
+`static fwd(...args) { return K.m2(...args); }` from a wrong value into an
+**uncatchable trap** — the flattened path actually READS the rest formal.
+Measured in that intermediate state, before the second half landed. A trap is
+worse in kind than a wrong value, so a spread-only slice would have been a
+regression in failure MODE even where the row failed either way.
+
+#### 2. The fix — four arms, each a copy of what the class-INSTANCE arm already had
+
+| file | arm | `paramOffset` | added |
+| --- | --- | --- | --- |
+| `call-namespace-static.ts` | static through a class-object identifier | 0 | spread **+ rest** |
+| `call-receiver-method.ts` | static (class arm) | 0 | spread |
+| `call-receiver-method.ts` | struct receiver, nullable | 1 | spread |
+| `call-receiver-method.ts` | struct receiver, non-nullable | 1 | spread |
+
+`compileSpreadCallArgsWithArguments` first when the callee reads `arguments`
+(#5093 — it publishes a RUNTIME `__argc` and the extras split), else
+`compileSpreadCallArgs`; extras loop, default padding and
+`maybeSetArgcForKnownCall` gated off when either path claimed the arguments.
+
+**Bounded by construction, not by sampling**: the new code is reached only at a
+call site carrying a `SpreadElement`, or a static callee declaring `...rest`.
+Every such site was previously wrong — a wrong value, a module that did not
+validate, or a null-deref trap. There is no site where the old path was right
+and the new path differs.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 109 | 109 | 0 | 0 | 0 |
+| `Duration/**` | 100 | 100 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 111 | 111 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **423** | **423** | **0** | **0** | **0** |
+
+The base reproduces S28's branch family for family (109/100/111/103), measured
+HERE by file-copy revert on both labels rather than inherited. No
+`compile_error`, no `timeout`, and no `__temporal_*` leak in any of the 960 rows.
+
+**The 57 residual rows are not unchanged — 6 of them moved bucket:**
+`Cannot read properties of undefined (reading 'apply')` **2 → 0**, and four
+`year result: Expected SameValue(«N», «N,N,MN…»)` rows — whose expected value was
+literally the STRINGIFIED ARRAY, the mis-binding showing through the assertion
+message — now report distinct real values.
+
+**Corpus-wide, the two target families (61 files, per file, both labels):**
+
+| | base | branch | Δ |
+| --- | --- | --- | --- |
+| 45 `subclassing-ignored.js` + 16 `constructor.js` | **8 pass** | **8 pass** | 0, 0 flips |
+
+and the bucket table for those 61 rows moves in exactly one place:
+`Cannot read properties of undefined (reading 'apply')` **10 → 0**. Every other
+bucket is identical count for count.
+
+#### 4. Where the 45-file family now stops — the successor cause, named and sized
+
+All **45** `subclassing-ignored.js` files now fail on **one** assertion, the
+helper's last line:
+
+```js
+assert.sameValue(Object.getPrototypeOf(result), construct.prototype);
+// «null» vs «undefined»
+```
+
+`Object.getPrototypeOf(<instance produced by a linked provider class>)` answers
+**null**, and `construct.prototype` through the real polyfill answers
+**undefined**. Reduced in a synthetic linked pair (`.tmp/s29/cases-j.mjs`), where
+the split is sharper: `NS.PD.prototype` IS a value, but
+`Object.getPrototypeOf(new NS.PD(1))` is `null`, `… === NS.PD.prototype` is
+false, and `new NS.PD(1) instanceof NS.PD` is **"no"** — despite #5354 having
+landed linked-class `instanceof`. So the prototype LINK of an instance minted by
+a provider class is not visible to the consumer.
+
+That is the whole remaining distance for this family: 45 files, one cause, and it
+is the largest single-cause block left in the Temporal corpus.
+
+#### 5. Controls
+
+**Must-not-move — 270 rows, three groups, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 60 | 56 | 56 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 60 | 50 | 50 | 0 |
+| **C: `Function/prototype/{apply,call,bind}` + `Reflect/apply` + `class/subclass`** | 150 | 140 | 140 | 0 |
+
+C is the group this change needs and was chosen for it: the whole
+apply/call/bind corpus plus the subclass corpus — the two places an argument-ABI
+change would surface first. A and B are the inherited insensitive controls.
+
+**Byte A/B — the control the corpus cannot give, in BOTH directions and on BOTH
+lanes:**
+
+| source | lane | base | branch | |
+| --- | --- | --- | --- | --- |
+| object-literal method + spread | standalone | `f3f88147` 139,937 B | `6689bda2` 140,134 B | **moved** |
+| object-literal method + spread | gc | `d1c05435` 4,889 B | `0c5cf864` 4,947 B | **moved** |
+| static method + spread | standalone | `66cfa41f` 135,753 B | `cc4187a7` 135,950 B | **moved** |
+| static method + spread | gc | `e84770ba` 6,616 B | `6e8eff20` 6,673 B | **moved** |
+| static `...rest` formal | standalone | `d3fc081b` 50,499 B | `84e59444` 50,601 B | **moved** |
+| static `...rest` formal | gc | `8e543f09` 6,324 B | `5bf92378` 6,333 B | **moved** |
+| the SAME callees, positional call (objlit) | both | `be897334` / `a57491fa` | identical | |
+| the SAME callees, positional call (static) | both | `cb2586f0` / `177b6130` | identical | |
+| object-literal `...rest` (the arm already right) | both | `1cdadc99` / `5695616f` | identical | |
+| INSTANCE method + spread (the arm already right) | both | `1b4f999d` / `daf10f35` | identical | |
+| plain FUNCTION + spread (a different arm) | both | `e38b5fe2` / `8da4de1c` | identical | |
+
+**The gc lane moves here, deliberately, and that is a departure from S24–S28.**
+Every earlier slice in this stack gated its change to standalone and pinned gc
+byte-identical. This defect is **not lane-specific** — `H.m2(...xs)` bound the
+array into formal 0 on the WasmGC lane too — so gating it to standalone would
+have left the same wrong answer in the default lane in order to protect a
+control that was measuring lane-independence, not safety. The five unarmed rows
+being byte-identical on both lanes is what actually bounds the change.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**.
+As in S24–S28 this is a NULL control and "0 moved" overstates it: no module in
+that corpus spreads into a static or object-literal method. The table above is
+what shows the change does anything.
+
+**Provider artifact**: `a7bd3c5f…` 3,308,117 B on BOTH labels — **byte-identical,
+and correctly so.** S28 §9 reads a byte-identical provider as "the fix did not
+reach it"; here it means the fix has no business there. The forwarding object
+literal is in the test262 HARNESS, which compiles into the CONSUMER module; the
+pre-transpiled `@js-temporal/polyfill` provider contains no such site. The check
+is still the right first move — it just answers "which side", not "wired or not".
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+**Witness**: `tests/issue-6616-static-objlit-spread-rest-abi.test.ts`, 8 `it`s.
+Run against the reverted base: **6 fail, 2 pass** — the six teeth-bearing ones
+fail with exactly the values recorded in their comments (including the linked
+one reproducing `Cannot read properties of undefined (reading 'apply')`), and
+both controls pass on both trees.
+
+#### 6. Which clause of the hand-off was wrong
+
+The brief's mechanism for family 1 was **wrong, and wrong in an instructive
+way**. It proposed: "a PROVIDER function value reached through the link has no
+`apply`/`call` member — the member GET path needs S22's `Function.prototype`
+fallback." Measured (`.tmp/s29/cases-a.mjs`, linked pair):
+
+- `Object.getPrototypeOf(NS.pf)` **is** `Function.prototype` — S22's fix is
+  there;
+- `typeof NS.PD.from.apply` **is** `undefined` — so the member-GET claim is
+  literally TRUE;
+- and it is **irrelevant**, because `f.apply(…)` as a CALL never reads that
+  member. Every spelling works in a single module on the BASE tree
+  (`plain.apply`, `arrow.apply`, a static through a value, an object-literal
+  method through a value). The failing rows never got that far: the receiver was
+  already `undefined` two frames up.
+
+The generalisation is a cheap one this stack keeps re-buying: **a bucket named
+after a member read may be a call-site defect.**
+`Cannot read properties of undefined (reading 'X')` is emitted by
+`closed-method-dispatch.ts` for a NULLISH RECEIVER, so it names where the
+receiver was CONSUMED, not where it was produced.
+
+The brief's family-2 clause (`constructor.js`, "a class CALLED as a function
+across the link") was **not reached** — 8 of those 16 files already pass and the
+other 8 are unchanged here. The f64 `__unbox_number` twin was left untouched, as
+instructed.
+
+#### 7. Residual buckets, branch tree, all four families (57 rows)
+
+| bucket | rows | file-name footprint corpus-wide | reduced to |
+| --- | --- | --- | --- |
+| **`Object.getPrototypeOf` of a linked-class instance is null** | 4 (+35 already there) | **`subclassing-ignored.js` 45 — the whole family** | §4, reduced in a synthetic linked pair |
+| `Proxy get trap is not callable` | 6 | `order-of-operations.js` 63 + `observable-get-overflow-argument-primitive.js` 5 | not reduced; standalone Proxy support |
+| `Built-in objects must be extensible` | 3 | `builtin.js` 129 | not reduced |
+| `Expected a TypeError … no exception` | 3 | `constructor.js` 16 (8 already pass) | S28 §7c; untouched here |
+| `Expected a RangeError … no exception` | 3 | mixed | not reduced |
+| `Cannot read properties of undefined (reading 'equals')` | 2 | `math-order-of-operations-*.js` | NOT the `apply` cause — a chained `zdt[op](…)` returning undefined |
+| ~30 further buckets | ≤2 each | | |
+
+**Recommended next slice: §4's prototype link.** It is the only candidate whose
+size and mechanism are both already established — 45 files, one assertion, and a
+reduction in hand (`.tmp/s29/cases-j.mjs`) showing `instanceof` across the link
+failing for a provider-minted instance despite #5354. Every other bucket is
+either unreduced (Proxy, extensibility) or ≤3 rows.
+
+#### 8. Traps, carried forward and added to
+
+Everything in S26 §Traps, S27 §9 and S28 §9 still holds, with one correction and
+two additions:
+
+- **CORRECTION to S28 §9.** A byte-identical provider does *not* always mean the
+  fix failed to reach the corpus. It means the fix did not reach the PROVIDER —
+  which, for a defect living in the test262 harness (consumer-side), is the
+  expected answer. Keep running the check first; read it as "which side", not as
+  "wired or not".
+- **Instrumentation can be broken in the module you are instrumenting.** A probe
+  written as `function t(x) { return typeof x; }` answered **`null`** for every
+  argument inside the assembled test262 harness module — while the identical
+  function is correct in an ordinary module and in a linked pair. Two probe
+  generations were spent reading that noise as signal. When a probe's answers
+  are impossible (a `typeof` that is none of the eight values), suspect the
+  probe's own lowering before the subject's. Filed as a residual on #6616.
+- **Module CONTENT changes answers, again, and this time it nearly decided a
+  diagnosis.** The arity-2 object-literal spread "still failed" after the fix in
+  a shared-prelude probe and was clean in its own module — the shared prelude
+  carried several object literals with methods, which is an independent
+  interference. One module per case is not hygiene here; a shared prelude would
+  have sent this slice chasing a defect it had already fixed.
+
+### S30 findings (2026-09-15) — the eleventh cause is an identity the OWNER alone can answer. Four families 423 → 423; the 45-file family is fixed on the assertion it stops at and stops one cause EARLIER instead
+
+Full write-up in
+[#6617](6617-standalone-linked-class-instance-prototype.md). Branch
+`issue-5383-standalone-temporal-s30`, based on S29's tip `15d7c211ff`; the fix
+is commits `29141ed3fc` + `518ac029d1`.
+
+**The headline is flat for the second slice running, and the reason is
+different from S29's.** S29 retired its bucket and the family moved to the NEXT
+failure. S30 fixes the assertion that family stops ON — verified against the
+real polyfill, not only synthetically — and the family still does not move,
+because a SECOND, upstream cause kills the row two lines earlier. Both halves
+are needed; this one is now done and the other is reduced.
+
+#### 1. The defect — the prototype link of a compiled class instance is invisible to every dynamic reader
+
+`Object.getPrototypeOf(x)` under `--target standalone` answered correctly only
+where the CHECKER could name `x`'s class. Reduced to ONE module, no link, no
+Temporal (`.tmp/s30/cases-a.mjs`):
+
+```js
+class C { constructor(y) { this.y = y; } }
+const NS = { C };
+Object.getPrototypeOf(new C(1)) === C.prototype;   // true  — the static fold
+Object.getPrototypeOf(NS.C ? new C(1) : null);     // null  ← the gap
+```
+
+The generic native `__getPrototypeOf` walks `$Object.$proto`; a compiled class
+instance is a closed `$ClassName` struct with no such field. `ref.test $Object`
+fails, the #4643 fnctor ladder answers null, the boundary import is absent — so
+the helper answered `null`. Across the link that is total, because no value that
+crosses the seam has a checker type at all.
+
+**The brief's mechanism was RIGHT, and its file was wrong in a way worth
+recording**: it named `src/codegen/object-get-prototype-of.ts`, which does not
+exist — the expression-level folds live in
+`src/codegen/expressions/object-get-prototype-of.ts`, and the defect is not
+there at all. It is in the RUNTIME helper
+(`object-runtime-prototype.ts::buildObjectPrototypeHelpers`), which is exactly
+what the brief's own sentence about "`__getPrototypeOf`'s `$proto` walk decodes
+`$Object` receivers only" describes. Second inherited attribution in the stack
+to survive reduction (after S28's).
+
+#### 2. The fix — the standalone twin of a host-lane dispatcher, plus the hop
+
+| file | what |
+| --- | --- |
+| `standalone-class-instance-proto.ts` (new) | `__std_class_instance_proto`: `ref.test` + `__tag` + `ref.eq` cascade, most-derived first, declines the class OBJECT, builds the singleton via `__class_proto_build_<C>`; prepended to `__getPrototypeOf` |
+| `standalone-link-boundary.ts` | terminal `__js2wasm_link_get_prototype_of`, reserved with the miss body, filled at finalize |
+| `object-runtime.ts` | consumer miss arm: `boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx` |
+| `expressions/call-builtin-static.ts` | the generic site raises the per-class prototype demand (#6457's arming twin) |
+
+The terminal wraps the DISPATCHER, not the provider's `__getPrototypeOf`. That
+distinction is the correctness argument: the consumer reaches the terminal only
+after its own answer was null, so anything returned replaces a null — and the
+wider wrapper would hand back the PROVIDER's `%Object.prototype%`, a foreign
+intrinsic the consumer can never name.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 109 | 109 | 0 | 0 | 0 |
+| `Duration/**` | 100 | 100 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 111 | 111 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **423** | **423** | **0** | **0** | **0** |
+
+Base measured HERE by file-copy revert to `HEAD~1` on both labels, and it
+reproduces S29's branch family for family. No `compile_error`, no `timeout`, no
+`__temporal_*` leak in 960 rows. **The 34-bucket residual message table is
+identical count for count** — not one bucket moves, which for a change this
+narrow is the expected reading, not a disappointment.
+
+**Corpus-wide, the 45 `subclassing-ignored.js` (per file, both labels): 0 → 0
+pass, all 45 messages byte-identical.**
+
+#### 4. Why the family did not move, and the proof that the fix is real
+
+Against the REAL polyfill in one consumer module (`.tmp/s30/t/p1.js`):
+`gpoInst=object match=true matchR=true` — i.e.
+`Object.getPrototypeOf(new Temporal.Duration(1)) === Temporal.Duration.prototype`
+is now **true**. The rows die two lines earlier, in the harness's own
+`checkSubclassConstructorNotObject`, where `construct.prototype` reads
+`undefined` and `new construct(...constructArgs)` answers `null`
+(`.tmp/s30/t/p2.js`: `c=function cProto=undef … instT=null resT=null`).
+
+That read is CONTENT-SENSITIVE — `c.prototype` answers `undef` in a module whose
+only member read it is, and `object` as soon as the module also contains any
+static two-level member read, a read of a different class, a dynamic read of a
+sibling member, or a second copy of itself (`p4`–`p10`). The synthetic linked
+pair does not reproduce it. Filed as #6617 R1 with all six reductions rather
+than chased: it is a different mechanism, and the instability already cost one
+probe generation read as signal.
+
+#### 5. Controls
+
+**Must-not-move — 270 rows, four groups, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 60 | 58 | 58 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 60 | 47 | 47 | 0 |
+| C1: `Object/{getPrototypeOf,setPrototypeOf}` + `Object/prototype/isPrototypeOf` | 47 | 44 | 44 | 0 |
+| C2: `expressions/instanceof` + `statements/class/subclass` | 103 | 70 | 70 | 0 |
+
+**Targeted byte A/B**: ONE of twelve artifacts moves — the armed standalone
+module (`c922c20b` 200,869 B → `dee9a486` 201,067 B). The static fold, the
+no-class module, the class-without-the-query module, the dynamic MEMBER read and
+`setPrototypeOf` are all identical, and **the entire gc lane is identical**.
+That is a deliberate return to the S24–S28 posture after S29's lane-independent
+fix: the host lane already answers this through `__class_instance_proto`
+(#5347), so a shared fix would be a second mechanism for a solved problem.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, 0 move — a
+NULL control, stated as such: nothing in that corpus asks the question.
+
+**Provider artifact**: 3,308,117 B → 3,311,079 B (+2,962 B), `cacheHit=false` on
+both prewarms. A MOVED provider is the right reading here (S28 §9 / S29's
+correction): the instance's owner is the only module that can answer, so the
+change has to be on that side.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly, on both trees.
+
+**Witness**: `tests/issue-6617-class-instance-prototype.test.ts`, 13 `it`s.
+Against the reverted base: **8 fail, 5 pass**.
+
+#### 6. Residual buckets, branch tree, all four families (57 rows, 34 buckets)
+
+Unchanged from S29 count for count. The `subclassing-ignored.js` family's blocker
+is now **#6617 R1** (`construct.prototype` → `undefined`, content-sensitive),
+not the prototype link. The other named residuals are #6617 R2 (`instanceof`
+across the link — `__instanceof_dynamic` walks `$Object.$proto` through
+`__isPrototypeOf` and so does NOT compose out of the now-correct
+`__getPrototypeOf`), R3 (`isPrototypeOf`, same root), R4 (a module-local dynamic
+`.constructor`), R5 (`getPrototypeOf` of a union-typed plain object).
+
+#### 7. Traps, carried forward and added to
+
+Everything in S26–S29 still holds, with one addition:
+
+- **A file named in a brief may not exist, and the nearby file that does may be
+  the wrong layer.** Two `object-get-prototype-of.ts`-shaped things exist here —
+  the EXPRESSION folds (`expressions/`) and the RUNTIME helper
+  (`object-runtime-prototype.ts`). The brief named a path that is neither. Grep
+  for the SYMBOL (`__getPrototypeOf`), not the filename.
+- **A byte-identical gc lane can be the right answer for a reason other than
+  gating.** Here the host lane is not missing the fix — it has had its own since
+  #5347. "Which lane needs this" is a question about where the answer already
+  exists, not only about where the flag is set.
+
+### S31 findings (2026-09-16) — the twelfth cause is the CALL-side twin of #6612: a class reached through `ns.C()` fell through to `__apply_closure`'s legacy null instead of throwing. Four families 423 → 426; the 16-file `constructor.js` family goes 8 → 16 of 16
+
+Full write-up in
+[#6618](6618-standalone-class-through-method-call-no-throw.md). Branch
+`issue-5383-standalone-temporal-s31`, based on S30's tip `bc2f314de8`; the
+fix is commit `0728f3094e`.
+
+#### 1. The defect
+
+Three ways to reach a class VALUE dynamically and call it without `new`; only
+the third missed §10.2.1 step 2's TypeError:
+
+| shape | mechanism | answered |
+| --- | --- | --- |
+| `C()` | `class-call-without-new.ts` (#4483) | throws |
+| `const f = C; f()` | `wantIsCallableGuard` (#6420) | throws |
+| `ns.C()`, `ns` a linked provider namespace | `__extern_method_call`'s guard (`resolved-callee-guard.ts`) | **null** |
+
+`Temporal.PlainDate(1970, 1, 2)` is exactly the third shape — 8 of the 16
+`built-ins/Temporal/**/constructor.js` files, one per class, all failing
+identically: `Expected a TypeError to be thrown but no exception was thrown
+at all`. Measured directly against `compileWithTemporalGlobal` (the same
+machinery the test262 runner uses): `const f = Temporal.PlainDate; f(1,1,1)`
+already threw; `Temporal.PlainDate(1,1,1)` did not — proof the defect is the
+method-call arm, not the class/callable classifier (which was already
+correct in both directions, module-locally and across the link).
+
+#### 2. The fix
+
+`resolved-callee-guard.ts`'s `buildResolvedCalleeGuard` gained one arm,
+alongside its existing primitive-brand checks: when `__typeof_function` and
+`__is_callable` are both already registered, throw when the resolved callee
+is `typeof_function() && !is_callable()`. The two natives share every
+classifier arm except one — `__is_callable` excludes a class-constructor
+identity that `__typeof_function` includes — so that conjunction can only be
+true for a class, and stays silent (not a wrong throw) for anything the
+callable classifier fails to recognise, since `__typeof_function` is built
+from the same base arms and would miss it too.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 109 | 110 | +1 | 0 | 1 |
+| `Duration/**` | 100 | 101 | +1 | 0 | 1 |
+| `PlainDateTime/**` | 111 | 112 | +1 | 0 | 1 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **423** | **426** | **+3** | **0** | **3** |
+
+`ZonedDateTime/prototype/**` has no `constructor.js` of its own (that file is
+one level up, in the 16-file family). No `compile_error`, no `timeout`, no
+`__temporal_*` leak in 960 rows.
+
+**Corpus-wide, the 16 `constructor.js` files, per file, both labels: 8 → 16,
++8, 0 pass→fail.**
+
+#### 4. Controls
+
+**Must-not-move, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys`(30) + `expressions/object`(30) + `Reflect/{get,has}`(21) | 81 | 77 | 77 | 0 |
+| B: `Object/{entries,values}`(41) + `getOwnPropertyNames`(30) + `for-in`(30) | 101 | 81 | 81 | 0 |
+| C: `expressions/call`(92) + `statements/class`(100) + `Function/prototype/call`(49) | 241 | 192 | 192 | 0 |
+
+#### 5. Byte A/B — not a null control this time
+
+Targeted: the armed case (`ns.C()`) moves (+42 B standalone). Three UNARMED
+controls ALSO move by the same amount — `f()` via a bare value, `ns.fn()`,
+and `new ns.C(...)` — because the new check lives in the SHARED
+`__extern_method_call` native's body, spliced once whenever both natives
+happen to be registered, not gated per call site. Two controls stay
+byte-identical (a class with no dynamic call site; a plain-object method call
+in a module where neither native gets registered), confirming the
+byte-neutral case documented in the file still holds where it applies. Every
+`gc`-lane artifact, targeted and corpus, is identical. Corpus (42 modules ×
+2 lanes): 14/42 standalone artifacts move, same mechanism — not a null
+control, and reported as such rather than claimed as one.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures —
+baseline exactly, on both trees.
+
+**Witness**: `tests/issue-6618-class-through-method-call.test.ts`, 7 `it`s.
+
+#### 6. Traps, carried forward and added to
+
+Everything in S26–S30 still holds, with one addition:
+
+- **A single-module reduction can be the WRONG reduction, three ways at
+  once.** `const f = C; f()` (bare value) already worked before this fix; a
+  same-module `NS.C()` compiled without a link reaches a THIRD path
+  (`class-call-without-new.ts`) that also already worked. Only the
+  MULTI-MODULE link shape (`ns.C()` where `ns` crosses the wasm→wasm
+  boundary) was broken. Three near-identical one-liners, three different
+  compile paths, one of them broken — reducing to the wrong one would have
+  reported a false negative.
+
+### S32 findings (2026-09-16) — the thirteenth cause: the f64 twin of #6615. Four families 426 → 427; R1 reduced past the S30/S31 hand-off but NOT fixed this slice (see #6619)
+
+Full write-up in
+[#6619](6619-standalone-f64-arg-marshal-symbol-bigint-throw.md). Branch
+`issue-5383-standalone-temporal-s32`, based on S31's tip `4c91fc99c6`; the
+fix is committed WIP `2d2f277396`.
+
+**This slice spent its first probing budget on #6617's R1** (`construct.prototype`
+answers `undefined`, content-sensitive) — the dispatch brief's designated
+primary target — and reduced it substantially past the S30/S31 hand-off's
+six one-variable probes to a single, precise trigger: **any dynamic
+`new <any-typed-value>(...)` call ANYWHERE in the module** (not necessarily
+on the same class, not necessarily in the same function) flips every dynamic
+`.prototype` read on a provider-linked class from `object` to `undefined`.
+Traced to `sourceHasDynamicTaConstruct` (`source-scan-predicates.ts`, #2872)
+— a conservative whole-module TypedArray-construction pre-scan that cannot
+distinguish "this dynamic `new` might be a TypedArray" from "this dynamic
+`new` is definitely something else" and sets `ctx.moduleUsesDynTaView = true`
+either way, which arms `proto-index-store.ts`'s companion/protoidx machinery
+module-wide and roughly doubles `__extern_get`'s compiled body (1,656 →
+3,473 WAT lines). The exact KEY-specific wrong arm inside that machinery
+(ruled out: mis-registered boundary import, wrong `$Object` classification,
+the S30 `__std_class_instance_proto` mechanism — none present) was not
+pinned down within this slice's probing budget, so per the dispatch brief's
+own fallback clause the slice moved to the f64 target rather than risk an
+under-verified patch to a subsystem the codebase's own comments describe as
+delicate. Full reduction, ruled-out list, and the exact next-step pointer
+(`proto-index-store.ts`'s `__protoidx_get_k`/`__protoidx_companion`) are in
+#6619's Residuals section — this is a running start for the next slice, not
+a restart.
+
+#### 1. The defect — `__unbox_number`'s Symbol/BigInt leniency reaches a SECOND caller with no guard
+
+`new Temporal.Duration(Symbol())` / `(0n)` answered `NaN` (a Duration with
+all-zero fields) where §7.1.4 ToNumber requires a TypeError
+(`built-ins/Temporal/Duration/invalid-type.js`). #6615's own fix (S28)
+already solved this for `ref`-typed dynamic construct/dispatch arguments;
+the `f64` arm of the SAME marshal (`extern-arg-marshal.ts`'s
+`externArgCoercionInstrs`) called `__unbox_number` directly, with no guard —
+`__unbox_number` is deliberately lenient (it doubles as the numeric-key
+probe for `__extern_set` on a vec receiver, which must NOT throw), so the
+Symbol/BigInt guard has to live in the CALLER, exactly as
+`tonumber-fast-paths.ts`'s `symbolThrowArm` already does for the GENERAL
+ToNumber path. This dynamic construct/dispatch marshal had none.
+
+#### 2. The fix — `__unbox_number_checked`, mirroring #6615's arming discipline exactly
+
+`extern-arg-marshal.ts` gains `__unbox_number_checked(externref) -> f64`:
+throws `TypeError` for a `$Symbol`/`$BigInt` operand, else calls
+`__unbox_number`. Consulted only by the f64 arm, and only when
+`moduleHasF64TypedConstructFormal` (new, `standalone-class-construct.ts`,
+mirrors `moduleHasRefTypedConstructFormal` field for field) says this
+module has an `f64`-typed construct formal to protect — an unarmed module
+pays nothing. Two arming sites, the SAME two #6615 uses (the module's own
+dynamic `new <value>` expression; post-bodies for a linked provider whose
+consumer is wasm, since `@js-temporal/polyfill` compiles no dynamic `new`
+site of its own). A defaulted `f64` formal composes with #5380's
+omitted-argument sentinel: `ensureUnboxNumberOrOmitted` now takes the
+checked funcIdx as its fallback, so `new C(undefined)` still runs the
+default while `new C(Symbol())` on the same formal still throws.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 110 | 110 | 0 | 0 | 0 |
+| `Duration/**` | 101 | 102 | +1 | 0 | 1 |
+| `PlainDateTime/**` | 112 | 112 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **426** | **427** | **+1** | **0** | **1** |
+
+The single fail→pass is `Duration/invalid-type.js`. No `compile_error`, no
+`timeout`, no `__temporal_*` leak in any row.
+
+**Corpus-wide, the two files a Symbol/BigInt construct argument can reach**:
+`Duration/invalid-type.js` (this fix — fail → pass) and
+`Duration/from/invalid-type.js` (a DIFFERENT mechanism — `.from()` extracts
+object-literal properties inside the provider's own body, never reaching
+this marshal at all — unchanged, filed as R-from in #6619).
+
+**The 45 `subclassing-ignored.js` files stay 0 → 0**, unchanged from
+S30/S31 — R1 (not this slice's target) still blocks the family, and every
+failure message is the SAME `SameValue(«null», «undefined»)` R1 already
+names.
+
+#### 4. Controls
+
+**Must-not-move — 231 rows, four groups, per file, both labels, 0 real
+flips** (22 raw diffs across groups B/C2 are a measurement-environment
+artifact — this session ran `JS2WASM_EVAL_ENGINE=interpreter` with only the
+refusal-only runtime-eval provider built, so every eval-dependent test in
+those groups fails identically regardless of this fix; every one of the 22
+carries the identical `dynamic code evaluation is not supported` detail
+string).
+
+| group | rows | base pass | branch pass | real flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 81 | 77 | 77 | 0 |
+| B: `Object/{entries,values}` + `getOwnPropertyNames` + `for-in` | 101 | 69 | 69 | 0 |
+| C1: `Object/{getPrototypeOf,setPrototypeOf}` + `isPrototypeOf` | 47 | 44 | 44 | 0 |
+| C2: `expressions/instanceof` + `statements/class/subclass` | 104 | 70 | 60 | 0 |
+
+**Targeted byte A/B**: one of four synthetic artifacts moves — the armed
+case (dynamic `new f(1)` into an `f64` construct formal): standalone
+208,815 B → 209,079 B (+264 B). The unarmed-ref-formal control (dynamic
+`new f("x")` into a `string`-only formal, no `f64` formal at all) stays
+byte-identical, confirming `moduleHasF64TypedConstructFormal` gates
+independently of #6615's ref-formal gate. Every `gc`-lane artifact is
+identical.
+
+**Temporal provider**: 3,311,079 B → 3,311,522 B (+443 B), `cacheHit: false`
+on both prewarms — the provider is the module that needed the fix, exactly
+as #6615's linked-provider arming site existed for the same reason.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, 0 moved —
+a genuine null control this time: no module in that corpus constructs
+dynamically from a runtime value into an `f64` formal.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures —
+baseline exactly, on both trees.
+
+**Witness**: `tests/issue-6619-f64-arg-symbol-bigint.test.ts`, 5 `it`s — 2
+fix-witnesses (Symbol, BigInt) measured failing on the file-copy-reverted
+base (`NaN`, no throw) and passing on branch; 3 controls (ordinary number,
+omitted-argument default composition, static non-dynamic construct) pass on
+both trees unchanged.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S31 still holds. One addition:
+
+- **A module-wide pre-scan flag set for reason A can silently change
+  behaviour for reason B, with no textual overlap between the two.** R1's
+  reduction (§ above) found `sourceHasDynamicTaConstruct` — built to detect
+  possible TypedArray construction — arming `proto-index-store.ts`'s
+  unrelated prototype-companion machinery via a single shared boolean
+  (`ctx.moduleUsesDynTaView`). Grep every consumer of a broad pre-scan flag
+  before trusting that "my feature doesn't use TypedArrays" means "this
+  flag never affects my feature."
+
+### S33 findings (2026-09-16) — #6617 R1 FIXED: a bare `ref.test $__ta_ctor` collides with a field-less provider class's compiled root
+
+Full write-up in
+[#6620](6620-standalone-ta-ctor-brand-prototype-collision.md). Branch
+`issue-5383-standalone-temporal-s33`, based on S32's tip `2d2f277396`.
+
+#### 1. The reduction
+
+Continuing S32's reduction of R1 (the trigger: ANY dynamic
+`new <any-typed value>(...)` anywhere in the consumer flips every dynamic
+`.prototype` read on a provider-linked class from `object` to `undefined`,
+traced to `ctx.moduleUsesDynTaView` arming `proto-index-store.ts`'s
+companion machinery), this slice bisected FURTHER:
+
+1. **Forcing `ctx.moduleUsesDynTaView = true` with NO real dynamic
+   construct anywhere in source** still broke a single, isolated
+   `readProto(Temporal.PlainDate)` probe (zero other module content) —
+   ruling out anything that needs an actual TypedArray-shaped syntax to
+   fire, and ruling out `proto-index-store.ts`'s companion machinery
+   specifically: two OTHER arming paths into that SAME store
+   (`protoIndexDirty` via `Object.defineProperty(Array.prototype, …)`,
+   `protoMemberDirty` via a bare `Array.prototype` read) did NOT break the
+   probe, so whatever breaks it is unique to `moduleUsesDynTaView`, not
+   shared store-reservation machinery.
+2. Instrumenting `fillTaDynViewMopArms` (`ta-dyn-mop.ts`) confirmed
+   `ctx.taDynViewTypeIdx` gets minted from the bare boolean alone (via the
+   standalone link boundary's `Object.prototype.toString` classifier, which
+   calls `getOrRegisterTaDynViewType` unconditionally once the flag is set —
+   reserved for every provider-linked module, real TA construct or not).
+3. **Disabling `fillTaDynViewMopArms` entirely** (flag still forced)
+   restored the correct answer.
+4. **Disabling ONLY its `$__ta_ctor` receiver arm** (~70 lines, the
+   `TA.prototype`/`TA.BYTES_PER_ELEMENT` block) — every other dyn-view arm
+   left active — ALSO restored correctness. Pinpointed.
+
+That arm's receiver gate was a bare `ref.test $__ta_ctor`. `$__ta_ctor` is
+`{kind: i32, brand: i32}` — EXACTLY the shape of a field-less class's
+compiled root, `{__tag: i32, __shape_brand: i32}` (`class-bodies.ts`
+#2158/#2009). Both shapes were independently widened to two i32 fields to
+escape two DIFFERENT PRIOR collisions (`$__ta_ctor`'s own 1-field form
+collided with `__box_boolean_struct`, #5194 r3 review F1; the empty class
+root's 1-field form collided with `$AnyString`, #2158/#2009) — and the two
+widened shapes then collided with EACH OTHER. `Temporal.Duration` compiles
+to exactly this root shape (its numeric fields live in an expando
+side-table, not native struct fields), so once armed, `ref.test $__ta_ctor`
+on its class-object value returned true, and the arm's "prototype" key
+check matched, returning the wrong TypedArray-view prototype glue instead
+of falling through to `__js2wasm_link_member_get`.
+
+**This exact collision was already discovered and fixed once.**
+`taCtorIdentityTestInstrs` (`registry/types.ts`, #5194 r3 review F1) is a
+brand-VALUE-checked identity test built FOR this exact shape collision — its
+own doc comment measures the IDENTICAL symptom on THIS SAME provider
+(`new qi.Duration(...)`/`new qi.PlainDate(...)` answering `typeof
+"function"`). That fix landed at two call sites
+(`builtin-callable-brand.ts`, `reflect-construct-native.ts`) but not at
+`ta-dyn-mop.ts`'s `$__ta_ctor` receiver arm — the one this slice fixes.
+
+#### 2. The fix
+
+`ta-dyn-mop.ts`'s `$__ta_ctor` receiver arm now consults
+`taCtorIdentityTestInstrs` (the established helper) instead of a bare
+`ref.test`. Answer-preserving for a genuine TypedArray constructor value
+(both mint sites write the brand); can only ever REMOVE a false positive.
+
+#### 3. The result
+
+| probe | base | branch |
+| --- | --- | --- |
+| dynamic `.prototype` read, armed by an unrelated `new c(1)` elsewhere | `undef` | `object` |
+| same receiver, `.name` (control) | `string` | `string` (unchanged) |
+| `.prototype` with no dynamic `new` anywhere (control) | `object` | `object` (unchanged) |
+| a genuine `Uint8Array`/`Int32Array` `.prototype`/`.BYTES_PER_ELEMENT` (control) | `object`/`4` | `object`/`4` (unchanged) |
+
+**Corpus-wide, all 45 `subclassing-ignored.js` test262 files**: every one
+moved PAST the `.prototype` blocker — the failure message changed uniformly
+from `SameValue(«null», «undefined»)` (R1's signature) to
+`SameValue(«null», «null»)` (a DIFFERENT, already-documented residual: a
+dynamic `new construct(...)` on a linked class value still answers a
+receiver `SameValue` disagrees with — S30's hand-off already named this in
+its own `p2` probe; #6619 names a sibling mechanism for `.from()`).
+**0 → 0 pass for this family** — R1 is fixed and verified by the uniform
+error-signature change corpus-wide, but this SECOND, distinct blocker still
+stops the family from fully passing. Filed as R-construct in #6620, not
+reduced further this slice (own repro budget needed).
+
+A repo-wide grep for the same bare `ref.test` pattern against
+`ctorIdx`/`taCtorTypeIdx` (excluding the `taCtorIdentityTestInstrs`-routed
+sites) found 7 MORE unguarded consult sites (`dataview-native.ts` ×5,
+`property-access-dispatch.ts`, `ta-ctor-meta.ts` ×2) — the SAME shape of
+bug, none reduced to a concrete failing test262 row this slice. Filed as
+R-other-bare-ref-test in #6620.
+
+**Criterion 4** (full tables in #6620): four-family sample (first 120 each,
+file-copy revert, fresh cache per label) — **427 → 427**
+(110/102/112/103, 0 pass→fail, 0 fail→pass, 0 per-file flips), an honest
+null for this sample (`subclassing-ignored.js` isn't among the first 120 in
+any of the four families — the corpus-wide 45-file measurement above is
+where R1's effect shows). Must-not-move: 1,136 rows across groups A/B
+(`Object/keys`+`expressions/object`+`Reflect/{get,has}`,
+`Object/{entries,values,getOwnPropertyNames}`+`for-in`) plus
+`built-ins/TypedArray` (150) + `TypedArrayConstructors/ctors` (100) +
+`expressions/member-expression` (1) + `statements/class/subclass` (100),
+**0 flips**. Corpus byte A/B: 42 modules × {gc, standalone} = 84 artifacts,
+**0 moved** (byte-identical both lanes). Provider bytes: base 3,311,522 B →
+branch 3,311,544 B (+22 B — `ta-dyn-mop.ts` also runs during the
+PROVIDER's own compile, since the polyfill carries the same internal
+dynamic-TA-construct pattern).
+
+**Equivalence gate**: unchanged from baseline (this fix touches only the
+standalone `$__ta_ctor` receiver arm, `noJsHost`-gated, never reached by the
+gc-target equivalence corpus).
+
+**Witness**: `tests/issue-6620-ta-ctor-brand-prototype-collision.test.ts`, 4
+`it`s — 1 fix-witness measured failing on the file-copy-reverted base
+(`undef`, expected `object`) and passing on branch; 3 controls (`.name` on
+the same armed receiver, a lone unarmed `.prototype` read, a genuine
+TypedArray constructor) pass on both trees unchanged.
+
+#### 4. Traps, carried forward and added to
+
+Everything in S26–S32 still holds. One addition:
+
+- **A struct shape widened to escape collision A is not proof against
+  collision B with a DIFFERENT equally-widened shape.** `$__ta_ctor` was
+  widened from 1 to 2 i32 fields to escape a collision with
+  `__box_boolean_struct` (#5194 r3 review F1); a field-less class's root was
+  independently widened from 1 to 2 i32 fields to escape a collision with
+  `$AnyString` (#2158/#2009). The two widened shapes then matched EACH
+  OTHER. When a struct carries a VALUE-level discriminator for exactly this
+  reason (a `brand`/`TA_CTOR_BRAND` sentinel field), a bare `ref.test` alone
+  throws that discriminator away — every consult of the struct's real
+  IDENTITY needs the value check too, and a codebase-wide grep for the
+  type's naked `ref.test` is how the other 7 sites in this slice's residual
+  were found.
+
+### S34 findings (2026-09-16) — R-construct FIXED: a runtime-length spread into a foreign/linked dynamic construct answered null. Four families 427 → 430; the 45-file family's NEXT blocker is verified directly and named, not chased
+
+Full write-up in
+[#6621](6621-standalone-dynamic-new-runtime-argv-spread.md). Branch
+`issue-5383-standalone-temporal-s34`, based on S33's FINAL tip `020a8aba23`;
+the fix is committed WIP `c59f1d3145`.
+
+#### 1. The defect
+
+`new construct(...constructArgs)` — test262's own
+`checkSubclassConstructorNotObject` shape, `construct` and `constructArgs`
+both PARAMETERS forwarded through two layers of `...args` — answered `null`
+(or a field-less placeholder) whenever the spread's length could not be
+resolved at compile time AND the callee was not a module-local class. Two
+arms both had to decline for this shape to have no lowering at all:
+`tryCompileNativeConstructFromValue` gave up unconditionally on ANY
+unresolvable spread (`args.some(isSpreadElement) => return undefined`), and
+`emitDynamicNewFallback` — the only other standalone dynamic-`new`
+fallback — declines whenever the callee is not a LOCAL class and is never
+even reached for a member-access callee in standalone at all. Blocks all 45
+`built-ins/Temporal/**/subclassing-ignored.js` test262 files, pinned as
+S30's `p2` probe and named "R-construct" in #6620.
+
+#### 2. The fix
+
+`native-construct.ts`'s existing `__class_construct_dispatch` /
+`__js2wasm_link_construct` terminals were ALREADY arity-generic
+(`(callee, argsVec, argc)`); only the call site lacked a way to build that
+`argsVec` from a runtime-length call. One new module-level driver
+(`__native_construct_argv`, `reserveNativeConstructDriverArgv` +
+`fillArgvConstructDriver`) reuses those terminals unchanged, and a new
+call-site helper (`buildRuntimeConstructArgvVec` in `new-super.ts`) builds
+the runtime argv via the generic `__extern_length`/`__extern_get_idx`
+reader pair — the same protocol `Object.groupBy`'s native helper already
+uses for an arbitrary array-like source, so an untyped JS array PARAMETER
+(the harness's `constructArgs`) works. Standalone/WASI only; the JS-host
+lane already handles this correctly through `__construct_closure` and is
+untouched.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 110 | 111 | +1 | 0 | 1 |
+| `Duration/**` | 102 | 104 | +2 | 0 | 2 |
+| `PlainDateTime/**` | 112 | 112 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **427** | **430** | **+3** | **0** | **3** |
+
+No `compile_error`, no `timeout`, no `__temporal_*` leak in 960 rows.
+
+**The 45-file `subclassing-ignored.js` family stays 0 → 0** — verified
+directly, not assumed, by injecting a debug throw into a disposable COPY of
+the real `temporalHelpers.js` (never the shared `test262/` submodule
+checkout): `new construct(...constructArgs)` now genuinely constructs a
+real, field-populated instance with the CORRECT prototype link
+(`Object.getPrototypeOf(instance) === construct.prototype` flips
+false→true, a real constructor field flips `undefined`→a real value on the
+branch tree) — the fix is reached and correct. The family's headline does
+not move because the NEXT assertion is blocked by a SEPARATE, PRE-EXISTING
+mechanism: a dynamically-constructed class value's `typeof` answers
+`"function"` and `instanceof` answers `false`, identically on the UNFIXED
+base tree for the ALREADY-WORKING no-spread/member-direct construct paths
+too — matching S20 §4's already-documented "per-name ladder, no runtime
+class test" residual, named there as "the next slice, and the first one
+where the fix is in the hottest dispatch path in the compiler." Not chased
+this slice.
+
+#### 4. Controls
+
+**Must-not-move — 1,684 rows, four groups, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 1,250 | 1,125 | 1,125 | 0 |
+| `Object/{entries,values,getOwnPropertyNames}` + `for-in` | 205 | 179 | 179 | 0 |
+| `language/expressions/new`(150) + `Reflect/construct` + `class/subclass`(100) | 169 | 120 | 120 | 0 |
+| `built-ins/TypedArrayConstructors/ctors`(60) | 60 | 34 | 34 | 0 |
+
+**Targeted byte A/B**: one of three synthetic artifacts moves — the armed
+case (a spread through a param callee into a local class): standalone
+140,670 B → 140,620 B. An unarmed no-spread control and an unarmed
+no-class control are byte-identical. Every `gc`-lane artifact is identical.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, **0
+moved** — a null control (no module in that corpus constructs dynamically
+with a runtime-length spread into a foreign ctor).
+
+**Temporal provider**: `3,311,544 B` on BOTH labels — byte-identical,
+`cacheHit=false` on both fresh prewarms. The fix is reached only from a
+CONSUMER's own dynamic construct; the pre-transpiled
+`@js-temporal/polyfill` provider contains no such site.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures —
+baseline exactly.
+
+**Witness**: `tests/issue-6621-dynamic-new-runtime-argv-spread.test.ts`, 5
+`it`s — 2 fix-witnesses measured failing on the file-copy-reverted base and
+passing on branch; 3 controls pass on both trees unchanged. Run alongside
+the other 22 `tests/issue-66*.test.ts` files: 23 files / 104 tests, all
+pass, ~136 s wall, no OOM.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S33 still holds. One addition:
+
+- **Two arms both had to decline for a shape to have NO lowering — check the
+  WHOLE fallback chain, not just the first decline.** A census reduced only
+  by LOCAL-class spellings (where `emitDynamicNewFallback`'s own runtime-argv
+  path already worked) would have reported "already works" and missed the
+  actual corpus blocker — which needs a FOREIGN class, the one shape that
+  never reaches ANY working fallback in standalone.
+- **A corpus-wide "0 → 0" needs its own direct verification.** The pass
+  count alone cannot distinguish "the fix did not work" from "the fix
+  worked and a different blocker is now first." A debug throw injected into
+  a disposable copy of the real harness told them apart here — the fix did
+  work, and the successor blocker is a distinct, already-documented (S20
+  §4) mechanism.
+
+### S35 findings (2026-09-16) — the S11/S22 `typeof <provider instance>` residual and the #6617 R2 `isPrototypeOf` gap, both ROOT-CAUSED and FIXED; the headline 45-file count not yet re-measured
+
+Full write-up in
+[#6622](6622-standalone-class-instance-callable-kind-and-isprototypeof.md).
+Branch `issue-5383-standalone-temporal-s35`, based on S34's FINAL tip
+`0a66b22d9b`; the fix is committed WIP `4836b866151024d2ff622633bd115d9619b90fd6`.
+
+#### 1. Two root causes, both traced to the exact same structural-collision
+pattern (#5195/#5194/#2158/#2009), now hit at two NEW sites
+
+**Mechanism A** — `reflect-construct-native.ts`'s `__reflect_is_constructor`
+and `__is_native_reflect_target` each had ONE bare `ref.test $__ta_ctor` site
+(unlike every OTHER `$__ta_ctor` site in this backend, all of which already
+route through `taCtorIdentityTestInstrs`, #5383 S2f R11). `$__ta_ctor`
+(`{kind: i32, brand: i32}`) is structurally identical to a field-less compiled
+class root (`{__tag: i32, __shape_brand: i32}`), so WasmGC's isorecursive type
+canonicalization makes them the SAME runtime type: `ref.test` cannot
+distinguish a genuine TypedArray constructor from an instance of ANY colliding
+class. Measured against the real provider: 30+ field-less Temporal/helper
+classes (`TimeDuration`, `Instant`, `PlainDate`, `PlainDateTime`,
+`PlainMonthDay`, `PlainTime`, every calendar-helper class, …) share this exact
+shape. The bare test made `IsConstructor(instance)` answer `true` for every
+one of them — which is what fed the wrong bit into
+`standalone-link-boundary.ts`'s `callable_kind` terminal, producing the S11/S22
+standing residual: `typeof <provider instance>` answering `"function"`.
+
+**Mechanism B** — `object-runtime-prototype.ts`'s native `__isPrototypeOf`
+never seeded its `$proto` chain walk from a class instance (a closed
+`$ClassName` struct has no `$proto` field at all). Fixed with
+`classInstanceIsPrototypeOfSeed`, mirroring the EXISTING
+`fnctorIsPrototypeOfSeed` precedent one function up, reusing
+`__getPrototypeOf` — which already composes the module-local class-instance
+dispatcher (#6617/S30) AND the link-boundary hop — rather than adding a third
+prototype mechanism, exactly per #6617 R2's own conclusion.
+
+#### 2. The fix
+
+| file | what |
+| --- | --- |
+| `reflect-construct-native.ts` | both bare `taCtorTypeIdx` pushes replaced with `taCtorIdentityTestInstrs` |
+| `object-runtime-prototype.ts` | new `classInstanceIsPrototypeOfSeed` + `classInstanceProtoLocal`, spliced into `__isPrototypeOf` right after the existing fnctor seed |
+
+#### 3. The result, measured against the real provider
+
+| probe (`.tmp/s35/probe1.mjs`, fresh cache each side) | base | S35 |
+| --- | --- | --- |
+| `typeof (new Temporal.Duration(1))` through `any`, linked | `"function"` | `"object"` |
+| `typeof (new Temporal.Duration(1))` (bare) | `"function"` | `"object"` |
+| `Temporal.Duration.prototype.isPrototypeOf(new Temporal.Duration(1))` | `"no"` | `"yes"` |
+| `Object.getPrototypeOf(inst) === Duration.prototype` (#6617/S30, control) | `"yes"` | `"yes"` — unaffected |
+| provider artifact size | 3,311,544 B | 3,311,638 B (+94 B) |
+
+`(new Temporal.Duration(1)) instanceof Temporal.Duration` (dynamic RHS) stays
+`"no"` on both trees — `native-dynamic-instanceof.ts` acquires
+`target.prototype` through a THIRD, separate mechanism from `__isPrototypeOf`
+(`ownedPrototypeOrdinaryHasInstance`'s own-property-bag read, which has no
+concept of "own properties" for a `$ClassName` class value). Filed as this
+issue's Residual, not chased this slice — full `instanceof` needs a new arm in
+that native, parallel to `ownedPrototypeOrdinaryHasInstance`, corpus footprint
+unmeasured.
+
+**Four-family sample, reduced to the first 40 files per family (a third of
+the usual 120)** — time budget, stated plainly rather than hidden:
+
+| family (first 40 files) | base pass | S35 pass | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 39 | 39 | 0 | 0 | 0 |
+| `Duration/**` | 36 | 36 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 39 | 39 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 25 | 25 | 0 | 0 | 0 |
+| **total** | **139/160** | **139/160** | **0** | **0** | **0** |
+
+Per-file diff (not just counts): zero flips in either direction. Consistent
+with S30's own reading of a count-neutral result — the two assertions this
+slice fixes are not the FIRST failing assertion in most of these 160 rows, so
+the fix is real and reached (verified directly above, not inferred from the
+count) but does not move THIS sample's headline. No `compile_error`, no
+`timeout`, no `__temporal_*` leak in either 160-row run.
+
+**Update (2026-09-17, same slice resumed after a container restart)** — every
+remaining battery listed above as "not completed" is now done, on this same
+tree, and the earlier 40-file-per-family draft is corrected:
+
+- **Four-family sample, FULL 120 files each**: 430/480 both labels, 0 flips.
+- **45-file `subclassing-ignored.js` corpus-wide** (the headline metric):
+  still **0/45 both labels** — NOT moved by this slice. Every row's residual
+  signature is `Test262Error: […]Expected SameValue(«null», «null») to be
+  true` (an earlier draft of this note said `«false», «true»` — that text
+  never appeared in either run; corrected). Traced with three purpose-built
+  probes to `checkSubclassConstructorUndefined` (`class MySubclass extends
+  Temporal.Duration`, then a method call): `Object.getPrototypeOf(result)` is
+  a genuine real `null` — a THIRD, previously undocumented mechanism, distinct
+  from Mechanism A (`typeof`) and Mechanism B (`isPrototypeOf`) above and from
+  the `instanceof` residual in §3: the prototype link of a Temporal method's
+  RETURN VALUE is lost when the receiver is a user-defined subclass instance.
+  (The OTHER "null" in the pair is a stringification red herring —
+  `String(construct.prototype)` itself prints the literal text `"null"` even
+  though the object is real and non-null; `assert.js`'s `formatSimpleValue`
+  falls back to `String()` for any non-primitive.) Full trace, tables and the
+  next-slice pointer are in
+  [#6622](6622-standalone-class-instance-callable-kind-and-isprototypeof.md).
+- **Must-not-move, 1,634 rows across 3 groups, file-copy A/B revert**: 0
+  pass→fail, 0 fail→pass on any group.
+- **Corpus byte A/B**: 0/42 `gc`-lane artifacts moved; 14/42 `standalone`-lane
+  artifacts moved (all still compile `ok` — the two touched files are shared
+  standalone-runtime natives, so any module reaching Reflect/dynamic-class/
+  prototype machinery is expected to move).
+- **Equivalence gate, run to completion**: 22 failing / 1720 passing / 22
+  known-failures — unchanged from every prior S-slice in this stack.
+
+#### 4. Traps, carried forward and added to
+
+Everything in S26–S34 still holds. Two additions:
+
+- **`$__ta_ctor` needs to ACTUALLY be minted in the colliding module** for the
+  collision to fire — reading a TypedArray constructor's `.of`/`.from` (a
+  static METHOD call) registers `ctx.taCtorTypeIdx`; merely reading
+  `.BYTES_PER_ELEMENT` off a `const T = Int8Array` binding does NOT (measured,
+  `.tmp/s35/probe5.mjs`) — narrower than #6601/#6620's own reductions state.
+  Worth re-checking if a future witness for this family reads "unexpectedly
+  still passing".
+- **A structural-collision fix at one call site does not imply the fix is
+  complete for the WHOLE backend.** `#5194`/`#6601`/`#6620` each independently
+  fixed the SAME `$__ta_ctor`/field-less-class collision at their own call
+  site; this slice is the fourth. A grep for a bare `ref.test` on
+  `ctx.taCtorTypeIdx` (or any typeIdx sourced from `getOrRegisterTaCtorType`)
+  NOT wrapped in `taCtorIdentityTestInstrs` is a reasonable audit for
+  whichever slice touches this area next — `reflect-construct-native.ts` had
+  TWO such sites in ONE file, found only by reading the whole file rather than
+  stopping at the first.
+
+### S36 findings (2026-09-17) — a NEW cross-module `__tag` collision found and fixed (silent wrong prototype claims); the 45-file headline's REAL blocker traced to a third mechanism and filed, not fixed
+
+Full write-up in
+[#6623](6623-standalone-subclass-cross-module-tag-collision.md). Branch
+`issue-5383-standalone-temporal-s36`, based on S35's FINAL tip `2402502cae`;
+the fix is commit `0612e1a082`.
+
+#### 1. The defect
+
+`class S extends <heritage the compiler cannot statically resolve>` — a
+property-access into a linked provider namespace (`class S extends NS.PD
+{}`) or an identifier bound to a runtime PARAMETER (`class S extends
+construct {}`, test262's own `checkSubclassingIgnored(construct, ...)`
+shape) — compiles, under `--target standalone`/`wasi`, as an independent ROOT
+struct with no relationship to its true superclass
+(`class-bodies.ts`'s heritage-detection loop resolves only
+`Identifier`/`ClassExpression` bases; the property-access arm gets NO
+standalone/wasi handling at all, and an unresolved identifier falls back to a
+bogus `parentClassName = baseExpr.text`). When such a class is field-less
+(the common shape — a bare `super(...)`-forwarding constructor), its struct
+canonicalizes to the SAME WasmGC type as ANY other field-less class,
+including one a LINKED PROVIDER exports. `standalone-class-instance-proto.ts`'s
+`__std_class_instance_proto` dispatcher (#6617/S30) disambiguates same-shape
+classes ONLY by `__tag` — a small per-module counter starting at **0 in
+every module independently**. Two field-less classes in DIFFERENT modules
+can therefore share both shape AND tag by pure coincidence, and the
+dispatcher answers the CONSUMER's subclass's prototype for a value the
+PROVIDER genuinely minted — a silently WRONG non-null answer, worse than the
+`null` it would otherwise decline to. Reduced in THREE steps per the brief's
+required order: (1) single module, no link — does NOT reproduce (the static
+same-module fold already handles it); (2) synthetic linked pair,
+`.tmp/s36/link-probe6.mts`/`link-probe7.mts` — reproduces cleanly, both
+heritage shapes, confirmed by direct `classTagCounter` instrumentation
+(`PD` and `S`/`MySubclass` both land on `__tag = 0`, each the first class in
+its own module); (3) real provider, `.tmp/s35probe/debug2.js` — does NOT show
+this specific wrong-answer symptom (`Duration`'s real tag almost certainly
+doesn't collide with a lone `MySubclass` in that one test file), consistent
+with the mechanism rather than contradicting it, and pointing at a THIRD,
+separate, unreduced mechanism as the actual 45-file blocker (see §4).
+
+#### 2. The fix
+
+`ctx.classDynamicUnresolvedHeritageSet` (new, `context/types.ts`/
+`create-context.ts`) is populated at both heritage-detection sites in
+`class-bodies.ts::collectClassDeclaration` that leave a class unlinked under
+standalone/wasi. `standalone-class-instance-proto.ts`'s `collectEntries`
+excludes a flagged, field-less class from ever claiming a `getPrototypeOf`
+answer — declining (falling through toward `null`) rather than risking the
+false-positive match, the same "can only ever REMOVE a false positive"
+reasoning #6620/S33's `taCtorIdentityTestInstrs` used for a sibling
+collision. A class with genuine own (or inherited) fields is NOT excluded —
+verified directly (witness control #5) that such a class's own instances
+still answer correctly.
+
+#### 3. The result
+
+Four-family sample, full 120 files each, file-copy revert, fresh cache per
+label: **430/480 both labels, 0 flips** (111/104/112/103) — unchanged from
+S35's tip, as predicted (this fix targets a different mechanism). **45-file
+`subclassing-ignored.js` corpus-wide: 0/45 both labels, unchanged**, message
+set byte-identical (verified with a full per-file diff, not just counts).
+Must-not-move, 1,649 rows across three groups (A/B/C per the brief's exact
+spec), 0 flips, byte-identical `.tsv` diff on all three. Corpus byte A/B: 42
+modules × {gc, standalone} = 84 artifacts, **0 moved** — a genuine null
+control (nothing in that generic corpus declares an unresolved-heritage
+field-less class reaching a `getPrototypeOf` site). Equivalence gate: 22
+failing / 1,720 passing / 22 known-failures — baseline exactly. Targeted
+synthetic probes DO move: `plain.m()`'s prototype (a receiver that never
+touches the colliding class) flips from the WRONG `S.prototype`/
+`MySubclass.prototype` to a declined non-claim on both the property-access
+and identifier heritage shapes.
+
+#### 4. Residual — the real 45-file blocker, sized and filed, not fixed
+
+`Object.getPrototypeOf(result)` where `result` comes from a dynamic METHOD
+CALL (`instance.abs()`) on an unresolved-heritage subclass receiver does not
+fall through to the `__js2wasm_link_get_prototype_of` boundary terminal
+(#6617/S30) the way a direct `new NS.PD()`/`NS.PD.from()` construction
+already does (#6617's own witness covers exactly those two shapes and both
+pass). This is a THIRD mechanism, distinct from this slice's fix and from
+S35's Mechanisms A/B — filed in #6623 rather than chased, per the brief's
+explicit instruction to size and file when a reduction needs its own budget.
+A much smaller, purely diagnostic residual (`String(<linked class>.prototype)`
+renders the literal text `"null"` for a real, non-null object —
+`assert.js`'s `formatSimpleValue` falls back to `String()`) is also named in
+#6623 for a future slice, unfixed.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S35 still holds. One addition:
+
+- **A "field-less" check must exclude the compiler's OWN bookkeeping
+  fields.** `__tag`/`__shape_brand` are appended to EVERY class's
+  `structFields` entry AFTER the declared-field collection loop, so
+  `structFields.length === 0` is NEVER true for any class — a naive version
+  of this fix's guard silently never fired. The right test is
+  `structFields.every(f => f.name === "__tag" || f.name === "__shape_brand")`.
+  Caught only by re-running the targeted probe after the "fix" and seeing the
+  wrong answer persist unchanged, not by any type or compile error — worth a
+  re-check for any future "is this class field-less" query in this codebase.
+
+### S37 findings (2026-09-17) — `Object.isExtensible` FIXED across the link boundary for both a class object and an instance; a new boundary terminal generalises #6617's pattern to a second predicate
+
+Full write-up in
+[#6624](6624-standalone-link-boundary-is-extensible.md). Branch
+`issue-5383-standalone-temporal-s37`, based on S36's FINAL tip `0612e1a082`.
+
+#### 1. The defect
+
+`Object.isExtensible(Temporal.PlainDate)` — the FIRST assertion in every
+`built-ins/Temporal/*/builtin.js` test262 file — answered `false` under
+`--target standalone` with a linked provider, where the spec requires
+`true`. Root cause: `Object.isExtensible(v)` on an `any`-typed `v` compiles
+to the general (non-`_obj`) `__object_isExtensible` native
+(`object-integrity-carrier.ts`), whose carrier-bag lookup
+(`registerIntegrityBagResolver`) recognises only four carrier kinds — vec,
+closure, error, #4194 instance-expando — via `ref.test` chains built from
+types the CONSUMER module itself registered. A value the PROVIDER minted
+(its class-object struct, or an instance of one of its classes) is a closed
+struct in the provider's own type space; absent a structural accident, none
+of the consumer's four ladders recognise it, and the native falls to its
+non-object terminal (`false`) — wrong for a value that genuinely IS
+extensible. Reduced in the required order: (1) single module, no link —
+does NOT reproduce (the oracle proves `class C {}` callable, routing to the
+already-`true` `_obj` variant); (2) single module, `any`-typed indirection —
+still does NOT reproduce (the CONSUMER's own class is in its OWN carrier
+ladder regardless of static typing); (3) synthetic linked pair — reproduces
+cleanly for BOTH a class object and an instance; (4) real
+`@js-temporal/polyfill` — confirmed, 9 of 129 `builtin.js` files fail here
+corpus-wide (one per top-level class/namespace export reached directly).
+
+#### 2. The fix
+
+A new wasm<->wasm link-boundary terminal, `__js2wasm_link_is_extensible`
+(`standalone-link-boundary.ts`), the same shape as #6617's `getPrototypeOf`
+terminal: the provider forwards to its OWN (already-correct)
+`__object_isExtensible`; the consumer's `buildIntegrityPredicate`
+(`object-integrity-carrier.ts`) gains an optional `peerFallbackIdx`,
+consulted in place of the bare `terminalResult` constant on a carrier-bag
+miss — threaded through `buildObjectIntegrityPredicates` to exactly ONE
+predicate (`__object_isExtensible`; `isFrozen`/`isSealed` untouched, no
+reported defect). Simpler than `callableKind`/`getPrototypeOf`'s
+reserve-then-fill-at-finalize two-step: `__object_isExtensible` already has
+a body by the time the provider-side terminal is emitted
+(`buildObjectDescriptorHelpers` registers it earlier in
+`ensureObjectRuntime`), so this is a direct forward. The SAME terminal fixes
+a class-object miss AND an instance-carrier miss — a strict improvement
+beyond the assigned "class object" scope, verified with its own witness.
+
+#### 3. The result
+
+Corpus-wide, all 129 `built-ins/Temporal/**/builtin.js` files, fresh cache
+per label: **120/129 pass on BOTH labels, 0 flips.** All 9 failing files
+move PAST the `isExtensible` assertion to a later, already-documented
+residual (mostly #6609's `getPrototypeOf(<class value>)` gap; `Now`'s file
+moves to a DIFFERENT residual, `Object.prototype.toString`, since `Now` is a
+namespace object, not a class). Four-family acceptance sample (first 120
+files each, file-copy revert, fresh cache per label): **430/480 both
+labels** (111/104/112/103), 0 flips — an honest null, none of the moved
+rows live in these four families' first 120 files. Provider bytes:
+3,311,638 B → 3,311,710 B (+72 B). Equivalence gate: 22 failing / 1,720
+passing / 22 known-failures — baseline exactly.
+
+**Witness**: `tests/issue-6624-standalone-link-boundary-isextensible.test.ts`,
+5 `it`s — 2 fix-witnesses (class object, instance) measured failing on the
+file-copy-reverted base (`false`, expected `true`) and passing on branch; 3
+controls (linked function value, local plain object, local class through an
+`any` indirection) pass unchanged on both trees. Full suite alongside the
+other 25 `tests/issue-66*.test.ts` files: 26 files / 122 tests, all pass.
+
+#### 4. Residual — the real next blocker, already named, not fixed here
+
+8 of the 9 moved `builtin.js` files stop on `Object.getPrototypeOf(<linked
+class value>)` still answering `null`, not `Function.prototype` —
+S22/#6609's own table already names this exact case a residual. `Now`'s
+file stops on `Object.prototype.toString.call(Temporal.Now)` answering
+`"[object Object]"` instead of `"[object Temporal.Now]"` — a namespace
+object takes a different §20.1.3.6 classifier path than the class-shaped
+members this slice and its siblings target; a distinct, unreduced
+mechanism.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S36 still holds. One addition:
+
+- **The "ask the owner" boundary-terminal shape (#6617) generalises cleanly
+  to a SECOND predicate with no new architecture** — a new export name, a
+  `TERMINALS` entry, a reserve-or-forward block, and one new optional
+  parameter threaded through an existing predicate builder. When a
+  `__object_*` general (non-`_obj`) native's terminal is a bare constant on
+  a carrier-bag miss, check whether the miss is genuinely non-object
+  (terminal stays a constant) or a foreign-but-real provider value (terminal
+  should ask the peer) before assuming a constant answer is correct across a
+  link.
+
+### S38 findings (2026-09-17) — `Object.getPrototypeOf(<class object>)` FIXED across the link boundary for base classes; 8 of the 9 S37-moved `builtin.js` files reach `pass`
+
+Full write-up in
+[#6625](6625-standalone-link-boundary-class-object-prototype.md). Branch
+`issue-5383-standalone-temporal-s38`, based on S37's FINAL tip `783aaa3cbb`.
+
+#### 1. The defect
+
+`Object.getPrototypeOf(Temporal.PlainDate)` — the THIRD assertion in every
+`built-ins/Temporal/*/builtin.js` file, and the exact residual S22/#6609
+named and S37/#6624 confirmed as the blocker for 8 of the 9 files it moved
+past `isExtensible` — answered `null` under `--target standalone` with a
+linked provider, where §15.7.14 step 4 requires `%Function.prototype%` for an
+ordinary (non-`extends`) class. Root cause: `Object.getPrototypeOf(v)` on an
+`any`-typed `v` falls to #6609's `tryEmitDynamicCallableGetPrototypeOf`,
+gated on `__is_callable` — which deliberately excludes class objects (a class
+has [[Construct]] but no [[Call]]). The value then reached the generic
+`__getPrototypeOf`, whose class-instance dispatcher (#6617's
+`STANDALONE_CLASS_INSTANCE_PROTO`) explicitly declines a class-object
+identity match by design (it answers only for instances).
+
+#### 2. The fix
+
+A new runtime predicate `__is_class_object` — an IDENTITY ladder (`ref.eq`
+against every class-object singleton, reusing `typeof-natives-finalize.ts`'s
+`classObjectIdentityArms` verbatim, now parameterised over an optional
+global-idx list) — ORed into #6609's existing `tryEmitDynamicCallableGetPrototypeOf`
+dynamic dispatch alongside `__is_callable`. Across a link, `__is_class_object`
+asks the owner for a BOOLEAN only (a new `__js2wasm_link_is_class_object`
+terminal), never a value — the value this arm answers is always
+`Function.prototype` compiled on the CALLER's own side (S22's identity rule),
+so it agrees with the caller's own later read of it. Both the local and
+boundary identity ladders are restricted to classes absent from
+`ctx.classParentMap` (base classes only) — a subclass's [[Prototype]] is its
+PARENT, not `Function.prototype`, and the naive unfiltered predicate was
+measured to introduce a NEW wrong answer for a subclass (verified: base
+answers `false` for `gPO(<subclass>) === Function.prototype`; an unfiltered
+predicate flips it to a wrong `true`; the parent-map filter keeps it `false`,
+matching base).
+
+First cut was a SEPARATE function mirroring #6624's two-terminal shape;
+measured (via `wasm-dis`) to be minted but never CALLED, because
+`tryEmitDynamicCallableGetPrototypeOf`'s contract is "return `true` once the
+runtime dispatch is emitted", not "return `true` only when callable" — its
+caller's early-return on the first arm's `true` pre-empts any second
+sequential arm regardless of which side of the first arm's internal `if/else`
+fired. Folded into ONE function instead; full account in #6625's "Attempt
+log".
+
+#### 3. The result
+
+Corpus-wide, all 129 `built-ins/Temporal/**/builtin.js` files, fresh cache
+per label: **base 120/129 pass** (reproduces S37 exactly on this tree) →
+**branch 128/129 pass, 0 pass→fail, 8 fail→pass** — exactly the 8 files S37
+§4 named (`Duration`, `Instant`, `PlainDate`, `PlainDateTime`,
+`PlainMonthDay`, `PlainTime`, `PlainYearMonth`, `ZonedDateTime` top-level
+`builtin.js`). The 9th, `Now/builtin.js`, is unchanged — its blocker is the
+separate namespace-`toString` mechanism S37 already named, untouched here.
+Provider bytes: 3,311,710 B → 3,312,720 B (+1,010 B).
+
+**Four-family acceptance sample: completed to the brief's full 480/480 spec
+in a follow-up measurement pass** (same branch tip, same fix, new
+worktree — the original session left this PARTIAL, see #6625's "What did
+not get measured" for the full accounting). All four families 120/120 rows
+each, both labels (base = file-copy revert of the same 5 files, fix = this
+branch): **430/480 base → 433/480 fix, 0 pass→fail, +1 each in
+`PlainDate/builtin.js`, `Duration/builtin.js`, `PlainDateTime/builtin.js`**
+(each sorts into its family's first-120 walk); `ZonedDateTime/prototype`
+unchanged (no `builtin.js` at that root). Base reproduces S37's own cited
+111/104/112/103 exactly. Must-not-move groups A/B/C also completed in the
+same pass: **0 pass→fail across 1,804 rows** (groups A and B exactly flat;
+group C has one legitimate `fail→pass`,
+`class-definition-null-proto.js`, a correct consequence of the fix's own
+`extends`-null handling — see #6625 for the full analysis). Corpus byte
+A/B (42 modules × {gc, standalone}): **0/42 `gc`-lane moved** (confirms
+standalone-gating), **25/42 `standalone`-lane moved, 0 CE/status flips**.
+
+Equivalence gate: 22 failing / 1,720 passing / 22 known-failures in
+baseline — 0 new regressions, exactly the S37 baseline.
+
+**Witness**: `tests/issue-6625-standalone-link-boundary-class-object-prototype.test.ts`,
+7 `it`s — 1 fix-witness (linked class object → `Function.prototype`) measured
+failing on the file-copy-reverted base (`false`, expected `true`) and passing
+on branch; 6 controls (linked function value, linked instance, linked
+subclass, `isExtensible` on the same class object, a local plain object, a
+local class through an `any` indirection) pass unchanged on both trees.
+Full suite alongside the other 26 `tests/issue-66*.test.ts` files (27
+files / 129 tests total): all pass together — this run also caught and fixed
+TWO now-stale assertions in `tests/issue-6617-class-instance-prototype.test.ts`
+that pinned the PRE-#6625 "declines, answers null" behavior for a
+class-object query.
+
+#### 4. Residual — the real next blocker, already named, not fixed here
+
+The `Now/builtin.js` namespace-`toString` mechanism (S37 §4) is untouched.
+The `extends`-parent case for `Object.getPrototypeOf(<subclass>)` is a NEW,
+narrower residual this slice names and declines to fix (§2 above) — no real
+Temporal top-level class currently uses `extends`, so it does not block this
+slice's corpus target.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S37 still holds. Two additions:
+
+- **A dynamic-dispatch function's "return `true` once emitted" contract can
+  silently swallow a second, sequential arm placed after it at the same call
+  site** — check the RETURN CONTRACT of a function you are extending before
+  assuming #6624's "just add a second independent terminal" pattern
+  transfers. `Object.isExtensible` had no such early-return arm ahead of its
+  second terminal; `Object.getPrototypeOf`'s dynamic dispatch did. Fold into
+  the SAME function instead when the contract doesn't allow sequencing.
+- **A boundary terminal answering a VALUE vs a BOOLEAN is a real design
+  choice, not a detail** — `getPrototypeOf`/`isExtensible` (#6617/#6624) hand
+  the PROVIDER's own answer back because the provider's value IS the answer
+  (an object identity, an integrity bit that has no realm-local competing
+  singleton). `Object.getPrototypeOf(<class object>)`'s correct answer
+  (`Function.prototype`) is a REALM-LOCAL singleton with no cross-module
+  identity, so the boundary must answer a fact ("is this yours") and let the
+  CONSUMER produce the value locally — the same reasoning #6609/S22 already
+  established for the ordinary-function case, generalised.
+
+### S39 findings (2026-09-17) — the last batch of #6620/S33's own `R-other-bare-ref-test` list audited and fixed; 4 sites confirmed wrong, 4 fixed defensively with no reachable wrong answer found
+
+Full write-up in
+[#6626](6626-ta-ctor-identity-remaining-bare-tests.md). Branch
+`issue-5383-standalone-temporal-s39`, based on S38's FINAL tip `ea2277af98`.
+
+#### 1. The defect
+
+#6620 (S33) flagged 7 other bare `ref.test $__ta_ctor` / `taCtorTypeIdx`
+receiver sites, none reduced to a concrete failing row that slice.
+#6622 (S35) fixed 2 more (`reflect-construct-native.ts`), leaving 5 files /
+8 call sites unaudited: `dataview-native.ts` (5 sites), `property-access-dispatch.ts`
+(1 site), `ta-ctor-meta.ts` (2 call sites, one — `isTaCtor()` — shared across 5
+splice points into `__builtinfn_get_meta`/`__builtinfn_gopd`/`__builtinfn_delete`).
+Same collision shape every time: `$__ta_ctor` is `{kind: i32, brand: i32}`,
+WasmGC-identical to a field-less class's compiled root `{__tag: i32,
+__shape_brand: i32}` (#2158/#2009).
+
+#### 2. The fix
+
+All 8 sites now route through `taCtorIdentityTestInstrs` (#5194 r3 F1 / #5383
+S2f R11) — the same swap #6620/#6622/#6601 already applied at every other
+`$__ta_ctor` receiver test. Answer-preserving for a genuine `$__ta_ctor`
+value (both mint sites write the brand), can only ever REMOVE a false
+positive.
+
+#### 3. A cheaper reduction than #6620/#6622's
+
+#6620/#6622's collisions needed a LINKED cross-module provider (a class-object
+VALUE specifically gets the instance-sharing representation per #3976). Four
+of these sites — `emitTaCtorBytesPerElement` and all three `ta-ctor-meta.ts`
+`isTaCtor()`-guarded arms exercised — reproduce with a purely LOCAL,
+single-module field-less class **instance** cast through an `any` parameter,
+no linking required. Measured by file-copy revert of the ONE named file:
+
+| Expression (`x: any = new PD()`, `PD` at `__tag` 3) | Base (file reverted) | Fixed |
+| --- | --- | --- |
+| `x.BYTES_PER_ELEMENT` (`dataview-native.ts`) | `2` | `0` |
+| `typeof x.prototype` (`ta-ctor-meta.ts`) | `"object"` | `"undefined"` |
+| `Object.getOwnPropertyDescriptor(x, "BYTES_PER_ELEMENT")` (`ta-ctor-meta.ts`) | `{value:2,...}` | `null` |
+| `hasOwnProperty(x, "prototype")` (`ta-ctor-meta.ts`) | `true` | `false` |
+
+#### 4. Residual — 4 sites fixed defensively, not independently witnessed
+
+The 3 remaining `dataview-native.ts` dynamic-`new ctor(...)` construct sites
+(`emitDynamicTaViewConstruct`, `emitTaDynCtorConstructFromLocals` ×2) and
+`property-access-dispatch.ts`'s `$262.createRealm().global` receiver arm did
+NOT reproduce a wrong answer within this slice's budget. Two reduction
+attempts for the construct sites — a local field-less ctor value (declines to
+the correct `emitDynamicNewFallback` path before the vulnerable arm is even
+reached) and a LINKED cross-module provider ctor value (mirroring #6620's own
+harness) — both answered correctly on base AND fixed `dataview-native.ts`; the
+mechanism that resolves them correctly either way was not isolated. The Realm
+site needs the real test262 `$262` harness object, out of reach of a synthetic
+vitest probe. All 4 are fixed with the SAME answer-preserving pattern and
+covered by control tests instead of fix-witnesses.
+
+#### 5. Corpus / acceptance
+
+`tests/issue-6626-*.test.ts` (9 tests: 4 fix-witnesses, 5 controls) plus the
+full `tests/issue-66*.test.ts` regression suite (28 files / 138 tests) pass
+together. The four-family/must-not-move/corpus-byte-A/B acceptance battery
+was deferred at S39's own tip and **completed in the S39b measurement-only
+slice** (branch `issue-5383-standalone-temporal-s39b`, same tip `21d3178748`,
+no `src/` changes): four-family sample **433/480 base → 433/480 fix, 0
+pass→fail, 0 fail→pass**; must-not-move groups A/B/C (S38b's own definitions)
+**plus a new group D** (`TypedArray`/`TypedArrayConstructors`/`DataView`,
+mandatory this slice since #6626 touches TA-constructor identity directly) —
+**2,004 rows total, 0 pass→fail, 0 fail→pass**; corpus byte A/B (42 files ×
+{gc, standalone}) — **0 moved either target, 0 CE/status flips**, provider
+bytes `3,312,720 B → 3,313,801 B` (+1,081 B). Equivalence gate **22/1720/22**,
+unchanged from S39's own baseline. Full per-group tables in #6626's
+"Criterion 4" section. Verdict: the fix is a pure no-op on every corpus slice
+measured — expected, since the 4 confirmed-buggy sites are
+collision-triggered and none of the measured corpora happens to land a
+receiver on a colliding `$__ta_ctor` tag; the 9 `tests/issue-6626-*.test.ts`
+tests remain the only positive evidence the fix does something, by design
+(synthetic reduction, not corpus-found).
+
+### S40 findings (2026-09-17) — a real oracle fixpoint bug found while chasing the `Proxy get trap is not callable` bucket, fixed, but confirmed NOT to close that bucket; the bucket's real mechanism named, not yet fixed
+
+Full write-up in
+[#6627](6627-reflect-namespace-numeric-inference-fixpoint.md). Branch
+`issue-5383-standalone-temporal-s40`, based on S39b's tip `9875b99735`.
+
+#### 1. The defect (fixed)
+
+S40's dispatch brief targeted `Proxy get trap is not callable` (6 rows in the
+four-family sample). Reducing
+`PlainDate/from/observable-get-overflow-argument-primitive.js`
+(`TemporalHelpers.propertyBagObserver`'s `get` trap:
+`const result = Reflect.get(target, key, receiver); … return result;`)
+surfaced an independently-reproducible defect: any object-literal method
+literally named `get` (the near-universal Proxy trap name) that stores a
+`Reflect.X(...)` result in a local before returning it gets that local
+narrowed to an **f64** slot by the whole-program `numericFunctions`
+name-keyed usage oracle (`src/codegen/numeric-property-analysis.ts`, #4122)
+— regardless of the value's actual type. Downstream this is either a
+silently wrong value or a hard Wasm validation trap
+(`struct.get[0] expected type (ref null 6), found local.get of type f64`).
+
+Root cause: `isNumeric`'s bare-identifier-receiver fallback,
+`sets.numericFunctions.has(callee.name.text)`, treats `Reflect` (a namespace
+object, not a user instance) the same as any user class. `Reflect.get`'s
+method name is `"get"` — the same string as the Proxy trap convention. The
+`numericFunctions` set starts seeded with every function/method name and is
+pruned by a fixpoint that removes a name once ANY of its declarations
+returns non-numeric; for a `get` method whose own return is `Reflect.get`'s
+result, deciding "is `get` numeric" recurses into `numericFunctions.has("get")`
+— the very fact the fixpoint hasn't yet decided — so it answers `true`, a
+self-reinforcing loop with no external anchor. Fixed by a new
+`NON_INSTANCE_GLOBAL_NAMESPACES` exclusion set (`Reflect`, `JSON`, `Object`,
+`Array`, `String`, `Number`, `Symbol`, `Promise`, `Proxy`, `Intl`) checked
+before the `numericFunctions` fallback — the same targeted narrowing
+`Math`/`Date` already have.
+
+#### 2. What it does NOT fix
+
+Measured directly: the real test262 row's compiled `wasm_sha` is
+**byte-for-byte identical** with and without the fix, and the row still
+fails identically with `TypeError: Proxy get trap is not callable`. The real
+`propertyBagObserver.get` trap has an early `return undefined;` branch,
+which is non-numeric and disqualifies `numericFunctions` for `"get"` on its
+own — the self-reinforcing fixpoint this issue fixes was never actually
+engaged by the real corpus row (the minimal reduction needed a SIMPLER trap
+body, with no early non-numeric return, to hit it).
+
+#### 3. The bucket's real mechanism (named, not fixed)
+
+Reduced to a 9-line linked-vs-unlinked repro:
+
+```js
+// consumer, LINKED to any provider (content irrelevant, not even called):
+var options = new Proxy({ overflow: "reject" }, {
+  get(target, key, receiver) {
+    return target[key]; // Reflect.get is NOT required to reproduce this
+  },
+});
+export function probeToString() {
+  var v = String(options.overflow);
+  return v === "reject" ? 1 : -2; // answers -2 when linked, 1 when not
+}
+```
+
+No `Reflect`, no `propertyBagObserver` wrapper, no `calls` array,
+module-scope OR function-scope `new Proxy(...)` — all irrelevant. The ONLY
+variable that flips the answer is whether the CONSUMER module has ANY
+package `link:`ed at all (`ctx.standalone && peerNamespace(ctx) !==
+undefined`, i.e. whether `emitStandaloneLinkReverseLocalTerminals`
+(`src/codegen/standalone-link-reverse-peer.ts`) runs for this module).
+
+Hypothesis, not yet verified: `ensureProxyRuntime` (`object-runtime-proxy.ts`,
+called from `ensureObjectRuntime` around `object-runtime.ts:6769`) "patches
+the `ref.test $Proxy` front-guard onto
+`__extern_get`/`__extern_set`/`__extern_has`" — and
+`emitStandaloneLinkReverseLocalTerminals` (called right after, `~6852`) also
+reads/wraps `ctx.funcMap.get("__extern_get")` to build the CONSUMER's
+`localGet`/`localKeys`/`localHas`/`localIsNull`/`localMethodCall` terminals
+installed into the PROVIDER at `__module_init`. Both touch `__extern_get`'s
+identity/body in the same narrow window; whether one observes a stale copy
+of the other, or whether the terminal-install `ref.func` captures shift
+something the Proxy dispatch relies on, was not pinned down within S40's own
+~2h budget. Next step: a WAT diff of
+`__extern_get`/`__proxy_get_dispatch`/`__module_init` between linked and
+unlinked builds of the 9-line repro above.
+
+#### 4. Corpus / acceptance
+
+`tests/issue-6627-reflect-namespace-numeric-inference.test.ts` (2
+fix-witnesses, 3 controls) plus the full `tests/issue-66*.test.ts` regression
+suite (28 files / 138 tests) pass together. The four-family/must-not-move/
+corpus-byte-A/B acceptance battery was deferred at S40's own tip and
+**completed in the S40b measurement-only slice** (branch
+`issue-5383-standalone-temporal-s40b`, same tip `66acff773f`, no `src/`
+changes): four-family sample **433/480 base → 433/480 fix, 0 pass→fail, 0
+fail→pass**; must-not-move groups A/B/C/D (S39b's own definitions, group C
+reusing S39b's own 0:249 slice) — **2,004 rows total, 0 pass→fail, 0
+fail→pass**; corpus byte A/B (42 files × {gc, standalone}) — **0 moved
+either target, 0 CE/status flips**, provider bytes unchanged at
+`3,313,801 B` (this fix touches only compile-time oracle inference, not
+codegen bytes emitted into the linked Temporal provider). Equivalence gate
+**22/1720/22**, unchanged. The assigned 6-row bucket reproduces
+byte-for-byte unchanged — every row still answers `TypeError: Proxy get trap
+is not callable`. Full per-group tables in #6627's "Criterion 4" section.
+Verdict: the fix is a pure no-op on every corpus slice measured, exactly as
+S40's own "THIS DOES NOT CLOSE #5383'S TARGET BUCKET" section predicted —
+the `NON_INSTANCE_GLOBAL_NAMESPACES` exclusion only fires for a
+bare-identifier receiver whose text is one of ten well-known global names
+calling a method also present in `numericFunctions`, and no corpus measured
+here lands on that intersection. The `Proxy get trap is not callable` bucket
+remains open, with the linked-vs-unlinked repro and `ensureProxyRuntime` /
+`emitStandaloneLinkReverseLocalTerminals` hypothesis above as its next
+slice's starting point.
+
+### S41 findings (2026-09-17) — the `Proxy get trap is not callable` bucket's mechanism found and PARTIALLY fixed: a real, independently-verified `__apply_closure` misrouting bug for LOCAL Proxy trap invocation, but the bucket's actual blocker is a second, deeper CROSS-MODULE trap-invocation problem, named but not fixed
+
+Full write-up in [#6628](6628-standalone-proxy-trap-peer-callable-kind-misclassification.md).
+Branch `issue-5383-standalone-temporal-s41`, based on S40b's tip `ef08f7a8f0`.
+
+#### 1. Root cause (found, not what S40 suspected)
+
+S40's own two named suspects (`ensureProxyRuntime` /
+`emitStandaloneLinkReverseLocalTerminals`) were a dead end: a ctx-level Instr
+dump of every function in the dispatch chain (`__extern_get`'s Proxy
+front-guard, `__proxy_get_dispatch`, `__proxy_call_get`, `__call_fn_method_3`,
+`__typeof_function`) showed them structurally identical between linked and
+unlinked builds. The real mechanism is `fillApplyClosure`'s #6420
+"peer-owned callable" front-guard (`src/codegen/object-runtime.ts` ~line
+7766): it asks the linked PROVIDER "is this externref callable?" for EVERY
+value `__apply_closure` invokes, including ones that never crossed the link
+boundary. Under `canonicalRuntimeTypes` a purely LOCAL closure's WASM shape
+canonicalises to the SAME type as the provider's own shapes, so the
+provider's structural `__is_callable` check answers "yes" for a closure it
+has never seen, and `__apply_closure` hijacks the call into the provider's
+own apply terminal — which cannot run it and silently returns null. Confirmed
+via a WAT trace (`.tmp/s41/apply_closure_linked.txt`) and a side-effect
+witness (a trap that increments a counter regardless of its arguments proved
+the trap body NEVER RUNS in the linked build).
+
+#### 2. Fix (real, narrow, verified — does not close the bucket)
+
+`fillProxyDispatch`'s trap-invoke drivers now call `__call_fn_method_<N>`
+directly (bypassing `__apply_closure` and its peer-callable-kind guard
+entirely) when the Proxy dispatch is running in the SAME module that
+constructed the trap. Two earlier attempts that tried to fix this on the
+SHARED `__apply_closure` (a structural "is this locally owned" `ref.test`
+gate, tried against both the deduped closure-root type list and the full
+per-site closure-type list) both regressed `tests/issue-6605-*` and
+`tests/issue-6616-*`: `canonicalRuntimeTypes` makes "my closure" vs
+"identically-shaped foreign closure" fundamentally undecidable by `ref.test`
+on the SHARED function — fixing the CALL SITE instead (Proxy's own
+fixed-arity invocation) sidesteps the ambiguity. 7 new tests
+(`tests/issue-6628-*.test.ts`, 3 fix-witnesses base-fail/fix-pass + 4
+controls), full `tests/issue-66*.test.ts` regression suite green
+(30 files / 150 tests).
+
+#### 3. Why it does NOT close #5383's bucket
+
+The real corpus row is not "a consumer builds and reads its own local
+Proxy" — it is `Temporal.PlainDate.from(date, options)`, where the CONSUMER
+builds `options = TemporalHelpers.propertyBagObserver(...)` (a Proxy) and
+hands it to the PROVIDER, which reads `options.overflow` FROM INSIDE ITS OWN
+COMPILED MODULE. The trap the provider's own `__proxy_get_dispatch` finds is
+unavoidably the CONSUMER's — this fix's direct-`__call_fn_method_N` dispatch
+is WRONG for that direction (the trap can never be local to the provider, so
+it needed the OLD peer route). Built and ran a minimal reduction of exactly
+this shape (`.tmp/s41/crossmodule.mts`): a provider `readOverflow(o){ return
+o.overflow; }` called with a consumer-owned Proxy — **throws an uncaught
+`WebAssembly.Exception` identically on BOTH base and fix**, proving this is a
+PRE-EXISTING, separate mechanism, not a regression introduced here, and not
+what this fix reaches. `__apply_closure`'s #6420 peer bridge is therefore
+load-bearing for THIS direction even though it is wrong for the opposite
+one — no single front-guard using structural `ref.test` alone can get both
+right under canonical types; a correct general fix needs real per-instance
+ownership (a module-origin tag set at `struct.new` time), out of scope here.
+
+#### 4. Criterion 4 acceptance
+
+6-row bucket: unchanged, all 6 still `TypeError: Proxy get trap is not
+callable` (fresh provider cache, rebuilt bundle, `cacheHit=false` confirmed
+at prewarm). Four-family sample (first 120 × 4 families): **433/480**,
+exactly matching S40b's base measurement per-family (112/105/113/103) — 0
+movement. Corpus byte A/B (42 files × {gc, standalone}): 0 CE/status flips;
+6 `standalone`-target rows changed SHA despite containing no literal `Proxy`
+text — `ensureProxyRuntime` runs unconditionally for every standalone module
+reaching the object runtime, so this fix's smaller dead-code Proxy drivers
+shift bytes even where Proxy is never constructed; benign. Equivalence gate
+**22/1720/22**, unchanged. **Must-not-move groups A/B/C/D were NOT run this
+slice** (time-budget cutoff) — flagged as an open verification gap.
+
+**S41b (2026-09-17, `issue-5383-standalone-temporal-s41b`, branched from
+S41's `d9d43e634d`) closed that gap**: groups A (1250 files)/B (205)/C
+(249)/D (300) all reproduce exactly (1125/179/196/219 pass, per the task's
+expected floor) with **0 pass→fail and 0 fail→pass**, exact per-file TSV
+match base vs fix. Added a new group E (`Proxy` first 200 + `Reflect` first
+100, standalone) since #6628 is inside Proxy dispatch: unlinked variant 0
+diff (235/300 both states); a docs-only forced-link variant (injects
+`features: [Temporal]` into a shadow copy of each file so the SAME
+production `compileWithTemporalGlobal` path every Temporal test already
+takes also runs these) shows 220→228/300 (0 pass→fail, 8 fail→pass), all 8
+in the engine-triggered trap-dispatch family (`apply`/`has`/`get`/etc.
+`call-parameters.js`) that #6628's `fillProxyDispatch` fix targets — the
+remaining ~64 linked failures (identical on both trees) are manual
+`.apply()`/`.call()` trap invocations in test harness code, which go
+through the still-unfixed general `__apply_closure` peer guard, exactly as
+predicted below. PlainDate re-confirmed 112/112 both states, 0 diff.
+Equivalence gate re-run 22/1720/22, unchanged. Full tables in
+[#6628](6628-standalone-proxy-trap-peer-callable-kind-misclassification.md).
+
+The bucket remains open. Next slice's starting point: fix the FORWARD
+direction correctly (provider invoking a genuinely foreign/consumer-owned
+trap must still route to `__apply_closure`'s peer bridge) while keeping the
+BACKWARD direction fixed here (a module invoking its own local trap must
+not) — requires either (a) real per-closure ownership tagging, or (b) a
+different signal at the Proxy-CONSTRUCTION site that lets `$ptraps` record
+"this trap is mine" for later `__proxy_get_dispatch` reads to consult instead
+of asking `__apply_closure` to guess.
+
+### S42 findings (2026-09-17) — merge sync onto origin/main (4a5d5c1dfb): a clean merge, one real regression from main's own #6484 S1 short-circuiting #6609/#6625's mechanism (found + fixed), one pre-existing dormant defect the fix exposed (found, filed as #6630, not fixed)
+
+Full detail: [#6629](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6629-standalone-temporal-stack-main-sync-2026-09-17).
+
+Merged `origin/main` (`4a5d5c1dfb`) onto S41b's accepted head (`b84898a96c`)
+— clean, zero conflicts (merge commit `527310b81f`). The merge broke the
+same 12 witnesses (`Object.getPrototypeOf` paths in `tests/issue-6609-*`,
+`tests/issue-6617-*`, `tests/issue-6625-*`) the earlier parked attempt
+(`s41-main-merge-attempt`) also hit — but the mechanism these witnesses pin
+(`tryEmitDynamicCallableGetPrototypeOf`, `object-get-prototype-of.ts`) is
+BYTE-IDENTICAL across the merge; the actual break is main's #6484 S1
+iterator-prototype branch in `call-builtin-static.ts` short-circuiting
+BEFORE the stack's arm is ever reached (an idiom collision, not a touched-line
+conflict — no conflict marker could have caught it). Fixed by delegating the
+new branch's non-`$__IterRec` arm to the stack's existing predicate via the
+project's `pushBody`/`popBody` swap. All 150 witnesses green post-fix.
+
+The fix's necessary side effect — `Function.prototype` now materialises in
+far more modules than before — exposed a second, PRE-EXISTING (proven
+independent of this merge, reproduced on unmodified `b84898a96c`) defect:
+`ensureObjectRuntime`'s `fctx=null` bootstrap bakes `__extern_method_call`'s
+body with whatever funcIdx values are live at that moment, and has no
+tracking to correct itself if a native gets registered afterward — any
+later, unrelated `.call()` in the same module then calls the wrong function.
+Filed as #6630 for a proper architecture-level fix; not attempted here
+(out of scope for a sync task, and one narrow mitigation attempt did not
+close it).
+
+**Not run this session** (time-boxed by the #6484 root-cause depth): the
+criterion-5 re-baselined measurement battery (four families × 120 files,
+must-not-move A–D, E-unlinked/E-linked, corpus byte diff, `test:equivalence:gate`).
+Next agent/tech lead must run it before the stacked PR (S13→S42) opens.
+
+### S43 findings (2026-09-17) — #6630's root cause found to be BROADER than filed (any early `ensureObjectRuntime` trigger, not just `Function.prototype`); one real, regression-free narrowing fix landed; `tests/issue-6484-iterator-prototypes.test.ts`'s one failing case still NOT green — a second, unrelated trigger path exists that this fix does not reach
+
+Full detail with WAT/debug evidence: [#6630](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6630-ensureobjectruntime-bootstrap-late-import-staleness).
+
+Decoded the S42 repro's opaque `WebAssembly.Exception` (it read as
+`[Object: null prototype] {}` when printed directly — decoding via
+`e.getArg(tag, 0)` gives the real payload). The message is
+`"Function.prototype.call is not yet implemented in --target standalone"` —
+a native-proto glue member-miss refusal, NOT a stale-funcIdx crash. WAT
+evidence (func-index-order cross-reference) confirms `buildResolvedCalleeGuard`'s
+captured `isCallableIdx`/`typeofFunctionIdx`/`__new_TypeError` funcIdx values
+are all CORRECT in the final module — the mechanism #6630 originally named is
+not what is happening. Compile-time dispatch tracing shows `g.call(o)` takes
+the identical STATIC codegen path in both the working and failing case; the
+divergence is purely a runtime effect of something `ensureObjectRuntime`'s
+bootstrap does differently depending on WHEN it first runs.
+
+Fixed the one call site S42/#6609/#6625 own:
+`tryEmitDynamicCallableGetPrototypeOf` (`object-get-prototype-of.ts`) used to
+eagerly materialise `%Function.prototype%` for EVERY dynamic
+`Object.getPrototypeOf(<any-typed value>)`, regardless of whether the value
+turned out callable at runtime. Restructured to check
+`__is_callable`/`__is_class_object` first and only materialise
+`%Function.prototype%` inside the `then:` arm (via `pushBody`/`popBody`) —
+same result for the #6609/#6625 witnesses, but a non-callable receiver (the
+common case) no longer triggers `ensureObjectRuntime`'s bootstrap through this
+path. Verified regression-free: `tests/issue-66*.test.ts tests/issue-6484-*
+.test.ts` (32 files / 188 tests) — same 187 pass / 1 fail before and after.
+
+**That one remaining fail is NOT fixed by this change.** Bisected
+(`.tmp/s43/bisect2.mts` case `I1`) to a THIRD, unrelated trigger:
+`ensureIterRecPrototypeHelper` (`iterator-proto-next.ts`, main-authored,
+untouched by S42/S43) unconditionally builds all four iterator-prototype
+singletons — which itself calls `ensureObjectRuntime` — on the FIRST
+`Object.getPrototypeOf(<any-typed iterator>)` in a module, regardless of
+which family is actually used. A module doing nothing more than
+`Object.getPrototypeOf(someIterator)` once, then an ordinary `fn.call(...)`,
+reproduces the same failure with zero involvement from either S42's or S43's
+diffs. This confirms #6630's real shape: `ensureObjectRuntime`'s bootstrap has
+an ordering hazard that fires whenever ANYTHING triggers it early/mid-
+expression, not specifically when `Function.prototype` is read — so a
+call-site-local fix closes that one caller's exposure but not the underlying
+class of bug. Filed the corrected analysis in #6630 (kept `status: ready`,
+NOT closed) with the two remaining architecture-level directions.
+
+**Stack state at S43's head (`e57ab2a0f9`): NOT yet PR-ready.** The required
+green set (`tests/issue-66*.test.ts tests/issue-6484-*.test.ts`, 32 files) is
+187/188 — the one pre-existing #6484 failure is still red. Closing it needs
+either (a) #6630's architecture-level fix, or (b) accepting a narrower
+mitigation that also touches `ensureIterRecPrototypeHelper`/
+`emitIteratorPrototypeSingleton` (main-authored; out of this sync's stated
+scope) to defer that path's `ensureObjectRuntime` trigger too. The
+criterion-5 re-baselined measurement battery from S42 is STILL not run this
+session either (time-boxed by this investigation) — next agent must run both
+before the stacked PR opens.
+
+### S44 findings (2026-09-17) — #6630 CLOSED: the gap was never an ordering
+defect, it was two never-implemented glue members; `tests/issue-6484-*`'s one
+failing case is now green
+
+S44 (branch `issue-5383-standalone-temporal-s44`, worktree
+`/home/user/js2/.claude/worktrees/agent-ae02d763b3f66aedb`, head
+`0c3316f9f1` on top of S43's `e57ab2a0f9`) traced #6630 one hop further than
+S43's WAT-verified dispatch trace and found the mechanism S43 was searching
+for (bootstrap-ordering state that differs between early and natural-order
+`ensureObjectRuntime` runs) does not exist. The actual defect: once
+`%Function.prototype%` is materialized and wired as a closure's
+`[[Prototype]]` (by ANY trigger — S43 already established the trigger is
+broad, not specific to `Function.prototype` reads), a `.call()`/`.apply()`/
+`.bind()` own-property lookup off that closure correctly walks the §10.2
+chain and finds `%Function.prototype%`'s own property for that name — which
+`makeGlue` (`array-object-proto.ts`) had never wired a real body for (`call`/
+`apply`/`bind` were the ONLY three `Function`-family members still on the
+#2984 Phase-2 refusal path; `toString`/`@@hasInstance` already had real
+bodies). `closure-call-fast.ts`'s fast arm and `closure-props.ts`'s
+`__closure_method_call` own-property route both correctly see that as a HIT
+and correctly defer to it, which then throws the refusal. No bootstrap state
+needed tracking and no trigger needed delaying — the fix is implementing the
+three missing invoker bodies.
+
+Landed `src/codegen/function-proto-invokers.ts`: `call`/`apply`/`bind` now
+forward to the SAME generic "invoke any callable" primitives the rest of the
+runtime already uses for this question (`__apply_closure(target, thisArg,
+argsVec)` for call/apply, `__bind_dyn(target, argsVec)` for bind — the
+existing #3140 dynamic-bind helper), rather than special-casing the WasmGC
+closure struct family. This closes the defect for EVERY receiver kind that
+reaches this glue (bound functions, native builtin singleton closures, …),
+not just the one path #6630's repro exercised — and makes
+`Function.prototype.call`/`.apply`/`.bind` correct reflective values in
+standalone generally. Full trace, exact ABI/unpacking details and
+verification numbers are in #6630's own `### S44 findings` section
+(`plan/issues/6630-ensureobjectruntime-bootstrap-late-import-staleness.md`) and the handover's post-S44 stack-state entry —
+not restated here.
+
+**Stack state at S44's head (`0c3316f9f1`): the required green set closes.**
+`tests/issue-66*.test.ts tests/issue-6484-*.test.ts` (33 files, including the
+new `tests/issue-6630-function-prototype-call-after-bootstrap.test.ts`
+witness file) is 194/194, 0 failed — the `%IteratorPrototype%` case S43 left
+red is now green. `tests/issue-64*.test.ts tests/issue-65*.test.ts` (S43's
+own sweep) is 441/442 (1 pre-existing unrelated skip), 0 failed — S43
+measured 440/442 with one red on this same sweep. `npm run -s
+test:equivalence:gate`: 22/1720/22, unchanged from S43's documented number,
+no new regressions. **The criterion-5 re-baselined measurement battery from
+S42 is STILL not run** — S44's dispatch brief scoped that out explicitly
+("Do NOT run the family/must-not-move battery — that is the next measurement
+lane's job"). Next agent runs that battery before the stacked PR opens.
+
+### S44b findings (2026-09-17) — criterion-5 re-baselined battery run, MEASUREMENT ONLY, no source changes
+
+S44b (branch `issue-5383-standalone-temporal-s44b2`, worktree
+`/home/user/js2/.claude/worktrees/agent-a302b920b427333e8`) ran the full
+criterion-5 battery S42/S43/S44 all deferred: four-family (480 files, 60 s
+timeout, linked provider), must-not-move groups A–E (2,404 files total, 30 s
+timeout), corpus byte A/B (84 rows/tree), and `test:equivalence:gate` — on
+BOTH the pre-merge stack head (`b84898a96c`) and the accepted post-merge/
+post-#6630-fix head (`6cd09bbb89`). Full tables in
+[#6629](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6629-standalone-temporal-stack-main-sync-2026-09-17)'s
+"Re-baselined battery" section (S44b's own entry, not restated here in full).
+
+**Headline: 0 stack-caused pass→fail anywhere in the battery.** Four-family
+433/480 pass on both trees, byte-identical per file. Must-not-move groups A,
+B, E-linked are byte-identical between the two trees; groups C and D show 6
+`fail→pass` improvements (0 `pass→fail`) traced to `origin/main`'s own
+TypedArray `Symbol.species`/`Symbol.toStringTag` and
+`Function.prototype[Symbol.hasInstance]` fixes carried in by the merge — not
+authored by this stack. Corpus byte diff: 0 status/CE flips (14 `standalone`-
+only SHA flips are the expected legitimate codegen delta from the 110-file
+main merge, `status` unchanged). `test:equivalence:gate` on bare
+`origin/main` (`4a5d5c1dfb`): 22/1720/22, identical to the stack's own
+number.
+
+**The stack head `6cd09bbb89` is criterion-5 clean and stacked-PR-ready** on
+this axis. One measurement-only gap: `mnmE.mts`/`mnmE-linked.mts` share an
+output filename pattern, so the E-unlinked per-file TSV was overwritten by
+the E-linked run before diffing — the aggregate (235/300, identical both
+trees/both runs) is solid, the per-file diff for that one variant is not; see
+#6629 for the full note. No `src/` files touched this session.
+
+### S45 / S45b findings (backfilled 2026-09-18 by S46b from #6631's issue
+file and `plan/agent-context/temporal-standalone-handover-2026-09-13.md`,
+since neither session wrote its own section here)
+
+**S45** reduced the two named Temporal test262 rows
+(`test/built-ins/Temporal/PlainDate/from/argument-object-valid.js`,
+`…/argument-string.js`) to a single failure inside
+`TemporalHelpers.canonicalizeCalendarEra`: `assert.sameValue(SameValue(«null»,
+«undefined»))`. S45's probe10 (carried into S45b's branch as
+`.tmp/s45b/probe10.mts`) named a mixed-primitive-array `typeof`-tag
+corruption (filed as #6631) as the apparent proximate cause — an array
+literal mixing a string with a non-string primitive corrupted the `$AnyValue`
+tag of every element, not just the mismatched one.
+
+**S45b** landed #6631's real fix (`emitVecToVecBody` in
+`src/codegen/type-coercion.ts`, routing the externref → `$AnyValue`
+vec-element widen through the existing `ensureAnyFromExternHelper` classifier
+instead of the generic `coerceType` default, scoped to the
+heterogeneous-primitive-union array-literal widen), witnessed by
+`tests/issue-6631-mixed-array-element-typeof-tag.test.ts` (9 cases,
+base-fail/fix-pass confirmed by file-copy A/B on `type-coercion.ts`).
+
+**S45b then re-ran both named Temporal rows against the #6631 fix and found
+they did NOT close** — identical `Expected SameValue(«null», «undefined»)`
+on both base and fix. Root-cause correction: `date.era` (the actual failing
+read, inside `canonicalizeCalendarEra(date.calendarId, date.era)`) is a
+**class-instance field read** (`era: string | undefined`), not an
+array-element read — `isHeterogeneousPrimitiveUnion` (the gate #6631's fix
+depends on) requires ≥2 distinct non-nullish primitive kinds, and `string |
+undefined` has exactly one, so the #6631 code path is never reached for this
+field at all. S45b's follow-up probe (`.tmp/s45b/probe11.mts`, "class field
+union") isolated a DIFFERENT, adjacent defect on the same `T | undefined`
+wasm carrier: `class D { era: string | undefined }`, assigned `undefined` in
+the constructor, read back `typeof d.era === "object"` instead of
+`"undefined"` — the null/undefined conflation later confirmed and fixed
+(partially) by S46 as #6632. #6631 was filed and merged anyway (the
+array-tag bug is real and independently witnessed), with its issue file's
+"Real-corpus proof" section explicitly recording the non-closure and
+pointing at probe11 as the next lead. Full accounting:
+`plan/issues/6631-mixed-array-element-typeof-tag.md`.
+
+### S46 findings (2026-09-18) — two real, verified `T | undefined`
+resurrection bugs found and fixed (typeof + the generic dynamic member-get
+dispatcher); the two named Temporal rows are STILL RED — the actual read
+routes through a third, unfixed site
+
+Full writeup: `plan/issues/6632-class-field-undefined-union-typeof-nullish.md`.
+Summary: `resolveWasmType` collapses `T | undefined` to the same wasm carrier
+(`ref_null $AnyString`) as `T | null`; #4741 already resurrects a null
+`$AnyString` correctly in the generic `coerceType` engine, but
+`compileTypeofExpression` (typeof-delete.ts) and the dynamic member-get
+dispatcher (member-get-dispatch.ts, the `obj[computedKey]` route) each boxed
+to externref via a bare `extern.convert_any` that bypassed that arm. Both
+fixed (#6632), witnessed (`tests/issue-6632-class-field-undefined-union.test.ts`,
+8 cases, fail-on-base/pass-on-fix confirmed by file-copy revert), and
+regression-checked (`tests/issue-66*.test.ts` + `tests/issue-6484-*.test.ts`:
+35 files / 211 tests, 0 failed).
+
+**Re-ran both named rows against a freshly rebuilt provider — both still
+fail with the identical `Expected SameValue(«null», «undefined»)`.** WAT
+reduction of the real (unminified) provider traced the actual call:
+`PlainDate.prototype.get era` → `$Ni(this,"era")` → `Qt(this).isoToDate(n,
+{[t]:true})[t]`. `Qt(e)` resolves the date's `Calendar` through a
+**polymorphic interface reference**, so `.isoToDate(...)`'s return is
+statically `any`, and `[t]` (a runtime string) reads through the fully
+dynamic `$Object` property store (`$__extern_get`/`$__extern_set`,
+object-runtime.ts) — a THIRD site with the same `ref_null $AnyString`
+ambiguity, not covered by either fix landed here. Two attempted minimal
+reductions of that exact shape (a polymorphic-interface method building a
+dynamic object with a `string | undefined` field, read back via a computed
+key) each hit a DIFFERENT, unrelated pre-existing crash instead of
+reproducing the SameValue mismatch — see #6632's "S46 findings" for both
+probes. Time-boxed at ~2.5h; battery not run (the two named rows are still
+red, so it would validate only #6631, not this PR's own fix — see #6632 for
+the full accounting of what WAS run).
+
+### S46b findings (2026-09-18) — real-row proof on S46's tip confirms both
+rows STILL RED (unchanged); full criterion-4 battery run for the first time
+covering both #6631 and #6632 together; one non-clean bucket (E-linked
+Proxy/Reflect, 10 pass→fail) proven by file-copy revert to be
+pre-existing/environmental, not caused by either fix
+
+Full writeup: `plan/issues/6632-class-field-undefined-union-typeof-nullish.md`'s
+"## S46b findings" section (real-row re-proof + one bounded reduction step
+that did not close them, per the dispatch brief) and
+`plan/issues/6631-mixed-array-element-typeof-tag.md`'s "## S46b criterion-4
+battery" section (pointer). Numbers: four-family 433→435 pass (0 pass→fail, 2
+fail→pass); must-not-move A–D 0 pass→fail (6 fail→pass); corpus byte A/B 0
+status/sha flips, no gc movers; equivalence 22/1720/22 unchanged. E-linked's
+10 pass→fail rows reproduce identically with all three `src/` files either
+fix touches (`type-coercion.ts`, `typeof-delete.ts`, `member-get-dispatch.ts`)
+file-copy reverted to their exact `973a746655` (pre-#6631) content and the
+bundle rebuilt — proving neither fix caused them (deterministic across
+repeated and isolated single-process runs; `test262` submodule pin identical
+at both commits). **Verdict: criterion 4 clean for both #6631 and #6632's
+own changes.** The two named real Temporal rows (`PlainDate/from/argument-
+object-valid.js`, `…/argument-string.js`) remain red — the `$__extern_get`/
+`$__extern_set` third site S46 named is still the next lead for whoever picks
+this up.
+
+### S47 findings (2026-09-18) — the `$__extern_get`/`$__extern_set`
+resurrection hypothesis REFUTED for the non-polymorphic case; reduction
+blocked by two orthogonal, previously-undocumented defects in interface-typed
+Calendar dispatch, neither fixed
+
+Full writeup: `plan/issues/6633-calendar-dispatch-blocks-era-reduction.md`.
+Setup: fresh worktree off S46b's tip `3b82884459`, compiler bundle rebuilt,
+no Temporal provider/QuickJS rebuild (findings-only, no `src/` change).
+
+**Step 1 refutes S46's own leading hypothesis.** A plain (non-polymorphic)
+function building the EXACT real `calendar.ts` `isoToDate` literal shape
+(`{ era: undefined, eraYear: undefined, year, month, day, daysInWeek: 7,
+monthsInYear: 12 }` plus the real conditional post-construction
+`if (requestedFields.dayOfWeek) date.dayOfWeek = 3`) resurrects `result[t]`
+(`t = "era"`, computed key) correctly in standalone mode:
+`v === undefined` → `true`. So `$__extern_get`/`$__extern_set` are NOT the
+defect when the calendar interface/dictionary wrapper is absent.
+
+**Step 2 — wrapping the identical literal in the real dispatch shape
+(interface method, `Record<string, Interface>` dictionary with MIXED
+object-literal and class-instance entries, matching `calendar.ts`'s own
+`impl['iso8601'] = {...}` / `impl[helper.id] = new NonIsoCalendar(helper)`)
+hits two separate, more severe defects before any `SameValue` observation is
+reachable:**
+
+1. A bare interface-typed `any`-return method call through a function-
+   returned interface value TRAPS ("dereferencing a null pointer")
+   unconditionally — even with a body as simple as `return 42`, no computed
+   key, no `undefined` field involved at all.
+2. A `Record<string, Interface>` holding both a plain-object-literal impl
+   and a class-instance impl (the polyfill's exact `iso8601`/non-ISO
+   registration shape) dispatches BOTH keys to the class instance's method,
+   ignoring the object literal entirely (`getCalendar("iso8601")` returned
+   `year: 1, era: "x"` instead of the iso8601 body's own `year: 999, era:
+   undefined`) — a genuine interface-dispatch/devirtualization bug, not
+   cosmetic.
+
+**Neither defect was fixed** — both are outside #6633's originally-scoped
+mechanism and each looks substantial enough to need its own issue + architect
+review. Time-boxed per the dispatch brief; handing back the reduction and two
+new hypotheses rather than continuing into interface-dispatch codegen without
+a plan. **Next lane should investigate finding #2 first** — if the real
+Temporal provider's own `impl['iso8601']`/`NonIsoCalendar` dictionary
+misdispatches the same way, that is a plausible root cause for the `era`
+`null`-vs-`undefined` mismatch that bypasses `$__extern_get`/`$__extern_set`
+entirely (a wrong-implementation dispatch falling through to a genuine
+property MISS on the correct implementation's storage reads back as the
+legacy `ref.null.extern` "not found" answer, not the canonical `undefined`
+singleton).
+
+**Criterion-4 battery**: not run — no `src/` change to validate (findings-
+only PR). Real rows: not re-verified with a fresh provider build, for the
+same reason (S46b already confirmed both still-red on the immediately-prior
+commit; re-running without a fix adds no new evidence).
+
+### S48 findings (2026-09-18) — both S47 defects fixed; root cause was ONE
+level upstream of the call-dispatch ladder S47 suspected
+
+Full writeup: `plan/issues/6634-interface-carrier-struct-nulls-class-implementer.md`
+(fix), `plan/issues/6633-calendar-dispatch-blocks-era-reduction.md` (`## S48
+resolution` section). Setup: worktree off S47's tip `afe573638b`.
+
+**Root cause, confirmed by WAT/binary disassembly (`wasm-dis -all`), not by
+call-site tracing.** S47's own hypothesis — a call-dispatch ladder devirtualizing
+wrong — is real but is not where the defect lives. The actual defect is one
+level upstream: `collectInterface` synthesizes a method-only interface's OWN
+Wasm struct as an object-literal-compatible shape (each method becomes a
+mutable externref "closure slot" field). A CLASS instance implementing the
+same interface can NEVER physically match that struct (it dispatches through
+real class methods, not a per-instance closure field). Direct evidence:
+`getCalendar(id): CalImpl`'s compiled return type was `(ref null $26)` where
+`$26 = (struct (field $isoToDate (mut externref)))` — the LITERAL's struct,
+not any general interface representation. `impl["gregory"]` (an actual
+`NonIsoCalendar` instance) failed `ref.test $26` inside `getCalendar`'s own
+return-coercion and became `ref.null` — silently for repro13 (the literal's
+method never reads `this`, so a null receiver doesn't trap, it just runs the
+WRONG body), and via `ref.as_non_null` for repro9 (the null-pointer trap, even
+with a SINGLE class implementer and NO literal anywhere in the program).
+
+**THREE independent call sites resolve a value's Wasm type/method FROM an
+interface's name, and all three needed the same fix** (`resolveWasmType` in
+`index.ts`, `resolveStructName` in `property-access.ts`, and
+`call-receiver-method.ts`'s own "final fallback: scan all known classes"
+block that S47 suspected) — file-copy A/B on just the first two, with the
+third reverted, re-broke repro13, confirming the third site independently
+devirtualizes and is unreachable through the other two. New leaf module
+`src/codegen/interface-class-implementer.ts` provides one memoized predicate
+(`interfaceHasClassImplementer`) all three now consult: once ANY known class
+declares `implements <interfaceName>`, that interface's Wasm carrier is
+externref, never the object-literal-shaped struct — the EXISTING
+dynamic-receiver dispatch machinery (already used for genuinely-`any`
+receivers) then correctly discriminates literal-vs-class at each call by
+runtime identity.
+
+**Both S47 defects fixed and verified** (`.tmp/s48/repro13.ts`,
+`.tmp/s48/repro9.ts`, copies of S47's repros):
+- repro13: `A.year=999 A.era typeof=undefined B.year=1 B.era typeof=string`
+  (was: both answer the class). A = literal, B = class — each answers its OWN
+  receiver.
+- repro9: `42` (was: `dereferencing a null pointer` trap).
+
+Witness test `tests/issue-6634-interface-dictionary-literal-vs-class-dispatch.test.ts`
+(6 cases — both repro shapes, a 3-implementer variant, and controls): 4/6 FAIL
+on base / 6/6 PASS on fix. `npx vitest run --maxWorkers=2
+tests/issue-66*.test.ts tests/issue-6484-*.test.ts` — 35 files / 211 tests,
+0 failed (with the fix applied). `npm run -s typecheck`,
+`check-loc-budget.mjs`, `check-func-budget.mjs` (with a `resolveWasmType`
+grant), `check-coercion-sites.mjs`, `check:oracle-ratchet` all green.
+
+**Scope NOT completed in this slice** (time-boxed): the criterion-4 battery
+(four-family vs 435, must-not-move A–F, byte-flip corpus, `test:equivalence:gate`,
+`tests/equivalence.test.ts`) and real-row re-verification with a freshly
+rebuilt Temporal provider (`argument-object-valid.js`/`argument-string.js`)
+were not run — the root-cause investigation (which required disassembling
+compiled Wasm to trace the defect past the call-dispatch layer S47 correctly
+identified as involved but which turned out not to be the root) consumed the
+assigned tool-call budget. **This fix is a necessary reduction step, not a
+confirmed mover of the two target test262 rows** — the next lane should
+rebuild the Temporal provider, prewarm it, and re-run those two specific
+rows first, before attempting the full battery, to establish whether this
+closes #5383's target gap or only removes an intermediate blocker.
+
+**Stack state 2026-09-18 (S48 tip):** NOT yet PR-ready without the follow-up
+verification above. Recommend the next lane: (1) rebuild the Temporal
+provider against this fix, (2) re-run the two target rows, (3) if still red,
+report the next error string per row; if green, run the full criterion-4
+battery before opening the PR.
+
+### S48b findings (2026-09-18) — real rows STILL RED with the #6634 fix
+rebuilt in; one reduction step names a NEW `illegal cast` trap the fix
+introduces for destructured-parameter interface-literal methods, worse than
+the silent misdispatch it replaced
+
+Setup: fresh worktree off S48's tip `190d5336d8`, branch
+`issue-5383-standalone-temporal-s48b`. Temporal provider rebuilt from scratch
+(`JS2WASM_TEMPORAL_CACHE=s48b`, `cacheHit=false`, provider namespace
+`js2wasm:npm:@js-temporal/polyfill:2ac1f8feccf61bdb`); QuickJS eval adapter
+also rebuilt (new key `d12704e68b66379d`, bundle hash changed as expected).
+**Caveat for future lanes: the Temporal provider's own cache key
+(`temporalProviderCacheKey` in `scripts/prewarm-temporal-provider.mjs`) hashes
+only the polyfill source + compile options, NOT the compiler bundle — it does
+NOT change across a `src/codegen` fix.** A same-named cache dir would have
+silently served a stale (pre-fix) provider; using a fresh `JS2WASM_TEMPORAL_CACHE`
+label per session (as the dispatch brief specified) is the only thing that
+forced a genuine rebuild here. This is a real gap in the prewarm script worth
+its own issue.
+
+**Real rows, still red, byte-identical error to every prior session (S45
+through S48):**
+```
+test262/test/built-ins/Temporal/PlainDate/from/argument-object-valid.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+test262/test/built-ins/Temporal/PlainDate/from/argument-string.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+```
+So #6634 did not close #5383's target gap — consistent with S48's own
+"necessary reduction step, not a confirmed mover" framing.
+
+**Why #6634 doesn't touch these two rows at all: the default calendar
+(`iso8601`) never reaches the class-implementer branch.** Disassembly of the
+real (unminified) `@js-temporal/polyfill` bundle traces the call chain
+`date.era` → `Ni(this,"era")` → `Qt(this).isoToDate(n,{[t]:true})[t]`, where
+`Qt(e) = ce("%calendarImpl%")(re(e,E))` resolves the calendar through a
+registry `Xo` populated as `Xo.iso8601 = {isoToDate({year,month,day}, r){
+const o = {era:void 0, eraYear:void 0, year, month, day, daysInWeek:7,
+monthsInYear:12}; ...; return o; }, ...}` (object literal) alongside
+`Xo[helper.id] = new NonIsoCalendar(helper)` for the non-ISO calendars (class
+instances). For these two test files the calendar is always `"iso8601"`, so
+the read only ever touches the object-literal branch — #6634's fix (which
+changes what happens when a class implementer of the SAME interface exists
+ANYWHERE in the program) is a no-op for this call, confirmed by the byte-
+identical error text pre- and post-fix.
+
+**One reduction step, per the dispatch brief.** Built `.tmp/s48b/repro17.ts`,
+matching the real shape closely: an interface `Calc` with ONE method whose
+parameter is object-DESTRUCTURED (`compute({year,month,day})`), a
+`Record<string,Calc>` holding an object-literal implementer plus a class
+implementer that is constructed but never called (`keepAlive()`, matching
+`iso8601`'s registry sharing a `Record`/dict type with the NonIsoCalendar
+instances without ever routing to them for the ISO path). File-copy A/B on
+the three #6634-touched `src/codegen` files (`call-receiver-method.ts`,
+`index.ts`, `property-access.ts`; the fourth file
+`interface-class-implementer.ts` need not be reverted — with the other three
+reverted it is simply unreferenced dead code, confirmed by `git status`
+showing zero diff after restoring the current versions):
+
+| Build | Result |
+| --- | --- |
+| BASE (afe573638b, pre-#6634) | `result=197600` — **silently misdispatches to the class** (`fields.year*100` with `fields.year=1976` → `197600`), even though the call went through the object-literal-holding variable. This is exactly #6634's documented bug (repro13's "both keys answer the class"). |
+| FIX (190d5336d8, #6634 applied) | `COMPILE/RUN ERROR: illegal cast` — a hard Wasm trap. |
+
+Narrowed further (`.tmp/s48b/repro16.ts`, the same destructured-parameter
+literal-only method with NO class implementer anywhere in the program):
+passes cleanly on the fix (`result=2005`), proving the trap needs BOTH
+ingredients together — `interfaceHasClassImplementer` flipping the carrier to
+externref (triggered by the class's mere existence, never by being called)
+AND the literal method's parameter being object-destructured.
+
+**Verdict: #6634 traded a silent wrong-answer defect for a hard crash in this
+specific shape (destructured-parameter interface method + literal/class
+carrier collapse), and neither is the `SameValue(null, undefined)` defect
+blocking #5383's two target rows — that defect lives entirely within the
+`iso8601`-literal-only, no-class-in-the-call-path branch, which #6634 never
+touches.** The real `Xo.iso8601.isoToDate` uses exactly this destructured-
+parameter shape (`({year,month,day}, r)`), so the NEW `illegal cast` trap is
+a plausible latent risk for any calendar codepath that happens to also
+reference a class-implemented calendar elsewhere in the same compiled
+program — worth its own issue before #6634 is considered closed-out, even
+though it does not reproduce inside the two target rows (which only ever
+touch the ISO calendar, so no class-implementer reference is live in that
+compiled unit). Filed as a follow-up candidate; not yet its own issue number
+(next lane or PO to decide whether repro17 is severe enough to block #6634's
+merge or ship as tracked debt).
+
+**Four-family battery (re-run with the freshly-rebuilt provider, same 480
+files as S46b/S47/S48's baseline TSVs):**
+
+| Family | Base pass/120 | Fix pass/120 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 113 | 113 | 0 | 0 |
+| Duration | 106 | 106 | 0 | 0 |
+| PlainDateTime | 113 | 113 | 0 | 0 |
+| ZonedDateTime | 103 | 103 | 0 | 0 |
+| **Total** | **435/480** | **435/480** | **0** | **0** |
+
+Zero movement in either direction — consistent with #6634 being a no-op for
+every file in this 480-file sample (none of them appear to hit the
+class-implementer branch either).
+
+**Must-not-move A–F, re-run against the fix with the same file lists as
+S46b's baseline TSVs** (A–E: diffed against S46b's committed base TSVs; F has
+no prior baseline, so its base column was produced by file-copy-reverting the
+three #6634-touched `src/codegen` files to their `afe573638b` content and
+re-running — equivalent to a detached `afe573638b` checkout for codegen
+purposes since `run-family.mts` imports live `src/index.ts` via `tsx`, not
+the compiled bundle; confirmed clean restore afterward via `git status`):
+
+| Group | Files | Base pass | Fix pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| A (general JS corpus, Object/keys-family) | 1250 | 1125 | 1125 | 0 | 0 |
+| B | 205 | 179 | 179 | 0 | 0 |
+| C | 349 | 274 | 274 | 0 | 0 |
+| D | 300 | 224 | 224 | 0 | 0 |
+| E-unlinked (Proxy/Reflect, standalone) | 300 | 235 | 235 | 0 | 0 |
+| E-linked (same files, `TEST262_ORACLE_MODE=linked`) | 300 | 235 | 235 | 0 | 0 |
+| F-class (`language/statements/class/`, first 250) | 250 | 136 | 136 | 0 | 0 |
+| F-methoddef (`expressions/object/method-definition/`, first 100) | 100 | 68 | 68 | 0 | 0 |
+| F-objproto (`built-ins/Object/prototype/`, first 150) | 150 | 136 | 136 | 0 | 0 |
+
+Zero pass→fail in every group — including E-linked, where S46b's own battery
+(for a DIFFERENT fix, #6631/#6632) had found 10 pass→fail later proven
+environmental. Here both E lanes are perfectly clean, 0 movement. **Criterion
+4 (must-not-move) is satisfied for #6634's own change**, on top of the
+`illegal cast` regression already isolated above (which lives OUTSIDE every
+one of these sampled groups — the interface+class+destructured-parameter
+shape is narrow enough that none of A–F, the four Temporal families, or the
+corpus below happen to exercise it).
+
+**Corpus byte-flip A/B** (42 files × {gc, standalone} = 84 entries,
+`website/playground/examples/**/*.ts` + `tests/fixtures/**/*.ts`, compiled
+and sha256-hashed on both targets, base from S46b's committed
+`.tmp/s46b/corpus-cur.jsonl`): **0 status flips, 0 sha flips, on EITHER
+target** — the corpus is byte-identical, not just status-identical, across
+this fix. 0 gc movers (none expected to move at all, since 0 flips occurred).
+
+**`npm run -s test:equivalence:gate`**: `22 failing, 1720 passing, 22
+known-failures in baseline` — `✓ No new equivalence regressions.` Matches
+S46b's figure exactly. (`tests/equivalence.test.ts` named in the dispatch
+brief does not exist as a single file — the suite lives as ~1700 individual
+files under `tests/equivalence/*.test.ts`; the gate script above is the
+authoritative aggregate check and is what S46b's own battery used for this
+same figure, so no separate chunked run was needed.)
+
+**Verdict on criterion 4 (0 legitimate pass→fail): SATISFIED for #6634's own
+diff.** The one crash this session found (`illegal cast`,
+destructured-parameter interface-literal method + co-existing class
+implementer) does not appear in any measured group above — it needed a
+purpose-built repro to surface. It is a real defect #6634 introduces (trading
+a silent misdispatch for a hard trap) but it is not a *measured* regression
+against any of the batteries run in this session or in S46b's; it is a
+latent risk documented above for the next lane / PO to triage before or
+after #6634 merges.
+
+**Bottom line for #5383:** the two named target rows remain red, unchanged
+by #6634. The `SameValue(null, undefined)` defect lives in the
+`Xo.iso8601`-object-literal-only branch of the real polyfill's calendar
+dispatch, which #6634's fix never touches (no class implementer is reachable
+from that call). The next lead is unchanged from S46/S46b's framing: the
+generic dynamic member-get read (`$__extern_get`, computed key `[t]` on an
+object literal's OWN return value, no interface/class involved at all) is
+still the standing hypothesis nobody has yet reduced to a minimal repro that
+reproduces the exact `null` vs `undefined` mismatch.
+
+### S49 findings (2026-09-18) — the `illegal cast` trap S48b flagged as latent
+debt is CLOSED; #5383's two target rows are still untouched (mandatory task
+only; task 2's reduction was not reached this session)
+
+S49 (branch `issue-5383-standalone-temporal-s49`, worktree off S48b's tip
+`4f68804bc9`) was dispatched with two tasks: (1) mandatory — eliminate the
+`illegal cast` trap S48b's own reduction step found (repro17: a
+destructured-parameter interface method implemented by an object literal,
+plus an uncalled class implementer of the same interface); (2) time-permitting
+— continue the `SameValue(null, undefined)` reduction toward #5383's two
+named target rows. Only task 1 was completed this session; task 2 was not
+reached.
+
+**Root cause and fix**: see `#6634`'s own issue file, "## S49 fix" section —
+the trap was in the CALL ARGUMENT, not the receiver. The dispatcher that
+routes `c.compute({year,month,day})` to the right runtime implementer
+(forced into existence by `#6634`'s own carrier-externref guard) compiles the
+destructured-parameter object literal as the open `$Object` dynamic carrier
+(by design — the call site cannot know statically which candidate struct to
+target), but every dispatch arm then hard-`ref.cast`s that `$Object` to its
+own candidate's CLOSED struct, which it never inhabits. Fixed with a new,
+narrowly-opt-in marshal (`ensureStructFromObjectCoercionHelper` in
+`extern-arg-marshal.ts`) that falls back to reading the target struct's
+fields generically off the externref value (via `__extern_get` +
+`struct.new`) instead of assuming the value already IS that struct — gated
+to fire only for a dispatcher whose candidates mix a class implementer with
+a non-class one, so every other closed-method-dispatch call site (the
+overwhelming majority) keeps its previous bytes exactly.
+
+**#5383's target gap is UNCHANGED by this fix, same as `#6634` itself.**
+The default `iso8601` calendar's `isoToDate` never reaches a mixed
+class+literal dispatcher — the two named test262 rows
+(`Temporal/PlainDate/from/argument-object-valid.js`,
+`…/argument-string.js`) still fail with the byte-identical
+`Expected SameValue(«null», «undefined»)` error, unchanged since S45. Task 2
+(continuing the reduction toward that defect, in the polyfill's own JS
+bundle shape per the dispatch brief) was not attempted this session — no time
+remained after the mandatory task's fix + verification. The standing
+hypothesis from S46/S46b/S47/S48/S48b is unchanged: a generic dynamic
+member-get read (`$__extern_get`, a computed key `[t]` on an object
+literal's OWN return value, no interface/class dispatch involved at all)
+inside the real bundle's composed property-bag shape.
+
+**Verification**: 3 new fix-witnesses + 1 new control added to
+`tests/issue-6634-interface-dictionary-literal-vs-class-dispatch.test.ts`
+(10 tests total, up from 6); all fail with `illegal cast` on a file-copy
+revert of the two touched files to S48b's tip, all pass on the fix.
+`npx vitest run --maxWorkers=2 tests/issue-66*.test.ts tests/issue-6484-*.test.ts`:
+36 files / 221 tests, 0 failed. Criterion-4 battery: 770 sampled test262
+files across the A–F groups (representative samples, not the full
+multi-thousand-file families — out of this session's time budget), 0 status
+flips against S48b's own baseline TSVs for the same files. Full detail,
+including why the four-family Temporal battery and full corpus byte A/B were
+NOT re-measured this session (inferred-safe but unmeasured), in `#6634`'s
+issue file "## S49 fix" section.
+
+### S49b findings (2026-09-18) — measurement-only, full must-not-move battery
+against S49's tip; every group clean except a real, reproducible E-linked
+regression S49's own sample missed
+
+S49b (branch `issue-5383-standalone-temporal-s49b`, worktree off S49's tip
+`3df9b3f8eb`, no code changes) closed S49's own sampling gap: ran the FULL
+must-not-move battery (~3,014 files across A–F, four Temporal families,
+corpus byte A/B, equivalence gate) that S49 had only sampled 770-of ≈3,204
+files for, in full detail. Fresh temporal-provider cache confirmed
+(`cacheHit=false`), fresh quickjs-eval-adapter (recompiled against S49's
+bundle, key `b08634d600e87acc`).
+
+**Every group is clean (0 pass→fail) except E-linked**, which S49's sample
+(60 of 300) missed: 17 real, reproducible pass→fail (Proxy/Reflect tests,
+provider force-linked), net −7 vs S48b's baseline of 235/300. E-unlinked
+(same 300 files, provider NOT force-linked) is clean — narrowing the
+regression to the linked-provider code path specifically. Reproduced twice
+(full-batch rerun: byte-identical 97/53 split; isolated rerun of just the 17
+files: same 17 fail). Full per-file error strings and the four-family/A–F/
+corpus/equivalence tables are in `#6634`'s issue file, "Criterion-4 battery —
+FULL RUN, S49b" section (this lane wrote the tables there rather than
+duplicating them here, since #6634 is the PR whose criterion-4 claim this
+battery validates).
+
+**This does not change #5383's target-gap status** — the two named test262
+rows are untouched, still `SameValue(«null», «undefined»)`, confirmed with
+the S49b fresh provider. It DOES mean #6634's own "criterion 4: SATISFIED"
+verdict needs revisiting: the E-linked regression is real and was not caught
+by S49's sample. Flagged for the owning lane (`#6634`) to decide whether to
+accept, investigate, or revert the `closed-method-dispatch.ts` change's
+effect on Proxy/Reflect trap dispatch under the linked-provider path.
+
+Stack state 2026-09-18 (post-S49b), new base numbers for the next lane to
+diff against: Temporal PlainDate 113/120, Duration 106/120, PlainDateTime
+113/120, ZDT 103/120 (435/480 total, unchanged from S48b); A 1125/1250; B
+179/205; C 274/349; D 224/300; E-unlinked 235/300; **E-linked 228/300** (was
+235/300 pre-S49 — this is the new true baseline for `main`/S49's tip, not a
+measurement error); F-class 136/250; F-methoddef 68/100; F-objproto
+136/150; corpus byte A/B 0/84 flips vs S48b; equivalence gate 22/1720/22
+unchanged.
+
+### S49c findings (2026-09-18) — ATTRIBUTION only: the E-linked 17 pass→fail
+is NOT S49-caused, it is environmental
+
+S49c (branch `issue-5383-standalone-temporal-s49c`, worktree off S49b's tip
+`ba31f49531`, no code changes retained) ran the same-worktree file-copy A/B
+S49b's own writeup called for. Reverted ONLY the two files S49 touched
+(`src/codegen/extern-arg-marshal.ts`, `src/codegen/closed-method-dispatch.ts`)
+to their pre-S49 `4f68804bc9` content, rebuilt the bundle (hash changed,
+confirming the revert took: `c435442009304b83` → `94325b4b322716fe`),
+rebuilt/re-linked the QuickJS adapter, prewarmed a fresh Temporal cache label
+(`cacheHit=false`), and reran the exact 27 files from S49b's E-linked table
+(17 pass→fail + 10 fail→pass) against this BASE tree, then again against the
+FIX tree (S49's diff intact, also freshly rebuilt/prewarmed).
+
+**Result: byte-identical per-file status on all 27 rows on both trees** — 17
+fail (same error strings) / 10 pass, whether or not S49's diff is present.
+Reverting S49's entire change does not move a single one of these 27 tests.
+**Verdict: none of the 27 rows are S49-caused — the E-linked drift versus
+S48b's committed base TSVs predates S49's diff.** This matches S46b's prior
+E-linked drift, which was also proven environmental by the identical
+same-worktree-revert method. Full 27-row table, method, and candidate
+environmental causes (not root-caused within this lane's budget) are in
+`#6634`'s issue file, "S49c attribution" section.
+
+**Consequence for #6634's criterion 4 and for this stack**: the E-linked
+regression S49b flagged for the owning lane to investigate is cleared — it
+is not a side effect of S49's `illegal cast` trap fix, and no revert of
+`3df9b3f8eb` is warranted on these grounds. `3df9b3f8eb` stands as the stack
+tip. This does not re-open or re-close any other open item in this
+document (the two `era` target rows, the four-family/A–F/corpus/equivalence
+numbers) — those are unchanged from S49b's measurement and are not
+re-verified here since no code changed.
+
+### S50 findings (2026-09-18) — a real, root-caused, fixed defect (#6635:
+`Map`/`WeakMap.get()` chained into a computed member access loses the
+value); NOT sufficient to close #5383's two target rows — WAT evidence names
+the actual remaining site
+
+S50 (branch `issue-5383-standalone-temporal-s50`, worktree off S49c's tip
+`76e5697eb20bca4d0dd3dae823bd694607a24182`) was dispatched to reduce the
+`SameValue(«null», «undefined»)` defect per the dispatch brief's exact method:
+build the JS-bundle-shape reduction (`Xo.iso8601 = {isoToDate({year,month,day},
+r){...}}` + `Xo[helper.id] = new NonIsoCalendar(helper)`), bisect, then WAT
+the real provider.
+
+**Bisection found and fixed a real defect, but it is NOT the one causing the
+two named rows.** Reducing `Ni(e,t){const n=re(e,D); return
+Qt(e).isoToDate(n,{[t]:true})[t]}` in the exact `.js`-shaped bundle syntax
+(`compileMulti({"/__main.js": body}, ..., {allowJs:true, target:"standalone"}
+)`) did not reproduce the null/undefined mismatch directly — but stepping
+through the real minified bundle's helper chain (`Qt(e) =
+ce("%calendarImpl%")(re(e,E))`, `re(e,t){const n=Q(e)?.[t]; if(void
+0===n)throw...}`, `Q(e){return V.get(e)}`, `V = new WeakMap()`) exposed a
+genuinely broken pattern: `someMap.get(k)[computedKey]` (read) and
+`someMap.get(k)[computedKey] = v` (write), used DIRECTLY with no intervening
+local variable, silently lose/drop the value.
+
+**Root cause**: `tryCompileNativeMapMethodCall` (`map-runtime.ts`) reports
+`Map`/`WeakMap.prototype.get()` as a bare `{kind:"anyref"}` — deliberately
+untyped. Two call sites compile the object sub-expression with **no
+expected-type hint** (`compileElementAccess`'s
+`compileExpression(ctx,fctx,expr.expression)`; `compileElementAssignment`'s
+same-shaped call), so the `anyref` never gets coerced to `externref` the way
+the dot-property twins get for free (they route through the checker with an
+explicit `externref` expected-type hint). Neither `compileElementAccessBody`
+(read) nor `compileExternSetFallback` (write) had an `anyref` arm — both fell
+to their generic `reportError(...); return null;` fallback, and the `#1919`
+speculative-rollback wrapper in `expressions.ts` treats a `null` inner result
+as a probe miss: it silently discards the diagnostic and the partial body,
+then substitutes a `pushDefaultValue` fallback derived from the TS-static
+type. For an unresolvable/`any` computed-member type that default is a bare
+`ref.null` — observably JS `null`, not `undefined`, exactly matching the
+target rows' error signature. The write side's fallback simply dropped the
+RHS.
+
+**Fix** (`src/codegen/property-access.ts` `compileElementAccessBody`,
+`src/codegen/expressions/assignment.ts` `compileExternSetFallback`): both now
+treat `anyref` the same as `ref`/`ref_null` — one `extern.convert_any` widens
+it onto the already-correct `externref` pipeline (`__extern_get`/
+`__extern_set`). Filed and merged as its own issue: `#6635`.
+
+**Real-row proof the fix works for THIS mechanism in isolation, and via the
+REAL linked provider**: reduction probes (`.tmp/s50run/probe9.mts` through
+`probe19.mts`, `probe15.mts`–`probe17.mts`) covering write-then-read,
+read-then-write, two-separate-`.get()`-calls, optional-chained `Q(e)?.[t]`,
+the exact `se`/`ce`-registry indirect-function-call pattern, and a
+NO-Map/WeakMap plain-method-call-chained-bracket variant — ALL pass after the
+fix (were 2/2 or 3/3 correct-value cases; several returned `undefined` or a
+corrupted third value pre-fix). `realprobe1.mts`/`realprobe3.mts` (real
+`@js-temporal/polyfill` bundle, `buildTemporalProvider` +
+`compileWithTemporalGlobal`, both via raw `src/` AND via the built
+`scripts/compiler-bundle.mjs`): `Temporal.PlainDate.from({year:1976,
+month:11, day:18}).era === undefined` now reads `true` (was `false`
+pre-fix) — a DIRECT, real-provider confirmation the fixed mechanism is
+exercised and correct for the simple case.
+
+**Yet the two target test262 rows remain byte-identically red** (confirmed
+post-fix, fresh provider/adapter/bundle rebuild, cache label `s50-fix1`,
+`cacheHit=false` then reused `cacheHit=true`):
+```
+test/built-ins/Temporal/PlainDate/from/argument-object-valid.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+test/built-ins/Temporal/PlainDate/from/argument-string.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+```
+
+**WAT evidence naming the actual remaining site.** Disassembled the real
+provider (`emitWat` not exposed on `buildTemporalProvider`'s return; dumped
+`provider.artifact.binary` to `.tmp/s50run/provider.wasm`, `wasm-dis -all` to
+`.tmp/s50run/provider.wat`, 2.16M lines — the name section is intact, so
+every function carries its original bundle identifier). `$Ni`'s body:
+```
+(call $vt (local.get $0) ...)                          ; RequireInternalSlot brand check
+(local.set $2 (call $re (local.get $0) ...))            ; n = re(e, D)  [the ISO date fields]
+(local.tee $3 (call $__call_m_isoToDate_2               ; Qt(e).isoToDate(n, {[t]:true})
+  (local.tee $3 (call $Qt (local.get $0)))
+  (block (result externref) ... __new_plain_object / __extern_set / __box_boolean ...)))
+...
+(local.set $5 (local.get $3))                           ; recv = isoToDate(...)'s return (ALREADY externref)
+(local.set $6 (extern.convert_any (local.get $1)))      ; key = t, converted to externref
+(local.tee $7 (call $__extern_get (local.get $5) (local.get $6)))   ; the FINAL [t] read
+```
+Two things this rules out: (1) `Qt(e).isoToDate(...)` is NOT a generic
+dynamic call — it goes through `$__call_m_isoToDate_2`, a DEVIRTUALIZED
+closed-method-dispatch call (`src/codegen/closed-method-dispatch.ts`, the
+same mechanism #6634/#6633 (S47–S49) already worked on), which returns
+`externref` directly. (2) The final `[t]` bracket read is therefore NEVER an
+`anyref` receiver at all — it goes straight to `__extern_get(externref,
+externref)`, the SAME native property-read helper every other object read
+uses, `#6635`'s fix never in the picture for this specific line. So the
+`null` must originate from `$__extern_get`'s OWN internal struct/field
+dispatch for whichever concrete struct type the compiler chose to represent
+`{era: void 0, eraYear: void 0, year, month, day, daysInWeek: 7,
+monthsInYear: 12}` — a question this session did not have budget left to
+answer (`__extern_get`'s implementation in the standalone build is itself a
+multi-thousand-line native dispatcher, `.tmp/s50run/provider.wat:1474475`
+onward, discriminating by `ref.test` across every struct shape known to the
+whole ~3300-line polyfill bundle).
+
+**Standing hypothesis for the next lane, narrowed from S46/S46b/S47/S48/
+S48b/S49's "generic __extern_get read" framing to something concrete and
+falsifiable**: `__extern_get`'s struct dispatch likely resolves the "era"
+FIELD across every struct shape in the WHOLE PROGRAM that has an "era"
+property (a name-keyed / canonical-ordinal scheme, the same class of
+carrier-collapse #6634 fixed for the METHOD-DISPATCH side) — and since the
+real bundle's `NonIsoCalendar.isoToDate` ALSO returns an object with an
+`era` field (always a non-undefined string, per `GregoryHelper`/
+`JapaneseHelper` etc.), the field's UNIFIED representation across the whole
+program may not be able to hold a genuine `undefined` for the `iso8601`
+literal's own `era: void 0` initializer — collapsing to `null` instead. This
+is a hypothesis, not a confirmed root cause: it was not reduced to a minimal
+repro this session (a repro needs the WHOLE real bundle's struct-shape
+diversity to trigger — my hand-built repros with 1–2 calendar shapes never
+reproduced it, consistent with this theory). The next lane should start from
+`.tmp/s50run/provider.wat` (kept only in this session's worktree; regenerate
+via `.tmp/s50run/dumpwat.mjs`, pattern: `buildTemporalProvider(...)` then
+`wasm-dis -all` the returned `artifact.binary`) and trace `$__extern_get`'s
+own dispatch for a `struct.get`/`ref.test` keyed on "era" across the whole
+polyfill's compiled struct table, OR build a repro with 2+ DISTINCT
+`isoToDate`-returning shapes (one `era: void 0`, one `era: "string"`) reached
+through the SAME `$__call_m_isoToDate_2` devirtualized dispatcher (not a
+plain Map/registry lookup) to see if that combination — not the Map.get()
+chain — is what collapses the field.
+
+**Criterion-4 battery vs the S49c/post-S49b base, fresh provider (cache label
+`s50-battery`, `cacheHit=false`)**:
+
+| Group | Files | Base pass | Fix pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| PlainDate | 120 | 113 | 113 | 0 | 0 |
+| Duration | 120 | 106 | 106 | 0 | 0 |
+| PlainDateTime | 120 | 113 | 113 | 0 | 0 |
+| ZonedDateTime | 120 | 103 | 103 | 0 | 0 |
+| **Four-family total** | **480** | **435** | **435** | **0** | **0** |
+| A (general JS corpus) | 1250 | (per-file match) | (per-file match) | 0 | 0 |
+| B | 205 | (per-file match) | (per-file match) | 0 | 0 |
+| C | 349 | (per-file match) | (per-file match) | 0 | 0 |
+| D | 300 | (per-file match) | (per-file match) | 0 | 0 |
+| E-unlinked (Proxy/Reflect, standalone) | 300 | (per-file match) | (per-file match) | 0 | 0 |
+| E-linked (`TEST262_ORACLE_MODE=linked`) | 300 | 235/300 (see note) | 235/300 | 0 | 0 |
+| F-class | 250 | (per-file match) | (per-file match) | 0 | 0 |
+| F-methoddef | 100 | (per-file match) | (per-file match) | 0 | 0 |
+| F-objproto | 150 | (per-file match) | (per-file match) | 0 | 0 |
+
+All 3,204 A–F files plus the 480 four-family files diffed PER-FILE (not just
+by count) against the S49c worktree's own committed base TSVs
+(`.tmp/s50/s49c/*`, copied from `/home/user/js2/.claude/worktrees/
+agent-a15ccd92764a093d7/.tmp/s49c`): **zero pass→fail in every group.**
+**E-linked note**: the base file used for this diff
+(`.tmp/s50/s49c/E-linked/E-cur-p{0,1}.tsv`) reads 235/300, not the 228/300
+S49b's own writeup names as "the new true baseline" — S49c's own conclusion
+was that this 235-vs-228 drift is environmental/non-deterministic, not
+caused by any lane's diff, so this session's 235/300 (an EXACT per-file match
+against the 235-count file, 0 flips) is consistent with, not contradictory
+to, S49c's finding; it was not re-investigated further here.
+
+**Corpus byte-flip A/B** (`.tmp/s50run/corpus.mts`, 42 files ×
+{gc,standalone} = 84 entries, diffed against S46b's committed
+`.tmp/s46b/corpus-cur.jsonl`): **0 status flips, 0 sha flips** on either
+target.
+
+**`npm run -s test:equivalence:gate`**: `22 failing, 1720 passing, 22
+known-failures in baseline` — `✓ No new equivalence regressions.` Matches
+every prior lane's figure exactly.
+
+**Verdict on criterion 4 (0 legitimate pass→fail): SATISFIED for #6635's own
+diff**, across the full A–F/four-family/corpus/equivalence measurement this
+session had budget for.
+
+**Bottom line for #5383**: #6635 is a real, useful, independently-verified
+fix, but the two named target rows are unchanged. The next lane's starting
+point is the WAT evidence above — `$__extern_get`'s own struct/field
+dispatch after the `$__call_m_isoToDate_2` devirtualized call, not a generic
+dynamic-member-get on a Map/WeakMap chain (that hypothesis, standing since
+S46, is now RULED OUT by direct WAT inspection of the real provider).
+
+Stack state 2026-09-18 (post-S50), unchanged from S49b/S49c's numbers except
+where noted: Temporal PlainDate 113/120, Duration 106/120, PlainDateTime
+113/120, ZDT 103/120 (435/480 total); A 1125/1250 (per-file identical); B
+179/205; C 274/349; D 224/300; E-unlinked 235/300; E-linked 235/300 (see the
+235-vs-228 environmental-drift note above — unresolved, not this session's
+to fix); F-class 136/250; F-methoddef 68/100; F-objproto 136/150; corpus byte
+A/B 0/84 flips; equivalence gate 22/1720/22 unchanged. HEAD of this lane:
+`78ceb4569b` on branch `issue-5383-standalone-temporal-s50`, worktree
+`/home/user/js2/.claude/worktrees/agent-a12589fac4b1ec3ac`.
+
+### S51 findings (2026-09-18) — all four `Expected a RangeError but got a undefined` target rows decompose to #6628's parked "Proxy get trap is not callable" mechanism; no fix landed, no rows moved
+
+S51 (branch `issue-5383-standalone-temporal-s51`, off S50's head `a3b09cc41e`)
+was dispatched to reduce the 4-row `Expected a RangeError but got a undefined`
+bucket named in the brief (`Duration/compare`, `PlainDate/from`,
+`PlainDateTime/from`, `ZonedDateTime/prototype/add`, all
+`options-read-before-algorithmic-validation.js`), distinct from #6628's 6-row
+`Proxy get trap is not callable` bucket per the brief's own framing.
+
+**Reduction found the opposite of the framing: all four rows are #6628, one
+layer down.** #6628 (`status: done`, completed 2026-09-17) landed a real,
+independently-verified fix for the peer-callable-kind misclassification it
+targeted, but its own title says it explicitly did NOT close the bucket — "a
+second, deeper cross-module mechanism blocks it." That deeper mechanism is
+still live on this HEAD and is exactly what all four of THIS bucket's rows hit
+underneath their outer "got a undefined" symptom.
+
+**Method — the outer message was previously undiagnosed because the failure
+is entirely internal to the compiled program.** `assert.throws` runs 100% in
+Wasm (harness + test body are one compiled unit under
+`compileWithTemporalGlobal`), so nothing about `thrown.constructor`/`.name`
+is host-visible without instrumentation. Patched a COPY of `assert.js`
+(`.tmp/s51/assert-patched.js`, never touching `test262/`) so the
+`thrown.constructor !== expectedErrorConstructor` mismatch arm throws a
+diagnostic `Test262Error` instead of building the normal message, then
+compiled `sta.js + assert-patched.js + compareArray.js + temporalHelpers.js +
+<real test body>` via `assembleOriginalHarness` (the SAME assembly function
+`runTest262File` uses — not a hand-reduced approximation) + the real linked
+Temporal provider (`.tmp/s51/probe11.mts`), and decoded the escaping
+exception with the runner's own `extractWasmExceptionMessage`. All four rows
+produced the byte-identical diagnostic:
+
+```
+Test262Error: DIAG: ctor=function ctorIsUndef=false ctorIsNull=false
+ctorName=string:undefined ctorEqRangeError=false ctorEqTypeError=true
+ctorEqError=false ctorLen=NaN thrownInstanceofRangeError=false
+thrownInstanceofError=true thrownMessage=Proxy get trap is not callable
+thrownName=TypeError thrownProtoCtorEqRangeErrorProto=false
+```
+
+Two separate, real bugs are visible in that one line, and only the first is
+in #6628's territory:
+
+1. **`thrownMessage=Proxy get trap is not callable`, `ctorEqTypeError=true`
+   — the caught value genuinely IS a `TypeError` from #6628's still-open
+   mechanism**, not a marshalled/lost RangeError. The polyfill never reaches
+   its RangeError-throwing validation at all: reading `options.overflow`
+   through `TemporalHelpers.propertyBagObserver`'s Proxy `get` trap throws
+   before validation runs, same signature #6628 named and left open.
+2. **A second, genuinely new finding: `.name` read off a builtin error
+   constructor recovered DYNAMICALLY (via `caught.constructor`, not a
+   syntactic `TypeError`/`RangeError` identifier mention) returns the
+   *literal four-character string* `"undefined"`, not the JS value
+   `undefined`.** `ctorName=string:undefined` proves this —
+   `typeof ctor.name === "string"` (rules out a JS-`undefined` `.name`,
+   which would report `typeof` as `"undefined"`). This is why the SURFACE
+   message reads "Expected a RangeError but got a **undefined**" instead of
+   "…but got a **TypeError**" — `assert.js`'s
+   `message += 'but got a ' + actualName` is concatenating the wrong
+   *string content*, not coping with a missing value. Traced (not fixed) to
+   an asymmetry between the two builtin-ctor-carrier materialization paths
+   that share one lazy global slot (`ctx.builtinObjectGlobals`):
+   `emitBuiltinConstructorIdentity` (`src/codegen/builtin-static-globals.ts`,
+   fired for a SYNTACTIC bare-identifier read of a known builtin) seeds the
+   carrier's own `length`/`name`/`prototype` data properties via
+   `pushBuiltinCtorOwnPropSeed` (`src/codegen/builtin-ctor-own-props.ts`)
+   before publishing the global; `ensureErrorCtorCarrierGlobal`
+   (`src/codegen/registry/error-types.ts`, fired from
+   `fillExternGetErrorProps`'s `.constructor` runtime-recovery arm — the path
+   a caught value's `.constructor` actually takes) only allocates the global
+   and materializes an EMPTY `$Object` via `__new_plain_object`, with no call
+   to the own-prop seeder. Confirmed this asymmetry is real by reading both
+   functions directly (not by a repro — a repro that reliably reproduces
+   whichever-path-wins-first ordering was not built this session; two earlier
+   hand probes each got a *different* answer for the identical snippet
+   depending on unrelated sibling-function order in the same test module,
+   consistent with "whichever materialization path runs first for a given
+   builtin name wins for the process/module lifetime," but that ordering
+   sensitivity was not pinned down to a single deterministic cause). Did NOT
+   trace where the literal string `"undefined"` specifically comes from on
+   the miss path (a `$Object` own-prop miss might fall through to some
+   generic "stringify the missing value" helper that renders JS `undefined`
+   as the four-character string rather than propagating it) — that is the
+   next concrete step for whoever picks this up, separately from #6628.
+
+**Why no fix was attempted**: fixing bug 2 (the `.name`-reads-as-string-
+`"undefined"` defect) would not move any of these four rows to pass — the
+underlying thrown value is genuinely a `TypeError` (bug 1, #6628's open
+mechanism), not a `RangeError`, so `assert.throws(RangeError, …)` is
+correctly failing regardless; fixing bug 2 would only change the failure
+message from "…but got a undefined" to "…but got a TypeError" for these four
+rows specifically, a wording improvement with zero criterion-4 pass delta.
+Per the dispatch brief's own routing instruction ("if a row here fails with
+that message instead, say so and move to the next row"), and since ALL FOUR
+target rows hit it, there was no row left in scope to fix. Filing bug 2
+separately is left to the tech lead/PO to prioritize — it is a real, traced,
+narrow defect (own-prop seeding is asymmetric across the two carrier-
+materialization call sites) but is orthogonal to and does not depend on
+resolving #6628 first, and fixing it would very likely turn other
+`Expected a X but got a undefined`-shaped rows elsewhere in the corpus into
+their genuinely-correct failure message (still failing, but no longer
+mis-attributed to this bucket's framing) — a documentation/triage value, not
+a pass-count value, until #6628's deeper mechanism is separately closed.
+
+**No code changed. No witness tests added (nothing to witness — no fix).
+Criterion-4 battery not run (no diff to measure).** HEAD unchanged from S50:
+`a3b09cc41e` on branch `issue-5383-standalone-temporal-s51`, worktree
+`/home/user/js2/.claude/worktrees/agent-a7a7c12866ddac01b`. Four-family and
+A–F numbers are therefore identical to the post-S50 figures immediately
+above (435/480 four-family; A 1125/1250; B 179/205; C 274/349; D 224/300;
+E-unlinked 235/300; E-linked 235/300; F-class 136/250; F-methoddef 68/100;
+F-objproto 136/150; corpus byte A/B 0/84 flips; equivalence gate 22/1720/22)
+— unchanged because nothing was changed.
+
+### S52c findings (2026-09-18) — the "cross-module Proxy" framing is WRONG: the empty-handler repro is a single-module, non-Proxy-specific "any"-typed dynamic-property-access defect; S52's/S52b's reverse-peer classification fix reverted as not applicable
+
+Dispatched to fix S52b's empty-handler-Proxy repro under a "cross-module
+`$Proxy`/`$ProxyTraps` field-layout mismatch" hypothesis. That hypothesis is
+falsified — decompiled both binaries (`wasm-dis -all`) and confirmed field
+count/type/order identical between provider and consumer; the failing
+`ref.cast $Proxy` narrative from S52b was also never actually true for the
+empty-handler case (never verified there — that message string was S52's,
+for the *real*-trap `readViaProxy` case, and was assumed to carry over
+without re-checking).
+
+Direct bisection (three gitignored probes preserved at
+`.tmp/s52c/probe-6637-{repro,direct,single-module}.test.ts` in this branch's
+worktree) found the actual cause: **`export function readOverflowDirect(o) {
+return o.overflow; }`, called with a `new Proxy({overflow:1}, {})` value,
+throws `TypeError: Cannot access property on null or undefined` even in a
+SINGLE STANDALONE MODULE with no link, no provider/consumer split, no
+`__apply_closure`/methodCall bridge at all** — confirmed by
+`diagNullCheck(o)` (`o === null` answers `1` for the live, non-null Proxy)
+and by `emitNullGuardedStructGet`/`emitGuardedRefCast`
+(`src/codegen/property-access.ts` / `type-coercion.ts`): an UNTYPED ("any")
+receiver's dot-access takes a static guarded-cast-to-some-struct-type fast
+path, finds no static struct with a field literally named `overflow` (a
+Proxy's properties are never static struct fields), and
+`emitNullCheckThrow` treats the resulting failed-cast null as "receiver is
+null" instead of falling through to the dynamic `__extern_get` path — which
+DOES correctly `ref.test $Proxy` and would dispatch correctly. Every
+provider function parameter is necessarily untyped (the link stub declares
+`any`), which is why this looked cross-module-specific in S52/S52b/#6628 —
+it is not; the SAME throw reproduces with `readOverflow` defined and called
+in one module, on one instance, with zero linking.
+
+Full detail, evidence chain, and the corrected recommendation (retire the
+"cross-module Proxy" framing; the next slice needs an architect pass on
+`emitNullGuardedStructGet`'s blast radius, not another link-harness repro)
+are in `#6637`'s own issue file, rewritten this session.
+
+**S52b's WIP reverted** (`git revert --no-edit HEAD` on
+`9f7e38ac1e`) — the reverse-peer `localCallableKind`/`reverseCallableKind`
+terminals and `__typeof_function`'s reverse fallback arm target a
+callable-classification gap that this session's evidence shows is not
+implicated in the empty-handler repro (no trap closure exists to
+misclassify — confirmed by the single-module, zero-linking repro above).
+They may still be useful for the REAL-trap case (`readViaProxy`, which has
+an actual `get(t,k,r){...}` closure and threw "Proxy get trap is not
+callable" per S52/S52b's own original finding — this session did not
+re-examine that case) but should be re-implemented against whatever #6637's
+eventual fix changes in `__typeof_function`'s arm ladder, not resurrected
+as-is.
+
+A second, smaller, INDEPENDENT defect was also found and left unfixed:
+`("overflow" in proxy)`, `Object.isExtensible(proxy)`, and
+`Object.keys(proxy).length` on the same empty-handler cross-module Proxy
+answer `0`/`0`/`0` (should be `1`/`1`/`1`) with NO throw — these compile
+through the generic dynamic helpers (`__extern_has`/`__object_isExtensible`/
+`__object_keys`), which DO correctly recognize `$Proxy` and correctly detect
+the trap-absent case, but then answer wrong when forwarding to the target
+(`p.ptarget`). Not traced further this session; noted as a candidate
+follow-up in #6637's "What's still open".
+
+**No fix attempted, no witness test suite added.** The real defect's fix
+touches `emitNullGuardedStructGet`/`emitGuardedRefCast` — the generic
+"any"-typed member-access fast path used by every struct-shaped runtime
+value in the compiler, not a Proxy-specific function — which is a
+different, larger-blast-radius change than what was scoped for a "fix the
+cross-module Proxy struct layout" slice, and needs its own architect design
+pass on which guarded-cast call sites are meant to throw on a genuine shape
+miss vs. fall through to the dynamic path. Base-vs-fix comparison, the
+four-family battery, the must-not-move A–F battery, byte-flip tables, and
+equivalence-gate numbers were not run — there is no fix on this branch to
+measure; HEAD is `d2d0072b5c` on branch
+`issue-5383-standalone-temporal-s52c` (S52b's `9f7e38ac1e` plus a clean
+revert of it), worktree
+`/home/user/js2/.claude/worktrees/agent-ad93bfa729a45909f`. The four-family
+and A–F numbers are unchanged from S51's figures (the revert restores
+exactly S52b's pre-diff source; no other `src/` file touched).
+
+
+### S53 findings (2026-09-18) — #6637's real defect ROOT-CAUSED and FIXED: a Proxy binding that escapes into an untyped call parameter lost its externref storage at its OWN declaration site, not at the property-read site S52c named
+
+S53 (branch `issue-5383-standalone-temporal-s53`, off S52c's head
+`aede72f2fc`, worktree `/home/user/js2/.claude/worktrees/agent-a20dab3638059270a`)
+was dispatched to fix the single-module defect S52c isolated. **S52c's own
+proposed fix location (`emitNullGuardedStructGet`'s multi-struct dispatch,
+`src/codegen/property-access.ts`) turned out to be the wrong mechanism** —
+decompiling the repro's compiled WAT (`wasm-dis -all`) shows `.overflow` on
+an untyped receiver already lowers to the GENERIC dynamic reader
+(`__dyn_member_get`, `src/codegen/dyn-read.ts`, #3053), which already
+`ref.test`s `$Proxy` correctly; the multi-struct dispatch chain S52c named
+is never reached by this repro at all.
+
+**The real defect is one level up: at the Proxy's OWN `const options = new
+Proxy(...)` declaration.** TypeScript types `new Proxy(target, handler)` as
+its TARGET's structural type (a `lib.es5.d.ts` quirk — `ProxyConstructor`
+returns `T`, not a Proxy-branded type), so the checker sees `options` as
+`{overflow: number}`. `src/codegen/analysis/proxy-binding-escape.ts`
+(`proxyBindingNeedsExternref`, added by #2615) exists to override this by
+forcing the raw externref Proxy carrier onto the local — UNLESS the binding
+"escapes" into a call/`new` argument, in which case #2615's own narrowing
+(needed to keep `Object.prototype.toString.call(p)` /
+`Array.prototype.copyWithin.call(p,…)` / `Object.getPrototypeOf(p)` working)
+keeps the struct typing instead. `readOverflow(options)` trips exactly that
+"escapes to a call" rule — `options`'s local gets struct-typed to whatever
+WasmGC struct matches `{overflow:number}`'s shape (confirmed: `$25 = struct
+(field (mut f64))`, vs. the runtime value's actual type `$14 = $Proxy`, a
+7-field struct). The guarded cast to `$25` at the point of `const options =
+new Proxy(...)` ALWAYS fails for a real Proxy, so `options` becomes
+`ref.null` **at declaration time** — before `readOverflow` is ever called.
+Every later dynamic read reports "receiver is null or undefined" because by
+then it genuinely is: the Proxy value was discarded three statements
+earlier. The control (`options.overflow` direct, no function indirection)
+never trips the escape rule, keeps externref storage, and reads correctly —
+matching S52c's own bisection exactly, just attributing it to the wrong
+mechanism.
+
+**Fix**: `expressionIsEscapingArgument` (`src/codegen/analysis/
+proxy-binding-escape.ts`) no longer counts a plain call `f(...)` as an
+escape when `f` is a BARE IDENTIFIER (never a property access — structurally
+excluding `.call`/`.apply`/method receivers, the #2615 regression class) and
+the matching parameter is genuinely untyped
+(`ctx.oracle.signatureOf(f).params[i].kind === "any"` — the type oracle, not
+raw `checker.*`, so `check:oracle-ratchet` reports +0/+0 for this PR). New
+helper `calleeParamIsUntyped`; both functions gained a `ctx` parameter to
+reach the oracle. An untyped parameter reads its argument through the same
+generic dynamic path the working direct-read control uses, so passing the
+raw Proxy externref into it is always safe.
+
+**Verification**: `tests/issue-6637-untyped-receiver-proxy-property-access.test.ts`
+(new, 13 tests) — untyped read (empty-handler + real get trap), write (real
+set trap), `in` (has trap), `Object.keys` (ownKeys trap), `Object.
+isExtensible` (empty-handler), controls (null receiver still throws; plain
+object/class instance/array receivers unaffected; direct static Proxy read
+unaffected; a Proxy escaping to a TYPED call — `Object.getPrototypeOf` —
+unaffected), one two-module link control. File-copy A/B against the pre-fix
+source: **5/13 fail on base** (exactly the fix-witness cases), **13/13 pass
+on fix**; the 8 controls pass on both trees. Two originally-planned cases
+(`proxy.m()` method calls through ANY Proxy; an `isExtensible` TRAP
+specifically) were found to throw even in the fully static, non-#6637 direct
+case on BOTH trees — pre-existing, separate, out-of-scope gaps, left for a
+follow-up filing rather than folded into this fix.
+
+Required suite `npx vitest run --maxWorkers=2 tests/issue-66*.test.ts
+tests/issue-6484-*.test.ts`: **38 files / 240 tests, 0 failed** (227 prior +
+13 new). Gate chain: `typecheck` clean; `check-loc-budget`/`check-func-budget`
+green both against `merge-base(origin)` and directly against `origin/main`
+except the pre-existing, unrelated `emitObjectProtoToStringClassifier`
+ceiling drift (main moved it in `0bf2914353`, a refactor this stack
+predates; granted in #6637's frontmatter per the dispatch brief's own KNOWN
+note); `check-coercion-sites`/`check:oracle-ratchet`/`check:dead-exports`/
+`check:speculative-rollback`/`check:issue-ids:against-main` all green.
+`npm run -s test:equivalence:gate`: 22 failing / 1720 passing / 22
+known-failures in baseline — identical to the S50/S51 figures, no new
+regressions.
+
+**Criterion-4 battery (four-family/A–F/corpus-byte, the 10 real sample
+rows against a rebuilt provider) was NOT run this session** — building and
+linking the real Temporal polyfill provider plus the full 42-package corpus
+byte-diff harness is a multi-hour undertaking this session's scope did not
+budget for. This is a real, acknowledged gap relative to the dispatch
+brief's full battery ask, not an oversight: the fix targets a general,
+Proxy-shape-independent storage-typing defect (any Proxy binding passed to
+any untyped function), proven correct with 13 direct unit-level fix/control
+tests covering read/write/`in`/keys/isExtensible plus a two-module link
+control, and the required `tests/issue-66*`/`tests/issue-6484-*` suite (240
+tests) and equivalence gate are green — but the specific "10 sample rows
+move" and "four-family 435→? / A–F 0 pass→fail / corpus byte flips" numbers
+the brief asked for are unmeasured. **Recommend**: before merge, either (a)
+have a follow-up session run the real-provider criterion-4 battery against
+this HEAD using the runner scripts at
+`/home/user/js2/.claude/worktrees/agent-ad93bfa729a45909f/.tmp/{s50run,s50,s51,s49b,s46b,s41b,s52c}`
+(base TSVs already captured there from S50/S51), or (b) accept the unit-level
+verification as sufficient given the narrow, well-isolated, mechanism-level
+nature of the fix and land it, deferring the sample-row re-run to whichever
+lane next touches #5383/#6628's remaining bucket (the fix should also move
+some of #6628's originally-named "Proxy get trap is not callable" rows,
+since those go through the identical `options`-escapes-to-an-untyped-
+provider-parameter shape — worth checking first).
+
+### S53b findings (2026-09-18, COMPLETE) — measurement-only run of the criterion-4 battery S53 left unmeasured; 10 target rows re-checked, none moved
+
+S53b (branch `issue-5383-standalone-temporal-s53b`, off S53's head
+`4d0136d9a1`, worktree
+`/home/user/js2/.claude/worktrees/agent-a99a85629df15dea9`) is the
+measurement-only follow-up S53 itself recommended: run the real-provider
+criterion-4 battery (10 target rows, four-family, A–F must-not-move,
+corpus-byte, equivalence gate) against S53's fix. **No `src/` changes in this
+lane.**
+
+**Setup**: fresh worktree; `pnpm install --frozen-lockfile`; `test262`
+submodule initialized fresh (`b363f29d3c`); `npm run build:compiler-bundle`;
+QuickJS artifact `quickjs-artifact-2e2d7736713beeda` copied from
+`agent-a07c5e7da05114ff6`'s `.test262-cache/`, but its adapter hash
+(`4b00fe809e6f55b2`) did not match what this bundle wants
+(`71952061b375de45`) — rebuilt with `node
+scripts/build-quickjs-eval-provider.mjs` (adapter cache MISS, artifact cache
+HIT, 3.6s). Temporal provider prewarmed FRESH:
+`JS2WASM_TEMPORAL_CACHE=s53b node scripts/prewarm-temporal-provider.mjs
+--target standalone` → `cacheHit=false key=a11c84e556193459 dir=s53b`
+(37.5s build). Runner scripts + S50 base TSVs copied from
+`agent-ad93bfa729a45909f`'s `.tmp/{s50run,s50,s51,s52c,s49b,s46b,s41b}` into
+`.tmp/s53b/`; working copies (adjusted import depth, `WT` path, batch runner
+for resumability) live in `.tmp/s53brun/` (gitignored, not part of this PR).
+
+**Base-file correction found before running anything**: for the A/C/D/
+E-unlinked/E-linked must-not-move families, `.tmp/s53b/s50run/` carries BOTH
+a `*-base-merged.tsv` (pre-S50) and a `*-fix-merged.tsv` (post-S50) file.
+Diffed them against each other first — `passToFail=0 failToPass=0` for all
+five, byte-for-byte identical outcome sets — confirming S50's own fix caused
+zero net movement in these families and that either file is a valid
+comparison point. Used `*-fix-merged.tsv` (or `B-fix.tsv`,
+`F-*-fix.tsv` — B/F never had a separate base variant) throughout, since it
+is the more recent, and the four-family files (`Duration/PlainDate/
+PlainDateTime/ZDT-fix.tsv`) only ever existed in this one form.
+
+**10 target rows (real provider, current HEAD)** — none moved; all still
+fail, with the SAME error strings S51/S53 already recorded:
+
+| Row | Result |
+| --- | --- |
+| `Duration/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/observable-get-overflow-argument-primitive.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/observable-get-overflow-argument-primitive.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `ZonedDateTime/prototype/add/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `Duration/compare/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `PlainDate/from/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `PlainDateTime/from/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `ZonedDateTime/prototype/add/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+
+The 6 "order-of-operations" rows fail on the SAME `Proxy get trap is not
+callable` `TypeError` S51/S52c named for #6628's still-open deeper
+mechanism — S53's fix (a Proxy binding escaping into a call whose parameter
+is untyped) does not touch this; these order-of-operations tests apparently
+hit a REAL-trap Proxy path, not the single-module empty-handler/no-link
+shape S53 fixed. The 4 "options-read-before-algorithmic-validation" rows
+fail identically to S51's own finding (bug 1 of that session: the caught
+value genuinely is a `TypeError` from #6628's mechanism, correctly failing
+`assert.throws(RangeError, …)`). **Answering S53's own follow-up
+question ("the fix should also move some of #6628's rows — worth checking
+first"): confirmed NO, it does not move any of the 10 sampled rows.**
+
+**Four-family battery** (real provider, per-file diff vs `.tmp/s53b/s50run/
+{Duration,PlainDate,PlainDateTime,ZDT}-fix.tsv`):
+
+| Family | Base | New | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| Duration | 106/120 | 106/120 | 0 | 0 |
+| PlainDate | 113/120 | 113/120 | 0 | 0 |
+| PlainDateTime | 113/120 | 113/120 | 0 | 0 |
+| ZonedDateTime | 103/120 | 103/120 | 0 | 0 |
+| **Total** | **435/480** | **435/480** | **0** | **0** |
+
+Four-family battery is COMPLETE and unchanged from S50's baseline: 435/480,
+byte-for-byte identical pass/fail assignment per file. S53's fix moves
+nothing in this battery either.
+
+**A–F must-not-move battery: COMPLETE (finished by S53b2 after a container
+restart killed S53b mid-run).** S53b2 (same branch lineage, HEAD `8add8d7efa`,
+worktree `/home/user/js2/.claude/worktrees/agent-a93264a3507301e71`) resumed
+the resumable batch script (`.tmp/s53brun/run-batch.mts`, which skips any
+chunk whose output file already exists) and ran the four remaining A parts
+(730-1180, 1180-1250), B, and all of C/D/E-unlinked/E-linked/F-class/
+F-methoddef/F-objproto — 3204 files total, matching S53b's partial count.
+Every family diffs at **0 pass→fail, 0 fail→pass** against
+`.tmp/s53b/s50run/`'s post-S50 base TSVs (`diff-tsv.mjs`, per-file
+comparison):
+
+| Family | Base | New | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A | 1125/1250 | 1125/1250 | 0 | 0 |
+| B | 179/205 | 179/205 | 0 | 0 |
+| C | 274/349 | 274/349 | 0 | 0 |
+| D | 224/300 | 224/300 | 0 | 0 |
+| E-unlinked | 235/300 | 235/300 | 0 | 0 |
+| E-linked | 235/300 | 235/300 | 0 | 0 |
+| F-class | 136/250 | 136/250 | 0 | 0 |
+| F-methoddef | 68/100 | 68/100 | 0 | 0 |
+| F-objproto | 136/150 | 136/150 | 0 | 0 |
+
+The pass counts are byte-for-byte identical to the S50 base, not just equal
+in total — every file's per-test outcome is unchanged. S53's fix moves
+nothing in the must-not-move battery either, consistent with the four-family
+and 10-target-row findings above and the corpus-byte battery below: the
+fix's trigger shape (a Proxy binding escaping into an untyped call
+parameter) does not occur anywhere in this battery's 3,204 files.
+
+**Corpus-byte battery: COMPLETE.** 42 files × {gc, standalone} = 84 rows,
+compiled fresh via `.tmp/s53brun/corpus.mts` (same harness as S50's,
+`WT` path updated) and diffed against `.tmp/s53b/s50run/corpus-fix.jsonl`
+with `diff-corpus.mjs`: **`statusFlips=0 shaFlips=0`** — not even a byte
+changed in any of the 84 compiled binaries. Expected: none of the 42
+`website/playground/examples`/`tests/fixtures` corpus files exercise a
+Proxy binding escaping into an untyped call parameter (S53's fix's exact
+trigger shape), so zero movers here is consistent, not surprising.
+
+**Equivalence gate: COMPLETE — 22 failing, 1720 passing, 22 known-failures
+in baseline, no new regressions.** Matches the number S51/S53 already
+recorded; unchanged by this measurement-only lane.
+
+**Criterion-4 verdict for S53**: all four sub-batteries (10 target rows,
+four-family, A–F must-not-move, corpus-byte) are now measured and every one
+reports zero movement. S53's `expressionIsEscapingArgument` fix is confirmed
+correct-and-inert against the real Temporal provider: it does not regress
+anything in this battery, and it also does not move any of the rows this
+dispatch specifically asked about (the 6 "order-of-operations" Proxy-trap
+rows and the 4 "options-read-before-algorithmic-validation" rows stay on
+their pre-existing #6628 mechanism, untouched by S53's narrower fix). S53 is
+criterion-4-clean and ready to merge on this axis.
+
+### S54 findings (2026-09-18) — main sync, PR #5978's head advanced to a merge of `origin/main`, 0 stack-caused regressions
+
+S54 (branch `issue-5383-standalone-temporal-s54`, off S53b2's head `d1803a8bd2`,
+worktree `/home/user/js2/.claude/worktrees/agent-a035f428ff305a563`) is the
+scheduled main-sync lane: `origin/main` had moved ~112 commits ahead of the
+stack's last sync since S53b2, and PR #5978 (S13→S54) needed to be caught up
+before it could pass CI. See [#6638](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6638-standalone-temporal-stack-main-sync-2026-09-18)
+for the merge writeup.
+
+**Merge**: `git merge origin/main` (merge-base `4a5d5c1dfba1…`, main tip
+`7b5fff8ae145…`) → commit `abc4c6dc79`. One real conflict — main's #6493 S1
+vs. this stack's #6630, both wiring `Function.prototype.{call,apply,bind}`
+bodies onto the same `makeGlue` ladder arm in `src/codegen/array-object-proto.ts`
+— resolved by keeping the stack's `function-proto-invokers.ts` (superset:
+covers `bind`, which main's file never did) and deleting main's file. A
+follow-up commit (`7bee4f3268`) ported one thing main's losing file had that
+the kept one lacked — the §20.2.3.1 step 3 `CreateListFromArrayLike`
+TypeError for a primitive `argArray` — after main's own witness
+(`tests/issue-6493-*.test.ts`) caught the gap on the first post-merge run.
+Both #6493 (11/11) and #6630 (6/6) witnesses are green against the one kept
+implementation.
+
+**Witness re-run** (merged + fixed tree): pre-merge baseline on `d1803a8bd2`
+was `tests/issue-66*.test.ts tests/issue-6484-*.test.ts` — 38 files / 240
+tests, 0 failed. Post-merge, the full union
+`tests/issue-64*.test.ts tests/issue-65*.test.ts tests/issue-66*.test.ts
+tests/issue-6484-*.test.ts` (115 files, batched to work around vitest's
+512MB-per-fork default) is **all green** — the one failure found
+(`tests/issue-6493-*`'s step-3 case) was the gap fixed in `7bee4f3268`, and a
+re-run confirmed green afterward.
+
+**Gates**: typecheck, loc-budget (both `merge-base(origin)` and
+`LOC_GATE_BASE=origin/main`), func-budget (both bases), coercion-sites,
+oracle-ratchet, dead-exports, speculative-rollback, issue-ids:against-main,
+`update-issues.mjs --check`, lint, format (no diff) — all green.
+`check:compiler-boundaries` reports only the pre-existing
+`inventory-valid-architecture-incomplete` red (`inventoryValid: true`) after
+reclassifying the renamed/added files in `scripts/compiler-boundaries.json`.
+Dropped the stranded `func-budget-allow` grant in #6637 (its own text said to
+drop it once the stack passed main's ceiling-moving commit `0bf2914353`,
+which the merge does).
+
+**Re-baselined battery vs. the pre-merge S53b2 numbers** (real Temporal
+provider, per-file diff against the S53b2-era base TSVs copied from
+`agent-a93264a3507301e71`'s `.tmp/s53brun/`):
+
+| Family | Baseline pass/total | pass→fail | fail→pass | Note |
+| --- | --- | --- | --- | --- |
+| Duration | 106/120 | 0 | 0 | |
+| PlainDate | 113/120 | 0 | 0 | |
+| PlainDateTime | 113/120 | 0 | 0 | |
+| ZonedDateTime | 103/120 | 0 | 0 | |
+| A | 1125/1250 | **1** | 5 | see below |
+| B | 179/205 | 0 | 0 | |
+| C | 274/349 | 0 | 0 | |
+| D | 224/300 | 0 | 0 | |
+| E-unlinked | 235/300 | 0 | 3 | |
+| E-linked | 235/300 | 0 | 3 | |
+| F-class | 136/250 | 0 | 0 | |
+| F-methoddef | 68/100 | 0 | 0 | |
+| F-objproto | 136/150 | 0 | 0 | |
+| **Total** | **3,047/3,684** | **1** | **11** | |
+
+Every file in every family was re-run (no sampling); "matched" counts in the
+per-family diffs equal each family's full baseline size, confirming complete
+coverage (e.g. family A: 1250/1250 matched across its five chunk files).
+
+**The one `pass→fail` is main-caused, not stack-caused.**
+`test/language/expressions/object/identifier-shorthand-static-init-await-valid.js`
+went from `pass` to `compile_error` (`'await' is not allowed in a class
+static initialization block`). Root cause: main's commit `06dbc8d88f`
+(`fix(early-errors): #6491 Script goal + six more early-error rules`) added
+`checkClassStaticBlockReservedNames` to
+`src/compiler/early-errors/module-rules.ts` — a file the stack never touches
+(byte-identical to `origin/main`'s copy, verified with a direct diff after
+the merge) and whose bug is self-contained in its own AST walk, independent
+of any caller. The walk flags a bare `await`/`arguments` IdentifierReference
+anywhere under a class static block, descending through nested arrow
+functions on the theory that "Contains is transparent for them" — but the
+failing test's own docstring names exactly the case this over-generalizes:
+"The `await` keyword is interpreted as an identifier within the body of
+arrow functions" (`(() => ({ await }))` inside `static { ... }` is valid
+per spec; the restriction on bare `await`/`arguments` doesn't propagate into
+a nested function body the way the walk assumes). This is main's pre-existing
+defect, not something this merge introduced or that the stack's own code
+interacts with — named here per the sync's acceptance criterion (main-caused
+regressions are documented, not fixed, by a sync-only lane) and left for
+whichever lane next touches `#6491`'s bucket.
+
+The 11 `fail→pass` moves are main's own conformance improvements landing for
+free (getter/setter-body-strict-inside fixes, `Reflect.get`/`.has`
+target-is-not-object-throws, a `yield`-as-expression fix, a null-handler
+Proxy `defineProperty` fix) — not examined further since they are pure
+upside, not migration risk.
+
+**Corpus-byte battery**: 84 rows (42 files × {gc, standalone}), re-compiled
+fresh and diffed against the S53b2-era `corpus-fix.jsonl`:
+**`statusFlips=0`** (every file that compiled before still compiles, and vice
+versa) but **`shaFlips=40`** — expected and not a regression signal: 112
+commits of unrelated codegen changes on `main` in the interim change emitted
+bytes for many corpus files without changing compile status. Status parity is
+the correctness signal here, not byte parity.
+
+**Equivalence gate**: `npm run -s test:equivalence:gate` → 22 failing / 1720
+passing / 22 known-failures in baseline — **matches the pre-merge number
+exactly**, no new regressions. (A separate run against a bare `origin/main`
+checkout, to report main's own standalone number, was not set up — the cost
+of a second full worktree + build + provider prewarm was judged not to
+justify the marginal signal here, since the equivalence suite's known-failure
+set is stack-authored and main carries none of these tests.)
+
+**Verdict**: this merged-and-fixed head (`7bee4f3268`, on branch
+`issue-5383-standalone-temporal-s54`) is **acceptable as PR #5978's new
+head**. Every witness is green, every gate is green, and the re-baselined
+battery shows exactly one `pass→fail` across 3,684 real-provider test262
+rows plus the 115-file unit-witness suite plus the 1,742-case equivalence
+gate — and that one is main's own pre-existing bug in code the stack never
+touches, not anything caused by this sync.
+
+### S56 findings (2026-09-18) — root-caused but NOT fixed: `class extends <linked provider class>` has no real cross-module inheritance under standalone at all; parked as [#6640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6640-standalone-extends-linked-provider-class-unimplemented)
+
+S56 (branch `issue-5383-standalone-temporal-s56`, off S54's head `aec4fe5ba2`,
+worktree `/home/user/js2/.claude/worktrees/agent-a24b58cdffe2bd3d2`) targeted
+`test/built-ins/Temporal/{PlainDate,PlainDateTime}/compare/use-internal-slots.js`
+— both `fail` with an uncaught non-`Error` value rendering `[object Object]`.
+
+**Root cause, fully reduced against the real `@js-temporal/polyfill`
+provider** (fresh `JS2WASM_TEMPORAL_CACHE=s56-1`, `cacheHit=false` on first
+build): `class AvoidGettersDate extends Temporal.PlainDate {}` — a
+property-access heritage into a linked provider namespace — compiles under
+`--target standalone` as a **fully independent root struct with zero
+compiled relationship to `Temporal.PlainDate`**:
+
+- `.tmp/s56/repro3.js`: `one.toString()` returns `"[object Object]"` (not the
+  inherited `PlainDate.prototype.toString`); `one.year` is `undefined` (a
+  plain property miss, not even a getter invocation).
+- `.tmp/s56/repro2.js`: `Object.getPrototypeOf(one) === AvoidGettersDate.prototype`
+  is `true` (the single-module half of construction works) but
+  `Object.getPrototypeOf(AvoidGettersDate.prototype) === Temporal.PlainDate.prototype`
+  and `Object.getPrototypeOf(AvoidGettersDate) === Temporal.PlainDate` are
+  both `false` — the cross-module `[[Prototype]]` link is simply absent.
+- `.tmp/s56/repro1.js`: `one instanceof Temporal.PlainDate` is `false`.
+
+Site: `src/codegen/class-bodies.ts::collectClassDeclaration`, the
+property-access/`else` heritage arm (~L1160, comment "(#6623, #5383 S36)")
+only marks `ctx.classDynamicUnresolvedHeritageSet` — the comment there says
+outright there is "NO standalone/wasi handling at all" for this shape. The
+polyfill's `compare()` finds `one` unrecognized (no real internal date slot
+was ever installed, since `super(...)` never threads through to the
+provider's actual constructor) and falls back to property-bag coercion,
+reading `.year`/`.month`/`.day` — the test's overridden getters throw a
+plain-object `CustomError`, which propagates uncaught and stringifies as
+`[object Object]`. `compileInstanceOf`/`collectInstanceOfTags`
+(`typeof-delete.ts`) are confirmed NOT the bug — they correctly report no
+tag/no match for a class that genuinely has no compiled link.
+
+**Why not fixed here**: a real fix needs a standalone analogue of the
+JS-host-only extern-class-parent construction path (real `super()` →
+provider constructor, a genuine cross-module `[[Prototype]]` chain for both
+the constructor and its `.prototype`, inherited method dispatch that falls
+through to the provider) — the same heritage arm #6623/S36 already flagged a
+third, unreduced residual mechanism in (a `getPrototypeOf` boundary-terminal
+gap for method-call results on this shape). A narrow `instanceof`-only patch
+was considered and rejected: it would make `compare()` take its "already a
+PlainDate" fast path against an object with no real internal slots, very
+plausibly trading today's clean, informative `fail` for a WasmGC trap or
+`compile_error` — a larger blast radius than the two target rows, given
+Temporal's dozens of `extends Temporal.PlainXxx {}` test262 files
+(`subclassing-ignored.js`, other `compare`/`equals` siblings, …).
+
+**Filed and parked**: [#6640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6640-standalone-extends-linked-provider-class-unimplemented)
+(`status: blocked`, `horizon: xl`) documents the full reduction and scopes
+the follow-up (implement real cross-module `extends` construction +
+dispatch for a linked-provider heritage). No code changed; no witness test
+added (there is no fix to witness). Target rows unchanged: both still `fail`
+with the `[object Object]` signature, confirmed on `aec4fe5ba2` — same as
+before this slice. No criterion-4 battery run (no code touched, nothing to
+regress-check).
+
+### S58 findings (2026-09-18) — #6641 FIXED: a computed-key method call on a linked-provider receiver reached no dispatch arm under standalone and answered `null`; the two blocked `ZonedDateTime/prototype/add/math-order-of-operations-add-*` rows now pass
+
+S58 (branch `issue-5383-standalone-temporal-s58`, off main's merge of PR
+#5978 `9116ee2db3`, worktree
+`/home/user/js2/.claude/worktrees/agent-a21090746acd50203`, head
+`7e5056f77e`) took the S57 reduction (`api[k](3, 4)` on a provider value
+returns `null` while `api.add(3, 4)` returns `7`).
+
+**Root cause (instrumented, not the S57 "args-carrier" candidate):** a call
+counter placed inside the provider's `__js2wasm_link_method_call` wrapper
+incremented once per literal-key call and never for a computed-key call —
+the forward terminal was never reached. The computed-call site in
+`src/codegen/expressions/call-tail-dispatch.ts` has arms for a user-class
+receiver, a TS-known plain-object-literal receiver and (JS-host only,
+`!noJsHost`) `tryEmitDynamicElementHostMethodCall`; nothing covered the
+generic `any`/externref receiver under `--target standalone`/`wasi`, so a
+linked-provider value (statically `any`, it crosses a `field(): any` getter
+stub) fell through to the silent drop-everything-return-`ref.null.extern`
+fallback. The literal-key twin already had the generic
+`__extern_method_call(recv, name, args)` arm (`call-receiver-method.ts`,
+#799 WI3), not standalone-gated.
+
+**Fix:** new `src/codegen/expressions/dynamic-element-generic-call.ts`
+(`tryEmitGenericComputedMethodCall`) — the `noJsHost` twin of the host arm:
+the key is compiled at runtime to externref (same marshaling as the working
+`__extern_get(recv, key)` read path), args go through the native ObjVec
+builders, then `__extern_method_call` generically. Wired into both branches
+of the computed-call dispatch directly after the host arm. Side effect,
+documented: the reverse-direction computed-key call (#6605's
+`callsThroughComputedKey`, previously a documented residual answering
+`null`) now answers `7`; that assertion was updated with a dated comment.
+
+**Witness:** `tests/issue-6641-link-forward-computed-method-call.test.ts`
+(0/1/2/3-arg computed calls, provider class-instance method, chained
+`x[k]()[k]()`, computed key naming a non-function → same TypeError as the
+literal path, literal-key and in-module-computed controls). Lead-run
+reverted-base check on `717d8d1de7` (main, no fix): the test FAILS with
+`expected null to be 7`; on `7e5056f77e` it passes.
+
+**Lead verification on `7e5056f77e`** (fresh provider cache `s58-lead`,
+`cacheHit=false`, built at that head; base = S54 TSVs):
+
+| Family | S54 base | S58 | Δ |
+| --- | --- | --- | --- |
+| PlainDate | 113/120 | 113/120 | 0 |
+| Duration | 106/120 | 106/120 | 0 |
+| PlainDateTime | 113/120 | 113/120 | 0 |
+| ZonedDateTime | 103/120 | 105/120 | +2 (`add/math-order-of-operations-add-{none,constrain}.js` fail→pass) |
+| **four-family total** | **435/480** | **437/480** | **+2, 0 pass→fail** |
+| A (1250) / B (205) / C (349) / D (300) | — | — | 0 pass→fail, 0 fail→pass each |
+| E-unlinked (300) / E-linked (300) | — | — | 0 / 0 |
+| F-class (250) / F-methoddef (100) / F-objproto (150) | — | — | 0 / 0 / 0 |
+
+Witness sweep `tests/issue-66*.test.ts` + `issue-6484-*` + `issue-6493-*`:
+40 files / 252 tests, 0 failed. Equivalence gate: 22 failing / 1720 passing
+/ 22 known-failures, unchanged. Corpus byte A/B (42 files × {gc,standalone}):
+0 status flips, **0 sha flips** — the new arm is standalone-only and the gc
+corpus is byte-identical. Gates: typecheck, loc/func budgets (merge-base and
+`LOC_GATE_BASE=origin/main`), coercion-sites, oracle-ratchet,
+speculative-rollback, issue-ids:against-main, update-issues `--check`,
+issue-spec-coverage, biome lint, prettier — all green.
+
+Criterion 4 holds for this slice. Residual after S58: 43 rows of the 480
+(provider-side Proxy trap invocation 10 rows — S55 WIP; `extends <provider
+class>` #6640/#6623; the two `era` rows #6633; one-offs
+`throw-when-intermediate-datetime-outside-valid-limits.js`,
+`PlainDateTime/from/argument-string-offset.js`,
+`ZonedDateTime/prototype/add/blank-duration.js`).
+
+### S59/S60 findings (2026-09-18) — BigInt across the link (#6642): four real codegen defects fixed, the 12 `ZonedDateTime` rows still red, blocker re-identified as "standalone has no realm-level `BigInt`"
+
+Both slices live on `issue-5383-standalone-temporal-s59` (S60 head
+`98fe5e42fa`, stacked on the merged S58 PR #5981 + `origin/main`). Issue file:
+[#6642](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6642-link-bigint-value-survival)
+(`status: blocked`, full reductions and the ordered next-step list).
+
+**S59** (Sonnet, worktree `agent-acf70162165009d42`, `ceb8ff3b39`, merged
+with the S58 tip → `8a95c4dace`): reduced the 12 rows to a link-free
+single-module repro and fixed two independent defects on the way — (1)
+`typeof-delete.ts` captured the `__typeof`/`__typeof_bigint` helper index
+BEFORE compiling the operand; a link-boundary read inside the operand
+registers late imports and shifts every defined-function index, so the
+stale local baked a `call` into the wrong function and
+`WebAssembly.Module()` rejected the module (`call[0] expected type i32,
+found block of type externref`) — a crash fix; (2) `binary-ops.ts` folded
+`<bigint> === <any>` to a compile-time `false`, never asking whether the
+`any` side could dynamically be a BigInt — now routed through the native
+`__extern_strict_eq` (its `bigintArm` already classifies dynamically).
+Witness `tests/issue-6642-link-bigint-value.test.ts` (fails 2/3 on
+`d8642a8e06`, passes with the fixes; the third case is a documented
+regression guard that passes on both). S59's diagnosis of the residual
+(a missing bigint column in `coercion-plan.ts`) was **wrong at the
+mechanism** — see S60.
+
+**S60** (Opus, worktree `agent-af6e32dc2de7b3b76`, `c49bdefb6c` +
+docs): traced that `coercionPlan` is never reached for this shape; the real
+site is `coerceType`, which already has the `__to_bigint` arm but received
+an i64 hint with **no bigint brand**. Two brand drops fixed: (3) the
+both-operands-BigInt arm in `binary-ops.ts` handed each operand a bare
+`{ kind: "i64" }` hint (now `BIGINT_I64`), so the unbox took the number row
+and compared against `0`; (4) `closures/result-boxing.ts` boxed every i64
+closure result as a NUMBER (`f64.convert_i64_s; __box_number` — rounds
+above 2^53 and erases bigint-ness) although the i32 arm beside it already
+preserved the `boolean`/`symbol` brands; new `boxI64ClosureResult` picks
+`__box_bigint` for a branded i64. Witness
+`tests/issue-6642-coercion-plan-bigint.test.ts` — lead-run on the base
+`8a95c4dace`: 3 failed / 2 passed (the two are guards); on `98fe5e42fa`:
+5 passed.
+
+**Why the 12 rows still do not move (S60, measured end-to-end):**
+`@js-temporal/polyfill` bundles JSBI (`class JSBI extends Array`) and
+converts back only via `globalThis.BigInt !== undefined ?
+globalThis.BigInt(x.toString(10)) : x`. Under standalone `globalThis.BigInt`
+is `undefined`, so `epochNanoseconds` returns the raw JSBI limb array —
+`«977899425,408899357,1»` IS `Array.prototype.toString` of base-1e9 limbs
+(977899425·1e9 + 408899357 is exactly the expected value), not a mangled
+BigInt. Four prerequisite links, in the order they must land (1–2 must not
+land alone: they turn a wrong answer into a thrown TypeError): a native
+StringToBigInt for `__bigint_ctor` (today it throws SyntaxError for any
+string; the polyfill passes a string; an f64 shortcut loses nanosecond
+digits); `__apply_closure`'s wrapper-ctor front-guard (`builtin-ctor-callable.ts`,
+#4394) identifies the callee by `ref.eq` against the compiling module's own
+`__builtin_ctor_BigInt` global, which a linked provider never shares — the
+actual blocker and a design question; `"BigInt"` in `CALLABLE_WRAPPER_CTORS`
+(§21.2.1.1 conversion via `__bigint_ctor → __box_bigint`, verified
+single-module); `"BigInt"` (and `"Symbol"`, same gap) in
+`STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`. Details in #6642 "Next step".
+
+**Lead verification** (S59 head `8a95c4dace` and S60 head `98fe5e42fa`,
+each with a fresh compiler bundle + fresh provider cache + the QuickJS
+adapter rebuilt for the merged tree, base = S58 head TSVs):
+
+| Head | four-family | A / B / C / D | E-unlinked / E-linked | F-class / F-methoddef / F-objproto |
+| --- | --- | --- | --- | --- |
+| `8a95c4dace` (S59) | 437/480, 0 flips | 0 / 0 / 0 / 0 flips | 0 / 0 | 0 / 0 / 0 |
+| `98fe5e42fa` (S60) | 437/480, 0 flips | 0 / 0 / 0 / 0 flips | 0 / 0 | 0 / 0 / 0 |
+
+Corpus byte A/B: against the S58 jsonl both heads show 0 status flips and
+30 sha flips (15 gc-lane); against a corpus run on `6bc1786904` (= S58 +
+`origin/main`, no S59/S60 code) both heads show **0 status / 0 sha flips**,
+so every byte movement is the `origin/main` merge and the gc lane is
+byte-identical for S59+S60. Equivalence gate 22 / 1720 / 22 on both heads.
+Witness sweep under Node 22 AND Node 25 (CI's version): 41 files / 255 tests
+(S59), 42 / 260 (S60), 0 failed. Gates (typecheck, loc/func budgets incl.
+`LOC_GATE_BASE=origin/main` — S59's `typeof-delete.ts` grant restated in
+#6642's frontmatter so it is not stranded, coercion-sites, oracle-ratchet,
+speculative-rollback, issue-ids:against-main, update-issues, spec-coverage,
+lint, prettier, compiler-boundaries inventory) all green.
+
+**Environment traps recorded this lane** (each cost a full false battery):
+`scripts/prewarm-temporal-provider.mjs` builds the provider through the
+gitignored `scripts/compiler-bundle.mjs`, so `pnpm run build:compiler-bundle`
+must precede every prewarm or the provider is pre-fix/absent; a fresh
+worktree has no QuickJS artifact and the runner fails EVERY row with
+"quickjs provider is not built" (looks like 100 % pass→fail); after a
+`main` merge the eval-adapter key changes and
+`node scripts/build-quickjs-eval-provider.mjs` must run again.
+
+Criterion 4 holds for S59 and S60 (0 legitimate pass→fail; buckets do not
+move yet because the blocker is upstream of the fixes). Residual after S60:
+43 rows of the 480 — the 12+3 BigInt-realm rows (#6642, specified above),
+Proxy trap invocation (10, S55 WIP), `extends <provider class>`
+(#6640/#6623), the two `era` rows (#6633), and the one-offs.
+
+### S61 findings (2026-09-19) — #6642 link 1 landed (native StringToBigInt); link 2 measured unnecessary; links 3+4 built and deliberately withheld; a FIFTH link found and reduced
+
+S61 (Opus, branch `issue-5383-standalone-temporal-s61`, head `14b0634c78`,
+off the merged S59/S60 PR #5984 head `10873df1e0`, worktree
+`agent-a80fccfb366ccfbfe`). Full writeup in
+[#6642](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6642-link-bigint-value-survival)
+"## S61".
+
+**Landed — link 1.** `__bigint_ctor` threw `SyntaxError` for every string
+argument, so the polyfill's `globalThis.BigInt(x.toString(10))` could never
+succeed. New leaf `src/runtime/wasmgc/values/string-to-bigint-body.ts`: a
+§7.1.14 StringToBigInt scan accumulating into i64 (trim, optional sign for
+decimal only, `0x`/`0o`/`0b`, empty/whitespace → `0n`, anything else →
+SyntaxError), spliced INLINE into `__bigint_ctor`'s body
+(`registry/imports.ts`, new `ref.test $AnyString` arm) so no wasm function
+index moves (the S59 Fix-1 hazard). Range: exact on [-2^63, 2^63-1], wraps
+modulo 2^64 above — consistent with the rest of the standalone BigInt lane,
+documented in the file header. Cost: +891 bytes per standalone binary; the
+gc lane is byte-identical. Witness `tests/issue-6642-realm-bigint.test.ts`:
+lead-run on the base `10873df1e0` 3 failed / 2 passed (the two are
+guards), on `14b0634c78` 5 passed.
+
+**Link 2 is NOT needed.** Each standalone module owns its OWN realm object
+and its OWN `__builtin_ctor_*` carriers (`api.realmRef() === globalThis` →
+0 across a link), so the provider's `__apply_closure` `ref.eq`-matches the
+carrier it seeded itself. Verified end-to-end: the provider minting a
+BigInt via `globalThis.BigInt(str)` gives the consumer a value whose
+`typeof`, `===` and `Object.is` are all correct.
+
+**Links 3+4 (`"BigInt"` in `CALLABLE_WRAPPER_CTORS` and in
+`STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`) built, measured, withheld.** With
+them applied the 15 target rows fail WORSE — 13 flip from a wrong value to
+`TypeError: called value is not a function` — because of a **fifth link**:
+instrumenting `buildResolvedCalleeGuard` against the real prewarmed
+provider shows the failing call is `toString` on a bigint receiver.
+Reduced single-module, link-free: `<any>.toString(radix)` throws TypeError
+for both number and bigint receivers under standalone (0-arg works for
+number, answers wrong for bigint; `String(<bigint>)` answers `0`). The exact
+one-line diffs for links 3+4 are in the issue so the next slice re-applies
+them in minutes.
+
+**Lead verification on `14b0634c78`** (S61's fresh bundle + provider
+`s61-f1` `cacheHit=false` + rebuilt adapter; base = S60 TSVs; every diff
+re-run by the lead): four-family 437/480, 0 flips; A 1250 / B 205 / C 349 /
+D 300 / E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 /
+F-objproto 150 — 0 pass→fail, 0 fail→pass each. Corpus byte A/B: 0 status
+flips, 25 sha flips ALL standalone-lane, **0 on gc** (S61's true-base run
+shows the same 25 → none is main drift). Equivalence 22 / 1720 / 22.
+Witness sweep 43 files / 265 tests, 0 failed under Node 22 and Node 25
+(lead re-ran Node 25). Gates green incl. `LOC_GATE_BASE=origin/main`,
+compiler-boundaries inventory (new leaf classified `native-runtime`),
+spec-coverage, lint, prettier.
+
+Criterion 4 holds. The 15 BigInt rows stay red; next slice (S62): add
+`"toString"` to `NUMBER_PRIMITIVE_CALL_MEMBERS`
+(`number-primitive-method-call.ts`, gate the demand scan on
+`arguments.length > 0`), fix the bigint receiver family
+(`toString(radix)`, 0-arg, `String(<bigint>)`), re-apply links 3+4, re-run
+the 15 rows.
+
+### S62 findings (2026-09-19) — #6642 DONE: dynamic-receiver `toString` for number and bigint (+ links 3/4); ZonedDateTime 105 → 115/120, four-family 437 → 447/480, 0 pass→fail
+
+S62 (Opus, branch `issue-5383-standalone-temporal-s62`, head `bec0a80555`,
+off the merged S61 PR #5985 head `bb435fa167`, worktree
+`agent-a3b2d877c2c97d38c`). Full writeup in
+[#6642](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6642-link-bigint-value-survival)
+"## S62" (`status: done`).
+
+**Root cause (link 5).** Two stringification ladders had no column for the
+shape the polyfill uses. `__extern_method_call` had a number-primitive arm
+but `toString` was not in its member list, so `<any>.toString(radix)` fell
+to the terminal miss (`TypeError: called value is not a function`) although
+the reflective body `emitNumberProtoToStringBody` already existed — pure
+routing. The standalone `$BigInt` carrier is neither `$Object`, vec, closure
+nor `$AnyValue` tag, so it missed BOTH ladders: `__extern_method_call` (same
+TypeError) and `__any_to_string` (fell to `"[object Object]"`). The exact
+i64 formatter `bigint_toString_radix` (#1644) existed; only the two dynamic
+routes to it were missing.
+
+**Fix.** New leaf `src/codegen/bigint-primitive-to-string.ts`
+(`unshiftExternMethodCallBigIntPrimitiveArm` — §21.2.3.3, name resolved by
+interned `$NativeString` + `ref.eq`, radix ladder in the number arm's
+shape; `unshiftAnyToStringBigIntArm`), both gated on
+`ctx.nativeBigIntTypeIdx >= 0` so a module without a bigint carrier pays
+nothing; `"toString"` added to `NUMBER_PRIMITIVE_CALL_MEMBERS` with a new
+`numberPrimitiveMemberDemandArity` gating its demand on
+`arguments.length >= 1`; the two finalize call sites in `index.ts` /
+`typeof-natives-finalize.ts`; links 3 (`"BigInt"` in
+`CALLABLE_WRAPPER_CTORS`, `argOf(0) → __bigint_ctor → __box_bigint`) and 4
+(`"BigInt"` in `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`). No
+`%BigInt.prototype%` brand minted — deliberately one name-resolved arm.
+Witness `tests/issue-6642-bigint-tostring.test.ts` (37 assertions):
+lead-run on the base `bb435fa167` 4 failed / 4; on `bec0a80555` 4 passed.
+
+**The 15 rows.** 10 fail→pass (`add/add-large-subseconds`,
+`argument-duration-max`, `argument-string-fractional-units-rounding-mode`,
+`argument-string-negative-fractional-units`, `blank-duration`,
+`negative-epochnanoseconds`, `options-object`, `overflow-undefined`,
+`overflow-wrong-type`, `epochNanoseconds/basic`). 5 stay red for three
+unrelated mechanisms, none bigint survival: `overflow-adding-months-to-max-year`
++ `throw-when-intermediate-datetime-outside-valid-limits` (the one-i64
+carrier's range — the tests use `864n * 10n ** 19n` > 2^63; needs a limb
+representation, whole-lane change), `options-read-before-algorithmic-validation`
+(option-read ordering), `order-of-operations` (Proxy `get` trap — the S55
+bucket), `subclassing-ignored` (#6640).
+
+**Lead verification on `bec0a80555`** (S62's fresh bundle + provider
+`s62-1` `cacheHit=false` + rebuilt adapter; base = S61 TSVs; every diff
+re-run by the lead):
+
+| Family | S61 base | S62 | Δ |
+| --- | --- | --- | --- |
+| PlainDate / Duration / PlainDateTime | 113 / 106 / 113 | same | 0 |
+| ZonedDateTime | 105/120 | **115/120** | +10, 0 pass→fail |
+| **four-family total** | 437/480 | **447/480** | +10 |
+| A 1250 / B 205 / C 349 / D 300 / E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 / F-objproto 150 | — | — | 0 pass→fail, 0 fail→pass each |
+
+Corpus byte A/B: 0 status flips, 21 sha flips ALL standalone (0 on gc),
+identical against S62's true-base run — link 4 seeds a `globalThis.BigInt`
+carrier in every standalone module with a realm object, +447…+563 B per
+binary; compile time on 20 B rows 34,037 → 33,614 ms (noise). Equivalence
+22 / 1720 / 22. Witness sweep 44 files / 269 tests, 0 failed under Node 22
+and Node 25 (lead re-ran Node 25). Gates green incl.
+`LOC_GATE_BASE=origin/main` (stranded `index.ts`/`generateModule`/
+`generateMultiModule`/`fillStandaloneTypeofClosureArms` grants restated in
+#6642), compiler-boundaries inventory, spec-coverage, lint, prettier.
+
+Criterion 4 holds and the bucket moved. Residual after S62: 33 rows of the
+480 — Proxy trap invocation (10 + `order-of-operations`, S55 WIP), `extends
+<provider class>` (#6640/#6623, incl. `subclassing-ignored`), the two `era`
+rows (#6633), the two >2^63 BigInt rows (limb representation, new issue),
+`options-read-before-algorithmic-validation` (new issue),
+`PlainDateTime/from/argument-string-offset.js`, and the one-offs.
+
+### S63 findings (2026-09-19) — #6637 DONE: a consumer-built Proxy read inside the provider delegates its `[[Get]]` to the owning module; all 10 Proxy-trap rows pass, four-family 447 → 457/480, 0 pass→fail
+
+S63 (Opus, branch `issue-5383-standalone-temporal-s63`, head `8879da239c`,
+off the merged S62 PR #5986 head `d38e8c52c9`, worktree
+`agent-a20160b027b58a139`). Full writeup in
+[#6637](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6637-cross-module-proxy-trap-route)
+"## S63" (`status: done`).
+
+**Decisive probe.** A provider diagnostic `checkCallable(f) { return typeof
+f === "function" ? 1 : 0 }` answers 0 for EVERY consumer-owned closure
+(named function and arrow) while the S17 reverse channel is live: the
+provider's `__typeof_function` classifies callables by `ref.test`ing the
+closure-wrapper types IT registered, `__proxy_get_dispatch` reads the trap
+out of the foreign `$Proxy`'s `ptraps` and asks that classifier, and throws
+`Proxy get trap is not callable`. S52b/S55's reverse-peer
+`callableKind`/`apply` terminals attacked the wrong half (classification
+alone cannot RUN a foreign trap — it also needs the owner's `this` binding
+and `__apply_closure` ladder); they stay unmerged (`751ceea68e`).
+
+**Fix.** On the one path that throws today, delegate the WHOLE `[[Get]]`
+back to the module that owns the Proxy over the reverse channel: the
+consumer re-performs `proxy[key]` with its own dispatch/trap/closure. New
+RAW terminal `__js2wasm_link_local_proxy_get` /
+`__js2wasm_link_reverse_proxy_get` (install ABI 5 → 6 funcrefs) returning
+`__extern_get` verbatim — the existing `localGet` normalises `undefined` →
+`null`, which costs a second and third OBSERVABLE trap call via
+`localIsNull` and fails the order-asserting rows. Placement is the safety
+argument: every receiver whose trap the provider CAN call is decided before
+the arm; with no peer installed the hop index is undefined ⇒ zero bytes
+emitted (gc, single-module standalone, JS-consumer providers untouched).
+Files: `object-runtime-proxy.ts` (+43), `standalone-link-reverse-peer.ts`
+(+108). Witness `tests/issue-6637-link-proxy-trap-invocation.test.ts`:
+lead-run on the base `d38e8c52c9` the fix case fails at its first
+assertion (raw wasm exception) and the residual control passes; on
+`8879da239c` both pass. Trap-call counts pinned: an undefined-valued trap
+answers `undefined` after exactly one call; two reads → exactly two calls.
+
+**Lead verification on `8879da239c`** (S63's fresh bundle + provider +
+adapter; base = S62 TSVs; every diff re-run by the lead):
+
+| Family | S62 base | S63 | Δ |
+| --- | --- | --- | --- |
+| PlainDate | 113/120 | **116/120** | +3 (`from/observable-get-overflow-argument-primitive`, `from/options-read-before-algorithmic-validation`, `from/order-of-operations`) |
+| Duration | 106/120 | **108/120** | +2 (`compare/options-read-before-algorithmic-validation`, `from/order-of-operations`) |
+| PlainDateTime | 113/120 | **116/120** | +3 (same three as PlainDate) |
+| ZonedDateTime | 115/120 | **117/120** | +2 (`prototype/add/options-read-before-algorithmic-validation`, `prototype/add/order-of-operations`) |
+| **four-family total** | **447/480** | **457/480** | **+10, 0 pass→fail** |
+| A 1250 / B 205 / C 349 / D 300 / **E-unlinked 300 / E-linked 300** / F-class 250 / F-methoddef 100 / F-objproto 150 | — | — | 0 pass→fail, 0 fail→pass each (both Proxy+Reflect groups explicitly flat) |
+
+Corpus byte A/B: **0 status flips, 0 sha flips** on both lanes — only the
+linked provider binary moves (3,334,248 → 3,334,356 B, +108). Equivalence
+22 / 1720 / 22. Witness sweep 45 files / 271 tests, 0 failed under Node 22
+and Node 25 (lead re-ran Node 25). Gates green incl.
+`LOC_GATE_BASE=origin/main`, compiler-boundaries inventory, spec-coverage,
+lint, prettier.
+
+**New finding, carried forward (not fixed):** a provider that compiles a
+Proxy of its OWN bypasses this arm — its closure-wrapper type then matches
+a consumer trap closure of the same shape, the guard never fires, and the
+provider runs the foreign closure through its own `__apply_closure`, which
+runs nothing and answers `undefined` (a silent wrong value — #6628's
+foreign-closure class). Does not touch this stack (the compiled
+`@js-temporal/polyfill` has 0 `new Proxy`); the witness's second case pins
+it so it tightens rather than gets deleted when #6628 lands. `set` /
+`deleteProperty` / `has` trap delegation deliberately not done (no raw
+`set`/`delete` terminal; `has`'s tri-state conflates "not mine" with "mine
+but absent") — all ten target rows were get-trap rows.
+
+Criterion 4 holds and the bucket moved. Residual after S63: 23 rows of the
+480 — `extends <provider class>` (#6640/#6623, incl. the
+`subclassing-ignored` rows), the two `era` rows (#6633), the two >2^63
+BigInt rows (limb representation, new issue),
+`PlainDateTime/from/argument-string-offset.js`, and the one-offs listed in
+the S62 findings.
+
+### S64 findings (2026-09-19) — #6640 DONE: `class S extends <linked-provider class>` constructs through the provider; both `use-internal-slots` rows pass, four-family 457 → 459/480, 0 pass→fail; the four `subclassing-ignored` rows reduced to two other mechanisms
+
+S64 (Opus, branch `issue-5383-standalone-temporal-s64`, head `212ee38889`,
+off the merged S63 PR #5987 head `4337265784`, worktree
+`agent-a7010bed034096fb2`). Full writeup in
+[#6640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6640-standalone-extends-linked-provider-class-unimplemented)
+"## S64" (`status: done`).
+
+**Mechanism.** A property/element-access heritage in a standalone LINK
+CONSUMER now makes the class externref-backed with a RUNTIME parent — the
+representation `class Sub extends Error` has used since #1366a. `this` IS
+the object the provider's own constructor minted: `super(...)` (explicit
+or the synthesized derived constructor, whose arity is taken from observed
+`new S(…)` sites) evaluates the heritage expression and hands it to the
+dynamic `__native_construct_<N>` driver (#3981), whose boundary arm asks
+the peer's `__js2wasm_link_callable_kind` for [[Construct]] and forwards to
+`__js2wasm_link_construct` (S2f/S2g). Inherited reads and method calls then
+work through the established `memberGet`/`methodCall` terminals, and a
+value handed back (`compare(one, two)`) brand-checks as a real instance
+because it is one. The instance's `[[Prototype]]` is deliberately NOT
+re-pointed at `S.prototype`. Gate: standalone/wasi AND `peerNamespaces`
+non-empty AND property/element-access heritage — providers and non-linked
+modules take no new path. New leaf
+`src/codegen/standalone-dynamic-parent-class.ts`; three splice points in
+`class-bodies.ts`; `classLinkedDynamicParentExpr` on the context;
+`isStandaloneLinkConsumer` exported from the link boundary. Witness
+`tests/issue-6640-link-extends-provider-class.test.ts`: lead-run on the
+base `4337265784` 1 failed / 1 (six probes wrong: `.a` undefined, inherited
+`get()`/`label()` "called value is not a function", `brandOf` → `foreign`);
+on `212ee38889` passes; 11 controls identical on both trees.
+
+**The 6 rows.** `PlainDate/compare/use-internal-slots.js` and
+`PlainDateTime/compare/use-internal-slots.js` fail→pass. The four
+`subclassing-ignored` rows are a DIFFERENT mechanism, reduced against the
+real provider: `Temporal.PlainDate.from.apply(undefined, [...])` returns
+`null` while direct `from(...)` works — `Function.prototype.apply` on a
+provider-owned method value (the first assertion of
+`checkSubclassingIgnoredStatic`, so both `from/*` rows die before any
+subclass exists; the `«null», «null»` text is #6623's
+`String(<linked class>.prototype)` artifact); `abs`/`add` reach
+`checkSubclassConstructorUndefined`, whose `class MySubclass extends
+construct` is an IDENTIFIER heritage (a parameter), the arm shared with
+every `extends <builtin>` spelling owned by `classBuiltinParentMap` and
+deliberately excluded here.
+
+**Lead verification on `212ee38889`** (S64's fresh bundle + provider
+`s64-1` + adapter; base = S63 TSVs; every diff re-run by the lead):
+
+| Family | S63 base | S64 | Δ |
+| --- | --- | --- | --- |
+| PlainDate | 116/120 | **117/120** | +1 (`compare/use-internal-slots`) |
+| Duration | 108/120 | 108/120 | 0 |
+| PlainDateTime | 116/120 | **117/120** | +1 (`compare/use-internal-slots`) |
+| ZonedDateTime | 117/120 | 117/120 | 0 |
+| **four-family total** | **457/480** | **459/480** | **+2, 0 pass→fail** |
+| A 1250 / B 205 / C 349 / D 300 / E-unlinked 300 / E-linked 300 / **F-class 250** / F-methoddef 100 / F-objproto 150 | — | — | 0 pass→fail, 0 fail→pass each |
+
+Corpus byte A/B: **0 status flips, 0 sha flips** on both lanes (standalone
++0 bytes on unlinked input; the provider re-emitted byte-identical).
+Equivalence 22 / 1720 / 22. Witness sweep 46 files / 272 tests, 0 failed
+under Node 22 and Node 25 (lead re-ran Node 25); class witnesses
+#6617/#6622/#6623 26 tests green on both. Gates green incl.
+`LOC_GATE_BASE=origin/main` (stranded grants restated in #6640),
+compiler-boundaries inventory, spec-coverage, lint, prettier;
+`check:dead-exports` caught and removed one unused export.
+
+**Residuals recorded in #6640 (measured):** `instanceof` across the link
+answers `false` even for a DIRECT provider instance (pre-existing, pinned
+as a control); unresolved-IDENTIFIER heritage not covered (blocks the
+`subclassing-ignored` rows together with the `.apply`-on-provider-method
+`null`); `super(...spread)` with runtime-length spread falls back to
+argument evaluation only (needs S34's argv driver); subclass own FIELDS are
+not installed on the parent-minted object (own methods dispatch);
+`String(subclassInstance)` still `"[object Object]"` (a `toString` consumer
+arm claims the receiver before the link terminal; unreduced).
+
+Criterion 4 holds and the bucket moved. Residual after S64: 21 rows of the
+480 — the four `subclassing-ignored` rows (two mechanisms above, new
+issues), the two `era` rows (#6633), the two >2^63 BigInt rows,
+`Duration/compare/order-of-operations.js` (#6628 provider-owned closure),
+`PlainDateTime/from/argument-string-offset.js`, and the Duration/PlainDate
+one-offs.
+
+### S65 findings (2026-09-19) — #6643 DONE at the mechanism: `f.apply`/`f.call` on a provider-owned method value no longer returns `null`; the two `from/subclassing-ignored` rows advance to a second blocker (static-member inheritance through a linked heritage, #6644); four-family holds 459/480, 0 pass→fail
+
+S65 (Opus; the first lane was killed by a container restart ~30 min in, its
+uncommitted draft was saved as a patch and a second lane resumed from it —
+the draft was measured inert and not kept). Branch
+`issue-5383-standalone-temporal-s65`, head `9441dba2e8`, off the merged S64
+PR #5988 head `32967877d8`, worktree `agent-a002eab6222ddeaa9`. Full
+writeup in
+[#6643](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6643-standalone-link-apply-call-provider-method)
+(`status: done`).
+
+**Root cause.** `__apply_closure`'s #6420 peer arm is unshifted AHEAD of
+local dispatch and fires on `peer.callableKind(fn) & 1` — a structural
+predicate, not an ownership one: the peer's `__is_callable` answers 1 for
+a closure that crossed INTO it. `f.apply(thisArg, args)` resolves `apply`
+to the consumer's own `%Function.prototype%` glue (#6630) once that
+prototype is materialized and `.apply` is read as a value; that GLUE
+closure was handed to the bridge, the peer arm claimed it and shipped the
+whole operation to the provider, which cannot run a consumer closure and
+returned the null sentinel. Proven by an `unreachable` spliced into the
+arm (traps on exactly that path) and by an argument that MUST throw
+returning `null` instead.
+
+**Fix.** The peer arm gains a conjunct: "the callee is one of THIS
+module's own transferred native-proto method closures" — the exact
+`ref.test` + module-local `bfnid` claim test
+`buildTransferredNativeProtoCallInstrs` already uses (new
+`buildTransferredNativeProtoOwnedBitInstrs` in
+`closures/transferred-native-proto.ts`; `linkedForeignCallableBitInstrs`
+in `standalone-link-boundary.ts`; `object-runtime.ts` peer arm;
+`function-proto-invokers.ts` §20.2.3 step 2 gains a peer `callableKind`
+disjunct). A first cut using `__is_callable(fn) == 0` fixed every #6643
+case but broke the REVERSE direction (#6605 and #6616's linked case went
+`7 → null`: an ordinary consumer closure invoked inside the provider is
+locally callable there too) — the narrow predicate keeps both green and
+additionally fixes `X.prototype.m.apply(instance)`. Secondary find: the
+variadic native-proto arm re-wrapped an `$ObjVec` data array with a bare
+`ref.cast`, an uncatchable `illegal cast` trap for `<provider
+callable>.call(…)` once the peer arm stopped short-circuiting — now
+guarded. Witness `tests/issue-6643-link-apply-call-provider-method.test.ts`:
+lead-run on the base `32967877d8` 1 failed / 1 (`.apply`/`.call` → `null`,
+`callOnNonCallable` no-throw); on `9441dba2e8` passes; controls unmoved.
+Pinned residual: `Reflect.apply` across the link still refuses its
+argumentsList (unchanged from base).
+
+**The 4 rows.** `{PlainDate,Duration}/from/subclassing-ignored.js` move
+from `SameValue(«null», «null»)` to `TypeError: called value is not a
+function` — helpers 1 and 2 of `checkSubclassingIgnoredStatic` now answer
+correctly in full against the real provider (all eight
+`checkStaticInvalidReceiver` receivers, `gPO(result) ===
+construct.prototype`, `calendarId`, `monthCode`; on base the very first
+was `null`); helper 3 `checkThisValueNotCalled` needs `MySubclass.from`
+to exist — static-member inheritance through `class S extends
+Temporal.PlainDate {}` (`typeof MySubclass.from` → `undefined`, probe
+p24) — which is #6644's identifier/linked-heritage scope together with
+cross-link `instanceof` (false even for a directly constructed provider
+instance, pinned in #6640's controls). The abs/add rows are unchanged
+(identifier heritage, #6644).
+
+**Lead verification on `9441dba2e8`** (S65's fresh bundle + provider +
+adapter; base = S64 TSVs; every diff re-run by the lead): four-family
+459/480 (117/108/117/117), 0 flips; A 1250 / B 205 / C 349 / D 300 /
+E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 / F-objproto
+150 — 0 pass→fail, 0 fail→pass each. Corpus byte A/B: 0 status / 0 sha
+flips against both the S64 base and S65's true-base run — gc
+byte-identical, standalone +0 bytes, provider artifact byte-identical
+(consumer-side only). Equivalence 22 / 1720 / 22. Witness sweep 47 files
+/ 273 tests, 0 failed under Node 22 and Node 25 (lead re-ran Node 25).
+Gates green incl. `LOC_GATE_BASE=origin/main`, compiler-boundaries
+inventory, spec-coverage, lint, prettier, dead-exports (inherited red
+only).
+
+Criterion 4 holds; the sample is unchanged at 459/480 by design (a
+mechanism fix, rows handed to #6644). Residual after S65: 21 rows of the
+480 — the four `subclassing-ignored` rows (#6644: identifier heritage +
+static-member inheritance + cross-link `instanceof`), the two `era` rows
+(#6633), the two >2^63 BigInt rows, `Duration/compare/order-of-operations.js`
+(#6628), `PlainDateTime/from/argument-string-offset.js` and the one-offs.
+
+### S66 findings (2026-09-19) — #6644 (in-progress): cross-link `instanceof` FIXED, static inheritance through a linked heritage (named, computed, identifier spellings) landed; the four `subclassing-ignored` rows still red on two newly located blockers; four-family holds 459/480, 0 pass→fail
+
+S66 (Opus, branch `issue-5383-standalone-temporal-s66`, head `3e7ac90073`,
+off the merged S65 PR #5990 head `930ab332f4`, worktree
+`agent-a5b45fd9c24d31356`). Full writeup in
+[#6644](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6644-link-static-inheritance-instanceof)
+(`status: in-progress`, rows did not move).
+
+**Mechanism 3 — cross-link `instanceof`.** `(new NS.Base(1)) instanceof
+NS.Base` was `false` for a DIRECTLY constructed provider instance (#6640's
+pinned residual 1). Decomposed on the base: every §7.3.20 ingredient
+already crossed the seam (`typeof T` function, `T.prototype` readable,
+`T.prototype.isPrototypeOf(V)` true); the one miss was the own-property
+GATE — `hasOwnProperty(T, "prototype")` is a module-local `ref.test`
+ladder a foreign struct matches nowhere, so the helper fell to the
+conservative `false`. Fix: a last-resort arm in `__instanceof_dynamic`
+(`native-dynamic-instanceof.ts`) that, when the peer's
+`__js2wasm_link_callable_kind` reports the target as a function object
+(`!= 0`, a provider class publishes construct-only), reads
+`Get(C, "prototype")` through `__extern_get` and runs the existing steps
+3 + 5–7 tail. #6640's residual 1 is RESOLVED; its two `instanceof`
+controls flip `false → true`.
+
+**Mechanism 1 — static inheritance through the heritage** (§15.7.14
+step 6). New leaf `standalone-linked-static-inheritance.ts` re-compiles
+the recorded heritage expression at the consuming site and asks
+`__extern_get`; three splices, each the LAST arm of its ladder: the named
+read (`property-access-dispatch.ts`), the class-static call
+(`expressions/call-namespace-static.ts`), the computed read (`S[k]`,
+`expressions.ts`). `prototype`/`name`/`length`/`constructor` never
+forwarded; an own static always shadows; `this` binds to the PARENT class
+object (documented bound — exactly the "subclassing ignored" answer these
+rows assert).
+
+**Mechanism 2 — identifier heritage with a captured parent value**
+(#6640's residual 2): `class MySubclass extends construct {}` where
+`construct` is a parameter. The value is in scope at exactly one program
+point, so it is captured at ClassDefinitionEvaluation into a per-class
+global `__linked_parent_<C>` (`statements.ts`, `class-bodies.ts`,
+`standalone-dynamic-parent-class.ts`, context field) and read by the
+synthesized constructor and the static arms; the predicate REFUSES
+anything it cannot capture (claiming without capturing would turn a
+harmless root struct into a `null` instance). #6623's field-having-provider
+control flips from `threw` to `called`.
+
+Witness `tests/issue-6644-link-static-inheritance-instanceof.test.ts`:
+lead-run on the base `930ab332f4` 1 failed / 1 (ten teeth: `typeof
+Sub.from` undefined, `Sub.from(3).get()`/`Sub.tag()` "called value is not
+a function", `Sub['tag']()` null, identifier heritage `.get()`/`.a`
+missing, three `instanceof` false); on `3e7ac90073` passes; 18 controls
+identical on both trees.
+
+**The 4 rows — unchanged, two blockers located.** Against the real
+provider `typeof MySubclass.from` `undefined → function`,
+`MySubclass.from(…)` → `2000`, helpers 1 and 2 of
+`checkSubclassingIgnoredStatic` pass; helper 3 still throws for the two
+`from/*` rows because (a) the COMPUTED read's class-name resolution is
+shape-sensitive (an object-literal method body makes it decline in the
+fixture yet resolve in the real file — routing the computed arm through
+the property-access dispatch's `resolvedClass` is the recorded
+hypothesis) and (b) a runtime SPREAD into the resolved provider static
+passes the array itself (`S[m](...a)` → `TypeError: year is required`,
+while `C.from(...a)` directly is correct — the dynamic-callee spread
+path, newly reachable). `abs`/`add` stop earlier on `super(...<runtime
+spread>)` leaving `this` unbuilt (#6640 residual 3; needs S34's argv
+driver). Pre-existing and not widened: `C["ownStatic"]()` is an
+uncatchable `illegal cast` even for a purely local class (the computed
+arm refuses any class with an own static for that reason).
+
+**Lead verification on `3e7ac90073`** (S66's fresh bundle + provider +
+adapter; base = S65 TSVs; every diff re-run by the lead): four-family
+459/480 (117/108/117/117), 0 flips; A 1250 / B 205 / C 349 / D 300 /
+E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 / F-objproto
+150 — 0 pass→fail, 0 fail→pass each. Corpus byte A/B: 0 status / 0 sha
+flips against the S65 base and S66's true-base run — gc byte-identical,
+standalone +0 bytes, provider byte-identical. Equivalence 22 / 1720 / 22.
+Witness sweep 48 files / 274 tests, 0 failed under Node 22 and Node 25
+(lead re-ran Node 25). Gates green incl. `LOC_GATE_BASE=origin/main`
+(stranded grants restated in #6644), compiler-boundaries inventory (new
+leaf classified), spec-coverage, lint, prettier, dead-exports.
+
+Criterion 4 holds; sample unchanged at 459/480 by design. Residual after
+S66: 21 rows of the 480 — the four `subclassing-ignored` rows (blockers
+above), the two PlainDate `era` rows (#6633), the two >2^63 BigInt rows,
+`Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js` and the one-offs.
+
+### S67 findings (2026-09-20) — #6644 (in-progress): linked-static arms resolve by class IDENTITY, runtime spread into an inherited linked static, `super(...<runtime spread>)` through a linked heritage; the two `from/subclassing-ignored` rows advance to the pre-existing `SameValue(«null», «undefined»)` blocker; four-family holds 459/480, 0 pass→fail
+
+S67 (Opus, branch `issue-5383-standalone-temporal-s67`, head `907ac32037`,
+off the merged S66 PR #5992 head `ab6e22f345`, worktree
+`agent-a6457c177911f46f1`). The lane was killed by the 03:20 UTC container
+restart mid-battery with all commits in place; the lead finished the
+battery (PlainDate, Duration) and every other verification step from its
+worktree. Full writeup appended to
+[#6644](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6644-link-static-inheritance-instanceof)
+("S67 — residuals 1, 2 and 4 closed").
+
+**What landed** (5 src files, +248/−25):
+
+1. `resolveLinkedStaticClassName` (`standalone-linked-static-inheritance.ts`)
+   resolves the computed-static READ and CALL receivers by declaration
+   identity via `ctx.oracle.valueDeclarationOf`, not by
+   `classExprNameMap.get(name)`. S66's "enclosing-shape sensitivity" was a
+   NAME COLLISION: a same-named twin class read the other's
+   `__linked_parent_<C>` global (measured `oB.go(NS.Other)` → `base`, the
+   WRONG parent, once the owner had run). A colliding twin with no synthetic
+   identity minted yet is REFUSED, not guessed.
+2. `S[k](...a)` on an inherited linked static routes through the boundary's
+   `__apply_closure(__extern_get(P, ToPropertyKey(k)), P, argv)` terminal
+   with #6616's `tryEmitSpreadHostArgs`, gated on a spread being PRESENT
+   (splice in `call-tail-dispatch.ts`); `calls.ts::tryEmitInlineDynamicCall`
+   is fixed-arity and handed the source array over as ONE argument
+   (`Sub[m](...A2)` → `two:p,q,undefined:1` on the base).
+3. `compileSuperCall`'s linked arm now serves a runtime-length argument
+   list through S34's `__native_construct_argv` driver, parameterised on
+   the callee push (`new-super.ts`, `class-bodies.ts`); it used to decline
+   and evaluate the arguments for effect (`new S()` was `null`).
+
+**Rows.** `PlainDate/from/subclassing-ignored.js` and
+`Duration/from/subclassing-ignored.js`: `called value is not a function` →
+`Test262Error: SameValue(«null», «undefined»)` — `temporalHelpers.js`
+`canonicalizeCalendarEra` line 140, the SAME pre-existing failure as
+`PlainDate/from/argument-object-valid.js` / `argument-string.js` and the
+#6633 `era` rows (an `undefined`-becomes-`null` argument-path defect), now
+reachable because all three `checkSubclassingIgnoredStatic` helpers pass
+when called separately. `abs`/`add` `subclassing-ignored` unchanged
+(`instance[method](...methodArgs)` on a subclass instance —
+`elemAccessReceiverIsUserClass` claims the receiver before the
+spread-capable arm).
+
+**Verification (lead, 2026-09-20).**
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory vs `ab6e22f345`, issue-ids | green |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (49 files / 275 tests) | Node 22 and Node 25.9 green |
+| new witness `tests/issue-6644-link-computed-static-spread-super.test.ts` on the file-copy reverted base (`ab.sh base`) | FAILS (18-case table mismatch) — a real witness |
+| four families × 120 vs S66 base | PlainDate 117, Duration 108, PlainDateTime 117, ZDT 117 = 459/480; 0 pass→fail, 0 fail→pass |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass |
+| corpus 42×{gc,standalone} | fix vs TRUE-base 0 status / 0 sha flips; the one sha flip vs S66's stored base (`ir-retirement/class-closure.ts::standalone`) reproduces on the true base, so it is base drift, not S67 |
+| equivalence | 22 / 1720 / 22, no new regressions |
+
+**Residuals (measured by the lane, `.tmp/s67/probes/`)** — all general
+dynamic-callee spread gaps, none link-specific:
+
+1. `fwd(...args) { return this.echo(...args) }` — a rest-forwarded call
+   does not happen at all (`undefined`), no provider involved.
+   `temporalHelpers.js` routes every `checkSubclassingIgnored*` entry
+   through exactly that shape.
+2. `f(...a)` on a dynamic callee delivers the wrong argument; `var g =
+   S[m]; g(...a)` → `null`.
+3. `instance[method](...methodArgs)` on a subclass instance (the `abs`/`add`
+   rows' blocker).
+4. `new X(...<runtime spread>)` traps `illegal cast` for a LOCAL class too —
+   pre-existing.
+5. `Object.getPrototypeOf(<class object>)` unmodelled; `C["ownStatic"]()`
+   still refused — unchanged from S66.
+
+### S68 findings (2026-09-20) — #6646 + #6645: the `era` `SameValue(«null», «undefined»)` is an ARGUMENT-BINDING defect at the call site, not a provider resurrection; all four rows flip to pass
+
+Branch `issue-5383-standalone-temporal-s68`, off the S67 PR #5998 head
+`5e3d2225f9` (which already carries `origin/main`). Two commits:
+
+| commit | issue | src files |
+| --- | --- | --- |
+| `604b2414cb` | #6646 — spread into an identifier-held dynamic callee | new leaf `src/codegen/standalone-dynamic-spread-call.ts`, one splice in `call-identifier.ts` |
+| `d4416f899f` | #6645 — spread into a member callee mis-binds formals | two splices in `call-receiver-method.ts`, one new entry point in the leaf |
+
+## The headline correction
+
+**The `era` mismatch is not a resurrection site.** The brief's three candidate
+sites (a `ref_null`→`undefined` boundary on the provider read path, an
+object-literal field holding `undefined` through the link,
+`Object.entries`/destructuring inside `canonicalizeCalendarEra`) are all
+clean. Measured against the real standalone provider through eight routes —
+`C.from(s)`, `C.from(var)`, `C.from.apply(undefined, args)`,
+`C.from.apply({}, args)`, `C["from"](...args)`, `C.from(...args)`,
+`C[m].apply(…)`, `class Sub extends C` — `PlainDate.prototype.era` answered
+`undefined` every time, `typeof "undefined"`, `=== undefined` true,
+`=== null` false, no own property, `"era" in date` false
+(`.tmp/s68/probes/e4.js`). `canonicalizeCalendarEra` itself answers correctly
+for `date.era`, a literal `undefined` and `void 0` (`.tmp/s68/probes/e1.js`).
+
+The `null` comes from ARGUMENT BINDING at the call site, in two different arms,
+and the four rows split two-and-two between them.
+
+## #6646 — a spread into an identifier-held dynamic callee
+
+`calls.ts::emitDynamicSpreadCall` already repairs this shape for the JS-host
+lane and declines for standalone, with a header that says the standalone lane
+"retains its native ObjVec/call_ref lowering, where the vector … can be
+expanded without a host boundary". That is not the lowering that runs: every
+dynamic-callee arm sizes its list from `expr.arguments.length`, one local per
+AST node.
+
+Base → fix (`.tmp/s68/probes/q1.js`, `q2.js`, file-copy reverted base):
+
+| expression | base | fix |
+| --- | --- | --- |
+| `callSpread(f,a){return f(...a)}` | `arr3/UNDEF/UNDEF/1` | `number/string/arr1/3` |
+| `var g=O.echo; g(...[1,"s",[2],4])` | `object/UNDEF/UNDEF/UNDEF/1` | `number/string/arr1/number/4` |
+| `var f=this.echo; f(...args)` | `E1,2,3undefinedundefined` | `E123` |
+| `f(1, ...a)` | first formal only | `number/string/arr1/3` |
+
+New leaf `standalone-dynamic-spread-call.ts`: `__objvec_new` + #6616's shared
+spread expander + `__apply_closure(callee, receiver, argv)` — already the
+innermost DEFAULT arm of `tryEmitInlineDynamicCall`, so no carrier becomes
+reachable that was not; only the argument COUNT changes. One splice, right
+after the host arm it twins, gated on a spread being present.
+
+**S67's residual 1 was a misattribution.** It recorded
+`fwd(...args){return this.echo(...args)}` as "the call does not happen at all".
+That probe's callee ends with `arguments.length`, and `this.<m>(…)` on an
+`arguments`-reading method answers `null` with **no spread at all** — a
+separate pre-existing defect. With an `arguments`-free callee (what
+`temporalHelpers.js` has) the spelling was already correct on the S67 head, so
+it is pinned as a CONTROL in the witness. A second splice into
+`call-tail-dispatch.ts` was written and then REMOVED for exactly this reason:
+it would have taken over a working lowering for no measured gain.
+
+## #6645 — a spread into a member callee
+
+Two arms, both in `compileReceiverMethodCall`:
+
+1. **A positional argument AFTER a spread.** The resolved-method arm is
+   spread-aware (#6616) but binds formals through `compileSpreadCallArgs`'s
+   static accounting — "each spread is assumed to cover exactly the parameter
+   slots left over after the trailing positional args are reserved (#2053)" —
+   which is a compile-time count. Measured:
+   `TemporalHelpers.assertPlainDate(D, ...EXP, "desc")` →
+   `year result: SameValue(«2000», «"desc"»)`; the same call written out is ok.
+   A shifted binding puts a value in `era`, which is what
+   `assert.sameValue(eraName, undefined)` reports.
+2. **A spread into a callable PROPERTY.** Both paths of
+   `compileCallablePropertyCall` are fixed-arity, so the source array arrives
+   as formal ZERO. With a controlled fake constructor
+   (`.tmp/s68/probes/ea.js`), `checkStaticInvalidReceiver(...[Ctor,"from",
+   ["x"],fn])` threw `Cannot read properties of undefined (reading 'apply')` —
+   `construct[method]` on the ARRAY — and the callee log was EMPTY, while the
+   same four arguments written out ran both `Ctor.from` and the callback. For
+   `checkThisValueNotCalled` the same miss surfaces as
+   `assert.sameValue(Object.getPrototypeOf(result), construct.prototype)` =
+   `SameValue(«null», «undefined»)`.
+
+Splice 1 is gated on an argument FOLLOWING a spread (a spread-only list keeps
+its existing, correct, cheaper lowering); splice 2 on a spread being present.
+
+### The reduction that found it
+
+`p7.js` — the three `checkSubclassingIgnoredStatic` helpers called DIRECTLY —
+all pass. `e5.js` — the ENTRY `checkSubclassingIgnoredStatic(C,"from",ARGS,RA)`
+— fails. That pair is what moved the search from the provider to the call
+shape.
+
+## Rows — before / after
+
+Fresh provider prewarmed from HEAD (`--target both`, `cacheHit=false`,
+`JS2WASM_TEMPORAL_CACHE=…/s68-4`):
+
+| row | S67 head | #6645 splice 2 only | both splices |
+| --- | --- | --- | --- |
+| `PlainDate/from/argument-object-valid.js` | `SameValue(«null», «undefined»)` | same | **pass** |
+| `PlainDate/from/argument-string.js` | `SameValue(«null», «undefined»)` | same | **pass** |
+| `PlainDate/from/subclassing-ignored.js` | `SameValue(«null», «undefined»)` | **pass** | **pass** |
+| `Duration/from/subclassing-ignored.js` | `SameValue(«null», «undefined»)` | **pass** | **pass** |
+
+p34/p37 (the S67 probes named in the brief) are NOT a verdict on this work:
+p34's `fwd` row still reads `undefined` because its `echo` ends with
+`arguments.length` (residual 2 below), and both probes need the standalone
+provider, which the brief's prewarm line does not build — `--target standalone`
+(or `both`) is required, else every Temporal row answers
+`Temporal is not defined` / `standalone target emitted host imports`.
+
+## Verification
+
+| check | result | artifact |
+| --- | --- | --- |
+| witness `tests/issue-6646-*` on the reverted base | 4 failed / 8; 8/8 after; 4 controls pass on both | `.tmp/s68/ab.sh base\|fix` |
+| witness `tests/issue-6645-*` on the reverted base | 2 failed / 4; 4/4 after; 2 controls pass on both | same |
+| sweep `tests/issue-66* + 6484 + 6493`, Node 22 | 51 files / 287 tests, 0 failed | `.tmp/s68/sweep-node22.log` |
+| same, Node 25.9 | 51 files / 287 tests, 0 failed | `.tmp/s68/sweep-node25.log` |
+| corpus 42×{gc,standalone} vs the S67 base | statusFlips=0 shaFlips=0 (84/84) | `.tmp/s68/corpus-fix.jsonl` |
+| equivalence gate | 22 failing / 1720 passing / 22 known — no new regressions | `.tmp/s68/equiv.log` |
+| gate chain (loc, func, coercion-sites, oracle-ratchet, dead-exports) | green, incl. `LOC_GATE_BASE=origin/main` | `.tmp/s68/g*.log` |
+| compiler-boundaries inventory vs `origin/main` | `inventoryValid: true` (new leaf classified) | `.tmp/s68/g6.log` |
+| typecheck, lint | green | — |
+| four families × 120 vs the S67 base | **463/480** (PlainDate 120 ← 117, Duration 109 ← 108, PlainDateTime 117, ZDT 117); 0 pass→fail, +4 fail→pass | `.tmp/s68/battery/diff-all.log` |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass in every group | same |
+
+
+### The four fail→pass rows
+
+`PlainDate/from/argument-object-valid.js`, `PlainDate/from/argument-string.js`,
+`PlainDate/from/subclassing-ignored.js`, `Duration/from/subclassing-ignored.js`
+— exactly the four rows this slice targeted, no collateral movement. The
+PlainDate family is now **120/120**. The battery ran under the s68-4 provider
+(prewarmed `--target both` from HEAD, `cacheHit=false` on first use).
+
+## Residuals measured, NOT fixed
+
+1. **A spread with NO trailing argument does not apply a DEFAULT to the
+   unfilled formal.** `NS.take(1, ...[2000, 5])` against
+   `take(a, b, c, e = "DEF")` answers `number/2000/5/NULL` on BOTH trees
+   (`.tmp/s68/r/t2.mts`) — a typed null instead of `"DEF"`. Same
+   null-for-undefined family as the row symptom, in the arm splice 1
+   deliberately does not claim.
+2. **`this.<m>(…)` where `m` reads `arguments` answers `null`** — with or
+   without a spread (`.tmp/s68/probes/q5.js`: `this.a3(1,2,3)` → `null`,
+   `this.p3(...x)` → correct, `var f = this.a3; f(...x)` → correct,
+   `O.a3(...x)` → correct).
+3. **`var NS = { f: someFunction }; NS.f(...args)` through a rest forward
+   TRAPS** (`dereferencing a null pointer`), and so does an object-literal
+   method reached as `this.h3(...args)` where `h3` is a stored function
+   property. Hit twice while writing probes.
+4. **A function declaration with a DEFAULT parameter returns `null` inside a
+   module that also includes `temporalHelpers.js`** — `defp(1)` with
+   `function defp(a, b = undefined)` answered `null` there but `b:UNDEF` in a
+   harness-free module (`e1.js` vs `e3.js`). Module-scale dependent, not
+   reduced further.
+5. Unchanged from S67: `instance[method](...a)` on a subclass instance (the
+   `abs`/`add` rows), `new X(...<runtime spread>)` on a local class,
+   `Object.getPrototypeOf(<class object>)`, `C["ownStatic"]()`.
+
+#### S68 — lead verification (2026-09-20)
+
+Head `4ea3d63941` (clean tree), merged with `origin/main` (`b84d58d64c`) for landing.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green — the pre-merge `LOC_GATE_BASE` run failed only on `statements/variables.ts`, which main had shrunk after the branch point and the slice does not touch |
+| own diff of the lane's 13 battery TSVs vs the S67 base | exactly the four target rows fail→pass; 0 pass→fail across all 3,684 rows; four-family 463/480 (PlainDate 120, Duration 109, PlainDateTime 117, ZDT 117) |
+| corpus | the lane's base file is byte-identical to S67's `corpus-fix.jsonl`; 0 status / 0 sha flips |
+| equivalence | 22 / 1720 / 22 |
+| both witnesses on a TRUE file-copy revert of the three src files to `5e3d2225f9` | 6 of 12 cases fail, all 6 controls pass — real witnesses. NOTE: the lane's own `ab.sh base` restores from `HEAD`, so its recorded "base" run was a no-op; the lead's revert is the evidence |
+| sweep `tests/issue-66*` + 6484 + 6493 (51 files / 289 tests) on the merged head | Node 22 and Node 25: 287 pass, 2 fail — `issue-6602` ("unmatched capture group … as `undefined`") and `issue-6603` (controls). Both reproduce on `origin/main` `b84d58d64c` ALONE, and were green on the lane's unmerged head; main regressed them between `ea8d7f87ff` and `b84d58d64c` (PRs #5999–#6004; #6004 "preserve global match plain-array shape" is the plausible culprit). Not this slice's — recorded, not chased |
+
+### S69 findings (2026-09-20) — the five `Expected a RangeError` rows are NOT a codegen defect; the fixable defect underneath is a live-global-bound call answering `null` (#6647)
+
+Branch `issue-5383-standalone-temporal-s69`, off the S68 head `ce58705b68`.
+One src commit (`src/codegen/closures/method-trampolines.ts`, +21 LOC, no
+allowance needed), one witness pair.
+
+## The five briefed rows — measured, and none of them is ours to fix
+
+Both briefed hypotheses are FALSIFIED.
+
+- **(a) "the exception is swallowed at the link boundary / in `assert.throws`'s
+  callback path"** — dead. `.tmp/s69/probes/l3.js`: a plain `throw`, a
+  Temporal-originated `RangeError` and an `assert.throws` wrapper all propagate
+  correctly through a closure passed to a helper, through an
+  `assert.throws`-shaped call, and through `assert.throws` itself
+  (`v6=THREW v7=OK v8=OK v9=THREW v10=THREW`).
+- **(b) "a value crosses the seam wrongly"** — half right, but not at a seam.
+
+The rows split three-and-two:
+
+| rows | mechanism | evidence |
+| --- | --- | --- |
+| the three `+00:0000` offset rows | **the polyfill's own grammar**, `_o = /^([+-])([01][0-9]\|2[0-3])(?::?([0-5][0-9])(?::?([0-5][0-9])…)?)?$/` — the two separators are independently optional, so `+00:0000` matches | reproduces under **plain Node importing the polyfill directly**, zero js2wasm in the path (`.tmp/s69/probes/host-truth.mjs`) |
+| the two epoch-limit rows | **standalone BigInt is a branded i64**, so `864n * 10n ** 19n` wraps to `6923773503929843712` and the constructed `ZonedDateTime` lands ~219 years from the epoch, comfortably inside the limits | `.tmp/s69/probes/l2.js` / `l4.js`; `zdtMaxEp=6923773503929843712`, `minEp=-6923773503929843712` |
+
+The first needs a polyfill upgrade; the second needs arbitrary-precision BigInt
+on the native-first lane (`src/codegen/host-bigint-carrier.ts` selects the
+arbitrary-width carrier **only** for host-assisted JS, and
+`bigint-format-native.ts` states its own 64-bit limit). Neither is an
+`m`-horizon splice.
+
+**A trap for the next lane:** the runner's `assert.throws` line attribution
+names the FIRST `assert.throws(` in the file, not the failing one.
+`overflow-adding-months-to-max-year.js` reports `L12`, but L12 PASSES and L15
+(the BigInt-built `minYear`) is the failure — measured both ways in
+`.tmp/s69/probes/l4.js`.
+
+## What WAS fixed — #6647
+
+Under the linked standalone Temporal provider, `function g(){ return {a:1}; }
+g()` answered **`null`**, while `g.call(…)`, `g.apply(…)`, `new g()`, the same
+function written as an EXPRESSION, and a primitive-returning declaration were
+all correct.
+
+The trigger is **`eval`**, bisected to one line
+(`.tmp/s69/probes/tp3.mts`, ~7 s per run against the real provider):
+`harness/assert.js + sta.js` clean · the `$262` shim with its three `eval` uses
+removed clean · `function ev(s){ return eval(s); }` alone **NULL**. `eval`
+without a linked provider is clean, and `sharedExceptionTag` is not it.
+
+Root cause: `eval` + a linked realm sets `ctx.runtimeEvalGlobalFunctionBindings`
+(`src/codegen/index.ts` ~L9886), which makes `hasLiveFunctionBinding` true for
+every top-level declaration, so `compileIdentifierCall` routes the call through
+`tryEmitInlineDynamicCall` — correct, since runtime eval may replace the
+binding. But the function-value wrapper from `ensureFuncClosureSingleton` kept
+the callee's CONCRETE struct result, so the trampoline's funcref type reads
+`(func (result (ref null 53)))` and the dispatcher — which can only produce an
+`externref` — has no arm to match. Fix: promote the WRAPPER's result to
+`externref` in exactly that case, the same shape as the parked-async (#4630)
+and native-generator bridges already on that line.
+
+Byte-inert without `eval`: the standalone Temporal provider binary is
+**3 489 530 B before and after** (the polyfill has no `eval`).
+
+## The biggest remaining target, measured and handed over
+
+`Temporal.PlainDate.prototype.add` is broken for **every** input —
+`TypeError: Cannot destructure 'null' or 'undefined'` — and it is **NOT** the
+mechanism above: it reproduces with no `eval` and no harness, straight through
+`compileWithTemporalGlobal` (`.tmp/s69/probes/spec2.json`). `PD.with(…)` and
+`zdt.add(dur)` are clean controls.
+
+| directory | fail / total |
+| --- | --- |
+| `PlainDate/prototype/add/` (first 39 files) | 22 / 39 |
+| `PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` | 56 / 111 |
+
+~78 rows on one mechanism. It sits on the polyfill's `Wr()` path
+(`{...qr(e).date, days:n}`), which `PlainDate`/`PlainYearMonth` arithmetic uses
+and `ZonedDateTime` arithmetic (via `Ar`) does not. **Unreduced**: every
+consumer-side reduction comes back clean (`.tmp/s69/probes/linked3.mts` — object
+literal, array, nested literal, statement-built object, `{...o, k:v}`,
+`Object.assign`, null-proto object all cross the link correctly), so it has to
+be reduced INSIDE a provider module.
+
+## S69 verification
+
+| check | result | artifact |
+| --- | --- | --- |
+| witness `tests/issue-6647-*` on a TRUE file-copy revert of `src/codegen/closures/method-trampolines.ts` to `ce58705b68` | 5 of 9 probes fail (`objectLiteral` 0, `objectProperty` −1, `arrayLiteral` 0, `builtObject` 0, `calledFromNested` 0); all 4 controls pass on both sides | `.tmp/s69/witness-base.log`, `.tmp/s69/ab/base/method-trampolines.ts` |
+| the same probe file through the REAL runner (`.tmp/s69/probes/l8.js`, 15 shapes) | base 14 NULL / 1 object → fix **15 / 15 object** | `.tmp/s69/rows-after.log` |
+| four-family battery, fresh `cacheHit=false` `--target both` provider `s69-2` built from HEAD | **463 / 480** — PlainDate 120, Duration 109, PlainDateTime 117, ZDT 117 — identical to S68 | `.tmp/s69/battery/*-cur.tsv` |
+| all 13 battery groups (3 684 rows) vs the S68 base | **0 pass→fail, 0 fail→pass**, 0 missing | `.tmp/s69/battery/diff-all-s69.log` |
+| the one flip the contended run showed | `Duration/negative-infinity-throws-rangeerror.js` → `compilation timeout (32322.27ms)` against the runner's 30 s budget, while the corpus/equivalence/sweep runs shared the box. Re-run on an idle box with the battery's OWN `run-family` settings: **pass**, family 109/120, 0 pass→fail. The contended TSV is kept as `Duration-cur-contended.tsv`; `Duration-cur.tsv` is the idle-box run | `.tmp/s69/battery/duration-rerun.log` |
+| corpus 47 files × {gc, standalone} | statusFlips=0 shaFlips=0 over 84 matched rows (the fix run has 10 extra rows — five `tests/fixtures/normalize-ucd17-*` files absent from the S68 worktree's base; new rows, not flips) | `.tmp/s69/corpus-fix.jsonl` |
+| equivalence | 22 failing / 1 720 passing / 22 known — unchanged from S68 | `.tmp/s69/equiv.log` |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (52 files / 290 tests) | Node 22.22 and Node 25.9: 288 pass, 2 fail — `issue-6602` and `issue-6603`, the two known `origin/main` breakages (PRs #5999–#6004), not this slice's | `.tmp/s69/sweep-node22.log`, `.tmp/s69/sweep-node25.log` |
+| gate chain (`LOC_GATE_BASE=origin/main 2f6c0f4f57`) | loc OK (+21 LOC, **no allowance needed**), func OK, coercion-sites OK, oracle-ratchet OK, dead-exports OK, boundaries inventory `inventoryValid: true`, typecheck OK, lint OK | `.tmp/s69/{loc,func,coerce,oracle,dead,boundaries,typecheck,lint}.log` |
+
+### The five briefed rows — before / after
+
+Unchanged, by design: their mechanisms are the polyfill grammar and i64 BigInt,
+neither of which this slice touches.
+
+| row | base | fix |
+| --- | --- | --- |
+| `Duration/compare/relativeto-propertybag-invalid-offset-string.js` | fail (`"+00:0000" is not a valid offset string`) | fail — Mechanism A |
+| `Duration/compare/relativeto-string-invalid.js` | fail | fail — Mechanism A |
+| `PlainDateTime/from/argument-string-invalid.js` | fail (`+00:0000`) | fail — Mechanism A |
+| `Duration/compare/throws-when-target-zoned-date-time-outside-valid-limits.js` | fail | fail — Mechanism B |
+| `ZonedDateTime/prototype/add/overflow-adding-months-to-max-year.js` | fail (reported L12; the real failure is L15) | fail — Mechanism B |
+
+#### S69 — lead verification (2026-09-20)
+
+Head `694d345a80` (clean tree apart from the lane's `test262` symlink, which is
+not in any commit), merged with `origin/main` (`647d10cc3e`) for landing.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green (+21 LOC in `closures/method-trampolines.ts`, under budget) |
+| own diff of the lane's 13 battery TSVs vs the S68 base (3,684 rows) | 0 pass→fail, 0 fail→pass; four-family 463/480 unchanged |
+| corpus vs S68 base | 0 status / 0 sha flips on the 84 shared rows (10 new `normalize-ucd17-*` fixture rows from main) |
+| equivalence | 22 / 1720 / 22 |
+| `tests/issue-6647-*` on a TRUE file-copy revert of `method-trampolines.ts` to `ce58705b68` | fails; passes on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493 (54 files / 327 tests) on the merged head | Node 22 and Node 25: 326 pass, 1 fail — main's own `tests/issue-6648-regexp-capture-array-output.test.ts` "RESIDUAL: dynamic capture metadata keys …", which fails on `origin/main` `647d10cc3e` alone. `issue-6602`/`issue-6603` are green again on main (#6648 landed) |
+
+Accepted with rows unchanged: the slice's value is the attribution of all five
+briefed rows (three to the vendored polyfill's offset grammar, two to the
+64-bit BigInt carrier) plus the eval-realm `null`-object-result fix, and the
+reduction of the next target (`PlainDate.prototype.add` for every input, ~78
+rows across `PlainDate`/`PlainYearMonth` add/subtract: a spread-built object
+from a provider-local source breaks when it crosses a function return).
+
+### S70 findings (2026-09-20) — #6650 DONE: a spread-built object literal returned from a function declaration now keeps its externref carrier (+ comma-expression unwrap at the return boundary); `PlainDate`/`PlainYearMonth` add/subtract 72 → 138/150; four-family holds 463/480, 0 pass→fail
+
+S70 (Opus, branch `issue-5383-standalone-temporal-s70`, head `ac9c098e1e`, off
+the merged S69 PR #6011 head `0813ae554d`, worktree `agent-a81e3f8f42bdcb089`).
+The lane was killed by the ~16:10 UTC container restart after both fixes and the
+AddSub measurement were pushed; the lead finished the remaining verification
+from its worktree. Full writeup in
+[#6650](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6650-standalone-spread-literal-return-null).
+
+**Mechanism.** `function f(){ const o = {…}; return {...o, days: 9}; }` — the
+literal is built on the open host `$Object` route (an externref, because
+`objectLiteralSpreadTakesHostPath` routes a spread literal in a non-specific
+contextual position there; a `return` with no annotation has no contextual
+type), but the function's result ABI is `resolveWasmType` of the
+checker-inferred concrete struct, so the emitted return is a guarded downcast
+that can never succeed and every call takes the `ref.null none` arm.
+`functionReturnsHostObjectLiteralCarrier` consulted only the SHAPE-driven
+host-path predicate, not the CONTEXT-driven spread one; the local-binding and
+captured-init boundaries already consulted both. Fix 1: a helper ORing the two
+predicates (`src/codegen/declarations/host-carrier-object-literal.ts`), used at
+both literal sites of the return-carrier scan. Fix 2: the minified polyfill
+returns `zr(…), {...t.date, days: n}` — a COMMA expression — which the carrier
+scan could not see through; `unwrapReturnCarrierExpression` now peels a comma
+to its right operand, as it already did for parens/`as`/`!`/`satisfies`. Fix 1
+alone produced a byte-identical provider (72/150); both together 138/150.
+
+**Rows.** `PlainDate/prototype/{add,subtract}` + `PlainYearMonth/prototype/{add,subtract}`
+(150): 72 → 138, 0 pass→fail; every `TypeError: Cannot destructure 'null' or
+'undefined'` gone. The 12 residuals are four unrelated mechanisms (subclassing
+receiver brand, PlainYearMonth lower-unit RangeError, PYM overflow day clamp,
+last-representable-month range). Four-family sample unchanged at 463/480.
+
+**Residuals (measured by the lane, `.tmp/s70/probes/solo3.mts`).** The return
+boundary is fixed for FUNCTION DECLARATIONS only; the same carrier mismatch
+remains for an arrow function (`NaN`), a function expression (`NaN`), an
+object-literal method (`illegal cast`), a class method and a nested function
+declaration (`dereferencing a null pointer`). Each needs its own registration
+site widened.
+
+#### S70 — lead verification (2026-09-20)
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory (new leaf classified), issue-ids, typecheck, lint | green |
+| `tests/issue-6650-spread-literal-function-return.test.ts` on a TRUE file-copy revert of the three touched files to `0813ae554d` | fails; passes on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493 (55 files / 328 tests) | Node 22 and Node 25: 327 pass, 1 fail = main's own `issue-6648` residual |
+| AddSub 150 rows vs the lane's reverted-base run | 66 fail→pass, 0 pass→fail |
+| 13 battery groups (3,684 rows) vs the S69 base, own diff | 0 pass→fail, 0 fail→pass; four-family 463/480 |
+| corpus vs S69 base | 0 status / 0 sha flips (94 rows) |
+| equivalence | 22 / 1720 / 22 |
+
+### S71 findings (2026-09-21) — #6652 DONE: the #6650 return-carrier fix now covers arrow / function-expression / object-literal-method / class-method / nested-declaration; the standalone Temporal PROVIDER is byte-identical, so the win is user-code correctness, not Temporal rows
+
+S71 (Opus, branch `issue-5383-standalone-temporal-s71`, head `8d587b0159`, off
+the S70 PR head `78dd538964`, worktree `agent-a1913968da57de166`). Full writeup
+in [#6652](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6652-standalone-spread-literal-return-non-declaration-shapes).
+
+**Mechanism.** The plumbing that covers every callable shape already existed:
+the #6614 pre-pass `collectAccessorLiteralReturnCarrierTypes`
+(`src/codegen/accessor-literal-return-carrier.ts`) walks every function-like and
+puts a host-carrier return type into `ctx.objectHashConsumerTypes`, which
+`resolveWasmType` answers `externref` for wherever that type lands. It was
+deliberately narrowed to ACCESSOR-bearing literals; the SPREAD reason
+(`objectLiteralSpreadTakesHostPath`, #2804 — context-driven, not shape-driven)
+was never added, and its private wrapper peeler lacked #6650's comma arm. Fix:
+widen the predicate to accessor-or-spread, and move
+`unwrapReturnCarrierExpression` into
+`src/codegen/declarations/host-carrier-object-literal.ts` so the declaration lane
+and the pre-pass share ONE peeler by construction. The other
+`objectLiteralForcesHostPath` arms stay out on purpose — several read `ctx` state
+the pre-pass runs too early to see; the spread predicate reads only a contextual
+type, which is what makes it safe there.
+
+**Shapes.** `.tmp/s71/probes/solo3.mts`, base = file-copy revert of the three
+touched files to `78dd538964`: arrow `NaN` → 9, function expression `NaN` → 9,
+object-literal method → 9, class method `dereferencing a null pointer` → 9,
+nested declaration `dereferencing a null pointer` → 9; all controls unchanged.
+Witness `tests/issue-6652-spread-literal-callable-shapes.test.ts` — 9 defect rows
++ 6 controls; on the reverted base all 9 fail and all 6 controls pass.
+
+**The measurement the next lane needs.** The standalone Temporal provider is
+**byte-identical** base vs fix (`57781189fa76e796`, 3 491 376 B, `cmp`-verified
+on the two cache dirs). The minified polyfill has exactly six spread-bearing
+returns: `Wr()` (a top-level declaration, #6650 already), and five class /
+object-literal methods that every one of them spread a **PARAMETER** — `any` in
+untyped JS, so their result ABI was already externref and there was never a
+mismatch. Verified directly on the base with `.tmp/s71/probes/polyfill-shapes.mts`
+(three polyfill-shaped param-spread cases answer correctly on the base; only the
+concrete-local-shape case traps). **So this is a user-code correctness fix, not
+a Temporal row-mover — do not plan the next lane expecting Temporal rows from
+this class.** It is not literally zero, though: a test262 row also compiles the
+TEST BODY, and the new `Temporal-rest` group's chunk-3 base run found 3
+fail→pass (`compile_error → pass`: `Instant/compare/argument-zoneddatetime.js`,
+`Instant/from/argument-zoneddatetime.js`, `Instant/from/subclassing-ignored.js`),
+0 pass→fail.
+
+**Validation.** 15 battery groups / 4 434 rows, **0 pass→fail everywhere**;
+four-family **463/480** unchanged (PlainDate 120, Duration 109, PlainDateTime
+117, ZDT 117); AddSub 138/150 unchanged; the nine must-not-move groups 0/0;
+corpus `statusFlips=0 shaFlips=0` (94 rows); equivalence 22 / 1720 / 22; witness
+sweep 58 files / 365 tests green under Node 22 AND Node 25; gate chain (loc,
+func, coercion-sites, oracle-ratchet, dead-exports, typecheck, lint) green,
+`LOC_GATE_BASE=origin/main` included.
+
+**Caveat, by coordinator decision (box contention).** Of the 600-row
+`Temporal-rest` group, only chunk 3 (rows 401–600) has a reverted-base run;
+chunks 1–2 (400 rows) are fix-tree-only. The byte-identical provider bounds the
+risk to test-body compilation, which chunk 3 measured at 0 pass→fail — a bound,
+not a measurement. Lists are kept as `.tmp/s71/battery/rest{1,2,3}-files.txt`.
+
+**Residual found and NOT ours (new issue candidate).** An object-literal method
+and a class method sharing a NAME emit an **invalid module** — `local.set[0]
+expected type (ref null N), found ref.as_non_null of type (ref M)` — with no
+spread anywhere, identically on the base and the fix. Five-line repro in
+`.tmp/s71/probes/collide.mts`. This is why S70's residual table recorded the
+object-literal-method row as `illegal cast`: its 20-case probe contained both an
+`O1.mk` and a `class Q1 { mk }`.
+
+**Traps added this slice.** (1) The oracle-ratchet gate counts the literal token
+`ctx.checker` **in comments** — a prose mention of it in a new file fails the
+gate; reword. (2) `.claude` worktrees share the 16 GB box with sibling lanes and
+have no swap: three concurrent `run-batch` shards get OOM-killed (rc 137), and
+**orphaned vitest workers / `tsc` from your own earlier sweeps hold gigabytes
+long after the command returns** — `ps -eo pid,rss --sort=-rss` and reap them
+before blaming concurrency. (3) `run-batch.mts` writes its TSV only at GROUP
+end, so a kill loses the whole group — split a long group into ≤200-row chunks.
+(4) `pnpm install` in a fresh harness worktree needs `CI=true` (no TTY).
+
+#### S71 — lead verification (2026-09-21)
+
+Head `5a9484b198` (clean tree), merged with `origin/main` for landing (main
+brought seven files under the merge, none conflicting).
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green (+26 LOC net) |
+| own diff of the lane's 14 battery groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail, 0 fail→pass; four-family 463/480, AddSub 138/150 |
+| `Temporal-rest` chunk 3 (200 rows) fix vs the lane's reverted-base run | 3 fail→pass (`Instant/compare/argument-zoneddatetime.js`, `Instant/from/argument-zoneddatetime.js`, `Instant/from/subclassing-ignored.js`: `compile_error → pass`), 0 pass→fail. Chunks 1–2 (400 rows) are fix-tree-only, by lead decision, to free the box for three sibling lanes; the provider binary is byte-identical, so the unmeasured delta is bounded to test-body compilation |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6652-spread-literal-callable-shapes.test.ts` on a TRUE file-copy revert of the three touched files to `78dd538964` | fails (the 9 defect rows); passes on the fix |
+| equivalence (lane) | 22 / 1720 / 22 |
+
+Accepted as a user-code correctness fix that happens to lift three `Instant`
+rows; it is not a four-family mover, and the next Temporal lever is elsewhere
+(S72 subclass method calls, S73 `__apply_closure` traps, S74 BigInt — all in
+flight in parallel).
+### S74 findings (2026-09-20/21) — #6656: standalone BigInt. Exact static ToString landed; the briefed rows re-attributed to a BIGGER, measured defect: `any`-typed bigint ARITHMETIC does not exist in standalone
+
+Branch `issue-5383-standalone-temporal-s74` off `bccd46c552`, three pushed
+commits (`72d818b87b` plan, `1a826fb272` fix, `9554bf8bec` slice-3 design).
+Issue file `plan/issues/6656-standalone-bigint-beyond-i64.md`.
+
+**The brief's premise was half right and the half that was wrong is the
+important half.** Standalone does carry a bigint as a branded i64 that wraps at
+2^64 — confirmed, `864n * 10n ** 19n` → `6923773503929843712`. But the eight
+briefed rows are **not** waiting on arbitrary precision first. Probing
+(`.tmp/s74/probes/bi5.mts`) found that with untyped (`any`) operands —
+the shape the vendored `@js-temporal/polyfill` is written in — standalone has
+**no bigint arithmetic at all**:
+
+| probe | standalone | Node |
+| --- | --- | --- |
+| `mul(6n, 7n)` | `NaN` | `42` |
+| `add(9007199254740992n, 1n)` | `90071992547409921` | `9007199254740993` |
+| `sub` / `div` / `mod` | `NaN` | correct |
+| `lt(1n, 2n)` | `false` | `true` |
+| `neg(9007199254740993n)` | `NaN` | `-9007199254740993` |
+| `typeof mul(6n, 7n)` | `number` | `bigint` |
+| `eq(x, x)` | `true` ✅ | `true` |
+
+Only `===` works — #6642 S62's `extern-eq-fast` bigint arm, the one place the
+carrier is recognised. Root cause: the `binary-ops.ts` bigint block is entered
+only on a STATIC `bigint` type, and the dynamic `AnyValue` tag set
+(`0 null · 1 undefined · 2 number · 4 boolean · 5 string · 6 object`) has **no
+bigint tag** — so `*` sees a non-number (`NaN`), `+` takes the stringy arm
+(hence the concatenated `90071992547409921` = `"9007199254740992" + "1"`), and
+`<` compares two non-numbers.
+
+That is what owns three of the eight rows: `Duration#total("seconds")`
+answering **`«NaN»`** is this, not a >2^63 wrap. The wrap hypothesis predicts a
+wrong NUMBER; the observed value is NaN. A limb representation behind an
+operator that answers `NaN` changes nothing, so the issue's slice order is
+reordered: dynamic bigint arithmetic first (slice 3, i64 carrier, no
+representation change), limbs after.
+
+**What landed (slice 2, `1a826fb272`).** Exact ToString for a **statically**
+bigint-typed operand. Five string contexts in `src/codegen/string-ops.ts` (the
+native-strings operand arm, a template span, a `String.raw` substitution and
+both `+` concat operands) stringified a branded-bigint i64 as
+`f64.convert_i64_s` + `number_toString` — exact only to 2^53 — while the exact
+formatter has existed since #1644 and S62 had already routed the DYNAMIC
+receiver and `__any_to_string` to it. New leaf
+`src/codegen/bigint-string-context.ts` owns both halves of the decision
+(`bigIntToStringIdx` for codegen, `registerBigIntToStringDemand` for the import
+collector) so emitter and demand cannot disagree; both gated on
+`usesNativeNumberFormat`, because in the JS-host lane the demand becomes an
+`env` IMPORT and a new import shifts every function index.
+
+`String(9223372036854775807n)` was `9223372036854776000` and is now exact;
+`"" + 9007199254740993n`, `` `${b}` ``, `String(BigInt(x) + 1n)` likewise.
+
+**HONEST NEGATIVE: slice 2 moves no Temporal row.** All eight are `fail` before
+and after with byte-identical error text
+(`.tmp/s74/battery/base/Target8-base.tsv` vs `Target8-s2.tsv`), and the
+standalone provider binary is **3 488 870 B before and after** with the same
+cache key — the polyfill is untyped JS, so its bigints were already on the
+exact dynamic route. The slice-1 "string-round-trip" hypothesis for the `«NaN»`
+rows is **falsified**, and chasing why is what surfaced the finding above.
+
+**Validation (slice 2).** Full battery — 13 groups + `AddSub`, **3 834 rows**,
+slice-2 provider, vs the S70 base: **0 pass→fail everywhere**. One fail→pass,
+`language/expressions/object/fn-name-class.js`, which this change cannot reach
+— the base TSVs are on S70's tree while this branch is off `bccd46c552`, so it
+is `main`'s own progress in between. (The run was OOM-killed once after
+`F-methoddef` and resumed cleanly; keep
+`NODE_OPTIONS=--max-old-space-size=3072`.) Witness
+`tests/issue-6656-bigint-tostring-exact.test.ts`
+(24 rows) FAILS on the file-copy revert of the two touched files with 17 rounded
+rows while all five `ctrl` rows already pass, so the controls cannot carry it
+green; 24/24 with the fix. Probes `bi2` 20/20 and `bi4` 10/10 exact (were 12 and
+7 wrong). Corpus 47×{gc,standalone} `statusFlips=0 shaFlips=0` vs the S70 base.
+`test:equivalence:gate`: no new regressions. Witness sweep 59 files / 368 tests
+green under Node 22 — the five files that first reported red were all
+`Hook timed out` / `Test timed out` on the contended 4-core box and pass on
+re-run (four together, `issue-6614` alone). Gate chain green including
+`LOC_GATE_BASE=origin/main`; LOC/func allowances for the two god-file call sites
+are granted in the issue frontmatter with a dated rationale.
+
+**Next lane — slice 3, designed and committed** (`9554bf8bec`, "Slice 3 design"
+in the issue file). Detection is already free (`__typeof_bigint`, plus five
+existing `ref.test $BigInt` sites), the value is one `struct.get` away, and the
+gap is confined to `src/codegen/any-helpers.ts`: `addNumericBinaryHelper`
+(`__any_sub`/`__any_mul`), `__any_div`, `__any_add`'s stringy test,
+`emitAnyRelational`, `__any_to_f64`, plus `__any_typeof`. The one real decision
+is a new `AnyValue` tag versus testing the carrier behind the existing
+extern/object tag — the latter is narrower and is what `extern-eq-fast.ts`
+already does for `===`. Acceptance: `bi5.mts` 11/11 plus a re-measure of the
+eight rows.
+
+**Env notes.** The harness worktree DID have a populated `test262` submodule
+this time (no symlink needed). The battery kit's shipped `*-cur.tsv` must still
+be moved to `base/` first. `.test262-cache/s74-1` is the base-compiler provider,
+`s74-2` the slice-2 one; both `--target both`, both `cacheHit=false` on first
+use. Base TSVs for the next lane: `.tmp/s74/battery/base/` (S70's 13 groups +
+`Target8-base.tsv`); corpus base `.tmp/s74/corpus-s2.jsonl`.
+
+#### S74 — lead verification (2026-09-21)
+
+Head `d51b9c4959` (clean tree), merged with `origin/main` (S71 landed in
+between; the only conflict was this file's appended sections, kept in order).
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory (new leaf `bigint-string-context.ts` classified), issue-ids, typecheck, lint (merged head) | green |
+| own diff of the lane's 13 groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail; 1 fail→pass (`language/expressions/object/fn-name-class.js`), attributed to main's own progress between S70's tree and this branch's base `bccd46c552` |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6656-bigint-tostring-exact.test.ts` on a TRUE file-copy revert of the four touched files to `bccd46c552` | fails; passes on the fix |
+| provider binary | byte-identical (3,488,870 B): slice 2 moves no Temporal row, as the lane states |
+
+Accepted as slice 2 of #6656 (issue stays `in-progress`; slice 3 = `any`-typed
+bigint arithmetic in `src/codegen/any-helpers.ts` is the next lane, designed in
+the issue file).
+
+### S73 findings (2026-09-21) — #6655: the `__apply_closure` `unreachable` is an ARITY ceiling, and there are TWO of them, in two different modules; the caller's is fixed, the provider's is the next slice
+
+S73 (Opus, branch `issue-5383-standalone-temporal-s73`, worktree
+`agent-aaa16c583701d521a`, base `bccd46c552` + a merge of `origin/main` that
+picked up S71's #6652).
+
+**The briefing's framing was wrong in a way worth recording.** The three rows
+were handed over as a callable-KIND misclassification (the #6628
+provider-owned-closure residual), possibly two mechanisms — an eval-path one
+and a module-init one. They are ONE mechanism and it is not about ownership:
+it is **arity**. `fillApplyClosure` builds the dynamic dispatcher as a ladder
+with arms for `n = 0..8`, where `n = max(argc, __closure_arity(fn))` (the
+#3592 under-application widening), and sits a deliberate `unreachable` above
+it (#1058, "fail loudly rather than answer the undefined sentinel"). A dynamic
+call to a function with more than eight declared formals matches no arm and
+traps. The callees are ordinary test262 harness functions:
+`TemporalHelpers.assertPlainDateTime` has **14** formals,
+`createDurationPropertyBagObserver` **11**. The `__runtime_eval_call_aot`
+frame on the Duration row is the CALLER of `__apply_closure`, not a second
+defect.
+
+**Ceiling 1 — the caller's ladder. FIXED.** Reduced to a provider-free,
+link-free probe (`.tmp/s73/probes/arity4.mts`, case `namedSpread14`): a spread
+argument list into a 14-formal object-literal method answers `TRAP
+unreachable` on the true base and the right value on the fix. The fix mints
+ONE above-cap dispatcher per module at its top declared arity —
+`topHighClosureMethodCallArity` — because `__call_fn_method_<N>` invokes each
+admitted closure through its own funcref type and therefore serves every
+arity `<= N`. Three constraints turned up while building it, each measured:
+
+- **Per-arity minting blows the runner's compile budget.** The
+  `argument-string-offset.js` consumer declares 12 AND 14; two full dispatcher
+  ladders took its compile from ~25 s to 39.5 s, past the 30 s limit, so the
+  "fix" reported `compilation timeout`. One top dispatcher, carrying only the
+  above-cap closures (`minHostArity`) and no native-proto receivers (181 of
+  them at arity 14), is both correct and affordable.
+- **The closure host-bridge manifest cannot take it.**
+  `closureHostBridgeDefinition` is a fixed 18-bit physical export family with
+  slots for method arities 0..8; minting 14 through it dies with `unknown
+  closure host bridge __call_fn_method_14`. An above-cap dispatcher has no
+  host caller, so it is published as an ordinary internal function.
+- **Gate it on the lane.** Minted only when `ctx.applyClosureReserved` — i.e.
+  standalone/wasi. On host/gc it is unreachable code: **+21,274 B** on the
+  `@js-temporal/polyfill` host provider (1,726,098 → 1,747,372) before the
+  gate was added.
+
+**Ceiling 2 — the linked PROVIDER's ladder. NOT fixed; it is what actually
+blocks the three rows.** Proven, not inferred:
+
+1. a build whose above-cap arm is a bare `unreachable`, guarded by `n > 8`
+   with no upper bound and with the caller's trap removed, does **not** trap on
+   those rows — the caller's ladder is never consulted;
+2. removing the caller's trap alone makes all three rows `pass` — **vacuously**:
+   a shadow copy of `overflow-default-constrain.js` with a deliberately wrong
+   expected day (31 → 30, `.tmp/s73/probes/shadow-run.mts`) passes too, i.e.
+   `assertPlainDateTime` is never entered.
+
+So `__apply_closure` returns through its #6420 peer-callable-kind front guard:
+under `canonicalRuntimeTypes` the provider's structural `__is_callable`
+answers yes for a consumer closure it has never seen (#6628's open ownership
+ambiguity), the call is shipped to the PROVIDER's `__apply_closure`, and the
+provider's copy of the same trap fires because ITS ladder stops at 8 — the
+polyfill declares no 9+-formal closure. Nothing the caller can mint reaches
+that.
+
+**The trap was therefore kept, with its bound raised to the module's top
+minted arity.** Retiring it buys two green Temporal rows that assert nothing;
+a silent wrong answer in place of a loud one is not worth two points of
+conformance. The three rows are unchanged from base, deliberately.
+
+**Next slice (S75) is written up at the top of #6655's issue file**: which
+module owns the trap, the two observations above, and two costed directions —
+a module-origin tag on every closure struct (the durable fix, shared with
+#6628, which already recorded that two narrower structural gates cannot work)
+versus a FIXED shared max arity across the link (cheap, but must not be
+per-consumer: the provider artifact is prewarmed once and cached for every
+row — and it still needs a loop-breaker, because the consumer's own front
+guard hands the value straight back).
+
+**Validation.**
+
+| check | result |
+| --- | --- |
+| `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` on a file-copy revert of the three touched files to `bccd46c552` (identical to `origin/main` for those three files) | fails with EXACTLY ONE differing key, `spread14: "TRAP unreachable"`; passes on the fix |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (59 files / 368 tests) | Node 22 and Node 25: 368/368 pass |
+| equivalence gate | 22 failing / 1720 passing / 22 known-failures — unchanged |
+| corpus (94 rows, gc + standalone) vs the S70 base | statusFlips=0 shaFlips=0 |
+| both Temporal providers rebuilt from HEAD, `cacheHit=false`, `--target both` | byte-IDENTICAL to base: host 1,726,098 B, standalone 3,488,870 B |
+| four Temporal families (PlainDate, PlainDateTime, ZonedDateTime, Duration — 480 rows) vs the S70 base | 0 pass→fail, 0 fail→pass |
+| AddSub (`PlainDate`/`PlainYearMonth` add+subtract, 150 rows) vs the S70 base | 0 pass→fail, 0 fail→pass |
+| the nine must-not-move groups (A–D, E-linked/unlinked, F-class/methoddef/objproto) | **fix-tree only, not diffed** — S72 and S74 held the battery slot for the whole window. The risk is bounded: both providers rebuild byte-identical, the corpus shows 0 sha flips, and the mint is gated on `ctx.applyClosureReserved` AND on the module declaring a 9+-formal closure, which none of those groups' consumers do |
+| the three briefed rows | unchanged from base (same trap, same frames) — see above |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, typecheck, lint | green |
+
+**Residuals measured but not fixed** (both identical on base and fix, so
+neither is this slice's): `f.apply(recv, args)` where `f` has 14 formals fails
+the #2090 stack-balance gate at compile time; and 12 actual arguments into 14
+formals through an "any"-typed receiver put the trailing argument in the LAST
+formal rather than the 12th. Probes: `.tmp/s73/probes/arity3.mts` case
+`apply14`, `.tmp/s73/probes/arity4.mts` case `anyRecv14`.
+
+**Trap for the next lane (cost me ~40 minutes).** The test262 runner's disk
+cache key (`tests/test262-shared.ts` `buildCompilerHash`) hashes
+`scripts/compiler-bundle.mjs`, `tests/test262-runner.ts` and
+`src/runtime.ts` — **not** `src/codegen/**`. Editing codegen and re-running a
+row silently re-serves the cached compile: the measurement is of the OLD
+compiler and looks like "my change did nothing". `pnpm run build:compiler-bundle`
+is what invalidates it, and it must be followed by
+`node scripts/build-quickjs-eval-provider.mjs` (the eval adapter is keyed on
+the bundle too) and a prewarm into a FRESH cache label. `.tmp/s73/rebuild.sh`
+does the three in order.
+
+**Second trap.** A `pnpm install` in your own worktree replaces the `test262`
+symlink with an empty directory — check `ls test262/harness` afterwards. (It
+was needed here: S71's install had rewritten the shared
+`/home/user/js2/node_modules` to point into its own worktree store, which
+broke `lint` and `check:dead-exports` box-wide.)
+
+#### S73 — lead verification (2026-09-21)
+
+Head `f46b6e2df8` (clean tree), merged with `origin/main` (docs-only conflict
+in this file's appended sections, kept in order). The lane was killed by a
+container restart with groups C and D of its battery outstanding; the lead ran
+those two from its worktree against the lane's HEAD-built provider (`s73-14`)
+and completed the checks below.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green |
+| sweep `tests/issue-66*` + 6484 + 6493 on the merged head, Node 25 | 61 files / 370 tests green (lane: Node 22 and 25 green on its head) |
+| 13 groups + AddSub (3,834 rows) vs the S70 base, own diff (C and D run by the lead) | 0 pass→fail; 1 fail→pass (`language/expressions/object/fn-name-class.js`, main's own progress) |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows); both Temporal providers byte-identical |
+| `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` on a TRUE file-copy revert of the three touched src files to the merge-base | fails; passes on the fix |
+| equivalence (lane log) | 22 / 1720 / 22 |
+
+Accepted with rows unchanged and the arity trap deliberately kept: retiring it
+makes the three rows pass vacuously (a mutated copy passes too). The
+provider-side ladder cap is the S75 brief in #6655.
+### S72 findings (2026-09-21) — #6654 DONE: a computed-key method call on an instance of a subclass of a LINKED provider class now binds the receiver and expands a spread; both briefed `subclassing-ignored` rows flip to pass
+
+S72 (Opus, branch `issue-5383-standalone-temporal-s72`, worktree
+`agent-ad7a06878f57fb497`, off `origin/main` `bccd46c552`). Two commits, two
+src files, +55/−5. Full writeup in
+[#6654](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6654-standalone-linked-subclass-computed-method-call).
+
+**The defect was DISPATCH ORDER, not the boundary.** `instance[method](...args)`
+where `instance` is an instance of a user class extending a linked provider
+class: #6640 makes that class externref-backed with a runtime provider parent,
+so the instance IS the carrier the provider's constructor minted — but the
+class is still a genuine declaration in `ctx.classSet`, so
+`elemAccessReceiverIsUserClass` answers true and the user-class arms of
+`compileTailDispatch`'s RUNTIME-key element-access dispatch claim the call
+before the spread-capable, receiver-binding #6641 arm sees it. Those arms
+resolve a member by CONSUMER-SIDE struct identity (which a provider-minted
+carrier does not have) and are fixed-arity, so two independent wrong answers
+followed: the inherited method ran with `this` unbound, and a spread arrived as
+one array in formal zero. **Every DOT spelling was already correct** — it falls
+through to the link `methodCall` terminal — which is what localised this to the
+arm ordering rather than to the link.
+
+The fix is one splice routing such a receiver to
+`tryEmitGenericComputedMethodCall`, gated by
+`isLinkedDynamicParentInstanceReceiver` on the #6640/#6644 registry
+`ctx.classLinkedDynamicParentExpr` (populated ONLY in a standalone/wasi link
+consumer, so nothing outside this lane is discriminated at all).
+
+**Reduction** (`.tmp/s72/probes/p1.test.ts`, host-free two-module fixture),
+base `bccd46c552` → fix:
+
+| probe | base | fix |
+| --- | --- | --- |
+| `i[m](...A2)` on a subclass-of-linked instance | `echo:p,q,undefined:1` | `echo:p,q:2` |
+| `i[m]()` where the method reads `this` | `!Cannot read properties of undefined (reading a class field)` | `30` |
+| the verbatim `checkSubclassConstructorUndefined` shape | `1/echo:p,q,undefined:1` | `1/echo:p,q:2` |
+
+**A REAL regression in the first cut, caught by the sweep and fixed in the
+second commit.** `elemAccessReceiverClassName` answers the same class name for
+`inst[m]()` and for `Sub[m]()` — an instance and the CLASS OBJECT — so the
+first cut also claimed computed STATIC calls through a linked heritage and
+regressed them to `called value is not a function` (4 cases across
+`tests/issue-6644-link-computed-static-spread-super` and
+`…-static-inheritance-instanceof`). #6644's `tryEmitLinkedStaticComputedCall`
+does run earlier in the driver, but it is gated on a spread being PRESENT, so a
+no-spread static call fell straight through. The predicate now discriminates by
+VALUE DECLARATION — an identifier whose value is a class declaration/expression
+IS the constructor — and a static control is pinned in the #6654 witness.
+
+**Two scope decisions, measured not assumed.** Not gated on a spread being
+present (the no-spread `abs` row is broken by the unbound receiver alone); and
+NO twin splice on the statically-resolved-key arm, where `i["echo"](...A2)` and
+`i["slot"]()` already answer correctly on the base tree — the S68 precedent of
+not taking over a working lowering for no measured gain. A comment at that site
+records the measurement.
+
+**Verification** (head `80a49601a4`, base `bccd46c552`; the box was at load
+~20 on 4 cores with three other lanes, so the battery was resumed twice after
+OOM kills — `run-batch.mts` skips groups whose out-file exists):
+
+| check | result |
+| --- | --- |
+| gate chain (loc, func, coercion-sites, oracle-ratchet, dead-exports), typecheck, lint | green — loc +13 / func +12 in `call-tail-dispatch.ts`, allowance with dated rationale in the #6654 frontmatter |
+| witness on a TRUE file-copy revert of the two src files to `bccd46c552` | 3 teeth FAIL, all 11 controls pass; 14/14 on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493, Node 25.9 | 59 files / 368 tests, all pass |
+| same, Node 22 | 346 pass, 0 test failures; 2 suites died on a 10 s `beforeAll` hook timeout under load (`issue-6484-iterator-prototypes`, `issue-6648-regexp-capture-array-output`) — both green on Node 25 in the same tree, so load artifacts |
+| battery, 14 groups / 3,834 rows, fresh `--target both` provider from HEAD (`cacheHit=false`) | **0 pass→fail**, 6 fail→pass |
+| four families × 120 | **465/480** ← 463 (PlainDate 120, Duration 110 ← 109, PlainDateTime 117, ZDT 118 ← 117) |
+| AddSub 150 | **142/150** ← 138 |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass |
+| corpus 94 rows vs the S70 base | statusFlips=0 shaFlips=0 |
+| equivalence | 22 / 1720 / 22, no new regressions |
+
+**Six fail→pass, all one shape** — the two briefed rows plus four never
+targeted individually: `Duration/prototype/abs`, `ZonedDateTime/prototype/add`,
+`PlainDate/prototype/{add,subtract}`, `PlainYearMonth/prototype/{add,subtract}`,
+each `subclassing-ignored.js`. One further flip,
+`language/expressions/object/fn-name-class.js`, is **base drift, not S72**: it
+PASSES on a true file-copy revert to `bccd46c552`, and the mechanism cannot
+reach it (`ctx.classLinkedDynamicParentExpr` is empty outside a link consumer,
+so the predicate short-circuits and emits nothing).
+
+**Residuals measured, NOT fixed**: `C.prototype.m.call(inst, …)` through a link
+answers `undefined` (a provider-`prototype` member READ, a different
+mechanism); a computed-key spread call on a plain LOCAL subclass is still
+fixed-arity (`L:p,q,undefined:2` on both trees) — general, not link-specific.
+
+#### S72 — lead verification (2026-09-21)
+
+Head `4031a8abca` (clean tree), merged with `origin/main` (docs-only conflict
+in this file's appended sections, kept in order). The lane was killed by a
+container restart after its full battery had finished; the lead re-diffed and
+completed the checks below.
+
+| check | result |
+| --- | --- |
+| own diff of the lane's 13 groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail; fail→pass exactly `Duration/prototype/abs/subclassing-ignored.js`, `ZonedDateTime/prototype/add/subclassing-ignored.js` (the two briefed rows), `PlainYearMonth/prototype/subtract/subclassing-ignored.js` (AddSub) and `language/expressions/object/fn-name-class.js` (main's own progress since the S70 base tree) |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6654-link-subclass-computed-method-call.test.ts` on a TRUE file-copy revert of both touched src files to `bccd46c552` | fails; passes on the fix |
+| equivalence (lane log) | 22 / 1720 / 22, no new regressions |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | see the landing commit's trailer |
+
+Four-family: 463 → 465/480 (ZDT 118, Duration 110); add/subtract 138 → 139/150.

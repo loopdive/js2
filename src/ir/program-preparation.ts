@@ -10,6 +10,7 @@ import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { IrProgramPreparationResult } from "./program/prepared-contracts.js";
 import { observePreparedIrProgram } from "./program-observation.js";
 import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
+import { prepareNumberFormatRuntimeSupport } from "../frontend/builtins/prepare-number-format.js";
 
 export interface IrWholeProgramPreparationInput extends IrProgramSourceInput {
   /** Internal resolved projection requests; all consume the same semantic module. */
@@ -45,9 +46,34 @@ export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): Ir
       "invalid-prepared-data",
       "native async family source projection cannot request a runtime projection outside wasmgc:standalone",
     );
+  if (
+    input.nativeStringValueProjection === "standalone-native" &&
+    policies.some((policy) => policy.backend !== "wasmgc" || policy.target !== "standalone")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string-value source projection cannot request a runtime projection outside wasmgc:standalone",
+    );
+  if (
+    input.nativeStringOutputProjection === "standalone-native" &&
+    policies.some((policy) => policy.backend !== "wasmgc" || policy.target !== "standalone")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string output projection cannot request a runtime projection outside wasmgc:standalone",
+    );
   const source = prepareIrProgramSources(input);
   if (source.kind !== "prepared") return source;
-  const typed = captureTypedIrProgramInput(source);
+  const runtimeSupport = prepareNumberFormatRuntimeSupport(source, input.policy);
+  if (
+    runtimeSupport !== undefined &&
+    policies.some((policy) => policy.backend !== "wasmgc" || policy.target !== "standalone")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "formatter runtime support cannot request a runtime projection outside wasmgc:standalone",
+    );
+  const typed = captureTypedIrProgramInput(source, runtimeSupport);
   const controls = resolveIrPreparationControlsFromEnv();
   const counters = createGvnCounters();
   let result: IrProgramPreparationResult;

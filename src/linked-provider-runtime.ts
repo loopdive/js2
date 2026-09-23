@@ -17,7 +17,34 @@ import {
   registerLinkedConsumerModule,
   registerLinkedProviderModule,
   wrapLinkedProviderValue,
+  type BuildImportsOptions,
 } from "./runtime.js";
+
+/**
+ * (#6475) The embedder's host context for a provider's own adapter.
+ *
+ * A provider's `env` is rebuilt rather than inherited, because the adapter
+ * carries per-instance callback/host state that must not be shared with the
+ * consumer. But "rebuild the wrappers" was implemented as "rebuild them with NO
+ * host context", which silently also discarded the two things that are properly
+ * the EMBEDDER's, not the instance's: the host dependencies (`console`) and the
+ * realm the wrappers resolve intrinsics from (`options.globalSandbox`). In the
+ * test262 runner, which installs a fresh per-row realm, that made the provider's
+ * `TypeError` a different constructor object than the consumer's — same name,
+ * not `===`, so `assert.throws(TypeError, …)` evaluated inside the provider
+ * rejected a genuine consumer-thrown native error — and sent the provider's
+ * `print` to the real console instead of the row's capturing proxy, which is
+ * why the `$DONE` async completion marker was never observed (#6476).
+ *
+ * Precedence is unchanged: provider-built `env` still wins over the inherited
+ * root `env`. This supplies the INPUTS that build it.
+ */
+export interface LinkedProviderHost {
+  /** Host dependencies, as passed to `buildImports` (e.g. `{ console }`). */
+  deps?: Record<string, unknown>;
+  /** Import-build options, notably `globalSandbox` (the embedder's realm). */
+  options?: BuildImportsOptions;
+}
 
 // (#5364) Re-exported so the ONE test262 instantiate seam
 // (`scripts/test262-import-object.mjs`) can retire the previous row's project
@@ -142,6 +169,7 @@ function decodeLinkedProviderManifest(artifact: LinkedModuleArtifact): ProviderM
 function buildProviderImportObject(
   artifact: LinkedModuleArtifact,
   overrides?: WebAssembly.Imports,
+  host?: LinkedProviderHost,
 ): WebAssembly.Imports {
   const manifest = decodeLinkedProviderManifest(artifact);
   const metadata = manifest.providerMetadata;
@@ -162,7 +190,7 @@ function buildProviderImportObject(
     capabilityProviderDiagnostics: metadata.capabilityProviderDiagnostics,
     exportBoundaryPolicies: metadata.exportBoundaryPolicies,
   } as CompileResult;
-  const built = buildCompiledImportsRuntime(providerResult);
+  const built = buildCompiledImportsRuntime(providerResult, host?.deps, host?.options);
   const imports = {
     // Provider-owned wrappers must win over inherited root wrappers: the
     // adapter carries per-instance callback/host state.
@@ -229,13 +257,16 @@ function wireProviderInstance(
 export function instantiateLinkedProviders(
   artifacts: readonly LinkedModuleArtifact[],
   rootImports: WebAssembly.Imports,
+  // (#6475) Absent for every embedder that has no realm of its own; the
+  // provider then builds against the ambient one exactly as before.
+  host?: LinkedProviderHost,
 ): ReadonlyMap<string, WebAssembly.Exports> {
   const providerExports = new Map<string, WebAssembly.Exports>();
   // (#5226) The consumer's own import object needs the tag too — it is the
   // module that CATCHES what a provider throws.
   if (artifacts.length > 0) installSharedExceptionTag(rootImports);
   for (const artifact of artifacts) {
-    const providerImports = buildProviderImportObject(artifact, rootImports);
+    const providerImports = buildProviderImportObject(artifact, rootImports, host);
     installSharedExceptionTag(providerImports);
     for (const dependency of artifact.dependencies) {
       const exports = providerExports.get(dependency);
@@ -285,7 +316,18 @@ export function wireCompiledInstance(
   // lone module must keep the registry empty so every read stays byte-identical.
   linked = false,
 ): void {
-  const setInstance = (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance;
-  setInstance?.(instance);
+  // (#6482) `buildImports` publishes the consumer's lifecycle hook as
+  // `setInstance`; only provider import objects carry the `__setInstance`
+  // alias (see `buildProviderImportObject`). Reading the alias alone left every
+  // in-process linked lane (smoke script, issue-3451/6475/6476/6477 suites)
+  // running `__module_init` with `getExports()` undefined — the vec
+  // defineProperty path then bailed to the sidecar and the provider read the
+  // stale element. The sharded worker was unaffected because it calls
+  // `importObj.setInstance` itself before `__module_init`.
+  const hooks = imports as {
+    __setInstance?: (instance: WebAssembly.Instance) => void;
+    setInstance?: (instance: WebAssembly.Instance) => void;
+  };
+  (hooks.__setInstance ?? hooks.setInstance)?.(instance);
   if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>);
 }

@@ -199,6 +199,82 @@ function fnctorProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[
 }
 
 /**
+ * (#6622) `__isPrototypeOf`'s seed for a CLASS-INSTANCE candidate — the twin of
+ * {@link fnctorIsPrototypeOfSeed}, tried when the fnctor ladder ALSO declined
+ * (`cur` is still null): a compiled class instance is a closed `$ClassName`
+ * struct with no `$proto` field, so the walk below never started, and
+ * `C.prototype.isPrototypeOf(new C())` — and, composed through `#6620`'s
+ * `emitDynamicInstanceOf`, `instance instanceof C` itself — answered `false`
+ * even though `Object.getPrototypeOf(instance) === C.prototype` (#6617/S30) is
+ * `true`.
+ *
+ * Reuses `__getPrototypeOf` rather than adding a THIRD prototype mechanism
+ * (`plan/issues/6617-standalone-linked-class-instance-prototype.md` R2's own
+ * conclusion): that native already composes the module-local class-instance
+ * dispatcher (`__std_class_instance_proto`), the fnctor ladder, AND — on its
+ * last-resort arm — the wasm→wasm link boundary hop to a PROVIDER-owned class.
+ * One `Get(candidate, "[[Prototype]]")` answer serves both the local and the
+ * linked case, exactly as `Object.getPrototypeOf` already does for the same
+ * receiver shape.
+ *
+ * `candidateSlot` is the RAW externref candidate parameter (the walk's `cur`
+ * itself is not `$Object`, so `struct.get`ing it is unsafe — the untyped
+ * parameter is what `__getPrototypeOf` accepts). Only the FIRST link is seeded,
+ * exactly like the fnctor twin: the remaining chain (`Temporal.Duration`'s own
+ * prototype is an ordinary `$Object`, per #6617 point 1) walks through the
+ * existing loop unmodified.
+ */
+function classInstanceIsPrototypeOfSeed(
+  ctx: CodegenContext,
+  objectTypeIdx: number,
+  curSlot: number,
+  targetSlot: number,
+  protoSlot: number,
+  candidateSlot: number,
+): Instr[] {
+  const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");
+  if (getPrototypeOfIdx === undefined) return [];
+  const compareFirstLink: Instr[] = [
+    { op: "local.get", index: protoSlot },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.tee", index: curSlot },
+    { op: "local.get", index: targetSlot },
+    { op: "ref.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+  ];
+  const seedFromGetPrototypeOf: Instr[] = [
+    { op: "local.get", index: candidateSlot },
+    { op: "call", funcIdx: getPrototypeOfIdx },
+    { op: "local.tee", index: protoSlot },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: protoSlot },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: compareFirstLink },
+      ],
+    },
+  ];
+  return [
+    { op: "local.get", index: curSlot },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: seedFromGetPrototypeOf },
+  ];
+}
+
+/** The scratch local {@link classInstanceIsPrototypeOfSeed} uses. */
+function classInstanceProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[] {
+  return ctx.funcMap.get("__getPrototypeOf") === undefined
+    ? []
+    : [{ name: "__classInstanceProto", type: { kind: "externref" } }];
+}
+
+/**
  * `__getPrototypeOf`'s LAST resort, unchanged from before #4643 and extracted
  * verbatim: the dynamic-boundary import when one exists, else the host-free
  * `null`. A FACTORY, like the three in `native-dynamic-instanceof.ts` — a shared
@@ -852,6 +928,11 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       },
       { op: "local.set", index: 3 },
       ...fnctorIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5), // (#4643) cur=3, target=2, scratch=5
+      // (#6622) Tried only when the fnctor seed ALSO declined (cur still
+      // null): candidate=local 1 is the raw externref param, scratch is the
+      // next local slot after fnctorProtoLocal's (present only when a fnctor
+      // ladder exists, so this index is computed rather than hard-coded).
+      ...classInstanceIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5 + fnctorProtoLocal(ctx).length, 1),
       // walk: cur = cur.$proto ; if cur == null → 0 ; if cur === target → 1
       {
         op: "block",
@@ -899,6 +980,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         { name: "cur", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
         ...fnctorProtoLocal(ctx), // (#4643) local 5, appended: locals 2..4 keep their indices
+        ...classInstanceProtoLocal(ctx), // (#6622) next slot after fnctorProtoLocal's
       ],
       body,
     );

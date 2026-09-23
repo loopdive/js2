@@ -739,7 +739,9 @@ export function prepareSingleAwaitIrFunction(
   const operandType = valueTypes.get(awaited.operand);
   if (
     !operandType ||
-    (!irTypeEquals(operandType, EXTERNREF) && !(operandType.kind === "extern" && operandType.className === "Promise"))
+    (!irTypeEquals(operandType, EXTERNREF) &&
+      !(operandType.kind === "extern" && operandType.className === "Promise") &&
+      !(operandType.kind === "dynamic" && operandType.tag === undefined))
   ) {
     return null;
   }

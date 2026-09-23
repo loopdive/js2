@@ -2495,6 +2495,21 @@ export const MATCH_VEC_FIELD_GROUPS = 4;
 export const MATCH_VEC_FIELD_INDICES = 5;
 
 /**
+ * Ensure the ordinary native-string vector used by a global `@@match` result.
+ *
+ * A global match returns an Array of full-match strings, not a
+ * `RegExpExecArray`. Keep this carrier separate from
+ * `$__regexp_match_vec`, whose additional fields are only valid for the
+ * single capture result produced by `exec` / non-global `match`.
+ */
+export function ensureRegexMatchFlatVecType(ctx: CodegenContext): number {
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const nstrElemKey = `ref_${anyStrTypeIdx}`;
+  const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
+  return getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+}
+
+/**
  * Ensure the `$__regexp_match_vec` struct type (#1914) — the match-result
  * shape for standalone `exec`/`match`.
  *
@@ -2515,7 +2530,7 @@ export function ensureRegexMatchVecType(ctx: CodegenContext): number {
   const nstrElemKey = `ref_${anyStrTypeIdx}`;
   const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
   const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
-  const baseVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+  const baseVecTypeIdx = ensureRegexMatchFlatVecType(ctx);
 
   // The base vec must be a non-final root for the subtype to validate.
   const baseVecDef = ctx.mod.types[baseVecTypeIdx];
@@ -3086,14 +3101,13 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
 
 /**
  * Emit `__regex_match_all(prog, classTable, nGroups, strData, strOff, strLen,
- * subject, nScratch, sticky) -> ref null $__regexp_match_vec` (#1913).
+ * subject, nScratch, sticky) -> ref null $__vec_ref_<AnyString>` (#1913).
  *
  * `String.prototype.match` with a GLOBAL regex (§22.2.6.8 step 6): collect
  * every match's [0] substring, advancing past empty matches per
- * AdvanceStringIndex; null when there were no matches. The result reuses the
- * match-vec subtype for type uniformity with the non-global path —
- * `index`/`input` carry the FIRST match (a documented narrow deviation: per
- * spec a global match result is a plain Array without those properties).
+ * AdvanceStringIndex; null when there were no matches. The result is the
+ * ordinary native-string vec: §22.2.6.8 global matching returns a plain Array
+ * without `index`, `input`, `groups`, or `indices` metadata.
  */
 export function ensureRegexMatchAll(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_match_all");
@@ -3110,7 +3124,7 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
   const nstrElemKey = `ref_${anyStrTypeIdx}`;
   const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
   const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
-  const matchVecTypeIdx = ensureRegexMatchVecType(ctx);
+  const flatVecTypeIdx = ensureRegexMatchFlatVecType(ctx);
 
   const substringIdx = ctx.nativeStrHelpers.get("__str_substring");
   if (substringIdx === undefined) {
@@ -3130,7 +3144,7 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
       { kind: "i32" }, // nScratch (#1959 — PROGRESS guard slots)
       { kind: "i32" }, // sticky — anchor every search for a /gy/ walk
     ],
-    [{ kind: "ref_null", typeIdx: matchVecTypeIdx }],
+    [{ kind: "ref_null", typeIdx: flatVecTypeIdx }],
   );
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set("__regex_match_all", funcIdx);
@@ -3155,7 +3169,6 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
   const NEWARR = 15;
   const MSTART = 16;
   const MEND = 17;
-  const FIRSTMS = 18;
 
   const body: Instr[] = [
     // nSlots = 2 * nGroups + nScratch (#1959 scratch slots ride in caps)
@@ -3177,8 +3190,6 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
     { op: "local.set", index: RCAP },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: POS },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: FIRSTMS },
     {
       op: "block",
       blockType: { kind: "empty" },
@@ -3213,17 +3224,6 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
             { op: "i32.const", value: 1 },
             { op: "array.get", typeIdx: i32Arr },
             { op: "local.set", index: MEND },
-            // first match start → the result's index field
-            { op: "local.get", index: RLEN },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: MSTART },
-                { op: "local.set", index: FIRSTMS },
-              ],
-            },
             // Grow result if needed; append substring(subject, mstart, mend).
             { op: "local.get", index: RLEN },
             { op: "local.get", index: RCAP },
@@ -3287,21 +3287,13 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
     { op: "i32.eqz" },
     {
       op: "if",
-      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: matchVecTypeIdx } },
-      then: [{ op: "ref.null", typeIdx: matchVecTypeIdx }],
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: flatVecTypeIdx } },
+      then: [{ op: "ref.null", typeIdx: flatVecTypeIdx }],
       else: [
         { op: "local.get", index: RLEN },
         { op: "local.get", index: RARR },
         { op: "ref.as_non_null" },
-        { op: "local.get", index: FIRSTMS },
-        { op: "local.get", index: SUBJ },
-        // groups/indices (#2588/#2589): a global `String.prototype.match`
-        // result is a flat array of matched strings, not a capture object, so
-        // neither named-groups nor `d`-flag indices apply per-element here.
-        // The `groups`/`indices` fields are externref → push null externref.
-        { op: "ref.null.extern" },
-        { op: "ref.null.extern" },
-        { op: "struct.new", typeIdx: matchVecTypeIdx },
+        { op: "struct.new", typeIdx: flatVecTypeIdx },
       ],
     },
   ];
@@ -3319,7 +3311,6 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
       { name: "newArr", type: { kind: "ref_null", typeIdx: nstrArrTypeIdx } },
       { name: "mstart", type: { kind: "i32" } },
       { name: "mend", type: { kind: "i32" } },
-      { name: "firstms", type: { kind: "i32" } },
     ],
     body,
     exported: false,

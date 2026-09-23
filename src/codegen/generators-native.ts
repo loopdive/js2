@@ -200,6 +200,33 @@ type StateTerminator =
       unwind?: readonly UnwindEntry[];
       next: number;
       bindResultTo?: string;
+    }
+  // (#6651 A2) `for (<decl> of <iterable>) { … yield … }` — the loop HEADER of a
+  // for-of whose body suspends. Until this kind existed `lowerStatements` had no
+  // `ForOfStatement` arm at all, so EVERY for-of carrying a yield fell out of the
+  // native plan; in standalone that is the #680 refusal (measured: 32 of the 69
+  // rows in the A2 residual, 8 of them a plain body-yield with no destructuring
+  // involved).
+  //
+  // The state is NOT self-suspending: it performs one IteratorStep per entry and
+  // transfers straight to `bodyState` (a value was produced) or `exitState` (the
+  // iterator is done) without returning to the caller. The suspension happens
+  // inside the body's own states, which is why the iterator has to survive a
+  // resume boundary — it rides the same per-site `externref` frame slot the
+  // `yield* <generic iterable>` delegation already allocates
+  // (`iterableDelegationSites`), driven by `__gen_delegate_start` /
+  // `__gen_delegate_step`. Reusing that slot family is deliberate: it is the one
+  // carrier in the frame that is already proven to hold a live iterator record
+  // across `.next()` calls.
+  | {
+      kind: "for-of-step";
+      subject: ts.Expression;
+      /** Index into `iterableDelegationSites` — the frame slot holding the record. */
+      siteIndex: number;
+      /** Spill name of the loop variable bound from each produced value. */
+      bindTo: string;
+      bodyState: number;
+      exitState: number;
     };
 
 /**
@@ -235,7 +262,16 @@ interface TryRegionPlan {
 type UnwindEntry =
   | { kind: "replay"; statements: readonly ts.Statement[] }
   | { kind: "catch"; region: TryRegionPlan }
-  | { kind: "finally"; region: TryRegionPlan };
+  | { kind: "finally"; region: TryRegionPlan }
+  // (#6651 A2) An enclosing native-lowered `for-of` whose iterator is still
+  // live. §14.7.5.7 step 6: leaving a ForIn/OfBodyEvaluation with an abrupt
+  // completion runs IteratorClose — so a `.return(v)` / `.throw(e)` delivered
+  // at a yield INSIDE the loop body must call the iterator's `return` before
+  // the completion continues outward. Intercepts NEITHER completion kind (it
+  // closes and keeps walking), which is why it sits in the chain rather than
+  // being folded into the terminator: an inner `catch` still gets its turn
+  // only if it is closer in, and the close runs exactly once per live record.
+  | { kind: "iter-close"; siteIndex: number };
 
 /**
  * (#3050) Runtime-throw route for exceptions raised WHILE EXECUTING a state
@@ -574,6 +610,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // (#3050) Catch-param spills are typed externref (the exn tag payload) —
   // resolved here, not from a body VariableDeclaration (none exists).
   const catchParamSpillTypes = new Map<string, ValType>();
+  // (#6651 A2) `for (<decl> of …)` loop-variable spills. The iterator hands back
+  // an `externref`, and the head's `VariableDeclaration` has no initializer for
+  // `resolveSpillLocalValType` to read, so the binding is typed here — exactly as
+  // the catch param is. Widened names are marked `undefWidenedLocals` in the
+  // resume fctx so a yielded `undefined` stays observable.
+  const forOfBindingSpillTypes = new Map<string, ValType>();
 
   // Reserve the state id for the in-progress state.
   let curId = reserveState();
@@ -633,6 +675,36 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   const statementsAreYieldFree = (statements: readonly ts.Statement[]): boolean =>
     statements.every((stmt) => !statementContainsYield(stmt));
+
+  /** (#6651 A2) A `return` in THIS function's scope (nested functions own theirs). */
+  const statementContainsReturn = (stmt: ts.Statement): boolean => {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found || isFunctionLikeScope(node)) return;
+      if (ts.isReturnStatement(node)) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(stmt);
+    return found;
+  };
+
+  /** (#6651 A2) A `yield*` in THIS function's scope. */
+  const nodeContainsDelegatedYield = (node: ts.Node): boolean => {
+    let found = false;
+    const visit = (n: ts.Node): void => {
+      if (found || (n !== node && isFunctionLikeScope(n))) return;
+      if (ts.isYieldExpression(n) && n.asteriskToken) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return found;
+  };
 
   /**
    * Lower a list of statements into the state graph, threading the "current
@@ -756,6 +828,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (continuation === "lowered") continue;
         if (continuation === "failed") return false;
       }
+      // 2d) (#2864 S2) The same continuation for a single-declarator
+      // declaration whose initializer suspends (`const a = [yield 1];`). Same
+      // direct-body-only / no-state-lowered-finally scope as 2b.
+      if (ts.isVariableStatement(stmt) && allowExpressionContinuations && stateFinallyDepth === 0) {
+        const continuation = lowerDeclarationContinuation(stmt, unwind);
+        if (continuation === "lowered") continue;
+        if (continuation === "failed") return false;
+      }
 
       // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
@@ -816,6 +896,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       }
       if (ts.isForStatement(stmt)) {
         if (!lowerFor(stmt, unwind)) return false;
+        continue;
+      }
+      if (ts.isForOfStatement(stmt)) {
+        if (!lowerForOf(stmt, unwind)) return false;
         continue;
       }
 
@@ -1192,13 +1276,27 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // `[Symbol.iterator]`), so a bare non-iterable object is NOT admitted. The
   // native `__iterator` runtime (#2038) then drives it host-free. Mirrors the
   // checker use already present in `nativeGeneratorDelegationName`.
-  function isGenericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
+  // (#6651 A2) `requireNext` additionally demands an own `next` member, i.e. the
+  // subject IS an iterator / generator object rather than merely iterable. The
+  // for-of header needs that stricter test because `__gen_delegate_start` drives
+  // the ORDINARY iterator protocol and nothing else: measured on this branch, a
+  // `number[]`, a `string` and a `Set` each compile host-free and then THROW at
+  // the first step, while a native generator and a `{ next(){}, [@@iterator](){} }`
+  // object both run correctly. Arrays have their own vec drive (the
+  // `isNumericIterableDelegate` split `yield*` already makes) and are deliberately
+  // not routed here — admitting them would trade the #680 refusal for a runtime
+  // trap, which is strictly worse than the leak it replaces.
+  function isGenericIterableDelegate(ctx: CodegenContext, subject: ts.Expression, requireNext = false): boolean {
     const t = ctx.checker.getTypeAtLocation(subject);
     if (!t) return false;
+    let iterable = false;
+    let hasNext = false;
     for (const p of ctx.checker.getPropertiesOfType(t)) {
-      if (p.getName().startsWith("__@iterator")) return true;
+      const n = p.getName();
+      if (n.startsWith("__@iterator")) iterable = true;
+      else if (n === "next") hasNext = true;
     }
-    return false;
+    return iterable && (!requireNext || hasNext);
   }
 
   // Reserve the successor of a yield and set up its resume binding/abrupt
@@ -1255,6 +1353,18 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   type ContinuationYieldBinding = readonly [ts.YieldExpression, string];
   type ExpressionContinuationAttempt = "lowered" | "not-applicable" | "failed";
 
+  /**
+   * The statement a continuation re-runs in its successor state, paired with the
+   * expression inside it whose yields / captured operands are replaced by spills.
+   * For an `ExpressionStatement` the two coincide; for a `VariableStatement`
+   * (#2864 S2) the root is the single declarator's initializer, while the whole
+   * declaration — binding included — is what the successor recompiles.
+   */
+  interface ContinuationHost {
+    statement: ts.Statement;
+    root: ts.Expression;
+  }
+
   interface ContinuationCaptureType {
     type: ValType;
     /** Emit the canonical JS undefined singleton instead of a raw i32 value. */
@@ -1300,11 +1410,46 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
   }
 
-  /** Only a bare, non-delegating yield belongs to this checkpoint. */
-  function bareContinuationYield(expr: ts.Expression): ts.YieldExpression | null {
+  /**
+   * (#2864 S1) Gate for every widening this slice adds to the #680 continuation
+   * grammar — an operand-carrying yield, an assignment root, a declaration root,
+   * a CALL as a captured prefix operand.
+   *
+   * Deliberately standalone/WASI-only. The JS-host lane keeps a WORKING
+   * eager-buffer fallback for every shape the plan refuses, so admitting more
+   * shapes there would only move already-passing rows onto a different lowering
+   * — pure regression risk for no conformance gain. Standalone has no fallback
+   * at all: a refusal there IS the #680 diagnostic / the `env::__gen_*`
+   * host-import leak this issue exists to remove. Keeping the gate here is also
+   * what makes the gc lane byte-identical across this change.
+   */
+  const continuationYieldsMayCarryOperands = noJsHostTarget(ctx);
+
+  /**
+   * A non-delegating yield this checkpoint can suspend on.
+   *
+   * #680 admitted ONLY the operand-less `yield`. A yield that carries an operand
+   * is admitted too now: the operand is compiled in the SUSPENDING state (it is
+   * the yield terminator's value expression, emitted after that state's prefix
+   * captures), and the successor recompiles the containing statement with the
+   * whole `YieldExpression` node replaced by the sent spill — so the operand is
+   * evaluated exactly once, before the resume boundary, and never re-run after
+   * it. A yield NESTED in the operand (`yield yield 1`) has no such single
+   * evaluation point and stays refused.
+   */
+  function continuationYieldOf(expr: ts.Expression): ts.YieldExpression | null {
     const inner = unwrapContinuationWrapper(expr);
-    if (!ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) return null;
-    return inner;
+    if (!ts.isYieldExpression(inner) || inner.asteriskToken) return null;
+    const operand = inner.expression;
+    if (operand === undefined) return inner;
+    if (!continuationYieldsMayCarryOperands) return null;
+    if (ts.isYieldExpression(unwrapContinuationWrapper(operand)) || nodeContainsYield(operand)) return null;
+    return yieldValueOk(operand) ? inner : null;
+  }
+
+  /** True when `expr` itself is a yield, or holds one outside a nested function. */
+  function containsAnyYield(expr: ts.Expression): boolean {
+    return ts.isYieldExpression(unwrapContinuationWrapper(expr)) || nodeContainsYield(expr);
   }
 
   /** The standalone form is deliberately limited to one-or-more parentheses. */
@@ -1315,20 +1460,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       parenthesized = true;
       inner = inner.expression;
     }
-    if (!parenthesized || !ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) {
-      return null;
-    }
-    return inner;
+    return parenthesized ? continuationYieldOf(inner) : null;
   }
 
-  /** Verify that every yield in a rebuilt expression is one of our bare yields. */
+  /** Verify that every yield in a rebuilt expression is one this lane admits. */
   function continuationYields(root: ts.Expression): ts.YieldExpression[] | null {
     const yields: ts.YieldExpression[] = [];
     let valid = true;
     function visit(node: ts.Node): void {
       if (!valid) return;
       if (ts.isYieldExpression(node)) {
-        if (node.asteriskToken || node.expression !== undefined) valid = false;
+        if (continuationYieldOf(node) === null) valid = false;
         else yields.push(node);
         return;
       }
@@ -1343,14 +1485,27 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   }
 
   /**
-   * Values before a suspension must not require observable Get/call/spread/key
-   * work. Local/literal arithmetic and identifier updates are the bounded
-   * one-time-effect set proven by this slice.
+   * An operand this lane may evaluate around a suspension. #680's set was
+   * local/literal arithmetic and identifier updates, described as "values before
+   * a suspension must not require observable Get/call/spread/key work".
+   *
+   * (#2864 S1) That reads as a soundness rule but is a PROOF-SCOPE one, and the
+   * distinction is the whole reason the continuation machinery exists: a
+   * captured prefix operand is compiled EXACTLY ONCE, in the suspending state,
+   * and every later state reads its spill through the planner-validated
+   * replacement map — so an observable CALL before a yield runs once, in source
+   * order, and never again after the resume. That single evaluation is precisely
+   * what `[f(), yield 1, h()]` requires, and it is pinned by the ORDER cases in
+   * `tests/issue-2864-yield-in-expression-position.test.ts`. Calls are therefore
+   * admitted, standalone-only (see `continuationYieldsMayCarryOperands`).
    */
   function isSafeContinuationOperand(expr: ts.Expression): boolean {
-    if (nodeContainsYield(expr)) return false;
+    if (containsAnyYield(expr)) return false;
     const inner = unwrapContinuationWrapper(expr);
     if (ts.isIdentifier(inner) || ts.isNumericLiteral(inner) || ts.isStringLiteral(inner)) return true;
+    // A yield anywhere inside it was rejected above; the capture's spill type
+    // still has to resolve to a struct-storable kind, or the plan bails.
+    if (continuationYieldsMayCarryOperands && ts.isCallExpression(inner)) return true;
     if (
       inner.kind === ts.SyntaxKind.TrueKeyword ||
       inner.kind === ts.SyntaxKind.FalseKeyword ||
@@ -1550,18 +1705,18 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   }
 
   function finishExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     captures: readonly NativeGeneratorExpressionCapture[],
     yieldBindings: readonly ContinuationYieldBinding[],
   ): boolean {
-    const replacements = buildContinuationReplacements(stmt.expression, captures, yieldBindings);
+    const replacements = buildContinuationReplacements(host.root, captures, yieldBindings);
     if (!replacements || !attachContinuationReplacements(curId, replacements)) return false;
-    curStatements.push(stmt);
+    curStatements.push(host.statement);
     return true;
   }
 
   function lowerSingleExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     yieldExpr: ts.YieldExpression,
     captureExpressions: readonly ts.Expression[],
     unwind: readonly UnwindEntry[],
@@ -1574,7 +1729,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     const sentSpill = continuationSpillName("sent");
     if (!emitYield(yieldExpr, sentSpill, unwind)) return false;
-    return finishExpressionContinuation(stmt, captures, [[yieldExpr, sentSpill]]);
+    return finishExpressionContinuation(host, captures, [[yieldExpr, sentSpill]]);
   }
 
   function flattenCommaExpression(expr: ts.Expression, terms: ts.Expression[]): void {
@@ -1588,7 +1743,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   }
 
   function lowerCommaExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     root: ts.Expression,
     unwind: readonly UnwindEntry[],
   ): boolean {
@@ -1598,7 +1753,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
     const yields: { index: number; expression: ts.YieldExpression }[] = [];
     for (let index = 0; index < terms.length; index++) {
-      const yieldExpr = bareContinuationYield(terms[index]!);
+      const yieldExpr = continuationYieldOf(terms[index]!);
       if (yieldExpr) yields.push({ index, expression: yieldExpr });
       else if (!isSafeContinuationOperand(terms[index]!)) return false;
     }
@@ -1621,17 +1776,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         captures.push(capture);
       }
     }
-    return finishExpressionContinuation(stmt, captures, bindings);
+    return finishExpressionContinuation(host, captures, bindings);
   }
 
   function lowerConditionalExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     conditional: ts.ConditionalExpression,
     unwind: readonly UnwindEntry[],
   ): boolean {
-    const conditionYield = bareContinuationYield(conditional.condition);
-    const thenYield = bareContinuationYield(conditional.whenTrue);
-    const elseYield = bareContinuationYield(conditional.whenFalse);
+    const conditionYield = continuationYieldOf(conditional.condition);
+    const thenYield = continuationYieldOf(conditional.whenTrue);
+    const elseYield = continuationYieldOf(conditional.whenFalse);
     if (!conditionYield || !thenYield || !elseYield) return false;
 
     const conditionSent = continuationSpillName("sent");
@@ -1659,7 +1814,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const thenSent = continuationSpillName("sent");
     if (!emitYield(thenYield, thenSent, unwind)) return false;
     const thenReplacements = buildContinuationReplacements(
-      stmt.expression,
+      host.root,
       [],
       [
         [conditionYield, conditionSent],
@@ -1668,14 +1823,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       ],
     );
     if (!thenReplacements || !attachContinuationReplacements(curId, thenReplacements)) return false;
-    curStatements.push(stmt);
+    curStatements.push(host.statement);
     finishState(curId, { kind: "jump", next: join });
 
     resetCursor(elseEntry);
     const elseSent = continuationSpillName("sent");
     if (!emitYield(elseYield, elseSent, unwind)) return false;
     const elseReplacements = buildContinuationReplacements(
-      stmt.expression,
+      host.root,
       [],
       [
         [conditionYield, conditionSent],
@@ -1684,19 +1839,94 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       ],
     );
     if (!elseReplacements || !attachContinuationReplacements(curId, elseReplacements)) return false;
-    curStatements.push(stmt);
+    curStatements.push(host.statement);
     finishState(curId, { kind: "jump", next: join });
 
     resetCursor(join);
     return true;
   }
 
+  /**
+   * (#2864 S1) An assignment TARGET whose evaluation may be deferred past a
+   * suspension in the right-hand side — see the call site for the §13.15.2
+   * argument. Standalone/WASI only, like every other S1 widening.
+   */
+  function continuationAssignmentTargetOk(left: ts.Expression): boolean {
+    if (!continuationYieldsMayCarryOperands) return false;
+    const inner = unwrapContinuationWrapper(left);
+    if (containsAnyYield(inner)) return false;
+    if (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner)) return true;
+    return ts.isIdentifier(inner);
+  }
+
   function lowerExpressionContinuation(
     stmt: ts.ExpressionStatement,
     unwind: readonly UnwindEntry[],
   ): ExpressionContinuationAttempt {
-    const root = unwrapContinuationWrapper(stmt.expression);
-    const singleYield = parenthesizedContinuationYield(stmt.expression);
+    const stmtRoot = unwrapContinuationWrapper(stmt.expression);
+    // (#2864 S1) An ASSIGNMENT whose VALUE suspends is lowered by re-rooting on
+    // its right-hand side and deferring the assignment itself into the successor
+    // state. §13.15.2 is what makes that order-preserving:
+    //   * destructuring target (`[a] = <rhs>`, `({a} = <rhs>)`) — step 2
+    //     evaluates the RHS FIRST; the pattern is not evaluated at all until a
+    //     value exists, so nothing of it can be owed before the suspension;
+    //   * simple identifier target (`x = <rhs>`) — step 1 resolves the binding,
+    //     which is unobservable, then evaluates the RHS.
+    // A MEMBER target (`o.p = yield`, `o[f()] = yield`) is excluded: its
+    // reference evaluation happens BEFORE the RHS and IS observable, so
+    // deferring it would move a Get/`f()` across the resume boundary. A yield
+    // INSIDE the target is excluded too — in a pattern that is a default
+    // initializer, i.e. a CONDITIONAL suspension this unconditional model
+    // cannot express (see the note in #2864).
+    const assignedValueRoot =
+      ts.isBinaryExpression(stmtRoot) &&
+      stmtRoot.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      continuationAssignmentTargetOk(stmtRoot.left)
+        ? unwrapContinuationWrapper(stmtRoot.right)
+        : undefined;
+    const root = assignedValueRoot ?? stmtRoot;
+    const singleYield = assignedValueRoot
+      ? continuationYieldOf(assignedValueRoot)
+      : parenthesizedContinuationYield(stmt.expression);
+    return lowerContinuationRoot({ statement: stmt, root: stmt.expression }, root, singleYield, unwind);
+  }
+
+  /**
+   * (#2864 S2) `var/let/const <id> = <expr containing a yield>;`. The #680
+   * machinery is statement-shaped already — a successor state recompiles the
+   * ORIGINAL statement with the yield and its captured prefix read from spills —
+   * so a declaration needs no new lowering, only a root: the single declarator's
+   * initializer. The BINDING therefore happens entirely in the successor, which
+   * is where the spec puts it (the value must exist first).
+   *
+   * Identifier names only. A binding PATTERN (`const [a] = [yield 1]`) binds
+   * names that `collectSpillsIn` does not register, so a later suspension would
+   * read a stale frame; that widening needs the spill-typing work the
+   * destructuring-PARAM path does and is deliberately not folded in here.
+   */
+  function lowerDeclarationContinuation(
+    stmt: ts.VariableStatement,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
+    if (!continuationYieldsMayCarryOperands) return "not-applicable";
+    if (stmt.declarationList.declarations.length !== 1) return "not-applicable";
+    const declarator = stmt.declarationList.declarations[0]!;
+    if (!ts.isIdentifier(declarator.name) || !declarator.initializer) return "not-applicable";
+    const root = unwrapContinuationWrapper(declarator.initializer);
+    return lowerContinuationRoot(
+      { statement: stmt, root: declarator.initializer },
+      root,
+      continuationYieldOf(root),
+      unwind,
+    );
+  }
+
+  function lowerContinuationRoot(
+    host: ContinuationHost,
+    root: ts.Expression,
+    singleYield: ts.YieldExpression | null,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
     const arrayRoot = ts.isArrayLiteralExpression(root) ? root : undefined;
     const objectRoot = ts.isObjectLiteralExpression(root) ? root : undefined;
     const conditionalRoot = ts.isConditionalExpression(root) ? root : undefined;
@@ -1710,7 +1940,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (unwind.length !== 0 || elemValType.kind !== "f64") return "failed";
 
     if (singleYield) {
-      return lowerSingleExpressionContinuation(stmt, singleYield, [], unwind) ? "lowered" : "failed";
+      return lowerSingleExpressionContinuation(host, singleYield, [], unwind) ? "lowered" : "failed";
     }
 
     if (arrayRoot) {
@@ -1719,18 +1949,18 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return "not-applicable";
         elements.push(element as ts.Expression);
       }
-      const yieldIndex = elements.findIndex((element) => bareContinuationYield(element) !== null);
-      if (yieldIndex < 0 || elements.some((element, index) => index !== yieldIndex && nodeContainsYield(element))) {
+      const yieldIndex = elements.findIndex((element) => continuationYieldOf(element) !== null);
+      if (yieldIndex < 0 || elements.some((element, index) => index !== yieldIndex && containsAnyYield(element))) {
         return "not-applicable";
       }
-      const yieldExpr = bareContinuationYield(elements[yieldIndex]!);
+      const yieldExpr = continuationYieldOf(elements[yieldIndex]!);
       if (
         !yieldExpr ||
         !elements.every((element, index) => index === yieldIndex || isSafeContinuationOperand(element))
       ) {
         return "not-applicable";
       }
-      return lowerSingleExpressionContinuation(stmt, yieldExpr, elements.slice(0, yieldIndex), unwind)
+      return lowerSingleExpressionContinuation(host, yieldExpr, elements.slice(0, yieldIndex), unwind)
         ? "lowered"
         : "failed";
     }
@@ -1741,24 +1971,24 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) return "not-applicable";
         values.push(property.initializer);
       }
-      const yieldIndex = values.findIndex((value) => bareContinuationYield(value) !== null);
-      if (yieldIndex < 0 || values.some((value, index) => index !== yieldIndex && nodeContainsYield(value))) {
+      const yieldIndex = values.findIndex((value) => continuationYieldOf(value) !== null);
+      if (yieldIndex < 0 || values.some((value, index) => index !== yieldIndex && containsAnyYield(value))) {
         return "not-applicable";
       }
-      const yieldExpr = bareContinuationYield(values[yieldIndex]!);
+      const yieldExpr = continuationYieldOf(values[yieldIndex]!);
       if (!yieldExpr || !values.every((value, index) => index === yieldIndex || isSafeContinuationOperand(value))) {
         return "not-applicable";
       }
-      return lowerSingleExpressionContinuation(stmt, yieldExpr, values.slice(0, yieldIndex), unwind)
+      return lowerSingleExpressionContinuation(host, yieldExpr, values.slice(0, yieldIndex), unwind)
         ? "lowered"
         : "failed";
     }
 
     if (conditionalRoot) {
-      return lowerConditionalExpressionContinuation(stmt, conditionalRoot, unwind) ? "lowered" : "not-applicable";
+      return lowerConditionalExpressionContinuation(host, conditionalRoot, unwind) ? "lowered" : "not-applicable";
     }
     if (commaRoot) {
-      return lowerCommaExpressionContinuation(stmt, commaRoot, unwind) ? "lowered" : "not-applicable";
+      return lowerCommaExpressionContinuation(host, commaRoot, unwind) ? "lowered" : "not-applicable";
     }
     return "not-applicable";
   }
@@ -1954,6 +2184,107 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     return ok;
   }
 
+  /**
+   * (#6651 A2) `for (<decl> of <iterable>) { … yield … }`.
+   *
+   * Until this existed `lowerStatements` had NO ForOfStatement arm, so a yield
+   * anywhere inside a for-of took the generic "unmodeled statement" bail — the
+   * single largest bail site in the A2 residual (32 of 69 rows; 8 of them plain
+   * body-yield loops with no destructuring anywhere). The host lane does not
+   * answer these either: an 8-row probe fails 8/8 with `i === 2` where the spec
+   * requires 1, i.e. the eager buffer ran the WHOLE loop before the first
+   * `.next()`. That is a property of the eager lowering, not of the feature, so
+   * the native state machine is the lane that can be correct here.
+   *
+   * Shape:
+   *
+   *     [cur] --jump--> [header] --value--> [body states] --jump--> [header]
+   *                        |
+   *                     exhausted
+   *                        v
+   *                     [exit]
+   *
+   * The header performs ONE IteratorStep per entry and never suspends; the
+   * suspension lives in the body's own states. The iterator therefore has to
+   * survive a resume boundary, which is why it rides the per-site `externref`
+   * frame slot family that `yield* <generic iterable>` already allocates — the
+   * one carrier in the frame proven to hold a live iterator record across
+   * `.next()` calls (`__gen_delegate_start` / `__gen_delegate_step`).
+   *
+   * Deliberate bails, each because admitting it would trade a LOUD standalone
+   * refusal for a SILENTLY wrong answer:
+   *  - JS-host lane: keeps the eager buffer (this is the standalone-only
+   *    widening rule every #680/#2864 slice follows — the host has a working
+   *    fallback, standalone has none);
+   *  - `for await`: no async-frame model here;
+   *  - a yield in the SUBJECT, or a destructuring / non-simple head: the head
+   *    pattern's own element evaluation would then have to be suspendable,
+   *    which is the separate §13.15.5 modelling this slice does not do;
+   *  - `return` anywhere in the body: the plain `return` terminator completes
+   *    without walking the unwind chain, so the iterator would never be closed
+   *    (§14.7.5.7 step 6);
+   *  - `yield*` in the body: the delegation terminator rebuilds its abrupt
+   *    context from `replay` entries ONLY, which would silently DROP this
+   *    loop's `iter-close` entry;
+   *  - `break` / `continue` (shared `loopBodyHasUnsupportedJump`).
+   */
+  function lowerForOf(stmt: ts.ForOfStatement, unwind: readonly UnwindEntry[]): boolean {
+    if (!noJsHostTarget(ctx)) return fail();
+    if (stmt.awaitModifier) return fail();
+    if (loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (nodeContainsYield(stmt.expression)) return fail();
+    // The subject must be an ITERATOR object (see isGenericIterableDelegate's
+    // `requireNext` note): arrays / strings / Sets compile host-free here and
+    // then trap at the first step, which is worse than the refusal they get now.
+    if (!isGenericIterableDelegate(ctx, stmt.expression, true)) return fail();
+    const init = stmt.initializer;
+    if (!ts.isVariableDeclarationList(init)) return fail();
+    if (init.declarations.length !== 1) return fail();
+    const declarator = init.declarations[0]!;
+    if (!ts.isIdentifier(declarator.name)) return fail();
+    const bindingName = declarator.name.text;
+    const body = thenBody(stmt.statement);
+    if (body.some((s) => statementContainsReturn(s))) return fail();
+    if (body.some((s) => nodeContainsDelegatedYield(s))) return fail();
+
+    collectSpillsIn(stmt.expression);
+    addSpill(bindingName);
+    // Type the loop variable at its DECLARED representation, not at the
+    // iterator's externref. Measured on this branch: with an externref slot
+    // `typeof x` answered `"number"` while `x * 2` and `yield x` both answered
+    // NaN — the unbox never happened on the read side, which is a silently
+    // wrong value, not a refusal. Binding at the declared type moves the single
+    // unbox to the ONE place that knows it is needed (the step's `local.set`).
+    forOfBindingSpillTypes.set(bindingName, resolveSpillLocalValType(ctx, declarator) ?? { kind: "externref" });
+
+    const siteIndex = iterableDelegationSites.length;
+    iterableDelegationSites.push({ subject: stmt.expression });
+
+    const headerId = reserveState();
+    finishState(curId, { kind: "jump", next: headerId });
+    const bodyEntry = reserveState();
+    const exitId = reserveState();
+    states[headerId] = {
+      statements: [],
+      resumeBindings: [],
+      terminator: {
+        kind: "for-of-step",
+        subject: stmt.expression,
+        siteIndex,
+        bindTo: bindingName,
+        bodyState: bodyEntry,
+        exitState: exitId,
+      },
+    };
+
+    resetCursor(bodyEntry);
+    if (!lowerStatements(body, [...unwind, { kind: "iter-close", siteIndex }], false)) return false;
+    finishState(curId, { kind: "jump", next: headerId });
+
+    resetCursor(exitId);
+    return ok;
+  }
+
   // Conservatively spill every simple numeric local declared / assigned in the
   // generator body, since loops re-enter states across suspensions and the live
   // local set is hard to compute precisely. Identifiers that are params are
@@ -2097,13 +2428,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // how a leak gets traded for a silent wrong value — so `gen` stays bailed
       // uniformly and is left as a measured, bounded follow-up on #3952.
       //
-      // The generator FUNCTION-EXPRESSION host (`const g = function*({…} = {}){}`)
-      // keeps the bail for ALL closure defaults too, and the control is what
-      // justifies it: that lane already traps on an element default with a plain
-      // NUMERIC value (`{ n = 41 }`), with no closure anywhere. So its defect is
-      // pre-existing and closure-INDEPENDENT — admitting these 8 rows would swap a
-      // loud host-import leak for a runtime trap without proving anything. Tracked
-      // separately; do not fold it in here.
+      // (#6651 A2, 2026-09-21) The paragraph that used to stand here said the
+      // generator FUNCTION-EXPRESSION host (`const g = function*({…} = {}){}`)
+      // keeps the bail for ALL closure defaults because "that lane already traps
+      // on an element default with a plain NUMERIC value (`{ n = 41 }`), with no
+      // closure anywhere". That control was RE-RUN and it does not reproduce:
+      // all four `fnexpr-num-{obj,ary}-{susp,nosusp}` cells of the 80-cell
+      // matrix in #6651's cluster-A round-2 receipt PASS on the isolated
+      // standalone runner, host-free. The claim is stale,
+      // so the blanket `ts.isFunctionExpression(decl)` arm it justified is gone
+      // (see the admission predicate below). Leaving it would have kept 16
+      // manifest rows bailed on a defect that no longer exists.
       const closureDefault =
         el.initializer !== undefined &&
         (ts.isFunctionExpression(el.initializer) ||
@@ -2118,20 +2453,58 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // boundary `externref` representation avoids that identity collision and
       // lets the normal dynamic property path observe the constructor name.
       // Methods with a yield retain the #3952 cross-suspend host path.
-      const classDefaultSafe =
-        el.initializer !== undefined &&
-        ts.isClassExpression(el.initializer!) &&
-        ts.isMethodDeclaration(decl) &&
+      //
+      // (#6651 A2, 2026-09-21) The condition that carries that argument is
+      // "the value never crosses a suspension" — a property of the BODY. The
+      // `ts.isMethodDeclaration(decl) && <parent is class/objlit>` conjunct it
+      // used to be spelled with is LANE IDENTITY, which is exactly what the
+      // #3952 note above warns against relying on. A generator function
+      // DECLARATION and a generator function EXPRESSION reach the same factory
+      // / resume split (#5255 free declarations, #3164/#3302 lifted closures)
+      // and spill into the same state struct, so the same argument applies to
+      // them verbatim. Measured, not assumed: the 80-cell
+      // lane × default-kind × pattern × suspension matrix is in #6651's cluster
+      // A round-2 receipt; every cell this predicate newly admits passes the
+      // isolated standalone runner, and every cell it still refuses is one that
+      // FAILS when admitted.
+      const zeroSuspendDefaultLane =
         decl.body !== undefined &&
         !nodeContainsYield(decl.body) &&
-        (ts.isClassDeclaration(decl.parent) ||
-          ts.isObjectLiteralExpression(decl.parent) ||
-          ts.isClassExpression(decl.parent));
+        (ts.isFunctionDeclaration(decl) ||
+          ts.isFunctionExpression(decl) ||
+          (ts.isMethodDeclaration(decl) &&
+            (ts.isClassDeclaration(decl.parent) ||
+              ts.isObjectLiteralExpression(decl.parent) ||
+              ts.isClassExpression(decl.parent))));
+      const classDefaultSafe =
+        el.initializer !== undefined && ts.isClassExpression(el.initializer!) && zeroSuspendDefaultLane;
+      // (#6651 A2) A GENERATOR function-expression default (`[g = function*(){}]`)
+      // is admitted on exactly the terms #4769 already set for a class-valued
+      // one, and for the same reason: in a ZERO-SUSPEND method the default is
+      // produced by the factory's eager (call-time, §10.2.11) destructure and
+      // read back in the resume function that runs immediately after, so the
+      // value never has to survive a suspension. The #3952 note above left this
+      // as "a measured, bounded follow-up" rather than a permanent bail — it
+      // declined to admit on lane identity alone. This is that measurement: the
+      // 24 `gen-meth[-static]-{ary,obj}-ptrn-*-init-fn-name-gen` rows of the
+      // #6651 cluster-A manifest, all three method lanes, before/after on the
+      // isolated standalone runner.
+      //
+      // (#6651 A2) A yielding body still keeps the host path for a generator- or
+      // class-valued default: `{gen,cls}-*-susp` are the cells that FAIL when
+      // admitted, and `zeroSuspendDefaultLane` is what excludes them. Arrow and
+      // plain-function defaults are admitted across a suspension too — #3952
+      // proved that round-trip, and the matrix re-confirms it in the two lanes
+      // this slice adds.
+      const genDefaultSafe =
+        el.initializer !== undefined &&
+        ts.isFunctionExpression(el.initializer!) &&
+        el.initializer!.asteriskToken !== undefined &&
+        zeroSuspendDefaultLane;
       if (
         closureDefault &&
-        ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined) ||
-          (ts.isClassExpression(el.initializer!) && !classDefaultSafe) ||
-          ts.isFunctionExpression(decl))
+        ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined && !genDefaultSafe) ||
+          (ts.isClassExpression(el.initializer!) && !classDefaultSafe))
       ) {
         return null;
       }
@@ -2261,6 +2634,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       spillTypes.set(name, catchType);
       continue;
     }
+    // (#6651 A2) A for-of loop variable — externref (the iterator's value).
+    const forOfType = forOfBindingSpillTypes.get(name);
+    if (forOfType) {
+      spillTypes.set(name, forOfType);
+      continue;
+    }
     const declNode = spillDecls.get(name);
     const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
     if (!resolved) return null;
@@ -2335,7 +2714,26 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     }
     if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
-  if (fnExprBodyReferencesThis(decl.body)) return false;
+  // (#6651 A1) A `this` in the body no longer bails in the no-JS-host lane.
+  // The receiver is snapshotted into the frame's `dynamic_this` field by the
+  // FACTORY (the lifted closure, which reads `__current_this` at call time —
+  // exactly where §10.2 binds it) and restored as the resume function's `this`
+  // local; see `capturesDynamicThis` in `registerNativeGenerator`. This is the
+  // #5255 free-declaration mechanism, widened to the fn-expr closure ABI.
+  //
+  // `super` keeps the bail: a fn-expr has no [[HomeObject]] in this codegen and
+  // the frame carries no home-object slot, so there is nothing to restore.
+  // `fnExprBodyReferencesThis` conflates the two, so re-ask separately.
+  // The two scans must AGREE before admitting: `fnExprBodyReferencesThis`
+  // descends into class bodies (a computed key `[this.k]` counts) while
+  // `bodyReferencesOwnThis` — the predicate that actually arms the snapshot —
+  // stops at class nodes. Admitting on the wider scan alone would compile a
+  // `this` the frame never captured, so a disagreement keeps the bail.
+  if (fnExprBodyReferencesThis(decl.body)) {
+    if (!noJsHostTarget(ctx)) return false;
+    if (methodBodyUsesSuper(decl.body)) return false;
+    if (!bodyReferencesOwnThis(decl.body)) return false;
+  }
   if (decl.name && bodyReferencesOwnName(decl.body, decl.name.text)) return false;
   // (#3302) Outer-scope captures are ADMITTED in the standalone/wasi lane:
   // the lifted closure already carries them as `__self` struct fields, and
@@ -3359,10 +3757,25 @@ export function registerNativeGenerator(
   // (`{ g: g }.g()`), whose receiver is installed only while its factory call
   // runs. Native execution resumes later, so persist that dynamic receiver in
   // the state frame. Methods already have their exact receiver as the leading
-  // synthetic wasm param; generator function expressions remain separately
-  // gated because their closure ABI supplies a different capture carrier.
+  // synthetic wasm param.
+  //
+  // (#6651 A1) Generator function EXPRESSIONS join this mechanism. Their
+  // closure ABI carries CAPTURES in the `__self` struct, but `this` is not a
+  // capture — a non-arrow function expression rebinds it per call — so the two
+  // do not compete for the same carrier. The factory here IS the lifted closure
+  // body, whose `this` resolves through the `__current_this` global that
+  // `__call_fn_method_N` installs around the dispatch (this-keyword.ts
+  // `readsCurrentThis` arm). Reading it in the factory pins the receiver at
+  // CALL time, which is where §10.2.1 [[Call]] binds it; the resume function
+  // runs later, when the global has long been restored, so without this
+  // snapshot the body would observe whatever receiver the *resuming* caller
+  // happened to have. This unblocks the `Array.prototype[Symbol.iterator] =
+  // function*(){ … this.length … }` fixture family.
   const capturesDynamicThis =
-    !synthesizedThis && ts.isFunctionDeclaration(decl) && decl.body !== undefined && bodyReferencesOwnThis(decl.body);
+    !synthesizedThis &&
+    (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) &&
+    decl.body !== undefined &&
+    bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   // (#2920) A binding-pattern param has no source identifier; mint a unique
@@ -3542,11 +3955,16 @@ export function registerNativeGenerator(
     stateFields.push({ name: "pending", type: { kind: "i32" }, mutable: true });
   }
 
+  // (#6651 A2) A `for-of-step` header drives the SAME delegation runtime
+  // (`__gen_delegate_start`/`_step`) from the same frame-slot family, so it has
+  // to flip this flag too — it is what reserves those helpers
+  // (`ensureNativeDelegatedResultHelpers`) and the `executing` re-entrancy field.
   const nativeDelegates = plan.states.some(
     (state) =>
-      state.terminator.kind === "yield-star" &&
-      state.terminator.delegationKind === "iterable" &&
-      state.terminator.protocol,
+      state.terminator.kind === "for-of-step" ||
+      (state.terminator.kind === "yield-star" &&
+        state.terminator.delegationKind === "iterable" &&
+        state.terminator.protocol),
   );
   const executingFieldIdx = nativeDelegates ? stateFields.length : undefined;
   if (nativeDelegates) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
@@ -4455,6 +4873,11 @@ function compileState(
       });
       break;
     }
+    // (#6651 A2) for-of loop header — see emitForOfStepState.
+    case "for-of-step": {
+      emitForOfStepState(ctx, fctx, info, term, selfLocal, resultLocal, loopDepth);
+      break;
+    }
     case "done": {
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, info.doneState));
@@ -5068,6 +5491,123 @@ function emitGenericDelegationState(
 }
 
 /**
+// (#6651 A2) for-of loop header. One IteratorStep per entry, no suspension:
+//   if (rec == null) rec = __gen_delegate_start(<subject>)   ; GetIterator, once
+//   (status, value) = __gen_delegate_step(rec, MODE_NEXT, null)
+//   if (status == 0) { <bind> = value; state = body;  br loop }  ; produced
+//   else             { rec = null;     state = exit;  br loop }  ; exhausted
+//
+// `status == 0` is the delegation runtime's "the iterator yielded a value"
+// — the case `yield*` re-yields and a for-of consumes. The null-guard is what
+// makes GetIterator happen EXACTLY once for the whole loop while the header
+// is re-entered per iteration; clearing the slot on exhaustion is what lets
+// an ENCLOSING loop re-enter this for-of with a fresh iterator, and what
+// makes the `iter-close` unwind entry a no-op after normal completion.
+ */
+function emitForOfStepState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: NativeGeneratorInfo,
+  term: Extract<StateTerminator, { kind: "for-of-step" }>,
+  selfLocal: number,
+  resultLocal: number,
+  loopDepth: number,
+): void {
+  const body = fctx.body;
+
+  const slot = info.iterableDelegationSlots?.[term.siteIndex];
+  const bindLocal = fctx.localMap.get(term.bindTo);
+  const bindSpill = info.spillNames.indexOf(term.bindTo);
+  if (!slot || bindLocal === undefined || bindSpill < 0) {
+    // Defensive: the plan recorded a site the struct/registry did not back.
+    // Complete rather than emit invalid wasm (mirrors the yield-star arm).
+    body.push(...storeSpills(info, fctx, selfLocal));
+    body.push(...setStateInstrs(info, selfLocal, info.doneState));
+    body.push(...emptyResult(ctx, info));
+    body.push({ op: "local.set", index: resultLocal });
+    return;
+  }
+  const status = allocLocal(fctx, `__forof_status_${fctx.locals.length}`, { kind: "i32" });
+  const value = allocLocal(fctx, `__forof_value_${fctx.locals.length}`, { kind: "externref" });
+  const loadRec: Instr[] = [
+    { op: "local.get", index: selfLocal },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+  ];
+  const materialize: Instr[] = [];
+  {
+    const savedFo = fctx.body;
+    fctx.body = materialize;
+    const subjectType = compileExpression(ctx, fctx, term.subject, { kind: "externref" });
+    if (!subjectType) throw new Error("Unable to compile for-of subject");
+    if (subjectType.kind !== "externref") coerceType(ctx, fctx, subjectType, { kind: "externref" });
+    materialize.push({ op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_start")! });
+    fctx.body = savedFo;
+  }
+  body.push(
+    ...loadRec,
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: selfLocal },
+        ...materialize,
+        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+      ],
+      else: [],
+    },
+  );
+  body.push(...storeSpills(info, fctx, selfLocal));
+  body.push(
+    ...loadRec,
+    { op: "i32.const", value: MODE_NEXT },
+    { op: "ref.null.extern" },
+    { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_step")! },
+    { op: "local.set", index: value },
+    { op: "local.set", index: status },
+  );
+  const bindType = getLocalType(fctx, bindLocal)!;
+  // `__gen_delegate_step` status 0 hands back the RAW iterator result object
+  // (that is what `yield*` re-yields under the `done: -1` sentinel for its
+  // consumer to unwrap). A for-of consumes the value HERE, so it reads
+  // `.value` off the raw result itself. Binding `value` directly instead —
+  // the first cut — made `typeof x` answer `"number"` while `x * 2` and
+  // `yield x` both answered NaN: the number being unboxed was the result
+  // OBJECT, not its `value` field.
+  const bindInstrs: Instr[] = [
+    { op: "local.get", index: value },
+    { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_get_value")! },
+  ];
+  if (bindType.kind !== "externref") {
+    const savedBind = fctx.body;
+    fctx.body = bindInstrs;
+    coerceType(ctx, fctx, { kind: "externref" }, bindType);
+    fctx.body = savedBind;
+  }
+  const producedArm: Instr[] = [
+    ...bindInstrs,
+    { op: "local.set", index: bindLocal },
+    { op: "local.get", index: selfLocal },
+    { op: "local.get", index: bindLocal },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + bindSpill },
+    ...setStateInstrs(info, selfLocal, term.bodyState),
+    { op: "br", depth: loopDepth + 1 },
+  ];
+  const exhaustedArm: Instr[] = [
+    { op: "local.get", index: selfLocal },
+    { op: "ref.null.extern" },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+    ...setStateInstrs(info, selfLocal, term.exitState),
+    { op: "br", depth: loopDepth + 1 },
+  ];
+  body.push(
+    { op: "local.get", index: status },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: producedArm, else: exhaustedArm },
+  );
+}
+
+/**
  * (#3050) Emit the abrupt-completion unwind walk into `fctx.body`. `entries`
  * is innermost-first. The completion KIND is read from the state struct field
  * `srcFieldIdx` — the resume `mode` field when routing a fresh `.throw()` /
@@ -5105,6 +5645,43 @@ function emitUnwindWalk(
   for (const entry of entries) {
     if (entry.kind === "replay") {
       for (const stmt of entry.statements) compileStatement(ctx, fctx, stmt);
+      continue;
+    }
+    if (entry.kind === "iter-close") {
+      // (#6651 A2) §14.7.5.7 step 6 / §7.4.9 IteratorClose: an abrupt completion
+      // leaving a for-of body closes the loop's iterator. Drive the record's
+      // `return` once through the delegation runtime (mode 1 = return) and clear
+      // the slot, so a later completion on the same generator cannot close twice.
+      // Both results are discarded: §7.4.9 step 5 ignores the close's VALUE, and
+      // when the close itself throws the ORIGINAL completion still wins (step 6)
+      // — which is what discarding the status gives us here.
+      const slot = info.iterableDelegationSlots?.[entry.siteIndex];
+      if (!slot) continue;
+      const load: Instr[] = [
+        { op: "local.get", index: o.selfLocal },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+      ];
+      body.push(
+        ...load,
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...load,
+            { op: "i32.const", value: 1 },
+            { op: "ref.null.extern" },
+            { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_step")! },
+            { op: "drop" },
+            { op: "drop" },
+            { op: "local.get", index: o.selfLocal },
+            { op: "ref.null.extern" },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+          ],
+          else: [],
+        },
+      );
       continue;
     }
     if (entry.kind === "catch") {

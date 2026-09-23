@@ -1,0 +1,69 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/expressions/calls.ts",
+  "sourceProvenance": {
+    "receiptBase": {
+      "revision": "bfe31c8bd96d748e867562e3e9b78343b72d1877",
+      "blob": "1c1b803da0e94a4135dde182f3fa9f47b6fb6ab7",
+      "sha256": "95600315f74c874d203444ce3274ce805d2e59bfd03e900db48192486b931889",
+      "bytes": 502389
+    },
+    "implementationParent": {
+      "revision": "c645a7627e099173b0b3e0c5daa1d7b5a110a9d5",
+      "blob": "1c1b803da0e94a4135dde182f3fa9f47b6fb6ab7",
+      "sha256": "95600315f74c874d203444ce3274ce805d2e59bfd03e900db48192486b931889",
+      "bytes": 502389
+    },
+    "originalImplementation": {
+      "revision": "4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1",
+      "blob": "5f01550e99bb62f1dabf32f3040c1282ff9edb43",
+      "sha256": "6d3d2da37671d44d32b2f85f9dc790768d1159cc05c3b8bfdf4f84c02a70c8ae",
+      "bytes": 503787
+    },
+    "preparedParent": {
+      "revision": "1139297588b9105d5d39b3df278e7320308cdf7e",
+      "blob": "5f01550e99bb62f1dabf32f3040c1282ff9edb43",
+      "sha256": "6d3d2da37671d44d32b2f85f9dc790768d1159cc05c3b8bfdf4f84c02a70c8ae",
+      "bytes": 503787
+    }
+  },
+  "originalImplementationTitle": "fix(codegen): separate class tags from callability",
+  "derivation": "Receipt base and implementation parent have identical complete source blobs. Original implementation and prepared parent have identical complete source blobs. Their complete difference is these four additions, 28 lines total; no joined candidate authorizes this fixture.",
+  "originalMinimumObserver": {
+    "sourceSha256": "95600315f74c874d203444ce3274ce805d2e59bfd03e900db48192486b931889",
+    "spanSha256": "058e1607a5fd545c1ec26511d6545ebe4ce045b1e4f5bf8136beba9418376ef7",
+    "start": 179095,
+    "end": 181752,
+    "unchangedInBothPinnedSources": true
+  },
+  "spans": [
+    {
+      "id": "callability-early-reservation",
+      "before": "    (ctx.standalone === true || ctx.wasi === true) &&\n    (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has(\"ctor:Int8Array\"));\n  const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;\n  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;\n\n  // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their\n",
+      "after": "    (ctx.standalone === true || ctx.wasi === true) &&\n    (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has(\"ctor:Int8Array\"));\n  const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;\n  // (#6420) The generic host-free dynamic-call path used to fall through to\n  // `__apply_closure` for every carrier it did not understand. That is wrong\n  // for a class VALUE: it intentionally has `typeof === \"function\"` and\n  // [[Construct]], but no [[Call]]. Register the shared predicate before any\n  // funcIdx is captured; the actual check is emitted after every argument has\n  // evaluated, matching EvaluateCall's observable order.\n  const wantIsCallableGuard = noJsHost(ctx);\n  if (wantIsCallableGuard) {\n    ensureLateImport(ctx, \"__is_callable\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;\n\n  // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their\n",
+      "beforeSha256": "3d061c927f0fd2f1a4fa20e51c8ae9d05586479ea164d173f83b02bdec01e091",
+      "afterSha256": "44e6b369ce790cf7577aea30eaa28d6659492950e3ad37cc68caa61f8065ba2c"
+    },
+    {
+      "id": "callability-index-capture",
+      "before": "  let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);\n  let isUndefinedIdx = ctx.funcMap.get(\"__extern_is_undefined\");\n  let unwrapForWasmIdx = ctx.funcMap.get(\"__unwrap_for_wasm\");\n  if (\n    boxNumberIdx === undefined ||\n    unboxNumberIdx === undefined ||\n",
+      "after": "  let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);\n  let isUndefinedIdx = ctx.funcMap.get(\"__extern_is_undefined\");\n  let unwrapForWasmIdx = ctx.funcMap.get(\"__unwrap_for_wasm\");\n  let isCallableIdx = ctx.funcMap.get(\"__is_callable\");\n  if (\n    boxNumberIdx === undefined ||\n    unboxNumberIdx === undefined ||\n",
+      "beforeSha256": "1b920972bb6319dfe99f535951b038978cc5922e3bc64604ec6da5da0e93d4dc",
+      "afterSha256": "84b283965c30b934001a78a2836a78bcfcc1f5c8c802a4ad6adea8cb507c0884"
+    },
+    {
+      "id": "callability-index-refresh",
+      "before": "  unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);\n  isUndefinedIdx = ctx.funcMap.get(\"__extern_is_undefined\");\n  unwrapForWasmIdx = ctx.funcMap.get(\"__unwrap_for_wasm\");\n  if (\n    boxNumberIdx === undefined ||\n    unboxNumberIdx === undefined ||\n",
+      "after": "  unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);\n  isUndefinedIdx = ctx.funcMap.get(\"__extern_is_undefined\");\n  unwrapForWasmIdx = ctx.funcMap.get(\"__unwrap_for_wasm\");\n  isCallableIdx = ctx.funcMap.get(\"__is_callable\");\n  if (\n    boxNumberIdx === undefined ||\n    unboxNumberIdx === undefined ||\n",
+      "beforeSha256": "a1e68ddcdd45c5ef2d5ce31d16fe2d872d5c600e75323a545148313d0aefafce",
+      "afterSha256": "6dd40727894b527d7a7785f47c37b76ab5d256ed2e7472a00e94bc09659e3d87"
+    },
+    {
+      "id": "callability-post-argument-guard",
+      "before": "  }\n  if (applyFallback !== undefined) applyFallback = reserveDynamicApplyFallback(ctx);\n\n  // Build dispatch chain (innermost = default, outermost = first).\n  // Default: ref.null.extern (matches existing fallback semantics).\n  let dispatch: Instr[] = [{ op: \"ref.null.extern\" }];\n",
+      "after": "  }\n  if (applyFallback !== undefined) applyFallback = reserveDynamicApplyFallback(ctx);\n\n  if (wantIsCallableGuard && isCallableIdx !== undefined) {\n    // Arguments are already materialised in locals. Throwing here therefore\n    // preserves §13.3.6's callee → arguments → IsCallable order and prevents a\n    // rejected class from reaching `__apply_closure`'s legacy null fallback.\n    const throwInstrs = buildThrowJsErrorInstrs(ctx, \"TypeError\", \"called value is not a function\", {\n      flush: fctx,\n    });\n    fctx.body.push(\n      { op: \"local.get\", index: anyLocal },\n      { op: \"extern.convert_any\" },\n      { op: \"call\", funcIdx: isCallableIdx },\n      { op: \"i32.eqz\" },\n      { op: \"if\", blockType: { kind: \"empty\" }, then: throwInstrs },\n    );\n  }\n\n  // Build dispatch chain (innermost = default, outermost = first).\n  // Default: ref.null.extern (matches existing fallback semantics).\n  let dispatch: Instr[] = [{ op: \"ref.null.extern\" }];\n",
+      "beforeSha256": "a8aab7b7dddcf8b3625ebe8562d0026f64a36c481f88c34e86a5347b596ec9c2",
+      "afterSha256": "a7fbd02f737213946175da775eff7da159551a72baf7d3c1aa4d91a029577446"
+    }
+  ]
+}

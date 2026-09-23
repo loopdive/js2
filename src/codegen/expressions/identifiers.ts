@@ -3,6 +3,7 @@
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
   getNullablePrimitiveInfo,
@@ -66,6 +67,7 @@ import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCance
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
   identifierIsWrittenTo,
+  moduleInstallsCallableHasInstance,
   resolveBuiltinCtorAliasName,
   tryEmitNonCallableRhsThrow,
 } from "../native-ordinary-instanceof.js";
@@ -116,6 +118,7 @@ import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import { tryEmitVecLinkedInstanceOf } from "../vec-proto-link.js"; // (#2917)
 import {
   tryEmitCompiledModuleNamespaceObject,
   tryEmitCompiledRuntimeNamespaceFunctionObject,
@@ -1327,6 +1330,10 @@ function compileIdentifierCore(
       !fctx.forInIdentifierVars?.has(name) &&
       !fctx.mixedAssignmentCarrierVars?.has(name) &&
       !mappedExternrefParam &&
+      // (#6651 C3) A JavaScript defaulted parameter's checker type is read off
+      // its own initializer; the slot was widened for exactly that reason, so
+      // re-narrowing it here would undo the widening one instruction later.
+      !paramReadIsJsDefaultGuess(ctx, id) &&
       !expressionHasWidenedPropertyType(ctx, id)
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
@@ -2669,7 +2676,18 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
   if (nonCallableThrow) return nonCallableThrow;
 
-  if (noJsHost(ctx) && isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))) {
+  // (#6651 I2) …and the fold is ALSO not the spec order when the module can
+  // install `@@hasInstance`: §13.10.2 step 2 reads the handler and step 4 calls
+  // it, both before OrdinaryHasInstance step 3 ever asks whether V is an
+  // object. `0 instanceof F` with `F[Symbol.hasInstance] = fn` measured
+  // `callCount === 0` on this branch's base because this fold answered first.
+  // Declining routes the site to the native operator wrapper, which answers the
+  // primitive-LHS `false` itself when no handler is installed.
+  if (
+    noJsHost(ctx) &&
+    !moduleInstallsCallableHasInstance(expr.getSourceFile()) &&
+    isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))
+  ) {
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });
     const rt = compileExpression(ctx, fctx, expr.right);
@@ -3197,6 +3215,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // modeled (#1325, distinct $__Date / $__StandaloneRegExp structs). NEVER emit
   // the host import here.
   if (noJsHost(ctx)) {
+    const vecLinked = tryEmitVecLinkedInstanceOf(ctx, fctx, expr, ctorName); // (#2917) `extends Array` link
+    if (vecLinked) return vecLinked;
     if (ctx.standalone && isStandaloneWrapperConstructorName(ctorName)) {
       return emitNativeWrapperInstanceOf(ctx, fctx, expr, ctorName);
     }

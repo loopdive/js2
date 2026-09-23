@@ -65,8 +65,10 @@ import {
   taViewDecode,
 } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
+import { ensureRegexMatchFlatVecType, REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js"; // (#4556 bucket A)
+import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "./array-subclass-receiver.js"; // (#2917)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import {
   compileArrowAsClosure,
@@ -90,6 +92,7 @@ import { ensureNativeArrayHof } from "./hof-native.js";
 import { flatMapSpeciesResult } from "./array-flatmap.js";
 // (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
 import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
+import { nullableElemParamOverrideFor } from "./array-hof-nullable-elem-param.js"; // (#6602)
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
@@ -109,7 +112,7 @@ import { isHostTypedArrayCarrierExpression } from "./expressions/typed-array-hos
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 // (#4655) Shared concat carrier/dispatch predicate — see array-concat-carrier.ts.
-import { concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
+import { concatMustConsultIsConcatSpreadable, concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
 import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
 // (#5317 r4) join/toLocaleString separator coercion (§23.1.3.15 step 3).
 import { buildJoinSeparatorToString } from "./join-separator.js";
@@ -235,6 +238,22 @@ export function nativeStringElementEqInstrs(
       ],
     },
   ];
+}
+
+/**
+ * A `RegExpExecArray` capture result is represented by the six-field
+ * `$__regexp_match_vec` subtype so its own `.index` / `.input` metadata remains
+ * available. Array-producing methods must not reuse that subtype for a fresh
+ * ordinary Array result: `struct.new` only receives the shared `{ length, data
+ * }` prefix, and the new result must not inherit capture metadata.
+ *
+ * `ensureRegexMatchFlatVecType` and `ensureRegexMatchVecType` deliberately
+ * obtain their backing from the same nullable-native-string vec registration,
+ * so the two-field allocation is valid for the returned base type.
+ */
+function ordinaryArrayResultVecType(ctx: CodegenContext, receiverVecTypeIdx: number): number {
+  if (ctx.typeIdxToStructName.get(receiverVecTypeIdx) !== REGEXP_MATCH_VEC_STRUCT) return receiverVecTypeIdx;
+  return ensureRegexMatchFlatVecType(ctx);
 }
 
 // (#3191) The former private `emitThrowString` / `throwStringInstrs` copies (a
@@ -1174,6 +1193,9 @@ function inferExpressionWasmType(
   expr: ts.Expression,
   allowProbe = true,
 ): ValType | undefined {
+  // (#2917) A receiver pre-spilled by array-subclass-receiver.ts reads its local.
+  const spilled = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
+  if (spilled !== undefined) return getLocalType(fctx, spilled);
   if (ts.isIdentifier(expr)) {
     const name = expr.text;
     const localIdx = fctx.localMap.get(name);
@@ -1562,6 +1584,21 @@ function emitDynViewSpeciesMethodTwoArm(
   const receiverExpr = propAccess.expression;
   if (!ts.isIdentifier(receiverExpr)) return undefined;
   const name = receiverExpr.text;
+  // (#6651 E-S4) §23.2.3.26 step 4 / §23.2.3.30 step 7 run `? ToIntegerOrInfinity`
+  // on the window arguments, and §7.1.4 step 3 makes a Symbol there a TypeError.
+  // Both arms below compile those args in `{kind:"f64"}` context, where a Symbol
+  // (an i32 id) coerces SILENTLY to 0 — `sample.subarray(Symbol())` returned a
+  // view instead of throwing (`{slice,subarray}/return-abrupt-from-*-symbol.js`).
+  // Same static-type question and same evaluation order as the `fill`/
+  // `copyWithin` gate; `map`/`filter` are excluded because their position 0 is
+  // the callback, not an index.
+  if (
+    (methodName === "slice" || methodName === "subarray") &&
+    emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [0, 1])
+  ) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "externref" };
+  }
   const dynIdx = getOrRegisterTaDynViewType(ctx);
 
   const rt = compileExpression(ctx, fctx, receiverExpr);
@@ -2040,7 +2077,20 @@ export function compileArrayMethodCall(
   const arrInfo =
     (receiverType === undefined ? null : resolveArrayInfo(ctx, receiverType)) ??
     resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, receiverType === undefined));
-  if (!arrInfo) return undefined;
+  if (!arrInfo) {
+    // (#2917) A standalone `class X extends Array` receiver is a real vec typed
+    // externref — lower it as one (array-subclass-receiver.ts).
+    if (receiverType === undefined || !isStandaloneArraySubclass(ctx, receiverType.getSymbol()?.name)) {
+      return undefined;
+    }
+    return withArraySubclassReceiverAsVec(
+      ctx,
+      fctx,
+      receiverExpr,
+      () => compileExpression(ctx, fctx, receiverExpr),
+      () => compileArrayMethodCall(ctx, fctx, propAccess, callExpr, undefined, methodName, expectedType, true),
+    );
+  }
 
   // A native-string join over a closure-producing array expression must
   // compile that receiver exactly once. The ordinary actual-type probe below
@@ -2088,7 +2138,7 @@ export function compileArrayMethodCall(
   if (receiverExpr && !skipReceiverProbeForNativeJoin) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
-    if (ts.isIdentifier(receiverExpr)) {
+    if (ts.isIdentifier(receiverExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(receiverExpr)) {
       const name = receiverExpr.text;
       const localIdx = fctx.localMap.get(name);
       if (localIdx !== undefined) {
@@ -2695,6 +2745,7 @@ function compileArrayToReversed(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType {
+  const resultVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
   const vecTmp = allocLocal(fctx, `__arr_trev_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_trev_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const newData = allocLocal(fctx, `__arr_trev_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
@@ -2783,8 +2834,8 @@ function compileArrayToReversed(
   fctx.body.push({ op: "local.get", index: lenTmp });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 /**
@@ -2861,6 +2912,7 @@ function compileArrayToSpliced(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
+  const resultVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
   const vecTmp = allocLocal(fctx, `__arr_tspl_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_tspl_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const newData = allocLocal(fctx, `__arr_tspl_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
@@ -3016,8 +3068,8 @@ function compileArrayToSpliced(
   fctx.body.push({ op: "local.get", index: newLenTmp });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 /**
@@ -3038,6 +3090,7 @@ function compileArrayWith(
     return null;
   }
 
+  const resultVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
   const vecTmp = allocLocal(fctx, `__arr_with_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_with_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const newData = allocLocal(fctx, `__arr_with_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
@@ -3082,8 +3135,8 @@ function compileArrayWith(
   fctx.body.push({ op: "local.get", index: lenTmp });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 /**
@@ -3957,7 +4010,12 @@ function compileArrayReverse(
   const dataTmp = allocLocal(fctx, `__arr_rev_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_rev_i_${fctx.locals.length}`, { kind: "i32" });
   const jTmp = allocLocal(fctx, `__arr_rev_j_${fctx.locals.length}`, { kind: "i32" });
-  const swapTmp = allocLocal(fctx, `__arr_rev_sw_${fctx.locals.length}`, elemType);
+  // (#6500) The swap slot must match what `getOp` below LOADS, not what the array
+  // STORES: `array.get_u`/`array.get_s` widen a packed element to i32, and a packed
+  // type is illegal in a value position anyway, so `elemType` here failed binary
+  // emit for every Uint8/Int8/Uint8Clamped/Uint16/Int16 receiver.
+  const swapSlotType: ValType = elemType.kind === "i8" || elemType.kind === "i16" ? { kind: "i32" } : elemType;
+  const swapTmp = allocLocal(fctx, `__arr_rev_sw_${fctx.locals.length}`, swapSlotType);
 
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
@@ -5014,6 +5072,7 @@ export function compileArraySliceFromVecLocal(
   startLocal: number,
   endLocal: number | null,
 ): ValType {
+  const resultVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
   const dataTmp = allocLocal(fctx, `__arr_slc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const newData = allocLocal(fctx, `__arr_slc_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const lenTmp = allocLocal(fctx, `__arr_slc_len_${fctx.locals.length}`, { kind: "i32" });
@@ -5084,14 +5143,14 @@ export function compileArraySliceFromVecLocal(
   fctx.body.push({ op: "local.get", index: sliceLenTmp });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
   if (speciesDeps !== undefined && speciesLocal !== undefined) {
     return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
       kind: "ref_null",
-      typeIdx: vecTypeIdx,
+      typeIdx: resultVecTypeIdx,
     });
   }
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 /**
@@ -5291,6 +5350,7 @@ function compileArrayConcat(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
+  const resultVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
   // (#4655) An index that resolves through the PROTOTYPE CHAIN is invisible to
   // every path below: they `array.copy` the receiver's own backing and never
   // perform `Get(O, k)`. §23.1.3.1 step 5.c.i is `HasProperty(E, k)` and 5.c.ii
@@ -5304,7 +5364,14 @@ function compileArrayConcat(
   // must take the spec loop (which carries the species prologue) — including
   // the 0-arg shallow-copy shortcut, which `concat/create-species*.js` exercises
   // with a bare `a.concat()`.
-  if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx)) {
+  // (#6485) Third gate, same argument, different observable: §23.1.3.1 step 5.b
+  // performs `Get(E, @@isConcatSpreadable)` on EVERY operand — receiver included
+  // — and every path below decides spreading statically, so a module that can
+  // reach that symbol must take the spec loop for every arity. Flag clear ⇒
+  // THIS gate is not reached (the spec loop's own step-1 fix is ungated and
+  // does move bytes for modules the two gates above already route there).
+  // See array-concat-carrier.ts.
+  if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx) || concatMustConsultIsConcatSpreadable(ctx)) {
     const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
     if (spec !== undefined) return spec;
   }
@@ -5337,8 +5404,8 @@ function compileArrayConcat(
     fctx.body.push({ op: "local.get", index: lenA });
     fctx.body.push({ op: "local.get", index: newData });
     fctx.body.push({ op: "ref.as_non_null" });
-    fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-    return { kind: "ref_null", typeIdx: vecTypeIdx };
+    fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+    return { kind: "ref_null", typeIdx: resultVecTypeIdx };
   }
 
   // Check if argument B is a known WasmGC array type. If not (e.g. `any`, `object`,
@@ -5431,8 +5498,8 @@ function compileArrayConcat(
   fctx.body.push({ op: "local.get", index: totalLen });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 /**
@@ -6151,6 +6218,7 @@ function compileArraySplice(
   arrTypeIdx: number,
   _elemType: ValType,
 ): ValType | null {
+  const resultVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
   // 0-arg splice: no mutation, return empty array
   if (callExpr.arguments.length === 0) {
     // Still need to evaluate receiver for side effects. (#5145) It is also the
@@ -6177,14 +6245,14 @@ function compileArraySplice(
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-    fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
     if (zeroArgSpeciesDeps !== undefined && zeroArgSpeciesLocal !== undefined) {
       return emitArraySpeciesResultSwap(ctx, fctx, zeroArgSpeciesDeps, zeroArgSpeciesLocal, {
         kind: "ref_null",
-        typeIdx: vecTypeIdx,
+        typeIdx: resultVecTypeIdx,
       });
     }
-    return { kind: "ref_null", typeIdx: vecTypeIdx };
+    return { kind: "ref_null", typeIdx: resultVecTypeIdx };
   }
 
   const vecTmp = allocLocal(fctx, `__arr_spl_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -6404,14 +6472,14 @@ function compileArraySplice(
   fctx.body.push({ op: "local.get", index: delCountTmp });
   fctx.body.push({ op: "local.get", index: delData });
   fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "struct.new", typeIdx: resultVecTypeIdx });
   if (speciesDeps !== undefined && speciesLocal !== undefined) {
     return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, {
       kind: "ref_null",
-      typeIdx: vecTypeIdx,
+      typeIdx: resultVecTypeIdx,
     });
   }
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
+  return { kind: "ref_null", typeIdx: resultVecTypeIdx };
 }
 
 // ── Functional array methods (filter, map, reduce, forEach, find, findIndex, some, every) ──
@@ -6613,6 +6681,20 @@ function setupArrayCallback(
   tag: string,
   bridgeName?: string,
   thisArgIndex?: number,
+  /**
+   * (#6602) The receiver's REAL element type. Installed as
+   * `ctx.arrayHofNullableElemParamOverride` for the duration of the callback
+   * compile so a `ref_null` element is not asserted non-null at the callback
+   * boundary — see `array-hof-nullable-elem-param.ts`. Omitted by `map`, which
+   * has its own unconditional override.
+   */
+  elemType?: ValType,
+  /**
+   * (#6602) Runtime parameter index that receives the element. 0 for the
+   * predicate family `(element, index, array)`; **1** for
+   * `reduce`/`reduceRight`, whose parameter 0 is the accumulator.
+   */
+  elemParamIndex = 0,
 ): ArrayCallbackSetup | null {
   const cbArg = callExpr.arguments[0]!;
   const hoistedCallback =
@@ -6622,11 +6704,18 @@ function setupArrayCallback(
           return funcIdx === undefined ? undefined : emitFuncRefAsClosure(ctx, fctx, cbArg.text, funcIdx);
         })()
       : undefined;
+  // (#6602) Window the receiver's real element type over the callback compile.
+  // `nullableElemParamOverrideFor` yields a value only for a `ref_null` element
+  // type, and the consumer only honours it against the exact non-null twin, so
+  // every other receiver compiles byte-for-byte as before.
+  const savedNullableElemOverride = ctx.arrayHofNullableElemParamOverride;
+  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType, elemParamIndex);
   const cbResult =
     hoistedCallback ??
     (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
       ? compileArrowAsClosure(ctx, fctx, cbArg)
       : compileExpression(ctx, fctx, cbArg));
+  ctx.arrayHofNullableElemParamOverride = savedNullableElemOverride;
 
   let closureInfo: ClosureInfo | undefined;
   let closureTypeIdx: number | undefined;
@@ -7423,7 +7512,7 @@ function compileArrayFilter(
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", bridge, 1, elemType);
   if (!setup) return null;
 
   const resLen = allocLocal(fctx, `__arr_flt_rl_${fctx.locals.length}`, { kind: "i32" });
@@ -7440,7 +7529,9 @@ function compileArrayFilter(
       : undefined;
   const overlay = overlayFilterAccess(ctx, fctx, loop, elemType, elemTmp, rawOverlayElemLocal);
   const resultVecTypeIdx =
-    overlay?.rawElemLocal === undefined ? vecTypeIdx : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    overlay?.rawElemLocal === undefined
+      ? ordinaryArrayResultVecType(ctx, vecTypeIdx)
+      : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
   const resultArrTypeIdx =
     overlay?.rawElemLocal === undefined ? arrTypeIdx : getArrTypeIdxFromVec(ctx, resultVecTypeIdx);
   const resultElemLocal = overlay?.rawElemLocal ?? elemTmp;
@@ -7546,7 +7637,7 @@ function compileArrayMap(
   // Determine the result element type from the callback's own return type
   let mapResultElemType: ValType = elemType;
   let mapArrTypeIdx = arrTypeIdx;
-  let mapVecTypeIdx = vecTypeIdx;
+  let mapVecTypeIdx = ordinaryArrayResultVecType(ctx, vecTypeIdx);
 
   if (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)) {
     const cbSig = ctx.checker.getSignatureFromDeclaration(cbArg);
@@ -7779,7 +7870,7 @@ function compileArrayReduce(
 
   const numKind = ctx.fast ? "i32" : "f64";
   const bridgeName = ctx.fast ? "__call_2_i32" : "__call_2_f64";
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduce", "red", bridgeName);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduce", "red", bridgeName, undefined, elemType, 1);
   if (!setup) return null;
 
   // The accumulator local must match the actual accumulator type, not always
@@ -7966,7 +8057,7 @@ function compileArrayReduceRight(
     flushLateImportShifts(ctx, fctx);
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduceRight", "rr", bridgeName);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduceRight", "rr", bridgeName, undefined, elemType, 1);
   if (!setup) return null;
 
   // The accumulator local must match the actual accumulator type, not always
@@ -8201,7 +8292,7 @@ function compileArrayForEach(
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, false);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", bridge, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe", receiverIsExternref);
@@ -8256,7 +8347,7 @@ function compileArrayFind(
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", bridge, 1, elemType);
   if (!setup) return null;
 
   const elemTmpLocal = allocLocal(fctx, `__arr_find_el_${fctx.locals.length}`, elemType);
@@ -8367,7 +8458,7 @@ function compileArrayFindIndex(
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", bridge, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi", receiverIsExternref);
@@ -8482,7 +8573,7 @@ function compileArrayFindLast(
     return elemType;
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "findLast", "findLast", undefined, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findLast", "findLast", undefined, 1, elemType);
   if (!setup) return null;
 
   const elemTmpLocal = allocLocal(fctx, `__arr_findLast_el_${fctx.locals.length}`, elemType);
@@ -8592,7 +8683,7 @@ function compileArrayFindLastIndex(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "findLastIndex", "fli", undefined, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findLastIndex", "fli", undefined, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoopReverse(
@@ -8671,7 +8762,7 @@ function compileArraySome(
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", bridge, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some", receiverIsExternref);
@@ -8738,7 +8829,7 @@ function compileArrayEvery(
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", bridge, 1);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", bridge, 1, elemType);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr", receiverIsExternref);

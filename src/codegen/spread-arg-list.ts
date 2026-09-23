@@ -84,6 +84,43 @@ export interface SpreadArgList {
   emitStores(sink: SpreadArgSink): void;
 }
 
+/**
+ * Copy a sink's instructions for ONE use (#6421).
+ *
+ * A sink is emitted once per slot, so splicing the caller's array in directly
+ * puts the SAME instruction objects at several points of one body. The
+ * late-import shifter dedups by ARRAY identity (`shiftFuncIndices` keeps a
+ * `Set<Instr[]>`), never by instruction identity, so it walks each repeated
+ * object once per occurrence and adds the shift delta to a `call`/`ref.func`
+ * index that many times — the second and later slots then call a function
+ * several slots past the right one. Measured on `String.fromCharCode(48,
+ * ...[65,66,67])` in standalone, where all four slots are static values: the
+ * accumulating `__str_concat` was shifted four times and the call answered
+ * `"0"` instead of `"0ABC"`.
+ *
+ * Cloning per use also makes it safe for a caller to hold locals or nested
+ * blocks in its sink, since each copy is shifted exactly once.
+ */
+function cloneInstrs(instrs: readonly Instr[]): Instr[] {
+  return instrs.map((instr) => {
+    const copy = { ...instr } as Instr & {
+      body?: Instr[];
+      then?: Instr[];
+      else?: Instr[];
+      catchAll?: Instr[];
+      catches?: { body?: Instr[] }[];
+    };
+    if (Array.isArray(copy.body)) copy.body = cloneInstrs(copy.body);
+    if (Array.isArray(copy.then)) copy.then = cloneInstrs(copy.then);
+    if (Array.isArray(copy.else)) copy.else = cloneInstrs(copy.else);
+    if (Array.isArray(copy.catchAll)) copy.catchAll = cloneInstrs(copy.catchAll);
+    if (Array.isArray(copy.catches)) {
+      copy.catches = copy.catches.map((c) => (Array.isArray(c.body) ? { ...c, body: cloneInstrs(c.body) } : { ...c }));
+    }
+    return copy;
+  });
+}
+
 /** True when any argument at or after `startIdx` is a spread element. */
 export function hasSpreadArgument(args: readonly ts.Expression[], startIdx = 0): boolean {
   for (let i = startIdx; i < args.length; i++) if (ts.isSpreadElement(args[i]!)) return true;
@@ -346,9 +383,9 @@ export function buildSpreadArgList(
   const emitStores = (sink: SpreadArgSink): void => {
     for (const slot of slots) {
       if (slot.kind === "value") {
-        fctx.body.push(...sink.pre);
+        fctx.body.push(...cloneInstrs(sink.pre));
         fctx.body.push({ op: "local.get", index: slot.local });
-        fctx.body.push(...sink.post);
+        fctx.body.push(...cloneInstrs(sink.post));
         continue;
       }
       const idxLocal = allocLocal(fctx, `__${tag}_i_${fctx.locals.length}`, { kind: "i32" });
@@ -381,9 +418,9 @@ export function buildSpreadArgList(
               { op: "local.get", index: slot.lenLocal },
               { op: "i32.ge_s" },
               { op: "br_if", depth: 1 },
-              ...sink.pre,
+              ...cloneInstrs(sink.pre),
               ...read,
-              ...sink.post,
+              ...cloneInstrs(sink.post),
               { op: "local.get", index: idxLocal },
               { op: "i32.const", value: 1 },
               { op: "i32.add" },

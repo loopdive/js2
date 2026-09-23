@@ -29,7 +29,7 @@
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
-import { TA_CTOR_BYTES, TA_CTOR_KINDS } from "./registry/types.js";
+import { TA_CTOR_BYTES, TA_CTOR_KINDS, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { ensureTypedArrayViewNativeProtoGlue } from "./array-object-proto.js";
 import { buildLazyNativeProtoGetInstrs } from "./native-proto.js";
 import { FNINST_BAG_OWNS, FNINST_TOMBSTONE } from "./function-instance-props.js";
@@ -176,12 +176,20 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
     return chain;
   };
 
-  /** `local.get 0; any.convert_extern; ref.test $__ta_ctor` — receiver guard. */
-  const isTaCtor = (): Instr[] => [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: taCtorTypeIdx },
-  ];
+  /**
+   * `local.get 0; any.convert_extern; …` receiver guard — the brand-VALUE-
+   * checked `taCtorIdentityTestInstrs` (#5383 S39 R-other-bare-ref-test), not
+   * a bare `ref.test`. A field-less class's compiled root (instance OR
+   * class-object value, #3976) shares `$__ta_ctor`'s exact `{i32, i32}`
+   * shape (#6620's root cause), so this receiver guard — spliced in front of
+   * `__builtinfn_get_meta`/`__builtinfn_gopd`/`__builtinfn_delete` — matched
+   * any such class reaching those natives whenever its compiler-assigned
+   * `__tag` fell inside `TA_CTOR_KINDS`' 0..10 range, answering wrong
+   * TypedArray-ctor metadata (e.g. `Int16Array.prototype`) instead of
+   * declining to the ordinary object path.
+   */
+  const isTaCtor = (): Instr[] =>
+    taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]);
 
   /**
    * (#5194 step 1) `externref`: the receiver kind's `<View>.prototype` glue
@@ -343,8 +351,8 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.set", index: 2 },
-    { op: "local.get", index: 2 },
-    { op: "ref.test", typeIdx: taCtorTypeIdx },
+    // (#5383 S39 R-other-bare-ref-test) See `isTaCtor`'s doc above.
+    ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: 2 }]),
     {
       op: "if",
       blockType: { kind: "empty" },

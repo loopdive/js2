@@ -1,0 +1,40 @@
+{
+  "schema": "repaired-patch-static-validation-v1",
+  "manifestSha256": "daba0e6d864187ee81f7f75a1a9cec2fcf6385b2e359df9e097b28d2821ec196",
+  "patchReadbackHashesVerified": true,
+  "syntaxParsing": {
+    "tool": "TypeScript 5.9.3 createSourceFile",
+    "files": 8,
+    "parseDiagnostics": 0,
+    "typecheck": false,
+    "emit": false
+  },
+  "inMemoryUnifiedPatchRoundtrip": { "files": 8, "exactPostimageMatches": 8 },
+  "readOnlyGitApplyChecks": [
+    {
+      "patch": "frame-repairs.patch",
+      "originalRoot": "/private/tmp/js2-3518-frame-baseline-0194-20260908",
+      "arguments": ["apply", "--check", "--whitespace=error-all"],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "applied": false
+    },
+    {
+      "patch": "delay-repairs.patch",
+      "originalRoot": "/private/tmp/js2-3518-logical-vector-integration-20260908",
+      "arguments": ["apply", "--check", "--whitespace=error-all"],
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "applied": false
+    }
+  ],
+  "originalFullSourceCensusesVerifiedBeforeAndAfterConstruction": true,
+  "protectedSourceWrites": 0,
+  "compilerInvocations": 0,
+  "compilerBuilderEvaluations": 0,
+  "comparisonRuns": 0,
+  "liveProcesses": [],
+  "limits": "Static applicability and syntax are not type checking, execution, emitted classifier identity, repaired/candidate equality, or authorization to run. Parent must independently reproduce postimages/censuses in new isolated roots before separately approved execution."
+}

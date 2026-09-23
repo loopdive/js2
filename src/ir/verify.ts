@@ -22,6 +22,7 @@
 
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrModuleDeclarations, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
+import { irSupportRef } from "./core/types.js";
 // #4605 — the module-level declared-type tables and the rules that read them.
 // `verifyIrFunction` stays standalone: the tables arrive as an optional
 // parameter, and their absence is always a conservative skip.
@@ -371,6 +372,30 @@ export function verifyIrFunction(
   options?: IrVerificationOptions,
 ): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
+  const checkSupportType = (type: IrType | null | undefined): void => {
+    if (type?.kind !== "support-ref") return;
+    try {
+      irSupportRef(type.ref, type.nullable);
+      if (Object.hasOwn(type, "val") || Object.hasOwn(type, "typeIdx") || Object.hasOwn(type, "layout"))
+        throw new TypeError("support-ref cannot carry physical fields");
+    } catch (error) {
+      errors.push({
+        message: `invalid support-ref type: ${error instanceof Error ? error.message : String(error)}`,
+        func: func.name,
+      });
+    }
+  };
+  for (const param of func.params) checkSupportType(param.type);
+  for (const type of func.resultTypes) checkSupportType(type);
+  for (const block of func.blocks) {
+    for (const type of block.blockArgTypes) checkSupportType(type);
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (instr) => {
+        checkSupportType(instr.resultType);
+        if (instr.kind === "const" && instr.value.kind === "null") checkSupportType(instr.value.ty);
+      });
+  }
+  if (errors.length) return errors;
   const defs = new Set<IrValueId>();
 
   if (func.asyncPlan) {
@@ -551,6 +576,7 @@ export function verifyIrFunction(
  * an unambiguous mismatch.
  */
 function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
+  if (actual.kind === "support-ref" || declared.kind === "support-ref") return irTypeEquals(actual, declared);
   // Fnctor values are nominal source-qualified instances, never arbitrary
   // reference-shaped carriers. An exact shape match is required in either
   // return direction; there is no implicit fnctor↔object/class conversion.
@@ -1539,6 +1565,18 @@ function checkBranchArgTypes(
 ): void {
   const target = func.blocks[toIdx];
   if (!target) return; // arity check already reported the bad target
+  for (let i = 0; i < args.length; i++) {
+    const actual = typeOf.get(args[i]!),
+      declared = target.blockArgTypes[i];
+    if (actual?.kind === "support-ref" || declared?.kind === "support-ref") {
+      if (!actual || !declared || !irTypeEquals(actual, declared))
+        errors.push({
+          message: `branch arg ${i} support-ref identity/nullability mismatch`,
+          func: func.name,
+          block: from.id as number,
+        });
+    }
+  }
   const n = Math.min(args.length, target.blockArgTypes.length);
   for (let i = 0; i < n; i++) {
     const declared = target.blockArgTypes[i];
@@ -2095,6 +2133,14 @@ function checkArmsAgainstResult(
   blockId: number,
   ctx: RoadmapRuleCtx,
 ): void {
+  if (resultType?.kind === "support-ref" || arms.some(([, value]) => ctx.typeOf.get(value)?.kind === "support-ref")) {
+    for (const [label, value] of arms) {
+      const actual = ctx.typeOf.get(value);
+      if (!actual || !resultType || !irTypeEquals(actual, resultType))
+        roadmapError(ctx, blockId, `${kind} ${label} support-ref identity/nullability mismatch`);
+    }
+    return;
+  }
   const want = resultType ? (asVal(resultType)?.kind ?? null) : null;
   if (want === null) return;
   for (const [label, v] of arms) {
@@ -2183,6 +2229,12 @@ function checkDeclaredCarrier(
   ctx: RoadmapRuleCtx,
   suffix = "",
 ): void {
+  const actual = ctx.typeOf.get(value);
+  if (declared?.kind === "support-ref" || actual?.kind === "support-ref") {
+    if (!actual || !declared || !irTypeEquals(actual, declared))
+      roadmapError(ctx, blockId, `${label} support-ref identity/nullability mismatch${suffix}`);
+    return;
+  }
   const want = asVal(declared)?.kind ?? null;
   const got = valKindOf(ctx.typeOf, value);
   if (want !== null && got !== null && got !== want) {
@@ -2258,6 +2310,32 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
   if (instr.kind === "call") {
     const resultKind = instr.resultType ? (asVal(instr.resultType)?.kind ?? null) : null;
     const signature = ctx.declarations?.declaredSignatures?.get(key);
+    const carriesSupport =
+      instr.resultType?.kind === "support-ref" ||
+      instr.args.some((value) => ctx.typeOf.get(value)?.kind === "support-ref") ||
+      signature?.result?.kind === "support-ref" ||
+      signature?.params.some((type) => type.kind === "support-ref");
+    if (carriesSupport) {
+      if (!signature) roadmapError(ctx, blockId, `call ${instr.target.name} support-ref requires a declared signature`);
+      else {
+        if (signature.params.length !== instr.args.length)
+          roadmapError(ctx, blockId, `call ${instr.target.name} support-ref declaration arity mismatch`);
+        for (let i = 0; i < instr.args.length; i++) {
+          const actual = ctx.typeOf.get(instr.args[i]!),
+            expected = signature.params[i];
+          if (actual?.kind === "support-ref" || expected?.kind === "support-ref")
+            if (!actual || !expected || !irTypeEquals(actual, expected))
+              roadmapError(
+                ctx,
+                blockId,
+                `call ${instr.target.name} arg ${i} support-ref identity/nullability mismatch`,
+              );
+        }
+        if (instr.resultType?.kind === "support-ref" || signature.result?.kind === "support-ref")
+          if (!instr.resultType || !signature.result || !irTypeEquals(instr.resultType, signature.result))
+            roadmapError(ctx, blockId, `call ${instr.target.name} result support-ref identity/nullability mismatch`);
+      }
+    }
     if (signature !== undefined) {
       const want = signature.result ? (asVal(signature.result)?.kind ?? null) : null;
       const args = instr.args.length;
@@ -2429,6 +2507,28 @@ function collectIrDefinitions(func: IrFunction): ReadonlyMap<IrValueId, IrInstr>
   return definitions;
 }
 
+function checkSupportRefFlow(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx): void {
+  const supportOperand = collectUses(instr).some((value) => ctx.typeOf.get(value)?.kind === "support-ref");
+  const supportResult = instr.resultType?.kind === "support-ref";
+  if (supportOperand || supportResult) {
+    const permitted =
+      instr.kind === "call" ||
+      instr.kind === "if" ||
+      instr.kind === "select" ||
+      instr.kind === "early.return" ||
+      (instr.kind === "unary" && instr.op === "ref.is_null" && !supportResult) ||
+      (instr.kind === "const" &&
+        instr.value.kind === "null" &&
+        instr.resultType?.kind === "support-ref" &&
+        instr.resultType.nullable &&
+        irTypeEquals(instr.value.ty, instr.resultType));
+    if (!permitted) roadmapError(ctx, blockId, `${instr.kind} does not support support-ref flow`);
+    const condition = instr.kind === "if" ? instr.cond : instr.kind === "select" ? instr.condition : undefined;
+    if (condition !== undefined && ctx.typeOf.get(condition)?.kind === "support-ref")
+      roadmapError(ctx, blockId, `${instr.kind} condition cannot be support-ref`);
+  }
+}
+
 function verifyInstrTypeRules(
   func: IrFunction,
   typeOf: ReadonlyMap<IrValueId, IrType>,
@@ -2464,6 +2564,7 @@ function verifyInstrTypeRules(
   };
 
   const checkInstr = (instr: IrInstr, blockId: number): void => {
+    checkSupportRefFlow(instr, blockId, roadmap);
     if (checkRoadmapRule(instr, blockId, roadmap)) return;
     switch (instr.kind) {
       case "intrinsic": {

@@ -33,6 +33,10 @@ async function run(src: string): Promise<any> {
   const io: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, io);
   io.__setExports?.(instance.exports);
+  io.__setInstance?.(instance);
+  // (#6438) Establish the data-struct authority: without it the raw-exports
+  // overload cannot decode a returned struct and now refuses instead of
+  // answering `{}` (every assertion below read `{}` on main).
   return wrapExports(instance.exports, { signatures: result.exportSignatures });
 }
 

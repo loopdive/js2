@@ -15,6 +15,9 @@
 //     null / boolean / string / finite non-negative-zero number, or a single-key
 //     tag {"$bigint": "<canonical decimal>"} | {"$number": "-0"|"NaN"|"Infinity"|"-Infinity"}.
 //     A malformed value is a schema refusal, never a mismatch.
+//   - optional mode: await-fulfill or await-reject; settlement has a 5-second limit.
+//     Optional checkpoints contain 2..18 export/expected pairs: immediate,
+//     one microtask per interior sample, then completion. They require async mode.
 //
 // The child decodes the bytes through the complete (re-authenticating) decode,
 // accepts and emits the SAME decoded object for every requested backend/target
@@ -110,7 +113,7 @@ if (!encodedPath || !oraclePath) {
 }
 
 // The value-domain validator is the same one the in-process comparison uses.
-const { compareExports, oracleValueProblem, replayOptions, replayProgram, RUNTIME_BACKENDS, RUNTIME_TARGETS } =
+const { compareExportsAsync, oracleCallProblems, replayOptions, replayProgram, RUNTIME_BACKENDS, RUNTIME_TARGETS } =
   await import("../tests/helpers/ir-whole-program-replay.ts");
 
 function validateOracle(raw) {
@@ -143,20 +146,7 @@ function validateOracle(raw) {
   if (!Array.isArray(raw.calls) || raw.calls.length === 0) problems.push("oracle.calls must be a nonempty array");
   else {
     raw.calls.forEach((call, index) => {
-      if (call === null || typeof call !== "object" || Array.isArray(call)) {
-        problems.push(`oracle.calls[${index}] must be an object`);
-        return;
-      }
-      if (typeof call.export !== "string" || call.export.length === 0)
-        problems.push(`oracle.calls[${index}].export must be a nonempty string`);
-      if (!Array.isArray(call.args) || !call.args.every((arg) => typeof arg === "number" && Number.isFinite(arg))) {
-        problems.push(`oracle.calls[${index}].args must be an array of finite numbers`);
-      }
-      if (!Object.hasOwn(call, "expected")) problems.push(`oracle.calls[${index}] lacks an expected value`);
-      else {
-        const problem = oracleValueProblem(call.expected);
-        if (problem) problems.push(`oracle.calls[${index}].expected is malformed: ${problem}`);
-      }
+      for (const problem of oracleCallProblems(call)) problems.push(`oracle.calls[${index}]: ${problem}`);
     });
   }
   return problems;
@@ -180,7 +170,7 @@ if (oracleProblems.length > 0) {
 try {
   const { decodePreparedIrProgram, digestEncodedPreparedIrProgram, encodePreparedIrProgram } =
     await import("../src/ir/program-codec.ts");
-  const { emittedStartupAdapterIndex } = await import("../src/ir/program-consumer.ts");
+  const { emittedStartupAdapterIndex, emittedSupportFunctionReceipts } = await import("../src/ir/program-consumer.ts");
 
   const text = readFileSync(encodedPath, "utf8");
   report.digest = digestEncodedPreparedIrProgram(text);
@@ -198,13 +188,18 @@ try {
         continue;
       }
       const { run } = outcome;
-      const rows = compareExports(run.exports, oracle.calls);
+      const rows = await compareExportsAsync(run.exports, oracle.calls);
       const receipts = run.emitted.emittedUnitIds;
       const projection = run.accepted.runtime.prepared.functions.map((fn) => fn.unitId);
       const adapterIndex = emittedStartupAdapterIndex(run.emitted);
+      const supportReceipts = emittedSupportFunctionReceipts(run.emitted);
+      const supportIndices = new Set(supportReceipts.map((receipt) => receipt.index));
+      if (supportIndices.size !== supportReceipts.length || supportIndices.has(adapterIndex))
+        fail(`${key}: duplicate or overlapping physical support receipts`);
       const importedFunctions = run.emitted.module.imports.filter((entry) => entry.desc.kind === "func").length;
       const ownedFunctions = run.emitted.module.functions.filter(
-        (_, position) => importedFunctions + position !== adapterIndex,
+        (_, position) =>
+          importedFunctions + position !== adapterIndex && !supportIndices.has(importedFunctions + position),
       ).length;
       report.targets[key] = {
         kind: "ran",
@@ -213,6 +208,7 @@ try {
         projectionUnits: projection.length,
         moduleFunctions: run.emitted.module.functions.length,
         startupAdapterIndex: adapterIndex,
+        supportFunctions: supportReceipts,
         moduleExports: run.emitted.module.exports.length,
         rows,
       };

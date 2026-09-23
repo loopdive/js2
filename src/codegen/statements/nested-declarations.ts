@@ -1,9 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Nested declaration lowering, hoisting, default parameters, and `arguments`. */
 import { ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import {
+  bodyReferencesOwnThis,
+  functionLikeReferencesOwnThis,
+  readsAmbientThisGlobal,
+} from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -141,6 +146,16 @@ function nestedParameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
       (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
       jsdocTags.some((tag) => tag.isBracketed === true))
   );
+}
+
+/**
+ * Mirror declarations.ts' bindingPatternParamNeedsWiden (#862) for lifted
+ * nested declarations: an unannotated binding-pattern parameter must take the
+ * externref destructure path, never a nominal tuple/anon-struct ABI.
+ */
+function nestedBindingPatternParamNeedsWiden(p: ts.ParameterDeclaration): boolean {
+  if (p.type || p.dotDotDotToken) return false;
+  return ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name);
 }
 
 const nestedParamUndefinedObservationCache = new WeakMap<ts.ParameterDeclaration, boolean>();
@@ -1385,15 +1400,23 @@ function compileNestedFunctionDeclarationInScope(
     }
     return false;
   };
+  // An unannotated binding-pattern parameter routes through the externref
+  // destructure path (#862) — a nominal tuple/anon-struct ABI makes every
+  // caller holding a different runtime shape fail the guarded cast and pass
+  // null. Top-level declarations (bindingPatternParamNeedsWiden) and lifted
+  // closures both widen; the nested-declaration lane silently did not, so a
+  // nested `function f(a, { b, c })` pinned its pattern to one `__anon_*`
+  // shape and deno_core's `copyAccessor(dest, prefix, key, desc)` destructured
+  // null at `__module_init`.
   const paramTypes: ValType[] = [];
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
     if (paramType !== undefined) ensureStructForType(ctx, paramType);
     let wasmType: ValType =
-      foreignEvalDeclaration || restBindingOverridesToExternref(p)
+      foreignEvalDeclaration || restBindingOverridesToExternref(p) || nestedBindingPatternParamNeedsWiden(p)
         ? { kind: "externref" }
-        : resolveWasmType(ctx, paramType!);
+        : widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType!));
     if (!foreignEvalDeclaration) {
       wasmType = preserveOmittedNestedParameter(ctx, stmt, p, wasmType);
     }
@@ -1818,6 +1841,8 @@ function compileNestedFunctionDeclarationInScope(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(funcName);
 
   // (#5148 checkpoint) Classify referenced sibling registry functions for the
   // lift-time transitive-capture promotion both branches below perform. The
@@ -3282,10 +3307,10 @@ export function hoistFunctionDeclarations(
       // stale result ABI.
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
-        if (foreignEvalDeclaration) return { kind: "externref" };
+        if (foreignEvalDeclaration || nestedBindingPatternParamNeedsWiden(p)) return { kind: "externref" };
         const paramType = ctx.checker.getTypeAtLocation(p);
         ensureStructForType(ctx, paramType);
-        let wt = resolveWasmType(ctx, paramType);
+        let wt = widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType));
         wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
@@ -3740,6 +3765,33 @@ export function ensureExtrasArgvGlobal(ctx: CodegenContext): { globalIdx: number
   ctx.extrasArgvGlobalIdx = globalIdx;
   ctx.extrasArgvVecTypeIdx = vti;
   return { globalIdx, vecTypeIdx: vti };
+}
+
+/**
+ * (#6491) Lazily register a `(mut i32)` module global `__host_argc`: the
+ * HOST's channel for telling `__call_fn_<arity>` the real call-site argument
+ * count when it widened an under-applied call to the closure's declared arity.
+ *
+ * Deliberately NOT `__argc`. That global is written by in-Wasm callers
+ * (`maybeSetArgcForKnownCall`) and consumed only by callees that read
+ * `arguments`, so at the moment a host callback re-enters the module it may
+ * hold a stale count from an unrelated Wasm call — a free-function dispatcher
+ * that consumed `__argc` would report THAT number as `arguments.length`. This
+ * global is written by exactly one producer (the `__\0js2_call_fn_argc_<arity>`
+ * wrapper) and consumed-and-cleared by exactly one consumer, so a module whose
+ * host never seeds it observes the historical behaviour bit for bit.
+ */
+export function ensureHostArgcGlobal(ctx: CodegenContext): number {
+  if (ctx.hostArgcGlobalIdx >= 0) return ctx.hostArgcGlobalIdx;
+  const globalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__host_argc",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: -1 }],
+  });
+  ctx.hostArgcGlobalIdx = globalIdx;
+  return globalIdx;
 }
 
 /**

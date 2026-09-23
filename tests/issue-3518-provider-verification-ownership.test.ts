@@ -28,7 +28,7 @@ import { createIrBindingId } from "../src/shared/contracts/identity-values.js";
 import type { IntrinsicId } from "../src/ir/core/intrinsic-vocabulary.js";
 import type { PreparedIrAsyncRuntime, PreparedIrAsyncRuntimeInput } from "../src/ir/runtime/contracts/prepared.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
-import { currentDeclarations, historicalIntrinsicVerifier } from "./helpers/ir-historical-runtime-reconstruction.js";
+import { currentDeclarations, historicalRuntimeDeclarations } from "./helpers/ir-historical-runtime-reconstruction.js";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string): string => readFileSync(resolve(root, path), "utf8");
@@ -398,67 +398,30 @@ function nameOf(node: ts.Statement, file: ts.SourceFile): string {
   throw new Error("unnamed declaration in " + file.fileName);
 }
 
-function originalIntrinsicVerifier(
-  node: ts.Statement,
-  file: ts.SourceFile,
-  overrides: ReadonlyMap<string, string>,
-): string {
-  historicalIntrinsicVerifier((path) => overrides.get(path) ?? read(path));
-  if (!ts.isFunctionDeclaration(node) || !node.body) throw new Error("missing combined verifier body");
-  const first = node.body.statements[0]!;
-  if (first.getText(file) !== "const errors = [...verifyIrIntrinsicSignature(instr, typeOf)];")
-    throw new Error("combined verifier no longer invokes the exact semantic prefix");
-  const semanticFile = parse("src/ir/analysis/intrinsics.ts", overrides);
-  const matches = semanticFile.statements.filter(
-    (entry) => ts.isFunctionDeclaration(entry) && entry.name?.text === "verifyIrIntrinsicSignature",
-  );
-  if (matches.length !== 1) throw new Error("missing or duplicated semantic verifier");
-  const semantic = matches[0] as ts.FunctionDeclaration;
-  if (!semantic.body || semantic.body.statements.at(-1)!.getText(semanticFile) !== "return errors;")
-    throw new Error("semantic verifier no longer returns its complete diagnostics");
-  const prefix = semantic.body.statements
-    .slice(0, -1)
-    .map((entry) => entry.getFullText(semanticFile))
-    .join("");
-  const original = node.getFullText(file);
-  return (
-    original.slice(0, first.getFullStart() - node.getFullStart()) +
-    prefix +
-    original.slice(first.end - node.getFullStart())
-  ).trim();
-}
-
 function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap<string, string> = new Map()): void {
-  // Reject source-order changes before the historical inter-owner projection.
-  // These paths, kinds and overload ordinals are pinned in the shared helper.
-  for (const path of destinations[receipt.name]!)
-    currentDeclarations(path, (file) => overrides.get(file) ?? read(file));
-  const files = destinations[receipt.name]!.map((path) => parse(path, overrides));
-  const candidates = files.flatMap((file) =>
-    declarations(file).map((node) => ({ file, node, name: nameOf(node, file) })),
-  );
-  const remaining = [...candidates];
-  const reconstructed = receipt.names.map((name) => {
-    const at = remaining.findIndex((entry) => entry.name === name);
-    if (at < 0) throw new Error("missing declaration " + name);
-    const entry = remaining.splice(at, 1)[0]!;
-    const text =
-      receipt.name === "intrinsic-support" && name === "verifyIrIntrinsicInstruction"
-        ? originalIntrinsicVerifier(entry.node, entry.file, overrides)
-        : entry.node.getFullText(entry.file).trim();
-    return { ...entry, text };
+  const source = (path: string) => overrides.get(path) ?? read(path);
+  // Current source order is checked before the independent historical order.
+  for (const path of destinations[receipt.name]!) currentDeclarations(path, source);
+  const rows =
+    receipt.name === "runtime-host-capabilities"
+      ? currentDeclarations("src/ir/runtime/host-capabilities.ts", source)
+      : historicalRuntimeDeclarations(
+          receipt.name === "runtime-callable-declarations"
+            ? "src/ir/runtime/callable-declarations.ts"
+            : "src/ir/" + receipt.name + ".ts",
+          source,
+        );
+  if (JSON.stringify(rows.map((row) => row.name)) !== JSON.stringify(receipt.names))
+    throw new Error("historical declaration order changed");
+  const reconstructed = rows.map((row) => {
+    // Reparse the normalized declaration, including live ordinary comments.
+    // row.node can otherwise still contain the current extra class overload.
+    const leading = row.file.text.slice(row.node.getFullStart(), row.node.getStart());
+    const file = parse(row.path, new Map([[row.path, leading + row.text]]));
+    if (file.statements.length !== 1) throw new Error("reconstructed declaration population changed");
+    const node = file.statements[0]!;
+    return { name: row.name, file, node, text: node.getFullText(file).trim() };
   });
-  const permittedExistingVocabulary = new Set([
-    "ASYNC_RUNTIME_FEATURES",
-    "ASYNC_OPTIONAL_RUNTIME_FEATURES",
-    "AsyncRuntimeFeature",
-  ]);
-  if (
-    remaining.some(
-      (entry) => receipt.name !== "async-runtime-providers" || !permittedExistingVocabulary.has(entry.name),
-    )
-  )
-    throw new Error("extra or duplicated declaration in " + receipt.name);
   if (reconstructed.filter(({ node }) => ts.isFunctionDeclaration(node)).length !== receipt.functions)
     throw new Error("function denominator changed");
   if (hash(reconstructed.map(({ text }) => text)) !== receipt.hash) throw new Error("declaration receipt changed");
@@ -473,7 +436,7 @@ function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap
   }
 }
 
-describe("provider ownership source receipts", () => {
+describe("provider ownership historical receipts after checked extension reconstruction", () => {
   it.each(receipts)("retains the complete $name declaration/member/initializer ledger", (receipt) => {
     verifyLedger(receipt);
   });
@@ -494,6 +457,7 @@ describe("provider ownership source receipts", () => {
     "the source receipt rejects a %s implementation mutation",
     (kind) => {
       const receipt = receipts.find((entry) => entry.name === "runtime-manifest")!;
+      verifyLedger(receipt);
       const path = destinations[receipt.name]![0]!;
       const file = parse(path);
       const node = declarations(file).find((entry) => nameOf(entry, file) === "RuntimeManifestBuilder")!;
@@ -526,6 +490,7 @@ describe("provider ownership source receipts", () => {
         original.slice(second.end);
       expect(changed).not.toBe(original);
       const receipt = receipts.find((entry) => destinations[entry.name]!.includes(path))!;
+      verifyLedger(receipt);
       expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/current declaration order/);
     },
   );
@@ -536,11 +501,13 @@ describe("provider ownership source receipts", () => {
     const changed = original.replace("if (!previous) preparedManifestByPlan.delete(input.plan);", "");
     expect(changed).not.toBe(original);
     const receipt = receipts.find((entry) => entry.name === "async-plan")!;
+    verifyLedger(receipt);
     expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/declaration receipt changed/);
   });
 
   it("rejects an empty-success combined verifier independently of historical reconstruction", () => {
     const receipt = receipts.find((entry) => entry.name === "intrinsic-support")!;
+    verifyLedger(receipt);
     const path = "src/ir/runtime/intrinsic-verification.ts";
     const file = parse(path);
     const node = file.statements.find(
@@ -553,7 +520,7 @@ describe("provider ownership source receipts", () => {
     expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/exact semantic prefix/);
   });
 
-  it("retains the full builder member and initialization census", () => {
+  it("keeps the current 37-member/six-overload builder census separate from historical 35/four", () => {
     const file = parse("src/ir/runtime/manifest.ts");
     const builder = file.statements.find(
       (entry): entry is ts.ClassDeclaration =>
@@ -590,6 +557,8 @@ describe("provider ownership source receipts", () => {
       "resolveProvider",
       "resolveProvider",
       "resolveProvider",
+      "resolveProvider",
+      "resolveProvider",
       "assertIntrinsicPlanned",
       "assertProviderPlanned",
       "assertHostCapabilityPlanned",
@@ -617,7 +586,8 @@ describe("provider ownership source receipts", () => {
       "#state",
     ]);
     expect(builder.members.filter((member) => ts.isMethodDeclaration(member) && member.body)).toHaveLength(16);
-    expect(builder.members.filter((member) => ts.isMethodDeclaration(member) && !member.body)).toHaveLength(4);
+    expect(builder.members).toHaveLength(37);
+    expect(builder.members.filter((member) => ts.isMethodDeclaration(member) && !member.body)).toHaveLength(6);
     expect(builder.members.filter(ts.isConstructorDeclaration)).toHaveLength(1);
     expect(builder.members.filter(ts.isGetAccessorDeclaration)).toHaveLength(1);
   });
@@ -647,8 +617,19 @@ describe("canonical provider identities and catalogs", () => {
   ])("forwards every existing $name value by identity", ({ historical, canonical }) => {
     const names = Object.keys(historical).sort();
     expect(names.length).toBeGreaterThan(0);
-    expect(names).toEqual(Object.keys(canonical).sort());
-    for (const name of names) expect(Reflect.get(historical, name)).toBe(Reflect.get(canonical, name));
+    const added = historical === oldCallables ? ["REFERENCE_ERROR_RUNTIME_PROVIDERS", "REFERENCE_ERROR_SIGNATURE"] : [];
+    expect([...names, ...added].sort()).toEqual(Object.keys(canonical).sort());
+    for (const name of names) {
+      expect(Reflect.get(canonical, name)).toBeDefined();
+      expect(Reflect.get(historical, name)).toBe(Reflect.get(canonical, name));
+    }
+    if (historical === oldCallables) {
+      expect(names).toEqual(["irRuntimeCallableDeclaration"]);
+      expect(callables.REFERENCE_ERROR_RUNTIME_PROVIDERS).toBe(manifest.REFERENCE_ERROR_RUNTIME_PROVIDERS);
+      expect(callables.REFERENCE_ERROR_SIGNATURE).toBe(
+        manifest.RUNTIME_FEATURE_SIGNATURES["error.reference.construct"],
+      );
+    }
   });
 
   it("shares the semantic guard and combined verifier with their historical paths", () => {

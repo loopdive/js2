@@ -52,6 +52,7 @@ import {
 import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
 import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { tryCompileWideBigIntExpression } from "./bigint-wide.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import {
   canStructurallyProjectRef,
@@ -94,6 +95,7 @@ import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 import { brandBooleanBinaryResult, compileBinaryExpression } from "./binary-ops.js";
 import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
+import { tryEmitLinkedStaticComputedRead } from "./standalone-linked-static-inheritance.js"; // (#6644)
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
 import { describeInternalError } from "./internal-error.js";
@@ -1082,6 +1084,21 @@ function compileExpressionInner(
   // inner dispatch: outer wrappers and public expected-type boxing/coercion
   // therefore still run before the original operand identity is reached.
   // The planner validates every entry; this has no replay/default fallback.
+  // (#6504 round 31) Same contract, async lane: a pre-await operand that was
+  // evaluated and spilled BEFORE the suspension is read back here rather than
+  // re-evaluated, which is what makes recompiling the containing argument
+  // expression on resume side-effect-free.
+  const asyncOperandLocal = fctx.asyncOperandValueLocals?.get(expr);
+  if (asyncOperandLocal !== undefined) {
+    const asyncOperandType = getLocalType(fctx, asyncOperandLocal);
+    if (asyncOperandType === undefined) {
+      reportError(ctx, expr, "Internal error: async continuation operand spill local is unavailable");
+      return null;
+    }
+    fctx.body.push({ op: "local.get", index: asyncOperandLocal });
+    return asyncOperandType;
+  }
+
   const nativeGeneratorExpressionLocal = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
   if (nativeGeneratorExpressionLocal !== undefined) {
     const nativeGeneratorExpressionType = getLocalType(fctx, nativeGeneratorExpressionLocal);
@@ -1102,6 +1119,10 @@ function compileExpressionInner(
     fctx.body.push({ op: "f64.const", value });
     return { kind: "f64" };
   }
+
+  // (#6656) A bigint expression whose i64 lowering would lose the value.
+  const wideBigInt = tryCompileWideBigIntExpression(ctx, fctx, expr, expectedType);
+  if (wideBigInt !== undefined) return wideBigInt;
 
   if (ts.isBigIntLiteral(expr)) {
     return compileBigIntLiteral(ctx, fctx, expr, expectedType);
@@ -1422,6 +1443,14 @@ function compileExpressionInner(
   }
 
   if (ts.isElementAccessExpression(expr)) {
+    // (#6644) A COMPUTED static read on a class that `extends` a LINKED
+    // provider class falls back to the parent's class object when this
+    // module's own lowering misses — a strict superset of that lowering,
+    // which it calls. Declines for every other receiver.
+    const linkedComputed = tryEmitLinkedStaticComputedRead(ctx, fctx, expr, () =>
+      compileElementAccess(ctx, fctx, expr, { kind: "externref" }),
+    );
+    if (linkedComputed !== undefined) return linkedComputed;
     // (#2128) Same getter-dispatch re-sync as the property-access arm above.
     // (#3037 CS1b(ii)) Re-classify a dynamic `any`-element read (`a[i]`, `o[key]`)
     // that is a direct operand of a standalone `any`-equality into the `$AnyValue`

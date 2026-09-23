@@ -5,6 +5,7 @@
  * codegen/declarations.ts (#3268).
  */
 import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
@@ -37,7 +38,7 @@ export function resolveGenericCallSiteTypes(
         const sigParams = sig.getParameters();
         for (let i = 0; i < sigParams.length; i++) {
           const paramType = ctx.checker.getTypeOfSymbol(sigParams[i]!);
-          params.push(resolveWasmType(ctx, paramType));
+          params.push(widenJsDefaultGuessSymbolSlot(sigParams[i], resolveWasmType(ctx, paramType)));
         }
         const retType = ctx.checker.getReturnTypeOfSignature(sig);
         // (#2905) Carrier own-return guard. resolveWasmType(Promise<T>) lowers to
@@ -1095,6 +1096,20 @@ export function inferImplicitAnyParamType(
     const seeded = dtsSeedAtomToValType(ctx, seedAtom);
     if (seeded !== null) return seeded;
   }
+  // (#6487) A function with no internal call site that is nevertheless
+  // referenced as a VALUE (`export const __h_x = verifyEqualTo;`, `export { fn
+  // }`, a callback handed to an API) has callers this file cannot see, exactly
+  // like an inconclusive call site. Body usage is a use-proof, not an ABI
+  // proof: one numeric use (`obj[name] * 2`) narrows the parameter to f64 and
+  // every unseen caller's string argument then arrives as NaN — the #3471
+  // miscompile class, reached through the escape door instead of the call-site
+  // one. `escapesAsValue` already withdraws the native-string `ref` route above
+  // for this same reason (#2867 S2); withdraw the f64 body route too.
+  //
+  // This sits AFTER the `.d.ts` seed (#743) deliberately: a declared type is a
+  // contract about those unseen callers, so it outranks both the escape
+  // heuristic and the body heuristic. Only the unseeded position falls through.
+  if (callSites.escapesAsValue) return null;
   return inferParamTypeFromBody(ctx, decl, paramIndex);
 }
 

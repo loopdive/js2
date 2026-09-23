@@ -55,6 +55,7 @@ import {
   TA_CTOR_BRAND,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
+  taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
@@ -331,7 +332,21 @@ export function isViewRefTestInstrs(ctx: CodegenContext, anyLocalIdx: number): I
   // plain `$Vec`s, so the pre-#5150 chain answered `false` for it whenever the
   // static type could not decide — which is always, for a first-class value
   // read. `ref.test` needs no ordering, so a Set keeps the chain duplicate-free.
+  // (#6651 E-S3) Two corrections to the carrier set, both measured on the
+  // `built-ins/ArrayBuffer/isView/*` rows:
+  //  - the DYNAMIC view brand `$__ta_dyn_view` was missing, so every
+  //    `testWithTypedArrayConstructors` sample (`new TA(…)` through an `any`
+  //    constructor) read as NOT a view — `arg-is-typedarray.js` and
+  //    `invoked-as-a-fn.js`. Read, never registered: a module with no dynamic
+  //    view keeps today's chain.
+  //  - `$__vec_i32_byte` is the ARRAYBUFFER's own backing carrier (#5349 says
+  //    so where it brands `i8_byte` `final` to keep the two apart), and an
+  //    ArrayBuffer has no [[ViewedArrayBuffer]] slot, so §25.1.4.1 answers
+  //    false for it — `arg-is-typedarray-buffer.js` asserts exactly that.
   const carriers = new Set<number>([...ctx.vecTypeMap.values(), ...ctx.taViewTypeMap.values(), dvWinTypeIdx]);
+  const bufferVecTypeIdx = ctx.vecTypeMap.get("i32_byte");
+  if (bufferVecTypeIdx !== undefined) carriers.delete(bufferVecTypeIdx);
+  if (ctx.taDynViewTypeIdx >= 0) carriers.add(ctx.taDynViewTypeIdx);
   const out: Instr[] = [];
   let emitted = false;
   for (const vi of carriers) {
@@ -4988,8 +5003,11 @@ export function emitTaCtorBytesPerElement(
   const kindLocal = allocLocal(fctx, `__tac_kind_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) `taCtorIdentityTestInstrs`, not a bare
+  // `ref.test` — a field-less class's compiled root (instance OR class-object
+  // value, #3976) shares `$__ta_ctor`'s exact `{i32, i32}` shape (#6620), so
+  // a bare structural test misclassifies it here too.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -5618,8 +5636,9 @@ export function emitDynamicTaViewConstruct(
   const kindLocal = allocLocal(fctx, `__dtav_kind_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment
+  // — the same brand-VALUE-checked identity test, not a bare `ref.test`.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: ctorAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -5894,8 +5913,8 @@ export function emitTaDynCtorConstructFromLocals(
 
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -6458,8 +6477,8 @@ export function emitTaDynCtorConstructFromLocals(
     for (const link of liveChains) ctx.liveBodies.delete(link);
   }
   fctx.body = savedTa;
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descAnyLocal }]));
   const int8Arm = buildInt8ArrayCarrierMatch(ctx, descAnyLocal, taArm);
   releaseSavedTa();
   releaseTaArm();
@@ -7157,6 +7176,15 @@ export function emitTaDynViewWriteF64Vec(
   });
 }
 
+/** (#6651 E5) A per-element step spliced between the carrier read and ToNumber (see `ensureTaFromArrayLikeMappedHelper`). */
+export interface TaFromArrayLikeMapHook {
+  helperName: string;
+  /** Extra externref params after `(ctor, carrier)`. */
+  extraParams: readonly string[];
+  /** Element externref on the stack in, replacement externref out. */
+  mapElement: (fctx: FunctionContext, iLocal: number) => void;
+}
+
 /**
  * (#3177 slice 5) Mint the shared native `__ta_from_arraylike(ctor, carrier) →
  * externref` — the builder behind the standalone `%TypedArray%.of` /
@@ -7174,9 +7202,9 @@ export function emitTaDynViewWriteF64Vec(
  * noJsHost lane only; every dependency is a native DEFINED function
  * (append-only — no import add / funcIdx shift). Idempotent via funcMap.
  */
-export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undefined {
+export function ensureTaFromArrayLikeHelper(ctx: CodegenContext, mapHook?: TaFromArrayLikeMapHook): number | undefined {
   if (!noJsHost(ctx)) return undefined;
-  const helperName = "__ta_from_arraylike";
+  const helperName = mapHook?.helperName ?? "__ta_from_arraylike";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
 
@@ -7191,9 +7219,11 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
 
+  const extraParams = (mapHook?.extraParams ?? []).map((name) => ({ name, type: { kind: "externref" } as ValType }));
   const params: ValType[] = [
     { kind: "externref" }, // ctor ($__ta_ctor)
     { kind: "externref" }, // carrier (indexable)
+    ...extraParams.map((p) => p.type),
   ];
   const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
   const funcIdx = mintDefinedFunc(ctx);
@@ -7204,6 +7234,7 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     params: [
       { name: "ctor", type: { kind: "externref" } },
       { name: "carrier", type: { kind: "externref" } },
+      ...extraParams,
     ],
     locals: [],
     localMap: new Map(),
@@ -7236,8 +7267,8 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   fctx.body.push({ op: "local.set", index: ctorAnyLocal });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: ctorAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -7275,6 +7306,32 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     else: [],
   });
 
+  // (#6651 E2) §23.2.4.1 TypedArrayCreate step 1 is `Construct(C, «len»)`, and
+  // §23.2.1 step 1 makes constructing `%TypedArray%` DIRECTLY a TypeError. Both
+  // identity probes above leave `kind` at the -1 sentinel exactly when `C` is
+  // not a CONCRETE view constructor, and since E2 widened `tryEmitTaStaticOfFrom`
+  // to admit the `%TypedArray%` intrinsic carrier that sentinel is now
+  // reachable. Before this it fell through to `pushElemSizeForKind(-1)` and
+  // built a view out of an abstract constructor.
+  //
+  // The PLACEMENT is the load-bearing part, not the throw. §23.2.2.1 orders the
+  // IteratorStep drain (step 5) — or ToObject + LengthOfArrayLike (step 6) —
+  // BEFORE TypedArrayCreate, so the check must sit AFTER the `__extern_length`
+  // read above, not before it. Raised earlier it reported the
+  // abstract-constructor TypeError for `TypedArray.from(<obj whose length
+  // getter throws>)`, where `built-ins/TypedArray/from/arylk-get-length-error.js`
+  // requires the getter's OWN completion — measured on this branch: the getter
+  // ran 0 times with the check in front of the length read, 1 time behind it.
+  fctx.body.push({ op: "local.get", index: kindLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Abstract class TypedArray not directly constructable"),
+    else: [],
+  });
+
   // bl = n * es; arr = new zeroed byte array[bl].
   fctx.body.push({ op: "local.get", index: nLocal });
   fctx.body.push({ op: "local.get", index: esLocal });
@@ -7299,6 +7356,7 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     fctx.body.push({ op: "local.get", index: iLocal });
     fctx.body.push({ op: "f64.convert_i32_s" });
     fctx.body.push({ op: "call", funcIdx: externGetIdxIdx });
+    mapHook?.mapElement(fctx, iLocal); // (#6651 E5) §23.2.2.1 step 7.e.iii / 11.c: map BEFORE this element's Set
     coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
     fctx.body.push({ op: "local.set", index: vLocal });
     fctx.body.push({ op: "local.get", index: iLocal });

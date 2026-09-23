@@ -24,8 +24,8 @@ import {
 import { demoteToLegacy } from "./outcomes.js";
 import type { IrPromiseDelayCertification, IrPromiseDelayResolver } from "./promise-delay.js";
 
-/** Target-neutral symbol whose standalone provider owns the native Promise/timer projection. */
-export const IR_NATIVE_PROMISE_DELAY_FN = "__ir_promise_delay_native";
+import { IR_NATIVE_PROMISE_DELAY_FN } from "./core/async-callables.js";
+export { IR_NATIVE_PROMISE_DELAY_FN } from "./core/async-callables.js";
 
 export type IrPromiseDelayRuntimeProjection = "host-executor" | "standalone-native";
 

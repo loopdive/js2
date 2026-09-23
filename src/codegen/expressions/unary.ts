@@ -21,6 +21,7 @@ import { tryStaticToNumber } from "./misc.js";
 import { compileMemberIncDec, compilePostfixUnary, compilePrefixUpdate } from "./unary-updates.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitBigIntCarrierNegate } from "../bigint-wide.js";
 
 function compileHostBigIntUnary(
   ctx: CodegenContext,
@@ -154,6 +155,11 @@ function compilePrefixUnary(
           fctx.body.push({ op: "call", funcIdx: negIdx });
           return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
         }
+      }
+      // (#6656) A bigint in a reference slot (e.g. a script-global `var`):
+      // BigInt::unaryMinus on the carrier, not ToNumber (which answered NaN).
+      if (ctx.oracle.staticJsTypeOf(expr.operand) === "bigint" && emitBigIntCarrierNegate(ctx, fctx, operandType)) {
+        return { kind: "externref" };
       }
       if (ctx.fast && operandType?.kind === "i32") {
         // i32 can't represent -0, so convert to f64 and use f64.neg.

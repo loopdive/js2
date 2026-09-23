@@ -1,0 +1,537 @@
+{
+  "schema": "issue5807-bounded-linux-replay-evidence-v1",
+  "run": 34417885898,
+  "workflowHead": "88e9ee46c149a18feebe66a10f617abe0b34a563",
+  "localEvidenceRoot": "/private/tmp/js2-5807-linux-replay-results.WJtxny",
+  "artifacts": {
+    "donor": 10130095338,
+    "candidate": 10130101382
+  },
+  "result": "constructor failure reproduced in both historical commits",
+  "regressionCleared": false,
+  "otherRegressionCovered": false,
+  "limitations": [
+    "Known-passing controls selected during replay from original evidence, not predeclared independent controls",
+    "Hosted images differ between replay arms; original worker scheduling not recoverable",
+    "Compared named verdict fields only, not byte equality or complete receipt equality",
+    "Original donor pass retained; no causal fix or flakiness waiver established"
+  ],
+  "arms": {
+    "donor": {
+      "admission": {
+        "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+        "node": "v25.9.0",
+        "platform": "linux",
+        "arch": "x64",
+        "controls": {
+          "COMPILER_POOL_SIZE": "4",
+          "VITEST_FORK_MAX_OLD_SPACE_SIZE": "1024",
+          "TEST262_WORKER_MAX_OLD_SPACE_SIZE": "1024",
+          "TEST262_INCLUDE_PROPOSALS": "1",
+          "TEST262_TARGET": "gc",
+          "TEST262_RESULT_PREFIX": "test262",
+          "TEST262_CHUNK_INDEX": "33",
+          "TEST262_CHUNK_TOTAL": "52",
+          "TEST262_PATH_FILTER": "",
+          "JS2WASM_IR_FIRST": "",
+          "JS2WASM_FNCTOR_LAYOUT_EMIT": "",
+          "JS2WASM_EVAL_ENGINE": "",
+          "TEST262_IT_TIMEOUT_MS": "",
+          "TEST262_FULL_RUNTIME_EVAL": "",
+          "JS2WASM_TEMPORAL_CACHE": ".test262-cache/temporal"
+        },
+        "imageOS": "ubuntu24",
+        "imageVersion": "20260831.293.1",
+        "originalImageVersion": "20260831.293.1",
+        "limitation": "Hosted image and worker scheduling may differ; this is diagnostic replay, not regression clearance.",
+        "registeredPathsSha256": "a96bc8efe43b6924c8d35af68d108a1ac1dd30a970d21212f8b0845971f5c737",
+        "files": [
+          {
+            "path": "historical-shard/test262-results-34368952422-js-host-mgchunk34.jsonl",
+            "sha256": "6f7c289e7e69aafb15feded1efb301e3f90214dc869e6efe4a765cc39f252dea"
+          },
+          {
+            "path": "historical-shard/test262-results-34368952422-js-host-mgchunk34.shard-34-of-52.complete.json",
+            "sha256": "f8b3e379e17b692e2c5237ab31e1f9c5c97cbe0fc1f40eb8539280cdfdc532da"
+          }
+        ]
+      },
+      "terminal": {
+        "code": 1,
+        "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e"
+      },
+      "populations": {
+        "historical-shard": {
+          "counts": {
+            "compile_error": 15,
+            "pass": 749,
+            "fail": 170,
+            "compile_timeout": 1,
+            "skip": 4
+          },
+          "rows": 939,
+          "selected": [
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArray/prototype/byteOffset/invoked-as-func.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/Int32Array/prototype.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            }
+          ]
+        },
+        "benchmarks/results": {
+          "counts": {
+            "compile_error": 15,
+            "pass": 748,
+            "fail": 171,
+            "compile_timeout": 1,
+            "skip": 4
+          },
+          "rows": 939,
+          "selected": [
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+              "status": "fail",
+              "error": "cannot marshal opaque compiled value to host BigInt64Array constructor (Testing with BigInt64Array and makeArray.)",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArray/prototype/byteOffset/invoked-as-func.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/Int32Array/prototype.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            }
+          ]
+        }
+      }
+    },
+    "candidate": {
+      "admission": {
+        "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+        "node": "v25.9.0",
+        "platform": "linux",
+        "arch": "x64",
+        "controls": {
+          "COMPILER_POOL_SIZE": "4",
+          "VITEST_FORK_MAX_OLD_SPACE_SIZE": "1024",
+          "TEST262_WORKER_MAX_OLD_SPACE_SIZE": "1024",
+          "TEST262_INCLUDE_PROPOSALS": "1",
+          "TEST262_TARGET": "gc",
+          "TEST262_RESULT_PREFIX": "test262",
+          "TEST262_CHUNK_INDEX": "33",
+          "TEST262_CHUNK_TOTAL": "52",
+          "TEST262_PATH_FILTER": "",
+          "JS2WASM_IR_FIRST": "",
+          "JS2WASM_FNCTOR_LAYOUT_EMIT": "",
+          "JS2WASM_EVAL_ENGINE": "",
+          "TEST262_IT_TIMEOUT_MS": "",
+          "TEST262_FULL_RUNTIME_EVAL": "",
+          "JS2WASM_TEMPORAL_CACHE": ".test262-cache/temporal"
+        },
+        "imageOS": "ubuntu24",
+        "imageVersion": "20260907.300.1",
+        "originalImageVersion": "20260831.293.1",
+        "limitation": "Hosted image and worker scheduling may differ; this is diagnostic replay, not regression clearance.",
+        "registeredPathsSha256": "a96bc8efe43b6924c8d35af68d108a1ac1dd30a970d21212f8b0845971f5c737",
+        "files": [
+          {
+            "path": "historical-shard/test262-results-34374533493-js-host-mgchunk34.jsonl",
+            "sha256": "e8202bb74c28badddad4d153654e76edba7b40241753c57c4d8880bffb650519"
+          },
+          {
+            "path": "historical-shard/test262-results-34374533493-js-host-mgchunk34.shard-34-of-52.complete.json",
+            "sha256": "d9756f2f59568c589d9280337552d83a1c1f67eba384e543d0e6213b8ca2b9cb"
+          }
+        ]
+      },
+      "terminal": {
+        "code": 1,
+        "head": "efa0908e09998c73da592fba32708c7ecca8d6e5"
+      },
+      "populations": {
+        "historical-shard": {
+          "counts": {
+            "compile_error": 15,
+            "pass": 748,
+            "fail": 171,
+            "compile_timeout": 1,
+            "skip": 4
+          },
+          "rows": 939,
+          "selected": [
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+              "status": "fail",
+              "error": "cannot marshal opaque compiled value to host BigInt64Array constructor (Testing with BigInt64Array and makeArray.)",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArray/prototype/byteOffset/invoked-as-func.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/Int32Array/prototype.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            }
+          ]
+        },
+        "benchmarks/results": {
+          "counts": {
+            "compile_error": 15,
+            "pass": 748,
+            "fail": 171,
+            "compile_timeout": 1,
+            "skip": 4
+          },
+          "rows": 939,
+          "selected": [
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+              "status": "fail",
+              "error": "cannot marshal opaque compiled value to host BigInt64Array constructor (Testing with BigInt64Array and makeArray.)",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArray/prototype/byteOffset/invoked-as-func.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/Int32Array/prototype.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            },
+            {
+              "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws.js",
+              "status": "pass",
+              "oracle_version": 13,
+              "oracle_lane": "honest",
+              "semantic_providers": "auto",
+              "strict": "both",
+              "reached_test": true
+            }
+          ]
+        }
+      }
+    }
+  },
+  "comparisons": [
+    {
+      "left": "donor:historical-shard",
+      "right": "donor:benchmarks/results",
+      "fieldsCompared": [
+        "status",
+        "error",
+        "error_category",
+        "oracle_version",
+        "oracle_lane",
+        "semantic_providers",
+        "scope",
+        "scope_official",
+        "strict",
+        "reached_test"
+      ],
+      "changes": [
+        {
+          "file": "test/language/expressions/dynamic-import/usage/nested-async-function-return-await-eval-gtbndng-indirect-update.js",
+          "fields": ["error"],
+          "beforeStatus": "fail",
+          "afterStatus": "fail"
+        },
+        {
+          "file": "test/language/expressions/dynamic-import/usage/nested-if-import-then-returns-thenable.js",
+          "fields": ["error"],
+          "beforeStatus": "fail",
+          "afterStatus": "fail"
+        },
+        {
+          "file": "test/language/expressions/dynamic-import/eval-rqstd-once.js",
+          "fields": ["error"],
+          "beforeStatus": "fail",
+          "afterStatus": "fail"
+        },
+        {
+          "file": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+          "fields": ["status", "error", "error_category"],
+          "beforeStatus": "pass",
+          "afterStatus": "fail"
+        }
+      ]
+    },
+    {
+      "left": "candidate:historical-shard",
+      "right": "candidate:benchmarks/results",
+      "fieldsCompared": [
+        "status",
+        "error",
+        "error_category",
+        "oracle_version",
+        "oracle_lane",
+        "semantic_providers",
+        "scope",
+        "scope_official",
+        "strict",
+        "reached_test"
+      ],
+      "changes": [
+        {
+          "file": "test/language/expressions/dynamic-import/usage/nested-async-function-return-await-eval-gtbndng-indirect-update.js",
+          "fields": ["error"],
+          "beforeStatus": "fail",
+          "afterStatus": "fail"
+        },
+        {
+          "file": "test/language/expressions/dynamic-import/usage/nested-if-import-then-returns-thenable.js",
+          "fields": ["error"],
+          "beforeStatus": "fail",
+          "afterStatus": "fail"
+        },
+        {
+          "file": "test/language/expressions/dynamic-import/eval-rqstd-once.js",
+          "fields": ["error"],
+          "beforeStatus": "fail",
+          "afterStatus": "fail"
+        }
+      ]
+    },
+    {
+      "left": "donor:benchmarks/results",
+      "right": "candidate:benchmarks/results",
+      "fieldsCompared": [
+        "status",
+        "error",
+        "error_category",
+        "oracle_version",
+        "oracle_lane",
+        "semantic_providers",
+        "scope",
+        "scope_official",
+        "strict",
+        "reached_test"
+      ],
+      "changes": []
+    }
+  ],
+  "inventory": [
+    {
+      "path": "issue5807-linux-candidate-34417885898/.test262-cache/temporal/prewarm.json",
+      "bytes": 255,
+      "sha256": "a15864fa06fb6c695c8722ccb68c266367f40cf0829c0798534a2465e0aafad6"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/benchmarks/results/test262-results-replay5807-34417885898-candidate.jsonl",
+      "bytes": 1692691,
+      "sha256": "a2344b85033faebe5938f9201304c71f4a0894e515b9a07e80445a8e146b80f8"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/benchmarks/results/test262-results-replay5807-34417885898-candidate.shard-34-of-52.complete.json",
+      "bytes": 76858,
+      "sha256": "6b4a071dbe6e93289d58eb73b5d30003c71280b3e014efbead8252e21c6bed15"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/historical-shard/test262-results-34374533493-js-host-mgchunk34.jsonl",
+      "bytes": 1691513,
+      "sha256": "e8202bb74c28badddad4d153654e76edba7b40241753c57c4d8880bffb650519"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/historical-shard/test262-results-34374533493-js-host-mgchunk34.shard-34-of-52.complete.json",
+      "bytes": 76855,
+      "sha256": "d9756f2f59568c589d9280337552d83a1c1f67eba384e543d0e6213b8ca2b9cb"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/package.json",
+      "bytes": 28940,
+      "sha256": "25c1a5369a6e1b3ab5fb9f73ba993411a131f68f6137b983d460c7187a0b3eab"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/pnpm-lock.yaml",
+      "bytes": 292598,
+      "sha256": "cd18b2b644544c06017f91c790c44156d6ad178e568b5ae2b3746b0740728273"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/replay5807-admission.json",
+      "bytes": 1414,
+      "sha256": "3fe534642acda546e2b949c4fc72d147cf1367845f75ce89d34f9bc4060e0cd3"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/replay5807-result.json",
+      "bytes": 3475,
+      "sha256": "e4d46967e49965f849eaf87bc5db4a4c1e151f76f1d18939f903f5a10ce23ce6"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/replay5807-terminal.json",
+      "bytes": 70,
+      "sha256": "220e1025e745f3d495eb82b68078cbda398408cdfdfb88b69285fa9af8d26cc1"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/replay5807.stderr.log",
+      "bytes": 7972,
+      "sha256": "f1bc13d74235707973095442d1db853c30571984c504efa115da2c25bb380577"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/replay5807.stdout.log",
+      "bytes": 92,
+      "sha256": "bec6260d8f03f8ed22a5a846b819f22ec227ef0d203ee0e6607c7e1bf62afd43"
+    },
+    {
+      "path": "issue5807-linux-candidate-34417885898/vitest-blob/blob-js-host-mg34.json",
+      "bytes": 843660,
+      "sha256": "8f7d6abc7abbb57145dfd11ec464b2cc7f8c344e4980f9c779d0bab5ed40a74d"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/.test262-cache/temporal/prewarm.json",
+      "bytes": 255,
+      "sha256": "fae8367f604aa28c1198f7a4be0d9b6798bb819be04df9cc6cfaab98a90b7582"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/benchmarks/results/test262-results-replay5807-34417885898-donor.jsonl",
+      "bytes": 1692635,
+      "sha256": "af489d6caaeb250268f9f9f7d743131eb4269f0459db1a170c8e96ddcdfdbafe"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/benchmarks/results/test262-results-replay5807-34417885898-donor.shard-34-of-52.complete.json",
+      "bytes": 76854,
+      "sha256": "bbbaa1d17ac1847b1dbee625171d1bfd23cd0bbc9350f4fd142d2f59a3e1609a"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/historical-shard/test262-results-34368952422-js-host-mgchunk34.jsonl",
+      "bytes": 1691317,
+      "sha256": "6f7c289e7e69aafb15feded1efb301e3f90214dc869e6efe4a765cc39f252dea"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/historical-shard/test262-results-34368952422-js-host-mgchunk34.shard-34-of-52.complete.json",
+      "bytes": 76855,
+      "sha256": "f8b3e379e17b692e2c5237ab31e1f9c5c97cbe0fc1f40eb8539280cdfdc532da"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/package.json",
+      "bytes": 28898,
+      "sha256": "17e566df0d56a49bea4c10adbd6872cd66022e7eb8dd5ced7cd9891bb32c063a"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/pnpm-lock.yaml",
+      "bytes": 292598,
+      "sha256": "cd18b2b644544c06017f91c790c44156d6ad178e568b5ae2b3746b0740728273"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/replay5807-admission.json",
+      "bytes": 1414,
+      "sha256": "ce644a59e454bde193243fb4531e8138c5e4a51cbfd301c9c517f74effa97d26"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/replay5807-result.json",
+      "bytes": 3475,
+      "sha256": "26b13f36afd4e059e079f6ef15521ba27029916a00f2521f4e1e14beac15e4a4"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/replay5807-terminal.json",
+      "bytes": 70,
+      "sha256": "62b41c459a32185b162451bba16e5316e2321e2ff55a5aaf5c63fa212862bdc8"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/replay5807.stderr.log",
+      "bytes": 6564,
+      "sha256": "01393c57a1b2efdc38d6d2ca4a40f4640fcf5359d319d5be13cd03734aa478a5"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/replay5807.stdout.log",
+      "bytes": 92,
+      "sha256": "bec6260d8f03f8ed22a5a846b819f22ec227ef0d203ee0e6607c7e1bf62afd43"
+    },
+    {
+      "path": "issue5807-linux-donor-34417885898/vitest-blob/blob-js-host-mg34.json",
+      "bytes": 835533,
+      "sha256": "abac3835b45aef090c37436583bdf737c573f3172787a6553e7e2b24dbf2a429"
+    }
+  ]
+}

@@ -1,0 +1,1654 @@
+{
+  "schema": "issue-5807-controlled-history-evidence-v1",
+  "localOnly": true,
+  "inventoryTiming": "Original per-trial controller trace inventories precede controller exit. Each final controller-file hash differs only by one appended observer-exit line, independently reconciled. The files inventories below hash final complete files; original receipts remain preserved.",
+  "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q",
+  "trials": [
+    {
+      "arm": "donor",
+      "mode": "alone",
+      "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/donor",
+      "terminal": {
+        "code": 0,
+        "signal": null,
+        "pid": 23321,
+        "parentPid": 23319,
+        "mode": "alone"
+      },
+      "resultStatus": "COMPLETE_LOCAL_DIAGNOSTIC_ONLY",
+      "stopReason": null,
+      "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+      "runtime": {
+        "node": "v25.9.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "executable": {
+        "path": "/private/tmp/js2-5807-node25.SwC0fQ/node-v25.9.0-darwin-arm64/bin/node",
+        "sha256": "4b3fe8b384e30ee917e28a9f5b79a3ca64b72b13b70d9ab2273e6e9a823f4cbf"
+      },
+      "driverSha256": "c0608f800dd7b8b194e5f7b916f4c9066a355b5bd0dcc356437614d89c5571b1",
+      "inputs": {
+        "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+        "fixtures": [
+          {
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js",
+            "sha256": "d53d853936dac9ca0b599f8462e3fe3789c74e62e2be32f8adc3aa2a1c2c8e37"
+          },
+          {
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+            "sha256": "75424b739a057050d8d5f81bd02185b99760c32a565855cb340aa446b962e451"
+          }
+        ],
+        "dependencies": {
+          "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/node_modules",
+          "count": 37767,
+          "sha256": "2323443257621a9645041ececdac85b2dbcf1ff995112e723f543c8f9c051cd3"
+        },
+        "bundles": [
+          {
+            "path": "scripts/compiler-bundle.mjs",
+            "sha256": "f7296237dd33da31d9e8386aff2edad28457d34029c0feac3def0643062b7af1"
+          },
+          {
+            "path": "scripts/runtime-bundle.mjs",
+            "sha256": "00496d99109eb11b770ff0e41953f519fac6163b90546d9dbcb85781965d8d17"
+          }
+        ],
+        "provider": {
+          "count": 11,
+          "sha256": "7ec402c2fa0519920defc30a0dd3e2a33c8ad25ffefaafc20ccaec5eb13b1d9a"
+        }
+      },
+      "verdicts": [
+        {
+          "role": "target",
+          "variant": "primary",
+          "label": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        },
+        {
+          "role": "target",
+          "variant": "strict",
+          "label": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        }
+      ],
+      "independentAudit": {
+        "status": "CONTROLLED_HISTORY_OBSERVED_NOT_CAUSAL_PROOF",
+        "mode": "alone",
+        "requests": 2,
+        "workerPid": 23368,
+        "workerBoot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+        "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+        "precedingLinked": [null, null],
+        "factoryIdentity": "unavailable-without-extra-compiled-reads",
+        "tailLimit": "abrupt/unwritten final tails remain unavailable",
+        "regressionCleared": false
+      },
+      "traceSummary": {
+        "streams": 2,
+        "dispatches": 2,
+        "resets": 0,
+        "targetPeerSelections": 0,
+        "targetRefusals": 0,
+        "targetMirrors": [
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          },
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          },
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          },
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          }
+        ]
+      },
+      "decisiveRecords": [
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 3,
+          "lost": 0,
+          "event": "request-begin",
+          "request": {
+            "id": 0,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "temporalRequested": false,
+            "metadataAvailable": true
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 4,
+          "lost": 0,
+          "event": "instantiate",
+          "request": {
+            "id": 0,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "linkedModules": 0
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 18,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 0,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30:1",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 32,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 0,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30:3",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 34,
+          "lost": 0,
+          "event": "request-begin",
+          "request": {
+            "id": 1,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "temporalRequested": false,
+            "metadataAvailable": true
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 35,
+          "lost": 0,
+          "event": "instantiate",
+          "request": {
+            "id": 1,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "linkedModules": 0
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 49,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 1,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30:4",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23368,
+          "boot": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30",
+          "seq": 63,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 1,
+            "generation": "23321-5d68419d-3358-4b3d-b65b-1af75738c96c:1",
+            "poolPid": 23321,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23368-29533af8-14ea-42b7-a3c3-372f9e72df30:6",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "replay5807-controlled-alone/admission.json",
+          "bytes": 8930099,
+          "sha256": "40e2b0e58998f7885333bb71a79b6208af76a75595a99aa10de9486698482555"
+        },
+        {
+          "path": "replay5807-controlled-alone/launch.json",
+          "bytes": 431,
+          "sha256": "4fb4f8ff011e53b15484338b7d78b93c9d9d764fe494adc88c60d27a9ed7c864"
+        },
+        {
+          "path": "replay5807-controlled-alone/preserved-traces.json",
+          "bytes": 3,
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "replay5807-controlled-alone/request-1.json",
+          "bytes": 2584,
+          "sha256": "dd6edbca045fcdb25fead46763ecd680e826ec4260a184d1184e323a84e474a4"
+        },
+        {
+          "path": "replay5807-controlled-alone/request-2.json",
+          "bytes": 2637,
+          "sha256": "700bd3e126e6125d8d84717b204de97c4c82d4b0ced9e3654a22e1e4bee65e30"
+        },
+        {
+          "path": "replay5807-controlled-alone/result.json",
+          "bytes": 6704,
+          "sha256": "0686814389b92e244401843582d2f6c2087ae3c13eca7a1ab15cb36c5efeaa42"
+        },
+        {
+          "path": "replay5807-controlled-alone/stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "replay5807-controlled-alone/stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "replay5807-controlled-alone/terminal.json",
+          "bytes": 91,
+          "sha256": "555c2975a7369e62e5f04ae0d124acbcf9d270d2afc7184c49d3b2f98efe44de"
+        },
+        {
+          "path": "replay5807-controlled-alone/trace-inventory.json",
+          "bytes": 311,
+          "sha256": "30e61df226c738aab0c5739bccbab44b5cc820ddf94ad1e90e22f9d4ea6480a0"
+        },
+        {
+          "path": "replay5807-traces/23321-5d68419d-3358-4b3d-b65b-1af75738c96c.jsonl",
+          "bytes": 1791,
+          "sha256": "40d55b87b70aac3d1a23fe5606d0b82207df42936128e9777e0bd38b4b76da59"
+        },
+        {
+          "path": "replay5807-traces/23368-29533af8-14ea-42b7-a3c3-372f9e72df30.jsonl",
+          "bytes": 32241,
+          "sha256": "f057142efac3f4e681d4abbecd14610cb4f19cb640d9528a551ad837cfbfc6fd"
+        }
+      ]
+    },
+    {
+      "arm": "donor",
+      "mode": "seeded",
+      "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/donor",
+      "terminal": {
+        "code": 0,
+        "signal": null,
+        "pid": 23457,
+        "parentPid": 23455,
+        "mode": "seeded"
+      },
+      "resultStatus": "COMPLETE_LOCAL_DIAGNOSTIC_ONLY",
+      "stopReason": null,
+      "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+      "runtime": {
+        "node": "v25.9.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "executable": {
+        "path": "/private/tmp/js2-5807-node25.SwC0fQ/node-v25.9.0-darwin-arm64/bin/node",
+        "sha256": "4b3fe8b384e30ee917e28a9f5b79a3ca64b72b13b70d9ab2273e6e9a823f4cbf"
+      },
+      "driverSha256": "c0608f800dd7b8b194e5f7b916f4c9066a355b5bd0dcc356437614d89c5571b1",
+      "inputs": {
+        "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+        "fixtures": [
+          {
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js",
+            "sha256": "d53d853936dac9ca0b599f8462e3fe3789c74e62e2be32f8adc3aa2a1c2c8e37"
+          },
+          {
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+            "sha256": "75424b739a057050d8d5f81bd02185b99760c32a565855cb340aa446b962e451"
+          }
+        ],
+        "dependencies": {
+          "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/node_modules",
+          "count": 37767,
+          "sha256": "2323443257621a9645041ececdac85b2dbcf1ff995112e723f543c8f9c051cd3"
+        },
+        "bundles": [
+          {
+            "path": "scripts/compiler-bundle.mjs",
+            "sha256": "f7296237dd33da31d9e8386aff2edad28457d34029c0feac3def0643062b7af1"
+          },
+          {
+            "path": "scripts/runtime-bundle.mjs",
+            "sha256": "00496d99109eb11b770ff0e41953f519fac6163b90546d9dbcb85781965d8d17"
+          }
+        ],
+        "provider": {
+          "count": 11,
+          "sha256": "7ec402c2fa0519920defc30a0dd3e2a33c8ad25ffefaafc20ccaec5eb13b1d9a"
+        }
+      },
+      "verdicts": [
+        {
+          "role": "seed",
+          "variant": "primary",
+          "label": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        },
+        {
+          "role": "seed",
+          "variant": "strict",
+          "label": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        },
+        {
+          "role": "target",
+          "variant": "primary",
+          "label": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+          "status": "fail",
+          "error": "cannot marshal opaque compiled value to host BigInt64Array constructor (Testing with BigInt64Array and makeArray.)",
+          "reachedTest": true
+        }
+      ],
+      "independentAudit": {
+        "status": "CONTROLLED_HISTORY_OBSERVED_NOT_CAUSAL_PROOF",
+        "mode": "seeded",
+        "requests": 3,
+        "workerPid": 23535,
+        "workerBoot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+        "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+        "precedingLinked": [
+          {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          }
+        ],
+        "factoryIdentity": "unavailable-without-extra-compiled-reads",
+        "tailLimit": "abrupt/unwritten final tails remain unavailable",
+        "regressionCleared": false
+      },
+      "traceSummary": {
+        "streams": 2,
+        "dispatches": 3,
+        "resets": 2,
+        "targetPeerSelections": 1,
+        "targetRefusals": 1,
+        "targetMirrors": [
+          {
+            "availability": "existing-read",
+            "type": "undefined",
+            "value": null,
+            "identity": null
+          }
+        ]
+      },
+      "decisiveRecords": [
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 5,
+          "lost": 0,
+          "event": "registry-reset",
+          "request": {
+            "id": 0,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "precedingLinked": {
+            "id": 0,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "data": {
+            "retained": {}
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 6,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 0,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "precedingLinked": {
+            "id": 0,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "data": {
+            "exports": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:1"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 7,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 0,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "precedingLinked": {
+            "id": 0,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "data": {
+            "exports": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:2"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 11,
+          "lost": 0,
+          "event": "registry-reset",
+          "request": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "retained": {
+              "0": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:1",
+              "1": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:2"
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 12,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "exports": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:3"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 13,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "exports": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:4"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 15,
+          "lost": 0,
+          "event": "request-begin",
+          "request": {
+            "id": 2,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "temporalRequested": false,
+            "metadataAvailable": true
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 16,
+          "lost": 0,
+          "event": "instantiate",
+          "request": {
+            "id": 2,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "linkedModules": 0
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 27,
+          "lost": 0,
+          "event": "decoder-selected",
+          "request": {
+            "id": 2,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "arg": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:5",
+            "local": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:6",
+            "selected": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:3",
+            "effective": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:3"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 36,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 2,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "arg": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:5",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "undefined",
+              "value": null,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23535,
+          "boot": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78",
+          "seq": 37,
+          "lost": 0,
+          "event": "construct-refusal",
+          "request": {
+            "id": 2,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23457-f715722b-92be-4001-9c75-4108879a4973:1",
+            "poolPid": 23457,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "arg": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:5",
+            "local": "23535-1cc9478f-946e-4c0b-89da-b6cd56433b78:6",
+            "name": "BigInt64Array",
+            "length": {
+              "availability": "existing-read",
+              "type": "undefined",
+              "value": null,
+              "identity": null
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "replay5807-controlled-seeded/admission.json",
+          "bytes": 8930426,
+          "sha256": "9adc8fcfd3ed8a2b71b1447e6b3519b275fbe65f929206620f903aa65fe3e90b"
+        },
+        {
+          "path": "replay5807-controlled-seeded/launch.json",
+          "bytes": 433,
+          "sha256": "0d07411374cddceb06240e7624552341d5f4f75ba190557ba9305e7f43a086f4"
+        },
+        {
+          "path": "replay5807-controlled-seeded/preserved-traces.json",
+          "bytes": 311,
+          "sha256": "e40feec755fb2aab132b950206a12be572372422268d7ca666b102c46b3e7e3b"
+        },
+        {
+          "path": "replay5807-controlled-seeded/request-1.json",
+          "bytes": 2059,
+          "sha256": "ec1db12414a383d28a01d987d5378f93041e26c8ce616ba58c94e96084870437"
+        },
+        {
+          "path": "replay5807-controlled-seeded/request-2.json",
+          "bytes": 2078,
+          "sha256": "08ca025ec2647e12f77bb3a9175f6859d5b7277deb8ec9c588e3bfd1b833c2b2"
+        },
+        {
+          "path": "replay5807-controlled-seeded/request-3.json",
+          "bytes": 2731,
+          "sha256": "7c572794c4812f96692fd4c3fcdbc7d6e3f38a02303928653695bdf8fd609cf0"
+        },
+        {
+          "path": "replay5807-controlled-seeded/result.json",
+          "bytes": 8778,
+          "sha256": "e0b5be6aaae913c36a2f683e0d10f8f60587d55334f8524b3dc91bba0b9a3282"
+        },
+        {
+          "path": "replay5807-controlled-seeded/stderr.log",
+          "bytes": 150,
+          "sha256": "0c81085f142d541aa8d88c016053b764c9fc895340c63ca856c160ee5213bbe5"
+        },
+        {
+          "path": "replay5807-controlled-seeded/stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "replay5807-controlled-seeded/terminal.json",
+          "bytes": 92,
+          "sha256": "6067eeb3e86d61761fee3c27d6f10f7a1d50a9ca8ce8e60fa4e8500c56cb886b"
+        },
+        {
+          "path": "replay5807-controlled-seeded/trace-inventory.json",
+          "bytes": 311,
+          "sha256": "dc1d3341f0902a81b904acd6e4f0ac2f4b4d32ebe34401f670c5d81b26f4b0ce"
+        },
+        {
+          "path": "replay5807-traces/23457-f715722b-92be-4001-9c75-4108879a4973.jsonl",
+          "bytes": 2125,
+          "sha256": "6e70cb34ee75b4cb794721ff7ee6cf9223af20a14239e7cfa2ce382a3e20031f"
+        },
+        {
+          "path": "replay5807-traces/23535-1cc9478f-946e-4c0b-89da-b6cd56433b78.jsonl",
+          "bytes": 24484,
+          "sha256": "2cc7c0f35cbaddcef3bd3376a0572ad2137e2d7f7a5c131514de7f427530b75c"
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "mode": "alone",
+      "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/candidate",
+      "terminal": {
+        "code": 0,
+        "signal": null,
+        "pid": 23618,
+        "parentPid": 23616,
+        "mode": "alone"
+      },
+      "resultStatus": "COMPLETE_LOCAL_DIAGNOSTIC_ONLY",
+      "stopReason": null,
+      "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+      "runtime": {
+        "node": "v25.9.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "executable": {
+        "path": "/private/tmp/js2-5807-node25.SwC0fQ/node-v25.9.0-darwin-arm64/bin/node",
+        "sha256": "4b3fe8b384e30ee917e28a9f5b79a3ca64b72b13b70d9ab2273e6e9a823f4cbf"
+      },
+      "driverSha256": "c0608f800dd7b8b194e5f7b916f4c9066a355b5bd0dcc356437614d89c5571b1",
+      "inputs": {
+        "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+        "fixtures": [
+          {
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js",
+            "sha256": "d53d853936dac9ca0b599f8462e3fe3789c74e62e2be32f8adc3aa2a1c2c8e37"
+          },
+          {
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+            "sha256": "75424b739a057050d8d5f81bd02185b99760c32a565855cb340aa446b962e451"
+          }
+        ],
+        "dependencies": {
+          "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/node_modules",
+          "count": 37767,
+          "sha256": "2323443257621a9645041ececdac85b2dbcf1ff995112e723f543c8f9c051cd3"
+        },
+        "bundles": [
+          {
+            "path": "scripts/compiler-bundle.mjs",
+            "sha256": "03c8b189e8ae36b76b581addfca7d31aa8a94661db391a4293bc525e7395690d"
+          },
+          {
+            "path": "scripts/runtime-bundle.mjs",
+            "sha256": "4346742834add975d28bd904823a96bc9b5359bbd6775da8ac71c637832f3bbc"
+          }
+        ],
+        "provider": {
+          "count": 11,
+          "sha256": "a6f3c601102cbf17cbf246c4f24a642a5379b2919e8efce7990e9e2502a14165"
+        }
+      },
+      "verdicts": [
+        {
+          "role": "target",
+          "variant": "primary",
+          "label": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        },
+        {
+          "role": "target",
+          "variant": "strict",
+          "label": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        }
+      ],
+      "independentAudit": {
+        "status": "CONTROLLED_HISTORY_OBSERVED_NOT_CAUSAL_PROOF",
+        "mode": "alone",
+        "requests": 2,
+        "workerPid": 23668,
+        "workerBoot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+        "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+        "precedingLinked": [null, null],
+        "factoryIdentity": "unavailable-without-extra-compiled-reads",
+        "tailLimit": "abrupt/unwritten final tails remain unavailable",
+        "regressionCleared": false
+      },
+      "traceSummary": {
+        "streams": 2,
+        "dispatches": 2,
+        "resets": 0,
+        "targetPeerSelections": 0,
+        "targetRefusals": 0,
+        "targetMirrors": [
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          },
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          },
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          },
+          {
+            "availability": "existing-read",
+            "type": "number",
+            "value": 3,
+            "identity": null
+          }
+        ]
+      },
+      "decisiveRecords": [
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 3,
+          "lost": 0,
+          "event": "request-begin",
+          "request": {
+            "id": 0,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "temporalRequested": false,
+            "metadataAvailable": true
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 4,
+          "lost": 0,
+          "event": "instantiate",
+          "request": {
+            "id": 0,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "linkedModules": 0
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 18,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 0,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd:1",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 32,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 0,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd:3",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 34,
+          "lost": 0,
+          "event": "request-begin",
+          "request": {
+            "id": 1,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "temporalRequested": false,
+            "metadataAvailable": true
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 35,
+          "lost": 0,
+          "event": "instantiate",
+          "request": {
+            "id": 1,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "linkedModules": 0
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 49,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 1,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd:4",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23668,
+          "boot": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd",
+          "seq": 63,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 1,
+            "generation": "23618-b755a8c4-f174-4d37-8aee-3c744799a1d7:1",
+            "poolPid": 23618,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js [strict rerun]"
+          },
+          "precedingLinked": null,
+          "data": {
+            "arg": "23668-b53cd56b-6741-4691-a9b1-f24e808406dd:6",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "number",
+              "value": 3,
+              "identity": null
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "replay5807-controlled-alone/admission.json",
+          "bytes": 8930115,
+          "sha256": "b228e1bfae34cae6d92b31a7af3a3e4cf5b5f1e83cb1f480d7baed10bf1f93d5"
+        },
+        {
+          "path": "replay5807-controlled-alone/launch.json",
+          "bytes": 435,
+          "sha256": "74d2a1b8b3ebaa7a9523930716fc1aa0a2c54496e8a32846136ce614ce156485"
+        },
+        {
+          "path": "replay5807-controlled-alone/preserved-traces.json",
+          "bytes": 3,
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "replay5807-controlled-alone/request-1.json",
+          "bytes": 2581,
+          "sha256": "9c126c766baa2034223c68abee999fd9d30beb30345560432e23a5c0efedc08e"
+        },
+        {
+          "path": "replay5807-controlled-alone/request-2.json",
+          "bytes": 2637,
+          "sha256": "73c320bfe12c167fad761746d72298d138598622e18c5c9a0e90aa821b3eb4c3"
+        },
+        {
+          "path": "replay5807-controlled-alone/result.json",
+          "bytes": 6701,
+          "sha256": "938233027c1240f37c68b7a19cad7f90dbe9f52a45bf67bc81d917b2cbcc4795"
+        },
+        {
+          "path": "replay5807-controlled-alone/stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "replay5807-controlled-alone/stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "replay5807-controlled-alone/terminal.json",
+          "bytes": 91,
+          "sha256": "1441ddf996e82cc23b4a81675efa63ea6dfeda59a6fae76d1575569f511283a0"
+        },
+        {
+          "path": "replay5807-controlled-alone/trace-inventory.json",
+          "bytes": 311,
+          "sha256": "7e7c433b534706e95534f4dcde0f8b45c0d8784d5f0cd2192ab391b375bd0b36"
+        },
+        {
+          "path": "replay5807-traces/23618-b755a8c4-f174-4d37-8aee-3c744799a1d7.jsonl",
+          "bytes": 1791,
+          "sha256": "b33e82553690e25ab3253e610860b580273283e75041fb2f1c1665c38ec89bbb"
+        },
+        {
+          "path": "replay5807-traces/23668-b53cd56b-6741-4691-a9b1-f24e808406dd.jsonl",
+          "bytes": 32241,
+          "sha256": "426a4bd11ee6491e227a21247263a78da399cc2780405a5b1869f8d2d19bdb62"
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "mode": "seeded",
+      "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/candidate",
+      "terminal": {
+        "code": 0,
+        "signal": null,
+        "pid": 23742,
+        "parentPid": 23740,
+        "mode": "seeded"
+      },
+      "resultStatus": "COMPLETE_LOCAL_DIAGNOSTIC_ONLY",
+      "stopReason": null,
+      "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+      "runtime": {
+        "node": "v25.9.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "executable": {
+        "path": "/private/tmp/js2-5807-node25.SwC0fQ/node-v25.9.0-darwin-arm64/bin/node",
+        "sha256": "4b3fe8b384e30ee917e28a9f5b79a3ca64b72b13b70d9ab2273e6e9a823f4cbf"
+      },
+      "driverSha256": "c0608f800dd7b8b194e5f7b916f4c9066a355b5bd0dcc356437614d89c5571b1",
+      "inputs": {
+        "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+        "fixtures": [
+          {
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js",
+            "sha256": "d53d853936dac9ca0b599f8462e3fe3789c74e62e2be32f8adc3aa2a1c2c8e37"
+          },
+          {
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+            "sha256": "75424b739a057050d8d5f81bd02185b99760c32a565855cb340aa446b962e451"
+          }
+        ],
+        "dependencies": {
+          "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/node_modules",
+          "count": 37767,
+          "sha256": "2323443257621a9645041ececdac85b2dbcf1ff995112e723f543c8f9c051cd3"
+        },
+        "bundles": [
+          {
+            "path": "scripts/compiler-bundle.mjs",
+            "sha256": "03c8b189e8ae36b76b581addfca7d31aa8a94661db391a4293bc525e7395690d"
+          },
+          {
+            "path": "scripts/runtime-bundle.mjs",
+            "sha256": "4346742834add975d28bd904823a96bc9b5359bbd6775da8ac71c637832f3bbc"
+          }
+        ],
+        "provider": {
+          "count": 11,
+          "sha256": "a6f3c601102cbf17cbf246c4f24a642a5379b2919e8efce7990e9e2502a14165"
+        }
+      },
+      "verdicts": [
+        {
+          "role": "seed",
+          "variant": "primary",
+          "label": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        },
+        {
+          "role": "seed",
+          "variant": "strict",
+          "label": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]",
+          "status": "pass",
+          "error": null,
+          "reachedTest": true
+        },
+        {
+          "role": "target",
+          "variant": "primary",
+          "label": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js",
+          "status": "fail",
+          "error": "cannot marshal opaque compiled value to host BigInt64Array constructor (Testing with BigInt64Array and makeArray.)",
+          "reachedTest": true
+        }
+      ],
+      "independentAudit": {
+        "status": "CONTROLLED_HISTORY_OBSERVED_NOT_CAUSAL_PROOF",
+        "mode": "seeded",
+        "requests": 3,
+        "workerPid": 23792,
+        "workerBoot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+        "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+        "precedingLinked": [
+          {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          }
+        ],
+        "factoryIdentity": "unavailable-without-extra-compiled-reads",
+        "tailLimit": "abrupt/unwritten final tails remain unavailable",
+        "regressionCleared": false
+      },
+      "traceSummary": {
+        "streams": 2,
+        "dispatches": 3,
+        "resets": 2,
+        "targetPeerSelections": 1,
+        "targetRefusals": 1,
+        "targetMirrors": [
+          {
+            "availability": "existing-read",
+            "type": "undefined",
+            "value": null,
+            "identity": null
+          }
+        ]
+      },
+      "decisiveRecords": [
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 5,
+          "lost": 0,
+          "event": "registry-reset",
+          "request": {
+            "id": 0,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "precedingLinked": {
+            "id": 0,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "data": {
+            "retained": {}
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 6,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 0,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "precedingLinked": {
+            "id": 0,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "data": {
+            "exports": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:1"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 7,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 0,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "precedingLinked": {
+            "id": 0,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js"
+          },
+          "data": {
+            "exports": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:2"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 11,
+          "lost": 0,
+          "event": "registry-reset",
+          "request": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "retained": {
+              "0": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:1",
+              "1": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:2"
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 12,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "exports": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:3"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 13,
+          "lost": 0,
+          "event": "registry-register",
+          "request": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "exports": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:4"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 15,
+          "lost": 0,
+          "event": "request-begin",
+          "request": {
+            "id": 2,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "temporalRequested": false,
+            "metadataAvailable": true
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 16,
+          "lost": 0,
+          "event": "instantiate",
+          "request": {
+            "id": 2,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "linkedModules": 0
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 27,
+          "lost": 0,
+          "event": "decoder-selected",
+          "request": {
+            "id": 2,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "arg": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:5",
+            "local": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:6",
+            "selected": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:3",
+            "effective": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:3"
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 36,
+          "lost": 0,
+          "event": "construct-mirror",
+          "request": {
+            "id": 2,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "arg": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:5",
+            "distinct": true,
+            "length": {
+              "availability": "existing-read",
+              "type": "undefined",
+              "value": null,
+              "identity": null
+            }
+          }
+        },
+        {
+          "schema": "issue-5807-observation-v1",
+          "pid": 23792,
+          "boot": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7",
+          "seq": 37,
+          "lost": 0,
+          "event": "construct-refusal",
+          "request": {
+            "id": 2,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js"
+          },
+          "precedingLinked": {
+            "id": 1,
+            "generation": "23742-9954a71d-4551-44fc-85a6-e761f8ec2e51:1",
+            "poolPid": 23742,
+            "path": "test/built-ins/Temporal/Duration/from/argument-string-invalid.js [strict rerun]"
+          },
+          "data": {
+            "arg": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:5",
+            "local": "23792-904147de-dab4-4961-8cb5-22cdecf3abe7:6",
+            "name": "BigInt64Array",
+            "length": {
+              "availability": "existing-read",
+              "type": "undefined",
+              "value": null,
+              "identity": null
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "replay5807-controlled-seeded/admission.json",
+          "bytes": 8930442,
+          "sha256": "025ee017c47d8740edf379b22d567b0f2547fe4772e3b86eb44d9610869a689c"
+        },
+        {
+          "path": "replay5807-controlled-seeded/launch.json",
+          "bytes": 437,
+          "sha256": "9ccc198bf5e2cf4aa79785c966501c11d75f46539493507b3879dd927acb10c8"
+        },
+        {
+          "path": "replay5807-controlled-seeded/preserved-traces.json",
+          "bytes": 311,
+          "sha256": "9e61ebc2f80f8830b311dba2145f4c28307fc166f3529677268ca76a25a041fe"
+        },
+        {
+          "path": "replay5807-controlled-seeded/request-1.json",
+          "bytes": 2066,
+          "sha256": "be8cada4d357cdbd4857ead2248ab1424b16a1a623901b5435cd09f97c44202c"
+        },
+        {
+          "path": "replay5807-controlled-seeded/request-2.json",
+          "bytes": 2079,
+          "sha256": "2a00acdd79014e25f42656f7e6d54e1dfb6be21d10379f8afc1eee72fc34ab83"
+        },
+        {
+          "path": "replay5807-controlled-seeded/request-3.json",
+          "bytes": 2730,
+          "sha256": "b437a32519f0953846cde8cf4be1c8b5942f731be9b939568c37741a3c81dba6"
+        },
+        {
+          "path": "replay5807-controlled-seeded/result.json",
+          "bytes": 8785,
+          "sha256": "f3207f3b5bac08e01fa23b13416dec6c9bae43fe0b18ebe4c689a82363bf77d9"
+        },
+        {
+          "path": "replay5807-controlled-seeded/stderr.log",
+          "bytes": 150,
+          "sha256": "ac5e0220326f4038eb098dcf4aecb5815834663120e898836a079bc18f72371b"
+        },
+        {
+          "path": "replay5807-controlled-seeded/stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "replay5807-controlled-seeded/terminal.json",
+          "bytes": 92,
+          "sha256": "1b7a9802a7b3bafd9f95cca47333a7bc98ed305402ae8e8409e496d420103570"
+        },
+        {
+          "path": "replay5807-controlled-seeded/trace-inventory.json",
+          "bytes": 311,
+          "sha256": "b8d34548457a84fc22386479d6fbd98126a10bfdf06491a7997468769c554d95"
+        },
+        {
+          "path": "replay5807-traces/23742-9954a71d-4551-44fc-85a6-e761f8ec2e51.jsonl",
+          "bytes": 2125,
+          "sha256": "ffdfcce2e7b2a086e5f79e084ef6f101c3d2d5379971615ff3ebf73ce0dbc59a"
+        },
+        {
+          "path": "replay5807-traces/23792-904147de-dab4-4961-8cb5-22cdecf3abe7.jsonl",
+          "bytes": 24484,
+          "sha256": "462b3634ef16c9d7575fccdae8a99e21a6c52c731749a1ddfdd931209198354d"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Darwin arm64 controlled single-worker observation, not Linux shard replay",
+    "No reset intervention; prior linked workload is a contrast, not an isolated decoder-registry intervention",
+    "Historical failures and all fixtures preserved; no baseline promotion or regression clearance",
+    "Factory identities and unwritten final trace tails remain unavailable",
+    "Strict target rerun omitted only after primary FAIL, matching original conditional rule"
+  ],
+  "regressionCleared": false
+}

@@ -375,9 +375,10 @@ function authenticatedFixture() {
 }
 
 describe("#3518 canonical runtime data-contract seam", () => {
-  it.each(movedReceipts)("preserves every $path declaration and attached documentation", (receipt) => {
+  it.each(movedReceipts)("checks historical $path receipt after checked extension reconstruction", (receipt) => {
     const reconstructed =
-      receipt.path === "src/ir/runtime/contracts/intrinsics.ts"
+      receipt.path === "src/ir/runtime/contracts/intrinsics.ts" ||
+      receipt.path === "src/ir/runtime/contracts/manifest.ts"
         ? acceptedHistoricalDeclarations(receipt.path, read)
         : undefined;
     const file = reconstructed
@@ -403,15 +404,18 @@ describe("#3518 canonical runtime data-contract seam", () => {
     );
   });
 
-  it.each(retainedReceipts)("leaves every retained $path declaration, body and catalog unchanged", (receipt) => {
-    const records = acceptedHistoricalDeclarations(receipt.path, read),
-      rows = receiptRows(records);
-    expect(rows).toHaveLength(receipt.declarations);
-    expect(records.filter((record) => ts.isFunctionDeclaration(record.node))).toHaveLength(receipt.functions);
-    expect(hash(rows)).toBe(receipt.hash);
-    expect(hash(rows.slice(1))).not.toBe(receipt.hash);
-    expect(read(receipt.path).match(/Copyright \(c\) 2026 Loopdive/g)).toHaveLength(1);
-  });
+  it.each(retainedReceipts)(
+    "checks historical retained $path receipt after checked extension reconstruction",
+    (receipt) => {
+      const records = acceptedHistoricalDeclarations(receipt.path, read),
+        rows = receiptRows(records);
+      expect(rows).toHaveLength(receipt.declarations);
+      expect(records.filter((record) => ts.isFunctionDeclaration(record.node))).toHaveLength(receipt.functions);
+      expect(hash(rows)).toBe(receipt.hash);
+      expect(hash(rows.slice(1))).not.toBe(receipt.hash);
+      expect(read(receipt.path).match(/Copyright \(c\) 2026 Loopdive/g)).toHaveLength(1);
+    },
+  );
 
   it("keeps the complete moved/retained denominators and the one currentness authority", () => {
     expect(movedReceipts.reduce((count, receipt) => count + receipt.names.length, 0)).toBe(135);

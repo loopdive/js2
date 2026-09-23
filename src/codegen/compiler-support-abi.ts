@@ -89,6 +89,8 @@ import {
 } from "./program-abi-planning.js";
 
 export const CLOSURE_ARGC_DISPATCHER_ROLE = "closure-argc-dispatcher";
+// (#6491) The same wrapper for the FREE-function dispatcher family.
+export const CLOSURE_FREE_ARGC_DISPATCHER_ROLE = "closure-free-argc-dispatcher";
 export const ASYNC_FRAME_MACHINERY_ROLE = "async-frame-machinery";
 export const VEC_FROM_EXTERN_ROLE = "vec-from-extern-materializer";
 export const STDLIB_MATH_HELPER_ROLE = "stdlib-math-helper";
@@ -191,6 +193,17 @@ export function recordClosureArgcDispatcher(ctx: CodegenContext, arity: number, 
   pushEntrySourceRecord(ctx, {
     role: CLOSURE_ARGC_DISPATCHER_ROLE,
     roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.closureArgcDispatcher,
+    derivedOrdinal: arity,
+    func,
+  });
+}
+
+/** (#6491) Record one free-function argc-seeding wrapper by its exact allocator object. */
+export function recordClosureFreeArgcDispatcher(ctx: CodegenContext, arity: number, func: WasmFunction): void {
+  if (!Number.isSafeInteger(arity) || arity < 0) return;
+  pushEntrySourceRecord(ctx, {
+    role: CLOSURE_FREE_ARGC_DISPATCHER_ROLE,
+    roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.closureFreeArgcDispatcher,
     derivedOrdinal: arity,
     func,
   });

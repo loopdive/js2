@@ -1336,6 +1336,8 @@ function collectGlobalStorage(
 
 function linearIrTypeKey(type: IrType): string {
   switch (type.kind) {
+    case "support-ref":
+      throw new Error("linear-memory plan does not support compiler support references");
     case "val":
       return `scalar:${linearStorageForIrType(type)}`;
     case "string":

@@ -180,6 +180,7 @@ export function createCodegenContext(
     inheritedSetDirtyKeys: new Set<string>(), // (#4602) scanForArrayHoles: statically-named keys such a descriptor could use
     vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
     arraySpeciesDirty: false, // (#5145) scanForArrayHoles: Symbol.species / a `.constructor` assignment is present
+    isConcatSpreadableDirty: false, // (#6485) scanForArrayHoles: the module can name @@isConcatSpreadable
     vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
     dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
@@ -223,12 +224,15 @@ export function createCodegenContext(
     runtimeKeyClassMethodNames: new Set(),
     standaloneRuntimeKeyClassProtos: new Set(),
     genericResolved: new Map(),
+    bigIntKernelFunctions: new Set(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
+    funcReadsOwnThis: new Set(),
     objectLiteralMethodFuncIdx: new Map(),
     extrasArgvGlobalIdx: -1,
     extrasArgvVecTypeIdx: -1,
     argcGlobalIdx: -1,
+    hostArgcGlobalIdx: -1,
     currentThisGlobalIdx: -1,
     callerStrictGlobalIdx: -1,
     sourceFunctionStrictness: new Map(),
@@ -263,6 +267,9 @@ export function createCodegenContext(
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
+    classDynamicUnresolvedHeritageSet: new Set(),
+    classLinkedDynamicParentExpr: new Map(),
+    classLinkedDynamicParentGlobal: new Map(),
     classCtorHostRegistered: new Set(),
     classTagCounter: 0,
     classTagMap: new Map(),

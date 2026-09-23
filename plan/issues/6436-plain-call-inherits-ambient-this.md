@@ -1,10 +1,11 @@
 ---
 id: 6436
 title: "A plain `f(x)` call inside a host-dispatched closure inherits the AMBIENT `this` instead of `undefined`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-13
 priority: medium
 horizon: s
 feasibility: medium
@@ -12,6 +13,27 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# (#6436, 2026-09-13) The fix adds one registry (`ctx.funcReadsOwnThis`, its
+# doc comment is the bulk of the types.ts growth), its collect-time population
+# at the two `needsImplicitArgumentsObject` sites plus the nested-lift one, and
+# a trampoline lookup at four plain-call emission sites. The trampoline itself
+# and its shared install/restore frame live in `src/codegen/named-this-call.ts`,
+# which is under budget; what remains in the god-files is the registry
+# declaration and one `?? trampoline` per call site, which cannot move.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+func-budget-allow:
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 ## Problem
@@ -95,3 +117,63 @@ binding — most plain call targets are statically known.
 ## Dispatch
 
 **opus** (medium): the diagnosis is confirmed and the shape is a known trampoline, but it spans a registry, a helper refactor that must keep #3796/#4203 bytes identical, and five call sites with index-shift ordering — enough coordination to need more than a mechanical pass.
+
+## Resolution
+
+Fixed 2026-09-13 (branch `issue-6436`, base `upstream/main` 69ccb3494f).
+
+**Mechanism.** A plain `f(x)` emitted a bare `call $f` and installed no
+receiver, so a callee whose `this` resolves through the `__current_this` module
+global read whatever a dispatcher had parked there. Plain calls now route
+through a per-target trampoline that installs `undefined` for the duration of
+the call and restores the previous receiver on both the normal and the
+unwinding exit.
+
+Three pieces:
+
+1. **`ctx.funcReadsOwnThis`** (`src/codegen/context/types.ts`) — the set of
+   named declarations whose `this` reads the global, minus those taking an
+   explicit `this` parameter (`readsAmbientThisGlobal` in
+   `src/codegen/helpers/body-references-own-this.ts`). Populated at COLLECT
+   time next to `funcUsesArguments` (`declarations.ts` ×2,
+   `statements/nested-declarations.ts`), because call sites compile before
+   hoisted bodies do; shadow save/restore mirrored in `statements.ts`,
+   `nested-function-name-scope.ts` and `runtime-module-callable-metadata.ts`.
+
+2. **`ensureNamedPlainCallTrampoline`** (`src/codegen/named-this-call.ts`) —
+   `(...targetParams) -> results`, body = install `ref.null.extern`, exact
+   call, restore. It reuses the #3796 `.call` trampoline's save/install/restore
+   frame, extracted to the module-level `installAndCallFrame` (including
+   #4620's parked-result `try_table` shape), with its own cache so the `.call`
+   trampoline's bytes and ordinals do not move. No `ref.is_null` split: a plain
+   call's receiver is statically absent, not a runtime value to test. It
+   installs a plain null, NOT the #4203 explicit-null marker — `f()` is an
+   ABSENT receiver, which the callee's null-guarded read already answers as
+   `undefined` (strict) / globalThis (sloppy).
+
+3. **Four call sites** — `call-identifier.ts`, `call-tail-dispatch.ts`,
+   `calls-optional-direct.ts`, and the `.call`/`.apply` legacy arms in
+   `calls.ts`. The trampoline is resolved from the FINAL (post-argument)
+   handle and minted after `maybeSetArgcForKnownCall`, so the argc/extras
+   protocol is untouched. The `calls.ts` arms use
+   `resolveUndefinedReceiverTrampoline`, which applies only when the #3796
+   trampoline declined AND the receiver is statically `undefined`/`void` —
+   a provably-`null` receiver keeps the #4203 marker path and its bytes.
+
+Async and generator targets are deliberately excluded: their bodies do not run
+inside the call, so clearing the receiver around the synchronous half would
+install nothing useful.
+
+**Evidence.** Probe of 15 fixtures, every expectation taken from a native Node
+run of the same source rather than assumed (two of the plan's control
+expectations were wrong that way — `tests[0].body({t:'T'})` makes `tests[0]`,
+not `{t:'T'}`, the receiver). On the parent: 7 wrong, 8 right. With the fix:
+15/15. Regression test `tests/issue-6436-plain-call-ambient-this.test.ts`
+carries all of them plus a WAT anti-cost control (a `this`-free callee mints no
+`__named_plain_call_` helper).
+
+**Pre-existing failures on this base, NOT caused by this change** — verified by
+reverting `src/` and re-running: `tests/issue-1702-strict-this.test.ts` (2),
+`tests/issue-4025-apply-call-this-binding.test.ts` (3), and
+`tests/equivalence/arguments-nested-and-loops.test.ts` "for-loop with function
+declaration in body" (a loop-capture bug: 30 vs 33).

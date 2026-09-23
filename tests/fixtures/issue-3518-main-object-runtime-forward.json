@@ -1,0 +1,52 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/object-runtime.ts",
+  "independentRecordSha256": "8a869edcdb09c68547c16bc09658a31095d781eb5f120a5bcf4c7bc529bb39f1",
+  "sourceProvenance": {
+    "implementationParent": {
+      "revision": "9dcd771d809f9e0736a4664dfbd9db86cd350bf9",
+      "blob": "5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3",
+      "sha256": "4f849215c225517ea8164a863396b15f6039ff4e6b8962e90ddf4df53252d4a3",
+      "bytes": 585838
+    },
+    "implementation": {
+      "revision": "3050552a1646a6af87f8f6c9c06dc83cb04407c5",
+      "blob": "6de671f328666581fb678213d2c3b5f975d3bc72",
+      "sha256": "ba47e668043dd0862cbeff268a9963987b2d53829c98ed4110716459e7a06ecd",
+      "bytes": 587854
+    },
+    "deliveredMain": {
+      "revision": "2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0",
+      "blob": "6de671f328666581fb678213d2c3b5f975d3bc72",
+      "sha256": "ba47e668043dd0862cbeff268a9963987b2d53829c98ed4110716459e7a06ecd",
+      "bytes": 587854
+    },
+    "priorCheckpoint": {
+      "revision": "5b59430597315b08b2d7a1365324b56551230308",
+      "blob": "41515e8b16c468b9877f0951f10cbaf79a0cb4e2",
+      "sha256": "5a745c07555e8183682a5014701eb4cd674da5d2ffd8367676a8a22024a50b06",
+      "bytes": 580915
+    }
+  },
+  "change": {
+    "operation": "insert",
+    "originalBeforeLine": 5490,
+    "originalAfterLine": 5490,
+    "addedLines": 34,
+    "addedText": "            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n            },\n          ] satisfies Instr[])\n        : []),\n      // (#6432) …and the native `$Symbol` carrier — the FOURTH instance of the\n      // same action-at-a-distance hazard the boxed-boolean and error-struct\n      // arms above document, and the one that blocked the whole linked\n      // standalone Temporal lane. §7.1.1 step 1: a Symbol is ALREADY a\n      // primitive, so ToPrimitive must hand it straight back; `returnIfPrimitive`\n      // below has always agreed (its `includeSymbol` arm), but the INPUT\n      // cascade did not, so a Symbol fell through the `$Object` test into\n      // `__class_to_primitive`. That answered correctly only while\n      // `__class_to_primitive` had no generic runtime walk; the moment the\n      // module gained one (`buildClassToPrimitiveRuntimeWalk`, emitted as soon\n      // as its probe natives resolve — which a LINKED standalone module always\n      // has), the walk's `__typeof_object(sym) || __typeof_function(sym)` guard\n      // answered TRUE for the Symbol carrier (`__typeof_object` has no Symbol\n      // arm) and sent a property read at it: `sym.toString()` → the inherited\n      // `Object.prototype.toString` glue → its loud standalone refusal.\n      //\n      // Measured 2026-09-12 (#6432): that refusal fired from INSIDE\n      // `__protoidx_companion` → `__nativeproto_seed_<Array>` →\n      // `__defineProperty_accessor(Array, @@species, …)` → `__obj_find` →\n      // `__to_property_key` → here, i.e. during MODULE INIT, before any user\n      // statement — which is why every linked test262 Temporal row reported\n      // \"Object.prototype.toString is not yet implemented in --target\n      // standalone\" and scored 0 pass.\n      ...(symbolKeysEnabled\n        ? ([\n            { op: \"local.get\", index: L_ANY },\n            { op: \"ref.test\", typeIdx: symbolTypeIdx },\n",
+    "leftAnchor": "      // MESSAGES stringify errors.\n      ...(ctx.errorStructTypeIdx >= 0\n        ? ([\n            { op: \"local.get\", index: L_ANY },\n            { op: \"ref.test\", typeIdx: ctx.errorStructTypeIdx },\n",
+    "rightAnchor": "            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n            },\n",
+    "enclosingFunction": "ensureObjectRuntime",
+    "placement": "Symbol primitive input arm before the objectTypeIdx input guard",
+    "priorCheckpointProjectedSha256": "c0714b5385bdf02bdb901f1bbab76fcdcf7b92a5adea182588b3eb34adf42728"
+  },
+  "spans": [
+    {
+      "id": "symbol-input-primitive-pass-through-6432",
+      "before": "      // MESSAGES stringify errors.\n      ...(ctx.errorStructTypeIdx >= 0\n        ? ([\n            { op: \"local.get\", index: L_ANY },\n            { op: \"ref.test\", typeIdx: ctx.errorStructTypeIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n            },\n",
+      "after": "      // MESSAGES stringify errors.\n      ...(ctx.errorStructTypeIdx >= 0\n        ? ([\n            { op: \"local.get\", index: L_ANY },\n            { op: \"ref.test\", typeIdx: ctx.errorStructTypeIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n            },\n          ] satisfies Instr[])\n        : []),\n      // (#6432) …and the native `$Symbol` carrier — the FOURTH instance of the\n      // same action-at-a-distance hazard the boxed-boolean and error-struct\n      // arms above document, and the one that blocked the whole linked\n      // standalone Temporal lane. §7.1.1 step 1: a Symbol is ALREADY a\n      // primitive, so ToPrimitive must hand it straight back; `returnIfPrimitive`\n      // below has always agreed (its `includeSymbol` arm), but the INPUT\n      // cascade did not, so a Symbol fell through the `$Object` test into\n      // `__class_to_primitive`. That answered correctly only while\n      // `__class_to_primitive` had no generic runtime walk; the moment the\n      // module gained one (`buildClassToPrimitiveRuntimeWalk`, emitted as soon\n      // as its probe natives resolve — which a LINKED standalone module always\n      // has), the walk's `__typeof_object(sym) || __typeof_function(sym)` guard\n      // answered TRUE for the Symbol carrier (`__typeof_object` has no Symbol\n      // arm) and sent a property read at it: `sym.toString()` → the inherited\n      // `Object.prototype.toString` glue → its loud standalone refusal.\n      //\n      // Measured 2026-09-12 (#6432): that refusal fired from INSIDE\n      // `__protoidx_companion` → `__nativeproto_seed_<Array>` →\n      // `__defineProperty_accessor(Array, @@species, …)` → `__obj_find` →\n      // `__to_property_key` → here, i.e. during MODULE INIT, before any user\n      // statement — which is why every linked test262 Temporal row reported\n      // \"Object.prototype.toString is not yet implemented in --target\n      // standalone\" and scored 0 pass.\n      ...(symbolKeysEnabled\n        ? ([\n            { op: \"local.get\", index: L_ANY },\n            { op: \"ref.test\", typeIdx: symbolTypeIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n            },\n",
+      "beforeSha256": "c7eb8aa68a5a3b4ad1e0e4f2843a2ec5eb3b6aec391330ab8b5389b309d12363",
+      "afterSha256": "5865431384e696074025b949b300b9d640c4e0d862340214bed9ec6c522be332"
+    }
+  ]
+}

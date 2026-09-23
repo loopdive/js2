@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
   captureSourceSlot,
   expectsBoxedCaptureValue,
@@ -17,6 +18,8 @@ import {
   recordLiftedCaptureBox,
 } from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitBigIntCtorCarrier } from "../bigint-wide-parse.js";
+import { emitI64ToStringCall } from "../bigint-string-context.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import {
   candidateFixedFormalCount,
@@ -64,6 +67,7 @@ import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } f
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
+import { tryEmitStandaloneDynamicSpreadCall } from "../standalone-dynamic-spread-call.js"; // (#6646)
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import {
@@ -102,7 +106,7 @@ import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
-import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
+import { tryCompileStoredObjectBuiltinCall, uncurriedBuiltinAliasArmActive } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import {
@@ -118,6 +122,7 @@ import { resolveDefaultExpressionImportGlobal } from "../default-expression-impo
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
+import { tryEmitLinkedProviderFreeGlobalCall } from "./linked-free-global-call.js"; // (#6492 r9) provider free callee → live realm lookup
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
 import { tryEmitNullishIdentifierCalleeTypeError } from "./stored-member-closure-call.js"; // (#4640 D1)
@@ -130,6 +135,7 @@ import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js"
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
+  calleeIsLinkedProviderParam,
   calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
@@ -150,6 +156,7 @@ import {
   buildArgcResetNoLazyExtras,
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
+import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
 
 function tryEmitGenericStructFactoryResult(
   ctx: CodegenContext,
@@ -519,7 +526,7 @@ function tryCompileStoredStandaloneCarrierCall(
   expr: ts.CallExpression,
   isKnownVariable: boolean,
 ): InnerResult | undefined {
-  if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+  if (!isKnownVariable || !uncurriedBuiltinAliasArmActive(ctx)) return undefined;
   const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
   if (storedObjectCall !== undefined) return storedObjectCall;
   if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
@@ -1286,6 +1293,8 @@ export function compileIdentifierCall(
           return { kind: "externref" };
         }
       }
+      // (#6656) A reference result keeps a value past 64 bits exact.
+      if (emitBigIntCtorCarrier(ctx, fctx, expectedType)) return { kind: "externref" };
       const ctorIdx = ctx.funcMap.get("__bigint_ctor");
       if (ctorIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: ctorIdx });
@@ -1495,6 +1504,9 @@ export function compileIdentifierCall(
         coerceType(ctx, fctx, argType, { kind: "externref" }, "string");
         return { kind: "externref" };
       }
+      // (#6656) i64: exact bigint formatter, else the number route.
+      if (argType?.kind === "i64" && emitI64ToStringCall(ctx, fctx, argType))
+        return emitStringBuiltinNumberResult(ctx, fctx);
 
       return argType ?? { kind: "externref" };
     }
@@ -1756,7 +1768,7 @@ export function compileIdentifierCall(
     // bind provider otherwise routes the `$__bound_fn` through the stored
     // `Function.prototype.call` VALUE, whose standalone body is the #2984
     // degrade throw. The resolver only matches the immutable harness idiom.
-    if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+    if (!isLocallyShadowed && uncurriedBuiltinAliasArmActive(ctx)) {
       // Deno's `uncurryThis = bind.bind(call)` has the exact native spelling
       // `call.bind(...args)`. Construct that bound-function carrier directly;
       // invoking the generic Function.prototype.bind method-value body would
@@ -1981,6 +1993,17 @@ export function compileIdentifierCall(
         const spreadCall = emitDynamicSpreadCall(ctx, fctx, expr, expectedType);
         if (spreadCall !== null) return spreadCall;
       }
+      // (#6646, #5383 S68) The HOST-FREE twin of the arm immediately above.
+      // Its header claimed the standalone lane "retains its native ObjVec /
+      // call_ref lowering, where the vector … can be expanded without a host
+      // boundary"; measured, the dispatch this block falls into is fixed-arity
+      // like every other, so `callSpread(f,a){return f(...a)}` handed `f` the
+      // source ARRAY as formal zero. Same ObjVec argv, no host boundary — see
+      // standalone-dynamic-spread-call.ts.
+      if (isKnownVariable && hasSpreadArg && noJsHost(ctx)) {
+        const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
+        if (nativeSpreadCall !== undefined) return nativeSpreadCall;
+      }
       if (callSigs && callSigs.length > 0 && !heterogeneousCallableCapture) {
         // Populate runtime callback candidates before compiling this HOF body.
         // Without the pre-scan, Test262's one-formal function expression is
@@ -2085,7 +2108,17 @@ export function compileIdentifierCall(
             continue;
           }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-          sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+          // (#6651 C3/C3b) The third widening this site has to mirror, for the
+          // reason the two above already spell out: a JavaScript parameter whose
+          // only type evidence is its own default gets an `externref` slot in the
+          // callee (`paramTypeIsJsDefaultGuess`), so asking here for the checker's
+          // `number` builds a wrapper signature the compiled callee never declared.
+          // Measured on `class C { async m(a = 23) {} }`: `var ref = C.prototype.m;
+          // ref(undefined)` emitted an all-f64 dispatch chain while the trampoline's
+          // own func type was `(externref) -> externref`, so the call reached no arm
+          // and the method body never ran — the async-method lane C3 had to exclude
+          // until this site mirrored the widening.
+          sigParamWasmTypes.push(widenJsDefaultGuessSlot(paramDecl, resolveWasmType(ctx, paramType)));
         }
 
         // (#4616) A REAL declared rest param (`body: (...args: unknown[]) =>
@@ -2918,6 +2951,12 @@ export function compileIdentifierCall(
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) ||
               calleeIsPromiseExecutorParam(ctx, expr.expression) ||
+              // (#6490) A callable param of a separately-linked PROVIDER can
+              // hold a consumer-module closure, whose struct belongs to the
+              // consumer's type group; the guarded cast here nulls and the
+              // dispatch traps un-catchably. Linker-only flag, so ordinary
+              // single-module compiles are byte-identical.
+              calleeIsLinkedProviderParam(ctx, expr.expression) ||
               // Captures explicitly marked as host-bound callback values stay
               // externref by design. They may be real JS functions after a
               // compiled method crosses the host boundary (Jest's Prompt
@@ -3519,6 +3558,18 @@ export function compileIdentifierCall(
           fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
           return { kind: "externref" };
         }
+      }
+
+      // (#6492 round 9) A linked PROVIDER resolves a free callee through the
+      // realm's global object FIRST, and only throws when the property is
+      // genuinely absent — §9.1.1.4, and the shape the test262 harness needs
+      // for `$DONE(err)`. Declines for every non-provider unit, so the
+      // ReferenceError arm below is unchanged everywhere else. Must come
+      // before that arm, which is unconditional once it decides the name is
+      // undeclared.
+      if (declaration === undefined && !implicitCallee && !isRuntimeEvalGlobal) {
+        const freeGlobal = tryEmitLinkedProviderFreeGlobalCall(ctx, fctx, expr, funcName);
+        if (freeGlobal !== undefined) return freeGlobal;
       }
 
       // §6.2.5.5 GetValue on an unresolvable Reference — both lanes. See
@@ -4255,7 +4306,10 @@ export function compileIdentifierCall(
 
     // Argument compilation may shift defined-function indices.
     const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
-    fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+    // (#6436) A plain call installs `undefined` as the receiver. Minted AFTER
+    // `maybeSetArgcForKnownCall`: the trampoline pushes no operand of its own.
+    const plainThis = resolvePlainCallThisTrampoline(ctx, funcName, finalFuncIdx);
+    fctx.body.push({ op: "call", funcIdx: plainThis ?? finalFuncIdx });
     // Foreign eval calls lack checker signatures; the resolved Wasm signature is authoritative.
     if (isForeignEvalNode(expr) && wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
     const sig = isForeignEvalNode(expr) ? undefined : ctx.checker.getResolvedSignature(expr);

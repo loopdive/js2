@@ -10,11 +10,13 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
 import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
+import { emitArrayIteratorPrototypeSingleton } from "../array-object-proto.js"; // (#6484 S3 review)
 import {
   compileArrowAsClosure,
   compileArrowFunction,
@@ -26,12 +28,14 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import { emitLiveCollectionIterRec } from "../map-runtime.js"; // (#5267 R3-1a)
+import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#6484 S2) array @@iterator carrier
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
   destructureParamArray,
   destructureParamObject,
   getArrTypeIdxFromVec,
+  TYPED_ARRAY_NAMES,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
@@ -69,10 +73,10 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
-import { patchInlinedIifeReturns } from "./iife-return-patch.js"; // (#5339)
+import { parkOuterReturnProtocol, patchInlinedIifeReturns, restoreOuterReturnProtocol } from "./iife-return-patch.js"; // (#5339, #6651 C3b)
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
-import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
+import { resolvePlainCallThisTrampoline, tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203, #6436)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./stored-member-closure-call.js";
 import { classMemberFuncKey } from "../class-member-keys.js";
@@ -80,6 +84,9 @@ import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394)
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
+import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
+import { tryEmitLinkedStaticComputedCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
+import { isLinkedDynamicParentInstanceReceiver } from "../standalone-dynamic-parent-class.js"; // (#6654)
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
@@ -446,6 +453,10 @@ export function compileTailDispatch(
               // function would coerce i32→f64 before local.set into an i32 local.
               const savedReturnType = fctx.returnType;
               fctx.returnType = iifeWasmRetType;
+              // (#6651 C3b) …and park the enclosing function's own return
+              // protocol for the same reason, one level up: see
+              // `parkOuterReturnProtocol`.
+              const parkedReturnProtocol = parkOuterReturnProtocol(fctx);
 
               // A real function instantiation creates all var bindings before
               // body evaluation. Besides read-before-declaration semantics, this
@@ -485,6 +496,7 @@ export function compileTailDispatch(
 
               // Restore outer function's return type
               fctx.returnType = savedReturnType;
+              restoreOuterReturnProtocol(fctx, parkedReturnProtocol);
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
@@ -526,8 +538,11 @@ export function compileTailDispatch(
               // compileReturnStatement to drop the expression value).
               const savedReturnType = fctx.returnType;
               fctx.returnType = null;
-
-              // See the returning arm above: function-scoped vars must exist
+              // (#6651 C3b) Park the enclosing function's return protocol — see
+              // the returning arm above and `parkOuterReturnProtocol`. A void
+              // IIFE's `return;` inside a generator factory would otherwise
+              // branch to the GENERATOR's exit label.
+              const parkedReturnProtocol = parkOuterReturnProtocol(fctx);
               // before the first statement and must shadow outer/global names.
               const isLargeIife = bodyStmts.length >= 1_000;
               if (isLargeIife) {
@@ -563,6 +578,7 @@ export function compileTailDispatch(
 
               // Restore outer function's return type
               fctx.returnType = savedReturnType;
+              restoreOuterReturnProtocol(fctx, parkedReturnProtocol);
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
@@ -670,6 +686,15 @@ export function compileTailDispatch(
   if (ts.isElementAccessExpression(expr.expression)) {
     const elemAccess = expr.expression;
     const argExpr = elemAccess.argumentExpression;
+    // (#6644, #5383 S67) `S[k](...args)` where `S` extends a LINKED provider
+    // class: the whole call has to be shipped through the boundary's
+    // `__apply_closure` terminal, because every arm below marshals a FIXED
+    // arity and hands a spread's source array over as one argument. Gated on a
+    // spread being present, so a computed call that works today keeps its
+    // exact lowering; declines for every receiver that is not one of #6640's
+    // linked-dynamic-parent classes, which is every module with no provider.
+    const linkedSpreadCall = tryEmitLinkedStaticComputedCall(ctx, fctx, expr, elemAccess);
+    if (linkedSpreadCall !== undefined) return linkedSpreadCall;
     // Resolve the key to a static string: string literals, numeric literals, const variables, etc.
     let resolvedMethodName: string | undefined;
     if (argExpr) {
@@ -756,16 +781,71 @@ export function compileTailDispatch(
             }
           }
         }
+        // (#6484 S3, kept through the S1+S2 merge) Whether this receiver is a
+        // TypedArray. S1+S2's general carrier migration routes every array-typed
+        // receiver through `__iterator`, so this no longer gates the dispatch —
+        // it only selects the prototype-materialisation arm further down, which
+        // arms the finalize step S3 added for the diverted carrier.
+        const iterRecvSymName = receiverType.getSymbol()?.name;
+        const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
-          // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
-          // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
-          // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
-          // and is NOT a drop-in — the array-iterator prototype/metadata rows
-          // key off the vec carrier — so the carrier migration is left to the
-          // follow-up that also moves `%ArrayIteratorPrototype%`.
+          // (#6484 S2) THE CARRIER MIGRATION the #5147 note deferred. This arm
+          // used to answer a SNAPSHOT `$Vec`, which is why `.next()` on
+          // `[1,2][Symbol.iterator]()` answered null — a vec has no cursor. The
+          // migration was blocked on the prototype/metadata rows keying off the
+          // vec carrier; S1 moved those onto the record's `family` tag, so the
+          // blocker is gone and `__iterator(recv)` is now a drop-in: it adopts a
+          // canonical `$Vec` into a LIVE `$IterRec{VEC, vec, 0, …}` cursor over
+          // the same vec, normalizes the other vec-family carriers, and stamps
+          // `ITER_FAMILY_ARRAY` so `getPrototypeOf` still answers
+          // `%ArrayIteratorPrototype%`. Registering the runtime here (rather
+          // than reaching for `ensureLateImport`) is what keeps the module
+          // host-import-free: `__iterator` must be the DEFINED native, never
+          // `env::__iterator`.
+          ensureNativeIteratorRuntime(ctx);
+          const nativeIterIdx = ctx.funcMap.get("__iterator");
+          if (nativeIterIdx !== undefined) {
+            flushLateImportShifts(ctx, fctx);
+            const snap = snapshotSpeculative(ctx, fctx);
+            const recvType = compileExpression(ctx, fctx, elemAccess.expression);
+            if (recvType !== null) {
+              if (recvType.kind === "ref" || recvType.kind === "ref_null") {
+                fctx.body.push({ op: "extern.convert_any" });
+              } else if (recvType.kind !== "externref") {
+                coerceType(ctx, fctx, recvType, { kind: "externref" });
+              }
+              // Iterator methods take no arguments; extras are evaluated for
+              // side effects only, exactly as the host bridge below does.
+              for (const arg of expr.arguments) {
+                const argType = compileExpression(ctx, fctx, arg);
+                if (argType) fctx.body.push({ op: "drop" });
+              }
+              fctx.body.push({ op: "call", funcIdx: nativeIterIdx });
+              return { kind: "externref" };
+            }
+            rollbackSpeculative(ctx, fctx, snap);
+          }
           const nativeResult = compileArrayMethodCall(ctx, fctx, elemAccess, expr, receiverType, "values");
           if (nativeResult !== undefined && nativeResult !== null) return nativeResult as ValType;
           // Fall through to the host bridge if the native path declined.
+        }
+        // (#6484 S3 review) The diverted TypedArray receiver hands back a
+        // `$__IterRec`, which models no `[[Prototype]]` — so
+        // `Object.getPrototypeOf(<any-typed binding of it>)` answered `null`,
+        // where the snapshot vec it replaced answered `%Array.prototype%` (the
+        // vec's own, ALSO wrong, answer — it is not `%ArrayIteratorPrototype%`;
+        // see the measurement in the issue file). §23.2.3.36 makes a TypedArray
+        // iterator an Array Iterator, so the spec answer is the #3013
+        // `%ArrayIteratorPrototype%` singleton. Materialize it here — the
+        // singleton is lazy, and the finalize arm below reads its global — and
+        // arm the finalize step. The statically-typed `ArrayIterator` binding
+        // already routes through the #3013 compile-time arm and is untouched.
+        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && typedArrayIterRecv) {
+          const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+          if (protoType) {
+            fctx.body.push({ op: "drop" });
+            ctx.typedArrayIterRecProtoPending = true;
+          }
         }
         const importName = methodName === "@@iterator" ? "__iterator" : "__async_iterator";
         // `%String.prototype%` is the empty String value (§22.1.3). Its
@@ -1462,6 +1542,10 @@ export function compileTailDispatch(
       // receiver. Placed BEFORE the field arm because a class with such a
       // member may also have a closure-valued field, and the runtime dispatch
       // serves that shape correctly too.
+      // (#6654) The linked-subclass arm spliced into the RUNTIME-key twin below
+      // has deliberately NO copy here — a statically resolved key on that
+      // receiver already answers correctly; see
+      // `isLinkedDynamicParentInstanceReceiver`.
       {
         const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
         if (classDyn !== undefined) return classDyn;
@@ -1492,6 +1576,10 @@ export function compileTailDispatch(
 
       const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
       if (dynamicHostCall !== undefined) return dynamicHostCall;
+
+      // (#6641) standalone/wasi twin of the arm just above.
+      const genericComputedCall = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+      if (genericComputedCall !== undefined) return genericComputedCall;
 
       // (#4482) `o["m"](…)` where the module stored a closure in `o.m` — the
       // bracket twin of the dot-access shape `compileCallDispatchTail` already
@@ -1538,6 +1626,18 @@ export function compileTailDispatch(
     // historical behaviour. A non-closure read value hits the safe default arm.
     // (#5195 F1/F3) The runtime-keyed twin of the resolved-key arm above — same
     // reason, and it must precede the receiver-less dispatch below.
+    // (#6654) An instance of a subclass of a LINKED PROVIDER class is in
+    // `ctx.classSet` like any other, so every user-class arm below claims it —
+    // but its carrier is the one the PROVIDER's constructor minted, which the
+    // consumer-side struct identity those arms resolve by cannot recognise, and
+    // they are fixed-arity. A receiver that is the CLASS OBJECT is excluded —
+    // that is a static call, owned by #6644's linked-static arms.
+    if (
+      isLinkedDynamicParentInstanceReceiver(ctx, elemAccess.expression, elemAccessReceiverClassName(ctx, elemAccess))
+    ) {
+      const linkedDyn = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+      if (linkedDyn !== undefined) return linkedDyn;
+    }
     {
       const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
       if (classDyn !== undefined) return classDyn;
@@ -1562,6 +1662,10 @@ export function compileTailDispatch(
 
     const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
     if (dynamicHostCall !== undefined) return dynamicHostCall;
+
+    // (#6641) standalone/wasi twin of the arm just above.
+    const genericComputedCallUnresolved = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+    if (genericComputedCallUnresolved !== undefined) return genericComputedCallUnresolved;
 
     {
       const recvType = compileExpression(ctx, fctx, elemAccess.expression);
@@ -1684,7 +1788,9 @@ export function compileTailDispatch(
             allArgs.length,
             getFuncParamTypes(ctx, finalFuncIdx)?.length ?? allArgs.length,
           );
-          fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+          // (#6436) Plain call ⇒ install `undefined` as the receiver.
+          const plainThis = resolvePlainCallThisTrampoline(ctx, funcName, finalFuncIdx);
+          fctx.body.push({ op: "call", funcIdx: plainThis ?? finalFuncIdx });
 
           const sig = ctx.checker.getResolvedSignature(expr);
           if (sig) {
@@ -1813,7 +1919,7 @@ export function compileTailDispatch(
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
         const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-        sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
       }
 
       const sigMatched = matchClosureInfoBySignature(ctx, sigParamWasmTypes, sigRetWasm, {
@@ -1950,7 +2056,7 @@ export function compileTailDispatch(
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
         const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
-        sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(runtimeSigParams[i], resolveWasmType(ctx, paramType)));
       }
 
       // (#1298 PR #231 fix) Look up an existing wrapper struct/funcref pair

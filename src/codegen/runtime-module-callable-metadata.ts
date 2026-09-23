@@ -45,7 +45,7 @@ function nameMaps(ctx: CodegenContext): readonly Map<string, unknown>[] {
 }
 
 function nameSets(ctx: CodegenContext): readonly Set<string>[] {
-  return [ctx.funcUsesArguments, ctx.asyncFunctions, ctx.generatorFunctions];
+  return [ctx.funcUsesArguments, ctx.funcReadsOwnThis, ctx.asyncFunctions, ctx.generatorFunctions];
 }
 
 function captureNameState(ctx: CodegenContext, name: string): CallableNameState {

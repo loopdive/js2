@@ -12,6 +12,7 @@ import type { AllocRegistrySnapshot } from "../analysis/contracts/allocations.js
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiPlanEntry } from "./abi.js";
 import type { PreparedComponentAbiLookup } from "./abi-lookup.js";
 import type { IrModuleInitPlan } from "./startup.js";
+import type { IrRuntimeSupport } from "./runtime-support.js";
 
 /** Semantic contracts enrich the existing ABI entries; there is no second binding authority. */
 export type PreparedIrAbiContract =
@@ -81,6 +82,7 @@ export interface PreparedIrProgram {
   /** Includes empty sources and preserves semantic module evaluation order. */
   readonly startup: readonly IrModuleInitPlan[];
   readonly allocations: AllocRegistrySnapshot;
+  readonly runtimeSupport?: IrRuntimeSupport;
   readonly runtime: readonly PreparedIrProgramRuntimeProjection[];
   readonly reconciliation: "complete";
   readonly sealed: true;

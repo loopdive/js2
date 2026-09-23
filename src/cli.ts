@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { createRequire } from "node:module";
+import * as nodeModule from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { enableCliCompileCache } from "./cli-compile-cache.js";
+
+// #6478 — must run BEFORE the dynamic import of the compiler bundle below:
+// the cache only helps modules compiled after it is enabled. Namespace import
+// (not a named one) because `enableCompileCache` does not exist on Node 20,
+// where a named import of a missing builtin export is a load-time SyntaxError.
+enableCliCompileCache(nodeModule);
+
+const createRequire = nodeModule.createRequire;
 
 declare const __JS2WASM_CLI_VERSION__: string | undefined;
 

@@ -5,6 +5,7 @@
  * bitwise, modulo, boolean, and any-typed binary operations.
  */
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6604)
 import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import {
@@ -19,7 +20,12 @@ import {
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
-import { ensureAnyFromExternHelper, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
+import {
+  ensureAnyFromExternHelper,
+  ensureExternStrictEqHelper,
+  isAnyValue,
+  undefinedSingletonActive,
+} from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -69,6 +75,11 @@ import {
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
+import {
+  bothOperandsAreBigIntCarriers,
+  emitTypeDisjointStrictEq,
+  tryCompileBigIntCarrierArithmetic,
+} from "./bigint-carrier-operands.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
@@ -174,6 +185,25 @@ export { emitModulo } from "./remainder.js";
  * Arithmetic/bitwise/logical (`&&`/`||` return the operand type) are deliberately
  * excluded — branding a number as boolean would be a bug.
  */
+/**
+ * (#6642) The expected ValType for an operand that is STATICALLY a BigInt.
+ *
+ * `bigint` is a structural-only BRAND on the `i64` carrier (see `ValType` in
+ * wasm/model/instructions.ts): every `.kind === "i64"` check still matches, so
+ * i64 codegen is byte-identical — but the brand is what `coerceType`'s
+ * `externref → i64` row consults to pick §7.1.13 `ToBigInt` (`__to_bigint`,
+ * precision-preserving) over the plain-NUMBER unbox (`__unbox_number` +
+ * `i64.trunc_sat_f64_s`, which answers 0/NaN for a `$BigInt`).
+ *
+ * Every hint below used to be a BARE `{ kind: "i64" }`. That is invisible while
+ * the operand compiles natively to i64 (a literal, an i64 local), and only bites
+ * when the operand arrives BOXED — a dynamically-dispatched closure/property
+ * call (`NS.giveBigInt()`), a link-boundary read — where the generic externref
+ * ABI wraps the native `() -> i64` closure. `coerceType` then took the
+ * number path and the whole comparison silently answered on `0`.
+ */
+const BIGINT_I64: ValType = { kind: "i64", bigint: true };
+
 const BOOLEAN_PRODUCING_BINARY_OPS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.LessThanToken,
   ts.SyntaxKind.GreaterThanToken,
@@ -861,10 +891,30 @@ export function compileBinaryExpression(
     const trackedScalarOmission = compileTrackedScalarOmissionComparison(ctx, fctx, expr);
     if (trackedScalarOmission) return trackedScalarOmission;
     const rightIsNullKeyword = expr.right.kind === ts.SyntaxKind.NullKeyword;
-    const rightIsUndefinedId = ts.isIdentifier(expr.right) && expr.right.text === "undefined";
+    // (#6604) `void 0` IS the undefined literal here — see
+    // void-undefined-operand.ts. This arm RECOGNISES the literal side instead
+    // of compiling it, which is why the helper admits `void` only over an inert
+    // literal; `void f()` keeps its evaluated lowering.
+    //
+    // NATIVE-SEMANTICS ONLY, and that is a measured distinction, not a
+    // byte-preservation dodge. With a JS host the generic fallback this arm
+    // would replace hands both operands to the host `===`, which already
+    // implements §7.2.16 for `void 0` — probed on both trees, all seven shapes
+    // correct before and after (`.tmp/s16/gcprobe.mjs`). Widening the predicate
+    // there would move bytes for an answer that is already right. Standalone
+    // has no such fallback: it compares the carriers structurally and reports
+    // `void 0 !== undefined` as TRUE, which is the defect this fixes.
+    const voidUndefinedIsLiteral = ctx.targetProfile.semanticProviders === "native-first";
+    const rightIsUndefinedId =
+      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.right)
+        ? true
+        : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
-    const leftIsUndefinedId = ts.isIdentifier(expr.left) && expr.left.text === "undefined";
+    const leftIsUndefinedId =
+      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.left)
+        ? true
+        : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
     // A declaration binding whose element type is a heterogeneous primitive
     // union is physically a nullable `$AnyValue`.  Do not consume its
@@ -1769,15 +1819,48 @@ export function compileBinaryExpression(
       const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
       const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
-      // Strict equality: BigInt and Number/String are different types → always false/true
+      // Strict equality: BigInt and a PROVABLY non-bigint Number/String/Boolean
+      // are different types → always false/true, decidable at compile time.
+      //
+      // (#6642) That fold is WRONG when the non-bigint side's static type is
+      // `any`/`unknown` — which is exactly what a value read across a
+      // standalone link boundary is typed as (the consumer's checker sees the
+      // provider through an `any`-returning stub; it cannot know the runtime
+      // value is a BigInt even when the provider's own source says so). The
+      // fold still ran because `isBigIntType`/`leftIsBigInt` reads the STATIC
+      // TS type, and `any` is never bigint statically — so `zdt.epochNanoseconds
+      // === 217175010123456789n` (both operands genuinely bigint at runtime)
+      // compiled its RHS, compiled its LHS (correctly reaching the provider
+      // across the link), dropped both, and answered a hardcoded `false`. Route
+      // an any/unknown non-bigint side through the native standalone strict-
+      // equality helper instead, which classifies BOTH operands dynamically
+      // (`extern-eq-fast.ts` already has a bigint×bigint `i64.eq` arm — it
+      // could not fire before because this fold never reached it). Gated to
+      // native-first/standalone (`ensureExternStrictEqHelper` returns
+      // undefined off that lane) so JS-host mode is untouched.
       if (isStrictEq || isStrictNeq) {
-        // Compile both sides for side effects, then drop them
-        const lt = compileExpression(ctx, fctx, expr.left);
-        if (lt) fctx.body.push({ op: "drop" });
-        const rt = compileExpression(ctx, fctx, expr.right);
-        if (rt) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: isStrictNeq ? 1 : 0 });
-        return { kind: "i32" };
+        const nonBigIntTsType0 = leftIsBigInt ? rightTsType : leftTsType;
+        const nonBigIntIsAnyish0 = (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
+        // `ctx.nativeBoxBooleanTypeIdx`, which are only set once
+        // `addUnionImports` has registered the native-first boxing helpers —
+        // this comparison can be the FIRST bigint-adjacent construct compiled
+        // in a module, before anything else triggers that registration.
+        if (nonBigIntIsAnyish0) addUnionImports(ctx);
+        const dynStrictEqIdx = nonBigIntIsAnyish0 ? ensureExternStrictEqHelper(ctx) : undefined;
+        if (dynStrictEqIdx !== undefined) {
+          const externref: ValType = { kind: "externref" };
+          const lt = compileExpression(ctx, fctx, expr.left, externref);
+          if (!lt) return null;
+          if (lt.kind !== "externref") coerceType(ctx, fctx, lt, externref);
+          const rt = compileExpression(ctx, fctx, expr.right, externref);
+          if (!rt) return null;
+          if (rt.kind !== "externref") coerceType(ctx, fctx, rt, externref);
+          fctx.body.push({ op: "call", funcIdx: dynStrictEqIdx });
+          if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+          return { kind: "i32" };
+        }
+        return emitTypeDisjointStrictEq(ctx, fctx, expr, isStrictNeq);
       }
 
       // Loose equality and comparisons: convert both operands to f64, then compare
@@ -2001,7 +2084,7 @@ export function compileBinaryExpression(
     }
 
     // Both operands are BigInt — compile as i64
-    const i64Hint: ValType = { kind: "i64" };
+    const i64Hint: ValType = BIGINT_I64;
     let leftType2 = compileExpression(ctx, fctx, expr.left, i64Hint);
     let rightType2 = compileExpression(ctx, fctx, expr.right, i64Hint);
     if (!leftType2 || !rightType2) return null;
@@ -2418,8 +2501,12 @@ export function compileBinaryExpression(
   //   `hasI32LocalOperand`     — relational only, both sides proven i32
   //   `arithI32WithToInt32Wrap`— an enclosing ToInt32 makes the wrap observable-equal
   //   `bitwiseI32`             — the op itself is ToInt32-defined
-  const numericHint: ValType | undefined =
-    isNumericOp || bothStaticNumberEq
+  // (#6656 slice 3) An f64 hint rounds a proven bigint-carrier pair past 2^53 —
+  // see `bigint-carrier-operands.ts` for why the brand is the proof.
+  const bigIntCarrierPair = (isNumericOp || bothStaticNumberEq) && bothOperandsAreBigIntCarriers(ctx, fctx, expr);
+  const numericHint: ValType | undefined = bigIntCarrierPair
+    ? { kind: "i64" }
+    : isNumericOp || bothStaticNumberEq
       ? {
           kind:
             (bothNativeI32 || hasI32LocalOperand || arithI32WithToInt32Wrap || bitwiseI32) && !isDivOrPow
@@ -2542,6 +2629,10 @@ function compileAnyBinaryDispatch(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): InnerResult {
+  // (#6656 slice 3) `any + any` is `any`, never `number`, so a bigint pair
+  // reaching this dispatch would be boxed through `__any_box_f64` and rounded.
+  const bigIntArith = tryCompileBigIntCarrierArithmetic(ctx, fctx, expr, op);
+  if (bigIntArith !== undefined) return bigIntArith;
   // (#1917 Step E3) Equality (`==`/`===`/`!=`/`!==`) is the dispatch layer the
   // coercion engine owns: `emitStrictEq`/`emitLooseEq` select the helper, box
   // both operands, emit the call, and negate for `!=`/`!==`. This is a

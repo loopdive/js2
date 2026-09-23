@@ -21,6 +21,7 @@ import { maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import { defaultValueInstrs, pushDefaultValue, pushParamSentinel } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
 import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imports.js";
+import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
 
 /** `compileCallExpression`, injected to keep this module free of a cycle. */
 type OrdinaryCallCompiler = (ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression) => InnerResult;
@@ -126,7 +127,8 @@ export function compileOptionalDirectCall(
       }
       maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, paramTypes.length);
     }
-    fctx.body.push({ op: "call", funcIdx });
+    // (#6436) Plain call ⇒ install `undefined` as the receiver.
+    fctx.body.push({ op: "call", funcIdx: resolvePlainCallThisTrampoline(ctx, funcName, funcIdx) ?? funcIdx });
     resolved = true;
   }
 

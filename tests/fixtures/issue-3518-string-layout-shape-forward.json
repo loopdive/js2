@@ -1,0 +1,71 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/runtime/wasmgc/values/string-layouts.ts",
+  "sourceProvenance": {
+    "publishedParent": {
+      "revision": "ea0f05c36267939d5731e3d5e927ada071ae1780",
+      "blob": "16589629863a2b6f11ebf267e7fcca1bb59cd1e7",
+      "sha256": "c821a11a15d7fbdb9caa71de856a2da588489795c6fd9d1ab6d2fcb4ecada9fc",
+      "bytes": 7333
+    },
+    "publishedHead": {
+      "revision": "5404151bfc1b49d6cffed4a87a8985c51bd3dd93",
+      "blob": "ad715b0be69365ff91081094917308a22456a777",
+      "sha256": "e1a199c4bac76eedef4f8bdd9b066f9fdf60159c4481a7fa137b723a8acdad05",
+      "bytes": 8675
+    }
+  },
+  "publishedTitle": "refactor(ir): share native resource declarations before allocation",
+  "derivation": "Exact seven ordered Git diff contexts between the fixed published parent and head. No merged candidate, runtime Git fallback or replacement historical donor hash is used.",
+  "spans": [
+    {
+      "id": "generic-shape-types-and-numeric-adapter",
+      "before": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport type { TypeDef } from \"../../../wasm/model/module-records.js\";\n\nexport interface NativeStringLayout {\n  readonly nativeStrDataTypeIdx: number;\n",
+      "after": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport type { TypeDef } from \"../../../wasm/model/module-records.js\";\nimport type { FieldDef, ArrayTypeDef } from \"../../../wasm/model/module-records.js\";\nimport type { ValType } from \"../../../wasm/model/instructions.js\";\n\ntype StringScalar = Exclude<ValType, { kind: \"ref\" | \"ref_null\" }>;\ninterface StringStructShape<R, P> {\n  kind: \"struct\";\n  name: string;\n  fields: (Omit<FieldDef, \"type\"> & { type: StringScalar | R })[];\n  parent: P;\n}\nfunction numericStringShape(shape: StringStructShape<Extract<ValType, { kind: \"ref\" }>, number>): TypeDef {\n  const { parent, ...descriptor } = shape;\n  return { ...descriptor, superTypeIdx: parent };\n}\n\nexport interface NativeStringLayout {\n  readonly nativeStrDataTypeIdx: number;\n",
+      "beforeSha256": "ff4833d2b09bb6596bf96c86201bb6ec3350b1a272308ef5c5badaff6d1b211e",
+      "afterSha256": "b23bd6cf1fab224d4e87c7dbf593f3686ba48fa79f4053c9f754cd15346685c4"
+    },
+    {
+      "id": "string-data-return-type",
+      "before": "  };\n}\n\nexport function createStringDataType(): TypeDef {\n  return {\n    kind: \"array\",\n    name: \"__str_data\",\n",
+      "after": "  };\n}\n\nexport function createStringDataType(): ArrayTypeDef {\n  return {\n    kind: \"array\",\n    name: \"__str_data\",\n",
+      "beforeSha256": "8f2fee3d2c790746d0bd4085baeff8dd64e32ca9d733bc38d2c2669695dd9b08",
+      "afterSha256": "d6d3580041dc316558bf25fcd9a6d0e5713994c8690f3e337daa65cdb35e90c4"
+    },
+    {
+      "id": "any-native-cons-wrapper-and-shape-entry",
+      "before": "}\n\nexport function createAnyStringType(): TypeDef {\n  return {\n    kind: \"struct\",\n    name: \"AnyString\",\n    fields: [{ name: \"len\", type: { kind: \"i32\" }, mutable: false }],\n    superTypeIdx: -1,\n  };\n}\n\nexport function createNativeStringType(layout: NativeStringLayout): TypeDef {\n  return {\n    kind: \"struct\",\n    name: \"NativeString\",\n    fields: [\n      { name: \"len\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"off\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"data\", type: { kind: \"ref\", typeIdx: layout.nativeStrDataTypeIdx }, mutable: false },\n    ],\n    superTypeIdx: layout.anyStrTypeIdx,\n  };\n}\n\nexport function createConsStringType(layout: NativeStringLayout): TypeDef {\n  return {\n    kind: \"struct\",\n    name: \"ConsString\",\n",
+      "after": "}\n\nexport function createAnyStringType(): TypeDef {\n  return numericStringShape(createAnyStringShape(-1));\n}\nexport function createAnyStringShape<P>(parent: P): StringStructShape<never, P> {\n  return {\n    kind: \"struct\",\n    name: \"AnyString\",\n    fields: [{ name: \"len\", type: { kind: \"i32\" }, mutable: false }],\n    parent,\n  };\n}\n\nexport function createNativeStringType(layout: NativeStringLayout): TypeDef {\n  return numericStringShape(\n    createNativeStringShape({ kind: \"ref\", typeIdx: layout.nativeStrDataTypeIdx }, layout.anyStrTypeIdx),\n  );\n}\nexport function createNativeStringShape<R, P>(data: R, parent: P): StringStructShape<R, P> {\n  return {\n    kind: \"struct\",\n    name: \"NativeString\",\n    fields: [\n      { name: \"len\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"off\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"data\", type: data, mutable: false },\n    ],\n    parent,\n  };\n}\n\nexport function createConsStringType(layout: NativeStringLayout): TypeDef {\n  return numericStringShape(\n    createConsStringShape({ kind: \"ref\", typeIdx: layout.anyStrTypeIdx }, layout.anyStrTypeIdx),\n  );\n}\nexport function createConsStringShape<R extends object, P>(anyString: R, parent: P): StringStructShape<R, P> {\n  return {\n    kind: \"struct\",\n    name: \"ConsString\",\n",
+      "beforeSha256": "91ca67e06fb4232cf8e0d15c175485ee2cbe6b859cfd0301406eed72479159b8",
+      "afterSha256": "f9c588a4961ef465ce9b2cd92132c761889eec58a58f5c7807cefd94336b1b8b"
+    },
+    {
+      "id": "cons-fields-and-hashed-wrapper-shape",
+      "before": "      // right=\"\"), turning every later flatten of the same rope into a two-\n      // field fast path instead of an O(len) re-copy. `len` stays immutable —\n      // the rewrite preserves the total length.\n      { name: \"left\", type: { kind: \"ref\", typeIdx: layout.anyStrTypeIdx }, mutable: true },\n      { name: \"right\", type: { kind: \"ref\", typeIdx: layout.anyStrTypeIdx }, mutable: true },\n    ],\n    superTypeIdx: layout.anyStrTypeIdx,\n  };\n}\n\nexport function createHashedStringType(layout: NativeStringLayout): TypeDef {\n  return {\n    kind: \"struct\",\n    name: \"HashedString\",\n    fields: [\n      { name: \"len\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"off\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"data\", type: { kind: \"ref\", typeIdx: layout.nativeStrDataTypeIdx }, mutable: false },\n      { name: \"hash\", type: { kind: \"i32\" }, mutable: true },\n      { name: \"cacheGen\", type: { kind: \"i32\" }, mutable: true },\n      { name: \"cacheOwner\", type: { kind: \"anyref\" }, mutable: true },\n",
+      "after": "      // right=\"\"), turning every later flatten of the same rope into a two-\n      // field fast path instead of an O(len) re-copy. `len` stays immutable —\n      // the rewrite preserves the total length.\n      { name: \"left\", type: { ...anyString }, mutable: true },\n      { name: \"right\", type: { ...anyString }, mutable: true },\n    ],\n    parent,\n  };\n}\n\nexport function createHashedStringType(layout: NativeStringLayout): TypeDef {\n  return numericStringShape(\n    createHashedStringShape({ kind: \"ref\", typeIdx: layout.nativeStrDataTypeIdx }, layout.nativeStrTypeIdx),\n  );\n}\nexport function createHashedStringShape<R, P>(data: R, parent: P): StringStructShape<R, P> {\n  return {\n    kind: \"struct\",\n    name: \"HashedString\",\n    fields: [\n      { name: \"len\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"off\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"data\", type: data, mutable: false },\n      { name: \"hash\", type: { kind: \"i32\" }, mutable: true },\n      { name: \"cacheGen\", type: { kind: \"i32\" }, mutable: true },\n      { name: \"cacheOwner\", type: { kind: \"anyref\" }, mutable: true },\n",
+      "beforeSha256": "2d5d54b9f2aed75e34060752810625fe4d36dc055c68a85170e8bed437df8b67",
+      "afterSha256": "78c3748cf3bab56273dd3099fa7cd55e97d2326f92a4d291defc1404115fc2fe"
+    },
+    {
+      "id": "hashed-parent-and-utf8-data-return-type",
+      "before": "      // build). Field 4 degrades to a populated flag (0/1).\n      { name: \"cacheProps\", type: { kind: \"anyref\" }, mutable: true },\n    ],\n    superTypeIdx: layout.nativeStrTypeIdx,\n  };\n}\n\nexport function createUtf8StringDataType(): TypeDef {\n  return {\n    kind: \"array\",\n    name: \"__str_data_u8\",\n",
+      "after": "      // build). Field 4 degrades to a populated flag (0/1).\n      { name: \"cacheProps\", type: { kind: \"anyref\" }, mutable: true },\n    ],\n    parent,\n  };\n}\n\nexport function createUtf8StringDataType(): ArrayTypeDef {\n  return {\n    kind: \"array\",\n    name: \"__str_data_u8\",\n",
+      "beforeSha256": "915ee8ef292e0e51c463a559511c846ada30494cf5ce79cbe201cacbfb664ddc",
+      "afterSha256": "dcf0bfdb963d65a79caf7aabe4b5f49d35e27a3ae924b413e2d9f8cf01c11029"
+    },
+    {
+      "id": "utf8-wrapper-and-shape-entry",
+      "before": "}\n\nexport function createUtf8StringType(layout: NativeStringLayout): TypeDef {\n  return {\n    kind: \"struct\",\n    name: \"Utf8String\",\n",
+      "after": "}\n\nexport function createUtf8StringType(layout: NativeStringLayout): TypeDef {\n  return numericStringShape(\n    createUtf8StringShape({ kind: \"ref\", typeIdx: layout.utf8StrDataTypeIdx }, layout.anyStrTypeIdx),\n  );\n}\nexport function createUtf8StringShape<R, P>(data: R, parent: P): StringStructShape<R, P> {\n  return {\n    kind: \"struct\",\n    name: \"Utf8String\",\n",
+      "beforeSha256": "8e4d8c352c6c866e7a82fb2132220d0373d34f60d33cc1372355e99d9c7ceab1",
+      "afterSha256": "97d90b7230dc70283cb978401843dde172c00196bdd8fe2dea3a1a43ba8bbdad"
+    },
+    {
+      "id": "utf8-data-field-and-parent",
+      "before": "      // Canonical-ABI byte length (>= len for multi-byte scalars; == len for ascii).\n      { name: \"byteLen\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"off\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"data\", type: { kind: \"ref\", typeIdx: layout.utf8StrDataTypeIdx }, mutable: false },\n    ],\n    superTypeIdx: layout.anyStrTypeIdx,\n  };\n}\n",
+      "after": "      // Canonical-ABI byte length (>= len for multi-byte scalars; == len for ascii).\n      { name: \"byteLen\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"off\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"data\", type: data, mutable: false },\n    ],\n    parent,\n  };\n}\n",
+      "beforeSha256": "ac0fe08b1575daaa58603142c496dddd485c3d71713142c7dfaecdfa1360ef70",
+      "afterSha256": "1c2359a30813cb1df64df9a92b9d1b3a6fbd9b356e27a47bde07bdd28383341d"
+    }
+  ]
+}

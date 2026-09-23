@@ -5,6 +5,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
+import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
@@ -62,6 +63,7 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
+import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -98,6 +100,7 @@ import { ensureObjectProtoProtoSetNative } from "../object-proto-proto-accessor.
 import { hasExplicitNullObjectPrototype } from "../object-proto-name-in.js"; // (#5268 review F4)
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
 import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
+import { targetReceiverIsPrototypeAccess } from "../class-proto-toplevel-write.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
@@ -2536,6 +2539,19 @@ function compileExternrefArrayDestructuringAssignment(
     emitExternrefAssignDestructureGuard(ctx, fctx, tmpLocal);
   }
 
+  // (#6651 cluster G, G1) A pattern with a MEMBER target makes the
+  // DestructuringAssignmentTarget reference evaluation OBSERVABLE, and
+  // §13.15.5.5 evaluates it BEFORE the iterator is stepped. The
+  // `__array_from_iter_n` materialisation below is a complete drain up front,
+  // so that ordering — and the §13.15.5.2 step 5 IteratorClose that depends on
+  // it — cannot be expressed here. Hand those patterns to the lazy drive; it
+  // refuses (emitting nothing) for every shape it does not model, so the
+  // all-identifier common case stays on the path below, byte-identical.
+  if (resultType.kind === "externref" && tryEmitSpecOrderedArrayAssignDrive(ctx, fctx, target, tmpLocal)) {
+    fctx.body.push({ op: "local.get", index: tmpLocal });
+    return resultType;
+  }
+
   // #1454: Spec §13.15.5.2 ArrayAssignmentPattern requires GetIterator(value)
   // before reading binding elements. The previous `tmpLocal[i]` via
   // __extern_get path bypassed the @@iterator getter and .next() calls,
@@ -3124,7 +3140,7 @@ function emitExternrefObjectPatternWrites(
 }
 
 /** Destructure an object from a local variable (used for nested patterns) */
-function emitObjectDestructureFromLocal(
+export function emitObjectDestructureFromLocal(
   ctx: CodegenContext,
   fctx: FunctionContext,
   pattern: ts.ObjectLiteralExpression,
@@ -4789,6 +4805,14 @@ function compilePropertyAssignment(
         { op: "local.get", index: newLenTmp },
         { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
       ];
+      // (#6482 r4) This store touches ONLY field 0, so a shrink leaves the
+      // dropped elements sitting in the backing array and a later grow exposes
+      // them again (`[0,1]; length = 1; length = 10` → index 1 read back as
+      // `1`). Mark the orphaned region before the length moves. Shared emitter —
+      // the receiver here is `$__vec_base`, whose only field is `length`, so
+      // reaching the data array needs the per-vec-type ladder that
+      // `vec-length-hole-fill.ts` owns for all three length-store sites.
+      emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only");
       const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
       if (receiverProvenVec) {
         for (const instr of selectedStore) fctx.body.push(instr);
@@ -4990,7 +5014,11 @@ function compilePropertyAssignment(
   // side-slot path. In JS-host mode the backing is the actual host instance
   // returned by `super(...)`; use ordinary [[Set]] instead of casting it to the
   // vestigial bookkeeping struct registered for the user class.
-  if (ctx.classExternrefBackedSet.has(typeName)) {
+  // (#6651 cluster C, C2) …but NOT when the receiver is `<C>.prototype`: the
+  // checker types it as the INSTANCE type, so this arm would cast a PROTOTYPE
+  // object to `$Error_struct` and TRAP. See class-proto-toplevel-write.ts.
+  const receiverIsClassPrototype = targetReceiverIsPrototypeAccess(target);
+  if (ctx.classExternrefBackedSet.has(typeName) && !receiverIsClassPrototype) {
     if (ctx.standalone) {
       const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
       if (ownWrite !== undefined) return ownWrite;
@@ -5280,6 +5308,11 @@ function compileExternPropertySet(
   const resolvedInfo = findExternInfoForMember(ctx, className, propName, "property");
   const propOwner = resolvedInfo ?? ctx.externClasses.get(className);
   if (!propOwner) return null;
+  // (#6651 B5) Without a JS host an INHERITED `Object` member write
+  // (`re.constructor = f` — the §22.2.6.14 SpeciesConstructor idiom) must not
+  // bind the `Object_set_<name>` host import; the caller's `__extern_set`
+  // fallback is the native ordinary [[Set]].
+  if (noJsHost(ctx) && propOwner.importPrefix === "Object") return null;
 
   // Check if the import exists BEFORE compiling object+value to avoid dangling stack values
   const importName = `${propOwner.importPrefix}_set_${propName}`;
@@ -5889,10 +5922,25 @@ function compileElementAssignment(
     // `x[object] = value` preserves coercion order and reaches either the
     // numeric element or the vec expando/prototype path selected by the
     // runtime (`S15.4_A1.1_T9`).
+    // (#6651 E3) A SYMBOL key is the one dynamic key shape a TypedArray view
+    // must take this route for. §10.4.5.5 step 1 only diverts a key that is a
+    // String whose CanonicalNumericIndexString is not undefined; a Symbol is
+    // neither, so `view[Symbol.toPrimitive] = f` is an ORDINARY named set.
+    // The TA exclusion above sent it to the numeric element lane instead,
+    // where the write is DROPPED — not misdirected: measured on this slice's
+    // base (`.tmp/6651/p4.js`, `.tmp/6651/t1.mts`), `f64[S]`, `i8[S]` and
+    // `u8[S]` all read back `undefined` afterwards, the STRING-keyed
+    // `i8.str = 6` landed, and element 0 of a pre-filled view was left
+    // untouched. Narrow by construction — a non-symbol key on a view keeps the
+    // numeric lane exactly as before.
+    const symbolTypedElementKey =
+      vecElementTypedArrayName(ctx, target.expression) !== undefined &&
+      ctx.oracle.staticJsTypeOf(target.argumentExpression) === "symbol";
     if (
-      vecElementTypedArrayName(ctx, target.expression) === undefined &&
-      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
-      isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression)
+      symbolTypedElementKey ||
+      (vecElementTypedArrayName(ctx, target.expression) === undefined &&
+        !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
+        isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression))
     ) {
       fctx.body.push({ op: "local.get", index: vecLocal });
       return compileExternSetFallback(ctx, fctx, target, value, arrType);
@@ -6364,7 +6412,17 @@ function compileExternSetFallback(
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "ref.null.extern" });
     }
-  } else if (objType.kind === "ref" || objType.kind === "ref_null") {
+  } else if (objType.kind === "ref" || objType.kind === "ref_null" || objType.kind === "anyref") {
+    // (#6635) `anyref` reaches here the same way it reaches
+    // `compileElementAccessBody`'s read-side twin — e.g. the un-annotated
+    // return of `Map`/`WeakMap.prototype.get()` used directly as a WRITE
+    // target with no intervening local (`someMap.get(k)[computedKey] = v`).
+    // `extern.convert_any` accepts anyref (and its struct-ref subtypes)
+    // identically, so this is the same conversion the `ref`/`ref_null` arm
+    // already performs — not a new code path, just widening its guard to
+    // stop anyref falling to the `reportError` below, which the #1919
+    // speculative wrapper turns into a SILENT no-op write (the RHS value is
+    // dropped instead of ever reaching `__extern_set`).
     fctx.body.push({ op: "extern.convert_any" });
   } else {
     reportError(ctx, target, "Unsupported element assignment target type");

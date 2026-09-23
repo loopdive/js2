@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, appendFileSync, realpathSync } from "node:
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import ts from "typescript";
+import { reconstructB1Source } from "./native-delay-combinator-b1-inverse.mjs";
 
 export const donorPath = "src/codegen/promise-combinators.ts";
 export const combinatorPath = "src/runtime/wasmgc/promise/combinator-bodies.ts";
@@ -536,7 +537,7 @@ const CURRENT_OWNER_FUNCTIONS = {
   ],
 };
 
-export function verifyRetainedDeclarations(reader) {
+function verifyRetainedDeclarationsRaw(reader) {
   assert.equal(RETAINED_DECLARATIONS.length, 24);
   const result = [];
   for (const [path, count] of [
@@ -581,7 +582,14 @@ export function verifyRetainedDeclarations(reader) {
   return { combinator: 20, delay: 4 };
 }
 
-export function verifyHistorical(reader) {
+export function verifyRetainedDeclarations(reader) {
+  return verifyRetainedDeclarationsRaw((path) => reconstructB1Source(path, reader));
+}
+
+export function verifyHistorical(liveReader) {
+  // B1 is mandatory live input. Invert only its checked extraction before
+  // applying the unchanged original body, declaration and bridge receipts.
+  const reader = (path) => reconstructB1Source(path, liveReader);
   const rows = reconstructedBodies(reader);
   assert.deepEqual(
     rows.map(([name]) => name),
@@ -591,7 +599,7 @@ export function verifyHistorical(reader) {
   assert.deepEqual(Object.keys(ORIGINAL_SEMANTIC_EVIDENCE), Object.keys(ORIGINAL_EVIDENCE));
   for (const [name, text] of rows)
     assert.equal(semanticReceipt(text), ORIGINAL_SEMANTIC_EVIDENCE[name], `historical semantic body ${name}`);
-  verifyRetainedDeclarations(reader);
+  verifyRetainedDeclarationsRaw(reader);
   for (const [path, expected] of Object.entries(BRIDGE_EVIDENCE))
     assert.equal(receipt(reader(path)), expected, `live glue/schema ${path}`);
   assert.deepEqual(Object.keys(BRIDGE_SEMANTIC_EVIDENCE), Object.keys(BRIDGE_EVIDENCE));

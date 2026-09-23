@@ -483,7 +483,9 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     const assertNoForgedFields = (tampered: Record<string, unknown>): void => {
       imports.setExports?.(tampered as Record<string, Function>);
       expect(countKeys(box)).toBe(0);
-      expect(wrapExports(tampered as WebAssembly.Exports).makeBox()).toEqual({});
+      // (#6438) No forged field list either way; the refusal replaced the `{}`
+      // that could not be told apart from a field-less object.
+      expect(() => wrapExports(tampered as WebAssembly.Exports).makeBox()).toThrow(/data-struct authority/);
     };
 
     const missingTerminal = clone();
@@ -561,7 +563,11 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     expect(wrapped.getAddTwo()(40)).toBe(42);
     expect(wrapped.getArray()).toEqual([3, 4]);
     expect((unwired.exports.countKeys as (value: unknown) => number)(box)).toBe(0);
-    expect(wrapped.makeBox()).toEqual({});
+    // (#6438) The struct is undecodable without authority; answering `{}` here
+    // was indistinguishable from a genuinely field-less object, so the raw
+    // overload now refuses instead. Failing closed is unchanged — only the
+    // shape of the failure is.
+    expect(() => wrapped.makeBox()).toThrow(/data-struct authority/);
 
     unwired.imports.setInstance?.(unwired.instance);
     expect((unwired.exports.countKeys as (value: unknown) => number)(box)).toBe(2);
@@ -663,7 +669,8 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     // If the mutable table were still its own authority, both paths would
     // accept the forged "second"-only field list and return one field.
     expect(countKeys(box)).toBe(0);
-    expect(wrapExports(tampered as WebAssembly.Exports).makeBox()).toEqual({});
+    // (#6438) Same fail-closed outcome, stated loudly instead of as `{}`.
+    expect(() => wrapExports(tampered as WebAssembly.Exports).makeBox()).toThrow(/data-struct authority/);
 
     bindings.set(0, originalIsDataStruct);
     bindings.set(1, originalStructFieldNames);

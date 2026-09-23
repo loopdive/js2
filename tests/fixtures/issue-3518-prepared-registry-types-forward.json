@@ -1,0 +1,38 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/registry/types.ts",
+  "independentRecordSha256": "cb9a9c1044672dd83621d46646e8f14b748ce302812873e0df1d90f0f5c6a149",
+  "sourceProvenance": {
+    "base": {
+      "revision": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "blob": "c0a93e474fd99b4fbee1691a26a2ad29191048f9",
+      "sha256": "71c8408b580aac1e3b4a1b0f064b96b8dde8148e4fe36c596313ccfe73d97c8d"
+    },
+    "prepared5760": {
+      "revision": "e24a8d2798da9d4680c0af2660a63c6b80c35593",
+      "blob": "fa67d2867a96aa2526cccf4c9f9e32ff03a8fb29",
+      "sha256": "729aa50a74886e4e4bb1c2e6a806b467470468a57fef5ecd87fb68fac92b71b7"
+    },
+    "scannerTarget": {
+      "revision": "1ce5d0575c890d640bc3ef9958c32d662bea9e98",
+      "blob": "a2251df03698bcbdf2d2da45a1d2449edded1b6c",
+      "sha256": "8e30d0c98c75cb4feb3924050fe02a6e911eb0e9b459391ba2598fcd96b19979"
+    }
+  },
+  "spans": [
+    {
+      "id": "instr-type-import",
+      "before": "import type { FieldDef, FuncTypeDef, StructTypeDef, ValType } from \"../../ir/types.js\";\n",
+      "after": "import type { FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from \"../../ir/types.js\";\n",
+      "beforeSha256": "43f2eb23b23cb024f33ab2028b1f196b8390000e8609fbc201c44e0d491b7a86",
+      "afterSha256": "cb2046942ec78f7e6d1d74ead299c784eab87d410b63b4f58608fe3f24fc92df"
+    },
+    {
+      "id": "typed-array-constructor-identity",
+      "before": "  ctx.typeIdxToStructName.set(idx, name);\n  ctx.structFields.set(name, fields);\n  return idx;\n}\n\n/**\n * (#3054 D) Get or register `$__ta_dyn_view` — a shared-backing TypedArray view\n * whose element kind is carried in a runtime `kind` field (index into\n * `TA_CTOR_KINDS`), for views built by a dynamic `new ctor(rab)` where the kind is\n * only known at runtime. B1's per-kind `$__ta_view_<K>` are structurally identical\n * → WasmGC canonicalizes them to ONE runtime type, so a boxed view can't recover\n * its kind via `ref.test`; this struct stores it explicitly. Subtype of\n * `$__vec_base` so `.length` reads field0 uniformly. Registered late+once.\n */\nexport function getOrRegisterTaDynViewType(ctx: CodegenContext): number {\n",
+      "after": "  ctx.typeIdxToStructName.set(idx, name);\n  ctx.structFields.set(name, fields);\n  return idx;\n}\n\n/**\n * (#5383 S2f R11) The `$__ta_ctor` IDENTITY test — `ref.test` **plus** the\n * `brand` VALUE — leaving i32 (1 = this really is a TypedArray constructor).\n * `pushAnyValue` is the (side-effect-free, re-emittable) instruction sequence\n * that pushes the value as an anyref — a `local.get`, or the `local.get` +\n * `any.convert_extern` pair the externref call sites already used. It is\n * emitted twice, which every call site could already do.\n *\n * `ref.test` alone asks a STRUCTURAL question and WasmGC canonicalizes\n * structurally-identical struct types, so it cannot answer a NOMINAL one.\n * #5194 r3 F1 met this once already (the one-field shape was also\n * `__box_boolean_struct`, so `typeof true === \"function\"`) and answered it by\n * widening the struct to two immutable i32 fields — which is EXACTLY the shape\n * #2158/#2009 gives an empty class ROOT (`(field $__tag i32)` +\n * `(field $__shape_brand i32)`, see `class-bodies.ts`). Two independent\n * \"make the shape unique\" fixes landed on the same shape, so in any module that\n * both holds a TypedArray constructor value and declares a field-less class,\n * every instance of that class passes `ref.test $__ta_ctor`.\n *\n * Measured 2026-09-08 on the standalone `@js-temporal/polyfill` provider\n * (`--target standalone`, `hostBridge:\"off\"`): `typeof` through a one-parameter\n * indirection answered `\"function\"` for `new qi.Duration(0,0,0,0,1)` and\n * `new qi.PlainDate(2024,1,1)`; dumping the matched struct's two fields gave\n * `{35, 0}` and `{33, 0}` — the class TAG and the `__shape_brand`, not\n * `{kind, TA_CTOR_BRAND}`. The polyfill's own brand check\n * (`if (!e || \"object\" != typeof e) return !1`) then rejected every Temporal\n * receiver, so every Temporal method and accessor threw `invalid receiver`.\n *\n * Widening the shape a third time would only move the collision, so the\n * discriminator has to be the brand VALUE, which no other type's field 1 holds\n * by accident. Answer-preserving for a genuine `$__ta_ctor` (both mint sites\n * write `TA_CTOR_BRAND`); it can only ever REMOVE a false positive.\n */\nexport function taCtorIdentityTestInstrs(ctx: CodegenContext, pushAnyValue: Instr[]): Instr[] {\n  const taCtorTypeIdx = ctx.taCtorTypeIdx;\n  if (taCtorTypeIdx === undefined || taCtorTypeIdx < 0) return [{ op: \"i32.const\", value: 0 }];\n  return [\n    ...pushAnyValue,\n    { op: \"ref.test\", typeIdx: taCtorTypeIdx },\n    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"i32\" } },\n      then: [\n        ...pushAnyValue,\n        { op: \"ref.cast\", typeIdx: taCtorTypeIdx },\n        { op: \"struct.get\", typeIdx: taCtorTypeIdx, fieldIdx: 1 },\n        { op: \"i32.const\", value: TA_CTOR_BRAND },\n        { op: \"i32.eq\" },\n      ],\n      else: [{ op: \"i32.const\", value: 0 }],\n    },\n  ];\n}\n\n/**\n * (#3054 D) Get or register `$__ta_dyn_view` — a shared-backing TypedArray view\n * whose element kind is carried in a runtime `kind` field (index into\n * `TA_CTOR_KINDS`), for views built by a dynamic `new ctor(rab)` where the kind is\n * only known at runtime. B1's per-kind `$__ta_view_<K>` are structurally identical\n * → WasmGC canonicalizes them to ONE runtime type, so a boxed view can't recover\n * its kind via `ref.test`; this struct stores it explicitly. Subtype of\n * `$__vec_base` so `.length` reads field0 uniformly. Registered late+once.\n */\nexport function getOrRegisterTaDynViewType(ctx: CodegenContext): number {\n",
+      "beforeSha256": "5c9dcc461c17aa210c0e1ff3e2c9be3ad253901d2070001657304e4f328c9660",
+      "afterSha256": "3baa06d7f2d47b36893f26fcf7fdf08e3126cfcefef60db637fe9e27f893eae7"
+    }
+  ]
+}

@@ -60,7 +60,7 @@ import {
   tryEmitJsonParseLiteral,
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
-import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
+import { canonicalUndefinedExternInstrs, ensureExternStrictEqHelper } from "../any-helpers.js";
 import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
@@ -72,16 +72,22 @@ import {
 } from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { tryEmitLinkedStaticCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCustomCapabilityCheck,
   emitStandalonePromiseCustomSettle,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
+  resolveF64VecArg,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
+import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
+import { compileSpreadCallArgs } from "./extern.js";
+import { emitKnownRestMethodArguments, knownMethodRestInfo } from "./object-method-rest-abi.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import {
   ensureNativeSymbolBoundaryBridge,
@@ -123,6 +129,7 @@ import {
   tryEmitJsonParsePrimitive,
   tryEmitJsonStringifyPrimitive,
 } from "./calls.js";
+import { sourceHasMethodOverride } from "./member-override-scan.js";
 
 function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {
   let current = value;
@@ -987,6 +994,102 @@ export function compileNamespaceStaticCall(
     const guardReflectTargetIsObject = (targetLocal: number, message: string): void => {
       emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message);
     };
+    // (#6494 S3) §28.1.6 / §28.1.9 step 1 for the two spellings the runtime
+    // guard deliberately declines: a target that is LITERALLY `null` or
+    // `undefined`. `emitNativeReflectNonObjectGuard` refuses to brand those at
+    // runtime because this compiler's alias/element widening nulls ordinary
+    // objects (see its comment) — but that hazard is about VALUES, and this is
+    // a question about the expression. `Reflect.get(null, 'p')` cannot be a
+    // nulled real object; it is the spec's step-1 TypeError, and it is what
+    // `Reflect/{get,has}/target-is-not-object-throws.js` spend half their
+    // assertions on (the number/string spellings already throw).
+    //
+    // Deliberately NOT extended to the other Reflect arms: their guards are
+    // pre-existing and widening them is not this slice's to do.
+    const targetIsStaticallyNullish = (argument: ts.Expression | undefined): boolean => {
+      if (argument === undefined) return false;
+      let inner: ts.Expression = argument;
+      while (
+        ts.isParenthesizedExpression(inner) ||
+        ts.isAsExpression(inner) ||
+        ts.isTypeAssertionExpression(inner) ||
+        ts.isNonNullExpression(inner)
+      ) {
+        inner = inner.expression;
+      }
+      // `null` and `void <expr>` are unambiguous in the grammar.
+      if (inner.kind === ts.SyntaxKind.NullKeyword) return true;
+      if (ts.isVoidExpression(inner)) return true;
+      // `undefined` is an ordinary identifier and CAN be shadowed, so the
+      // oracle — not the spelling — owns the decision. A shadowing
+      // `var undefined = {}` reports `object` and keeps its previous lowering.
+      const fact = ctx.oracle.typeFactOf(inner);
+      return fact.kind === "null" || fact.kind === "undefined" || fact.kind === "void";
+    };
+    /**
+     * (#6651 cluster F, slice F2) `IsConstructor(V)` is FALSE, decided from the
+     * expression alone. Positive tests only — an unrecognised shape answers
+     * `false` (i.e. "do not throw") and keeps its previous lowering, because a
+     * wrong fire turns a working `Reflect.construct` into a TypeError.
+     *
+     * Three admitted classes, one per assertion of
+     * `Reflect/construct/target-is-not-constructor-throws.js`:
+     *
+     *  - a PRIMITIVE by the oracle's own type fact (`1`, `null`, a `string`
+     *    binding, a symbol …). No object, so no [[Construct]], whatever the
+     *    value turns out to be;
+     *  - an object literal / array literal / arrow function written right
+     *    here — ordinary objects and non-constructor functions by construction;
+     *  - a BUILT-IN METHOD reached through an unshadowed ambient global
+     *    (`Date.now`, `Math.max`). Their lib declaration is a `MethodSignature`
+     *    inside a `.d.ts` interface, whereas every ES constructor is declared
+     *    as `declare var X: XConstructor` — so "the member resolves to a
+     *    declaration-file method signature" separates the two exactly, without
+     *    a hand-kept name table. TypeScript's own construct signatures are NOT
+     *    usable here: `function f() {}` has none, and it IS a constructor.
+     */
+    const targetIsDefinitelyNotConstructor = (argument: ts.Expression): boolean => {
+      let inner: ts.Expression = argument;
+      while (
+        ts.isParenthesizedExpression(inner) ||
+        ts.isAsExpression(inner) ||
+        ts.isTypeAssertionExpression(inner) ||
+        ts.isNonNullExpression(inner)
+      ) {
+        inner = inner.expression;
+      }
+      if (targetIsStaticallyNullish(inner)) return true;
+      if (ts.isObjectLiteralExpression(inner) || ts.isArrayLiteralExpression(inner) || ts.isArrowFunction(inner)) {
+        return true;
+      }
+      const fact = ctx.oracle.typeFactOf(inner);
+      if (
+        fact.kind === "number" ||
+        fact.kind === "string" ||
+        fact.kind === "boolean" ||
+        fact.kind === "bigint" ||
+        fact.kind === "symbol"
+      ) {
+        return true;
+      }
+      if (!ts.isPropertyAccessExpression(inner) || ts.isPrivateIdentifier(inner.name)) return false;
+      const root = inner.expression;
+      if (!ts.isIdentifier(root) || !resolvesToAmbientGlobal(ctx, root)) return false;
+      if (fctx.localMap.has(root.text) || (fctx.boxedCaptures?.has(root.text) ?? false)) return false;
+      const declaration = ctx.oracle.valueDeclarationOf(inner.name);
+      return (
+        declaration !== undefined && ts.isMethodSignature(declaration) && declaration.getSourceFile().isDeclarationFile
+      );
+    };
+    const guardReflectTargetIsObjectOrNullish = (
+      targetLocal: number,
+      message: string,
+      argument: ts.Expression | undefined,
+    ): void => {
+      emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message, {
+        staticallyNullish: targetIsStaticallyNullish(argument),
+      });
+    };
     // (#5196 R3-2 C5) §7.1.19 ToPropertyKey on the Reflect key argument, in
     // place, AFTER the target guard and BEFORE the native call. An object key
     // with a throwing `toString`/`valueOf` must propagate that abrupt
@@ -1055,7 +1158,8 @@ export function compileNamespaceStaticCall(
         }
         // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
         // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
-        guardReflectTargetIsObject(targetLocal, "Reflect.get called on non-object");
+        // (#6494 S3) …plus a statically-nullish target.
+        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.get called on non-object", expr.arguments[0]);
         coerceReflectPropertyKey(argLocals[1]);
 
         // (#2046/#4397) Preserve the optional receiver in Wasm. A native
@@ -1261,7 +1365,8 @@ export function compileNamespaceStaticCall(
         // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
         // `isExtensible` already use (it admits closure and expando carriers
         // positively, so an ordinary callable/instance target is unaffected).
-        guardReflectTargetIsObject(targetLocal, "Reflect.has called on non-object");
+        // (#6494 S3) …plus a statically-nullish target.
+        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.has called on non-object", expr.arguments[0]);
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
@@ -1335,6 +1440,100 @@ export function compileNamespaceStaticCall(
 
         const funcIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F) §28.1.13 is `target.[[OwnPropertyKeys]]()`, whose
+        // §10.1.11.1 order is integer indices ascending, then string keys in
+        // creation order, then SYMBOL keys in creation order.
+        // `__getOwnPropertyNames` supplies the first two groups and drops the
+        // third — the arm's own comment says "the native runtime does not
+        // retain symbol-keyed properties yet", which is stale: it does, and
+        // `Object.getOwnPropertySymbols` already reads them back with correct
+        // identity (measured — `Reflect.ownKeys(o).length` was 1 where
+        // `getOwnPropertySymbols(o).length` was 1 on the same object). So the
+        // gap is only that the two lists are never joined. Appending the
+        // symbol vec to the (freshly built, unshared) names vec is the whole
+        // §10.1.11.1 step-4 concatenation; declines to the names-only answer
+        // when any of the three helpers is absent from this module.
+        const ownSymbolsIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const externLengthIdx = ensureLateImport(ctx, "__extern_length", [externRef], [{ kind: "f64" }]);
+        flushLateImportShifts(ctx, fctx);
+        const externGetIdxIdx = ensureLateImport(ctx, "__extern_get_idx", [externRef, { kind: "f64" }], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+        const proxyTypeIdxOwnKeys = ctx.objectRuntimeTypes?.proxyTypeIdx;
+        /** Append every own symbol key of `targetLocal` onto the names vec on the stack. */
+        const appendOwnSymbols = (): Instr[] => {
+          const symsIdx = ctx.funcMap.get("__getOwnPropertySymbols") ?? ownSymbolsIdx;
+          const lenIdx = ctx.funcMap.get("__extern_length") ?? externLengthIdx;
+          const getIdx = ctx.funcMap.get("__extern_get_idx") ?? externGetIdxIdx;
+          if (symsIdx === undefined || lenIdx === undefined || getIdx === undefined || objVecPushIdx === undefined) {
+            return [];
+          }
+          const keysLocal = allocTempLocal(fctx, externRef);
+          const symsLocal = allocTempLocal(fctx, externRef);
+          const nLocal = allocTempLocal(fctx, { kind: "f64" });
+          const iLocal = allocTempLocal(fctx, { kind: "f64" });
+          const appendLoop: Instr[] = [
+            { op: "local.get", index: targetLocal },
+            { op: "call", funcIdx: symsIdx },
+            { op: "local.tee", index: symsLocal },
+            { op: "call", funcIdx: lenIdx },
+            { op: "local.set", index: nLocal },
+            { op: "f64.const", value: 0 },
+            { op: "local.set", index: iLocal },
+            {
+              op: "block",
+              blockType: { kind: "empty" },
+              body: [
+                {
+                  op: "loop",
+                  blockType: { kind: "empty" },
+                  body: [
+                    { op: "local.get", index: iLocal },
+                    { op: "local.get", index: nLocal },
+                    { op: "f64.ge" },
+                    { op: "br_if", depth: 1 },
+                    { op: "local.get", index: keysLocal },
+                    { op: "local.get", index: symsLocal },
+                    { op: "local.get", index: iLocal },
+                    { op: "call", funcIdx: getIdx },
+                    { op: "call", funcIdx: objVecPushIdx },
+                    { op: "local.get", index: iLocal },
+                    { op: "f64.const", value: 1 },
+                    { op: "f64.add" },
+                    { op: "local.set", index: iLocal },
+                    { op: "br", depth: 0 },
+                  ],
+                },
+              ],
+            },
+          ];
+          // A `$Proxy` receiver is EXCLUDED, and the exclusion is load-bearing:
+          // `__getOwnPropertyNames`'s proxy front guard returns the §10.5.11
+          // `ownKeys` TRAP's own array, which the spec requires be returned
+          // as-is and which the user still holds a reference to. Appending to
+          // it would both mutate a user array and add keys the trap did not
+          // report. Only the ordinary `$Object` walk (a vec this call just
+          // built) is concatenated.
+          const out: Instr[] = [
+            { op: "local.set", index: keysLocal },
+            ...(proxyTypeIdxOwnKeys === undefined
+              ? appendLoop
+              : ([
+                  { op: "local.get", index: targetLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: proxyTypeIdxOwnKeys },
+                  { op: "i32.eqz" },
+                  { op: "if", blockType: { kind: "empty" }, then: appendLoop },
+                ] satisfies Instr[])),
+            { op: "local.get", index: keysLocal },
+          ];
+          releaseTempLocal(fctx, iLocal);
+          releaseTempLocal(fctx, nLocal);
+          releaseTempLocal(fctx, symsLocal);
+          releaseTempLocal(fctx, keysLocal);
+          return out;
+        };
         const boundaryOwnKeysIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
         if (funcIdx !== undefined && boundaryOwnKeysIdx !== undefined) {
           const resultLocal = allocTempLocal(fctx, externRef);
@@ -1345,10 +1544,7 @@ export function compileNamespaceStaticCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: externRef },
-            then: [
-              { op: "local.get", index: targetLocal },
-              { op: "call", funcIdx },
-            ],
+            then: [{ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, ...appendOwnSymbols()],
             else: [{ op: "local.get", index: resultLocal }],
           });
           releaseTempLocal(fctx, resultLocal);
@@ -1358,6 +1554,7 @@ export function compileNamespaceStaticCall(
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "local.get", index: targetLocal });
           fctx.body.push({ op: "call", funcIdx });
+          fctx.body.push(...appendOwnSymbols());
           releaseTempLocal(fctx, targetLocal);
           return { kind: "externref" };
         }
@@ -1640,6 +1837,88 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "local.tee", index: spoProtoLocal });
         const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F) §28.1.14 step 4 — the REAL boolean. The KNOWN
+        // LIMITATION above ("a refused set returns `true`") described the
+        // missing failure channel; #5148 cluster 2b has since built exactly
+        // that channel as `__object_setPrototypeOf_status`, a pure §10.1.2.1
+        // predicate (SameValue → true, non-extensible → false, cycle → false)
+        // that performs NO write and answers a permissive 1 for every receiver
+        // the writer does not own (non-`$Object`, `$Proxy`). So the answer is
+        // the CONJUNCTION of two bits that are each already correct:
+        //   - the ordinary bit: `__object_setPrototypeOf_status(o, p)`;
+        //   - the exotic bit: `__is_truthy(__object_setPrototypeOf(o, p))`,
+        //     which for a `$Proxy` receiver is the §10.5.2 trap's booleanish
+        //     result (the writer's proxy front guard returns it instead of the
+        //     obj) and for an ordinary receiver is the always-truthy obj → 1.
+        // Reading the writer's result through `__is_truthy` is the same rule
+        // `Reflect.defineProperty` above already applies to its applier, so
+        // this makes the two Reflect arms agree rather than adding a rule.
+        // Evaluation order is status-then-write and the operands come from the
+        // two locals, so neither argument is re-evaluated.
+        const spoStatusIdx = ensureLateImport(ctx, "__object_setPrototypeOf_status", [externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F, review of the first cut) The status native's step-2
+        // SameValue compares the two ENCODED `$proto` references, and an
+        // ordinary object's `%Object.prototype%` terminal is encoded as a NULL
+        // field (`OBJ_FLAG_NULL_PROTO` distinguishes it from an explicitly
+        // null-prototype object). So `Reflect.setPrototypeOf(o, Object.prototype)`
+        // on a NON-EXTENSIBLE ordinary `o` looked like "different prototype"
+        // and fell through to the step-3 refusal — the spec says step 2 wins and
+        // the answer is `true`. That shape is REAL: it cost
+        // `Reflect/setPrototypeOf/return-true-if-proto-is-current.js` a
+        // pass → fail in the neighbourhood sweep of the first cut, which is how
+        // it was found. No probe predicted it; only the before/after row run did.
+        // The fallback asks the reader that already models the implicit
+        // terminal — `__getPrototypeOf` — and ONLY when the status bit is 0, so
+        // a live `$Proxy` never sees an extra `getPrototypeOf` trap call: the
+        // status native answers a permissive 1 for every non-`$Object` receiver,
+        // and that set is exactly the one that contains proxies.
+        const spoGpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const spoStrictEqIdx = ensureExternStrictEqHelper(ctx);
+        flushLateImportShifts(ctx, fctx);
+        const spoWriteIdx = ctx.funcMap.get("__object_setPrototypeOf") ?? spoIdx;
+        const spoIsTruthyIdx = ctx.funcMap.get("__is_truthy");
+        const spoSameAsCurrent = (): Instr[] => {
+          const gpo = ctx.funcMap.get("__getPrototypeOf") ?? spoGpoIdx;
+          if (gpo === undefined || spoStrictEqIdx === undefined) return [];
+          return [
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: i32Ty },
+              then: [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "call", funcIdx: gpo },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: spoStrictEqIdx },
+              ],
+              else: [{ op: "i32.const", value: 1 }],
+            },
+          ];
+        };
+        // The answer, built from the two locals. Declines to the previous
+        // unconditional `true` if either half is unavailable in this module.
+        const spoBooleanAnswer = (writeIdx: number): Instr[] =>
+          spoStatusIdx === undefined || spoIsTruthyIdx === undefined
+            ? [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: writeIdx },
+                { op: "drop" },
+                { op: "i32.const", value: 1 },
+              ]
+            : [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: spoStatusIdx },
+                ...spoSameAsCurrent(),
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: writeIdx },
+                { op: "call", funcIdx: spoIsTruthyIdx },
+                { op: "i32.and" },
+              ];
         if (spoIdx !== undefined) {
           const immutable = objectPrototypeIsImmutableInstrs(ctx, spoTargetLocal);
           if (immutable) {
@@ -1653,18 +1932,14 @@ export function compileNamespaceStaticCall(
               op: "if",
               blockType: { kind: "val", type: i32Ty },
               then: [{ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }],
-              else: [
-                { op: "local.get", index: spoTargetLocal },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: spoIdx },
-                { op: "drop" }, // native returns obj; Reflect wants a boolean
-                { op: "i32.const", value: 1 }, // success → true (see KNOWN LIMITATION)
-              ],
+              else: spoBooleanAnswer(spoWriteIdx ?? spoIdx),
             });
           } else {
-            fctx.body.push({ op: "call", funcIdx: spoIdx });
-            fctx.body.push({ op: "drop" }); // native returns obj; Reflect wants a boolean
-            fctx.body.push({ op: "i32.const", value: 1 }); // success → true (see KNOWN LIMITATION)
+            // Both operands are already in their locals (the two `local.tee`s
+            // above), so the stack copies are redundant here.
+            fctx.body.push({ op: "drop" }); // proto
+            fctx.body.push({ op: "drop" }); // obj
+            fctx.body.push(...spoBooleanAnswer(spoWriteIdx ?? spoIdx));
           }
           releaseTempLocal(fctx, spoProtoLocal);
           releaseTempLocal(fctx, spoTargetLocal);
@@ -1725,6 +2000,22 @@ export function compileNamespaceStaticCall(
 
         const nativeIdx = ensureLateImport(ctx, "__object_preventExtensions", [externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F) §28.1.11 step 2 returns the BOOLEAN
+        // `target.[[PreventExtensions]]()`. `__object_preventExtensions`'s
+        // `$Proxy` front guard already returns the §10.5.4 trap's booleanish
+        // result (the helper returns externref precisely so it can), and for
+        // an ordinary receiver it returns the always-truthy obj — so
+        // `__is_truthy` is the whole conversion, and `drop; i32.const 1`
+        // was discarding a `false` the trap had already computed. Same rule
+        // `Reflect.defineProperty` applies to its applier result.
+        const prevExtIsTruthyIdx = ctx.funcMap.get("__is_truthy");
+        const prevExtAnswer = (callIdx: number): Instr[] =>
+          prevExtIsTruthyIdx === undefined
+            ? [{ op: "call", funcIdx: callIdx }, { op: "drop" }, { op: "i32.const", value: 1 }]
+            : [
+                { op: "call", funcIdx: callIdx },
+                { op: "call", funcIdx: prevExtIsTruthyIdx },
+              ];
         const boundaryIdx = boundaryReflectInterop
           ? ctx.funcMap.get("__boundary_object_reflect_prevent_extensions")
           : undefined;
@@ -1737,12 +2028,7 @@ export function compileNamespaceStaticCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: i32Ty },
-            then: [
-              { op: "local.get", index: targetLocal },
-              { op: "call", funcIdx: nativeIdx },
-              { op: "drop" },
-              { op: "i32.const", value: 1 },
-            ],
+            then: [{ op: "local.get", index: targetLocal }, ...prevExtAnswer(nativeIdx)],
             else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
           });
           releaseTempLocal(fctx, resultLocal);
@@ -1751,9 +2037,7 @@ export function compileNamespaceStaticCall(
         }
         fctx.body.push({ op: "local.get", index: targetLocal });
         if (nativeIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: nativeIdx });
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push(...prevExtAnswer(nativeIdx));
         } else {
           fctx.body.push({ op: "drop" });
           fctx.body.push({ op: "i32.const", value: 0 });
@@ -1827,7 +2111,22 @@ export function compileNamespaceStaticCall(
           releaseReflectArgumentLocals(argLocals);
           return { kind: "externref" };
         }
-        guardReflectTargetIsObject(argLocals[2], "Reflect.apply argumentsList is not an object");
+        // (#6651 cluster F, slice F2) …and a LITERAL `null` / `undefined`
+        // argumentsList is the same question about the EXPRESSION, not about a
+        // value the runtime guard may have nulled. `emitNativeReflectNonObjectGuard`
+        // deliberately declines to brand a null carrier (this compiler's alias
+        // widening nulls ordinary objects), so `Reflect.apply(fn, null, null)`
+        // and `Reflect.apply(fn, null, undefined)` sailed past step 2 and
+        // invoked `fn` with an empty list. Measured on this branch's base:
+        // `Reflect/apply/arguments-list-is-not-array-like.js` failed on exactly
+        // those two of its ten assertions — the numeric, boolean, symbol and
+        // throwing-`length` spellings already threw. Same reasoning, same
+        // helper, as the `Reflect.{get,has}` target guard #6494 S3 added.
+        guardReflectTargetIsObjectOrNullish(
+          argLocals[2],
+          "Reflect.apply argumentsList is not an object",
+          expr.arguments[2],
+        );
         const applyIdx = reserveApplyClosure(ctx);
         fctx.body.push({ op: "local.get", index: targetLocal });
         if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });
@@ -1973,6 +2272,43 @@ export function compileNamespaceStaticCall(
         const listArg = expr.arguments[1];
         const newTargetArg = expr.arguments[2];
         const unwrappedList = listArg === undefined ? undefined : unwrapReflectConstructExpr(listArg);
+        // (#6651 cluster F, slice F2) §28.1.2 step 1 — `IsConstructor(target)`.
+        // The arm below checks IsConstructor on the NEWTARGET (`Reflect.construct
+        // newTarget is not a constructor`) and never on the TARGET, so
+        // `Reflect.construct(1, [])` reached `compileNewExpression(new 1())`
+        // and answered without throwing. Measured on this branch's base,
+        // `Reflect/construct/target-is-not-constructor-throws.js` fails on its
+        // FIRST assertion.
+        //
+        // Only the STATICALLY decidable half is taken. A runtime
+        // `__reflect_is_constructor` probe would have to evaluate `targetArg`
+        // into a local and `compileNewExpression` would then evaluate it a
+        // SECOND time — a real semantic break for `Reflect.construct(f(), [])`.
+        // The static half needs no such duplicate: it fires only where the
+        // program is guaranteed to throw, so nothing that constructs today
+        // changes.
+        //
+        // Evaluation order is preserved rather than short-circuited: JavaScript
+        // evaluates the callee's arguments before entering the builtin, so the
+        // target and every argument-list element are compiled (and dropped)
+        // ahead of the throw.
+        if (targetArg !== undefined && targetIsDefinitelyNotConstructor(targetArg)) {
+          const dropValue = (argument: ts.Expression): void => {
+            const ty = compileExpression(ctx, fctx, argument, externRef);
+            if (ty !== null) fctx.body.push({ op: "drop" });
+          };
+          dropValue(targetArg);
+          if (unwrappedList !== undefined && ts.isArrayLiteralExpression(unwrappedList)) {
+            for (const element of unwrappedList.elements) {
+              if (!ts.isOmittedExpression(element)) dropValue(element);
+            }
+          } else if (listArg !== undefined) {
+            dropValue(listArg);
+          }
+          if (newTargetArg !== undefined) dropValue(newTargetArg);
+          emitThrowTypeError(ctx, fctx, "Reflect.construct target is not a constructor");
+          return { kind: "externref" };
+        }
         if (
           targetArg === undefined ||
           !unwrappedList ||
@@ -2535,6 +2871,21 @@ export function compileNamespaceStaticCall(
       const arg0 = expr.arguments[0];
       const nativeCombinatorEligible =
         isStandalonePromiseActive(ctx) && isNativeCombinatorMethod(methodName) && expr.arguments.length === 1;
+      // (#5197 R3-2) The ordinary native pipeline intentionally remains
+      // byte-identical unless source can observe the constructor's `resolve`
+      // or a per-promise `then`. In the observable case the emitter performs
+      // one real Get(C, "resolve"), captures it, then Calls/Invokes it for
+      // every element. The scan is deliberately source-wide and name-based:
+      // any syntactic `.resolve` / `.then` assignment or literal-key
+      // defineProperty/defineProperties admits the slower route, including
+      // aliases and unrelated false positives. Computed keys remain outside
+      // this bounded syntactic admission; it is an optimization gate, not a
+      // whole-program proof that the target is exactly `%Promise%`.
+      const observableCombinator =
+        nativeCombinatorEligible &&
+        !isPromiseSubclassReceiver &&
+        (methodName === "all" || methodName === "race") &&
+        (sourceHasMethodOverride(ctx, expr, "resolve") || sourceHasMethodOverride(ctx, expr, "then"));
       if (
         nativeCombinatorEligible &&
         arg0 !== undefined &&
@@ -2569,7 +2920,13 @@ export function compileNamespaceStaticCall(
             fctx.savedBodies.push(buf);
             pushedBufs++;
           }
-          return emitStandalonePromiseCombinator(ctx, fctx, methodName, elementInstrs);
+          return emitStandalonePromiseCombinator(
+            ctx,
+            fctx,
+            methodName,
+            elementInstrs,
+            observableCombinator ? { observableResolve: true } : undefined,
+          );
         } finally {
           fctx.savedBodies.length -= pushedBufs + 1;
         }
@@ -2581,6 +2938,9 @@ export function compileNamespaceStaticCall(
       // see them — handle them statically by materializing the same
       // projection (Set → values, Map → [k, v] entries) into a canonical
       // externref $Vec and driving the unchanged arm-1 runtime loop over it.
+      // R3-2 deliberately does NOT opt this projection into its observable
+      // pipeline: projection drains the collection before the combinator body,
+      // so it cannot establish the required iterator/resolve interleaving.
       // Checker-only guard first (no emission for non-Set/Map args), then a
       // #1919-transactional probe confirms the arg genuinely lowers to the
       // native `$Map` struct (mirrors compileForOfNativeCollection).
@@ -2632,16 +2992,28 @@ export function compileNamespaceStaticCall(
       // helper (a raw `body.length =` rollback would leak a phantom late
       // import); the (#2922) dynamic path below then decides whether to take
       // the probed shape at runtime or keep the host fallthrough
-      // byte-unchanged (f64-backed `number[]` vecs — the Gap-4
-      // output-representation escalation —, strings, native generators).
+      // byte-unchanged (f64-backed `number[]` vecs outside the bounded R3-2
+      // observable arm, strings, native generators).
       if (nativeCombinatorEligible && arg0 !== undefined) {
         const snap = snapshotSpeculative(ctx, fctx);
         const argType = compileExpression(ctx, fctx, arg0);
         const vecShape = resolveExternrefVecArg(ctx, argType);
-        if (vecShape) {
+        // R3-2's direct VEC admission also includes native `number[]`
+        // carriers, but only when the observable protocol is active. The
+        // runtime loop boxes each f64 slot as it consumes it; it deliberately
+        // does not copy the vector ahead of `Call(resolve, …)` because an
+        // earlier resolve call may mutate a later element.
+        const f64VecShape = observableCombinator ? resolveF64VecArg(ctx, argType) : null;
+        const observableF64Vec = f64VecShape !== null;
+        const admittedVecShape = vecShape ?? f64VecShape;
+        if (admittedVecShape) {
+          if (observableF64Vec) {
+            ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+            flushLateImportShifts(ctx, fctx);
+          }
           const argVecLocal = allocLocal(fctx, `__comb_argvec_${fctx.locals.length}`, {
             kind: "ref_null",
-            typeIdx: vecShape.vecTypeIdx,
+            typeIdx: admittedVecShape.vecTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: argVecLocal });
           return emitStandalonePromiseCombinatorRuntime(
@@ -2649,8 +3021,9 @@ export function compileNamespaceStaticCall(
             fctx,
             methodName,
             argVecLocal,
-            vecShape.vecTypeIdx,
-            vecShape.arrTypeIdx,
+            admittedVecShape.vecTypeIdx,
+            admittedVecShape.arrTypeIdx,
+            observableCombinator ? { observableResolve: true, boxF64Elements: observableF64Vec } : undefined,
           );
         }
         // Didn't lower as an externref vec — roll back, then either take the
@@ -2897,6 +3270,17 @@ export function compileNamespaceStaticCall(
     // the earlier direct-call site (`Promise.resolve(v)` /
     // `Promise.reject(r)` without `.call`) and does not apply here.
     const methodName = propAccess.expression.name.text;
+
+    // (#6651 cluster D / #5197 R3-3) `Promise.{all,race}.call(C, iterable)` for
+    // an ordinary compiled `C` runs the §27.2.4.1.1/§27.2.4.3.1 element
+    // protocol natively (promise-custom-combinator.ts owns admission, argument
+    // compilation and the transactional refusal) instead of leaking the
+    // unsatisfiable `Promise_all`/`Promise_race` host import. Tried BEFORE the
+    // narrow #4682 empty-array arm, which remains the fallback.
+    if (isStandalonePromiseActive(ctx) && isCustomCombinatorMethod(methodName)) {
+      const custom = tryEmitCustomCombinatorCall(ctx, fctx, expr, methodName);
+      if (custom !== undefined) return custom;
+    }
 
     // (#4682) Bounded NewPromiseCapability arm: an ordinary compiled
     // constructor plus an empty array.  The existing native aggregate path
@@ -3869,6 +4253,11 @@ export function compileNamespaceStaticCall(
     const clsName = ctx.classExprNameMap.get(propAccess.expression.text) ?? propAccess.expression.text;
     const methodName = propAccess.name.text;
     const fullName = `${clsName}_${methodName}`;
+    // (#6644) §15.7.14 step 6 across the wasm→wasm link, when this class
+    // declares no such static. Declines for every own static and for every
+    // class that is not one of #6640's linked-dynamic-parent classes.
+    const linkedStatic = tryEmitLinkedStaticCall(ctx, fctx, expr, propAccess.expression, clsName, methodName);
+    if (linkedStatic !== undefined) return linkedStatic;
     if (ctx.staticMethodSet.has(fullName)) {
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")); // (#1983)
       if (funcIdx !== undefined) {
@@ -3877,18 +4266,45 @@ export function compileNamespaceStaticCall(
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
         const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
-        for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          const sourceParam =
-            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
-          const forceArrayLiteralVec =
-            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
-          if (forceArrayLiteralVec) {
-            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
-          } else {
-            compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+        // (#6616) `K.s(...xs)` — this arm is the one that CLAIMS a static call
+        // through a class-object identifier, and it bound each argument NODE to
+        // one formal. A spread element therefore arrived whole: the callee saw
+        // the array (or, for an inline `[1, 2]`, a tuple struct) in formal 0 and
+        // `undefined` in every other. `paramOffset` is 0 — a static body has no
+        // `self` param.
+        //
+        // (#6616) The same arm also never materialised the hidden REST vec, so
+        // a `static f(...args)` body saw `args === null` and trapped on the
+        // first read — `K.f(1, 2)` with no spread anywhere. Every other callee
+        // shape (object-literal method, plain function, instance method) was
+        // already correct; only the static-through-a-class-object arm was
+        // missing both halves of the known-callee argument ABI.
+        const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
+        const handledRestStatic =
+          restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
+        const hasSpreadStatic = expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledSpreadStatic = !handledRestStatic && hasSpreadStatic && staticParamCount > 0;
+        const handledArgvSpreadStatic =
+          handledSpreadStatic &&
+          calleeReadsArgsEarly &&
+          restInfoStatic === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 0, fullName);
+        if (handledSpreadStatic) {
+          if (!handledArgvSpreadStatic) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoStatic, 0);
+        } else if (!handledRestStatic) {
+          for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
+            const sourceParam =
+              memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+            const forceArrayLiteralVec =
+              (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+            if (forceArrayLiteralVec) {
+              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
+            } else {
+              compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+            }
           }
         }
-        if (expr.arguments.length > staticParamCount) {
+        if (!handledRestStatic && !handledSpreadStatic && expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], staticParamCount);
           } else {
@@ -3901,13 +4317,15 @@ export function compileNamespaceStaticCall(
           }
         }
         // Pad missing arguments with defaults
-        if (paramTypes) {
+        if (paramTypes && !handledRestStatic && !handledSpreadStatic) {
           for (let i = expr.arguments.length; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
         // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
+        // (#5093: not over a flattened spread, which published a runtime one).
+        if (!handledArgvSpreadStatic)
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
         const finalStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? funcIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalStaticIdx });

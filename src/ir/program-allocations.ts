@@ -8,9 +8,29 @@ import { asAllocSiteId, forEachInstrDeep, type IrFunction } from "./nodes.js";
 import { preparedIrDataKey, preparedIrTypeKey } from "./program-abi-contracts.js";
 import { PreparedIrProgramInvariantError, type PreparedIrProgram } from "./program.js";
 import { assertFinalAllocProvenance } from "./verify-alloc.js";
+import { irRuntimeSupportFunctions, type IrRuntimeSupport } from "./program/runtime-support.js";
+import type { IrPreparationControls } from "./program/controls.js";
+
+/** Support has already received its inherited self-host hygiene, not source GVN. */
+export function analyzeIrRuntimeSupportAllocations(
+  support: IrRuntimeSupport | undefined,
+  allocations: AllocSiteRegistry,
+  controls: IrPreparationControls,
+): void {
+  for (const fn of irRuntimeSupportFunctions(support)) {
+    assertFinalAllocProvenance(fn, allocations);
+    analyzeEncoding(fn, allocations);
+    if (controls.ownership || controls.escape) {
+      const ownership = analyzeOwnership(fn, allocations);
+      if (controls.escape) analyzeEscape(fn, allocations, ownership);
+    }
+  }
+}
 
 /** Reconstruct the existing registry's read authority, then verify every final artifact. */
-export function assertPreparedIrProgramAllocations(program: Pick<PreparedIrProgram, "allocations" | "ir">): void {
+export function assertPreparedIrProgramAllocations(
+  program: Pick<PreparedIrProgram, "allocations" | "ir" | "runtimeSupport">,
+): void {
   const snapshot = program.allocations;
   const invalid = (detail: string): never => {
     throw new PreparedIrProgramInvariantError("invalid-prepared-data", `program allocations: ${detail}`);
@@ -82,7 +102,7 @@ export function assertPreparedIrProgramAllocations(program: Pick<PreparedIrProgr
       if (requestedNamespaces.has(ALLOC_NAMESPACES.escape)) analyzeEscape(fn, registry, ownership);
     }
   };
-  for (const fn of program.ir.functions) {
+  for (const fn of [...program.ir.functions, ...irRuntimeSupportFunctions(program.runtimeSupport)]) {
     analyze(fn);
     // State buffers are executable semantic bodies too. The existing provenance
     // verifier accepts a function carrier, so reuse it over each exact buffer.

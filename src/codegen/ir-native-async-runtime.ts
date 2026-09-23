@@ -2,6 +2,7 @@
 
 import { IR_ASYNC_PROMISE_ALL_NATIVE_FN } from "../ir/async-semantic-runtime.js";
 import type { WasmFunction } from "../ir/types.js";
+import { buildNativeAllProviderLocals } from "../runtime/wasmgc/promise/delay-combinator-layouts.js";
 import { ensureCombinatorFunctions, emitStandalonePromiseCombinatorRuntime } from "./promise-combinators.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -93,9 +94,31 @@ export function ensureIrNativePromiseAllProvider(ctx: CodegenContext): number {
   const previous = ctx.currentFunc;
   ctx.currentFunc = fctx;
   try {
+    const localPlan = buildNativeAllProviderLocals(
+      combinator.promiseTypeIdx,
+      combinator.arrTypeIdx,
+      combinator.stateTypeIdx,
+      { parameterCount: fctx.params.length, firstLocalOrdinal: fctx.locals.length, argVecLocal: 0 },
+    );
     // The compatibility emitter binds resources/locals, then immediately
     // publishes the canonical detached vector body into this exact context.
     emitStandalonePromiseCombinatorRuntime(ctx, fctx, "all", 0, combinator.vecTypeIdx, combinator.arrTypeIdx);
+    const firstSlot = localPlan.slots.resultLocal;
+    if (fctx.locals.length !== localPlan.locals.length) {
+      throw new Error("native Promise.all provider lost its canonical local population");
+    }
+    for (const [ordinal, expected] of localPlan.locals.entries()) {
+      const actual = fctx.locals[ordinal];
+      if (
+        actual?.name !== expected.name ||
+        actual.type.kind !== expected.type.kind ||
+        (expected.type.kind === "ref" &&
+          (actual.type.kind !== "ref" || actual.type.typeIdx !== expected.type.typeIdx)) ||
+        fctx.localMap.get(expected.name) !== firstSlot + ordinal
+      ) {
+        throw new Error("native Promise.all provider lost its canonical local layout");
+      }
+    }
     fctx.body.push({ op: "return" });
   } finally {
     ctx.currentFunc = previous;

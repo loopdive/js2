@@ -10,6 +10,8 @@ import { prepareIrProgramRuntimeCallables } from "./program-runtime-abi.js";
 import { prepareWholeProgramAsyncFunctions, prepareWholeProgramRuntimeManifest } from "./runtime-program-producers.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
+import { assertIrRuntimeSupport, irNumberFormatDemandOwners } from "./program/runtime-support.js";
+import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type {
@@ -53,6 +55,17 @@ export function prepareTypedIrProgram(
   const resolved = ownTypedIrProgramOptions(options);
   const { input: source, allocations } = ownTypedIrProgramInput(input);
   assertPreparedIrProgramPopulation(source);
+  assertIrRuntimeSupport(source, source.runtimeSupport);
+  if (
+    source.runtimeSupport !== undefined &&
+    [resolved.policy, ...resolved.runtimePolicies].some(
+      (policy) => policy.backend !== "wasmgc" || policy.target !== "standalone",
+    )
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "formatter runtime support requires wasmgc:standalone for every selected policy",
+    );
   const initialRuntime = prepareIrProgramRuntimeCallables(source);
   if (initialRuntime.kind !== "prepared") return initialRuntime;
   const initialEntries = prepareIrProgramAbiEntries(source, initialRuntime.declarations);
@@ -80,6 +93,15 @@ export function prepareTypedIrProgram(
     counters,
   );
   const finalSource = { ...source, ...optimized };
+  if (finalSource.runtimeSupport !== undefined) {
+    const demandOwners = irNumberFormatDemandOwners(finalSource.ir.functions);
+    finalSource.runtimeSupport = {
+      ...finalSource.runtimeSupport,
+      batches: finalSource.runtimeSupport.batches.map((batch) => ({ ...batch, demandOwners })),
+    };
+  }
+  assertIrRuntimeSupport({ ...finalSource, allocations: allocations.snapshot() }, finalSource.runtimeSupport);
+  analyzeIrRuntimeSupportAllocations(finalSource.runtimeSupport, allocations, resolved.controls);
   const finalRuntime = prepareIrProgramRuntimeCallables(finalSource);
   if (finalRuntime.kind !== "prepared") return finalRuntime;
   const entries = prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations);
@@ -90,8 +112,12 @@ export function prepareTypedIrProgram(
     ...optimized,
     abi: { entries },
     startup: source.startup,
+    ...(finalSource.runtimeSupport === undefined ? {} : { runtimeSupport: finalSource.runtimeSupport }),
     allocations: allocations.snapshot(),
-  }) as Pick<PreparedIrProgram, "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations">;
+  }) as Pick<
+    PreparedIrProgram,
+    "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations" | "runtimeSupport"
+  >;
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
   const demands = new Map(semantic.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));
   for (const policy of resolved.runtimePolicies) {

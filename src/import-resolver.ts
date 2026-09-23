@@ -830,6 +830,9 @@ function buildPreprocessPositionMap(
  */
 const TIMER_SHIM_FNS = ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] as const;
 
+/** #6479 — every token that can make {@link injectTimerShimOnly} emit anything. */
+const TIMER_SURFACE_RE = /setTimeout|setInterval|clearTimeout|clearInterval|queueMicrotask/;
+
 function detectTimerCallSites(sf: ts.SourceFile): Set<string> {
   const found = new Set<string>();
   const visit = (node: ts.Node): void => {
@@ -883,8 +886,21 @@ function buildTimerShim(used: Set<string>, definedNames: Set<string>): string {
  * bare `setTimeout` resolves to the raw ambient host function and receives a
  * Wasm closure that Node cannot invoke.
  */
-export function injectTimerShimOnly(source: string, opts?: { host?: boolean }): string {
+export function injectTimerShimOnly(source: string, opts?: { host?: boolean; prefilter?: boolean }): string {
   if (opts?.host === false) return source;
+  // #6479 — cheap textual gate in front of the parse. The shim is non-empty
+  // only if `buildTimerShim` emits a line or `queueUsed` is true, and both are
+  // gated on a literal token appearing in the source:
+  //   - `detectTimerCallSites` adds a name only when a CallExpression's callee
+  //     is an *identifier* whose text is one of TIMER_SHIM_FNS, so the source
+  //     must contain that exact token;
+  //   - `queueUsed` is `source.includes("queueMicrotask")` outright.
+  // `setImmediate` is deliberately absent: this pass never shims it (it is not
+  // in TIMER_SHIM_FNS), so a file mentioning only `setImmediate` returns the
+  // source unchanged either way. Member forms (`globalThis.setTimeout(…)`) are
+  // not matched by the scan at all, but they do contain the token, so they
+  // still take the parse path and get the same (identity) result.
+  if (opts?.prefilter !== false && !TIMER_SURFACE_RE.test(source)) return source;
   const sf = ts.createSourceFile("__timer_shim__.ts", source, ts.ScriptTarget.Latest, true);
   const used = detectTimerCallSites(sf);
   const definedNames = new Set<string>();

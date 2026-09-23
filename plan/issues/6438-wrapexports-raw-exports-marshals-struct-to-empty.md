@@ -1,16 +1,34 @@
 ---
 id: 6438
 title: "wrapExports(instance.exports) silently marshals a returned struct to `{}` — only the Instance overload can decode"
-status: ready
+status: done
+completed: 2026-09-13
 sprint: current
 created: 2026-09-13
 updated: 2026-09-13
+assignee: ttraenkler/sendev-6438
 priority: high
 horizon: m
 feasibility: medium
 task_type: bug
 area: runtime
 goal: correctness
+# 2026-09-13 (#6438). Growth is this PR's own, measured against upstream/main
+# 69ccb3494f: src/runtime.ts 19735 -> 19762 (+27) and src/index.ts 1513 -> 1519
+# (+6). The runtime lines are the masked-decoder flag, the probe bundle handed
+# to the new module, the guard arm in `invoke`, and the `wrapExports` JSDoc that
+# states the raw-record contract; the index.ts lines are the `importObject`
+# JSDoc saying `__setInstance` (not `__setExports`) is what establishes the
+# data-struct authority. The decision logic itself (108 lines) lives OUT of the
+# god-file in src/runtime/raw-exports-struct-authority.ts, which is why the
+# in-file delta is 27 and not ~120.
+# host-import-policy `maximumRuntimeTsLines` 19735 -> 19762, the same measured
+# +27 and nothing else: src/runtime.ts on upstream/main 69ccb3494f is exactly
+# 19735 lines (it sat AT the ceiling), and this branch's is 19762. No host
+# import is added or changed; only the line-count ceiling moves.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/index.ts
 ---
 
 ## Problem
@@ -93,3 +111,70 @@ embedder on the documented historical API has the same silent failure.
 ## Dispatch
 
 **opus** — bounded runtime change with a precise probe order to preserve, but the fallout is a suite-wide sweep of ~91 raw-overload call sites whose breakage must be resolved by re-wiring, not by weakening the fail-closed check.
+
+## Resolution
+
+Fixed on branch `issue-6438`. Contract: **refuse loudly, never decode from a raw
+record** — exactly as planned, with one widening the probe found.
+
+**Mechanism.** `wrapExports` passes
+`mayEstablishDataStructAuthority: brandedExports !== undefined`, and
+`_brandedInstanceExports` answers `undefined` for a bare exports record, so the
+raw overload can only CONSUME an authority. Without one,
+`_hostBridgeExportView` masks the compiler's `__struct_field_names` to
+`undefined`, `_structFieldNamesRaw` answers `null`, `looksMarshalable` still
+answers `true` through its `hasVecLen` tail, and `_wasmToPlain` walks the #3637
+"neither named struct nor vec" arm to `{}`.
+
+**Change.** `wrapExports` computes `dataStructDecoderMasked` (the module ships a
+decoder AND the view masked it) once per wrap, and one arm in `invoke` — before
+every marshalling branch, skipped under `marshal: false` — asks
+`rawExportsStructDecodeError` (new `src/runtime/raw-exports-struct-authority.ts`)
+whether the result is a struct no decoder can name. If so it throws a
+`TypeError` naming `__setInstance`. A vec is scanned element-wise (depth-capped)
+because a vec of undecodable structs marshalled to `[{}, …]` just as silently.
+`_wasmToPlain`, `_hostBridgeExportView` and the lifecycle adapter are untouched.
+
+**One deviation from the plan, by measurement.** The plan gated the arm on
+`marshalable`. The `__struct_field_names`-collision fixture showed the
+NOT-marshalable arm is just as wrong: with the decoder masked AND no `__vec_len`
+export, `looksMarshalable` falls through and a plain struct is handed to JS as a
+CALLABLE (#1308 fallback) — a wrong answer of a different shape, from the same
+missing authority. The guard therefore runs whenever the decoder is masked;
+`__is_closure` still exempts real closures, so #1308's guarantee is unchanged.
+Second refinement: the undecodability test is
+`_structFieldNamesRaw(value, view) == null` rather than "masked", so a #5225
+cross-module decoder that CAN answer for a value is still honoured.
+
+**Fallout — measured, not assumed.** All 70 test files that use the raw overload
+were run against the parent and against the fix (`.tmp/chunks-base` vs
+`.tmp/chunks`): **zero new failures**. Every site that now throws was ALREADY
+red on main, reading `{}` where it asserted fields — the plan's predicted
+"suite-wide sweep" did not materialize because the affected sites were already
+broken. Four helpers were then re-wired with the documented one-liner
+(`__setInstance(instance)` next to the existing `__setExports`), which turned
+**16 previously-red tests green**: `issue-2806` (3), `issue-2841` (4),
+`issue-2851` (4), `issue-3637` (5).
+
+Two more files were re-wired and then REVERTED: `tests/issue-2747.test.ts` and
+`tests/issue-2836-typed-vec-dynamic-dispatch-arg.test.ts` still fail after it,
+for defects unrelated to the boundary — #2747's `walks a multi-level __proto__
+chain` yields `a,shared,p,` where V8 yields `a,shared,p,g,` (the grandparent key
+is missing from the for-in chain walk), and #2836's two vec round-trip cases are
+unchanged by the re-wiring. The `quality` lane's "Changed root test files must
+pass (#3008)" step makes any touched test file a gate, so a file that cannot be
+made green in this PR's scope must not be touched by it. Both were already red
+on main and are no worse here; they are filed separately.
+
+`tests/issue-3520-data-struct-host-bridge-abi.test.ts` moves three `toEqual({})`
+assertions to `toThrow(/data-struct authority/)`: same fail-closed outcome, no
+forged field list, stated loudly instead of as an empty object.
+
+**Acceptance criteria.** (1) contract decided — refuse; (2) a struct never
+marshals to `{}` unless it really has no fields (a field-less struct on an
+authenticated view still answers a name list and still lands in `{}`);
+(3) `tests/issue-6438-raw-exports-struct-decode.test.ts` covers both overloads
+on the same module plus the field-less control — 2 of its 7 cases fail on the
+parent and all 7 pass with the fix, the other 5 pass both ways; (4) #3520 holds
+— the user-declared-`__struct_field_names` fixture still refuses on the raw
+record and still answers the compiler's names on the Instance overload.

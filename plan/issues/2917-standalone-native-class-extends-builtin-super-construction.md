@@ -21,7 +21,48 @@ loc-budget-allow:
   - src/codegen/property-access.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/class-bodies.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/vec-overlay.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/closed-method-dispatch.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/index.ts
+  - src/codegen/type-coercion.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/class-bodies.ts::compileSuperCall
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
+
+<!-- 2026-09-23 budget-allow rationale (Array-subclass methods lane): the
+shared receiver-spill mechanism lives in the NEW module
+src/codegen/array-subclass-receiver.ts; the listed files only gain the call
+site that routes into it (+2..+22 lines each): the super.method() arm in
+new-super.ts, the inherited-method arm in compileArrayMethodCall, the
+user-class `.prototype.m.call` guard in calls.ts, the ArraySetLength arm for
+"length" writes in the vec-overlay `__extern_set` prologue, the super(...)
+arity forward in compileSuperCall, the gOPD(subclass, "length") fold guard in
+compileBuiltinStaticCall and the own-override shadow test in the closed
+dispatcher's vec mutator arm. -->
+
+<!--
+2026-09-23 budget rationale (Array-subclass prototype identity slice): all of
+the logic lives in the NEW module src/codegen/vec-proto-link.ts. The god-file
+growth is wiring only — one import line per file plus: the `instanceof`
+dispatch arm in compileHostInstanceOf (+2, it must be chosen inside that
+dispatcher), the `Object.getPrototypeOf(J.prototype)` fold in
+compileBuiltinStaticCall (+2, next to the user-class parent fold it extends),
+one finalize call in each of generateModule / generateMultiModule (+1 each,
+beside their `fillStandaloneClassInstanceProtoArm` twins), and the import
+feeding the one-line alias wrap in coerceType (type-coercion.ts +1).
+-->
 
 # #2917 — Standalone native `class X extends <Builtin>` super-construction
 
@@ -466,3 +507,108 @@ Date, RegExp, Function — each its own issue id referencing #2917 + #3240.
   `in-progress`→`ready` for the next slice owner.
 - **If resuming mid-CI**: check `gh pr checks` for the PR from this branch;
   fix-forward on the branch; never enqueue manually.
+
+## Slice — Array-subclass prototype identity (2026-09-23, opus lane "proto-identity")
+
+**Problem (measured on `fb7607cd9e`).** An `extends Array` instance is a plain
+`$__vec_externref`; nothing on it says "J". Through an `any` receiver
+(`function id(v){ if (typeof v === "object") return v; return null; }`):
+`id(new J(1)) instanceof J` → false, `Object.getPrototypeOf(id(new J(1))) ===
+J.prototype` → false, `Object.setPrototypeOf(vec, J.prototype)` → silent no-op,
+`Object.getPrototypeOf(J.prototype) === Array.prototype` → false (statically
+folded to `null`), and `function f(){ return Array.prototype } f() === f()` →
+false (each vec-typed slot materialised a fresh copy).
+
+**Design B, as built** (`src/codegen/vec-proto-link.ts`):
+
+- *Link storage.* The #3537 expando bag is a `$Object`, and nothing reads its
+  `$proto` (every bag consumer reads own-only). `emitSetSubclassProto`
+  (class-bodies.ts) now stores `Sub.prototype` there after the #5383 method
+  install. The method install is KEPT, so `hasOwnProperty`/`Object.keys`
+  answers are unchanged.
+- *Readers.* Finalize-time arms (same window as #6617's
+  `fillStandaloneClassInstanceProtoArm`): `__getPrototypeOf(vec)` answers the
+  link; `__object_setPrototypeOf(vec, P)` writes it (`$Object` P) or clears it
+  (anything else); `__vec_proto_instanceof(v, C.prototype)` walks link →
+  `$Object.$proto` chain with `ref.eq` (so `K extends J` needs no class list).
+  The no-JS-host `instanceof` branch (expressions/identifiers.ts) routes
+  Array-rooted classes there instead of the `i32.const 0` fallback.
+- *`J.prototype → Array.prototype`.* `$proto` cannot hold the `$NativeProto`,
+  so the edge is answered where asked: a `__getPrototypeOf` arm per class that
+  directly `extends Array` (only while its prototype's `$proto` is still the
+  implicit default), and the static `Object.getPrototypeOf(J.prototype)` fold in
+  call-builtin-static.ts.
+- *Stable `Array.prototype` in vec slots.* `coerceType` externref→vec now
+  answers one module-wide alias vec per vec type when the source IS the
+  `Array.prototype` singleton (`wrapArrayProtoVecAlias`).
+
+**Why not design A** (vec subtype with a proto field): every `ref.test` of the
+concrete vec type would need to accept the subtype; the bag is already
+per-instance state with an identity-keyed lookup.
+
+**Hazard found.** `fixups.ts` repairs a `struct.set` receiver by walking back
+over net-zero instructions; with `local.get <externref vec>; call
+__vec_bag_ensure; any.convert_extern; ref.cast $Object` as the receiver it
+landed on the vec and spliced a `ref.cast_null $Object` onto it (illegal cast
+at runtime). Every `struct.set` in the new code takes its receiver from a
+TYPED local.
+
+**Not fixed (documented limits).**
+- Identity ACROSS representations: the alias vec and the `$NativeProto` are two
+  values, so `ap() === Array.prototype` (one side vec, the other externref)
+  stays false. `built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js`
+  therefore still fails (the trap returns the vec alias; the invariant check
+  compares it with the target's `$NativeProto`). A real fix needs a single
+  representation for `Array.prototype` or a vec→externref canonicalization.
+- Inherited USER methods through the link (`id(new K(1)).m()` where `m` is on
+  `J`) still miss: `__vec_prop_get` reads the bag own-only. Walking the link
+  there is the natural follow-up and would let the #5383 own-property install
+  go away (which would also fix `hasOwnProperty("m") === true`).
+
+### 2026-09-23 — Temporal `argument-duration-precision-exact-numerical-values` rows: wrong `this` in linked ToPrimitive
+
+**Symptom.** `Duration/from/…precision-exact-numerical-values.js` and
+`Duration/prototype/add/…` (standalone, linked Temporal provider) threw
+`TypeError: invalid receiver`. Not JSBI, not Array-subclass: a one-line probe
+`new Temporal.Duration(0,0,0,0,1).toString()` threw the same, while
+`d.toJSON()`, `d.hours` and `Temporal.Duration.prototype.toString.call(d)` all
+answered correctly.
+
+**Root cause.** The consumer lowers `x.toString()` on an `any` receiver to
+ToString (`__extern_toString` → `__to_primitive`). A provider class instance is
+not a `$Object`, so it reaches `__class_to_primitive`'s runtime §7.1.1.1 walk
+(`class-to-primitive.ts` `buildClassToPrimitiveRuntimeWalk` →
+`ordinary-to-primitive-probe.ts` `buildOrdinaryToPrimitiveProbe`). The walk
+resolves `toString` with `__extern_get` (which crosses the link and returns the
+PROVIDER's method closure) and then invokes it through the CONSUMER's
+`__call_accessor_get` → `__call_fn_method_N`. The closure struct type is
+structurally canonical, so the consumer's dispatcher accepts it and
+`call_ref`s straight into provider code — but it binds `this` through the
+consumer's own `__current_this` global; the provider trampoline reads the
+provider's copy, i.e. a stale receiver. The Temporal brand check then throws.
+This is exactly the hazard the #5383 S2h `__js2wasm_link_method_call`
+terminal exists for; `__extern_method_call` already routes through it, the
+ToPrimitive walk did not.
+
+Why it surfaced after d8b002e236: `Duration.prototype.toString(options =
+undefined)` has declared arity 1. Before that commit the multi-source
+`__call_accessor_get` baked a bare `__call_fn_method_0`, which rejected the
+closure (null → `"[object Object]"`, the previous failure). With the arity
+classifier in place the call went through — with the wrong `this`. An arity-0
+provider `toString` was already broken the same way.
+
+**Fix.** The probe takes an optional `ownerCall`; `class-to-primitive.ts`
+supplies it only in a linked standalone consumer (both peer terminals
+resolvable via `standaloneLinkBoundaryPeerIndex`). Per step: if
+`__js2wasm_link_get_prototype_of(recv)` is non-null (a provider class instance,
+#6617), run `__js2wasm_link_method_call(recv, name, [])` and treat its result
+like the local call's; otherwise the unchanged local step. A null answer is the
+walk's existing "declined" outcome, so the local call is never also made for a
+provider receiver. Non-linked modules are byte-identical (checked:
+standalone + gc sha256 unchanged on a ToPrimitive-heavy probe).
+
+**Measured.** Witness `tests/issue-2917-linked-provider-to-primitive.test.ts`
+(linked pm package, standalone): base `toString(opts)`/`String`/template/`+`
+→ `"[object Object]"`, arity-0 `toString` throws; after, all correct, local
+controls unchanged. test262 standalone: the two target rows fail → pass;
+`.tmp/s74b/target8-rel.txt` 3/8 → 5/8 (the two targets; no row regressed).

@@ -6,6 +6,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
+import { buildAnyValueType, buildUndefinedInitializer } from "../runtime/wasmgc/values/primitive-layouts.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
@@ -17,6 +18,7 @@ import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-hel
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
+import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
 export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -28,17 +30,7 @@ export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unb
 export function ensureAnyValueType(ctx: CodegenContext): void {
   if (ctx.anyValueTypeIdx >= 0) return; // already registered
   ctx.anyValueTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "AnyValue",
-    fields: [
-      { name: "tag", type: { kind: "i32" }, mutable: false },
-      { name: "i32val", type: { kind: "i32" }, mutable: false },
-      { name: "f64val", type: { kind: "f64" }, mutable: false },
-      { name: "refval", type: { kind: "eqref" }, mutable: false },
-      { name: "externval", type: { kind: "externref" }, mutable: false },
-    ],
-  });
+  ctx.mod.types.push(buildAnyValueType());
 
   // (#2106 S1.0) Reserve the standalone `$undefined` singleton up-front, in the
   // same call that registers `$AnyValue`. It is an immutable tag-1 `$AnyValue`
@@ -54,21 +46,13 @@ export function ensureAnyValueType(ctx: CodegenContext): void {
   // this global. The tag-1 shape mirrors `__any_from_extern`'s `nullAny`
   // ({tag:1, i32val:0, f64val:NaN, refval:null, externval:null}).
   if ((ctx.standalone || ctx.nativeStrings) && ctx.undefinedGlobalIdx === undefined) {
-    const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
     const anyTypeIdx = ctx.anyValueTypeIdx;
     const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
     ctx.mod.globals.push({
       name: "__undefined",
       type: { kind: "ref", typeIdx: anyTypeIdx },
       mutable: false,
-      init: [
-        { op: "i32.const", value: 1 }, // tag = 1 (Undefined)
-        { op: "i32.const", value: 0 }, // i32val
-        { op: "f64.const", value: NaN }, // f64val
-        { op: "ref.null", typeIdx: EQ_HEAP_TYPE }, // refval
-        { op: "ref.null.extern" }, // externval
-        { op: "struct.new", typeIdx: anyTypeIdx },
-      ],
+      init: buildUndefinedInitializer(anyTypeIdx),
     });
     ctx.undefinedGlobalIdx = globalIdx;
   }
@@ -856,16 +840,8 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "local.get", index: 3 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "i64.eq" },
-              { op: "return" },
-            ],
+            // (#6656) exact for a value past i64, not just its low 64 bits.
+            then: [...bigIntCarrierEqInstrs(ctx, 2, 3), { op: "return" }],
           },
         ]
       : []) satisfies Instr[]),

@@ -31,8 +31,8 @@
  * carry the ctx-bound `$__str_data` typeIdx (the #3161 typed-def rule).
  */
 
-import type { SelfHostedFuncDef } from "../codegen/stdlib-selfhost.js";
-import { irVal, type IrType } from "../ir/nodes.js";
+import type { SelfHostedFuncDef } from "../frontend/builtins/contracts.js";
+import { irVal, type IrType } from "../ir/core/types.js";
 
 const F64: IrType = irVal({ kind: "f64" });
 const STR: IrType = { kind: "string" };

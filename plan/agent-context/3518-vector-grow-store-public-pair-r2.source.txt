@@ -1,0 +1,460 @@
+// Operational public-compiler preservation pair; writes only this worker's .tmp.
+// Provenance/artifact primitives copied unchanged from the published settlement instrument.
+import assert from "node:assert/strict";
+import { spawn, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, realpathSync, mkdirSync, writeFileSync, appendFileSync, openSync, closeSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import type { CompileResult } from "../src/index.js";
+const instrument = fileURLToPath(import.meta.url);
+const worker = realpathSync(resolve(dirname(instrument), ".."));
+const roots = {
+  baseline: "/private/tmp/js2-3518-explicit-rec-integration-20260908",
+  candidate: "/private/tmp/js2-3518-vector-grow-store-20260908",
+};
+const BASE = "2b9cb408c18446361fcf9837045067d1fd97c642";
+
+const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+
+const read = (root: string, path: string) => readFileSync(join(root, path), "utf8");
+
+const controls = {
+  JS2WASM_IR_GVN: "0",
+  JS2WASM_IR_OWNERSHIP: "0",
+  JS2WASM_IR_ESCAPE: "0",
+  IR_VERIFY_ALLOC: "0",
+  JS2WASM_IR_VERIFY_DOMINANCE_NAIVE: "0",
+  JS2WASM_IR_INLINE: "0",
+};
+
+function envFor(root: string) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env))
+    if (/^(JS2WASM_|IR_VERIFY_|TSX_|ESBUILD_BINARY_PATH$|NODE_OPTIONS$|NODE_V8_COVERAGE$)/.test(key))
+      Reflect.deleteProperty(env, key);
+  return {
+    ...env,
+    ...controls,
+    NODE_OPTIONS: "--max-old-space-size=2048",
+    TSX_TSCONFIG_PATH: join(root, "tsconfig.json"),
+    TSX_DISABLE_CACHE: "1",
+  };
+}
+
+function launch() {
+  return {
+    argv: process.execArgv,
+    env: Object.fromEntries(
+      Object.entries(process.env)
+        .filter(([key]) => /^(JS2WASM_|IR_VERIFY_|TSX_|ESBUILD_BINARY_PATH$|NODE_OPTIONS$|NODE_V8_COVERAGE$)/.test(key))
+        .sort(),
+    ),
+  };
+}
+
+function tree(root: string, directory: string): [string, string][] {
+  const result: [string, string][] = [];
+  for (const entry of readdirSync(join(root, directory), { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) result.push(...tree(root, path));
+    else if (entry.isFile()) result.push([path, sha(readFileSync(join(root, path)))]);
+  }
+  return result;
+}
+
+function snapshot(root: string) {
+  const files = tree(root, "src");
+  return {
+    root,
+    head: execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+    dirty: execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=all", "--", "src"], {
+      encoding: "utf8",
+    }),
+    files,
+    sha256: sha(JSON.stringify(files)),
+  };
+}
+
+function runtime(root: string) {
+  const req = createRequire(join(root, "package.json"));
+  const tsx = dirname(req.resolve("tsx/package.json"));
+  const esbuild = dirname(req.resolve("esbuild/package.json"));
+  const binaryPackage = dirname(
+    createRequire(join(esbuild, "package.json")).resolve(`@esbuild/${process.platform}-${process.arch}/package.json`),
+  );
+  return {
+    node: process.version,
+    versions: process.versions,
+    exec: realpathSync(process.execPath),
+    execSha256: sha(readFileSync(process.execPath)),
+    tsx: tree(tsx, "dist"),
+    tsxPackage: sha(readFileSync(join(tsx, "package.json"))),
+    esbuild: tree(esbuild, "lib"),
+    esbuildPackage: sha(readFileSync(join(esbuild, "package.json"))),
+    binary: tree(binaryPackage, "bin"),
+    typescript: sha(readFileSync(req.resolve("typescript"))),
+    config: sha(read(root, "tsconfig.json")),
+    instrument: sha(readFileSync(instrument)),
+  };
+}
+
+function data(value: unknown): unknown {
+  const seen = new Map<object, number>();
+  function visit(v: any): any {
+    if (v === undefined) return { $undefined: true };
+    if (typeof v === "number" && !Number.isFinite(v)) return { $number: String(v) };
+    if (typeof v === "bigint") return { $bigint: String(v) };
+    if (v === null || typeof v !== "object") return v;
+    if (seen.has(v)) return { $ref: seen.get(v) };
+    seen.set(v, seen.size);
+    if (v instanceof Error)
+      return Object.fromEntries(
+        [...new Set(["name", "message", "stack", "cause", ...Object.getOwnPropertyNames(v)])].map((k) => [
+          k,
+          visit((v as Error & Record<string, unknown>)[k]),
+        ]),
+      );
+    if (Array.isArray(v)) return v.map(visit);
+    if (v instanceof Map) return { $map: [...v].map(([k, w]) => [visit(k), visit(w)]) };
+    if (v instanceof Set) return { $set: [...v].map(visit) };
+    return Object.fromEntries(Object.keys(v).map((k) => [k, visit(v[k])]));
+  }
+  return visit(value);
+}
+
+async function settle<T>(promise: Promise<T>, phase: string): Promise<T> {
+  let rejectIdle!: (error: Error) => void;
+  const idle = new Promise<never>((_, reject) => {
+    rejectIdle = reject;
+  });
+  const onIdle = () => {
+    const error = Object.assign(new Error("unsettled recorder await: " + phase), {
+      code: "ERR_RECORDER_UNSETTLED_AWAIT",
+      phase,
+    });
+    rejectIdle(error);
+  };
+  process.once("beforeExit", onIdle);
+  try {
+    return await Promise.race([promise, idle]);
+  } finally {
+    process.removeListener("beforeExit", onIdle);
+  }
+}
+
+function artifact(result: CompileResult) {
+  const bytes = result.binary;
+  const module = new WebAssembly.Module(bytes);
+  return {
+    binary: Buffer.from(bytes).toString("base64"),
+    wat: result.wat,
+    imports: WebAssembly.Module.imports(module),
+    exports: WebAssembly.Module.exports(module),
+    resourceOrder: result.wat
+      .split("\n")
+      .filter((line) => /^ {2}\((?:type|import|global|func|export|elem|data)\b/.test(line)),
+    units: data({
+      compiled: result.irCompiledFuncs,
+      outcomes: result.irOutcomes,
+      postClaimErrors: result.irPostClaimErrors,
+    }),
+    stringPool: data(result.stringPool),
+  };
+}
+
+const recipes = [
+  {
+    id: "dense-externref-push", provenance: "tests/issue-3603-vec-mirror-writeback.test.ts: native push positive",
+    source: 'export function run(): number { const a: any[] = []; a.push("x"); return a.length; }',
+    expected: 1, pathRequirement: "default-externref",
+  },
+  {
+    id: "dense-f64-push", provenance: "tests/issue-2856-vec-push.test.ts: expression push result",
+    source: "export function run(): number { const arr: number[] = []; arr.push(7); const n = arr.push(9); return n * 100 + arr[0] * 10 + arr[1]; }",
+    expected: 279, pathRequirement: "default-f64",
+  },
+  {
+    id: "hole-global-filter-growth", provenance: "tests/es5-array-new-filter-holes.test.ts: growth gap and captured filter length (export renamed only)",
+    source: "const source = new Array(2);\nsource[1] = 1;\nfunction callback(_value: unknown): boolean { source[20] = 2; return true; }\nconst result = source.filter(callback);\nexport function run(): number { return result.length; }",
+    expected: 1, pathRequirement: "hole-global-externref",
+  },
+  {
+    id: "f64-hole-growth", provenance: "source-produced combination of the numeric grow shape and a same-module literal elision, per f64HolesActive",
+    source: "export function hole(): number { const b: any[] = [1, , 3]; return b.length; }\nexport function run(): number { const a: number[] = []; a[5] = 9; return a.length * 100 + a[5] + (0 in a ? 1000 : 0); }",
+    expected: 609, pathRequirement: "f64-hole-f64",
+  },
+  {
+    id: "packed-carrier-brand-positive", provenance: "tests/issue-5349-species-r5.test.ts: BUILDS_BOTH",
+    source: "export function run(){ var u=new Uint8Array(2); var ab=new ArrayBuffer(8); return u.length + Number(ab.byteLength); }",
+    expected: 10, pathRequirement: "packed-final-open-brand",
+  },
+  {
+    id: "packed-carrier-brand-rejection", provenance: "tests/issue-5349-species-r5.test.ts: length-constructed Uint8Array species result + existing runStandalone try/catch",
+    source: 'export function run(){ try { var made; var ab=new ArrayBuffer(8); var C={}; C[Symbol.species]=function(n){ made=new Uint8Array(n); return made }; ab.constructor=C; var r=ab.slice(0,4); return 500+(r===made?10:0)+(Number(r.length)===4?100:0)+(Number(r.byteLength)===4?1:0); } catch(e) { if(e instanceof TypeError) return 1; if(e instanceof RangeError) return 2; return 3; } }',
+    expected: 1, pathRequirement: "packed-final-open-brand",
+  },
+] as const;
+const expandedRecipes = [...recipes, {
+  id: "hole-global-local-ir-store",
+  provenance: "tests/es5-array-new-filter-holes.test.ts: claims the bounded sparse route in standalone IR; export renamed only",
+  source: "export function run(): void { const keep = (): boolean => true; const values = new Array(4); values[1] = null; values.filter(keep); }",
+  expected: {$undefined: true}, pathRequirement: "hole-global-externref",
+}] as const;
+const matrix = expandedRecipes.flatMap(recipe => [false, true].map(experimentalIR => ({
+  ...recipe, id: recipe.id + (experimentalIR ? "-ir" : "-legacy"),
+  options: {
+    target: "standalone", experimentalIR, emitWat: true, allowJs: true,
+    skipSemanticDiagnostics: true, trackFallbacks: true, trackIrOutcomes: true,
+    fileName: "vector-grow-store-" + recipe.id + ".ts",
+  },
+})));
+assert.equal(matrix.length, 14);
+assert.equal(new Set(matrix.map(f => f.id)).size, 14);
+
+function requireFrozen(root: string) {
+  assert.equal(execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {encoding:"utf8"}).trim(), BASE);
+  if (root === roots.baseline) {
+    assert.equal(execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"], {encoding:"utf8"}), "");
+  } else {
+    assert.equal(root, roots.candidate);
+    const frozen = JSON.parse(read(root, ".tmp/vector-grow-store-frozen-r2.json"));
+    assert.equal(frozen.files.length, 5);
+    for (const f of frozen.files) assert.equal(sha(readFileSync(join(root, f.path))), f.sha256, f.path);
+  }
+}
+function sourceCensus() {
+  for (const root of Object.values(roots)) requireFrozen(root);
+  const baseline = snapshot(roots.baseline), candidate = snapshot(roots.candidate);
+  const old = new Map(baseline.files), current = new Map(candidate.files);
+  const changed = [...new Set([...old.keys(), ...current.keys()])].filter(p => old.get(p) !== current.get(p)).sort();
+  assert.deepEqual(changed, [
+    "src/codegen/registry/types.ts", "src/codegen/vec-elem-set.ts",
+    "src/runtime/wasmgc/values/vector-grow-store.ts",
+  ]);
+  return {baseline, candidate, changed};
+}
+// Extract exact balanced WAT forms, retaining all contents and coordinates.
+// The scanner handles strings, line comments and nested WAT block comments.
+function formAt(wat: string, start: number) {
+  let depth=0, quoted=false, escaped=false, line=false, block=0;
+  for(let i=start;i<wat.length;i++) {
+    const c=wat[i], next=wat[i+1];
+    if(line) { if(c === "\n") line=false; continue; }
+    if(block) {
+      if(c==="(" && next===";") {block++;i++;}
+      else if(c===";" && next===")") {block--;i++;}
+      continue;
+    }
+    if(quoted) {if(escaped)escaped=false;else if(c==="\\")escaped=true;else if(c==='"')quoted=false;continue;}
+    if(c===";" && next===";"){line=true;i++;continue;}
+    if(c==="(" && next===";"){block++;i++;continue;}
+    if(c==='"'){quoted=true;continue;}
+    if(c==="(")depth++;
+    if(c===")" && --depth===0)return {start,end:i+1,text:wat.slice(start,i+1)};
+  }
+  throw Error("incomplete WAT form at "+start);
+}
+function paths(wat: string) {
+  const allTypes=[...wat.matchAll(/\(type \$([^\s()]+)/g)].map(m=>({name:m[1],...formAt(wat,m.index!)}));
+  const allFunctions=[...wat.matchAll(/^  \(func \$([^\s()]+)/gm)].map(m=>m[1]);
+  const helpers=[...wat.matchAll(/\(func \$(__vec_elem_set_\d+)\b/g)].map(match=>{
+    const form=formAt(wat,match.index!);
+    const arrayIndices=[...form.text.matchAll(/\barray\.set (\d+)\b/g)].map(m=>Number(m[1]));
+    assert.equal(arrayIndices.length,1,"one actual array store in grow/store helper");
+    const backing=allTypes[arrayIndices[0]];
+    assert(backing,"resolved actual numeric array coordinate");
+    const elementMatch=backing.text.match(/\(array \(mut (f64|externref|i32|i64|f32|i8|i16)\)\)/);
+    const element=elementMatch?.[1] ?? "reference";
+    const fill=form.text.includes("f64.reinterpret_i64")?"f64-hole":form.text.includes("global.get")?"hole-global":"default";
+    const functionIndex=allFunctions.indexOf(match[1]);
+    assert(functionIndex>=0,"actual defined function coordinate");
+    // Every selected module is independently required to have zero imports;
+    // therefore its definition order is its complete numeric function space.
+    const callCount=[...wat.matchAll(new RegExp("\\bcall "+functionIndex+"(?=\\s|\\))","g"))].length;
+    return {name:match[1],...form,sha256:sha(form.text),element,fill,functionIndex,arrayTypeIndex:arrayIndices[0],backing,callCount,category:fill+"-"+element};
+  });
+  const types=[...wat.matchAll(/\(type \$(__vec_(?:base|i8_byte|i32_byte|externref|f64)|__arr_(?:externref|f64)|__holey_array)\b/g)]
+    .map(match=>({name:match[1],...formAt(wat,match.index!)}));
+  const packed=types.find(t=>t.name==="__vec_i8_byte"), buffer=types.find(t=>t.name==="__vec_i32_byte");
+  const branded=!!packed && !!buffer && packed.text.includes("(sub final ") && buffer.text.includes("(sub $") && !buffer.text.includes("(sub final ");
+  return {helpers,types,branded};
+}
+async function measure(api: any, fixture: (typeof matrix)[number]) {
+  let phase="compile";
+  const row: any={id:fixture.id,fixture,compilations:[],executions:[],kind:"pending"};
+  try {
+    const result=await settle(api.compile(fixture.source,fixture.options),"compile:"+fixture.id);
+    const compilation:any={source:fixture.source,options:fixture.options,success:result.success,errors:data(result.errors),
+      artifact:{binary:Buffer.from(result.binary).toString("base64"),wat:result.wat}};
+    row.compilations.push(compilation);
+    if(!result.success){row.kind="refused";row.phase=phase;return row;}
+    phase="artifact";
+    compilation.artifact=artifact(result);
+    compilation.artifact.completeResourceOrder=result.wat.split("\n").filter((line:string)=>
+      /^\s+\((?:rec|type|import|global|func|tag|table|memory|export|elem|data)(?:\s|\))/.test(line));
+    row.pathEvidence=paths(result.wat);
+    assert(result.wat.length>0);
+    assert(result.binary.length>8);
+    assert.deepEqual(compilation.artifact.imports,[],"standalone zero imports");
+    assert.deepEqual(result.imports,[],"closed declared import census");
+    phase="instantiate";
+    const bytes=Buffer.from(result.binary); // preserve exact input to actual instantiation
+    const input=bytes.toString("base64");
+    assert.equal(input,compilation.artifact.binary);
+    const execution:any={instantiationInputBinary:input,instantiatedBinary:null,values:[]};
+    row.executions.push(execution);
+    const {instance}=await settle(WebAssembly.instantiate(bytes,{}),"instantiate:"+fixture.id);
+    execution.instantiatedBinary=input;
+    phase="execute";
+    assert.equal(typeof instance.exports.run,"function");
+    for(let ordinal=0;ordinal<2;ordinal++) {
+      const value=(instance.exports.run as Function)();
+      execution.values.push({export:"run",args:[],ordinal,value:data(value)});
+      assert.deepEqual(data(value),fixture.expected,"independent expected result: "+fixture.id);
+    }
+    row.kind="executed"; row.phase="completed";
+  } catch(error) {row.kind="threw";row.phase=phase;row.error=data(error);}
+  return row;
+}
+async function arm(label: keyof typeof roots, output: string) {
+  const root=realpathSync(roots[label]);
+  assert.equal(process.cwd(),root);
+  assert(output.startsWith(join(worker,".tmp/")));
+  requireFrozen(root);
+  assert.equal(process.env.TSX_TSCONFIG_PATH,join(root,"tsconfig.json"));
+  assert.equal(process.env.TSX_DISABLE_CACHE,"1");
+  assert.equal(process.env.ESBUILD_BINARY_PATH,undefined);
+  for(const [key,value] of Object.entries(controls))assert.equal(process.env[key],value);
+  const before=snapshot(root),identity=runtime(root);
+  const urls={compile:pathToFileURL(join(root,"src/index.ts")).href};
+  const api=await settle(import(urls.compile),"public-root");
+  const rows=[];
+  for(const fixture of matrix) {
+    appendFileSync(output+".progress.jsonl",JSON.stringify({stage:"start",id:fixture.id})+"\n");
+    const row=await measure(api,fixture); rows.push(row);
+    appendFileSync(output+".progress.jsonl",JSON.stringify({stage:"completed",row})+"\n");
+  }
+  requireFrozen(root);
+  const after=snapshot(root);assert.deepEqual(after,before);assert.deepEqual(runtime(root),identity);
+  const report={schema:"vector-grow-store-public-v1",provenance:{label,before,after,identity,urls,launch:launch(),matrixSha256:sha(JSON.stringify(matrix))},rows};
+  writeFileSync(output,JSON.stringify(report,null,2));
+}
+async function child(label: keyof typeof roots, directory: string) {
+  const root=roots[label],output=join(directory,label+".json");
+  const loader=createRequire(join(root,"package.json")).resolve("tsx/esm");
+  const args=["--import",loader,instrument,"--arm",label,output];
+  const env=envFor(root), launchReceipt={label,root,execPath:process.execPath,args,env:envForReceipt(env),output};
+  writeFileSync(join(directory,label+".launch.json"),JSON.stringify(launchReceipt,null,2));
+  const outFd=openSync(join(directory,label+".stdout.log"),"wx"),errFd=openSync(join(directory,label+".stderr.log"),"wx");
+  let terminal:any;
+  try {
+    terminal=await new Promise(resolveTerminal=>{
+      const p=spawn(process.execPath,args,{cwd:root,env,stdio:["ignore",outFd,errFd]});
+      console.log(JSON.stringify({stage:"child-start",label,pid:p.pid,output}));
+      let error:any=null;
+      p.once("error",e=>{error=data(e)});
+      p.once("close",(code,signal)=>resolveTerminal({code,signal,error,pid:p.pid}));
+    });
+  } finally {closeSync(outFd);closeSync(errFd);}
+  let reportSha256:string|null=null;
+  try {reportSha256=sha(readFileSync(output));} catch {}
+  const receipt={...terminal,label,root,output,reportSha256,launchSha256:sha(readFileSync(join(directory,label+".launch.json")))};
+  writeFileSync(join(directory,label+".terminal.json"),JSON.stringify(receipt,null,2));
+  console.log(JSON.stringify({stage:"child-terminal",...receipt}));
+  return receipt;
+}
+function envForReceipt(env: NodeJS.ProcessEnv) {
+  return Object.fromEntries(Object.entries(env).filter(([k])=>/^(JS2WASM_|IR_VERIFY_|TSX_|ESBUILD_BINARY_PATH$|NODE_OPTIONS$|NODE_V8_COVERAGE$)/.test(k)).sort());
+}
+function differences(a:any,b:any,path="$",out:any[]=[]): any[] {
+  if(Object.is(a,b))return out;
+  if(!a || !b || typeof a!=="object" || typeof b!=="object" || Array.isArray(a)!==Array.isArray(b)) {
+    out.push({path,baseline:a,candidate:b}); return out;
+  }
+  for(const k of new Set([...Object.keys(a),...Object.keys(b)]))differences(a[k],b[k],path+"."+k,out);
+  return out;
+}
+function validateReport(report:any,label:keyof typeof roots,expected:any) {
+  const p=report.provenance,root=roots[label];
+  assert.equal(report.schema,"vector-grow-store-public-v1");
+  assert.equal(p.label,label);
+  assert.deepEqual(p.before,expected[label]);assert.deepEqual(p.after,p.before);
+  assert.deepEqual(p.identity,runtime(root));
+  assert.deepEqual(p.urls,{compile:pathToFileURL(join(root,"src/index.ts")).href});
+  assert.equal(p.matrixSha256,sha(JSON.stringify(matrix)));
+  assert.equal(p.launch.env.TSX_TSCONFIG_PATH,join(root,"tsconfig.json"));
+  assert.equal(p.launch.env.TSX_DISABLE_CACHE,"1");
+  assert.equal(p.launch.env.NODE_OPTIONS,"--max-old-space-size=2048");
+  assert.equal(p.launch.env.ESBUILD_BINARY_PATH,undefined);
+  assert.deepEqual(p.launch.env,envForReceipt(envFor(root)));
+  const loader=createRequire(join(root,"package.json")).resolve("tsx/esm");
+  assert.deepEqual(p.launch.argv,["--import",loader]);
+  assert.equal(report.rows.length,14);
+  const categories=new Set<string>();
+  const gaps=[];
+  for(let i=0;i<matrix.length;i++) {
+    const row=report.rows[i],fixture=matrix[i];
+    assert.equal(row.id,fixture.id);assert.deepEqual(row.fixture,fixture);
+    if(row.kind!=="executed"){gaps.push({id:row.id,kind:row.kind,phase:row.phase});continue;}
+    assert.equal(row.compilations.length,1);
+    const compilation=row.compilations[0],e=compilation.artifact;
+    assert.equal(compilation.source,fixture.source);assert.deepEqual(compilation.options,fixture.options);
+    assert.equal(compilation.success,true);
+    assert.equal(row.executions.length,1);
+    assert.equal(row.executions[0].instantiationInputBinary,e.binary);
+    assert.equal(row.executions[0].instantiatedBinary,e.binary);
+    const mod=new WebAssembly.Module(Buffer.from(e.binary,"base64"));
+    assert.deepEqual(e.imports,WebAssembly.Module.imports(mod));assert.deepEqual(e.imports,[]);
+    assert.deepEqual(e.exports,WebAssembly.Module.exports(mod));assert(e.wat.length>0);
+    assert.deepEqual(row.executions[0].values,[0,1].map(ordinal=>({export:"run",args:[],ordinal,value:fixture.expected})));
+    assert.deepEqual(row.pathEvidence,paths(e.wat));
+    for(const h of row.pathEvidence.helpers)if(h.callCount>0)categories.add(h.category);
+    if(row.pathEvidence.branded)categories.add("packed-final-open-brand");
+  }
+  for(const category of ["default-externref","default-f64","hole-global-externref","f64-hole-f64","packed-final-open-brand"])
+    if(!categories.has(category))gaps.push({unmeasuredPath:category});
+  return {executed:report.rows.filter((r:any)=>r.kind==="executed").length,requiredRows:14,categories:[...categories].sort(),gaps,ok:gaps.length===0};
+}
+async function pair(directory:string) {
+  directory=resolve(directory);assert(directory.startsWith(join(worker,".tmp/")));mkdirSync(directory,{recursive:false});
+  const expected=sourceCensus();
+  writeFileSync(join(directory,"expected.json"),JSON.stringify({expected,matrix,identity:runtime(worker),harnessSha256:sha(readFileSync(instrument))},null,2));
+  const terminals=[];
+  for(const label of ["baseline","candidate"] as const)terminals.push(await child(label,directory));
+  for(const t of terminals) {assert.equal(t.code,0);assert.equal(t.signal,null);assert.equal(t.error,null);assert.equal(t.reportSha256,sha(readFileSync(t.output)));}
+  const before=JSON.parse(readFileSync(terminals[0].output,"utf8")),after=JSON.parse(readFileSync(terminals[1].output,"utf8"));
+  const a=validateReport(before,"baseline",expected),b=validateReport(after,"candidate",expected);
+  const rawDifferences=differences(before.rows,after.rows);
+  // No checkout-prefix stripping, byte/value normalization or discarded refusal rows.
+  const preservationOK=rawDifferences.length===0;
+  const acceptanceOK=preservationOK && a.ok && b.ok;
+  const negatives=[];
+  const mustReject=(name:string,operation:()=>unknown)=>{assert.throws(operation);negatives.push({name,rejected:true});};
+  const mutate=(fn:(x:any)=>void)=>{const x=structuredClone(after);fn(x);return x;};
+  mustReject("drop-row",()=>validateReport(mutate(x=>x.rows.pop()),"candidate",expected));
+  mustReject("wrong-root",()=>validateReport(before,"candidate",expected));
+  const executedIndex=after.rows.findIndex((r:any)=>r.kind==="executed");
+  assert(executedIndex>=0,"positive executing comparator control");
+  mustReject("alter-instantiated-byte",()=>validateReport(mutate(x=>x.rows[executedIndex].executions[0].instantiatedBinary+="AA"),"candidate",expected));
+  mustReject("alter-value",()=>validateReport(mutate(x=>x.rows[executedIndex].executions[0].values[0].value=99999),"candidate",expected));
+  const changed=mutate(x=>x.rows[executedIndex].compilations[0].errors.push({message:"changed outcome"}));
+  assert(differences(before.rows,changed.rows).length>0);negatives.push({name:"changed-outcome-not-equal",rejected:true});
+  const report={schema:"vector-grow-store-public-pair-v2",preservationOK,acceptanceOK,baseline:a,candidate:b,denominator:{pairs:14,rows:28,expectedCalls:56},terminals,rawDifferences,negativeControls:negatives,expected};
+  writeFileSync(join(directory,"comparison.json"),JSON.stringify(report,null,2));
+  assert.deepEqual(sourceCensus(),expected);
+  console.log(JSON.stringify({stage:"comparison",preservationOK,acceptanceOK,baseline:a,candidate:b,rawDifferenceCount:rawDifferences.length,path:join(directory,"comparison.json")}));
+  if(!acceptanceOK)process.exitCode=1;
+}
+const [mode,arg,out]=process.argv.slice(2);
+try {
+  if(mode==="--arm") {assert(arg==="baseline" || arg==="candidate");await arm(arg,out);}
+  else if(mode==="--pair") await pair(arg);
+  else throw Error("use --pair own.tmp/new-directory or --arm baseline|candidate own.tmp/report.json");
+} catch(error) {
+  if(mode==="--arm" && out?.startsWith(join(worker,".tmp/")))writeFileSync(out+".fatal.json",JSON.stringify(data(error),null,2));
+  console.error(error);process.exitCode=1;
+}

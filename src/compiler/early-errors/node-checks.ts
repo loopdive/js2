@@ -13,6 +13,7 @@ import {
   containsArguments,
   getMemberName,
   hasAsyncModifier,
+  hasNewTargetEnvironment,
   hasOptionalChain,
   isArgumentsOrEval,
   isAsiLetExpressionStatement,
@@ -30,6 +31,7 @@ import {
   isInsideGeneratorParams,
   isInsideIteration,
   isInsideMethod,
+  isInsideAnyFunction,
   isInsideNestedFunction,
   isInvalidAssignmentTarget,
   isStatementPosition,
@@ -126,12 +128,43 @@ const COMPOUND_ASSIGNMENT_OPS = [
 const STRICT_RESERVED_WORDS = new Set([
   "implements",
   "interface",
+  // (#6491 r2) `let` completes §13.1.1's strict-mode list. It was the only
+  // member missing, and it is the one the corpus actually exercises:
+  // `var let = 1` (`future-reserved-words/let-strict.js`) and `class let {}` /
+  // `var C = class let {}` (`{statements,expressions}/class/class-name-ident-let.js`,
+  // strict because a ClassDeclaration's body and name are always strict code).
+  // Safe against false positives by construction: a `let` DECLARATION parses as
+  // a keyword, not an Identifier node, so only `let` used AS a name reaches
+  // here, and property names / labels are already excluded above.
+  "let",
   "package",
   "private",
   "protected",
   "public",
   "static",
 ]);
+
+/**
+ * (#6491 r2) Is `node` the BindingIdentifier an import introduces?
+ *
+ * §16.2.2 makes every ImportedBinding a BindingIdentifier, and module code is
+ * strict (§11.2.2), so `import { eval } from …`, `import { x as arguments }`,
+ * `import arguments from …` and `import * as eval from …` are all SyntaxErrors
+ * — four corpus rows that were invisible because the two strict-binding rules
+ * enumerated their parent kinds and no import kind was on either list.
+ *
+ * `ImportSpecifier.propertyName` is deliberately NOT a binding: in
+ * `import { eval as ok }` the `eval` is the EXPORT's name in the other module,
+ * which may legitimately be anything.
+ */
+function isImportedBindingName(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  if (!parent) return false;
+  if (ts.isImportSpecifier(parent)) return parent.name === node;
+  if (ts.isImportClause(parent)) return parent.name === node;
+  if (ts.isNamespaceImport(parent)) return parent.name === node;
+  return false;
+}
 
 const STRICT_RESERVED_ASSIGN_TARGETS = new Set([
   "implements",
@@ -928,6 +961,7 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
             (ts.isClassDeclaration(parent) && parent.name === node) ||
             (ts.isClassExpression(parent) && parent.name === node) ||
             (ts.isBindingElement(parent) && parent.name === node) ||
+            isImportedBindingName(node) ||
             // Shorthand property in object literal: {implements} — IdentifierReference
             (ts.isShorthandPropertyAssignment(parent) && parent.name === node));
         if (isBinding) {
@@ -1154,6 +1188,7 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
         (ts.isClassDeclaration(parent) && parent.name === node) ||
         (ts.isClassExpression(parent) && parent.name === node) ||
         (ts.isBindingElement(parent) && parent.name === node) ||
+        isImportedBindingName(node) ||
         (ts.isCatchClause(parent) &&
           parent.variableDeclaration &&
           ts.isIdentifier(parent.variableDeclaration.name) &&
@@ -1740,7 +1775,19 @@ on([ts.SyntaxKind.AwaitExpression], (ctx, node) => {
     // appears inside test() (1 function deep). Real nested functions like
     // `function fn() { await 0; }` inside the wrapper are 2+ levels deep.
     // See the same trade-off comment at line ~1492 (import/export in invalid positions).
-    if (!isInsideAsyncFunction(node) && !isInsideClassStaticBlock(node) && isInsideNestedFunction(node)) {
+    // (#6491 r2) …and the depth-2 heuristic above is exactly what hid the four
+    // `module-code/top-level-await/syntax/early-does-not-propagate-to-fn-*`
+    // rows: `function fn() { await 0; }` at a MODULE's top level is ONE
+    // function deep, so the guard that exists to tolerate the synthetic
+    // `export function test() { … }` wrapper skipped it. Under an EXPLICIT
+    // module goal that wrapper is not in play (those rows are assembled as real
+    // top-level module code), and the spec rule is unconditional: a
+    // non-async function's body and parameters are [~Await], so an
+    // AwaitExpression anywhere inside one is a SyntaxError no matter how deep
+    // it sits. Top-level `await` with NO enclosing function stays legal — that
+    // is top-level await, which is the point of these rows' fixture.
+    const insideNonAsyncFunction = ctx.moduleGoal ? isInsideAnyFunction(node) : isInsideNestedFunction(node);
+    if (!isInsideAsyncFunction(node) && !isInsideClassStaticBlock(node) && insideNonAsyncFunction) {
       ctx.addError(node, "'await' expressions are only allowed in async functions");
     }
   }
@@ -2189,14 +2236,13 @@ on([ts.SyntaxKind.TaggedTemplateExpression], (ctx, node) => {
   }
 });
 
-// ── new.target outside function ─────────────────────────────────
-// ES spec: new.target is only valid inside functions (including arrow functions
-// which inherit from enclosing function) and class static blocks.
+// ── new.target lexical resolution environment ───────────────────
+// Arrow functions inherit it; computed member names run outside their member.
 on([ts.SyntaxKind.MetaProperty], (ctx, node) => {
   if (node.kind === ts.SyntaxKind.MetaProperty) {
     const meta = node as ts.MetaProperty;
     if (meta.keywordToken === ts.SyntaxKind.NewKeyword && meta.name.text === "target") {
-      if (!isInsideFunction(node) && !isInsideClassStaticBlock(node)) {
+      if (!hasNewTargetEnvironment(node)) {
         ctx.addError(node, "new.target is only valid inside functions");
       }
     }

@@ -105,7 +105,12 @@ import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
 import { buildVecGopdHoleBail } from "./vec-overlay-hole-bail.js"; // (#4491 T11) sparse marker descriptor guard
-import { buildLengthSeedFlags, buildVecLengthConfig } from "./vec-length-descriptor.js";
+import {
+  buildArgumentsOrdinaryLengthDefineArm,
+  buildLengthSeedFlags,
+  buildVecLengthConfig,
+  buildVecLengthDescriptorValue,
+} from "./vec-length-descriptor.js";
 import { buildArgumentsLengthDeletedBail, fillArgumentsLengthBrand } from "./arguments-length-brand.js"; // (#4658)
 import {
   allowedCarriers,
@@ -670,6 +675,20 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     return; // placeholders stay as safe no-ops
   }
 
+  // (#6651 H2) The native `$Symbol` carrier, when the module already has one.
+  // Read, never `ensureSymbolCarrier`d: this is a FINALIZE pass, and minting a
+  // new struct type here would change the type space of every module that
+  // never mentions a symbol. `-1` ⇒ the READ prologue keeps its historical
+  // instruction sequence exactly.
+  //
+  // It does NOT make the whole slice byte-neutral, and the measurement says so:
+  // the three define/gOPD arms below are unconditional, and `ctx.symbolTypeIdx`
+  // is set for most standalone modules anyway (6 of a 15-module corpus moved,
+  // including one with no `Symbol` in its source). The control that holds is
+  // the HOST one, and it holds by construction rather than by luck —
+  // `fillVecOverlayHelpers` returns early unless `ctx.standalone`, so gc output
+  // cannot move; measured 15/15 sha256-identical on that corpus.
+  const symbolKeyTypeIdx = ctx.symbolTypeIdx;
   const carriers = allowedCarriers(ctx);
   if (carriers.length === 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
@@ -742,6 +761,37 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: inner },
   ];
+
+  /**
+   * (#6651 H2) `notLengthWrap`, but safe for a key that may be a `$Symbol`.
+   * The plain guard `ref.cast`s the key to `$AnyString` to compare it against
+   * `"length"`, which TRAPS on a symbol. A symbol key is never `"length"`, so
+   * the whole test is skipped for one and `inner` runs unconditionally.
+   * With no `$Symbol` carrier registered this is `notLengthWrap` verbatim.
+   */
+  const notLengthWrapUnlessSymbol = (keyLocal: number, inner: Instr[]): Instr[] =>
+    symbolKeyTypeIdx < 0
+      ? notLengthWrap(keyLocal, inner)
+      : [
+          { op: "local.get", index: keyLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolKeyTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 1 }],
+            else: [
+              { op: "local.get", index: keyLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: anyStrTypeIdx },
+              { op: "call", funcIdx: strFlattenIdx },
+              ...nativeStringLiteralInstrs(ctx, "length"),
+              { op: "call", funcIdx: strEqualsIdx },
+              { op: "i32.eqz" },
+            ],
+          },
+          { op: "if", blockType: { kind: "empty" }, then: inner },
+        ];
 
   /** `idxLocal = __obj_index_of_key(cast key)` — canonical array index or -1. */
   const parseIndex = (keyLocal: number, idxLocal: number): Instr[] => [
@@ -1044,12 +1094,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               ];
       const bailReturnVec: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
 
+      // (#6651 cluster H) §10.4.4 — an `arguments` object's `length` is an ORDINARY
+      // data property, so a `{value: n}` define on one must not run ArraySetLength.
+      const argumentsLengthDefineArm = buildArgumentsOrdinaryLengthDefineArm(ctx, HOST_HAS_VALUE);
+
       // (#3251 S3) The `"length"` define body — ArraySetLength §10.4.2.1.
       // Runs INSTEAD of the index path when key == "length"; always returns.
       const lengthDefineBody: Instr[] =
         s3 === null
-          ? bailReturnVec.map((i) => ({ ...i }))
+          ? [...argumentsLengthDefineArm, ...bailReturnVec.map((i) => ({ ...i }))]
           : [
+              ...argumentsLengthDefineArm,
               // comp / compExt + seed the length descriptor
               { op: "local.get", index: 4 },
               { op: "call", funcIdx: core.ensureIdx },
@@ -1420,10 +1475,32 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           4,
           bailReturnVec.map((i) => ({ ...i })),
         ),
-        ...stringKeyGuard(
-          1,
-          bailReturnVec.map((i) => ({ ...i })),
-        ),
+        // (#6651 cluster H, slice H2) §10.4.2.1 step 1 — a SYMBOL key is not an
+        // array index and not "length", so [[DefineOwnProperty]] on an Array
+        // exotic object is OrdinaryDefineOwnProperty on the same object. The
+        // overlay used to `return` here, which silently DROPPED the definition:
+        // `Object.defineProperty(arr, Symbol.isConcatSpreadable, …)` left the
+        // property absent while the same descriptor on a plain object worked
+        // and a plain `arr[sym] = v` assignment worked (both measured). Route
+        // the key to the companion `$Object` — the carrier the symbol-keyed
+        // READ path already consults — instead of discarding it. The companion
+        // is a `$Object`, never a vec, so the generic native cannot re-enter
+        // this overlay; the "length" arm below already delegates this way.
+        ...stringKeyGuard(1, [
+          { op: "local.get", index: 4 },
+          { op: "call", funcIdx: core.ensureIdx },
+          { op: "local.set", index: 5 },
+          { op: "local.get", index: 5 },
+          { op: "extern.convert_any" },
+          { op: "local.set", index: 6 },
+          { op: "local.get", index: 6 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "local.get", index: 3 },
+          { op: "call", funcIdx: dpValueIdx },
+          { op: "drop" },
+          ...bailReturnVec.map((i) => ({ ...i })),
+        ]),
         // (#3251 S3) "length" → ArraySetLength (always returns inside).
         ...lengthKeyGuard(1, lengthDefineBody),
         { op: "local.get", index: 4 },
@@ -1662,7 +1739,27 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "any.convert_extern" },
         { op: "local.set", index: 5 },
         ...carrierWhitelistGuard(5, bailReturnVec()),
-        ...stringKeyGuard(1, bailReturnVec()),
+        // (#6651 H2) Symbol key → OrdinaryDefineOwnProperty on the companion.
+        // See the `__vec_dp_value` twin: the bail dropped the accessor outright,
+        // so `Object.defineProperty(arr, @@isConcatSpreadable, {get})` never
+        // installed a getter and `arr[@@isConcatSpreadable]` stayed `undefined`
+        // (the #6485 `is-concat-spreadable-get-order` residual).
+        ...stringKeyGuard(1, [
+          { op: "local.get", index: 5 },
+          { op: "call", funcIdx: core.ensureIdx },
+          { op: "local.set", index: 6 },
+          { op: "local.get", index: 6 },
+          { op: "extern.convert_any" },
+          { op: "local.set", index: 7 },
+          { op: "local.get", index: 7 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 4 },
+          { op: "call", funcIdx: dpAccessorIdx },
+          { op: "drop" },
+          ...bailReturnVec(),
+        ]),
         // (#3251 S3) accessor define on "length": §10.4.2.1 step 2 — always a
         // TypeError. Seed the length descriptor and delegate; the $Object S4
         // accessor preflight rejects the data→accessor conversion on the
@@ -1902,13 +1999,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               },
               { op: "call", funcIdx: newPlainObjectIdx },
               { op: "local.set", index: 6 },
-              ...setKey("value", [
-                { op: "local.get", index: 2 },
-                { op: "ref.cast", typeIdx: vecBaseIdx },
-                { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
-                { op: "f64.convert_i32_s" },
-                { op: "call", funcIdx: s3.boxNumIdx },
-              ]),
+              ...setKey("value", buildVecLengthDescriptorValue(ctx, 2, vecBaseIdx, s3.boxNumIdx)),
               ...setKey("writable", [
                 { op: "local.get", index: 4 },
                 { op: "call", funcIdx: boxBoolIdx },
@@ -1951,7 +2042,51 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "any.convert_extern" },
         { op: "local.set", index: 2 },
         ...carrierWhitelistGuard(2, bailMiss()),
-        ...stringKeyGuard(1, bailMiss()),
+        // (#6651 H2) A symbol key has no index / "length" meaning, so
+        // [[GetOwnProperty]] on an Array exotic object is the ordinary one.
+        // The bail answered `undefined` even when the companion HELD the entry
+        // — measured: `arr[sym] = 9` reads back 9, while
+        // `Object.getOwnPropertyDescriptor(arr, sym)` answered `undefined` for
+        // the same property. Delegate to the `$Object` descriptor builder.
+        ...stringKeyGuard(1, [
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: core.lookupIdx },
+          { op: "local.tee", index: 3 },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 3 },
+              { op: "ref.as_non_null" },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: objFindIdx },
+              { op: "ref.is_null" },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 3 },
+                  { op: "extern.convert_any" },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: gopdObjectIdx },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+          // The companion does not hold it — a symbol expando written by plain
+          // assignment lands in the #3537 bag instead (the #4010 two-table
+          // seam). Self-contained: the arm must RETURN, because the index /
+          // "length" logic below `ref.cast`s the key to `$AnyString`.
+          // `bailMiss()`, not the bare `missExtern()` the tail-of-body call
+          // uses: this arm is NOT the end of the function, and falling through
+          // would reach the `"length"` guard, which `ref.cast`s the key to
+          // `$AnyString` and TRAPS on a symbol.
+          ...buildBagGopdOrMiss(ctx, 6, bailMiss()),
+        ]),
         // (#3251 S3) "length" → synthesized length descriptor (always returns).
         ...lengthKeyGuard(1, lengthGopdBody),
         // Companion entry → delegate to the $Object descriptor builder.
@@ -2377,6 +2512,22 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                         ] satisfies Instr[])),
                   ],
                 },
+                // (#2917) `v.length = n` on a vec whose companion has no
+                // "length" entry yet: the companion may hold element values
+                // (FLAG_COMPANION_VALUE) that the read prologue answers even at
+                // or past the length, so the length-field-only store below
+                // left `j[1]` readable after `j.length = 1`. Run the full
+                // ArraySetLength (§10.4.2.1) define, which also deletes the
+                // companion entries ≥ newLen. Once it has seeded "length",
+                // later writes take the entry arm above.
+                { op: "local.get", index: keyLocal },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: anyStrTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: lengthKeyGuard(keyLocal, overlayStore(HOST_HAS_VALUE)),
+                },
               ],
             },
             { op: "local.get", index: keyLocal },
@@ -2701,10 +2852,31 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "ref.test", typeIdx: vecBaseIdx },
             // The consult keys `__obj_find` with the raw externref key —
             // restrict to $AnyString keys (a boxed-number key is the #3183
-            // numeric arm's job; a Symbol key has no overlay entry).
+            // numeric arm's job).
+            //
+            // (#6651 H2) …and to SYMBOL keys, which now DO have an overlay
+            // entry: `__vec_dp_value` / `__vec_dp_accessor` route a symbol
+            // define to the companion instead of dropping it (§10.4.2.1 step 1
+            // — a symbol is neither an array index nor "length", so the
+            // definition is the ordinary one). Without widening this gate the
+            // define lands and the read never looks, which is the silent
+            // half of the same defect. The consult body itself was already
+            // symbol-safe: its "is this an index key?" question has an
+            // explicit non-`$AnyString` else-arm answering "named key, the
+            // companion is authoritative". Gated on the `$Symbol` carrier
+            // already being registered, so a module whose type space has no
+            // `$Symbol` keeps this prologue byte-for-byte.
             { op: "local.get", index: 1 },
             { op: "any.convert_extern" },
             { op: "ref.test", typeIdx: anyStrTypeIdx },
+            ...(symbolKeyTypeIdx >= 0
+              ? ([
+                  { op: "local.get", index: 1 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: symbolKeyTypeIdx },
+                  { op: "i32.or" },
+                ] as Instr[])
+              : []),
             { op: "i32.and" },
             {
               op: "if",
@@ -2712,8 +2884,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               // (#3251 S3) "length" is EXCLUDED from the companion consult —
               // the live vec length field is authoritative (a companion copy
               // goes stale on push/plain writes); the pre-existing length arm
-              // below answers it.
-              then: notLengthWrap(1, [
+              // below answers it. A symbol key can never BE "length", and the
+              // guard `ref.cast`s to `$AnyString`, so it is skipped for one.
+              then: notLengthWrapUnlessSymbol(1, [
                 { op: "local.get", index: gAny },
                 { op: "call", funcIdx: core.lookupIdx },
                 { op: "local.tee", index: gComp },

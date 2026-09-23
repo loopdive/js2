@@ -29,6 +29,7 @@ import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitNarrowedCarrierToString } from "../bigint-wide.js";
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -36,6 +37,7 @@ import {
 } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
+import { interfaceHasClassImplementer } from "../interface-class-implementer.js"; // (#6634)
 import { collectOpenReceiverCandidates } from "./virtual-candidate-set.js"; // (#5249)
 import {
   buildCallSiteNullishReceiverGuard, // (#4656) callee-reference-before-arguments
@@ -53,6 +55,7 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
+import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
@@ -72,8 +75,11 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
+import { buildTaFromMapfnCallableGate, buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6651 E2) §23.2.1 carrier identity + §23.2.2.1 step 3
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
-import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
+import { taDynDetachedGuardPrologue } from "../ta-dyn-method-call.js"; // (#6501) §23.2.4.4 prologue for the helper-routed mutators
+import { ensureNativeArrayFromIterN, reserveAnyIterNext } from "../iterator-native.js";
+import { ensureTaFromArrayLikeMappedHelper } from "../ta-static-from-of-body.js"; // (#6651 E5) per-element §23.2.2.1 mapping
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import {
@@ -89,12 +95,16 @@ import {
   STRING_METHODS,
   typedArrayVecStorage,
 } from "../index.js";
-import { isTaViewTypeIdx } from "../registry/types.js";
+import { isTaViewTypeIdx, taCtorIdentityTestInstrs } from "../registry/types.js"; // (#5383 S14) brand-checked TA-ctor identity
 import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
+import {
+  tryEmitStandaloneDynamicSpreadCall,
+  tryEmitStandaloneTrailingSpreadCall,
+} from "../standalone-dynamic-spread-call.js"; // (#6645/#6646)
 import { compilePropertyIntrospection } from "../object-ops.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveBindDynHelper } from "../object-runtime.js";
 import {
@@ -374,6 +384,7 @@ function tryEmitTaStaticOfFrom(
     const savedT = fctx.body;
     fctx.body = thenArm;
     const carrierLocal = allocLocal(fctx, `__tastat_carrier_${fctx.locals.length}`, { kind: "externref" });
+    let mappedCall: Instr[] | undefined;
     if (methodName === "of") {
       // Pack the of-args into a native `$ObjVec` (read by __extern_*).
       const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
@@ -385,10 +396,9 @@ function tryEmitTaStaticOfFrom(
         fctx.body.push({ op: "call", funcIdx: pushIdx });
       }
     } else {
-      // from(src[, mapfn[, thisArg]]): normalize src (+ optional mapfn) to a
-      // carrier the array-like reader consumes. A present, non-nullish mapfn
-      // routes through __array_from_mapped (composes __array_from_iter_n +
-      // __hof_map); no/undefined mapfn drains via __array_from_iter_n directly.
+      // from(src[, mapfn[, thisArg]]): normalize src (UNMAPPED) to a carrier
+      // the array-like reader consumes via __array_from_iter_n; a present,
+      // non-nullish mapfn is applied per element by __ta_from_arraylike_mapped.
       const iterNIdx = ensureNativeArrayFromIterN(ctx);
       const src = argLocals[0];
       if (src === undefined) {
@@ -396,30 +406,36 @@ function tryEmitTaStaticOfFrom(
         fctx.body.push({ op: "call", funcIdx: newIdx });
         fctx.body.push({ op: "local.set", index: carrierLocal });
       } else if (dispatchArgs.length >= 2) {
-        const mappedIdx = ensureNativeArrayFromMapped(ctx);
         const nullishIdx = ctx.funcMap.get("__nullish_to_null");
         const mapfn = argLocals[1]!;
         const thisArg = argLocals[2];
-        const iterArm: Instr[] = [
-          { op: "local.get", index: src },
-          { op: "f64.const", value: -1 },
-          { op: "call", funcIdx: iterNIdx },
-          { op: "local.set", index: carrierLocal },
-        ];
+        // (#6651 E2) §23.2.2.1 step 3 runs BEFORE step 4's
+        // `GetMethod(source, @@iterator)`, so the gate has to be emitted here —
+        // ahead of the drain — not folded into the nullish test below, which
+        // cannot tell `null` (a TypeError) from `undefined` (no mapping).
+        fctx.body.push(...buildTaFromMapfnCallableGate(ctx, mapfn));
+        fctx.body.push({ op: "local.get", index: src });
+        fctx.body.push({ op: "f64.const", value: -1 });
+        fctx.body.push({ op: "call", funcIdx: iterNIdx });
+        fctx.body.push({ op: "local.set", index: carrierLocal });
+        // (#6651 E5) Map per element AFTER TypedArrayCreate, with exactly
+        // « kValue, k » — see `ensureTaFromArrayLikeMappedHelper`.
+        const mappedIdx = ensureTaFromArrayLikeMappedHelper(ctx);
         if (mappedIdx !== undefined) {
-          const mapArm: Instr[] = [
-            { op: "local.get", index: src },
-            { op: "local.get", index: mapfn },
-            thisArg !== undefined ? { op: "local.get", index: thisArg } : { op: "ref.null.extern" },
-            { op: "call", funcIdx: mappedIdx },
-            { op: "local.set", index: carrierLocal },
-          ];
           fctx.body.push({ op: "local.get", index: mapfn });
           if (nullishIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishIdx });
-          fctx.body.push({ op: "ref.is_null" });
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: iterArm, else: mapArm });
-        } else {
-          for (const ins of iterArm) fctx.body.push(ins);
+          fctx.body.push({ op: "ref.is_null" }, { op: "i32.eqz" });
+          const thisArgInstrs: Instr[] =
+            thisArg !== undefined
+              ? [{ op: "local.get", index: thisArg }]
+              : (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
+          mappedCall = [
+            { op: "local.get", index: recvLocal },
+            { op: "local.get", index: carrierLocal },
+            { op: "local.get", index: mapfn },
+            ...thisArgInstrs,
+            { op: "call", funcIdx: mappedIdx },
+          ];
         }
       } else {
         fctx.body.push({ op: "local.get", index: src });
@@ -428,9 +444,19 @@ function tryEmitTaStaticOfFrom(
         fctx.body.push({ op: "local.set", index: carrierLocal });
       }
     }
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push({ op: "local.get", index: carrierLocal });
-    fctx.body.push({ op: "call", funcIdx: taFromIdx });
+    const taArm: Instr[] = [
+      { op: "local.get", index: recvLocal },
+      { op: "local.get", index: carrierLocal },
+      { op: "call", funcIdx: taFromIdx },
+    ];
+    if (mappedCall)
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: mappedCall,
+        else: taArm,
+      });
+    else fctx.body.push(...taArm);
     fctx.body = savedT;
   }
 
@@ -440,11 +466,42 @@ function tryEmitTaStaticOfFrom(
   for (const aLocal of argLocals) elseArm.push({ op: "local.get", index: aLocal });
   elseArm.push({ op: "call", funcIdx: dispatchIdx });
   const isTaCtorLocal = allocLocal(fctx, `__tastat_is_ctor_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: recvAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
+  // (#5383 S14) The IDENTITY test, not a bare `ref.test`. WasmGC canonicalizes
+  // structurally-identical struct types, and `$__ta_ctor` is two immutable i32
+  // fields — the SAME shape #2158/#2009 gives a field-less class ROOT. In a
+  // module that links the standalone Temporal provider, every provider class
+  // OBJECT therefore passes `ref.test $__ta_ctor`, and this arm builds a typed
+  // array out of it: `Temporal.PlainDate.from("2020-12-24")` answered an object
+  // whose only own key was `length`, `Object.prototype.toString` said
+  // `[object Array]`, and `new Temporal.PlainDate(1976,11,18).length` read back
+  // `1976` — the first constructor argument, out of a struct this module had no
+  // right to decode. Every later read of that value was `undefined`.
+  //
+  // `taCtorIdentityTestInstrs` (#5383 S2f R11) is the discriminator already
+  // written for this exact collision, measured on this exact provider: it adds
+  // the `brand` FIELD-VALUE check, which no other type's field 1 holds by
+  // accident. Answer-preserving for a genuine `$__ta_ctor` (both mint sites
+  // write `TA_CTOR_BRAND`); it can only ever REMOVE a false positive, so the
+  // `testWithTypedArrayConstructors` shape this arm exists for is untouched.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: recvAnyLocal }]));
   fctx.body.push({ op: "local.set", index: isTaCtorLocal });
   fctx.body.push(
     ...buildInt8ArrayCarrierMatch(ctx, recvAnyLocal, [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: isTaCtorLocal },
+    ]),
+  );
+  // (#6651 E2) …and the `%TypedArray%` INTRINSIC carrier (§23.2.1), which is
+  // neither a `$__ta_ctor` nor the Int8Array carrier. IsConstructor(%TypedArray%)
+  // is TRUE, so §23.2.2.1 step 2 does NOT throw for it — the abstract-constructor
+  // TypeError belongs to TypedArrayCreate at step 5/6, AFTER the source has been
+  // drained. Declining here sent `TypedArray.from(src)` to the dispatcher, whose
+  // refusal closure threw that TypeError as the FIRST observable act, so a
+  // source whose `@@iterator`/`next`/`length` throws reported the wrong
+  // completion. `__ta_from_arraylike` raises it at the right point instead
+  // (kind < 0 arm), so admitting the carrier here is what restores spec order.
+  fctx.body.push(
+    ...buildTypedArrayIntrinsicCarrierMatch(ctx, recvAnyLocal, [
       { op: "i32.const", value: 1 },
       { op: "local.set", index: isTaCtorLocal },
     ]),
@@ -1681,13 +1738,30 @@ export function compileReceiverMethodCall(
     if (!receiverClassName || !ctx.classSet.has(receiverClassName)) {
       const recvProps = receiverType.getProperties?.() ?? [];
       const recvPropNames = new Set(recvProps.map((p) => p.name));
+      // (#6634) A NAMED interface with a KNOWN class implementer already has
+      // its OWN Wasm carrier resolved to externref by `resolveWasmType`
+      // (`interface-class-implementer.ts`) — precisely because a class
+      // instance can never physically match the object-literal-shaped struct
+      // this scan is about to guess. Hardcoding a static call to that class
+      // here would be equally wrong for the SAME reason whenever the runtime
+      // value is actually some OTHER implementer (a literal, or another
+      // class) — see #6634 repro13 (a `Record<string, Iface>` holding both a
+      // literal and a class instance always answered the class) and its
+      // single-class-implementer sibling. Reuse the identical predicate so
+      // this fallback and the interface's own carrier choice always agree:
+      // no new checker queries, just the same class/interface name lookup.
+      const ifaceName = receiverType.symbol?.name;
+      const interfaceForcesDynamic =
+        ifaceName !== undefined && !ctx.classSet.has(ifaceName) && interfaceHasClassImplementer(ctx, ifaceName);
       // An `any`/`unknown` receiver (or another property-less structural type)
       // provides no evidence for a nominal class. Picking the first class that
       // happens to define the same method name is order-dependent and can run a
       // private-field body against an unrelated object. Leave those receivers
       // dynamic so their runtime identity selects the method.
       const canInferClass =
-        recvProps.length > 0 && (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0;
+        !interfaceForcesDynamic &&
+        recvProps.length > 0 &&
+        (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0;
       const canonicalClasses = canInferClass
         ? new Set([...ctx.classSet].map((name) => canonicalClassExpressionName(ctx, name) ?? name))
         : [];
@@ -1983,12 +2057,28 @@ export function compileReceiverMethodCall(
         const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
         const handledRestStatic =
           restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
-        if (!handledRestStatic) {
+        // (#6616) A STATIC method reached through its class object is the same
+        // known-callee call as the instance arm below, and it needs the same
+        // spread handling. Without it a `K.s(...xs)` site compiled the spread
+        // SOURCE as one positional argument: the callee saw the array in its
+        // first formal and `undefined` in the rest, or — for a tuple-struct
+        // carrier (an inline `[1, 2]`) — the module failed wasm validation.
+        // `paramOffset` is 0 here: a static body has no `self` param.
+        const handledSpreadStatic =
+          !handledRestStatic && paramCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledArgvSpreadStatic =
+          handledSpreadStatic &&
+          calleeReadsArgsStatic &&
+          restInfoStatic === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, resolvedStaticIdx, 0, fullName);
+        if (handledSpreadStatic) {
+          if (!handledArgvSpreadStatic) compileSpreadCallArgs(ctx, fctx, expr, resolvedStaticIdx, restInfoStatic, 0);
+        } else if (!handledRestStatic) {
           for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
             compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
           }
         }
-        if (!handledRestStatic && expr.arguments.length > paramCount) {
+        if (!handledRestStatic && !handledSpreadStatic && expr.arguments.length > paramCount) {
           if (calleeReadsArgsStatic) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], paramCount);
           } else {
@@ -2000,13 +2090,15 @@ export function compileReceiverMethodCall(
             }
           }
         }
-        if (paramTypes && !handledRestStatic) {
+        if (paramTypes && !handledRestStatic && !handledSpreadStatic) {
           for (let i = expr.arguments.length; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
-        // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, paramCount);
+        // Set __argc before the call so the callee knows the actual arg count.
+        // (#5093) The flattened-spread path published a RUNTIME count already; a
+        // constant here would clobber it back to the un-flattened node count.
+        if (!handledArgvSpreadStatic) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, paramCount);
         const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? resolvedStaticIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const sig = ctx.checker.getResolvedSignature(expr);
@@ -2293,6 +2385,19 @@ export function compileReceiverMethodCall(
       if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
         funcIdx = undefined;
       }
+      // (#6645, #5383 S68) `o.m(a, ...src, b)` — a positional argument AFTER a
+      // spread. The arms below ARE spread-aware (#6616), but bind formals by
+      // the static accounting `compileSpreadCallArgs` documents, which is exact
+      // only while the spread's length is known at compile time. With a
+      // trailing argument the binding shifts — see
+      // {@link tryEmitStandaloneTrailingSpreadCall} for the measurement. Sits
+      // before the resolved-method arm because that arm claims the call
+      // whenever `funcIdx` is defined, which is the case for every
+      // object-literal method (`TemporalHelpers.assertPlainDate`).
+      {
+        const trailingSpread = tryEmitStandaloneTrailingSpreadCall(ctx, fctx, expr);
+        if (trailingSpread !== undefined) return trailingSpread;
+      }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         // (#4775) A fnctor receiver gets its devirtualization chance HERE.
@@ -2321,6 +2426,19 @@ export function compileReceiverMethodCall(
           });
           if (devirtualized !== undefined) return devirtualized;
         }
+        // (#6645, #5383 S68) A SPREAD into a callable PROPERTY. Both arms of
+        // `compileCallablePropertyCall` marshal a fixed arity — one local per
+        // AST argument node — so the spread's source array arrives as formal
+        // ZERO. Measured against the real Temporal provider,
+        // `.tmp/s68/probes/ea.js`: `TemporalHelpers.checkStaticInvalidReceiver(
+        // ...[Ctor,"from",["x"],fn])` threw "Cannot read properties of
+        // undefined (reading 'apply')" (`construct[method]` on the ARRAY),
+        // while the identical call with the four arguments written out ran
+        // both `from` and the assertion callback. Route it through the
+        // runtime-argv terminal instead; gated on a spread being present, so
+        // every callable-property call that works today is untouched.
+        const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
+        if (nativeSpreadCall !== undefined) return nativeSpreadCall;
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
@@ -2376,12 +2494,24 @@ export function compileReceiverMethodCall(
           const restInfoSm = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
           const handledRestSm =
             restInfoSm !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoSm, 1);
-          if (!handledRestSm) {
+          // (#6616) Same spread handling as the class-instance arm below — an
+          // OBJECT-LITERAL method reached through a struct-typed receiver is a
+          // known callee with a `self` param, so `paramOffset` is 1.
+          const handledSpreadSm =
+            !handledRestSm && smMethodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+          const handledArgvSpreadSm =
+            handledSpreadSm &&
+            calleeReadsArgsSm &&
+            restInfoSm === undefined &&
+            compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 1, fullName);
+          if (handledSpreadSm) {
+            if (!handledArgvSpreadSm) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoSm, 1);
+          } else if (!handledRestSm) {
             for (let i = 0; i < Math.min(expr.arguments.length, smMethodParamCount); i++) {
               compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
             }
           }
-          if (!handledRestSm && expr.arguments.length > smMethodParamCount) {
+          if (!handledRestSm && !handledSpreadSm && expr.arguments.length > smMethodParamCount) {
             if (calleeReadsArgsSm) {
               emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], smMethodParamCount);
             } else {
@@ -2393,13 +2523,15 @@ export function compileReceiverMethodCall(
               }
             }
           }
-          if (paramTypes && !handledRestSm) {
+          if (paramTypes && !handledRestSm && !handledSpreadSm) {
             for (let i = Math.min(expr.arguments.length, smMethodParamCount) + 1; i < paramTypes.length; i++) {
               pushDefaultValue(fctx, paramTypes[i]!, ctx);
             }
           }
           // Set __argc before the call so the callee knows the actual arg count
-          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
+          // (#5093: not over a flattened spread, which published a runtime one).
+          if (!handledArgvSpreadSm)
+            maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
           const finalStructMethodIdx =
             ownShadowFuncIdx(ctx, ownShadowNameS) ??
             (hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx));
@@ -2441,12 +2573,24 @@ export function compileReceiverMethodCall(
         const restInfoNns = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
         const handledRestNns =
           restInfoNns !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNns, 1);
-        if (!handledRestNns) {
+        // (#6616) Spread handling for the non-nullable struct receiver — the arm
+        // that actually claims `H.m(...xs)` / `this.m(...args)` on an
+        // object-literal method.
+        const handledSpreadNns =
+          !handledRestNns && nnMethodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledArgvSpreadNns =
+          handledSpreadNns &&
+          calleeReadsArgsNns &&
+          restInfoNns === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 1, fullName);
+        if (handledSpreadNns) {
+          if (!handledArgvSpreadNns) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNns, 1);
+        } else if (!handledRestNns) {
           for (let i = 0; i < Math.min(expr.arguments.length, nnMethodParamCount); i++) {
             compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
           }
         }
-        if (!handledRestNns && expr.arguments.length > nnMethodParamCount) {
+        if (!handledRestNns && !handledSpreadNns && expr.arguments.length > nnMethodParamCount) {
           if (calleeReadsArgsNns) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], nnMethodParamCount);
           } else {
@@ -2459,13 +2603,15 @@ export function compileReceiverMethodCall(
           }
         }
         // Pad missing arguments with defaults (skip self param at index 0)
-        if (paramTypes && !handledRestNns) {
+        if (paramTypes && !handledRestNns && !handledSpreadNns) {
           for (let i = Math.min(expr.arguments.length, nnMethodParamCount) + 1; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
         // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
+        // (#5093: not over a flattened spread, which published a runtime one).
+        if (!handledArgvSpreadNns)
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
         const finalStructMethodIdx =
           ownShadowFuncIdx(ctx, ownShadowNameS) ??
@@ -2833,6 +2979,8 @@ export function compileReceiverMethodCall(
     if (exprType && exprType.kind === "i32") {
       fctx.body.push({ op: "i64.extend_i32_s" });
     }
+    // (#6656) A narrowed reference slot: format the carrier, exact past i64.
+    if (exprType?.kind === "i64" && emitNarrowedCarrierToString(ctx, fctx, radixLocalIdx)) return { kind: "externref" };
     if (radixLocalIdx !== undefined) {
       const radixFuncIdx = ctx.funcMap.get("bigint_toString_radix");
       if (radixFuncIdx !== undefined) {
@@ -3251,6 +3399,16 @@ export function compileReceiverMethodCall(
           return compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method, wrapperReceiverOverride);
         }
       }
+      // (#6651 cluster B) §22.1.3 step 2 — `GetMethod(searchValue, @@match /
+      // @@replace / @@search / @@split)` comes BEFORE the string lane, and for
+      // an ordinary-object search value it cannot be decided statically (the
+      // method is installed after the object is created). The probe declines
+      // for every other shape, so the fast paths are unchanged; the fallback
+      // arm is this very call. See `string-symbol-protocol.ts`.
+      const protocolResult = tryCompileStringSymbolProtocolDispatch(ctx, fctx, expr, propAccess, method, () =>
+        compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method),
+      );
+      if (protocolResult !== undefined) return protocolResult;
       return compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method);
     }
 
@@ -4128,7 +4286,11 @@ export function compileReceiverMethodCall(
             fctx.body.push({ op: "local.set", index: aLocal });
             argLocals.push(aLocal);
           }
-          const thenArm: Instr[] = [{ op: "local.get", index: recvLocal }];
+          // (#6501) §23.2.4.4 ValidateTypedArray — these four never reach the
+          // #5961 dispatcher prologue; see `taDynDetachedGuardPrologue` for why
+          // it must sit after the args are in locals and before the helper.
+          const taDetGuard = taDynDetachedGuardPrologue(ctx, fctx, methodName, recvLocal);
+          const thenArm: Instr[] = [...taDetGuard, { op: "local.get", index: recvLocal }];
           // `set` consumes only source + offset, but all supplied arguments
           // have already been evaluated into locals above. Keep the same
           // five-parameter native helper ABI as the other dyn-view mutators;
