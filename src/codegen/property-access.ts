@@ -21,6 +21,7 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
+import { tryEmitAnyValueArrayUndefinedOobGet } from "./any-value-element-read.js"; // (#6651 G3)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -6663,6 +6664,9 @@ export function compileElementAccessBody(
       emitPlainArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, f1BoxType, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (shouldWidenReferenceArrayOob(oobUndefined, expr, arrDef.element)) {
+      // (#6651 G3) An `$AnyValue` element keeps its box (see the module).
+      const anyRead = tryEmitAnyValueArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
+      if (anyRead) return anyRead;
       emitReferenceArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (oobUndefinedTypedArray) {
@@ -6772,6 +6776,8 @@ export function compileElementAccessBody(
     emitPlainArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element, f1BoxTypeArr);
     return { kind: "externref" };
   } else if (shouldWidenReferenceArrayOob(oobUndefinedArr, expr, typeDef.element)) {
+    const anyRead = tryEmitAnyValueArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element); // (#6651 G3)
+    if (anyRead) return anyRead;
     emitReferenceArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element);
     return { kind: "externref" };
   } else if (oobUndefinedTypedArrayArr) {
