@@ -169,6 +169,27 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
+  # not as its TARGET's static shape). `property-access.ts` +13 — three lines
+  # at the dot-property arm in `compilePropertyAccess`, three at its computed
+  # twin in `compileElementAccess`, and the import; `assignment.ts` +28 for the
+  # write arm; `object-ops.ts` +15 and `new-super.ts` +12 for the
+  # helper-returned-proxy hop. The lowering itself and all of its rationale
+  # live in the NEW leaf `src/codegen/proxy-receiver-generic-read.ts` — the
+  # first cut inlined them and cost +78 here. Comment-dominated in every case:
+  # the executable part of each arm is the same six-line "compile the receiver,
+  # push the key, call `__extern_get`" the foreign-eval lane a few hundred
+  # lines above already uses, and the rest records the measurement that
+  # overturns the fast path —
+  # `new Proxy([1,2,3],{}).length` answered **0** and
+  # `new Proxy(new String("str"),{}).length` **trapped with a null-pointer
+  # dereference** on this branch's base, while `p["length"]` on the SAME tree
+  # answered 3. The mechanism (the provenance predicate and the new
+  # return-expression hop) lives in the leaf
+  # `src/codegen/proxy-value-provenance.ts`. What cannot move is the admission
+  # itself: it has to be readable at the point the target-shaped lowering is
+  # chosen, which is the top of each of these four dispatchers.
+  - src/codegen/property-access.ts
   # 2026-09-23 — cluster D slice D2b (driven `Promise.all`/`race` over a dynamic
   # iterable). The mechanism — the spec-ordered GetIterator/IteratorStep drive,
   # the growable `$CombinatorDriveState` and its three reaction bodies — is the
@@ -521,6 +542,23 @@ loc-budget-allow:
   # the one recipe every vec-family reader (`__iterator`, `__extern_get_idx`)
   # uses to lift an element to externref; the arm must sit in that recipe.
 func-budget-allow:
+  # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
+  # the WRITE arm plus the `__proto__` exclusion and the measurement that
+  # forced it (see the LOC rationale above; the exclusion is the one thing
+  # this slice regressed and then closed, so it is recorded at the clause).
+  # And +4 inside `compileElementAccess`, which is
+  # the WHOLE arm — a three-line call to `tryProxyReceiverElementRead` plus its
+  # pointer comment. The mechanism, the measurements and every line of
+  # rationale live in the NEW leaf `src/codegen/proxy-receiver-generic-read.ts`
+  # (the first cut inlined them here and cost +28 / +44, and pushed the dot
+  # twin `compilePropertyAccess` over the 300-line threshold for the first
+  # time; extracting brought that one back under budget entirely). What cannot
+  # move is the call itself: the decision "this receiver is a proxy, so do not
+  # read the target's native representation" has to be taken BEFORE the
+  # vec/index arms below, and those arms are what it overrides. The extraction
+  # was verified byte-neutral — all 30 binaries of the 15-program dual-target
+  # corpus are identical before and after it.
+  - src/codegen/property-access.ts::compileElementAccess
   # 2026-09-23 — cluster D slice D2b: `compileNamespaceStaticCall` +4, the
   # dispatch line described under the LOC grant (dynamic-iterable all/race →
   # `emitStandalonePromiseCombinatorDrive`, with the legacy drain as fallback).
@@ -2324,6 +2362,223 @@ unusable no-provider run, kept as the evidence for the engine warning),
 `.tmp/6651/I-buckets.txt`. Probes: `.tmp/6651/{selfimport,selfimport2,hasinst,probe}.mts`.
 None of the probes is committed.
 
+
+### 2026-09-23 — Cluster H (builtins misc, standalone), slice H4: gOPS' missing vec arm, and two corrections to the cluster's worklist
+
+- **Branch** `issue-6651-h4-standalone-builtins`, base `claude/project-thread-yhj9pp`
+  @ `86943b93` (carries round 4 incl. H2 and H3). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-af3440f1dbf0363fc`.
+  A pristine `git archive HEAD` extract at `.tmp/base-tree/` was taken at the
+  FIRST edit; `src/` was never edited under a running sweep, and every
+  before-state below was measured by this lane, not inherited.
+- Took H3's worklist item 2. Items 1 and 3 are **root-caused and handed back**,
+  both with a correction to what the previous lanes believed — see the bottom.
+
+#### The dispatch's first target is NOT in the reachable set — measured, not argued
+
+The brief named `Object.prototype.toString` §20.1.3.6 step 15 (5–6 rows) as
+target 1. H2's own bucket table already marked all six of those rows **host-fail**,
+and H2's own criterion is that *core ∧ host-pass* — 35 rows — is what standalone
+lowering can reach. Re-measured here on both lanes before spending anything
+(`.tmp/6651/h4-{sa,host}-before.log`, 8 rows, `--isolate`):
+
+| row | standalone, base | host, base |
+| --- | --- | --- |
+| `toString/get-symbol-tag-err.js` | no exception | no exception |
+| `toString/symbol-tag-generators-builtin.js` | `[object Function]` | `[object Undefined]` |
+| `toString/symbol-tag-non-str-builtin.js` | #4119 refusal | `[object Undefined]` |
+| `toString/symbol-tag-override-primitives.js` | `[object Boolean]` | `[object Boolean]` |
+| `toString/symbol-tag-weakmap-builtin.js` | #4119 refusal | `[object Undefined]` |
+| `toString/symbol-tag-weakset-builtin.js` | #4119 refusal | `[object Undefined]` |
+| `getOwnPropertySymbols/order-after-define-property.js` | fail | **pass** |
+| `entries/symbols-omitted.js` | fail | **pass** |
+
+**All six `@@toStringTag` rows fail on the host lane too**, each with a
+*differently* wrong answer. So this is not one standalone arm: it needs a
+runtime `Get(O, @@toStringTag)` inside the classifier (observable — the
+`get-symbol-tag-err` row asserts a throwing getter propagates), real
+**deletable** builtin tag properties on ~6 prototypes (the `*-builtin` rows
+delete the tag and re-check), three new receiver arms (WeakMap, WeakSet,
+Symbol), a tag consult ordered BEFORE the primitive-wrapper arms — and a host
+twin of all of it. That is two to three slices. Sized, not started.
+
+The remaining two rows are the host-pass pair, and they are what this slice went
+after.
+
+#### What landed — §20.1.2.10 over an ARRAY carrier
+
+Measured standalone on base, one module (`test262/test/probe/gops.js`, not
+committed):
+
+| question | base | spec |
+| --- | ---: | ---: |
+| `gOPS(arr).length` after `arr[symA]=10` + a symbol `defineProperty` | `0` | `2` |
+| `arr[symA]` / `arr[symB]` | `10` / `20` ✓ | `10` / `20` |
+| `gOPN(arr)` | `0,1,length` ✓ | `0,1,length` |
+| `Object.keys(arr)` | `0,1` ✓ | `0,1` |
+| the same two defines on a PLAIN object | `2` ✓ | `2` |
+
+Values right, names right, plain-object carrier right — a carrier gap, not a
+symbol-key gap. `__getOwnPropertySymbols`' non-`$Object` branch returns a fresh
+empty vec, so it never reaches the #3251 overlay companion or the #3537 bag.
+Landed as `fillGopsVecArm` in the new `src/codegen/vec-symbol-own-keys.ts`,
+spliced after the native's own `__objvec_new` anchor exactly as `fillGopnVecArm`
+is, plus a key-KIND **mode bit** (`KEY_MODE_SYMBOLS_ONLY`, bit 1 of the existing
+third parameter) on the two shared key walkers. Bit 0 keeps its `includeNonEnum`
+meaning and no signature moves — load-bearing, because both natives are reserved
+with a baked `call <idx>` before they are filled.
+
+**Two things this slice got wrong first. Both are recorded because both were
+invisible to reasoning and only a measurement separated them.**
+
+1. **`__obj_ordered` / `__obj_ordered_all` are STRING-key walkers.** The first
+   draft screened them for symbol keys and pushed **nothing at all** — with the
+   arm demonstrably running (a sentinel push proved it, after four other
+   hypotheses had each been eliminated by instrumenting an early return). Symbol
+   entries are simply not in that sequence; `__obj_ordered_symbols` (#2866 slice
+   3) is their walker. A filter over the wrong sequence is indistinguishable
+   from a filter that is too strict, and only the sentinel told them apart.
+2. **The two stores OVERLAP, so the symbols lane still needs de-duplication.**
+   With the right walker, `order-after-define-property.js` answered
+   `[Symbol(a), Symbol(b), Symbol(a)]` against an expected `[Symbol(a),
+   Symbol(b)]`: `symA` is in the bag (assignment) AND in the companion (a later
+   define) — the #4010 two-table seam. `buildBagKeyDedupeSkip` is reused rather
+   than re-written, with two new knobs (`continueDepth`, `stepIndex`) because
+   the bag walk branches to a `loop` label (re-enters, must step the cursor by
+   hand) while the overlay lane branches to an enclosing `if` (falls through to
+   the loop's own increment, must NOT step). Getting that pairing wrong is
+   silent — an infinite loop or a dropped key, never a validation error — so the
+   two knobs travel together and say so.
+
+#### Manifest rows, standalone, `--isolate`, before → after
+
+`.tmp/6651/h4.txt`, the 8 rows above. Logs
+`.tmp/6651/h4-sa-{before,after-final}.log`.
+
+| | pass | fail |
+| --- | ---: | ---: |
+| before | **0** | 8 |
+| after | **1** | 7 |
+
+Per-row: `Object/getOwnPropertySymbols/order-after-define-property.js`.
+**1 gained, 0 lost, 0 other verdict changes.**
+
+#### Controls
+
+- **Neighbourhood, 1,732 rows, standalone, `--isolate`, BOTH sides** — all of
+  `built-ins/Object/{getOwnPropertySymbols,getOwnPropertyNames,keys,entries,
+  values,getOwnPropertyDescriptors,getOwnPropertyDescriptor,defineProperty}`,
+  `built-ins/Reflect/ownKeys`, `built-ins/Symbol`,
+  `built-ins/Array/prototype/Symbol.unscopables`. 6 chunks, 3 concurrent, fresh
+  process per row, 420 s row cap on both sides
+  (`.tmp/6651/nb-sa-{before,after}-*.log`):
+  **1,649 pass / 83 fail → 1,650 / 82**. Per-row set diff via `rowdiff.mjs`:
+  **1 gained, 0 lost, 0 other verdict changes** — the same
+  `order-after-define-property.js`. Four of the six chunk logs are
+  byte-identical between sides.
+  `built-ins/Object/defineProperties` (632 rows) is the one deliberate
+  exclusion: it is a thin wrapper over `defineProperty`, which is included in
+  full. The 1,131 `defineProperty` rows were kept precisely because this file's
+  own header records the #4055 **−684** incident, where a visibility widening
+  looked clean and cost 684 rows through `propertyHelper.js`.
+- **Host lane: byte identity, measured, not inferred.** 17-module corpus — the
+  13 `website/playground/examples` sources plus 4 inline modules, one per
+  construct this slice changes (symbol-keyed gOPS on an array, the same on a
+  plain object, the string names walk) and one control touching none.
+  **17/17 sha256-identical on `gc`**, before vs after
+  (`.tmp/6651/shas-{before,after}.txt`). The three modules that exercise exactly
+  the changed behaviour are in that 17, so this is not a sample that misses the
+  construct.
+- On **standalone 8 of the 17 move, INCLUDING the no-symbol control** — the mode
+  mask on `__carrier_bag_push_keys` is emitted wherever that native is reserved,
+  which is any standalone module with a carrier substrate, independent of the
+  #4230 demand gate. Behaviour there is unchanged (the mask folds to the old
+  constant) but the bytes are not, so this slice is **not** standalone-byte-neutral.
+  Stated because the sha corpus is what would catch a claim otherwise.
+- **The func-budget split is proven byte-identical, which is why the sweep still
+  applies.** The key-kind mode took `fillCarrierBagVisibility` from 291 to 352
+  lines and `fillVecOverlayPushKeys` from 237 to 351, both past the #3400 /
+  R-FUNC 300-line budget. Rather than take a `func-budget-allow:` grant, each
+  native's body was lifted VERBATIM into a module-scope builder
+  (`fillCarrierBagPushKeys`, `buildOverlayPushKeysBody`). The 34-row sha corpus
+  is **diff-empty across the extraction on both lanes**
+  (`.tmp/6651/shas-{prerefactor,postrefactor}.txt`), so the 1,732-row sweep —
+  measured on the pre-extraction tree — is evidence for the shipped tree too.
+  **No budget grant is needed and none is taken.**
+- Pin file `tests/issue-6651-vec-symbol-own-keys.test.ts`, 7 cases —
+  **3 verified RED on the base tree** via the file-copy A/B (the bag expando,
+  the non-enumerable companion define, the both-stores de-dup), 4 green on both
+  sides (the plain-object control; symbols staying OFF the names surfaces; an
+  array with no symbol key still answering `[]`; and the demand-gate gap below).
+
+#### KNOWN GAP, pinned rather than left to be rediscovered
+
+`ctx.vecOwnKeysDirty` (`array-holes.ts`) is a syntactic pre-scan for
+`defineProperty` / `defineProperties` / two-arg `create` / `getOwnPropertyNames`
+/ `ownKeys` / `getOwnPropertyDescriptors`. **`getOwnPropertySymbols` is not on
+that list**, so a module whose only own-key call is `gOPS` emits none of this
+machinery and still answers `[]`. Found by the pin file, not by reasoning.
+
+Adding the name is a one-line fix, but it WIDENS the gate — more modules get the
+whole vec key-walk machinery — so it wants its own neighbourhood sweep rather
+than a free ride on this one. Measured cost of deferring: **zero rows** in the
+1,732-row neighbourhood, where all 12 `built-ins/Object/getOwnPropertySymbols`
+rows either already passed or mention `defineProperty`. Pinned as a
+characterisation case asserting the current answer, with the reason.
+
+Gates, run bare: typecheck OK; **loc-budget OK and func-budget OK with NO
+grants** (net +472 LOC); coercion-sites OK; oracle-ratchet OK
+(`getTypeAtLocation +0`, `ctx.checker +0`); dead-exports OK; lint OK.
+`node scripts/equivalence-gate.mjs`: **22 failing / 1,720 passing, all 22
+already in the baseline — no new equivalence regressions.**
+
+#### Root-caused, NOT taken
+
+1. **`Object/entries/symbols-omitted.js` is NOT an entries defect, and not a
+   symbol-description-table defect either — H3's diagnosis and my own first
+   hypothesis were both wrong.** H3 recorded that `obj.key === symValue` is
+   `true` while `String(obj.key)` prints `Symbol()`. Measured here, the identity
+   half does not hold for the failing spelling, and the trigger is narrower and
+   stranger than "a defineProperty'd symbol key":
+
+   | program | `String(read)` | `read === sv` |
+   | --- | --- | --- |
+   | `{key: sv}` then `o.key` | `Symbol(value)` | `true` |
+   | `{}` then `o.key = sv` | **`Symbol()`** | **`false`** |
+   | `[sv]` then `arr[0]` | `Symbol(value)` | `true` |
+   | `{p:1}` then `o.p = sv` | **`101`** | — |
+   | `{key: sv}` + **any** `Object.defineProperty(o, …)` then `o.key` | **`Symbol()`** | `true` |
+
+   Four findings that redirect the next owner: (a) the **descriptor** lane is
+   correct where the ordinary read is wrong (`gOPD(c,"key").value` is
+   `Symbol(value)` while `c.key` is `Symbol()`); (b) on the **host** lane it is
+   exactly INVERTED — reads are right and `gOPD(...).value` leaks the raw id
+   `101`; (c) the trigger is **any** `defineProperty` on the object, including a
+   **string-keyed** one, so the symbol key is irrelevant; (d) `101` is the
+   symbol's i32 id, so the value is crossing a boundary as a bare id and each
+   side re-materialises it differently.
+   **A tempting fix that does NOT work, measured:** `__box_symbol` builds its
+   `$Symbol` carrier with `$desc` left null (its own doc comment says so).
+   Filling it from the description side table changes **nothing** on any of
+   these rows — because `fillSymbolAnyToStringArm` already looks the description
+   up by id from that same table, and `Object.getOwnPropertySymbols` carriers
+   render their descriptions correctly. The change was written, measured, found
+   behaviour-neutral, and **reverted** rather than shipped as unmotivated byte
+   churn. This is a value-representation defect (the #6651 `value-rep` lane), not
+   a cluster-H slice tail.
+2. **`Object.prototype.toString` §20.1.3.6 step 15** — sized at the top of this
+   receipt. Not reachable by standalone-lowering work alone; needs a host twin.
+3. **The RegExp `lastIndex` creation-order residual** H3 named is untouched.
+
+#### For the next owner
+
+1. `getOwnPropertySymbols` in the `vecOwnKeysDirty` pre-scan — one line plus its
+   own neighbourhood sweep (the KNOWN GAP above).
+2. The symbol-as-property-VALUE representation defect (item 1 above) — the
+   sharpest remaining lead in this cluster, and it is a `value-rep` item, not an
+   `Object.entries` one.
+3. `Object.prototype.toString` @@toStringTag — two to three slices, both lanes.
+4. Symbol wrapper objects — lane I4 owns the carrier this round.
 
 ### 2026-09-23 — Cluster H (builtins misc, standalone), slice H3: the array read that disagreed with its own descriptor, and gOPDs' missing symbol half
 
@@ -5112,6 +5367,136 @@ the receiver's own lookup, so a user `Int16Array.of = f` shadow is not
 observed. It is not a regression: the base answered `false` for that probe too
 (`.tmp/e4/p3.js`, `shadow`).
 
+### 2026-09-23 — Cluster I, slice I4: the Symbol wrapper object, and an immediately-called bind of an object-field callable
+
+- **Branch** `issue-6651-i4-symbol-wrapper`, base `claude/project-thread-yhj9pp`
+  (`5b396ebc`). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a07d5921b6a32dcfd`.
+- **Host-lane probe first.** All ten candidate rows were run on the DEFAULT
+  (host) target before any lowering was touched
+  (`.tmp/6651/cand-host.log`, 7 pass / 3 fail). The three host FAILURES are
+  shared front-end work, not standalone lowering, and were dropped from scope
+  on that evidence:
+  `Symbol/prototype/Symbol.toPrimitive/{redefined,removed}-symbol-wrapper-ordinary-toprimitive.js`
+  (host: "Cannot convert a Symbol value to a number") and
+  `Symbol/prototype/Symbol.toPrimitive/this-val-symbol.js` (host: null-pointer
+  deref). Do not re-open them from this cluster.
+
+- **Row-level result**, `--standalone --isolate`,
+  `JS2WASM_ROW_TIMEOUT_MS=420000`, scored by per-row set diff
+  (`.tmp/6651/rowdiff.mjs`), never by counts. **No `error` rows in any of the
+  six sweeps**, so every row below is measured rather than skipped.
+
+  | manifest | rows | before | after | gained | lost |
+  | --- | ---: | --- | --- | ---: | ---: |
+  | `I-language-misc.txt` | 114 | `I-base.log` — 9 pass / 94 fail / 11 CE | `I-after.log` — **11** pass / 92 fail / 11 CE | **+2** | 0 |
+  | `H-builtins-misc.txt` | 217 | `H-base.log` — 11 pass / 200 fail / 6 CE | `H-after.log` — **12** pass / 199 fail / 6 CE | **+1** | 0 |
+  | control (below) | 253 | `ctl-base.log` — 201 pass / 52 fail | `ctl-after.log` — **202** pass / 51 fail | +1 | 0 |
+
+  Gained rows: `language/expressions/typeof/symbol.js`,
+  `language/expressions/arrow-function/lexical-this.js` (cluster I) and
+  `built-ins/Object/symbol_object-returns-fresh-symbol.js` (cluster H).
+  Verdict changes among non-pass rows: **zero** in all three manifests.
+
+- **Control** (`.tmp/6651/I4-control.txt`, 253 rows): every
+  `built-ins/Symbol/`, every `built-ins/Function/prototype/bind/`, and every
+  top-level `language/expressions/arrow-function/` row — the two neighbourhoods
+  the change can reach. +1 (the same `lexical-this.js`), 0 losses, 0 verdict
+  changes. No collateral damage.
+
+- **Host lane byte-identity.** Eight representative programs compiled on the
+  DEFAULT target before and after, sha256 of each binary compared
+  (`.tmp/6651/hash-base.txt` vs `hash-after.txt`, generated by
+  `.tmp/6651/hashcorpus.mts`): **all eight identical**, including the
+  `Object(Symbol(…))` and member-`bind` programs. Both changes are gated behind
+  `noJsHost(ctx)` / `usesNativeFunctionBindProvider(ctx)`.
+
+- **What landed — 1. `Object(sym)` is a wrapper object (§7.1.18 ToObject,
+  Table 13).** `emitObjectCoercion` (calls-guards.ts) gated its Symbol arm on
+  `!noJsHost(ctx)`, so the host-free lane fell through to the identity tail:
+  `Object(Symbol())` evaluated to the symbol ITSELF and `typeof` read
+  `"symbol"`. The arm now splits its carrier by lane exactly as the BigInt arm
+  above it already does — the JS-host helper keeps taking the raw i32 symbol id,
+  the host-free helper takes the value ALREADY boxed as the `$Symbol` GC carrier
+  (`__box_symbol`, #2866).
+
+  The wrapper itself is the same `[[PrimitiveValue]]` `$Object` as every other
+  standalone wrapper, so `__new_Symbol` is registered as an **alias onto
+  `__new_String`'s funcIdx** rather than as a second copy of
+  `emitWrapperBuildTail`: neither builder inspects the value it wraps, and
+  `ensureObjectRuntime` is an all-or-nothing block, so a duplicate function
+  would have grown EVERY standalone module (the #4034 unconditional-pull-in
+  lesson) to serve the rare `Object(sym)`. The distinct name keeps the call site
+  readable and lets a future Symbol-specific wrapper become a real function
+  without touching callers.
+
+- **What landed — 2. `<obj>.<member>.bind(t)()` no longer traps.** Under a
+  native `Function.prototype.bind` provider a `.bind(…)` mints a `$__bound_fn`
+  CARRIER (#3140), not a closure struct. The call-of-call path in
+  `compileTailDispatch` matched the bind result's TS call signature against the
+  registered closure shapes, `ref.cast` the carrier to the winner (guarded, so
+  null) and then null-checked it — "dereferencing a null pointer in
+  `__module_init`". The JS-host lane has carried an explicit arm against exactly
+  this shape (its comment names the `f.af` spelling); the host-free twin was
+  missing. The new arm routes such a call to `tryEmitInlineDynamicCall`, whose
+  `boundArm` unwraps the carrier through `__apply_closure` (which applies
+  [[BoundThis]]/[[BoundArguments]] and composes for bound-of-bound). It must sit
+  BEFORE the closure match, not after: the match succeeds and traps, so the
+  existing dynamic-call fallback at the dispatcher's tail is never reached.
+
+  Scope note for whoever reads this next: the bug needs the bind target to be
+  **statically typed**. `const f: any = {af: …}; f.af.bind(u)()` already worked,
+  because with no call signature the closure match declines and the call reaches
+  the carrier-aware path on its own — which is why `lexical-this.js` (checked as
+  JS, so `this.af = _ => this` DOES get a signature) reproduced it while the
+  obvious `any`-typed TypeScript probe did not.
+
+- **Residuals, measured not assumed.**
+  - `built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-obj-symbol-wrapper.js`
+    (in manifest H, host PASS) still fails: `Object(Symbol.toPrimitive)[Symbol.toPrimitive]()`
+    needs the wrapper's `[[PrimitiveValue]]` slot to be classified as the
+    **Symbol** brand so `Symbol.prototype`'s methods reach it. The classification
+    ladder is `wrapperClassify` in
+    `src/codegen/native-proto-instance-method-read.ts` (and its twin
+    `__protoidx_brand_off`, proto-index-store.ts), which today knows
+    `$AnyString` → String, `$__box_number`/i31 → Number, `$__box_boolean` →
+    Boolean and has no `$Symbol` row. Adding one also reaches
+    `built-ins/Symbol/prototype/description/wrapper.js` (not in any manifest;
+    host PASS, standalone `undefined`). Left out deliberately: that ladder is on
+    the read path of every wrapper in the corpus, so it needs its own before/after
+    sweep, not a ride-along.
+  - `built-ins/Symbol/prototype/toString/toString.js` (manifest H, host PASS) is
+    a *primitive* symbol receiver (`Symbol.prototype.toString.call(Symbol('66'))`
+    → `undefined`), unrelated to the wrapper; a separate borrowed-method gap.
+  - `emitObjectCoercion` dispatches on the argument's STATIC type throughout, so
+    an `any`-typed argument still takes the identity tail on the host-free lane.
+    The host lane answers that at runtime through `__to_object`; there is no
+    host-free twin yet (#4530 names the same split). Unchanged by this slice.
+
+- **Gates** (run bare, never piped): `check-loc-budget` OK, `check-func-budget`
+  OK — both satisfied by this file's EXISTING per-file/per-function grants
+  (`call-tail-dispatch.ts` +29 / `compileTailDispatch`, `object-runtime.ts` +19 /
+  `ensureObjectRuntime`); no new grant needed, and `calls-guards.ts`'s
+  `emitObjectCoercion` stays under threshold. `check-coercion-sites` OK,
+  `check:oracle-ratchet` OK (getTypeAtLocation +0, ctx.checker +0),
+  `check:dead-exports` exit 0.
+
+- **Tests.** `tests/issue-6651-i4-symbol-wrapper-and-member-bind-call.test.ts`
+  (8 cases, all green). Every non-lock case was verified RED on this slice's
+  base by a file-copy A/B before the fix was written — the four Symbol cases
+  failed on base (`.tmp/6651/basetest.log`), and the two bind cases were
+  re-shaped after the first draft passed on base, because an `any`-typed bind
+  target does not reproduce the defect (`.tmp/6651/probe3.mts`: shapes 1 and 4
+  trap on base, run correctly after). The equivalence suite OOMs as a whole in
+  this container at any pool size, so it was run in eight single-fork shards
+  (`.tmp/eqshards.sh`) on BOTH trees: **all eight shards report an identical
+  FAIL set before and after** (`.tmp/6651/eq-{base,after}-{1..8}.log`). Six
+  files fail on this branch regardless of this slice —
+  `null-dereference-guards`, `logical-conditional-identity`,
+  `misc-small-patterns`, `arguments-nested-and-loops`, `new-non-constructor`,
+  `array-inline-return`/`reflect-api` — and shard 4 OOMs on both trees, so that
+  ~28-file slice is unmeasured here and is left to CI's sharded
+  `equivalence-gate`.
 ### 2026-09-23 — Cluster B (RegExp `@@` protocol, standalone), slice B5: `RegExp.prototype[@@split]` (§22.2.6.14)
 
 - **Base** `claude/es2015-test262-plan-54tooh` @ `1b24a5e3a2` (origin/main + E4,
@@ -6372,6 +6757,224 @@ executable line changed per site.
 - F2's `getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm`
   verdict is unchanged: it needs a null/undefined-distinct value representation,
   not a dispatch fix.
+
+### 2026-09-23 — Cluster F (Proxy / Reflect, standalone), slice F4: a proxy read as its TARGET's shape, and the largest bucket measured to its floor
+
+- **Branch** `issue-6651-f4-proxy-target-shape`, based on
+  `claude/project-thread-yhj9pp` @ `86943b93` (round 4, which carries F3 —
+  deliberate predecessor-stacking, not `origin/main`). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a7b37f84e6c9538f4`. Not pushed; the
+  integrator owns the push and the PR.
+- **Manifest** `plan/agent-context/6651/F-proxy-reflect.txt`, 89 rows, sha256
+  `3edd7052b503ee48f0022a8bc2f5c041a116228d19ef65d31bf2aeb54cf80dd7`
+  (unchanged since F1 — re-hashed here, not inherited).
+
+**Headline, stated plainly: this slice moves ZERO manifest rows.** It fixes
+three real standalone defects — one of them a hard wasm trap — and loses
+nothing, but the `*-target-is-proxy` bucket it was aimed at does not yield a
+single row, and the receipt below says why with measurements rather than
+impressions.
+
+| standalone, `--isolate`, 89 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/F4-base.log`) | **21** | 63 | 5 |
+| after (`.tmp/6651/F4-after2.log`) | **21** | 63 | 5 |
+
+Per-PATH set diff (`.tmp/6651/rowdiff.mjs`), not a count comparison: **0
+gained, 0 lost, 0 other verdict changes.** The before-state is this lane's own
+run of the unmodified branch tip; it happens to agree with F3's after-state at
+21. No row reported `error` and none reported "provider is not built".
+
+#### The host probe the brief asked for, first — it halves the bucket
+
+All 24 `*-target-is-proxy.js` rows fail on standalone. Run on the DEFAULT
+target (`.tmp/6651/F4-host-base.log`, plus a re-measure of two rows that came
+back `error` on a transient ENOENT and are really passes —
+`.tmp/6651/F4-host-apply2.log`):
+
+| lane | pass | fail |
+| --- | ---: | ---: |
+| host (default target), 24 rows | **10** | 14 |
+| standalone, 24 rows | **0** | 24 |
+
+So 14 of the 24 are front-end work that a standalone slice cannot reach, and
+the reachable bucket is the 10 host-passing rows. Their standalone failures, on
+base, are **ten different first assertions**:
+
+| row (`built-ins/Proxy/…-target-is-proxy.js`) | standalone first failure on base |
+| --- | --- |
+| `apply/trap-is-missing` | `Object.prototype.hasOwnProperty is not yet implemented in --target standalone` |
+| `apply/trap-is-null` | wasm trap: dereferencing a null pointer, calling the nested function proxy |
+| `defineProperty/trap-is-null` | array `length` define invariant answered `undefined`, expected `2` |
+| `defineProperty/trap-is-undefined` | `Object.defineProperty(arrayProxy,"0",…)` did not reach the array |
+| `deleteProperty/trap-is-null` | `Reflect.deleteProperty(stringProxy,"length")` did not refuse |
+| `get/trap-is-undefined` | `Object.create(plainObjectProxy)[0]` — inherited index read |
+| `getOwnPropertyDescriptor/trap-is-missing` | `new String("str")` own index descriptors |
+| `has/trap-is-missing` | `Reflect.has(regExpProxy,"ignoreCase")` |
+| `ownKeys/trap-is-missing` | `new String` ownKeys order, symbol key missing |
+| `set/trap-is-missing` | a `set` accessor through a two-hop proxy |
+
+**Nested-proxy forwarding itself is NOT the defect.** Probed on base
+(`.tmp/6651/p1.js`), a proxy over a proxy over a PLAIN object forwards `get`,
+`has`, `ownKeys` and `getOwnPropertyDescriptor` correctly, and an inner trap
+runs exactly once through an outer handler whose trap is absent, `undefined`
+or `null` — all three spellings. The `__extern_*` front-guards already recurse.
+What the bucket actually exercises is EXOTIC targets — array `length`/index,
+`new String("str")` own indices, RegExp prototype accessors, function `name` /
+`length` / `prototype` — one to four independent mechanisms per row. F2's
+"several mechanisms per row" is exact, and the bucket is not a bucket; it is
+ten singletons behind one filename pattern.
+
+#### What landed — the receiver's static type is the TARGET's type
+
+TypeScript types `new Proxy(t, h)` as `typeof t`: its lib signature is
+`new <T extends object>(target: T, handler: ProxyHandler<T>): T`. So a proxy
+over an array is statically `number[]`, and every codegen arm keyed off that
+type lowers a read or a write of the TARGET's native representation against a
+`$Proxy` struct, which has none of those fields. Measured on base, standalone
+(`.tmp/6651/p8.js`, `.tmp/6651/p9.js`, `.tmp/6651/p5.js`):
+
+| program | base | node |
+| --- | --- | --- |
+| `new Proxy([1,2,3],{}).length` | `0` | `3` |
+| `new Proxy([1,2,3],{})[0]` | `NaN` | `1` |
+| `new Proxy(new String("str"),{}).length` | **wasm trap, "dereferencing a null pointer"** | `3` |
+| `p.length = 0`, `p` over `[1,2,3]` | array untouched | `[]` |
+| …with a `set` trap installed | **0 trap calls** | 1 |
+| `new Proxy([1,2,3],{})["length"]` (same tree) | **`3`** | `3` |
+
+The last row is the whole argument: the string-literal ELEMENT spelling already
+answered correctly on base, because it reaches `__extern_get`, whose
+`ref.test $Proxy` front-guard enters the §10.5 dispatch. **The runtime was never
+wrong; the dot and numeric-index spellings never asked it.** That is F2's and
+F3's defect shape a third time — an admission that follows the SPELLING, not
+the VALUE — and it is closed with the same predicate, `tracesToProxyValue`.
+
+Three call sites, all `ctx.standalone`-gated:
+
+1. `compilePropertyAccess` (`property-access.ts`) — `p.name`.
+2. `compileElementAccess` (same file) — `p[k]`.
+3. `compilePropertyAssignment` (`expressions/assignment.ts`) — `p.name = v`.
+
+The lowering and every line of its rationale live in the NEW leaf
+`src/codegen/proxy-receiver-generic-read.ts`; the god-files carry three lines
+each. The first cut inlined them and cost +78 LOC in `property-access.ts` and
+pushed `compilePropertyAccess` over the 300-line function threshold for the
+first time. **The extraction was verified byte-neutral before it was kept**: all
+32 binaries of the 16-program dual-target corpus below are identical across it.
+
+Routing to `__extern_get` / `__extern_set` is conservative in the safe
+direction — both are the ordinary property access for every non-proxy value
+too, so a false positive would cost a fast path, never a wrong answer.
+
+**`__proto__` is excluded from the write arm, and that exclusion is measured,
+not defensive.** §B.2.2.1 makes `o.__proto__ = v` an accessor call performing
+`[[SetPrototypeOf]]`, not an ordinary [[Set]], and the arm that owns it already
+carries the proxy front-guard. Routing it through the new arm turned
+`built-ins/Object/prototype/__proto__/set-abrupt.js` from **PASS to FAIL** in
+the 487-row control — the `setPrototypeOf` trap stopped running, so the throw it
+must propagate never happened. That one row is the only thing this slice ever
+regressed; it was caught by the control, not by the manifest, and the narrowing
+restores the base lowering byte-for-byte (corpus row 16).
+
+#### …and the helper-returned proxy F3 named
+
+F3 recorded `function mk(){return new Proxy(t,h);}` as invisible to both
+admissions. Re-measured on this branch's base (`.tmp/6651/p11.js`): the define
+trap ran **0** times for `Object.defineProperty(mk(), …)` and for the one-hop
+`var m = mk()`, and the construct trap ran **0** times for `var mc = mkc(); new
+mc()`, while the direct spelling ran both. `singleReturnExpressionOfCall` adds
+the return-expression hop in `proxy-value-provenance.ts` under three
+restrictions, each load-bearing: the body must be exactly one `return <expr>`
+(a multi-statement body can CHOOSE between values, and this predicate cannot
+say "sometimes"); the callee binding must be single-assignment-equivalent,
+including a hoisted `function` declaration, which the #5196 R3 name scan
+covers; and the returned expression is re-traced, never trusted. The hop is
+consumed by the read, write, construct (`new-super.ts`) and define
+(`object-ops.ts`) sites, so all four now ask one question.
+
+`new (mkc())()` — the call written directly in callee position — is still NOT
+covered: `tryCompileNativeConstructFromValue` gates on
+`ts.isIdentifier(calleeExpr)` before the proxy admission is reached, and
+widening that gate is a far larger blast radius than this slice.
+
+#### Controls
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| `built-ins/Proxy/**` + `built-ins/Reflect/**`, standalone (`.tmp/6651/nb-pr-{before,after2}.log`) | 464 | 395 / 64 / 5 | 395 / 64 / 5 | **0 gained, 0 lost, 0 other** |
+| every test262 row OUTSIDE that neighbourhood mentioning `new Proxy` / `Proxy.revocable` (382) ∪ `Array/length`, `Array.prototype.push`, `String.prototype.charAt`, `language/expressions/property-accessors` (105) — the array/index fast paths this slice reorders — standalone (`.tmp/6651/nb-extra-{before,after2}.log`) | 487 | 319 / 148 / 20 | 319 / 148 / 20 | **0 gained, 0 lost, 0 other** |
+| the 89-row manifest ∪ both sets above, HOST (default target) (`.tmp/6651/nb-host-{before,after}.log`) | 951 | 694 / 257 | 694 / 257 | **none** |
+
+Every log was checked for `error` rows and for "provider is not built": **zero
+of each**, in all six.
+
+**Host byte-identity corpus** (`.tmp/6651/sha-{before,after}.txt`): 16 programs
+compiled for BOTH targets — a proxy-free control, a plain array read/write, the
+five proxy read/write shapes, the `p["length"]` twin, the direct / helper /
+reassigned-helper `defineProperty` trio, the helper construct, `Array.isArray`
+over a proxy, a plain object read/write, a proxy stored in an object FIELD (the
+trace deliberately does not follow that hop), and the `__proto__` write.
+**All 16 `gc` binaries are byte-identical.** On standalone exactly 7 move —
+the five reads/writes through a proxy binding, `p["length"]` (which now
+compiles to the SAME bytes as `p.length`, the two spellings having converged on
+one route), and the helper-returned `defineProperty`. Every control is
+identical, including the reassigned helper, the field-stored proxy and
+`__proto__`.
+
+Also green, all run **bare**: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` — +0 `getTypeAtLocation`, +0 `ctx.checker` — and
+`check:dead-exports`); `node scripts/equivalence-gate.mjs` (22 failing / 1720
+passing, all 22 in the committed baseline); `biome lint
+--diagnostic-level=error`; `prettier --check` on every changed file; and the
+new pin `tests/issue-6651-cluster-f4-proxy-target-shape.test.ts`, 10/10 —
+**7 verified RED on the base tree** by a pristine `git archive HEAD` extract
+(`.tmp/ab-tree`), 3 controls green on both sides. LOC/function growth is
+granted in this file's frontmatter.
+
+#### Newly root-caused, NOT taken
+
+- **`Reflect.construct(<proxy>, [])` ALREADY WORKS on this base.** The round-5
+  brief carried it from F3 as "never reaches proxy construct dispatch on any
+  spelling". Probed directly (`.tmp/6651/p10.js`, standalone): the construct
+  trap runs, and a trap returning a non-object throws the §10.5.14 step-9
+  TypeError. F3's own fix closed it; the note is stale and is retired here.
+- **`Reflect.get(<String object>, "length")` answers `NaN`** where the direct
+  `s.length` answers 3. This is what still makes
+  `new Proxy(new String("str"),{}).length` wrong (it no longer TRAPS, which is
+  this slice's contribution, but the value is NaN): the dynamic get route has
+  no String-object own-`length` arm. Worth its own slice; it is a value-read
+  gap, not a proxy gap.
+- **`Reflect.has` and `in` disagree, in BOTH directions, on both targets.**
+  Measured (`.tmp/6651/p4-{sa,host}.txt`): standalone `Reflect.has({a:1},"a")`
+  is `true` and host is **`false`**; standalone `Reflect.has(/re/,"exec")` is
+  `false` and host is `true`; `'exec' in <proxy over regexp>` is `false` on
+  standalone and `true` on host — while the raw `'exec' in re` is `true` on
+  both. Two independent defects (a `Reflect.has` implementation on each lane,
+  and a proxy-`has` walk that misses built-in prototypes) sit behind
+  `has/trap-is-{missing,undefined}-target-is-proxy.js`.
+- **`Object.prototype.hasOwnProperty` is unimplemented on standalone** — the
+  first assertion of `apply/trap-is-missing-target-is-proxy.js`, and a
+  self-contained missing builtin rather than a proxy question.
+- **A proxy stored in an object FIELD keeps the old behaviour**:
+  `var b = {v: new Proxy([1,2,3],{})}; b.v.length` still answers `0`. The trace
+  follows single-assignment variable bindings, not object fields; widening it
+  there needs a different proof and is left deliberately.
+- **`built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js`** was out of
+  scope by the brief (the `Array.prototype` two-representation limit owned by
+  #2917) and this slice never entered it.
+
+#### Residual sub-buckets — what a next F slice should NOT expect
+
+The 24-row `*-target-is-proxy` bucket was F2's largest and is now measured to
+its floor: **14 rows are host-lane work**, and the remaining **10 are ten
+distinct mechanisms**, at least four of which (String-object own properties,
+`Reflect.has`, `Object.prototype.hasOwnProperty`, array-`length` define
+invariants) are general standalone gaps that happen to be observed through a
+proxy. There is no shared mechanism left in it. A future slice should pick the
+underlying gaps by name — the `new String` own-property MOP is the one that
+appears in three rows — rather than the filename pattern.
 
 ### 2026-09-23 — Cluster I (language misc, standalone), slice I2: `instanceof` consults `@@hasInstance`
 
