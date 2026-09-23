@@ -75,8 +75,11 @@ const EXTERNREF: ValType = { kind: "externref" };
 const observesByFile = new WeakMap<ts.SourceFile, boolean>();
 
 /**
- * (#6651 B4) §22.2.6's getter-only member names. `lastIndex` is DELIBERATELY
- * absent — see the descriptor clause in {@link fileObservesRegExpExecProtocol}.
+ * (#6651 B4) §22.2.6's getter-only member names, plus (#6651 B6) `lastIndex`:
+ * B4 left it out because the observable route could not yet throw on a
+ * non-writable `lastIndex`; B6 gave the carrier a runtime [[Writable]] bit and
+ * the protocol a strict `[[Set]]`, so a file that redefines `lastIndex` now
+ * gains the route instead of losing the static core's compile-time throw.
  */
 const REGEXP_ACCESSOR_NAMES: ReadonlySet<string> = new Set([
   "source",
@@ -89,6 +92,7 @@ const REGEXP_ACCESSOR_NAMES: ReadonlySet<string> = new Set([
   "unicodeSets",
   "sticky",
   "hasIndices",
+  "lastIndex",
 ]);
 
 /**
@@ -116,8 +120,8 @@ const REGEXP_ACCESSOR_NAMES: ReadonlySet<string> = new Set([
  * no-ops on a non-writable property — B3's recorded object-runtime gap). So the
  * route is a strict gain for a file that redefines an ACCESSOR and a strict
  * loss for one that redefines `lastIndex`, and `lastIndex` is exactly the name
- * {@link REGEXP_ACCESSOR_NAMES} leaves out. Revisit when strict `[[Set]]`
- * throws.
+ * {@link REGEXP_ACCESSOR_NAMES} left out — until #6651 B6, which made the
+ * strict `[[Set]]` throw and added `lastIndex` to the set.
  */
 export function fileObservesRegExpExecProtocol(node: ts.Node): boolean {
   const sf = node.getSourceFile();

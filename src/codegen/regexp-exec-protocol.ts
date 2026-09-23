@@ -70,6 +70,7 @@ import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./nati
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { prepareStandaloneExternrefToNumberProviders } from "./tonumber-fast-paths.js";
+import { ensureSpecExternrefToStringProvider } from "./coercion-engine.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -113,6 +114,9 @@ export function prepareRegExpExecProtocol(
   const applyClosure = reserveApplyClosure(ctx);
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
+  // (#6651 B6) Every `Set` in §22.2.6/§22.2.7 is `Set(R, "lastIndex", v, true)`:
+  // a refused write (non-writable `lastIndex`, getter-only accessor) THROWS.
+  ensureLateImport(ctx, "__extern_set_strict", [EXTERNREF, EXTERNREF, EXTERNREF], []);
   ensureLateImport(ctx, "__extern_toString", [EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__is_callable", [EXTERNREF], [I32]);
   ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [I32]);
@@ -121,11 +125,16 @@ export function prepareRegExpExecProtocol(
   ensureLateImport(ctx, "__box_number", [F64], [EXTERNREF]);
   for (const key of PROTOCOL_KEYS) addStringConstantGlobal(ctx, key);
   flushLateImportShifts(ctx, fctx);
+  // (#6651 B6) Every ToString in §22.2.6 is the spec's, which REJECTS a Symbol
+  // (§7.1.17) — `@@split/coerce-{flags,string}-err`, `@@search/coerce-string-err`.
+  // Provisioned before the index batch below: it may mint/flush.
+  const specToString = ensureSpecExternrefToStringProvider(ctx, fctx);
 
   const get = (name: string): number | undefined => ctx.funcMap.get(name);
   const externGet = get("__extern_get");
-  const externSet = get("__extern_set");
-  const externToString = get("__extern_toString");
+  const externSet = get("__extern_set_strict") ?? get("__extern_set");
+  const externToString =
+    (specToString !== undefined ? get("__extern_to_string_spec") : undefined) ?? get("__extern_toString");
   const isCallable = get("__is_callable");
   const typeofObject = get("__typeof_object");
   const sameValueZero = get("__same_value_zero");

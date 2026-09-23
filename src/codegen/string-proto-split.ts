@@ -54,7 +54,7 @@ import {
 } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import {
   RE_FIELD_CLASS_TABLE,
   RE_FIELD_NGROUPS,
@@ -63,6 +63,9 @@ import {
   usesNativeRegExpProvider,
 } from "./regexp-standalone.js";
 import { ensureRegexSplit } from "./native-regex.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { getWellKnownSymbolId } from "./literals.js";
+import { ensureLateImport } from "./expressions/late-imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
 import { ensureVecConstructorCarrier } from "./vec-constructor-carrier.js";
@@ -85,6 +88,117 @@ function pushIsUndefined(ctx: CodegenContext, sink: Instr[], paramIdx: number): 
   if (isUndefIdx !== undefined) {
     sink.push({ op: "local.get", index: paramIdx }, { op: "call", funcIdx: isUndefIdx }, { op: "i32.or" });
   }
+}
+
+const SPLIT_PROTOCOL_NATIVES = [
+  "__extern_get",
+  "__box_symbol",
+  "__typeof_object",
+  "__typeof_function",
+  "__objvec_new",
+  "__objvec_push",
+  "__apply_closure",
+] as const;
+
+/**
+ * (#6651 B6) Register what {@link emitSplitProtocolDispatch} calls and build its
+ * TypeError template; returns the template, or `undefined` (dispatch skipped,
+ * body unchanged) when a native is unavailable. Flushes late-import shifts.
+ */
+function prepareSplitProtocolDispatch(ctx: CodegenContext, fctx: FunctionContext): Instr[] | undefined {
+  if (getWellKnownSymbolId("split") === undefined) return undefined;
+  reserveApplyClosure(ctx);
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const notCallable = buildThrowJsErrorInstrs(ctx, "TypeError", "separator[Symbol.split] is not a function", {
+    flush: fctx,
+  });
+  flushLateImportShifts(ctx, fctx);
+  if (SPLIT_PROTOCOL_NATIVES.some((name) => ctx.funcMap.get(name) === undefined)) return undefined;
+  return notCallable;
+}
+
+/**
+ * §22.1.3.23 step 2 for the reflective closure (`this` = param 1, separator =
+ * param 2, limit = param 3): when the separator is an OBJECT, `m = ?
+ * GetMethod(separator, @@split)`; if present, `return ? Call(m, separator,
+ * «O, limit»)` with O and limit UNCOERCED. A backend RegExp separator is
+ * excluded — it keeps the existing native `__regex_split` lane below, whose
+ * answer is the builtin `@@split`'s — and a primitive separator is left to the
+ * steps below: its wrapper prototype has no `@@split` in this runtime.
+ */
+function emitSplitProtocolDispatch(ctx: CodegenContext, fctx: FunctionContext, notCallable: Instr[]): void {
+  const fn = (name: (typeof SPLIT_PROTOCOL_NATIVES)[number]): number => ctx.funcMap.get(name)!;
+  const mLocal = allocLocal(fctx, `__split_m_${fctx.locals.length}`, { kind: "externref" });
+  const argsLocal = allocLocal(fctx, `__split_args_${fctx.locals.length}`, { kind: "externref" });
+  const regexpTypeIdx = usesNativeRegExpProvider(ctx) ? ctx.structMap.get("__StandaloneRegExp") : undefined;
+  const isNullish: Instr[] = [];
+  pushIsUndefined(ctx, isNullish, 2);
+  const mIsAbsent: Instr[] = [];
+  pushIsUndefined(ctx, mIsAbsent, mLocal);
+  fctx.body.push(
+    ...isNullish,
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: fn("__typeof_object") },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: fn("__typeof_function") },
+        { op: "i32.or" },
+        // A backend RegExp keeps its native `__regex_split` lane below.
+        ...(regexpTypeIdx === undefined
+          ? []
+          : ([
+              { op: "local.get", index: 2 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: regexpTypeIdx },
+              { op: "i32.eqz" },
+              { op: "i32.and" },
+            ] satisfies Instr[])),
+      ],
+    },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 2 },
+        { op: "i32.const", value: getWellKnownSymbolId("split")! },
+        { op: "call", funcIdx: fn("__box_symbol") },
+        { op: "call", funcIdx: fn("__extern_get") },
+        { op: "local.set", index: mLocal },
+        ...mIsAbsent,
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: mLocal },
+            { op: "call", funcIdx: fn("__typeof_function") },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: notCallable },
+            { op: "call", funcIdx: fn("__objvec_new") },
+            { op: "local.set", index: argsLocal },
+            { op: "local.get", index: argsLocal },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: fn("__objvec_push") },
+            { op: "local.get", index: argsLocal },
+            { op: "local.get", index: 3 },
+            { op: "call", funcIdx: fn("__objvec_push") },
+            { op: "local.get", index: mLocal },
+            { op: "local.get", index: 2 },
+            { op: "local.get", index: argsLocal },
+            { op: "call", funcIdx: fn("__apply_closure") },
+            { op: "return" },
+          ],
+        },
+      ],
+    },
+  );
 }
 
 /**
@@ -177,6 +291,9 @@ export function emitStringSplitMemberBody(ctx: CodegenContext, fctx: FunctionCon
   // below (it can register late imports of its own).
   ensureVecConstructorCarrier(ctx);
   const unboxIdx = ensureExternrefToNumberProvider(ctx, fctx);
+  // (#6651 B6) Step 2's GetMethod(separator, @@split) + Call — registered here,
+  // with the other late adders, so the indices captured below are post-shift.
+  const protocolThrow = prepareSplitProtocolDispatch(ctx, fctx);
 
   // (2) Helper funcIdxs, after the shifts.
   const anyToStrIdx = ensureAnyToStringHelper(ctx);
@@ -203,6 +320,9 @@ export function emitStringSplitMemberBody(ctx: CodegenContext, fctx: FunctionCon
 
   // Step 1.
   emitRequireObjectCoercible(ctx, fctx);
+  // Step 2 — before ToString(this): `this-value-tostring-error` requires an
+  // object separator's `@@split` to run with the receiver still uncoerced.
+  if (protocolThrow !== undefined) emitSplitProtocolDispatch(ctx, fctx, protocolThrow);
 
   // Step 3: S = ? ToString(this), flattened.
   emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
