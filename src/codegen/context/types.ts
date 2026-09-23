@@ -4030,6 +4030,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   nativeBoxNumberTypeIdx: number;
   nativeBoxBooleanTypeIdx: number;
   nativeBigIntTypeIdx: number;
+  /** (#6656) `$BigIntWide` (subtype of `$BigInt`) and its limb array; see bigint-wide.ts. */
+  nativeBigIntWideTypeIdx?: number;
+  nativeBigIntLimbsTypeIdx?: number;
   /** Cache for function reference wrappers: signature key → ClosureInfo */
   funcRefWrapperCache: Map<string, ClosureInfo>;
   /** #3371: constructible ordinary-function wrapper subtypes, keyed by signature. */

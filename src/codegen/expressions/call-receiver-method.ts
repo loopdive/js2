@@ -29,6 +29,7 @@ import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitNarrowedCarrierToString } from "../bigint-wide.js";
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -2978,6 +2979,8 @@ export function compileReceiverMethodCall(
     if (exprType && exprType.kind === "i32") {
       fctx.body.push({ op: "i64.extend_i32_s" });
     }
+    // (#6656) A narrowed reference slot: format the carrier, exact past i64.
+    if (exprType?.kind === "i64" && emitNarrowedCarrierToString(ctx, fctx, radixLocalIdx)) return { kind: "externref" };
     if (radixLocalIdx !== undefined) {
       const radixFuncIdx = ctx.funcMap.get("bigint_toString_radix");
       if (radixFuncIdx !== undefined) {
