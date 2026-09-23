@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10683,
-    "fail": 863,
+    "pass": 10703,
+    "fail": 843,
     "ce": 158,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 525,
-        "fail": 82,
+        "pass": 526,
+        "fail": 81,
         "ce": 2,
         "skip": 0,
         "total": 609,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 298,
-        "fail": 130,
+        "pass": 310,
+        "fail": 118,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 69
+        "pct": 72
       },
       {
         "name": "Reflect.construct",
@@ -156,12 +156,12 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 127,
-        "fail": 49,
+        "pass": 131,
+        "fail": 45,
         "ce": 9,
         "skip": 0,
         "total": 185,
-        "pct": 69
+        "pct": 71
       },
       {
         "name": "destructuring-assignment",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 27,
-        "fail": 100,
+        "pass": 39,
+        "fail": 88,
         "ce": 1,
         "skip": 0,
         "total": 128,
-        "pct": 21
+        "pct": 30
       },
       {
         "name": "Symbol.toPrimitive",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4477,
-    "fail": 890,
+    "pass": 4483,
+    "fail": 884,
     "ce": 78,
     "skip": 0,
     "total": 5445,
