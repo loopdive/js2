@@ -387,6 +387,21 @@ loc-budget-allow:
 # `vec-symbol-key-overlay.ts` leaf taking the four dependencies explicitly — is
 # the right follow-up and is recorded as such in this slice's receipt; it is not
 # mixed into a change whose whole value is a measured behaviour fix.
+# 2026-09-23 — cluster H slice H3 (`__extern_get`'s missing NUMERIC-key arm on
+# a vec receiver). `object-runtime.ts` +11, of which 5 are comment. The whole
+# MECHANISM lives in the leaf `vec-numeric-key-presence.ts`, which already owned
+# the `__extern_has` twin this slice mirrors (#6485) — the classifier is now
+# shared by both builders rather than duplicated, so that file grew by the GET
+# wrapper and its rationale only. What cannot move is the six-line splice: the
+# arm has to sit immediately after the `$AnyString` key test inside the
+# `fillDynamicForinVecArms` vec block and BEFORE the fall-through to the named
+# property tail, and `fillDynamicForinVecArms` is one finalize pass whose arms
+# are built from its own closure (`getMiss`, `gN`, `externGetIdxIdx`). Putting
+# the call anywhere else changes which answer wins. The comment records the
+# measurement that justifies it — `readIt([10,20], 0)` answered `undefined`
+# where `readIt([10,20], "0")` answered `10` — next to the `$AnyString` gate
+# that caused it.
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   # 2026-09-23 — cluster F slice F3: +13 inside `compileObjectDefineProperty`,
   # the same comment-dominated one-line change as the LOC grant above. The
@@ -403,6 +418,11 @@ func-budget-allow:
   # prototype member; splitting it to absorb a fourth line of an existing family
   # would scatter the routing this gate exists to keep in one readable place.
   - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
+  # 2026-09-23 — cluster H slice H3: the same +11 as the LOC grant above, all of
+  # it inside this one finalize pass. See that rationale — the splice position
+  # is the behaviour, so the arm cannot be hoisted out of the pass without
+  # first parameterising its closure.
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
   # 2026-09-23 — cluster H slice H2: the same +153 as the LOC grant above, in
   # the same four arms. `fillVecOverlayHelpers` is one long FINALIZE pass that
   # fills each reserved native's body in turn; every arm this slice adds is a
@@ -2102,6 +2122,183 @@ unusable no-provider run, kept as the evidence for the engine warning),
 `.tmp/6651/I-buckets.txt`. Probes: `.tmp/6651/{selfimport,selfimport2,hasinst,probe}.mts`.
 None of the probes is committed.
 
+
+### 2026-09-23 — Cluster H (builtins misc, standalone), slice H3: the array read that disagreed with its own descriptor, and gOPDs' missing symbol half
+
+- **Branch** `issue-6651-h3-standalone-builtins`, base `claude/project-thread-yhj9pp`
+  @ `584b231f` (carries round 3 incl. H2). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-aa5350a966282901e`.
+  A pristine `git archive HEAD` extract at `.tmp/base-tree/` was taken at the
+  FIRST edit, so every before-state below is one `cp` away and `src/` was never
+  edited under a running sweep.
+- Took H2's worklist items 1 and 3. Item 2 (Symbol wrapper objects) is
+  root-caused but NOT taken — see the bottom of this receipt.
+
+#### Item 1 — the four `*/target-array-with-non-writable-property.js` rows were NOT a `CreateDataPropertyOrThrow` defect
+
+H2 flagged the caveat that a hand-written probe of the same shape already
+answered correctly, and said to diagnose against the original-harness assembly.
+That was the right instruction and it inverted the diagnosis. Measured
+standalone with an INSTRUMENTED copy of `propertyHelper.js` (a local editable
+copy under the worktree's own `test262/harness/`, reverted to the pristine
+symlink before any sweep):
+
+```
+PROBE actual=undefined str0=1 Sname=1 plus=1 len=1 isArr=true keys=0,length
+```
+
+Inside `verifyProperty`, `obj[name]` answered `undefined` while
+`obj["0"]`, `obj[String(name)]` and `obj[name + 0]` all answered `1` — and the
+descriptor check one line earlier had already PASSED. So
+`CreateDataPropertyOrThrow` was doing its job; the harness's own read of the
+value was wrong. `propertyHelper.js` carries `// @ts-check` and
+`@param {string|symbol} name`, which is the whole trigger:
+
+| `readIt(recv, key)`, `obj: object` + `name: string\|symbol` | base | spec |
+| --- | --- | --- |
+| `readIt([10, 20], 0)`   | `undefined` | `10` |
+| `readIt([10, 20], "0")` | `10`        | `10` |
+| `readIt({0: 7}, 0)`     | `7`         | `7`  |
+
+The plain-object row is what makes it a vec-carrier bug, and the JSDoc matrix
+narrowed it to exactly that combination (an `any` key or an `any` receiver is
+correct — only `object` + `string|symbol` breaks). `isNumericIndexExpression`
+declines a non-numeric key type, so the site keeps `__extern_get` and boxes the
+key; every index delegation inside `__extern_get`'s `$__vec_base` arm sits
+behind `ref.test $AnyString`, so a runtime **Number** reached none of them and
+fell through to the named-property tail.
+
+`__extern_has` already had this arm — #6485 added it for `0 in arr`. The GET
+twin simply did not exist, so `in` reported a property the read could not
+fetch. Landed as `buildVecNumericKeyGetArm` in
+`src/codegen/vec-numeric-key-presence.ts` (the #6485 classifier — the
+`__typeof_number` gate plus the integral / non-negative test — is now SHARED by
+both builders rather than duplicated), spliced into `fillDynamicForinVecArms`'
+`__extern_get` arm immediately after the `$AnyString` test. A canonical
+non-negative integral key delegates to `__extern_get_idx`, which is precisely
+what the existing `__str_to_number` string arm calls, so the Number spelling is
+byte-for-byte the String spelling and overlays / deletes / accessors / holes /
+the OOB→`undefined` miss keep their one reader.
+
+#### Item 2 — `Object.getOwnPropertyDescriptors` walked only the STRING own keys
+
+§20.1.2.9 step 3 walks `O.[[OwnPropertyKeys]]()` — indices, then strings, then
+symbols. The self-hosted helper (`src/stdlib/object-runtime.ts`) looped over
+`__getOwnPropertyNames` alone, so an object whose own keys are all symbols
+produced `{}`. Measured standalone on base: for `o[symA]=1; o[symB]=2`,
+`Reflect.ownKeys(gOPDs(o))` was `[]` and `getOwnPropertySymbols(gOPDs(o)).length`
+was `0`. Fixed with a second loop over `__getOwnPropertySymbols` — already the
+carrier-correct reader (#2866 PR1), already registered leaf-first — in that
+order, which IS the spec key order.
+
+#### Manifest rows, standalone, `--isolate`, before → after
+
+`.tmp/6651/h3.txt` — the 13 rows H2's worklist items 1/3/4 name.
+Logs `.tmp/6651/h3-{before,after2}.log`.
+
+| | pass | fail |
+| --- | ---: | ---: |
+| before | **0** | 13 |
+| after | **5** | 8 |
+
+Per-row: `filter`/`map`/`slice`/`splice`'s
+`target-array-with-non-writable-property.js` and
+`Object/getOwnPropertyDescriptors/symbols-included.js`. **5 gained, 0 lost.**
+
+One row ADVANCED rather than passing:
+`getOwnPropertyDescriptors/order-after-define-property.js` now clears its symbol
+assertion (L42) and fails at L48 on the RegExp half — `Reflect.ownKeys(reDescs)`
+answers `[a, lastIndex]` where creation order is `[lastIndex, a]`, i.e. the
+standalone RegExp carrier materialises `lastIndex` lazily at define time instead
+of seeding it at construction. That is a separate carrier-ordering defect.
+
+#### Controls
+
+- **Host lane: byte identity, measured, not inferred.** 16-module gc corpus
+  (13 `website/playground/examples` sources + 3 inline modules, one per changed
+  construct: the `string|symbol`-keyed dynamic read, a symbol-keyed gOPDs, and a
+  no-symbol/no-dynamic-key control) — **16/16 sha256-identical**, before vs
+  after (`.tmp/6651/shas-{before,after}.txt`, diff in `shas-diff.txt`). The two
+  inline modules that exercise exactly the changed behaviour are in that 16, so
+  this is not a sample that happens to miss the construct.
+- On **standalone** 7 of the 16 move, INCLUDING the no-symbol/no-dynamic-key
+  control — both arms are unconditional, so this slice is **not**
+  standalone-byte-neutral. Stated because the sha corpus is what would catch a
+  claim otherwise.
+- **Neighbourhood**, 785 rows, standalone, `--isolate`, both sides — all of
+  `built-ins/Array/prototype/{filter,map,slice,splice}` and
+  `built-ins/Object/{getOwnPropertyDescriptors,getOwnPropertySymbols,
+  getOwnPropertyNames,keys,entries,values}`; 8 chunks, 4 concurrent, fresh
+  process per row (`.tmp/6651/nb-sa-{before,after}-nbchunk-*.log`, set diff via
+  `.tmp/rowdiff.mjs`): **7 gained, 0 lost, 0 other verdict changes.** The two
+  gains beyond the manifest are `filter/15.4.4.20-9-c-ii-13.js` and
+  `map/15.4.4.19-8-c-ii-13.js` — the same numeric-key GET fix reached through
+  another harness helper.
+- **How the 785 rows were bounded, and the one methodological trap.** The first
+  attempt used the in-process runner on a 1,194-row set and WEDGED: a
+  `filter`/`map` chunk ran >55 min with no output. The in-process runner's
+  `JS2WASM_ROW_TIMEOUT_MS` bounds the RUN, not a compiler hang, so it cannot
+  time-bound such a row at all — `--isolate` is the only mode that yields a
+  verdict for every row, because it caps the whole child process. The sweep was
+  restarted under `--isolate` with a 20 s row cap on BOTH sides.
+- **The 20 s cap then produced 10 false "losses", and re-measuring them is what
+  made the diff honest.** A count comparison would have read −10 and a naive
+  set diff read them as regressions; they were rows whose isolate child
+  exceeded 20 s on the (heavily loaded, 5-lane) box. Re-run at 420 s
+  (`.tmp/6651/recheck-after.log`): **all 10 PASS on the after tree**, and the
+  two `fail → error` rows (`filter/15.4.4.20-1-{12,13}.js`) are `fail` on both
+  sides. An `error` row is not a verdict and must be re-measured, never counted.
+- Pin file `tests/issue-6651-vec-numeric-key-get.test.ts`, 6 cases —
+  **3 verified RED on the base tree** via the file-copy A/B (the dynamic read,
+  the species-target agreement, the symbol-keyed gOPDs), 3 green on both sides
+  (a fractional/negative/OOB Number key must stay on the named tail; a boolean
+  key must be ToPropertyKey'd as a NAME and not coerced to index 1; a
+  symbol-free receiver's descriptor map is unchanged).
+
+Gates, run bare: typecheck OK; loc-budget OK and func-budget OK with the +11
+grants added to this file's frontmatter above, dated; coercion-sites OK;
+oracle-ratchet OK (`getTypeAtLocation +0`, `ctx.checker +0`); dead-exports OK;
+lint OK. `node scripts/equivalence-gate.mjs`: **22 failing / 1,720 passing, all
+22 already in the baseline — no new equivalence regressions.**
+
+#### Root-caused, NOT taken
+
+1. **Symbol wrapper objects (4 rows) — blocked on a missing carrier, not a
+   missing arm.** `typeof Object(sym)` does not answer "object", it TRAPS:
+   `RuntimeError: dereferencing a null pointer`. ToObject has no Symbol-wrapper
+   representation at all, so `Object(sym)`, `Object.assign(Symbol(), …)` and
+   `Symbol.prototype.{toString,@@toPrimitive}` on a wrapper receiver all need a
+   new carrier plus its prototype-method dispatch and its ToPrimitive. That is a
+   mechanism the size of H2's item 2, not a slice tail.
+2. **`getOwnPropertySymbols` on an ARRAY carrier (1 row).** Confirmed
+   independently of H2: `var arr = []; arr[symA] = 1;` then
+   `Object.getOwnPropertySymbols(arr)` answers `[]`, while the same on a plain
+   object is correct (`2`, in creation order, and correct after a later
+   `defineProperty`). `__getOwnPropertySymbols` has no `$__vec_base` arm — the
+   twin of `fillGopnVecArm` — so it never reaches the #3251 companion or the
+   #3537 bag. The work is that arm plus symbol-only key filtering in
+   `buildBagPushKeys`/`buildOverlayPushKeys`, which today push string keys.
+3. **`Object/entries/symbols-omitted.js` (1 row) is NOT about symbol keys being
+   omitted** — that part works. `result[0][1]` comes back as a
+   DESCRIPTION-LESS `Symbol()` where `symValue` is `Symbol('value')`, and
+   `String(obj.key)` prints `Symbol()` too while `obj.key === symValue` is
+   `true`. The description survives in a reduced module and is lost once the
+   object also carries a `defineProperty`'d non-enumerable symbol key; the
+   trigger was isolated to that far, no further.
+4. **A static `d.a.value` on a helper-produced object reads `undefined`** —
+   identical on base and after (`names=2 a=undefined w=undefined`), with the
+   dynamic `d[ka].value` spelling correct on both. A pre-existing
+   static-property-read residual on a runtime-built receiver, unrelated to this
+   slice; the pin file spells that case dynamically and says why.
+
+#### For the next owner
+
+1. The RegExp `lastIndex` creation-order residual above — one row, and it is
+   the last assertion standing in `gOPDs/order-after-define-property.js`.
+2. The `__getOwnPropertySymbols` vec arm (item 2 above) — one row, bounded work.
+3. `Object.prototype.toString` §20.1.3.6 step 15 — still H2's item 2, still the
+   largest single mechanism in the cluster (5 rows + ripple).
+4. Symbol wrapper objects — the carrier described above (4 rows).
 
 ### 2026-09-23 — Cluster H (builtins misc, standalone), slice H2: the measured bucket table, and symbol property keys on an array carrier
 

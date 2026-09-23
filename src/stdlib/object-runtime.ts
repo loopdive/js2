@@ -48,9 +48,19 @@ const COMMON_CALLEES: ReadonlyArray<[string, Sig]> = [
 
 /**
  * `Object.getOwnPropertyDescriptors(obj)` — a fresh plain object mapping each
- * own string key to its descriptor. Enumerates own keys via
+ * own key to its descriptor. Enumerates own keys via
  * `__getOwnPropertyNames` and, per key, sets
- * `out[key] = __getOwnPropertyDescriptor(obj, key)`. A non-object receiver
+ * `out[key] = __getOwnPropertyDescriptor(obj, key)`.
+ *
+ * (#6651 H3) …then the SYMBOL keys, via `__getOwnPropertySymbols`. §20.1.2.9
+ * step 3 walks `? O.[[OwnPropertyKeys]]()`, which is OrdinaryOwnPropertyKeys —
+ * integer indices, then strings in creation order, then SYMBOLS in creation
+ * order. Only the string half was walked, so an object whose own keys are all
+ * symbols produced `{}`: measured standalone, `Reflect.ownKeys(gOPDs(obj))` was
+ * `[]` where the spec wants `[symA, symB]`. The two loops in this order ARE
+ * that key order, and the singular `__getOwnPropertySymbols` is already the
+ * carrier-correct reader (#2866 PR1), so no new symbol machinery is introduced.
+ * A non-object receiver
  * yields `{}` (the loop runs zero times — `__getOwnPropertyNames` returns an
  * empty vec). Same enumeration + per-key descriptor builder as the singular
  * `getOwnPropertyDescriptor`, so accessor-vs-data shape and attribute flags
@@ -66,6 +76,14 @@ export function __object_getOwnPropertyDescriptors(obj: unknown): unknown {
     const key = __extern_get_idx(names, i);
     __extern_set(out, key, __getOwnPropertyDescriptor(obj, key));
     i = i + 1;
+  }
+  const syms = __getOwnPropertySymbols(obj);
+  const scap: number = __extern_length(syms);
+  let j: number = 0;
+  while (j < scap) {
+    const skey = __extern_get_idx(syms, j);
+    __extern_set(out, skey, __getOwnPropertyDescriptor(obj, skey));
+    j = j + 1;
   }
   return out;
 }
@@ -110,6 +128,7 @@ export const SELF_HOSTED_OBJECT_RUNTIME: ReadonlyMap<string, SelfHostedFuncDef> 
       calleeTypes: new Map<string, Sig>([
         ...COMMON_CALLEES,
         ["__getOwnPropertyNames", { params: [EXT], returnType: EXT }],
+        ["__getOwnPropertySymbols", { params: [EXT], returnType: EXT }],
         ["__getOwnPropertyDescriptor", { params: [EXT, EXT], returnType: EXT }],
       ]),
     },
