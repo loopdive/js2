@@ -21,6 +21,7 @@ import {
   isVoidType,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { compileHostFreeCryptoCall, isHostFreeCryptoCall } from "./standalone-crypto.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
@@ -9665,14 +9666,13 @@ function compileCallExpression(
     }
 
     // (#1503) Web Crypto host imports: crypto.randomUUID() / crypto.getRandomValues(buf).
-    // Available wherever the host exposes a `crypto` global (browsers + Node 19+).
-    // In WASI mode there is no JS host, so the imports are still added but resolve
-    // to a throw at runtime (no silent fallback to Math.random — that would be a
-    // security trap, see issue #1503). Shadow-aware.
+    // Never a Math.random fallback (security trap, #1503/#4569): standalone throws
+    // (#6659, standalone-crypto.ts); WASI imports resolve to a throw. Shadow-aware.
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "crypto") {
       const isShadowed = fctx.localMap.has("crypto") || (fctx.boxedCaptures?.has("crypto") ?? false);
       if (!isShadowed) {
         const cryptoMethod = propAccess.name.text;
+        if (isHostFreeCryptoCall(ctx, cryptoMethod)) return compileHostFreeCryptoCall(ctx, fctx);
         if (cryptoMethod === "randomUUID") {
           const idx = ensureLateImport(ctx, "__crypto_random_uuid", [], [{ kind: "externref" }]);
           flushLateImportShifts(ctx, fctx);

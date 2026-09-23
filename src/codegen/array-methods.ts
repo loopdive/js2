@@ -9561,7 +9561,9 @@ function compileTypedArraySet(
   let externGetIdx: number | undefined;
   let unwrapForWasmIdx: number | undefined;
   let srcExtern: number | undefined;
-  if (dstCarrier?.kind === "externref") {
+  // Host-free targets have no facade: the externref IS the vec (#6659).
+  const unwrapHostFacade = dstCarrier?.kind === "externref" && !ctx.standalone && !ctx.wasi;
+  if (unwrapHostFacade) {
     unwrapForWasmIdx = ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
   if (!srcArrInfo) {
@@ -9575,7 +9577,7 @@ function compileTypedArraySet(
     );
   }
   flushLateImportShifts(ctx, fctx);
-  if (dstCarrier?.kind === "externref" && unwrapForWasmIdx === undefined) return null;
+  if (unwrapHostFacade && unwrapForWasmIdx === undefined) return null;
   if (!srcArrInfo && (externLenIdx === undefined || externGetIdx === undefined)) return null;
 
   const dstVec = allocLocal(fctx, `__ta_set_dvec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -9593,9 +9595,9 @@ function compileTypedArraySet(
   // Receiver -> vec ref, extract length (field 0) + data array (field 1).
   if (dstCarrier?.kind === "externref") {
     compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
-    fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
+    if (unwrapHostFacade) fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: unwrapHostFacade ? "ref.cast" : "ref.cast_null", typeIdx: vecTypeIdx }); // null → TypeError guard
   } else {
     compileExpression(ctx, fctx, propAccess.expression);
   }
