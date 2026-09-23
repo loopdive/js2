@@ -29,6 +29,7 @@ import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { emitNarrowedCarrierToString } from "../bigint-wide.js";
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -77,7 +78,8 @@ import {
 import { buildTaFromMapfnCallableGate, buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6651 E2) §23.2.1 carrier identity + §23.2.2.1 step 3
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { taDynDetachedGuardPrologue } from "../ta-dyn-method-call.js"; // (#6501) §23.2.4.4 prologue for the helper-routed mutators
-import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
+import { ensureNativeArrayFromIterN, reserveAnyIterNext } from "../iterator-native.js";
+import { ensureTaFromArrayLikeMappedHelper } from "../ta-static-from-of-body.js"; // (#6651 E5) per-element §23.2.2.1 mapping
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import {
@@ -382,6 +384,7 @@ function tryEmitTaStaticOfFrom(
     const savedT = fctx.body;
     fctx.body = thenArm;
     const carrierLocal = allocLocal(fctx, `__tastat_carrier_${fctx.locals.length}`, { kind: "externref" });
+    let mappedCall: Instr[] | undefined;
     if (methodName === "of") {
       // Pack the of-args into a native `$ObjVec` (read by __extern_*).
       const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
@@ -393,10 +396,9 @@ function tryEmitTaStaticOfFrom(
         fctx.body.push({ op: "call", funcIdx: pushIdx });
       }
     } else {
-      // from(src[, mapfn[, thisArg]]): normalize src (+ optional mapfn) to a
-      // carrier the array-like reader consumes. A present, non-nullish mapfn
-      // routes through __array_from_mapped (composes __array_from_iter_n +
-      // __hof_map); no/undefined mapfn drains via __array_from_iter_n directly.
+      // from(src[, mapfn[, thisArg]]): normalize src (UNMAPPED) to a carrier
+      // the array-like reader consumes via __array_from_iter_n; a present,
+      // non-nullish mapfn is applied per element by __ta_from_arraylike_mapped.
       const iterNIdx = ensureNativeArrayFromIterN(ctx);
       const src = argLocals[0];
       if (src === undefined) {
@@ -404,35 +406,36 @@ function tryEmitTaStaticOfFrom(
         fctx.body.push({ op: "call", funcIdx: newIdx });
         fctx.body.push({ op: "local.set", index: carrierLocal });
       } else if (dispatchArgs.length >= 2) {
-        const mappedIdx = ensureNativeArrayFromMapped(ctx);
         const nullishIdx = ctx.funcMap.get("__nullish_to_null");
         const mapfn = argLocals[1]!;
         const thisArg = argLocals[2];
         // (#6651 E2) §23.2.2.1 step 3 runs BEFORE step 4's
         // `GetMethod(source, @@iterator)`, so the gate has to be emitted here —
-        // ahead of both drain arms — not folded into the nullish test below,
-        // which cannot tell `null` (a TypeError) from `undefined` (no mapping).
+        // ahead of the drain — not folded into the nullish test below, which
+        // cannot tell `null` (a TypeError) from `undefined` (no mapping).
         fctx.body.push(...buildTaFromMapfnCallableGate(ctx, mapfn));
-        const iterArm: Instr[] = [
-          { op: "local.get", index: src },
-          { op: "f64.const", value: -1 },
-          { op: "call", funcIdx: iterNIdx },
-          { op: "local.set", index: carrierLocal },
-        ];
+        fctx.body.push({ op: "local.get", index: src });
+        fctx.body.push({ op: "f64.const", value: -1 });
+        fctx.body.push({ op: "call", funcIdx: iterNIdx });
+        fctx.body.push({ op: "local.set", index: carrierLocal });
+        // (#6651 E5) Map per element AFTER TypedArrayCreate, with exactly
+        // « kValue, k » — see `ensureTaFromArrayLikeMappedHelper`.
+        const mappedIdx = ensureTaFromArrayLikeMappedHelper(ctx);
         if (mappedIdx !== undefined) {
-          const mapArm: Instr[] = [
-            { op: "local.get", index: src },
-            { op: "local.get", index: mapfn },
-            thisArg !== undefined ? { op: "local.get", index: thisArg } : { op: "ref.null.extern" },
-            { op: "call", funcIdx: mappedIdx },
-            { op: "local.set", index: carrierLocal },
-          ];
           fctx.body.push({ op: "local.get", index: mapfn });
           if (nullishIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishIdx });
-          fctx.body.push({ op: "ref.is_null" });
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: iterArm, else: mapArm });
-        } else {
-          for (const ins of iterArm) fctx.body.push(ins);
+          fctx.body.push({ op: "ref.is_null" }, { op: "i32.eqz" });
+          const thisArgInstrs: Instr[] =
+            thisArg !== undefined
+              ? [{ op: "local.get", index: thisArg }]
+              : (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
+          mappedCall = [
+            { op: "local.get", index: recvLocal },
+            { op: "local.get", index: carrierLocal },
+            { op: "local.get", index: mapfn },
+            ...thisArgInstrs,
+            { op: "call", funcIdx: mappedIdx },
+          ];
         }
       } else {
         fctx.body.push({ op: "local.get", index: src });
@@ -441,9 +444,19 @@ function tryEmitTaStaticOfFrom(
         fctx.body.push({ op: "local.set", index: carrierLocal });
       }
     }
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push({ op: "local.get", index: carrierLocal });
-    fctx.body.push({ op: "call", funcIdx: taFromIdx });
+    const taArm: Instr[] = [
+      { op: "local.get", index: recvLocal },
+      { op: "local.get", index: carrierLocal },
+      { op: "call", funcIdx: taFromIdx },
+    ];
+    if (mappedCall)
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: mappedCall,
+        else: taArm,
+      });
+    else fctx.body.push(...taArm);
     fctx.body = savedT;
   }
 
@@ -2966,6 +2979,8 @@ export function compileReceiverMethodCall(
     if (exprType && exprType.kind === "i32") {
       fctx.body.push({ op: "i64.extend_i32_s" });
     }
+    // (#6656) A narrowed reference slot: format the carrier, exact past i64.
+    if (exprType?.kind === "i64" && emitNarrowedCarrierToString(ctx, fctx, radixLocalIdx)) return { kind: "externref" };
     if (radixLocalIdx !== undefined) {
       const radixFuncIdx = ctx.funcMap.get("bigint_toString_radix");
       if (radixFuncIdx !== undefined) {

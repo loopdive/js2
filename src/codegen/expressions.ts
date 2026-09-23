@@ -52,6 +52,7 @@ import {
 import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
 import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { tryCompileWideBigIntExpression } from "./bigint-wide.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import {
   canStructurallyProjectRef,
@@ -1118,6 +1119,10 @@ function compileExpressionInner(
     fctx.body.push({ op: "f64.const", value });
     return { kind: "f64" };
   }
+
+  // (#6656) A bigint expression whose i64 lowering would lose the value.
+  const wideBigInt = tryCompileWideBigIntExpression(ctx, fctx, expr, expectedType);
+  if (wideBigInt !== undefined) return wideBigInt;
 
   if (ts.isBigIntLiteral(expr)) {
     return compileBigIntLiteral(ctx, fctx, expr, expectedType);

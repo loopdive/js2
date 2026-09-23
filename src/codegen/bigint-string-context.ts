@@ -61,6 +61,7 @@
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { usesNativeNumberFormat } from "./number-format-native.js";
+import { emitNarrowedCarrierToString } from "./bigint-wide.js";
 
 /**
  * Index of the exact `bigint_toString` formatter to use for `opType`, or
@@ -111,6 +112,8 @@ export function registerBigIntToStringDemand(ctx: CodegenContext, needed: Set<st
  */
 export function emitI64ToStringCall(ctx: CodegenContext, fctx: FunctionContext, argType: ValType): boolean {
   const exact = bigIntToStringIdx(ctx, argType);
+  // (#6656) A narrowed reference slot: format the carrier, exact past i64.
+  if (exact !== undefined && emitNarrowedCarrierToString(ctx, fctx)) return true;
   if (exact !== undefined) {
     fctx.body.push({ op: "call", funcIdx: exact });
     return true;

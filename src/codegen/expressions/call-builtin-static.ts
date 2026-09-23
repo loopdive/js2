@@ -1316,7 +1316,15 @@ export function compileBuiltinStaticCall(
               } else {
                 fctx.body.push({ op: "array.get", typeIdx: srcArrIdx });
               }
-              if (!valTypesMatch(srcStore, storeWasm)) coerceType(ctx, fctx, srcStore, storeWasm);
+              // (#6651 E5) An externref element is ToNumber'd FIRST (§23.2.2.1's
+              // Set runs ToNumber, i.e. ToPrimitive/valueOf): a direct externref→i32
+              // coercion is `__unbox_number`, which reads an object as NaN → 0.
+              let elemT = srcStore;
+              if (srcStore.kind === "externref" && storeWasm.kind !== "f64") {
+                coerceType(ctx, fctx, srcStore, { kind: "f64" });
+                elemT = { kind: "f64" };
+              }
+              if (!valTypesMatch(elemT, storeWasm)) coerceType(ctx, fctx, elemT, storeWasm);
               fctx.body.push({ op: "array.set", typeIdx: taArrTypeIdx });
               // i++
               fctx.body.push({ op: "local.get", index: iTmp });

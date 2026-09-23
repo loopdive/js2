@@ -83,6 +83,7 @@ import {
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
 import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
+import { emitStandalonePromiseCombinatorDrive } from "../promise-combinator-drive.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileSpreadCallArgs } from "./extern.js";
@@ -3030,7 +3031,11 @@ export function compileNamespaceStaticCall(
         // (#2922 arms 2+3) dynamic path or fall through to the host path.
         rollbackSpeculative(ctx, fctx, snap);
         if (isDynamicCombinatorArgEligible(ctx, argType, arg0)) {
-          return emitDynamicCombinatorArg(ctx, fctx, methodName, arg0);
+          // (#6651 D2b) all/race step the iterator in spec order instead of draining it.
+          const driven = isPromiseSubclassReceiver
+            ? undefined
+            : emitStandalonePromiseCombinatorDrive(ctx, fctx, methodName, arg0, observableCombinator);
+          return driven ?? emitDynamicCombinatorArg(ctx, fctx, methodName, arg0);
         }
       }
       const importName = `Promise_${methodName}`;

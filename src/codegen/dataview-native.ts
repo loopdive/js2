@@ -7176,6 +7176,15 @@ export function emitTaDynViewWriteF64Vec(
   });
 }
 
+/** (#6651 E5) A per-element step spliced between the carrier read and ToNumber (see `ensureTaFromArrayLikeMappedHelper`). */
+export interface TaFromArrayLikeMapHook {
+  helperName: string;
+  /** Extra externref params after `(ctor, carrier)`. */
+  extraParams: readonly string[];
+  /** Element externref on the stack in, replacement externref out. */
+  mapElement: (fctx: FunctionContext, iLocal: number) => void;
+}
+
 /**
  * (#3177 slice 5) Mint the shared native `__ta_from_arraylike(ctor, carrier) →
  * externref` — the builder behind the standalone `%TypedArray%.of` /
@@ -7193,9 +7202,9 @@ export function emitTaDynViewWriteF64Vec(
  * noJsHost lane only; every dependency is a native DEFINED function
  * (append-only — no import add / funcIdx shift). Idempotent via funcMap.
  */
-export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undefined {
+export function ensureTaFromArrayLikeHelper(ctx: CodegenContext, mapHook?: TaFromArrayLikeMapHook): number | undefined {
   if (!noJsHost(ctx)) return undefined;
-  const helperName = "__ta_from_arraylike";
+  const helperName = mapHook?.helperName ?? "__ta_from_arraylike";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
 
@@ -7210,9 +7219,11 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
 
+  const extraParams = (mapHook?.extraParams ?? []).map((name) => ({ name, type: { kind: "externref" } as ValType }));
   const params: ValType[] = [
     { kind: "externref" }, // ctor ($__ta_ctor)
     { kind: "externref" }, // carrier (indexable)
+    ...extraParams.map((p) => p.type),
   ];
   const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
   const funcIdx = mintDefinedFunc(ctx);
@@ -7223,6 +7234,7 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     params: [
       { name: "ctor", type: { kind: "externref" } },
       { name: "carrier", type: { kind: "externref" } },
+      ...extraParams,
     ],
     locals: [],
     localMap: new Map(),
@@ -7344,6 +7356,7 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     fctx.body.push({ op: "local.get", index: iLocal });
     fctx.body.push({ op: "f64.convert_i32_s" });
     fctx.body.push({ op: "call", funcIdx: externGetIdxIdx });
+    mapHook?.mapElement(fctx, iLocal); // (#6651 E5) §23.2.2.1 step 7.e.iii / 11.c: map BEFORE this element's Set
     coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
     fctx.body.push({ op: "local.set", index: vLocal });
     fctx.body.push({ op: "local.get", index: iLocal });

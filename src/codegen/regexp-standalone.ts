@@ -97,7 +97,13 @@ import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
-import { emitRegExpSymbolProtocolApply, fileObservesRegExpExecProtocol } from "./regexp-symbol-protocol-call.js";
+import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
+import { emitRegExpSymbolSplitBody } from "./regexp-split-protocol.js";
+import {
+  emitRegExpSymbolProtocolApply,
+  fileMentionsSymbolMatch,
+  fileObservesRegExpExecProtocol,
+} from "./regexp-symbol-protocol-call.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
@@ -1036,6 +1042,12 @@ export const RE_FIELD_LASTINDEX = 6;
 // numeric reflection site.
 export const RE_FIELD_LASTINDEX_RAW = 7;
 export const RE_FIELD_LASTINDEX_RAW_PRESENT = 8;
+// (#6651 B6) [[Writable]] of the own `lastIndex` data property, inverted so a
+// fresh carrier's default `0` is the spec's `writable: true` (§22.2.3.3). Set
+// only by `Object.defineProperty(re, "lastIndex", {writable: false})`; read by
+// the runtime `[[Set]]` arms in `regexp-lastindex-carrier.ts`. `$`-prefixed so
+// the closed-struct ladders never expose it as a property.
+export const RE_FIELD_LASTINDEX_NONWRITABLE = 9;
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
@@ -1129,6 +1141,7 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
     { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
     { name: "lastIndexRaw", type: { kind: "externref" } as ValType, mutable: true },
     { name: "lastIndexRawPresent", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "$lastIndexNonWritable", type: { kind: "i32" } as ValType, mutable: true },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -1939,6 +1952,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 { op: "f64.const", value: 0 }, // lastIndex
                 { op: "ref.null.extern" }, // raw lastIndex
                 { op: "i32.const", value: 0 }, // raw present
+                { op: "i32.const", value: 0 }, // lastIndex writable
                 { op: "struct.new", typeIdx: structTypeIdx },
                 { op: "return" },
               ],
@@ -2433,6 +2447,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "f64.const", value: 0 },
     { op: "ref.null.extern" },
     { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: structTypeIdx },
   ];
 
@@ -2516,8 +2531,8 @@ function emitStandaloneRegExpStruct(
   fctx.body.push({ op: "i32.const", value: compiled.nScratch });
   // field 6: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
   fctx.body.push({ op: "f64.const", value: 0 });
-  // fields 7/8: no deferred raw value on a fresh object.
-  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 });
+  // fields 7/8: no deferred raw value on a fresh object; field 9: writable.
+  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 }, { op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -2791,6 +2806,7 @@ export function compileStandaloneRegExpConstructor(
         { op: "f64.const", value: 0 },
         { op: "ref.null.extern" },
         { op: "i32.const", value: 0 },
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: structTypeIdx },
       );
     }
@@ -2861,6 +2877,7 @@ export function compileStandaloneRegExpConstructor(
     fctx.body.push(
       { op: "f64.const", value: 0 },
       { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: structTypeIdx },
     );
@@ -3308,7 +3325,26 @@ export function emitRegexSearchCall(
     // 9.e / 15), then restore the match flag for the caller.
     const matchedTmp = allocLocal(fctx, `__re_matched_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.set", index: matchedTmp });
+    // (#6651 B6) The reflective/protocol route has no receiver expression for
+    // the compile-time guard, so it consults the carrier's runtime
+    // [[Writable]] bit: `? Set(R, "lastIndex", e, true)` throws on a
+    // non-writable `lastIndex` (§22.2.7.2 steps 12.a.i.1 / 12.c.i.1 / 16).
+    const runtimeWritableGuard: Instr[] =
+      options.gyLastIndex === "runtime"
+        ? [
+            { op: "local.get", index: regexpLocal },
+            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+                flush: fctx,
+              }),
+            },
+          ]
+        : [];
     const updateLastIndex: Instr[] = [
+      ...runtimeWritableGuard,
       ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, regexpExpr ?? undefined),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedTmp },
@@ -4905,6 +4941,50 @@ export function tryCompileStandaloneRegExpSymbolCall(
     return undefined;
   }
 
+  // (#6651 B5) `re[Symbol.split](s, lim)` routes through the reified
+  // `RegExp.prototype[@@split]` — the §22.2.6.14 body with SpeciesConstructor
+  // and the splitter walk — under the same whole-file gate as B3's route,
+  // widened by `arraySpeciesDirty` (the module mentions `species` or assigns a
+  // `.constructor`, the only ways SpeciesConstructor can answer anything but
+  // %RegExp%) and by an operand the static core cannot type: a missing or
+  // non-string subject, or a non-number limit. Checked BEFORE the arity test
+  // below, because `re[Symbol.split]()` is legal (S = "undefined").
+  if (symbolMethod === "split" && expr.arguments.length <= 2) {
+    const [subject, limit] = expr.arguments;
+    const observed =
+      ctx.arraySpeciesDirty ||
+      fileObservesRegExpExecProtocol(expr) ||
+      fileMentionsSymbolMatch(expr) ||
+      subject === undefined ||
+      !isStringLikeArg(ctx, subject) ||
+      (limit !== undefined && (regExpArgType(ctx, limit).flags & ts.TypeFlags.NumberLike) === 0);
+    const splitId = getWellKnownSymbolId("split");
+    if (observed && splitId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, splitId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
+  // (#6651 B5) `re[Symbol.replace](s, v)` takes the same route to the reified
+  // §22.2.6.11 body when the program can observe the protocol (B3's whole-file
+  // predicate) or an operand is one the static core cannot type (a missing or
+  // non-string subject, a missing replacement).
+  if (symbolMethod === "replace" && expr.arguments.length <= 2) {
+    const [subject, replacement] = expr.arguments;
+    const observed =
+      fileObservesRegExpExecProtocol(expr) ||
+      subject === undefined ||
+      replacement === undefined ||
+      !isStringLikeArg(ctx, subject);
+    const replaceId = getWellKnownSymbolId("replace");
+    if (observed && replaceId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, replaceId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
   // arg[0] is the subject string in every form; string-coercion
   // (`re[Symbol.match](42)`) falls through to the host path which does ToString.
   if (expr.arguments.length < 1) return undefined;
@@ -4925,7 +5005,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
       ensureRegExpNativeProtoGlue(ctx);
       const symbolId = getWellKnownSymbolId(symbolMethod);
       if (symbolId !== undefined) {
-        const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, strExpr, symbolId);
+        const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, [strExpr], symbolId);
         if (routed !== undefined) return routed;
       }
     }
@@ -5607,6 +5687,41 @@ export function ensureRegExpNativeProtoGlue(ctx: CodegenContext): number | undef
 }
 
 /**
+ * RegExpExec steps 5-6 (§22.2.7.1) for the externref RegExp held in `rxLocal`:
+ * the brand recovery (a catchable TypeError on a non-RegExp) plus
+ * `RegExpBuiltinExec`, leaving an externref match object or null. Shared by the
+ * `@@match` / `@@search` bodies (where `rxLocal` is `this`) and `@@split`
+ * (where it is the constructed SPLITTER).
+ */
+function emitRegExpBuiltinExecFromLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rxLocal: number,
+  sLocal: number,
+): void {
+  const builtin = recoverRegExpStructFromExternref(ctx, fctx, rxLocal);
+  if (builtin === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return;
+  }
+  const subjLocal = flattenExternrefArgToString(ctx, fctx, sLocal);
+  const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+    gyLastIndex: "runtime",
+    readLastIndex: true,
+    inputOverride: () => {
+      fctx.body.push({ op: "local.get", index: subjLocal });
+      return nativeStringType(ctx);
+    },
+    regexpOverride: { regexpLocal: builtin.regexpLocal, structTypeIdx: builtin.structTypeIdx },
+  });
+  if (emitted === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return;
+  }
+  fctx.body.push({ op: "extern.convert_any" });
+}
+
+/**
  * Emit a RegExp.prototype method/getter closure body. The closure params are:
  *   index 0: the `__fn_wrap` self struct,
  *   index 1: the externref `this` receiver,
@@ -5698,31 +5813,23 @@ function emitRegExpProtoMemberBody(
   // brand check first answered TypeError for that shape before the user's
   // `exec` could run — see `regexp-exec-protocol.ts`. The builtin arm below IS
   // the old prologue, moved to where the spec puts it.
+  // RegExpExec steps 5-6 for a genuine RegExp receiver: the brand recovery that
+  // used to run first, plus `RegExpBuiltinExec`, leaving an externref.
+  const emitBuiltinExec = (rxLocal: number, sLocal: number): void =>
+    emitRegExpBuiltinExecFromLocal(ctx, fctx, rxLocal, sLocal);
+  // (#6651 B5) `@@10` = `RegExp.prototype[@@split]`, §22.2.6.14 — same
+  // placement rule as `@@9`/`@@7`: step 2 is `Type(rx) is Object`, and the
+  // brand requirement lives in RegExpExec step 5 on the SPLITTER, so the
+  // builtin arm recovers the struct from the splitter local, not from `this`.
+  if (member === "@@10" || member === "@@8") {
+    const result =
+      member === "@@10"
+        ? emitRegExpSymbolSplitBody(ctx, fctx, 1, 2, 3, emitBuiltinExec)
+        : emitRegExpSymbolReplaceBody(ctx, fctx, 1, 2, 3, emitBuiltinExec);
+    // A decline emits nothing and falls to the placeholder below, unchanged.
+    if (result !== null) return result;
+  }
   if (member === "@@9" || member === "@@7") {
-    // RegExpExec steps 5-6 for a genuine RegExp `this`: the brand recovery that
-    // used to run first, plus `RegExpBuiltinExec`, leaving an externref.
-    const emitBuiltinExec = (_rxLocal: number, sLocal: number): void => {
-      const builtin = recoverRegExpStructFromExternref(ctx, fctx, 1);
-      if (builtin === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-        return;
-      }
-      const subjLocal = flattenExternrefArgToString(ctx, fctx, sLocal);
-      const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
-        gyLastIndex: "runtime",
-        readLastIndex: true,
-        inputOverride: () => {
-          fctx.body.push({ op: "local.get", index: subjLocal });
-          return nativeStringType(ctx);
-        },
-        regexpOverride: { regexpLocal: builtin.regexpLocal, structTypeIdx: builtin.structTypeIdx },
-      });
-      if (emitted === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-        return;
-      }
-      fctx.body.push({ op: "extern.convert_any" });
-    };
     const protocolResult =
       member === "@@9"
         ? emitRegExpSymbolSearchBody(ctx, fctx, 1, 2, emitBuiltinExec)
@@ -5936,6 +6043,17 @@ function emitRegExpCompileInPlace(
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
     );
   }
+  // (#6651 B6) §22.2.3.3.1 step 11 — `? Set(obj, "lastIndex", +0, true)`, AFTER
+  // the matcher was replaced: a non-writable `lastIndex` throws with the new
+  // program already installed (`pattern-regexp-immutable-lastindex`).
+  const readOnlyThrow = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+    flush: fctx,
+  });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+    { op: "if", blockType: { kind: "empty" }, then: readOnlyThrow },
+  );
   fctx.body.push(
     { op: "local.get", index: regexpLocal },
     { op: "f64.const", value: 0 },

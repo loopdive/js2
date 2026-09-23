@@ -564,3 +564,51 @@ TYPED local.
   `J`) still miss: `__vec_prop_get` reads the bag own-only. Walking the link
   there is the natural follow-up and would let the #5383 own-property install
   go away (which would also fix `hasOwnProperty("m") === true`).
+
+### 2026-09-23 — Temporal `argument-duration-precision-exact-numerical-values` rows: wrong `this` in linked ToPrimitive
+
+**Symptom.** `Duration/from/…precision-exact-numerical-values.js` and
+`Duration/prototype/add/…` (standalone, linked Temporal provider) threw
+`TypeError: invalid receiver`. Not JSBI, not Array-subclass: a one-line probe
+`new Temporal.Duration(0,0,0,0,1).toString()` threw the same, while
+`d.toJSON()`, `d.hours` and `Temporal.Duration.prototype.toString.call(d)` all
+answered correctly.
+
+**Root cause.** The consumer lowers `x.toString()` on an `any` receiver to
+ToString (`__extern_toString` → `__to_primitive`). A provider class instance is
+not a `$Object`, so it reaches `__class_to_primitive`'s runtime §7.1.1.1 walk
+(`class-to-primitive.ts` `buildClassToPrimitiveRuntimeWalk` →
+`ordinary-to-primitive-probe.ts` `buildOrdinaryToPrimitiveProbe`). The walk
+resolves `toString` with `__extern_get` (which crosses the link and returns the
+PROVIDER's method closure) and then invokes it through the CONSUMER's
+`__call_accessor_get` → `__call_fn_method_N`. The closure struct type is
+structurally canonical, so the consumer's dispatcher accepts it and
+`call_ref`s straight into provider code — but it binds `this` through the
+consumer's own `__current_this` global; the provider trampoline reads the
+provider's copy, i.e. a stale receiver. The Temporal brand check then throws.
+This is exactly the hazard the #5383 S2h `__js2wasm_link_method_call`
+terminal exists for; `__extern_method_call` already routes through it, the
+ToPrimitive walk did not.
+
+Why it surfaced after d8b002e236: `Duration.prototype.toString(options =
+undefined)` has declared arity 1. Before that commit the multi-source
+`__call_accessor_get` baked a bare `__call_fn_method_0`, which rejected the
+closure (null → `"[object Object]"`, the previous failure). With the arity
+classifier in place the call went through — with the wrong `this`. An arity-0
+provider `toString` was already broken the same way.
+
+**Fix.** The probe takes an optional `ownerCall`; `class-to-primitive.ts`
+supplies it only in a linked standalone consumer (both peer terminals
+resolvable via `standaloneLinkBoundaryPeerIndex`). Per step: if
+`__js2wasm_link_get_prototype_of(recv)` is non-null (a provider class instance,
+#6617), run `__js2wasm_link_method_call(recv, name, [])` and treat its result
+like the local call's; otherwise the unchanged local step. A null answer is the
+walk's existing "declined" outcome, so the local call is never also made for a
+provider receiver. Non-linked modules are byte-identical (checked:
+standalone + gc sha256 unchanged on a ToPrimitive-heavy probe).
+
+**Measured.** Witness `tests/issue-2917-linked-provider-to-primitive.test.ts`
+(linked pm package, standalone): base `toString(opts)`/`String`/template/`+`
+→ `"[object Object]"`, arity-0 `toString` throws; after, all correct, local
+controls unchanged. test262 standalone: the two target rows fail → pass;
+`.tmp/s74b/target8-rel.txt` 3/8 → 5/8 (the two targets; no row regressed).
