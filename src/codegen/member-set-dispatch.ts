@@ -40,7 +40,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, isVecBaseSubtype } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
@@ -142,6 +142,27 @@ export function reserveMemberSetDispatch(
   return funcIdx;
 }
 
+/**
+ * The struct candidates a member-set dispatcher writes as a plain slot: every
+ * MUTABLE struct field named `propName` (an immutable field is a hard validator
+ * error — the #2657 boxed-primitive-wrapper case). Shared by the generic
+ * dispatcher and its `__f64` twin (member-set-f64.ts), which must agree.
+ *
+ * (#2917) A standalone vec's `length` is excluded: it is Array-exotic
+ * (§10.4.2.4 ArraySetLength validates, grows the backing and drops the
+ * truncated tail), and a bare `struct.set` left `arr.length = 1; arr[1]`
+ * reading the old element. Vec receivers fall to the `__extern_set` terminal,
+ * whose vec-length-set.ts arm implements ArraySetLength.
+ */
+export function memberSetCandidates(
+  ctx: CodegenContext,
+  propName: string,
+): ReturnType<typeof findAlternateStructsForField> {
+  return findAlternateStructsForField(ctx, propName, -1).filter(
+    (c) => c.mutable && !(propName === "length" && ctx.standalone && isVecBaseSubtype(ctx, c.structTypeIdx)),
+  );
+}
+
 /** Build the ordinary-property `arguments.length` arm for standalone vecs. */
 function argumentsLengthSetArm(ctx: CodegenContext, propName: string): Instr[] {
   const typeIdx = ctx.standalone ? ctx.structMap.get("__arguments_vec") : undefined;
@@ -196,7 +217,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     // fields can take a `struct.set` (an immutable field is a hard validator
     // error — the #2657 boxed-primitive-wrapper case); immutable-field structs
     // fall through to the sidecar, which is correct for `(new String("x")).value`.
-    const candidates = findAlternateStructsForField(ctx, propName, -1).filter((c) => c.mutable);
+    const candidates = memberSetCandidates(ctx, propName);
 
     // Terminal else-arm: the host write (strict throws on a getter-only accessor;
     // non-strict is the plain sidecar update). Covers genuine host externrefs,

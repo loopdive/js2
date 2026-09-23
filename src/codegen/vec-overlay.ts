@@ -2512,6 +2512,22 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                         ] satisfies Instr[])),
                   ],
                 },
+                // (#2917) `v.length = n` on a vec whose companion has no
+                // "length" entry yet: the companion may hold element values
+                // (FLAG_COMPANION_VALUE) that the read prologue answers even at
+                // or past the length, so the length-field-only store below
+                // left `j[1]` readable after `j.length = 1`. Run the full
+                // ArraySetLength (§10.4.2.1) define, which also deletes the
+                // companion entries ≥ newLen. Once it has seeded "length",
+                // later writes take the entry arm above.
+                { op: "local.get", index: keyLocal },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: anyStrTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: lengthKeyGuard(keyLocal, overlayStore(HOST_HAS_VALUE)),
+                },
               ],
             },
             { op: "local.get", index: keyLocal },

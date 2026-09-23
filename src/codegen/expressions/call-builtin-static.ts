@@ -148,6 +148,7 @@ import { resolveStructName } from "./misc.js";
 import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
+import { isStandaloneArraySubclass } from "../array-subclass-receiver.js"; // (#2917)
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -3034,7 +3035,12 @@ export function compileBuiltinStaticCall(
     // host import and already passes) — gated on ctx.standalone so host
     // bytes stay identical.
     const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
-    const structName = isScriptGlobalThisReceiver ? undefined : resolveStructName(ctx, arg0TsType);
+    // (#2917) A standalone Array subclass's struct is vestigial — the instance
+    // is a vec — so the struct fold answered `undefined` for `length`/indices.
+    const structName =
+      isScriptGlobalThisReceiver || isStandaloneArraySubclass(ctx, arg0TsType.getSymbol()?.name)
+        ? undefined
+        : resolveStructName(ctx, arg0TsType);
     const literalKeyText = (e: ts.Expression): string | undefined => {
       if (ts.isStringLiteral(e)) return e.text;
       if (!ctx.standalone) return undefined;

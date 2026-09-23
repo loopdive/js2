@@ -21,7 +21,31 @@ loc-budget-allow:
   - src/codegen/property-access.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/class-bodies.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/vec-overlay.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/closed-method-dispatch.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/class-bodies.ts::compileSuperCall
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
 ---
+
+<!-- 2026-09-23 budget-allow rationale (Array-subclass methods lane): the
+shared receiver-spill mechanism lives in the NEW module
+src/codegen/array-subclass-receiver.ts; the listed files only gain the call
+site that routes into it (+2..+22 lines each): the super.method() arm in
+new-super.ts, the inherited-method arm in compileArrayMethodCall, the
+user-class `.prototype.m.call` guard in calls.ts, the ArraySetLength arm for
+"length" writes in the vec-overlay `__extern_set` prologue, the super(...)
+arity forward in compileSuperCall, the gOPD(subclass, "length") fold guard in
+compileBuiltinStaticCall and the own-override shadow test in the closed
+dispatcher's vec mutator arm. -->
+
 
 # #2917 — Standalone native `class X extends <Builtin>` super-construction
 
