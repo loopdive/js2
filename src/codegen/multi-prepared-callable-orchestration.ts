@@ -37,6 +37,8 @@ import type {
   MultiPreparedFunctionValueSupportReceipt,
   MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
+// Pulls the CodegenContext augmentation into entry-rooted programs (self-compile), not only `tsc -p`.
+import type {} from "./ir-program-callable-context.js";
 import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import {
   collectMultiPreparedStringLeafShapes,

@@ -1462,7 +1462,8 @@ export function collectGrowableObjectLiterals(
               node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
               ts.isPropertyAccessExpression(node.left)
             ) {
-              const info = propertyChainRoot(node.left);
+              const info = propertyChainRoot(node.left); // gc/host `V.__proto__ =` is the setter, not a field add (#2747 d)
+              const isHostProtoWrite = !ctx.standalone && node.left.name.text === "__proto__";
               if (info && info.root === varName) {
                 if (info.depth >= 2) {
                   // A deep write does not necessarily grow the ROOT object.
@@ -1489,7 +1490,7 @@ export function collectGrowableObjectLiterals(
                   if (!targetsDeclaredNestedField) {
                     grows = true;
                   }
-                } else if (info.depth === 1 && !shape.has(node.left.name.text)) {
+                } else if (info.depth === 1 && !shape.has(node.left.name.text) && !isHostProtoWrite) {
                   grows = true; // direct out-of-shape field add
                 }
               }
