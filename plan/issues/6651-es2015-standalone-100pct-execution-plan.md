@@ -1066,14 +1066,18 @@ sweep on the round-6 integrated branch:
 | --- | ---: | --- |
 | `language/expressions/tagged-template/` | 8 → **6** (slice T1, 2026-09-24: 2 closed on both lanes; the other 6 are named with their exact site in the T1 receipt at the end of this file) | **this thread (`claude/project-thread-yhj9pp`)** |
 | `language/module-code/namespace/internals/` | 12 | **this thread (`claude/project-thread-yhj9pp`)** |
-| `language/statements/with/` | 11 | **UNCLAIMED — reserved for a JS-host lane** |
-| `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **UNCLAIMED — reserved for a JS-host lane** |
+| `language/statements/with/` | 11 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **this thread (`claude/project-thread-yhj9pp`)** |
 
-**If you are an outside lane reading this: do not start tagged templates or
-module namespaces.** They are claimed here, and #6651 now carries a live claim
-on `origin/issue-assignments` for `ttraenkler/project-thread-yhj9pp`. `with` and
-`eval` are deliberately left open; take those, and add your own claim line here
-before you start so this table stays the lock.
+**If you are an outside lane reading this: do not start any of these four.**
+As of 2026-09-24 all four families are claimed by this thread, and #6651 carries
+a live claim on `origin/issue-assignments` for
+`ttraenkler/project-thread-yhj9pp`.
+
+`with` and `eval` were held open for a JS-host lane until 2026-09-24. No such
+lane was ever started in this project, so holding them open only stranded the
+two largest remaining families. They are now this thread's, and the split
+question is closed: there is one lane, and it takes all four.
 
 Why the table exists: on 2026-09-21 three cluster slices (A2, C3, E2) were
 implemented twice because two sessions worked this issue in parallel without
