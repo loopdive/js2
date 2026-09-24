@@ -8835,6 +8835,113 @@ defect, verified in the emitted WAT rather than inferred:
   `language/arguments-object/**` ∪ `language/rest-parameters/**` ∪ the
   `params-*` / `dflt-*` / `arguments-*` rows of
   `language/{expressions,statements}/function/`).
+
+## 2026-09-24 — lane H2 (`@@hasInstance` in `instanceof`): the slice was ALREADY LANDED; what I added instead
+
+**Dispatched task:** make `instanceof` consult `@@hasInstance` for
+`symbol-hasinstance-{invocation,to-boolean,get-err}.js`.
+
+**Finding, first thing: that work is on `main`.** Commit `0c05cb16`
+(2026-09-23, "cluster I, slice I2") added `__instanceof_operator` and is an
+ancestor of `origin/main`. Re-measured here rather than assumed, on base
+`3a891033`, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, QuickJS eval tier
+confirmed in the log banner:
+
+| sweep | rows | standalone | host |
+| --- | --- | --- | --- |
+| the three target rows | 3 | **3 pass** | 3 pass |
+| `language/expressions/instanceof/**` | 43 | 42 pass, 1 fail | 35 pass, 8 fail |
+
+The single standalone residual is `prototype-getter-with-object.js`
+(`'prototype' getter called once` — a getter-caching question, not
+`@@hasInstance`). The 8 host-lane failures are the builtin-constructor-alias
+family (`var OBJECT = Object`), also unrelated. **Nothing on the dispatched
+task remained to implement.**
+
+### What I shipped instead
+
+**1. The behavioural pin the landed slice never got.**
+`tests/issue-6651-instanceof-hasinstance.test.ts`, 24 cases. `issue-4484.test.ts`
+already covers the weaker half — it asserts `.not.toBe(3)`, "the operator did
+not throw", which stays green whether the handler runs or is ignored. The new
+file asserts what the three rows actually turn on: the handler RUNS, receives
+`this === C` and the left operand as its single argument, and its result is
+ToBoolean-ed.
+
+RED-on-base evidence (a pin green on base proves nothing): with the I2 route
+reconstructed away on today's tree — the primitive-fold decline forced off in
+`identifiers.ts`, `operatorIdx` forced to `undefined` in
+`native-dynamic-instanceof.ts`, and `native-ordinary-instanceof.ts` restored
+from `0c05cb16^` — **14 of 24 cases fail**. The 10 that stay green are the
+controls and the two answers that were already right (`null` handler ⇒
+TypeError; a handler returning `false`).
+
+**2. One real defect, found by writing the pin: the installation scan is blind
+to TypeScript type-only syntax.** `isSymbolHasInstanceKey` required a bare
+`Symbol.hasInstance` property access, so
+
+```ts
+F[Symbol.hasInstance as any] = fn;                     // and
+Object.defineProperty(F, Symbol.hasInstance as any, …) // and F[(Symbol.hasInstance)]
+```
+
+read as "this module installs no handler", the #4484 A step-1 arm fired, and
+`0 instanceof F` threw `TypeError: Right-hand side of 'instanceof' is not
+callable` — a wrong THROW out of a correct program, and for the getter spelling
+it swallowed the accessor's own abrupt completion. `as`/`satisfies`/`!`/`<T>`/
+parentheses erase at runtime and cannot change whether a handler exists. Fixed
+by unwrapping them in the key matcher, which also now accepts
+`Symbol["hasInstance"]`. Strictly a WIDENING: every consumer of the gate uses it
+to DECLINE a static shortcut, so a wider match can only route more sites to the
+spec operator.
+
+### Control sweep (the gate is module-scoped, so this is the load-bearing part)
+
+Neighbourhood = all 43 `language/expressions/instanceof/**` rows ∪ all 49 other
+corpus files mentioning `hasInstance` = **92 rows**, both lanes, before and
+after, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, **zero `error` rows in any
+of the four logs**:
+
+| lane | before | after | per-ROW diff |
+| --- | --- | --- | --- |
+| standalone | 71 pass / 13 fail / 3 compile_error / 5 skip | identical | **non-pass set IDENTICAL (16 rows)** |
+| host | 59 pass / 28 fail / 5 skip | identical | **non-pass set IDENTICAL (28 rows)** |
+
+**Row-neutral, and that is expected rather than disappointing:** test262 is
+JavaScript, so `as any` cannot occur there, and a corpus-wide grep finds **no**
+file using the `Symbol["hasInstance"]` element-access spelling either. The fix
+is for TypeScript sources the compiler is actually pointed at (its own dogfood
+corpus included), where the cast spelling is the ordinary way to index a
+non-symbol-keyed object. A negative row result with the numbers behind it.
+
+### Gates
+
+`check-loc-budget` (net +43 on the touched file), `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet` (getTypeAtLocation +0,
+`ctx.checker` +0), `check:dead-exports`, and
+`check-compiler-boundaries --mode inventory --base HEAD^1` — all exit 0, run
+bare. CI-base simulation with `LOC_GATE_BASE=$(git rev-parse origin/main)` also
+0 on both budget gates. No `scripts/*-baseline.json` touched; no growth
+allowance needed.
+
+### Left out, and why
+
+- **`prototype-getter-with-object.js`** (the one standalone `instanceof`
+  residual) — it is about how often the `prototype` getter is read, a different
+  mechanism from §13.10.2, and moving it was not this slice's remit.
+- **The 8 host-lane `instanceof` failures** (builtin-constructor alias,
+  `var OBJECT = Object`) — host lane, and `resolveBuiltinCtorAliasName` is
+  deliberately `noJsHost`-only.
+- **`isDefinitelyNotCallableValue` was NOT given the same unwrapping.** Doing so
+  would NARROW the gate (`null as any` would start taking the static throw), and
+  the conservative answer there is also the correct one — it routes to the
+  runtime operator, which reaches the same TypeError by the spec path.
+- **`function C(){}; new (C as any)()` answers `false` for `o instanceof C` in
+  the TS harness, with AND without a handler in the module.** Pre-existing, not
+  this route; recorded because it first looked like a module-scope regression
+  and would have been reported as one by a control that did not check its own
+  base.
+
 ## 2026-09-24 — cluster I slice T1: tagged templates (§13.2.8), the first SHARED front-end family
 
 Branch `issue-6651-t1-tagged-templates`, based on
