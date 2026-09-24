@@ -600,6 +600,7 @@
       }
       /* Mode switch: Host (JS) vs Standalone (pure Wasm) conformance numbers. */
       .mode-switch {
+        position: relative;
         display: inline-flex;
         gap: 0.25rem;
         padding: 0.25rem;
@@ -609,6 +610,8 @@
         margin-bottom: 1.5rem;
       }
       .mode-switch button {
+        position: relative;
+        z-index: 1;
         appearance: none;
         border: 1px solid transparent;
         background: transparent;
@@ -629,6 +632,38 @@
         background: var(--surface-hover);
         color: var(--text);
         border-color: var(--border);
+      }
+      /* Sliding pill: once placed by JS, it draws the active background and
+         glides between buttons instead of the highlight jumping. */
+      .mode-switch-pill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 0;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--surface-hover);
+        box-sizing: border-box;
+        pointer-events: none;
+        opacity: 0;
+        transition:
+          transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+          width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .mode-switch.has-pill .mode-switch-pill {
+        opacity: 1;
+      }
+      .mode-switch.has-pill button.active {
+        background: transparent;
+        border-color: transparent;
+      }
+      .mode-switch-pill.no-anim {
+        transition: none;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .mode-switch-pill {
+          transition: none;
+        }
       }
       .mode-switch .mode-sub {
         display: block;
@@ -2575,6 +2610,18 @@
           };
           if (standaloneView) {
             const modeSwitch = el("div", { className: "mode-switch" });
+            const pill = el("span", { className: "mode-switch-pill" });
+            pill.setAttribute("aria-hidden", "true");
+            modeSwitch.appendChild(pill);
+            const placePill = (animate) => {
+              const active = modeSwitch.querySelector("button.active");
+              if (!active || !active.offsetWidth) return;
+              pill.classList.toggle("no-anim", !animate);
+              pill.style.width = active.offsetWidth + "px";
+              pill.style.height = active.offsetHeight + "px";
+              pill.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
+              modeSwitch.classList.add("has-pill");
+            };
             const mkBtn = (mode, main, sub) => {
               const b = el(
                 "button",
@@ -2589,6 +2636,7 @@
                 window.t262ViewState?.write({ mode });
                 modeSwitch.querySelectorAll("button").forEach((x) => x.classList.remove("active"));
                 b.classList.add("active");
+                placePill(true);
                 renderActive();
               });
               return b;
@@ -2596,6 +2644,11 @@
             modeSwitch.appendChild(mkBtn("host", "Host mode", "JS runtime imports"));
             modeSwitch.appendChild(mkBtn("standalone", "Standalone", "pure Wasm, no JS host"));
             app.appendChild(modeSwitch);
+            placePill(false);
+            // Button widths change with web-font loading and viewport size.
+            if (typeof ResizeObserver === "function") {
+              new ResizeObserver(() => placePill(false)).observe(modeSwitch);
+            }
           }
           app.appendChild(conformanceHost);
           renderActive();
