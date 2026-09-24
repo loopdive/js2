@@ -220,14 +220,57 @@ export function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean 
   return found;
 }
 
-/** Is `key` the well-known symbol reference `Symbol.hasInstance`? */
+/**
+ * (#6651 H2) Strip the TYPE-ONLY wrappers a TypeScript source puts around an
+ * otherwise ordinary expression. `as`/`satisfies`/`!`/`<T>`/parentheses all
+ * erase to nothing at runtime, so a matcher that asks "is this expression
+ * `Symbol.hasInstance`?" must see through them.
+ *
+ * This is not hypothetical syntax. `obj[Symbol.hasInstance as any] = fn` and
+ * `Object.defineProperty(F, Symbol.hasInstance as any, …)` are the spellings a
+ * TS source needs whenever the receiver's index signature is not symbol-keyed —
+ * and MEASURED on this base, both made `0 instanceof F` throw
+ * `TypeError: Right-hand side of 'instanceof' is not callable`, because the
+ * unwrapped matcher below said "no handler here" and the #4484 A step-1 arm
+ * fired. A wrong THROW, not a wrong value.
+ */
+function unwrapTypeOnly(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isSatisfiesExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = cur.expression;
+      continue;
+    }
+    return cur;
+  }
+}
+
+/**
+ * Is `key` the well-known symbol reference `Symbol.hasInstance`? Accepts both
+ * member spellings (`Symbol.hasInstance` / `Symbol["hasInstance"]`) and looks
+ * through type-only wrappers — see `unwrapTypeOnly`.
+ */
 function isSymbolHasInstanceKey(key: ts.Expression): boolean {
-  return (
-    ts.isPropertyAccessExpression(key) &&
-    ts.isIdentifier(key.expression) &&
-    key.expression.text === "Symbol" &&
-    key.name.text === "hasInstance"
-  );
+  const k = unwrapTypeOnly(key);
+  if (ts.isPropertyAccessExpression(k)) {
+    return ts.isIdentifier(k.expression) && k.expression.text === "Symbol" && k.name.text === "hasInstance";
+  }
+  if (ts.isElementAccessExpression(k)) {
+    const arg = unwrapTypeOnly(k.argumentExpression);
+    return (
+      ts.isIdentifier(k.expression) &&
+      k.expression.text === "Symbol" &&
+      ts.isStringLiteralLike(arg) &&
+      arg.text === "hasInstance"
+    );
+  }
+  return false;
 }
 
 /**
