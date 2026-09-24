@@ -19,7 +19,7 @@ import {
   isProvablyNonNull,
   typeErrorThrowInstrs,
 } from "./property-access.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { registerLateReadStringConstant } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 
@@ -80,7 +80,7 @@ function emitStructuralExternrefFieldGet(
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return undefined;
   if (!receiverAlreadyNullChecked) emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr);
-  addStringConstantGlobal(ctx, propName);
+  registerLateReadStringConstant(ctx, propName);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
   if (ctx.runtimeEvalGlobalFunctionBindings === true) {

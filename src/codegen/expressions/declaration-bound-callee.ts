@@ -26,6 +26,9 @@ export function withDeclarationBoundCallee<R>(ctx: CodegenContext, expr: TsNs.Ca
   const current = ctx.funcMap.get(callee.text);
   if (current === undefined) return compile();
   const declaration = ctx.oracle.aliasedValueDeclarationOf(callee);
+  if (declaration !== undefined && isForeignFunctionShadow(ctx, callee.text, declaration, current)) {
+    return withWithheldForeignCallee(ctx, callee.text, current, compile);
+  }
   if (
     declaration === undefined ||
     !ts.isFunctionDeclaration(declaration) ||
@@ -49,6 +52,46 @@ export function withDeclarationBoundCallee<R>(ctx: CodegenContext, expr: TsNs.Ca
     // by the same amount; carry that shift onto the restored binding.
     const shifted = ctx.funcMap.get(name);
     ctx.funcMap.set(name, current + (shifted === undefined ? 0 : shifted - own));
+    if (inline !== undefined) ctx.inlinableFunctions.set(name, inline);
+  }
+}
+
+// (#6669) The inverse collision: the callee resolves to a module-level
+// VARIABLE (`const oe = Object.getPrototypeOf` in styled-components) while
+// `funcMap[name]` holds ANOTHER module's top-level `function oe` (stylis). No
+// declaration of this name is a function in the calling module, so #4133's
+// per-source re-binding never touches it, and the call compiled as a direct
+// `call $oe` to stylis's 4-arg (lifted 11-param) body — a wasm-opt
+// "call param types must match" error in styled-components' hoist-statics
+// helper. Proven foreign only when the funcMap handle belongs to a source
+// FunctionDeclaration in a DIFFERENT file and the variable has module storage
+// holding its real value; an Identifier initializer may be a genuine alias of
+// that function, so it keeps the historical direct call.
+function isForeignFunctionShadow(
+  ctx: CodegenContext,
+  name: string,
+  declaration: TsNs.Declaration,
+  current: number,
+): boolean {
+  if (!ts.isVariableDeclaration(declaration)) return false;
+  if (declaration.initializer !== undefined && ts.isIdentifier(declaration.initializer)) return false;
+  const statement = declaration.parent?.parent;
+  if (statement === undefined || !ts.isVariableStatement(statement) || !ts.isSourceFile(statement.parent)) return false;
+  if (!ctx.moduleGlobals.has(name)) return false;
+  const owner = ctx.sourceFunctionDeclarationByHandle.get(current);
+  return owner !== undefined && owner.getSourceFile() !== statement.parent;
+}
+
+function withWithheldForeignCallee<R>(ctx: CodegenContext, name: string, current: number, compile: () => R): R {
+  // Source-function handles are stable-regime ids (#1916 S3) that no late
+  // import shifts, so restoring the exact value is sound.
+  const inline = ctx.inlinableFunctions.get(name);
+  ctx.inlinableFunctions.delete(name);
+  ctx.funcMap.delete(name);
+  try {
+    return compile();
+  } finally {
+    ctx.funcMap.set(name, current);
     if (inline !== undefined) ctx.inlinableFunctions.set(name, inline);
   }
 }
