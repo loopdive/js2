@@ -50,7 +50,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { FLAG_ACCESSOR, FLAG_TOMBSTONE } from "./object-runtime.js"; // (#4157)
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4157)
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { addStringConstantGlobal, registerLateReadStringConstant } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import {
   addUnionImportsViaRegistry,
@@ -422,7 +422,7 @@ export function reserveMemberGetDispatch(
     [{ kind: "externref" }],
   );
   if (getIdx === undefined) return undefined;
-  addStringConstantGlobal(ctx, propName);
+  registerLateReadStringConstant(ctx, propName);
   addUnionImportsViaRegistry(ctx);
   // (#3032 W6) A `value` dispatcher may grow a sentinel-canonicalizing arm for
   // the native-generator IteratorResult structs at fill time; under a JS host

@@ -232,6 +232,9 @@ export class ProgramAbiSourceCallableRegistry {
   private readonly observations = new Map<IrUnitId, SourceCallableObservation[]>();
   private readonly supports = new Map<IrBindingId, SourceSupportCallableObservation[]>();
   private readonly functionValues = new Map<IrUnitId, SourceFunctionValueObservation[]>();
+  // (#1058) Resolved owner units. Every function-value read asks, and each
+  // ask scanned every unit: quadratic in TypeScript's checker.
+  private readonly unitByFunction = new Map<WasmFunction, IrUnitId>();
   private planned = false;
 
   constructor(
@@ -390,6 +393,10 @@ export class ProgramAbiSourceCallableRegistry {
     if (previous?.funcIdx !== funcIdx || previous.displayName !== func.name) {
       observations.push(Object.freeze({ unitId, displayName: func.name, funcIdx, func }));
       this.observations.set(unitId, observations);
+      // Only answers for the function this observation names can change.
+      this.unitByFunction.delete(func);
+      const current = definedFuncAt(this.ctx, funcIdx);
+      if (current) this.unitByFunction.delete(current);
     }
     return unitId;
   }
@@ -434,6 +441,8 @@ export class ProgramAbiSourceCallableRegistry {
   }
 
   private unitForFunction(func: WasmFunction): IrUnitId | undefined {
+    const known = this.unitByFunction.get(func);
+    if (known !== undefined) return known;
     let match: IrUnitId | undefined;
     for (const [unitId, observations] of this.observations) {
       if (
@@ -451,6 +460,7 @@ export class ProgramAbiSourceCallableRegistry {
       }
       match = unitId;
     }
+    if (match !== undefined) this.unitByFunction.set(func, match);
     return match;
   }
 

@@ -133,6 +133,21 @@ function findRuntimeTopLevelDeclaration(sourceFile: ts.SourceFile, name: string)
 }
 
 /**
+ * (#6669) `funcMap` is keyed by bare name across the linked graph, so another
+ * module's top-level `function oe` is not this module's binding: a same-named
+ * variable here (`const oe = Object.getPrototypeOf`) still needs its own cell.
+ */
+function functionIsFromAnotherSource(
+  ctx: CodegenContext,
+  fnIdx: number,
+  declaration: ts.VariableDeclaration | ts.BindingElement | undefined,
+): boolean {
+  if (declaration === undefined) return false;
+  const owner = ctx.sourceFunctionDeclarationByHandle.get(fnIdx);
+  return owner !== undefined && owner.getSourceFile() !== declaration.getSourceFile();
+}
+
+/**
  * Register one module-level global and expose its exact allocator object to
  * the structural ABI sidecar when the source declaration is authoritative.
  */
@@ -158,7 +173,14 @@ export function registerModuleGlobal(
   // the value into that carrier. Other defined functions retain the original
   // collision guard.
   const shadowsConversionHook = declaration !== undefined && (name === "toString" || name === "valueOf");
-  if (fnIdx !== undefined && fnIdx >= ctx.numImportFuncs && !shadowsConversionHook) return;
+  if (
+    fnIdx !== undefined &&
+    fnIdx >= ctx.numImportFuncs &&
+    !shadowsConversionHook &&
+    !functionIsFromAnotherSource(ctx, fnIdx, declaration)
+  ) {
+    return;
+  }
   const existingGlobalIdx = ctx.moduleGlobals.get(name);
   if (existingGlobalIdx !== undefined) {
     if (declaration) {
