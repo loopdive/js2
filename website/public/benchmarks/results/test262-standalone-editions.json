@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10890,
-    "fail": 722,
+    "pass": 10904,
+    "fail": 708,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 531,
-        "fail": 76,
+        "pass": 544,
+        "fail": 63,
         "ce": 2,
         "skip": 0,
         "total": 609,
-        "pct": 87
+        "pct": 89
       },
       {
         "name": "arrow-function",
@@ -210,12 +210,12 @@
       },
       {
         "name": "Symbol.match",
-        "pass": 63,
-        "fail": 13,
+        "pass": 70,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 83
+        "pct": 92
       },
       {
         "name": "Symbol.replace",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3862,
-    "fail": 512,
+    "pass": 3863,
+    "fail": 511,
     "ce": 449,
     "skip": 0,
     "total": 4823,
@@ -1188,12 +1188,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 14,
-        "fail": 22,
+        "pass": 15,
+        "fail": 21,
         "ce": 4,
         "skip": 0,
         "total": 40,
-        "pct": 35
+        "pct": 38
       },
       {
         "name": "Promise.prototype.finally",
@@ -1224,12 +1224,12 @@
       },
       {
         "name": "regexp-dotall",
-        "pass": 10,
-        "fail": 2,
+        "pass": 11,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 83
+        "pct": 92
       },
       {
         "name": "Proxy",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4191,
-    "fail": 1208,
+    "pass": 4192,
+    "fail": 1207,
     "ce": 393,
     "skip": 0,
     "total": 5792,
@@ -2402,12 +2402,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 8,
-        "fail": 35,
+        "pass": 9,
+        "fail": 34,
         "ce": 5,
         "skip": 0,
         "total": 48,
-        "pct": 17
+        "pct": 19
       },
       {
         "name": "SharedArrayBuffer",
@@ -2438,12 +2438,12 @@
       },
       {
         "name": "regexp-match-indices",
-        "pass": 24,
-        "fail": 3,
+        "pass": 25,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 89
+        "pct": 93
       },
       {
         "name": "DataView",

@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-24",
   "threshold": 1500,
-  "totalCeiling": 929402,
+  "totalCeiling": 929774,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -22,7 +22,7 @@
     "src/codegen/dataview-native.ts": 9610,
     "src/codegen/declarations.ts": 6712,
     "src/codegen/declarations/import-collector.ts": 2305,
-    "src/codegen/declarations/object-shape-widening.ts": 2705,
+    "src/codegen/declarations/object-shape-widening.ts": 2723,
     "src/codegen/declarations/param-return-inference.ts": 1836,
     "src/codegen/destructuring-params.ts": 2921,
     "src/codegen/dyn-read.ts": 1736,
@@ -68,7 +68,7 @@
     "src/codegen/property-access-dispatch.ts": 5432,
     "src/codegen/property-access.ts": 6882,
     "src/codegen/proto-index-store.ts": 1871,
-    "src/codegen/regexp-standalone.ts": 6496,
+    "src/codegen/regexp-standalone.ts": 6505,
     "src/codegen/registry/imports.ts": 2703,
     "src/codegen/stack-balance.ts": 3358,
     "src/codegen/statements/control-flow.ts": 2046,

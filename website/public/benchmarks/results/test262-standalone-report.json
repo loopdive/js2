@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-24T04:38:09.469Z",
-  "baseline_generated_at": "2026-09-24T04:38:09.469Z",
-  "baseline_sha": "dd5f651e44dba57b07159060bfecd148affac9e7",
+  "timestamp": "2026-09-24T05:37:03.403Z",
+  "baseline_generated_at": "2026-09-24T05:37:03.404Z",
+  "baseline_sha": "fbe658c44abf95dc4ca858e048edff9beb8cb9de",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,36 +11,36 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 36385,
-    "fail": 9066,
-    "compile_error": 2752,
-    "compile_timeout": 11,
+    "pass": 36401,
+    "fail": 9050,
+    "compile_error": 2751,
+    "compile_timeout": 12,
     "skip": 18,
     "compilable": 45451,
-    "host_free_pass": 36385,
+    "host_free_pass": 36401,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 35353,
-        "fail": 9031,
-        "compile_error": 2733,
-        "compile_timeout": 11,
+        "pass": 35367,
+        "fail": 9017,
+        "compile_error": 2732,
+        "compile_timeout": 12,
         "skip": 18,
         "compilable": 44384,
-        "host_free_pass": 35353,
+        "host_free_pass": 35367,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
       "annex_b": {
         "total": 1086,
-        "pass": 1032,
-        "fail": 35,
+        "pass": 1034,
+        "fail": 33,
         "compile_error": 19,
         "compile_timeout": 0,
         "skip": 0,
         "compilable": 1067,
-        "host_free_pass": 1032,
+        "host_free_pass": 1034,
         "stale": 0,
         "label": "Annex B (legacy web compat)"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 36385,
-        "fail": 9066,
-        "compile_error": 2752,
-        "compile_timeout": 11,
+        "pass": 36401,
+        "fail": 9050,
+        "compile_error": 2751,
+        "compile_timeout": 12,
         "skip": 18,
         "compilable": 45451,
-        "host_free_pass": 36385,
+        "host_free_pass": 36401,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 36620,
-        "fail": 9082,
-        "compile_error": 2908,
-        "compile_timeout": 11,
+        "pass": 36636,
+        "fail": 9066,
+        "compile_error": 2907,
+        "compile_timeout": 12,
         "skip": 114,
         "compilable": 45702,
-        "host_free_pass": 36620,
+        "host_free_pass": 36636,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,47 +84,47 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 36385,
-    "fail": 9066,
-    "compile_error": 2752,
-    "compile_timeout": 11,
+    "pass": 36401,
+    "fail": 9050,
+    "compile_error": 2751,
+    "compile_timeout": 12,
     "skip": 18,
     "compilable": 45451,
-    "host_free_pass": 36385,
+    "host_free_pass": 36401,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 36620,
-    "fail": 9082,
-    "compile_error": 2908,
-    "compile_timeout": 11,
+    "pass": 36636,
+    "fail": 9066,
+    "compile_error": 2907,
+    "compile_timeout": 12,
     "skip": 114,
     "compilable": 45702,
-    "host_free_pass": 36620,
+    "host_free_pass": 36636,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 34099,
-    "fail": 8932,
-    "compile_error": 2661,
-    "compile_timeout": 11,
+    "pass": 34115,
+    "fail": 8916,
+    "compile_error": 2660,
+    "compile_timeout": 12,
     "skip": 18,
     "compilable": 43031,
-    "host_free_pass": 34099,
+    "host_free_pass": 34115,
     "stale": 0
   },
   "scope_summaries": {
     "annex_b": {
       "total": 1086,
-      "pass": 1032,
-      "fail": 35,
+      "pass": 1034,
+      "fail": 33,
       "compile_error": 19,
       "compile_timeout": 0,
       "skip": 0,
       "compilable": 1067,
-      "host_free_pass": 1032,
+      "host_free_pass": 1034,
       "stale": 0
     },
     "proposal": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 35353,
-      "fail": 9031,
-      "compile_error": 2733,
-      "compile_timeout": 11,
+      "pass": 35367,
+      "fail": 9017,
+      "compile_error": 2732,
+      "compile_timeout": 12,
       "skip": 18,
       "compilable": 44384,
-      "host_free_pass": 35353,
+      "host_free_pass": 35367,
       "stale": 0
     }
   },
@@ -154,13 +154,13 @@
     {
       "name": "annexB/built-ins",
       "path": "annexB/built-ins",
-      "pass": 205,
-      "fail": 20,
+      "pass": 207,
+      "fail": 18,
       "compile_error": 16,
       "compile_timeout": 0,
       "skip": 0,
       "total": 241,
-      "host_free_pass": 205
+      "host_free_pass": 207
     },
     {
       "name": "annexB/language",
@@ -671,13 +671,13 @@
     {
       "name": "built-ins/RegExp",
       "path": "built-ins/RegExp",
-      "pass": 1786,
-      "fail": 76,
+      "pass": 1800,
+      "fail": 62,
       "compile_error": 17,
       "compile_timeout": 0,
       "skip": 0,
       "total": 1879,
-      "host_free_pass": 1786
+      "host_free_pass": 1800
     },
     {
       "name": "built-ins/RegExpStringIteratorPrototype",
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1000,
       "fail": 435,
-      "compile_error": 11,
-      "compile_timeout": 0,
+      "compile_error": 10,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1000
@@ -1198,19 +1198,19 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4420,
+    "assertion_fail": 4405,
     "host_import_leak": 1708,
     "illegal_cast": 234,
     "missing_builtin": 2,
     "negative_test_fail": 3,
     "null_deref": 13,
     "oob": 7,
-    "other": 3158,
+    "other": 3157,
     "promise_error": 44,
     "range_error": 15,
     "runtime_error": 141,
     "syntax_error": 14,
-    "type_error": 2208,
+    "type_error": 2207,
     "wasm_compile": 22
   },
   "hard_errors": {},
@@ -1220,8 +1220,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 12001,
-    "classified": 12001,
+    "total_non_pass_non_skip": 11985,
+    "classified": 11985,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1291,16 +1291,16 @@
           "ES2026": 4433
         },
         "sample_files": [
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
-          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "other:ReferenceError: Temporal is not defined"
         ]
@@ -1522,25 +1522,25 @@
           "#1539"
         ],
         "label": "Standalone RegExp string protocol, global/sticky lastIndex, split, replace, and matchAll",
-        "count": 84,
+        "count": 83,
         "statuses": {
           "pass": 0,
-          "fail": 67,
+          "fail": 66,
           "compile_error": 17,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 84,
+          "total": 83,
           "host_free_pass": 0
         },
         "error_categories": {
           "type_error": 26,
           "other": 18,
-          "assertion_fail": 39,
+          "assertion_fail": 38,
           "illegal_cast": 1
         },
         "by_edition": {
           "ES2020": 55,
-          "ES2015": 12,
+          "ES2015": 11,
           "ES2021": 4,
           "ES2018": 2,
           "ES2025": 3,
@@ -1571,29 +1571,29 @@
           "#682"
         ],
         "label": "Standalone RegExp native-engine/runtime gaps: source, constructors, prototype access, result shape",
-        "count": 60,
+        "count": 46,
         "statuses": {
           "pass": 0,
-          "fail": 46,
+          "fail": 32,
           "compile_error": 14,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 60,
+          "total": 46,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 44,
+          "assertion_fail": 30,
           "other": 12,
           "type_error": 2,
           "runtime_error": 1,
           "wasm_compile": 1
         },
         "by_edition": {
-          "ES2018": 9,
-          "ES2015": 21,
+          "ES2018": 8,
+          "ES2015": 9,
           "Unclassified (untagged)": 5,
           "ES2027": 20,
-          "ES2022": 2,
+          "ES2022": 1,
           "ES2024": 1,
           "ES2025": 2
         },
@@ -1601,15 +1601,15 @@
           "test/built-ins/RegExp/named-groups/groups-object-undefined.js",
           "test/annexB/built-ins/RegExp/prototype/compile/pattern-string-invalid.js",
           "test/language/statementList/eval-class-regexp-literal-flags.js",
-          "test/built-ins/RegExp/from-regexp-like-get-flags-err.js",
-          "test/language/statementList/eval-block-regexp-literal-flags.js"
+          "test/language/statementList/eval-block-regexp-literal-flags.js",
+          "test/annexB/built-ins/RegExp/prototype/compile/this-cross-realm-instance.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«null», «[object Array]») to be true",
           "assertion_fail:Test262Error: invalid pattern: ? Expected a SyntaxError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
-          "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: Expected SameValue(«\"b\"», «\"ab\"») to be true"
         ]
       },
       {
@@ -1622,22 +1622,22 @@
           "#1914"
         ],
         "label": "Residual standalone RegExp failures not matched by the narrower RegExp sub-buckets",
-        "count": 45,
+        "count": 44,
         "statuses": {
           "pass": 0,
-          "fail": 30,
+          "fail": 29,
           "compile_error": 15,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 45,
+          "total": 44,
           "host_free_pass": 0
         },
         "error_categories": {
-          "type_error": 17,
+          "type_error": 16,
           "other": 28
         },
         "by_edition": {
-          "ES2015": 12,
+          "ES2015": 11,
           "ES2027": 1,
           "ES2025": 13,
           "ES2022": 14,
@@ -1975,8 +1975,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1425,
-          "compile_error": 209,
-          "compile_timeout": 11,
+          "compile_error": 208,
+          "compile_timeout": 12,
           "skip": 0,
           "total": 1645,
           "host_free_pass": 0
@@ -1987,7 +1987,7 @@
           "illegal_cast": 175,
           "type_error": 239,
           "host_import_leak": 179,
-          "other": 34,
+          "other": 33,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2011,14 +2011,14 @@
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js",
           "test/built-ins/TypedArray/prototype/at/index-non-numeric-argument-tointeger-invalid.js",
-          "test/built-ins/TypedArray/prototype/with/negative-index-resize-to-out-of-bounds.js"
+          "test/built-ins/TypedArray/prototype/set/this-backed-by-resizable-buffer.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
           "null_deref:dereferencing a null pointer [in __closure_139() ← testWithAllTypedArrayConstructors ← __fn_tramp_testWithAllTypedArrayConstructors_cached ← __call_fn_method_4]",
           "assertion_fail:Test262Error: value assigned to receiver[#] Expected SameValue(«[object Object]», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
-          "assertion_fail:Test262Error: Expected a RangeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)"
+          "illegal_cast:illegal cast [in __module_init_chunk_0() ← __module_init]"
         ]
       },
       {
@@ -2640,15 +2640,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
+          "test/built-ins/Atomics/or/bigint/bad-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
         ]
       },
       {
@@ -2911,7 +2911,7 @@
           "test/language/identifiers/start-unicode-17.0.0-class.js",
           "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-16.0.0-escaped.js",
-          "test/language/identifiers/part-unicode-17.0.0.js"
+          "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Invalid character.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immediately follow a numeric literal.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immed",
