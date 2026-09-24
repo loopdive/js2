@@ -1502,17 +1502,12 @@ describe("#680 native generator expression continuations", () => {
         export function test(): number { return g().next().done ? 1 : 0; }
       `,
     ],
-    [
-      "destructuring assignment",
-      `
-        function* g(): Generator<undefined, void, number> {
-          let value: number | undefined;
-          const source: { value?: number } = {};
-          ({ value = yield } = source);
-        }
-        export function test(): number { return g().next().done ? 1 : 0; }
-      `,
-    ],
+    // (#6651 A4) "destructuring assignment" — `({ value = yield } = source)` —
+    // used to be listed here. It is now lowered natively by
+    // `generator-yield-linearize.ts` (a pattern default is a conditional
+    // suspension between the Get and the PutValue), so it no longer fails
+    // closed; the positive pin is `tests/issue-6651-a4-yield-in-pattern.test.ts`
+    // ("a typed local receives a shorthand default across the resume").
   ])("fails closed for %s", async (_name, source) => {
     await expectStandaloneRefusal(source);
   });

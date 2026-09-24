@@ -408,9 +408,12 @@ export function compileTailDispatch(
                     ts.isParenthesizedExpression(retExpr) ||
                     ts.isAsExpression(retExpr) ||
                     ts.isTypeAssertionExpression(retExpr) ||
-                    ts.isNonNullExpression(retExpr)
+                    ts.isNonNullExpression(retExpr) ||
+                    // (#2917) `return sideEffect, { … }` — minified code (the
+                    // Temporal polyfill's nudge IIFE) returns the RIGHT operand.
+                    (ts.isBinaryExpression(retExpr) && retExpr.operatorToken.kind === ts.SyntaxKind.CommaToken)
                   ) {
-                    retExpr = retExpr.expression;
+                    retExpr = ts.isBinaryExpression(retExpr) ? retExpr.right : retExpr.expression;
                   }
                   if (
                     ts.isObjectLiteralExpression(retExpr) &&
