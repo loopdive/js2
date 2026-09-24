@@ -119,6 +119,7 @@ import {
   type StandaloneWrapperConstructorName,
 } from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
+import { tryEmitStandaloneConsoleValue } from "../standalone-console-object.js";
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -1795,6 +1796,8 @@ function compileIdentifierCore(
   {
     const unavailable = standaloneUnavailableGlobalReference(ctx, fctx, id);
     if (unavailable !== undefined) return emitStandaloneUnavailableGlobalThrow(ctx, fctx, unavailable);
+    const consoleValue = tryEmitStandaloneConsoleValue(ctx, fctx, id); // (#6671)
+    if (consoleValue) return consoleValue;
   }
   const shadowedAmbient = !unresolvedInModuleGoal && ambientGlobalReadIsUserFunctionShadowed(ctx, id, name);
   const globalInfo = shadowedAmbient ? undefined : ctx.declaredGlobals.get(name);
