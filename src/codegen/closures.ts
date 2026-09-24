@@ -1835,7 +1835,7 @@ export function closureProvablyAfterLetDecl(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   name: string,
 ): boolean {
-  const sym = ctx.checker.getSymbolsInScope(arrow, ts.SymbolFlags.Variable).find((s) => s.name === name);
+  const sym = ctx.checker.resolveName(name, arrow, ts.SymbolFlags.Variable, false);
   if (!sym) return false;
   const decl = sym.valueDeclaration;
   if (!decl) return false;

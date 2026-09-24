@@ -1755,6 +1755,27 @@ during compile.
 parameter per nested function, field reads and writes in place of per-call
 capture lists), gated on capture count so small closures keep today's ABI.
 
+**Profile first (2026-09-24).** A CPU profile of the 200 × 200 case showed the
+time was not in emitted code but in three analyses that rescanned the whole
+enclosing body for every nested function or capture:
+
+- `analyzeTdzAccessByPos` called `getSymbolsInScope` (copies every symbol in
+  scope) per capture per call site; now `resolveName` (one scope-chain walk).
+  `closureProvablyAfterLetDecl` had the same shape.
+- `findScopedVariableDeclaration` walked the enclosing scope per capture; now
+  one cached name → declaration map per scope (`scopeVariableDeclarations`).
+- `collectOwnerBindingsWrittenAfterDeclaration` rescanned every later statement
+  per nested function; now each later statement's writes are computed once.
+
+| k × n | before | after |
+| --- | --- | --- |
+| 200 × 200 | 12.7 s | 3.9 s |
+| 400 × 400 | 64.5 s | 13.2 s |
+
+Output is byte-identical (same module sizes). The full checker still runs out
+of its 8 GB heap after 56 minutes in `checker.ts` bodies, so the remaining cost
+is elsewhere; the next profile targets the real compile.
+
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
