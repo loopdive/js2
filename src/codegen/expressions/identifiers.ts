@@ -775,8 +775,8 @@ function analyzeTdzAccessByPos(ctx: CodegenContext, varName: string, callNode: t
   const sourceFile = callNode.getSourceFile();
   if (!sourceFile) return "check";
 
-  // Find the declaration by looking up the local symbol in scope
-  const sym = ctx.checker.getSymbolsInScope(callNode, ts.SymbolFlags.Variable).find((s) => s.name === varName);
+  // (#1058) resolveName walks the scope chain once, not every symbol in scope.
+  const sym = ctx.checker.resolveName(varName, callNode, ts.SymbolFlags.Variable, false);
   if (!sym) return "check";
   const decl = sym.valueDeclaration;
   if (!decl) return "check";

@@ -1,10 +1,11 @@
 ---
 id: 6660
 title: "npm-compat: standalone perf lanes inherit the JS-host package-entry compile failure, hiding their real blockers (axios #3587, lodash/prettier TS8017)"
-status: ready
-sprint: Backlog
+status: done
+sprint: current
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
+completed: 2026-09-24
 priority: medium
 horizon: s
 feasibility: easy
@@ -12,7 +13,7 @@ reasoning_effort: medium
 task_type: bug
 area: tooling
 goal: standalone
-related: [3587, 1472, 1474, 2182, 2631, 1768, 2863]
+related: [3587, 1472, 1474, 2182, 2631, 1768, 2863, 6661]
 ---
 
 # Standalone perf lanes show the host lane's compile error, not their own
@@ -93,3 +94,74 @@ blocks, that lane is measured in a bounded child process
 `timeoutMs`) and reports its own error; TS8017/TS8010 timer-shim noise is no
 longer chosen as a blocker anywhere. Still open here: the compile-time-static
 `standalone` lane (and `jsHost`, by design) still inherit the host block.
+
+## Implementation Plan
+
+Lead decision (2026-09-24): the standalone lanes run their OWN compile and
+report their OWN error, never the host lane's — the lanes are independent by
+architecture. The JS-host lanes keep their behaviour. Scripts only; no `src/`
+change.
+
+- `scripts/lib/npm-compat-perf.mjs`: `STANDALONE_PERF_LANES` (CLI lane name →
+  `perf.lanes` key) and `resolveStandalonePerfLanes({ hostBlocked, selected,
+  inProcess, inChild })`. The host diagnostic is not an input: a selected
+  standalone lane is always measured — in process, or through the bounded
+  child when the host gate blocked; an unselected lane is `skipped`.
+- `scripts/generate-npm-compat-report.mjs`:
+  - `standaloneDynamicLaneInChild` → `standaloneLaneInChild(name, lane,
+    budgetMs)`, serving both `standalone-static` and `standalone-dynamic`
+    (`--only <pkg> --perf-only --lane <lane> --partial-output`, budget = the
+    package's harness `timeoutMs`, default 120 s).
+  - `perfNpmCompatPackage`: `blocked?.standalone ?? runStatic()` is gone; both
+    standalone lanes come from `resolveStandalonePerfLanes`. `jsHost` still
+    shows the host-gate block (`packageEntryBlockReason`), `jsHostNative` still
+    runs its own compile — both byte-for-byte as before.
+  - Native (oracle) import failure no longer returns early for every lane: the
+    JS-host lanes still report `native package import failed: …` (unchanged),
+    but a standalone lane compiles first and, if it compiles, reports
+    `status: "oracle-unavailable"` with its binary size — so a harness catalog
+    gap (#6661's jest `Cannot find module 'jest-config'`) can no longer mask a
+    standalone compile status. The dashboard renders unknown statuses as "could
+    not be measured".
+- Regression test `tests/issue-6660-npm-compat-standalone-lane-independence.test.ts`.
+
+## Resolution
+
+Measured locally 2026-09-24 on upstream/main d772cc772d + this change.
+"Before" = the committed `benchmarks/results/npm-compat.json` (CI refresh of
+2026-09-14; the refresh has not promoted since) and the pre-change code path
+(`blocked?.standalone`), which copies the host diagnostic by construction.
+
+End-to-end (full mode, host gate actually blocked): `--only axios --no-write`
+(691 s): `jsHost` = `JS-host package-entry compile failed: async shape not
+supported … (#3587)` (unchanged), `jsHostNative` = the #3587 refusal from its
+own compile (unchanged), and **both** standalone lanes were measured in the
+bounded child and show their own `__get_builtin` refusal.
+
+Per-lane (`--perf-only --lane standalone-static|standalone-dynamic`; static /
+dynamic gave identical first diagnostics):
+
+| package | standalone lanes before | standalone lanes after (verbatim) |
+| --- | --- | --- |
+| axios | `async shape not supported: … (#3587)` (host) | `Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.` |
+| lodash | `Signature declarations can only be used in TypeScript files.` (host noise) | `Codegen error: String.prototype.split(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.` |
+| prettier | `Signature declarations can only be used in TypeScript files.` (host noise) | same `String.prototype.split(...)` #1474 refusal as lodash |
+| jest | `native package import failed: Cannot find module 'jest-config'` (catalog gap) | runtime-error, phase `module-init`: `uncaught Wasm-GC exception (non-stringifiable payload): raised by compiler-generated code (the module has no source throw, so no __exn_render_* exports; see #6666)` |
+
+Notes:
+
+- lodash/prettier's `replace` refusal recorded in #6661 is gone on this main
+  (GitHub PR 6054, branch `issue-replace-regexp-standalone`, landed standalone
+  RegExp `replace`); the next #1474 site is `split`.
+- jest now compiles in both standalone lanes (the #6661 hoist fallback fixes the
+  native import locally); its module-init throw is #6666 (`require is not
+  defined`). Should the native import ever fail again in CI, the standalone
+  lanes will read `oracle-unavailable` with their compiled size rather than
+  the catalog gap.
+- Cost: a host-blocked package now runs two bounded standalone children
+  instead of one (axios ≈ 2 × 80–120 s here under load); each is capped by the
+  package's harness budget.
+- Controls: no `src/` change, so standalone test262 and the JS-host dogfood
+  suites are unaffected by construction (not re-run). The regression test
+  fails on the parent (3 of 4; `resolveStandalonePerfLanes` missing, generator
+  still has `blocked?.standalone`) and passes with the fix (4 of 4).

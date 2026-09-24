@@ -25,6 +25,8 @@ loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/stack-balance.ts
   - src/codegen/expressions/operator-assignment.ts
+  # 2026-09-23: checker slice — index.ts and property-access.ts each import
+  # the fnctor-name helper so NodeLinks resolves one way for the whole compile.
   - src/codegen/index.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/statements/nested-declarations.ts
@@ -1692,6 +1694,87 @@ oracles, because the duplicate path's related-information list is empty.
 
 **Next:** extend the binder workload beyond the two fixtures, then move on to
 the checker.
+
+## Checker slice: first measurements (2026-09-23)
+
+New oracle `dogfood:typescript-checker-source`
+(`tests/dogfood/fixtures/typescript-checker-workload.ts`). It builds a minimal
+`TypeCheckerHost` with `noLib: true` and packs `diagnostics.length * 65536 +
+firstCode`. Native TypeScript (tsx) gives:
+
+| Fixture | Source | Expected |
+| --- | --- | --- |
+| `assign-mismatch.ts` | `const x: number = "str";` | 67,858 (one TS2322) |
+| `assign-ok.ts` | `const x: number = 1;` | 0 |
+| `two-mismatches.ts` | `const a: string = 1; const b: boolean = "s";` | 133,394 (two, first TS2322) |
+
+The graph is 43 source files and 357 module-init statements.
+
+**First run (main):** 1,231 s and 5,040 MiB peak RSS, with two compile errors:
+
+1. `createTypeChecker`: nested `resolveImportSymbolType` "changed its full
+   physical ABI after reservation". Its `links: NodeLinks` parameter was
+   reserved as the `NodeLinks` struct and compiled as externref.
+   - Cause: `interface NodeLinks` (types.ts) shares its name with checker.ts's
+     `function NodeLinks`, which is constructed by `new (NodeLinks as any)()`.
+     `resolveWasmType` treats a type named like a fnctor as a fnctor instance,
+     but it read the name from `funcConstructorMap`. That map only learns a
+     name when codegen reaches the `new` site, so the answer flipped mid-compile.
+   - Fix: `fnctor-instance-names.ts` also consults the escape gate's
+     up-front `new`-site names. `resolveStructName` declines the interface
+     struct for such a name, so member access goes dynamic, the way the value
+     is typed. Regression test: `issue-1058-checker-shapes`.
+2. A stack-balance error in `SyntacticTypeNodeBuilderResolver_shouldRemoveDeclaration`
+   referencing local 412 of 403. It appears to follow from error 1: an
+   inlined 382-parameter nested function whose body was left half-compiled.
+   Rerun needed to confirm.
+
+**Second run (with the fix):** the compile passed the old error but was still
+inside checker.ts bodies at the 3,600 s limit, with an 8,193 MiB peak. The
+first run was fast only because error 1 aborted `createTypeChecker` early.
+
+**Cost driver: captures passed as parameters.** Every nested function in
+`createTypeChecker` is lifted with each captured outer variable as its own
+parameter (`resolveImportSymbolType` has 381 capture parameters plus 4 of its
+own). Every sibling call passes all of them again. A synthetic probe
+(`k` outer locals, `n` nested functions each touching four locals and calling
+the next):
+
+| k × n | compile | module |
+| --- | --- | --- |
+| 50 × 50 | 1.4 s | 90 KB |
+| 100 × 100 | 2.5 s | 355 KB |
+| 200 × 200 | 12.7 s | 1.44 MB |
+| 400 × 400 | 64.5 s | 5.37 MB (923 MiB RSS) |
+
+Size grows with k × n. `createTypeChecker` is roughly 380 × 2,000, with many
+call sites per function. 200 × 200 also overflows the default Node stack
+during compile.
+
+**Next:** lift large capture sets through one shared environment struct (one
+parameter per nested function, field reads and writes in place of per-call
+capture lists), gated on capture count so small closures keep today's ABI.
+
+**Profile first (2026-09-24).** A CPU profile of the 200 × 200 case showed the
+time was not in emitted code but in three analyses that rescanned the whole
+enclosing body for every nested function or capture:
+
+- `analyzeTdzAccessByPos` called `getSymbolsInScope` (copies every symbol in
+  scope) per capture per call site; now `resolveName` (one scope-chain walk).
+  `closureProvablyAfterLetDecl` had the same shape.
+- `findScopedVariableDeclaration` walked the enclosing scope per capture; now
+  one cached name → declaration map per scope (`scopeVariableDeclarations`).
+- `collectOwnerBindingsWrittenAfterDeclaration` rescanned every later statement
+  per nested function; now each later statement's writes are computed once.
+
+| k × n | before | after |
+| --- | --- | --- |
+| 200 × 200 | 12.7 s | 3.9 s |
+| 400 × 400 | 64.5 s | 13.2 s |
+
+Output is byte-identical (same module sizes). The full checker still runs out
+of its 8 GB heap after 56 minutes in `checker.ts` bodies, so the remaining cost
+is elsewhere; the next profile targets the real compile.
 
 ## Acceptance criteria
 
