@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1767,
+      "passCount": 1769,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 1032,
+      "passCount": 1037,
       "totalCount": 1106
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 614,
+      "passCount": 617,
       "totalCount": 1048
     },
     {
