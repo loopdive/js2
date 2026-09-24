@@ -21,7 +21,9 @@ import { resolveStructName } from "./property-access.js";
 import { emitDynGet } from "./dyn-read.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureLateImport, emitUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitAnnexBUnboundReferenceError } from "./js-errors.js";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 import { ensureWithHasBindingNative } from "./with-has-binding-native.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { compileExpression, compileStatement, coerceType, valTypesMatch } from "./shared.js";
@@ -409,7 +411,7 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
   // anywhere in scope (`env[Symbol.unscopables] = …`, `o[k] = v`) can add an own
   // property the static struct view does not model — including a runtime
   // @@unscopables blocklist. The struct scope cannot see it, so defer to Tier-2.
-  if (targetReceivesDynamicElementWrite(ident)) return null;
+  if (targetReceivesDynamicOwnPropertyInstall(ident)) return null;
 
   // W1's IR-owned target plan is also the static-projection disqualifier: a
   // bare `delete name` needs runtime HasBinding/DeleteBinding and one canonical
@@ -533,6 +535,14 @@ export function emitDynamicWithGet(
   fctx: FunctionContext,
   scope: DynamicWithScope,
   name: string,
+  // (#6651 W1) The reference SITE, used only to decide §9.1.1.2.6's `S` flag.
+  // A `with` statement is a SyntaxError in strict code, so the strict case is
+  // always a nested strict function/arrow whose body still resolves names
+  // through this object environment record — strictness is therefore a property
+  // of the reference, not of the `with` itself. `undefined` ⇒ treated as sloppy
+  // (the pre-#6651 behaviour), never as strict. Placed BEFORE the callback so
+  // the god-file call sites keep their trailing-callback formatting.
+  siteNode: ts.Node | undefined,
   emitFallback: () => ValType | null,
   // (#2663 Slice 3) Optional PRE-CAPTURED HasBinding i32 local (from
   // `emitCaptureWithHasBinding`). When supplied the gate branches on it instead
@@ -545,12 +555,55 @@ export function emitDynamicWithGet(
   // HasBinding gate: __extern_has(recv, "name") -> i32 (own+proto, value-indep).
   addStringConstantGlobal(ctx, name);
   const hasIdx = hasLocalIdx !== undefined ? -1 : withHasBindingFuncIdx(ctx, fctx);
+  const stillExistsIdx = ensureLateImport(
+    ctx,
+    "__extern_has",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
   flushLateImportShifts(ctx, fctx);
 
-  // THEN arm: Get(recv, name) -> externref (via the #2580 substrate emitDynGet).
+  // THEN arm: §9.1.1.2.6 GetBindingValue.
+  //
+  //   2. Let value be ? HasProperty(bindingObject, N).
+  //   3. If value is false: if S is false return undefined, else throw a
+  //      ReferenceError.
+  //   4. Return ? Get(bindingObject, N).
+  //
+  // Step 2 is a SECOND, value-independent presence check, distinct from the
+  // HasBinding gate above — and it is observable: the @@unscopables getter run
+  // by HasBinding step 5 can delete the property before the value is read
+  // (`*-binding-deleted-in-get-unscopables*.js`), and the proxy-env rows assert
+  // the resulting `has:`/`get:` trap SEQUENCE. It was missing entirely; the
+  // host lane only appeared to have it because `__extern_get` used to probe
+  // with `in` first (that probe is gone as of #6651 W1 — see runtime.ts).
   const savedThen = pushBody(fctx);
+  const savedGet = pushBody(fctx);
   fctx.body.push({ op: "local.get", index: scope.localIdx });
   emitDynGet(ctx, fctx, name);
+  const getArm = fctx.body;
+  popBody(fctx, savedGet);
+  const savedGone = pushBody(fctx);
+  if (siteNode !== undefined && isStrictContext(siteNode, ctx.inferModuleStrictArguments)) {
+    emitAnnexBUnboundReferenceError(ctx, fctx, name); // throws; leaves the type contract
+  } else {
+    emitUndefined(ctx, fctx);
+  }
+  const goneArm = fctx.body;
+  popBody(fctx, savedGone);
+  if (stillExistsIdx === undefined) {
+    fctx.body.push(...getArm);
+  } else {
+    fctx.body.push({ op: "local.get", index: scope.localIdx });
+    for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
+    fctx.body.push({ op: "call", funcIdx: stillExistsIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } as ValType },
+      then: getArm,
+      else: goneArm,
+    });
+  }
   const thenArm = fctx.body;
   popBody(fctx, savedThen);
 
@@ -665,7 +718,7 @@ export function emitDynamicWithCascadeRead(
     // A missing capture means the gate could not be registered — treat the name
     // as unbound on this object and cascade outward (same policy as the write).
     if (hasLocal === undefined) return outer();
-    return emitDynamicWithGet(ctx, fctx, res.scope, id.text, outer, hasLocal);
+    return emitDynamicWithGet(ctx, fctx, res.scope, id.text, id, outer, hasLocal);
   }
   if (res?.kind === "static") {
     const fieldType = emitWithBindingGet(fctx, res.binding);
@@ -738,6 +791,9 @@ export function emitDynamicWithSet(
   fctx: FunctionContext,
   scope: DynamicWithScope,
   name: string,
+  // (#6651 W1) The reference site — decides §9.1.1.2.5's `S` flag. See the
+  // matching parameter on `emitDynamicWithGet`.
+  siteNode: ts.Node | undefined,
   rhsLocalIdx: number,
   hasLocalIdx: number,
   emitFallbackWrite: () => void,
@@ -748,6 +804,12 @@ export function emitDynamicWithSet(
     "__extern_set",
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
+  );
+  const stillExistsIdx = ensureLateImport(
+    ctx,
+    "__extern_has",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
   );
   flushLateImportShifts(ctx, fctx);
 
@@ -763,8 +825,35 @@ export function emitDynamicWithSet(
     return;
   }
 
-  // THEN arm: __extern_set(recv, "name", rhsVal) → writes the object binding.
+  // THEN arm: §9.1.1.2.5 SetMutableBinding.
+  //
+  //   2. Let stillExists be ? HasProperty(bindingObject, N).
+  //   3. If stillExists is false and S is true, throw a ReferenceError.
+  //   4. Perform ? Set(bindingObject, N, V, S).
+  //
+  // Step 2 runs UNCONDITIONALLY — it is a distinct observable operation from
+  // the HasBinding gate captured in `hasLocalIdx`, and the proxy-env rows count
+  // it (`set-mutable-binding-idref-with-proxy-env.js` expects `has:p` between
+  // the @@unscopables `get:` and the `set:p`). Step 4 also runs unconditionally:
+  // a SLOPPY write to a binding that vanished between HasBinding and here still
+  // performs the Set, it just no longer throws.
   const savedThen = pushBody(fctx);
+  if (stillExistsIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: scope.localIdx });
+    for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
+    fctx.body.push({ op: "call", funcIdx: stillExistsIdx });
+    if (siteNode !== undefined && isStrictContext(siteNode, ctx.inferModuleStrictArguments)) {
+      fctx.body.push({ op: "i32.eqz" });
+      const savedGone = pushBody(fctx);
+      emitAnnexBUnboundReferenceError(ctx, fctx, name);
+      fctx.body.push({ op: "drop" }); // unreachable after the throw; keeps the arm void
+      const goneArm = fctx.body;
+      popBody(fctx, savedGone);
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: goneArm });
+    } else {
+      fctx.body.push({ op: "drop" });
+    }
+  }
   fctx.body.push({ op: "local.get", index: scope.localIdx });
   for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
   fctx.body.push({ op: "local.get", index: rhsLocalIdx });
@@ -987,8 +1076,18 @@ function staticPropertyName(name: ts.PropertyName): string | undefined {
  * model (notably a runtime @@unscopables blocklist), so the `with` target must
  * stay on the Tier-2 dynamic path. Element-access READS and string/numeric
  * literal-keyed writes (which map to known fields) do not count.
+ *
+ * (#6651 W1) The MOP spelling of the same install counts too:
+ * `Object.defineProperty(env, Symbol.unscopables, {get(){…}})` adds exactly the
+ * property this gate exists to notice, and it was invisible here because it is
+ * a CALL, not an element write. `language/statements/with/unscopables-get-err.js`
+ * and `unscopables-prop-get-err.js` use precisely that spelling, took the static
+ * Tier-1 path, and so never ran HasBinding at all — the throwing getter the row
+ * asserts on was never invoked. `Object.defineProperties` / `Reflect.defineProperty`
+ * are the same hazard. A false positive here costs only the zero-overhead static
+ * projection (Tier-2 is the semantic backstop), never correctness.
  */
-function targetReceivesDynamicElementWrite(ident: ts.Identifier): boolean {
+function targetReceivesDynamicOwnPropertyInstall(ident: ts.Identifier): boolean {
   const name = ident.text;
   // Walk up to the nearest enclosing function-like body / source file.
   let scope: ts.Node = ident;
@@ -1014,8 +1113,29 @@ function targetReceivesDynamicElementWrite(ident: ts.Identifier): boolean {
     if (ts.isDeleteExpression(p)) return true;
     return false;
   };
+  // (#6651 W1) `Object.defineProperty(<ident>, <dynamic key>, …)` /
+  // `Object.defineProperties(<ident>, …)` / `Reflect.defineProperty(…)`.
+  const isDefinePropertyInstall = (node: ts.Node): boolean => {
+    if (!ts.isCallExpression(node) || node.arguments.length < 2) return false;
+    const callee = node.expression;
+    if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+    const ns = callee.expression.text;
+    const fn = callee.name.text;
+    if (ns !== "Object" && ns !== "Reflect") return false;
+    if (fn !== "defineProperty" && fn !== "defineProperties") return false;
+    let recv: ts.Expression = node.arguments[0]!;
+    while (ts.isParenthesizedExpression(recv)) recv = recv.expression;
+    if (!ts.isIdentifier(recv) || recv.text !== name) return false;
+    // `defineProperties` takes a whole descriptor map: any of its keys may be
+    // computed, so it always disqualifies the static projection.
+    return fn === "defineProperties" || isDynamicKey(node.arguments[1]);
+  };
   const walk = (node: ts.Node): void => {
     if (found) return;
+    if (isDefinePropertyInstall(node)) {
+      found = true;
+      return;
+    }
     if (ts.isElementAccessExpression(node)) {
       let obj: ts.Expression = node.expression;
       while (ts.isParenthesizedExpression(obj)) obj = obj.expression;

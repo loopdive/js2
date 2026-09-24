@@ -12949,7 +12949,16 @@ assert._isSameValue = isSameValue;
               // any module struct had a `length` field, flipping __upstreamSame
               // into its array arm. `_isWasmStruct` classifies null-proto host
               // objects correctly (extensibility + opaqueness probe).
-              if (!_isWasmStruct(obj) && key in Object(obj)) {
+              //
+              // (#6651 W1) A tracked user Proxy takes the direct read
+              // UNCONDITIONALLY. §10.5.8 [[Get]] invokes ONLY the `get` trap, so
+              // the `in` presence probe performs a `has` trap operation the spec
+              // never performs — and the with/@@unscopables rows
+              // (`language/statements/with/*-with-proxy-env.js`) assert the exact
+              // trap SEQUENCE, not just the resulting value. It is also strictly
+              // FEWER traps when the key is absent: `in` (has) → `_safeGet` (get)
+              // → the null-proto probe (getPrototypeOf) collapses to one `get`.
+              if (!_isWasmStruct(obj) && (_isUserProxy(obj) || key in Object(obj))) {
                 const v = obj[key];
                 // (#3097) Exit-boundary un-marshal: a canonical host
                 // ArrayBuffer (minted at the construct bridge for a compiled
@@ -13652,7 +13661,16 @@ assert._isSameValue = isSameValue;
           let unsc: any;
           try {
             unsc = getProp(obj, Symbol.unscopables);
-          } catch {
+          } catch (e) {
+            // (#6651 W1) §9.1.1.2.1 step 5's `?` PROPAGATES. A throwing
+            // @@unscopables getter must reach the user's try/catch —
+            // `language/statements/with/unscopables-get-err.js` asserts exactly
+            // that. The blanket swallow here existed for the OPAQUE WasmGC
+            // receiver, whose host read raises "WebAssembly objects are opaque"
+            // with no sidecar entry; that is a substrate limitation, not a
+            // user-observable abrupt completion, so it alone still degrades to
+            // "no blocklist".
+            if (!_isWasmStruct(obj)) throw e;
             unsc = undefined;
           }
           // (4) If Type(unscopables) is Object: blocked = ToBoolean(Get(unsc, N)).
@@ -13660,7 +13678,11 @@ assert._isSameValue = isSameValue;
             let blocked: any;
             try {
               blocked = getProp(unsc, key);
-            } catch {
+            } catch (e) {
+              // (#6651 W1) Step 5.a's `?` propagates too — same opaque-struct
+              // carve-out as the @@unscopables read above
+              // (`unscopables-prop-get-err.js`).
+              if (!_isWasmStruct(unsc)) throw e;
               blocked = undefined;
             }
             if (toBool(blocked)) return 0; // @@unscopables hides the binding.
@@ -19091,8 +19113,10 @@ assert._isSameValue = isSameValue;
           }
           try {
             // (#4616) Same gate as the primary __extern_get: see the comment
-            // there — a null-proto HOST object must take the direct read.
-            if (!_isWasmStruct(obj) && key in Object(obj)) {
+            // there — a null-proto HOST object must take the direct read, and
+            // (#6651 W1) a tracked user Proxy takes it unconditionally so a
+            // spec `Get` fires only the `get` trap.
+            if (!_isWasmStruct(obj) && (_isUserProxy(obj) || key in Object(obj))) {
               const v = obj[key];
               // (#3097) Exit-boundary un-marshal: a canonical host ArrayBuffer
               // (minted at the construct bridge for a compiled buffer struct)
