@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10918,
-    "fail": 694,
+    "pass": 10922,
+    "fail": 690,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 342,
-        "fail": 47,
+        "pass": 344,
+        "fail": 45,
         "ce": 21,
         "skip": 0,
         "total": 410,
-        "pct": 83
+        "pct": 84
       },
       {
         "name": "Reflect",
@@ -2856,12 +2856,12 @@
   },
   {
     "edition": "ES2024",
-    "pass": 380,
-    "fail": 67,
+    "pass": 381,
+    "fail": 66,
     "ce": 109,
     "skip": 0,
     "total": 556,
-    "pct": 68,
+    "pct": 69,
     "features": [
       {
         "name": "TypedArray",
@@ -2874,12 +2874,12 @@
       },
       {
         "name": "regexp-v-flag",
-        "pass": 184,
-        "fail": 3,
+        "pass": 185,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 187,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
@@ -2919,12 +2919,12 @@
       },
       {
         "name": "regexp-unicode-property-escapes",
-        "pass": 94,
-        "fail": 2,
+        "pass": 95,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 96,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "SharedArrayBuffer",
@@ -3263,8 +3263,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 570,
-    "fail": 325,
+    "pass": 571,
+    "fail": 324,
     "ce": 106,
     "skip": 0,
     "total": 1001,
@@ -3344,12 +3344,12 @@
       },
       {
         "name": "regexp-duplicate-named-groups",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 15,
         "skip": 0,
         "total": 16,
-        "pct": 0
+        "pct": 6
       },
       {
         "name": "Symbol",
@@ -3571,57 +3571,57 @@
   },
   {
     "edition": "ES2026",
-    "pass": 277,
-    "fail": 4087,
-    "ce": 557,
+    "pass": 4600,
+    "fail": 207,
+    "ce": 114,
     "skip": 0,
     "total": 4921,
-    "pct": 6,
+    "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 170,
-        "fail": 3987,
-        "ce": 454,
+        "pass": 4493,
+        "fail": 107,
+        "ce": 11,
         "skip": 0,
         "total": 4611,
-        "pct": 4
+        "pct": 97
       },
       {
         "name": "Symbol",
-        "pass": 75,
-        "fail": 296,
-        "ce": 23,
+        "pass": 386,
+        "fail": 6,
+        "ce": 2,
         "skip": 0,
         "total": 394,
-        "pct": 19
+        "pct": 98
       },
       {
         "name": "BigInt",
-        "pass": 48,
-        "fail": 116,
-        "ce": 15,
+        "pass": 170,
+        "fail": 7,
+        "ce": 2,
         "skip": 0,
         "total": 179,
-        "pct": 27
+        "pct": 95
       },
       {
         "name": "arrow-function",
-        "pass": 8,
-        "fail": 146,
-        "ce": 24,
+        "pass": 169,
+        "fail": 9,
+        "ce": 0,
         "skip": 0,
         "total": 178,
-        "pct": 4
+        "pct": 95
       },
       {
         "name": "Reflect.construct",
-        "pass": 6,
-        "fail": 133,
+        "pass": 129,
+        "fail": 10,
         "ce": 0,
         "skip": 0,
         "total": 139,
-        "pct": 4
+        "pct": 93
       },
       {
         "name": "Array.fromAsync",
@@ -3697,12 +3697,12 @@
       },
       {
         "name": "Intl.Era-monthcode",
-        "pass": 0,
-        "fail": 9,
-        "ce": 1,
+        "pass": 10,
+        "fail": 0,
+        "ce": 0,
         "skip": 0,
         "total": 10,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "Math.sumPrecise",
@@ -3733,12 +3733,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 0,
-        "fail": 4,
+        "pass": 2,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 0
+        "pct": 50
       },
       {
         "name": "Map",
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4478,
+    "pass": 4479,
     "fail": 890,
-    "ce": 77,
+    "ce": 76,
     "skip": 0,
     "total": 5445,
     "pct": 82
