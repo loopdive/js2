@@ -195,6 +195,21 @@ loc-budget-allow:
   # are the comments recording that ordering and the two effects it forced
   # (`__argc` is consumed by the vec body; a body `let arguments` is a separate
   # binding) — both of which were live bugs found by measurement, not theory.
+  # 2026-09-24 — cluster B1 slice N1 (module namespace: live bindings, null
+  # prototype, non-extensible). `src/codegen/module-namespace-value.ts`
+  # 769 → 1008 (+239). The growth is in ONE emitter and cannot move out of it:
+  # the three new export kinds (`live`, `default`, and the accessor install)
+  # all have to be woven into `emitNamespaceObject`'s single
+  # reserve-imports → flush → emit → re-resolve-global-indices pass, which is
+  # the one place that knows which late imports were minted and therefore which
+  # baked indices have shifted. A leaf module would have to be handed that
+  # bookkeeping to hand it straight back. Roughly half the added lines are the
+  # spec citations (§10.4.6.1/.4/.7, §16.2.1.6.4) and the measured
+  # before-states the arms reverse, kept at the arm rather than in a commit
+  # message. Measured: +11 rows on each lane across
+  # `language/module-code/namespace/internals/**`, 0 regressions across
+  # `language/module-code/**` (597 rows, both lanes).
+  - src/codegen/module-namespace-value.ts
   # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
   # not as its TARGET's static shape). `property-access.ts` +13 — three lines
   # at the dot-property arm in `compilePropertyAccess`, three at its computed
@@ -9588,3 +9603,148 @@ inside three host-import bodies that cannot leave `resolveImport`'s closure.
 Logs: `.tmp/6651w/{with,ctl,prx}-{host,sa}-{base,after}.log` and the derived
 `.rows` set files; manifests `.tmp/6651w/{with-all,control,proxy,targets}.txt`;
 probes `.tmp/6651w/probe{,2,3,4,5}.mts`.
+### 2026-09-24 — Cluster B1 (`module-code/namespace/internals`), slice N1: the family was never a MOP slice *or* a runner slice — it was one decline in the namespace emitter
+
+- **Branch** `worktree-agent-a65b89f20ad3c1336` (pushed as
+  `issue-6651-n1-module-namespace-mop`), base `3a891033`, an ancestor of
+  `origin/main` at measure time. **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a65b89f20ad3c1336`. A base copy of
+  the one edited source file was taken at the FIRST edit
+  (`.tmp/n1/base/module-namespace-value.ts`); every before-state below was
+  measured by this lane with that copy installed, not inherited.
+
+#### Correction 1 — **Blocker A (the runner) does not exist.** The stale note cost the previous lane its whole diagnosis
+
+The 2026-09-22 entry above says the rows fail because `wrapTest` refuses to
+hoist a self-import, and proposes rewriting the specifier. That describes a
+path these rows **do not take**. `runTest262File` — the authoritative runner,
+and the one `scripts/run-test262-paths.mts` drives — does not call `wrapTest`
+at all: it assembles the ORIGINAL upstream harness
+(`runOriginalHarnessVariant`), and that function has carried a self-import arm
+for some time (`tests/test262-runner.ts` ~L4385): `hasSelfModuleImport` from
+`scripts/test262-fixture-graph.mjs` recognises the shape and compiles the row
+through `compileMulti` under its own pinned virtual key `./<test262-path>`.
+**No runner change was needed or made.** The `wrapTest` note is still true of
+the legacy wrapped path; it is simply not the path that measures this family.
+
+#### Correction 2 — **Blocker B is real but is not "the self-import case is not modelled"**
+
+Probed on the source-clean tree, through the real runner, with the QuickJS
+provider live (`.tmp/n1/` probes, since deleted):
+
+| probe module | `ns` |
+| --- | --- |
+| `export var local1` only | `typeof ns` = **`"undefined"`** |
+| `export var local1` + `export function f` | `ns === null` **true**, yet `typeof ns.f` = `"function"` |
+
+The second row is the tell: member access on the namespace alias is folded
+statically, while the namespace **value** declines. The decline is one rule in
+`src/codegen/module-namespace-value.ts::namespaceFunctionExports` — "mutable
+values require live-binding getters. Decline the entire object rather than
+publishing a semantically-wrong snapshot." Every test in this family exports
+`var`/`let` (they exist to test live bindings), so every one of them hit it.
+The self-import edge itself was already handled.
+
+#### What landed (one file, `src/codegen/module-namespace-value.ts`, +239)
+
+1. **Live bindings.** A top-level `export var`/`let` is no longer a decline: it
+   installs a synthesized zero-argument getter over the module global through
+   `__defineProperty_accessor` with `{enumerable: true, configurable: false}`
+   and **no setter**. The missing `[[Set]]` half is not incidental — it is what
+   makes §10.4.6.9's write refusal and §10.4.6.10's delete refusal fall out of
+   the ordinary descriptor.
+2. **`export default <expression>`** reads the snapshot cell
+   `ctx.defaultExpressionGlobals` already mints for a cross-module import of
+   that default. One `export default null` alone had been declining the whole
+   object.
+3. **§10.4.6.1 / §10.4.6.4**: the object is built with `__object_create(null)`
+   and sealed with `__object_preventExtensions` after the last slot is
+   installed.
+4. **§10.4.6.7 key order** is code-unit (`<`), not `localeCompare`. Only the
+   module-namespace sort changed; the TypeScript-namespace projection's sort at
+   the other call site is untouched.
+
+#### Measured — per-ROW set diffs, both lanes, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, QuickJS banner confirmed in every log
+
+| lane | target dir `namespace/internals` (36 rows) | control `language/module-code/**` (599 rows) |
+| --- | --- | --- |
+| host (default) | 9 → **20** pass (27 → 16 fail) | 369 → **380** pass, **0** rows pass→fail |
+| standalone | 10 → **21** pass (26 → 15 fail) | 374 → **385** pass, **0** rows pass→fail |
+
+The control's fixed set is exactly the target dir's fixed set on both lanes —
+nothing outside `namespace/internals` moved in either direction. Logs:
+`.tmp/n1/{internals,mc}-{host,sa}-{before,after}*.log`.
+
+**Two host rows are excluded from the control comparison, identically in the
+before and the after run, and they are named rather than silently dropped:**
+`top-level-await/{dynamic-import-of-waiting-module,while-dynamic-evaluation}.js`.
+The first kills the node process outright (`ERR_MODULE_NOT_FOUND` for
+`src/runtime/<name>_FIXTURE.js`, the `__dynamic_import` mapping), the second
+does not terminate inside 420 s. Both are pre-existing and target-independent;
+the standalone lane has zero `error` rows in both runs. So the control is
+**597 measured rows** on host and **599** on standalone.
+
+Regression test: `tests/issue-6651-module-namespace-live-bindings.test.ts`.
+**RED on `3a891033`** — and not by one assertion: `ns` is `undefined`, so
+`test()` throws a bare `WebAssembly.Exception` before returning a score. All
+six bits (object identity, live binding, default export, null prototype,
+non-extensibility, code-unit key order) are unreachable on base.
+
+Gates, all run bare: `check-loc-budget`, `check-func-budget` (both also with
+`LOC_GATE_BASE=origin/main`), `check-coercion-sites`, `check:oracle-ratchet`
+(+0 raw-checker growth), `check:dead-exports`,
+`check-compiler-boundaries --mode inventory --base HEAD^1`
+(`inventoryValid: true`; no new file under `src/`), `typescript7 --noEmit`,
+`biome lint --diagnostic-level=error`, and `scripts/equivalence-gate.mjs`
+(22 failing / 1,720 passing / 22 known — no new). The LOC grant is restated in
+this file's own `loc-budget-allow`, dated, rather than relying on the
+pre-existing grant in #1058's file.
+
+#### Residuals — 16 host / 15 standalone rows, with sites
+
+Every one of them now fails on a REAL §10.4.6 behaviour rather than on `ns`:
+
+1. **TDZ `ReferenceError` (7 rows)** — `{delete-exported,enumerate-binding,
+   get-own-property-str-found,get-str-found}-uninit`,
+   `object-{hasOwnProperty,keys,propertyIsEnumerable}-binding-uninit`,
+   `super-access-to-tdz-binding`. `ctx.tdzGlobals` + `emitTdzCheckAtGlobal(…,
+   throwJsError = true)` (`src/codegen/statements/tdz.ts`) are exactly the
+   right primitives for the GETTER — but note **most of these rows are NOT
+   reachable that way**: `Object.keys` / `hasOwnProperty` /
+   `propertyIsEnumerable` go through `[[GetOwnProperty]]`, which for a
+   namespace calls `GetBindingValue` and throws, while an ordinary accessor
+   property is inspected without ever invoking its getter. Getter-side TDZ buys
+   perhaps 2 of the 7; the rest need a real exotic object.
+2. **Data-vs-accessor descriptor (1 row)** —
+   `get-own-property-str-found-init` wants
+   `{value, writable: true, enumerable: true, configurable: false}`. This is
+   the one place the accessor lowering is observably wrong rather than merely
+   incomplete, and it is the honest price of not building an exotic object.
+3. **`Reflect.defineProperty` must RETURN false, not throw (1 row)** —
+   `define-own-property` now reports
+   `TypeError: Cannot define property, object is not extensible`. That is a
+   RUNTIME defect in the non-extensible arm of `__reflect_defineProperty`
+   (`src/runtime.ts`), not a namespace one: `Reflect.*` never throws for a
+   refusal. Worth fixing on its own; it will also affect other rows.
+4. **`ns instanceof Object` still true on standalone (1 row)** —
+   `get-prototype-of`. `__object_create(null)` is honoured enough for
+   `ns.__proto__` to answer `undefined` (that row flipped) but not for the
+   native `instanceof`. Site: the native `__object_create` / prototype-chain
+   walk in the standalone object runtime.
+5. **Nested namespaces (2 rows)** — `get-nested-namespace-{dflt-skip,props-nrml}`
+   read `ns` as *not defined*: these import OTHER modules (`_FIXTURE`s), a
+   different edge from the self-import one, and the namespace of a *fixture*
+   module is not materialised.
+6. **Indirect self re-export (`export { x as y } from './self.js'`)** —
+   `own-property-keys-binding-types` counts 7 keys where 10 are required; the
+   missing keys are the indirect ones. `namespaceFunctionExports` resolves the
+   alias to a declaration it then rejects.
+7. **Standalone-only `illegal cast` (1 row)** — `own-property-keys-sort` passes
+   on host and traps on standalone at `__module_init_chunk_3` with 16 exports
+   including `λ`/`μ`/`π`. A genuine standalone miscompile that this slice
+   *uncovered* (the row could not reach codegen of that shape before).
+
+Not attempted, deliberately: the §10.4.6 exotic object itself. Items 1, 2 and
+most of 3 collapse into it, and it is a larger design decision (a namespace
+brand in the object runtime on both lanes) than a conformance slice should make
+unilaterally.
