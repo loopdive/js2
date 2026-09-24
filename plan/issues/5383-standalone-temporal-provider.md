@@ -12887,8 +12887,9 @@ Four-family: 463 → 465/480 (ZDT 118, Duration 110); add/subtract 138 → 139/1
 → **3,776 / 4,603 pass (82.0%)**. CI's standalone lane does NOT link the
 polyfill (`standalone_temporal` input, off by default in
 `test262-sharded.yml`), so the dashboard shows ~170/4,603 ("Temporal is not
-defined") and none of the fixes below move it. Turning it on is the owner's
-decision, pending.
+defined") and none of the fixes below move it. ~~Turning it on is the owner's
+decision, pending.~~ **Update: switched on — see "CI links Temporal
+(2026-09-24)" below.**
 
 **Landed / in this PR (per-lane measurements, no full re-run yet):**
 
@@ -12933,3 +12934,28 @@ externref vecs.
 version — clear it (or use a private `JS2WASM_TEMPORAL_CACHE`) and re-run
 `build-quickjs-eval-provider.mjs` after any compiler change, or rows run
 stale.
+
+### CI links Temporal (2026-09-24, PR #6091)
+
+The owner switched it on. `standalone_temporal` now defaults to `true`, and the
+build step runs on push/merge_group/schedule (they carry no `inputs`); a
+`workflow_dispatch` run can still uncheck it to measure the unlinked lane. The
+step stays `continue-on-error`: a failed provider build falls back to unlinked
+rows rather than blocking the queue.
+
+**First CI measurement** (merge-group run 35988098705, `merge shard reports`
+job): standalone lane **+4,325 passes, 0 wasm-change regressions**, standalone
+total 36,659 → 40,984. The only change in that PR was linking, so the gain is
+the Temporal rows: roughly 4,500 / 4,603 now pass on CI (≈170 before + 4,325;
+derived, not a per-directory count). The exact per-row list lives in that
+run's `test262-merged-report` artifact.
+
+**Next session, in order:**
+1. Count Temporal rows directly from the next promoted standalone baseline
+   (`test262-standalone-current.jsonl` in `loopdive/js2wasm-baselines`) and
+   diff against the local 2026-09-23 run to find the ~100 remaining rows.
+2. The two approved items above (typed `Temporal` binding, direct
+   constructor calls into the provider).
+3. Watch for per-row 30 s kills on the largest linked rows (#5407 halved them
+   but did not reach the ≤1.3× bar); a `compile_timeout` spike in the standalone
+   guard is the signal.
