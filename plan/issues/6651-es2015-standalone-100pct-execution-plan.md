@@ -552,6 +552,30 @@ loc-budget-allow:
   # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
   # gate it relaxes — the candidate gate is the single source of truth three
   # emit sites and the host-import scan consult, so it cannot move).
+  - src/codegen/property-access.ts
+# 2026-09-23 — cluster H slice H5 (the SYMBOL brand on a wrapper's
+# `[[PrimitiveValue]]` slot). `proto-index-store.ts` +22 inside
+# `fillBrandOffBody`'s wrapper-classification arm: one `SYMBOL_OFF` constant and
+# a six-instruction `ref.test $Symbol → ret(SYMBOL_OFF)` row, the rest comment.
+# The row cannot move to a subsystem module: it is one more rung of an EXISTING
+# in-place `ref.test` ladder over the box type in the slot (`$AnyString` →
+# String, `$__box_number`/i31 → Number, `$__box_boolean` → Boolean), and the
+# whole point of the change is that a reader of those three rows sees the fourth
+# beside them. Extracting it would put the Symbol answer somewhere the other
+# three are not, which is exactly the split that made the Symbol wrapper answer
+# the Object brand in the first place.
+#
+# What the growth buys, measured and stated plainly: it makes
+# `Object(Symbol.toPrimitive)[Symbol.toPrimitive]()` and
+# `Object(sym).toString === Symbol.prototype.toString` correct on standalone
+# (4 of 11 cases in `tests/issue-6651-h5-symbol-brand.test.ts` are RED on the
+# base tree), and it moves ZERO test262 rows — an 865-row per-row set diff over
+# manifests H and I plus a 561-row wrapper control found no gain and no loss.
+# The reason is recorded in the H5 receipt below: every corpus row that would
+# exercise it fails the #2175 proto-member-dirty gate. Arming that gate from
+# `Object(sym)` was measured at +57,125 bytes on the smallest program that shows
+# the defect, which is why this slice does not do it.
+  - src/codegen/proto-index-store.ts
   # 2026-09-23 — cluster A slice A4. The pattern planner and every op emitter
   # live in the NEW leaf `src/codegen/generator-yield-linearize.ts`.
   # `generators-native.ts` +141 is what has to sit inside the plan builder and
@@ -624,6 +648,18 @@ func-budget-allow:
   # that would satisfy this gate is the `vec-symbol-key-overlay.ts` extraction
   # named in the LOC rationale — a refactor, not part of a behaviour fix.
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  # 2026-09-24 — cluster I slice I5: `compileIIFE` +2 (315 > 313). The whole
+  # mechanism — the `super`-in-body test, the enclosing-class resolution and the
+  # synthetic `this` capture — was extracted VERBATIM into the module-scope
+  # `adoptLiftedIifeSuperContext` (the inline first cut cost +33), and the
+  # extraction is proven byte-neutral: all 50 host-lane binaries of the
+  # `website/playground/examples` + `tests/fixtures` corpus hash identically
+  # pre- and post-extraction (`.tmp/6651/hash-{after,postextract}.json`), and the
+  # six-row standalone measurement is unchanged across it. What cannot move is
+  # the call itself: it must MUTATE `captures` before `captureParamTypes` /
+  # `allParamTypes` / `addFuncType` read that array — one line — and its result
+  # must land on the lifted `FunctionContext` literal — the second line.
+  - src/codegen/expressions/calls.ts::compileIIFE
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -985,6 +1021,38 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   frozen G manifest keeps them (measured 21/21 non-pass on 2026-09-23 under
   `quickjs`, standalone). Implementing them would be proposal work in a later
   edition's lane, not an ES2015 gap.
+
+## Front-end feature ownership — claimed 2026-09-24
+
+The standalone-reachable rows in clusters F, H and I are nearly exhausted. What
+remains in cluster I is dominated by four SHARED front-end features, which block
+the standalone and JS-host lanes alike. Measured from the cluster-I manifest
+sweep on the round-6 integrated branch:
+
+| family | rows remaining | owner |
+| --- | ---: | --- |
+| `language/expressions/tagged-template/` | 8 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `language/module-code/namespace/internals/` | 12 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `language/statements/with/` | 11 | **UNCLAIMED — reserved for a JS-host lane** |
+| `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **UNCLAIMED — reserved for a JS-host lane** |
+
+**If you are an outside lane reading this: do not start tagged templates or
+module namespaces.** They are claimed here, and #6651 now carries a live claim
+on `origin/issue-assignments` for `ttraenkler/project-thread-yhj9pp`. `with` and
+`eval` are deliberately left open; take those, and add your own claim line here
+before you start so this table stays the lock.
+
+Why the table exists: on 2026-09-21 three cluster slices (A2, C3, E2) were
+implemented twice because two sessions worked this issue in parallel without
+knowing about each other. A lane that has started but not yet pushed is
+invisible to both the claim ref and the open-PR scan, so the only thing that
+prevents a repeat is claiming a family *before* starting it.
+
+Method note that applies to whoever takes which: **host-probe every candidate
+row on the DEFAULT target before touching lowering.** A row that fails on host
+cannot be fixed by standalone lowering. That check has now redirected five
+separate lanes away from unreachable buckets, and it is how these four families
+were identified as shared rather than standalone-only in the first place.
 
 ## Cluster status
 
@@ -5553,6 +5621,145 @@ observed. It is not a regression: the base answered `false` for that probe too
   `array-inline-return`/`reflect-api` — and shard 4 OOMs on both trees, so that
   ~28-file slice is unmeasured here and is left to CI's sharded
   `equivalence-gate`.
+### 2026-09-24 — Cluster H, slice H5: the SYMBOL brand on a wrapper's `[[PrimitiveValue]]` slot
+
+**Headline: the brand row is real and correct, and it moves ZERO test262 rows.**
+It is blocked one layer down by the #2175 proto-member-dirty gate, and buying
+past that gate was measured at **+57,125 bytes per module** — far more than the
+one row it would move. That question is now closed with numbers rather than
+left open.
+
+- **Branch** `issue-6651-h5-symbol-brand`, base `claude/project-thread-yhj9pp`
+  (`dda62641`, which carries I4). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a5f1e95d4176fdae1`.
+
+- **Host-lane probe FIRST, before any source edit** (`.tmp/6651/cand-host.log`,
+  DEFAULT target, 9 rows, 6 pass / 3 fail). The three host FAILURES are shared
+  front-end work and were dropped from scope on that evidence — including both
+  "nearby residuals" the dispatch named:
+  `language/computed-property-names/basics/symbol.js` (host: `object[sym2]` reads
+  `undefined`) and `language/arguments-object/{mapped,unmapped}/Symbol.iterator.js`
+  (host: "Symbol(Symbol.iterator) should be an own property"). Do not re-open
+  them from this cluster; they are not standalone lowering.
+
+- **Row-level result**, `--standalone --isolate`,
+  `JS2WASM_ROW_TIMEOUT_MS=420000`, scored by per-row set diff
+  (`.tmp/6651/rowdiff.mjs`), never by counts. **Zero `error` rows in either
+  sweep**, so all 865 rows are measured rather than skipped.
+
+  | manifest | rows | before (`H5-base.log`) | after (`H5-after2.log`) | gained | lost | changed |
+  | --- | ---: | --- | --- | ---: | ---: | ---: |
+  | `H-builtins-misc.txt` | 217 | 12 pass / 199 fail / 6 CE | 12 / 199 / 6 | **0** | 0 | 0 |
+  | `I-language-misc.txt` | 114 | 12 pass / 91 fail / 11 CE | 12 / 91 / 11 | **0** | 0 | 0 |
+  | control (below) | 561 | 497 pass / 60 fail / 4 CE | 497 / 60 / 4 | **0** | 0 | 0 |
+
+- **Control** (`.tmp/6651/H5-control.txt`, 561 rows) — this ladder is on the read
+  path of every wrapper in the corpus, so the control is the point of the slice:
+  every `built-ins/Symbol/` (98), every `built-ins/Number/prototype/` (168),
+  every `built-ins/Boolean/prototype/` (26), and a deterministic **every-fourth**
+  slice of `built-ins/String/prototype/` (269 of 1,073). **What was bounded and
+  why:** String/prototype alone is 1,073 rows and would have roughly doubled a
+  sweep that already ran ~2 h per side on a shared 4-core box with another lane
+  active; the `NR%4==1` slice is spread across every method directory rather
+  than truncated, so no method family is unrepresented. The other three
+  neighbourhoods are complete.
+
+- **Host lane byte-identity.** Ten representative programs compiled on the
+  DEFAULT target before and after, sha256 per binary
+  (`.tmp/6651/hash-base.txt` vs `hash-after2.txt`, script `.tmp/6651/h5hash.mts`):
+  **all ten identical**, including the String/Number/Boolean/Symbol wrapper
+  reads, the proto-reflection program and the symbol-keyed read. The arm lives in
+  a `ctx.standalone`-only fill, so this is a check of that gating, not an
+  assertion about it.
+
+- **What landed.** One row in `fillBrandOffBody`'s wrapper-classification ladder
+  (`src/codegen/proto-index-store.ts`): a `[[PrimitiveValue]]` slot holding the
+  `$Symbol` carrier (#2866) now answers `SYMBOL_OFF` instead of falling through
+  to the Object default. §10.4.3 — a wrapper's implicit chain starts at its OWN
+  prototype — is the same rule the three existing rows state; Symbol was simply
+  missing from the list.
+
+  **The lever is `__protoidx_brand_off`, NOT the `wrapperClassify` twin that I4's
+  residual named first.** Measured three ways, so this correction is worth
+  recording: `__protoidx_brand_off` classifies the RECEIVER and is key-AGNOSTIC
+  (`__protoidx_get_k` hands the key straight to `__obj_find`), so it is the only
+  one of the two that can serve a SYMBOL key — and symbol-keyed reads carry a
+  boxed `$Symbol` externref, never a string, so `wrapperClassify`'s string-key
+  ladder cannot look at `[Symbol.toPrimitive]` at all. A three-way A/B on the
+  identity probe (`.tmp/6651/probe5.mts`) showed the `brand_off` hunk ALONE
+  produces every gain, including the §21.1.5 VALUE-identity read
+  `Object(sym).toString === Symbol.prototype.toString` that `wrapperClassify`
+  exists for — the companion consult answers it first.
+
+  **So the `wrapperClassify` hunk was written, measured, and then DROPPED.** It
+  changed no answer in any of six constructed shapes plus all 865 corpus rows,
+  while costing **+112…+157 bytes** in every proto-member-dirty standalone
+  module (`.tmp/6651/sahash-swept.txt` vs `sahash-shipped.txt`). The 865-row
+  sweep was then **re-run on the tree that actually ships** rather than inherited
+  from the two-hunk tree — the two trees are NOT byte-identical, so transferring
+  the number would have been attribution, not measurement.
+
+- **Why zero rows moved, and what it would cost to move them.** Both ladders live
+  inside the #2175 proto-index store, which a module materializes only when it is
+  **proto-member dirty** — when a builtin `.prototype` reaches the dynamic reader
+  as a VALUE. `built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-obj-symbol-wrapper.js`
+  never names a builtin prototype, so neither the store nor the Symbol companion
+  seeder is armed and the new row is inert there. Measured on the smallest
+  program that shows the defect (`.tmp/6651/probe4.mts`):
+
+  | program | store armed | bytes |
+  | --- | --- | ---: |
+  | `Object(Symbol.toPrimitive)[Symbol.toPrimitive]()` alone | no | 139,254 |
+  | …plus one `Symbol.prototype` VALUE read | yes | 196,379 |
+
+  Arming the store from `Object(sym)` therefore costs **+57,125 bytes (+41 %)**
+  on every module that builds a Symbol wrapper, to move one test262 row. Not
+  done, deliberately. A user-class prototype write (`T.prototype.toString = …`)
+  and an `Object.prototype.toString` VALUE read were both checked and neither
+  arms it, so there is no cheap incidental trigger either.
+
+- **What the change DOES buy** (unit-tested, not corpus-visible):
+  `tests/issue-6651-h5-symbol-brand.test.ts`, 11 cases, all green. **4 of the 7
+  non-control cases are RED on this slice's base**, verified by a file-copy A/B
+  (`.tmp/6651/h5test-base.log`): the symbol-keyed `@@toPrimitive` read, its call,
+  the inline spelling test262 uses, and the transferred `.call(wrapper)` form.
+  The `toString`/`valueOf` CALL cases pass on base already (a different lowering
+  serves them) and are kept as controls. One case is a deliberate **LOCK** on the
+  dirty gate above: a module naming no builtin prototype still answers
+  `undefined`, and that is the gate, not a regression.
+
+- **Residuals, measured not assumed.**
+  - `built-ins/Symbol/prototype/description/wrapper.js` (host PASS, in no
+    manifest) does **not** move, and I4's note that the brand row would also
+    reach it is **incorrect** — checked, not assumed. `description` is not a
+    member of the Symbol glue at all: `SYMBOL_PROTO_METHODS` in
+    `src/codegen/array-object-proto.ts` (~L418) is `["@@3", "toString",
+    "valueOf"]`, so the seeder installs no `description` companion entry for the
+    consult to find. Closing it needs `description` added there as a **getter**
+    (`makeGlue`'s `memberKind` is a flat `() => "method"`; `makeGlueWithGetters`
+    is the existing shape) plus a `thisSymbolValue(this).[[Description]]` body
+    beside `emitSymbolProtoValueOfBody` in `src/codegen/symbol-proto-valueof.ts`.
+    That also changes `Symbol.prototype`'s own-property SET, so it needs its own
+    `built-ins/Symbol/prototype/description/` sweep — a separate slice, not a
+    ride-along, for the same reason this one was.
+  - `built-ins/Symbol/prototype/toString/toString.js` — out of scope by the
+    dispatch, unchanged, and confirmed still failing for the stated reason (a
+    *primitive* symbol receiver, a borrowed-method gap). Adding a bare-`$Symbol`
+    `testArm` to the same ladder would be three more lines and might reach it;
+    NOT attempted here, and it would inherit the same dirty-gate blocker.
+
+- **Gates** (run bare, never piped): `check-loc-budget` OK **after** a new dated
+  grant for `src/codegen/proto-index-store.ts` (+22, rationale at the grant),
+  also re-run with `LOC_GATE_BASE=origin/main` (OK); `check-func-budget` OK on
+  both bases; `check-coercion-sites` OK; `check:oracle-ratchet` OK
+  (`getTypeAtLocation` +0, `ctx.checker` +0); `check:dead-exports` exit 0;
+  `npm run -s typecheck` exit 0; `biome lint --diagnostic-level=error` clean.
+
+- **Not run:** the equivalence suite (it OOMs whole in this container; I4's
+  eight-shard workaround was not repeated for a one-arm standalone-only fill
+  that is byte-identical on the host lane and zero-delta on 865 standalone
+  rows). CI's `equivalence-gate` covers it.
+
 ### 2026-09-23 — Cluster B (RegExp `@@` protocol, standalone), slice B5: `RegExp.prototype[@@split]` (§22.2.6.14)
 
 - **Base** `claude/es2015-test262-plan-54tooh` @ `1b24a5e3a2` (origin/main + E4,
@@ -8063,6 +8270,111 @@ Both lanes `git merge origin/main` before opening a slice and record slices
 under `## Cluster status`. This lane has not opened F, H or I since round 1;
 the partition stands as proposed.
 
+### 2026-09-24 — Cluster I, slice I5: the void-`super` rollback (arrow-lexical family)
+
+- **Branch** `issue-6651-i5-arrow-lexical`, base `claude/project-thread-yhj9pp`
+  (`dda62641`). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-ab13370bde0a74a4c`.
+- **Host-lane probe FIRST, and it redirected the slice.** All SIX rows of the
+  named arrow-lexical family fail on the DEFAULT (host) target too
+  (`.tmp/6651/I5-six-host-base.log`, 6 fail), so none of them is standalone
+  lowering — the cause is shared front-end. Two of the six turned out to be
+  reachable anyway and are fixed here; the other four are named below with the
+  exact site that blocks them. **Nothing in this slice is `noJsHost`-gated, by
+  design: the defect was target-independent.**
+
+| manifest / lane | | pass | fail | CE |
+| --- | --- | ---: | ---: | ---: |
+| `I-language-misc.txt` (114) standalone | before `.tmp/6651/I-base.log` | 12 | 91 | 11 |
+| | after `.tmp/6651/I-after2.log` | **14** | 89 | 11 |
+| control (564) standalone | before `.tmp/6651/control-standalone-base.log` | 484 | 77 | 3 |
+| | after `.tmp/6651/control-standalone-after.log` | **486** | 75 | 3 |
+| control (564) HOST | before `.tmp/6651/control-host-base.log` | 465 | 95 | 4 |
+| | after `.tmp/6651/control-host-after.log` | **467** | 93 | 4 |
+
+  Per-ROW set diff (`rowdiff.mjs`, three args) on all three: **+2 gained, 0
+  lost, 0 verdict-changed**, the same two rows every time —
+  `arrow-function/lexical-super-property.js` and
+  `…/lexical-super-property-from-within-constructor.js`. Zero `error` rows in
+  any sweep (`JS2WASM_ROW_TIMEOUT_MS=420000 … --isolate` throughout). The
+  control manifest is every `language/expressions/{arrow-function,super,new.target}`,
+  every `language/statements/class/subclass`, and the `class/definition/*super*`
+  rows — 564 paths, `.tmp/6651/I5-control.txt`.
+
+- **Root cause: `null` means two different things, and one of them deletes
+  code.** A void call legitimately produces no value, but `null` returned to
+  the #1919 speculative wrapper in `compileExpressionBody` means "inner
+  produced no usable value" — the wrapper then calls `rollbackSpeculative`,
+  TRUNCATES the instructions already emitted and substitutes a default
+  constant. So a `super.<m>()` whose parent method returns void was *silently
+  deleted*: `super.increment();` compiled to `i32.const 0; drop`, the program
+  compiled and ran, and every side effect of the parent method (a `this` field
+  write, an outer-scope mutation) was gone. This is exactly the hazard #1551
+  documented and fixed for the nested `super(...)` arm; three other arms still
+  carried the `null`:
+
+  1. `compileSuperMethodCallCore` (`src/codegen/expressions/new-super.ts`)
+     returned `null` for a void parent method **after** emitting
+     `local.get this; call <Parent>_<m>` → now `VOID_RESULT`.
+  2. The INLINE concise-arrow IIFE arm (`call-tail-dispatch.ts`) returned
+     `compileExpression`'s `null` straight through, rolling the whole inlined
+     IIFE back. `compileExpression`'s FAILURE paths never return `null` (they
+     push a default and return its `ValType`), so `null` there is
+     unambiguously the void case → `result ?? VOID_RESULT`.
+  3. The LIFTED IIFE path (`compileIIFE`, taken when the call supplies FEWER
+     arguments than the arrow declares — the test262 rows' own
+     `(_ => super.increment())()`) gave the lifted `FunctionContext` neither
+     `enclosingClassName` nor a `this` local, so the super lowering bailed to
+     its evaluate-args-and-default fallback. New module-scope
+     `adoptLiftedIifeSuperContext` threads the caller's `this` in as an
+     ordinary synthetic capture and carries the class name across, gated on the
+     body actually mentioning `super` (a plain `this` read already resolves
+     through the `__current_this` rung, so no other IIFE's lifted signature
+     moves).
+
+  The bug is invisible to a value-returning probe: `super.f()` that returns a
+  number has always worked, which is why `class A { f(): number … }` passes and
+  `class A { f(): void … }` silently does nothing.
+
+- **Byte-identity, host lane.** 50 binaries (`website/playground/examples` +
+  `tests/fixtures`, DEFAULT target) hash **identically** before and after the
+  whole change (`.tmp/6651/hash-{base,after}.json`) — no corpus program
+  contains the pattern, which is why this survived. That is NOT a claim of host
+  neutrality: the change is deliberately ungated and the host control sweep
+  moves 2 rows (above). The `compileIIFE` extraction is separately proven
+  byte-neutral (`hash-postextract.json` = `hash-after.json` = base, 50/50) and
+  the six-row standalone verdict is unchanged across it.
+
+- **Left out, with the exact site.** The other four rows of the family, all
+  still failing on BOTH lanes:
+  - `lexical-new.target.js`, `lexical-new.target-closure-returned.js` —
+    `new.target` is `undefined` for any function that is not a compiled
+    CONSTRUCTOR (`src/codegen/expressions.ts` ~L1614: the non-`isConstructor`
+    arm emits `undefined`), and the machinery behind it is a per-class i32 id
+    (`src/codegen/new-target.ts`), which cannot represent "the function object
+    `new` was applied to". A plain `function F(){}` called as `new F()` reads
+    `undefined` even without any arrow. Needs its own issue; it is not arrow
+    capture.
+  - `lexical-super-call-from-within-constructor.js` — wants a **ReferenceError**
+    from a SECOND `super()` (§8.6.2 `[[ThisBindingStatus]]`); there is no
+    already-initialised check on the `super()` path.
+  - `lexical-supercall-from-immediately-invoked-arrow.js` — `(_ => super())()`
+    with no argument, i.e. the LIFTED IIFE again, but for `super(...)` rather
+    than `super.m()`. The `super(...)` arm (`calls.ts` ~L8078) requires
+    `fctx.isConstructor === true`, which a lifted IIFE is not; making it one
+    would drag constructor-only state (own-field init sequencing, the
+    `super`-initialised flag) into a lifted function, so it is deliberately not
+    attempted here.
+- Pin file `tests/issue-6651-super-void-rollback.test.ts`, 5 cases (statement
+  position, `this`-mutating parent, inline arrow arm, lifted arrow arm, and a
+  value-returning super call as the unchanged control).
+- Gates run bare, never piped: `check-loc-budget` 0 · `check-func-budget` 0
+  (with the `compileIIFE` +2 grant added to this file's frontmatter, after the
+  verbatim extraction cut the inline cost from +33) · `check-coercion-sites` 0 ·
+  `check:oracle-ratchet` 0 · `check:dead-exports` 0 · `lint` 0 · `typecheck` 0 ·
+  `test:equivalence:gate` 0 (22 failing / 1720 passing / 22 known — no new
+  regressions).
+
 ## Manifest generator note
 
 Partition rule applied to the 1,320 non-pass rows, first match wins:
@@ -8075,3 +8387,122 @@ computed-property-names; G = `for-of`, `expressions/assignment`, `for/`,
 generators (runtime), `GeneratorPrototype`, `GeneratorFunction`, `Iterator`,
 `ArrayIteratorPrototype`; H = remaining `built-ins/*`; I = the rest.
 Manifest SHA-256s are in the commit that added them.
+
+## Handoff — 2026-09-24, lane-I6 (cluster I residual triage; measurement only, no source change)
+
+**Result in one line: cluster I has no standalone-reachable family left. All
+34 rows in the dispatched probe set fail identically on BOTH lanes, and across
+the whole 114-row manifest only 4 rows pass on host while failing on
+standalone — three of them in families this lane was told not to touch.**
+
+This re-measures, per row and on both targets, the claim the 2026-09-22
+project-thread handoff made from a partial probe ("cluster I is almost entirely
+a front-end cluster"). It holds, and it now holds for the entire manifest
+rather than seven buckets of it.
+
+### Runs (never piped, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, src frozen)
+
+| log | lane | manifest | counts | sha256 |
+| --- | --- | --- | --- | --- |
+| `.tmp/6651/I6-base.log` | `--standalone` | 114-row `I-language-misc.txt` | pass 14 / CE 11 / fail 89 | `8e6c2691…a835d0` |
+| `.tmp/6651/I6-host-full.log` | default (host) | same 114 rows | pass 18 / CE 4 / fail 92 | `d1cd3f1f…d35217` |
+| `.tmp/6651/I6-host-probe.log` | default (host) | 34-row dispatched probe set | fail 34 / pass 0 | `f1b391a0…eff79c` |
+
+Zero `error` rows in all three — the QuickJS eval provider was present via the
+`.test262-cache` symlink (banner: artifact `073742801ba7`, adapter key
+`d4799bda84cfed0d`), so none of the 40 eval/realm rows degraded to
+"not measured".
+
+### Phase 1 — per-row host verdict for the dispatched families
+
+Every row below is `fail` on standalone **and** `fail` on host. None is
+standalone-reachable; each is shared front-end work.
+
+| family (rows) | host | shared cause | in scope? |
+| --- | --- | --- | --- |
+| `global-code/{decl-lex,script-decl-*}` (7) | 7 fail | every row drives `$262.evalScript(...)`; the script-goal declaration it creates is never installed as a global binding/property (`test262let is not defined`, `brandNew should be an own property`). **eval capability gap** | NO — excluded by dispatch |
+| `statementList/eval-class-*` (4) | 4 fail | `eval('class C {}[];')` evaluates to `undefined` (`Cannot convert undefined to object`). **eval capability gap** | NO — excluded by dispatch |
+| `{expressions,statements}/function/params-dflt-ref-arguments` (2) | 2 fail | `arguments` read inside a parameter DEFAULT lowers to `ref.null extern` → `TypeError: Cannot access property on null or undefined`. Root cause proven below. | front-end |
+| `expressions/function/arguments-with-arguments-{fn,lex}` + `statements/function/arguments-with-arguments-lex` (3) | 3 fail | same parameter-scope `arguments` binding; surfaces as `RuntimeError: illegal cast` (lex ×2) and `typeof args === "function"` (fn). | front-end |
+| `{expressions,statements}/function/dstr/ary-ptrn-elem-ary-rest-init` (2) | 2 fail | `f([[...x] = values])` — the nested rest-with-initializer element reads null. Known as #5271 **G3**, explicitly deferred there ("high blast radius"). | front-end |
+| `rest-parameters/arrow-function` (1) | fail | `(a, b, ...c) => c` yields a primitive/null instead of an array. | front-end |
+| `rest-parameters/with-new-target` (1) | fail | `arguments.length` is 1 where the rest param has 3 (`class Base { constructor(...a) }`). Same `arguments`-vs-non-simple-parameter-list area. | front-end |
+| `statements/{const,let}/block-local-closure-*-before-initialization` (3) | 3 fail | no ReferenceError: a hoisted `function f(){ return x + 1 }` in the same block as `let x` does not observe the block binding's TDZ flag. This is #5271 **B2**, recorded there as NOT done, with `preallocateBlockScopedSlots` deliberately skipping any block that hoists a function declaration. | front-end |
+| `statements/variable/binding-resolution` (1) | fail | uses `with (obj)`. | NO — excluded by dispatch |
+| `expressions/call/with-base-obj` (1) | fail | uses `with (obj)`; `method is not defined`. | NO — excluded by dispatch |
+| `expressions/equals/coerce-symbol-to-prim-return-prim` (1) | fail | loose `==` between an object with `@@toPrimitive` and a **string** primitive returns false. | front-end |
+| `expressions/instanceof/prototype-getter-with-object` (1) | fail | `Get(C,"prototype")` must call an accessor installed on `Function.prototype`; the getter is not invoked. Bucket B8's remaining half. | front-end |
+| `expressions/call/tco-non-eval-{function,function-dynamic,global}` (3) | 3 fail | proper tail calls at `$MAX_ITERATIONS` (1e5) through a locally-shadowed `eval` binding; `tco-non-eval-function` is a literal `RangeError: Maximum call stack size exceeded`, i.e. no TCO on that shape. | front-end |
+| `types/reference/{get,put}-value-prop-base-primitive` (2) | 2 fail | property lookup/assignment on a primitive base does not consult a user-extended `Number/String/Boolean/Symbol.prototype` (`1..test262` reads null). | front-end |
+| `types/reference/{get,put}-value-prop-base-primitive-realm` (2) | 2 fail | same, plus `$262.createRealm()` + `other.eval`. | NO — cross-realm/eval |
+
+### The only standalone-reachable rows in the whole cluster
+
+`rowdiff.mjs I6-base.log I6-host-full.log I-language-misc.txt` — GAINED 4,
+LOST 0 (standalone is a strict subset of host here):
+
+- `language/expressions/tagged-template/cache-realm.js` — **reserved for the other lane** (tagged-template).
+- `language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain.js` — **reserved** (`with/`).
+- `language/expressions/call/eval-realm-indirect.js` — eval/realm capability gap, **excluded**.
+- `annexB/language/literals/regexp/identity-escape.js` — the one genuinely
+  available row. It is a standalone **compile error**, not a miscompile:
+  `standalone RegExp engine does not support Unicode property escape \P{…}
+  (#1539 Phase 2d)`. One annexB row gated on a large, separately-tracked
+  RegExp-engine feature — not a family, and not ES2015 language.
+
+So phase 2 had no target under the dispatch's own definition, and this lane
+deliberately shipped no source change rather than fake one.
+
+Worth recording because it changes what a future cluster-I dispatch should
+fund: 5 rows (`module-code/{eval-export-dflt-expr-gen-anon,eval-export-dflt-expr-gen-named,instn-iee-bndng-gen,instn-named-bndng-dflt-gen-named,instn-named-bndng-gen}`)
+are standalone compile errors with one shared cause — *"standalone target
+emitted host imports: env::g / env::B / env::g2 (#2961)"*, an exported
+**generator** binding leaking out as a host import. Closing it is real
+standalone work, but it buys **0 passes**: all five also fail on host, so they
+would merely become `fail`. Any plan that counts them as standalone wins is
+counting wrong.
+
+### Root cause proven for the largest front-end family (5 rows), handed over unimplemented
+
+Bucket B11/B12's `arguments`-in-parameter-scope rows reduce to one ordering
+defect, verified in the emitted WAT rather than inferred:
+
+- Repro `.tmp/6651/probe-args.mts` — `f = function (x = arguments[2], y = arguments[3], z) {}; f(undefined, undefined, "third", "fourth")` throws a `WebAssembly.Exception` on the default target.
+- In the WAT (`.tmp/6651/probe.wat`, `$__closure_0`) the default branch for `x`
+  begins `ref.null extern; local.tee 7; ref.is_null; (if (then … throw))` — the
+  receiver is a literal null — while `local $arguments` is built from
+  `__extras_argv` **further down**, after every default.
+- Cause: `allocLocal(fctx, "arguments", …)` happens inside `emitArgumentsObject`,
+  which all three lanes call AFTER parameter defaults and destructuring, so
+  while a default is compiled `fctx.localMap` has no `arguments` entry and the
+  identifier resolves to nothing. §10.2.11 creates the arguments object at
+  step 22, *before* IteratorBindingInitialization of the formals.
+- Exact sites: `src/codegen/function-body.ts` — defaults L412-570, destructuring
+  L601-609, arguments object L614-672; `src/codegen/statements/nested-declarations.ts`
+  — L1964 then L1990, and L2467 then L2493.
+- #5139 already fixed the *detection* half (`needsImplicitArgumentsObject`
+  scans parameter initializers, with a comment naming exactly this case); only
+  the *emission order* is left.
+- Shape of the fix, and why it should be cheap to gate: hoist the
+  arguments-object emission above the defaults **only when
+  `isSimpleParameterList(decl.parameters)` is false**. A simple parameter list
+  has no defaults or destructuring to reorder against, so that lane stays
+  byte-identical; and a non-simple list already gets an **unmapped** arguments
+  object (§10.2.11 step 22.a), so no param↔`arguments` aliasing is disturbed.
+  Taking the snapshot before defaults is independently the spec-correct
+  reading: today `arguments[0]` of `f(undefined, …)` would observe the
+  *defaulted* value.
+- Not implemented here: it moves host rows, not standalone-only ones, so it is
+  outside this lane's remit; and cluster H is concurrently editing `arguments`
+  (`vec-length-descriptor.ts`, ordinary `length`), which makes an unsolicited
+  reorder of the same subsystem a poor idea from a second lane.
+
+### Left out, with sites
+
+- Nothing was implemented, so no gate deltas, no byte-identity check, and no
+  control sweep are reported — there is no `after` state to compare. The
+  control manifest that a follow-up should use is prepared at
+  `.tmp/6651/ctl-I6.txt` (164 rows, a 1-in-3 subsample of
+  `language/arguments-object/**` ∪ `language/rest-parameters/**` ∪ the
+  `params-*` / `dflt-*` / `arguments-*` rows of
+  `language/{expressions,statements}/function/`).
