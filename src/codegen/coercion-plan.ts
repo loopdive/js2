@@ -35,6 +35,15 @@ import type { Instr, ValType } from "../ir/types.js";
 export interface CoercionHelpers {
   boxNumberIdx: number | null;
   unboxNumberIdx: number | null;
+  /**
+   * (#5383) `__box_bigint`. When supplied, a BIGINT-branded i64 boxes as a
+   * BigInt (the #1644 split `coerceType` makes) instead of through the number
+   * row below. Callers that cannot supply it (the post-hoc stack balancer) keep
+   * the numeric row. The unbox direction is deliberately NOT mirrored: a
+   * dynamic write into a bigint-typed slot may carry any value, and
+   * `__to_bigint` would THROW on a number where the numeric row truncates.
+   */
+  boxBigIntIdx?: number | null;
 }
 
 export interface CoercionPlan {
@@ -92,6 +101,11 @@ export function coercionPlan(from: ValType, to: ValType, helpers: CoercionHelper
   if (fromK === "f64" && toK === "i64") return { instrs: [{ op: "i64.trunc_sat_f64_s" }] };
   if (fromK === "i32" && toK === "i64") return { instrs: [{ op: "i64.extend_i32_s" }] };
   if (fromK === "i64" && toK === "i32") return { instrs: [{ op: "i32.wrap_i64" }] };
+
+  // ── bigint → externref (#5383): a branded i64 boxes as a BigInt, not a number ──
+  if (from.kind === "i64" && from.bigint === true && isExternKind(to.kind) && helpers.boxBigIntIdx != null) {
+    return { instrs: [{ op: "call", funcIdx: helpers.boxBigIntIdx }] };
+  }
 
   // ── number → externref (box) ──
   if (fromK === "f64" && isExternKind(to.kind)) {

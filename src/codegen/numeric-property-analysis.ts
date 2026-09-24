@@ -168,6 +168,15 @@ export interface NumericPropertyAnalysisHost {
    * only when it can add something.
    */
   readonly provenNumericCallReturn?: (call: ts.CallExpression) => boolean;
+  /**
+   * (#5383) The module sits on a standalone wasm↔wasm link, so a property READ
+   * may land on the PEER's object, whose writes this analysis never saw. The
+   * name-keyed verdicts are closed-world facts; they must not prove a read
+   * numeric or string (`var t = options.roundingIncrement` got an f64 slot, and
+   * the consumer's `2n` / `"2"` arrived as the number 2). Self-reads while
+   * judging a write keep their induction (the slot itself is local).
+   */
+  readonly openWorldPropertyReads?: boolean;
 }
 
 type FunctionLike = ts.FunctionLikeDeclaration & { body: ts.ConciseBody };
@@ -914,6 +923,8 @@ function makeProver(
    * itself and a string-valued TokenType slot gets promoted to f64.
    */
   let excludedName: string | undefined;
+  /** May a read of `name` use the name-keyed verdicts? See `openWorldPropertyReads`. */
+  const closedRead = (name: string): boolean => host.openWorldPropertyReads !== true || name === selfName;
   /** Re-entrancy guard for the slot recursion in {@link isString}. */
   const stringSlotsInFlight = new Set<Slot>();
 
@@ -923,7 +934,9 @@ function makeProver(
     if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value) || ts.isTemplateExpression(value)) {
       return true;
     }
-    if (ts.isPropertyAccessExpression(value) && stringProperties.has(value.name.text)) return true;
+    if (ts.isPropertyAccessExpression(value) && closedRead(value.name.text) && stringProperties.has(value.name.text)) {
+      return true;
+    }
     if (ts.isIdentifier(value)) {
       const slot = facts.scopes.resolve(value, value.text);
       // A local whose every definition is a string (`var s = this.source`).
@@ -1071,13 +1084,13 @@ function makeProver(
       ) {
         return true;
       }
-      if (value.name.text === excludedName) return false;
+      if (value.name.text === excludedName || !closedRead(value.name.text)) return false;
       return value.name.text === selfName || sets.numericProperties.has(value.name.text);
     }
     if (ts.isElementAccessExpression(value)) {
       const key = value.argumentExpression && unwrap(value.argumentExpression);
       if (key && ts.isStringLiteral(key)) {
-        if (key.text === excludedName) return false;
+        if (key.text === excludedName || !closedRead(key.text)) return false;
         return key.text === selfName || sets.numericProperties.has(key.text);
       }
       return false;
