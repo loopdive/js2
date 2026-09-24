@@ -1850,6 +1850,49 @@ Next blocker: `stack-balance invariant (entry):
 284, but only 3 params + 18 locals are declared` (an object-literal method
 inside `createNodeBuilder`, checker.ts line 6238).
 
+### Handoff (2026-09-24)
+
+State: parser, binder and checker-slice oracles pass. The full checker
+(`createTypeChecker`) compile runs about 23 minutes at about 6 GB peak RSS and
+now stops at the `shouldRemoveDeclaration` error above. The checker oracles
+(`pnpm run dogfood:typescript-checker-source`: `assign-mismatch=67858`,
+`assign-ok=0`, `two-mismatches=133394`) have not run yet; printer/emitter and
+self-hosting come after.
+
+Next step: find which instruction in that method's body references local 284.
+The error message embeds the whole body as JSON. Local 284 is far past the
+method's 21 slots, so it is most likely an index from an enclosing frame
+(`createNodeBuilder` or `createTypeChecker`) emitted into the method. Suspects
+are the captured-function value for `checkComputedPropertyName` and the
+`__tdz_box_checker` local the method declares. A small repro (an interface-typed
+object literal inside a nested builder whose method calls a capturing outer
+helper, with `context as X` casts) compiles and runs correctly, so the trigger
+needs something more from the real file.
+
+Driver used for the full compile (keep it under `.tmp/`, not committed):
+
+```ts
+import { writeFileSync } from "node:fs";
+import { compileProject } from "../src/index.ts";
+const r: any = await compileProject("tests/dogfood/fixtures/typescript-checker-workload.ts", {
+  allowJs: true, skipSemanticDiagnostics: true, target: "gc", platform: "node", emitWat: false,
+  resolve: { consumerDrivenBarrels: true },
+} as any);
+const errs = (r.errors ?? []).filter((e: any) => e.severity !== "warning");
+writeFileSync(".tmp/checker-errors.json", JSON.stringify(errs, null, 1));
+if (r.binary?.length) writeFileSync(".tmp/checker.wasm", r.binary);
+```
+
+Run it with `node --max-old-space-size=11000 --stack-size=8000 --import tsx`.
+Profile the same run with `--inspect-brk` and a CDP client (CPU profile or
+heap sampling). Keep the shell's working directory outside the nested
+TypeScript checkout under `tests/dogfood/.npm-upstream-suites/typescript`,
+because the repo's hooks break when run from there.
+
+Known and not addressed: two `tests/issue-2976.test.ts` cases fail on main
+(the V8 capability protocol case and the reassigned-capture case) and are
+unchanged by this work.
+
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
