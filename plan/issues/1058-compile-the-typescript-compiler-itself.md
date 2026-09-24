@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-23
+updated: 2026-09-24
 priority: high
 feasibility: hard
 model: fable
@@ -86,6 +86,9 @@ loc-budget-allow:
   # subsystem modules (declaration-bound-callee, undefined-holding-variable,
   # null-ref-undefined-box, unmatched-closure-host-call).
 func-budget-allow:
+  # 2026-09-24: the literal-promotion guard learns to leave a capture cell's
+  # type alone (3 lines).
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
   # 2026-09-23: binder slice. compileIdentifierCall's body moves verbatim into
   # compileBoundIdentifierCall behind the declaration-bound callee wrapper; the
   # numeric-key switch learns enum keys and an undefined miss.
@@ -1824,6 +1827,28 @@ changed capture noIterationTypes's physical ABI after reservation`. At phase-0
 reservation the capture was a plain externref; when `checkArrayLiteral` is
 compiled the declaring frame has a box registered for `noIterationTypes` while
 its `localMap` slot is still the raw externref local.
+
+### Next two checker errors (2026-09-24)
+
+`noIterationTypes` ABI change: an earlier sibling's mutable capture had already
+boxed the outer binding, so its `localMap` slot held the capture cell. The
+#5148 literal-promotion step in `compileNestedFunctionDeclarationInScope` read
+that ref-typed slot as a stale literal type and rewrote it, so the later
+sibling's reserved capture plan no longer matched. The step now skips a slot
+whose type is the binding's own capture cell.
+
+Recursive struct narrowing: passing a struct where a narrower struct type is
+expected copies the shared fields. When a field holds the struct's own type
+(the checker's `MappedType.target`), that copy inlined the same conversion
+into itself until the compiler's stack overflowed. A repeated
+`from>to` pair now calls an outlined `__struct_narrow_<from>_<to>` helper,
+which recurses at runtime. Test:
+`tests/issue-1058-recursive-struct-narrowing.test.ts`.
+
+Next blocker: `stack-balance invariant (entry):
+'SyntacticTypeNodeBuilderResolver_shouldRemoveDeclaration' references local
+284, but only 3 params + 18 locals are declared` (an object-literal method
+inside `createNodeBuilder`, checker.ts line 6238).
 
 ## Acceptance criteria
 
