@@ -843,7 +843,7 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     // else arm, then restore the stack.
     const scopes = fctx.withScopes!;
     const matchedIdx = scopes.lastIndexOf(withRes.scope);
-    return emitDynamicWithGet(ctx, fctx, withRes.scope, name, () => {
+    return emitDynamicWithGet(ctx, fctx, withRes.scope, name, id, () => {
       const saved = fctx.withScopes;
       fctx.withScopes = scopes.slice(0, matchedIdx);
       try {

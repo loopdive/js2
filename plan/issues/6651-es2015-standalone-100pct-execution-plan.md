@@ -169,6 +169,17 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-24 — lane W1 (`with` / Object Environment Record, §9.1.1.2).
+  # `src/runtime.ts` +24, and ~19 of those are comment. Three edits, all inside
+  # HOST IMPORT BODIES, which is the one thing that cannot move out of this
+  # file: `__extern_get` (both the by-name binding and the `extern_get` intent)
+  # stops probing presence with `in` before reading a tracked user Proxy, and
+  # `__with_has_binding` stops swallowing a throwing @@unscopables getter. Each
+  # is a one-line condition change plus the measurement that forced it — the
+  # trap SEQUENCE a `with`-over-Proxy row compares, which is invisible from the
+  # value alone, so the rationale has to sit at the condition or the next
+  # reader re-adds the probe. There is no mechanism here to extract.
+  - src/runtime.ts
   # 2026-09-24 — lane A1 (arguments object created BEFORE parameter defaults,
   # §10.2.11 step 22). `nested-declarations.ts` +86 and `closures.ts` +54, both
   # already listed below. The growth is the SEAM, not the mechanism: the
@@ -623,6 +634,14 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-24 — lane W1: +24 inside `src/runtime.ts::resolveImport`, which is
+  # the same 24 lines as the `loc-budget-allow` grant above (the three edited
+  # host-import bodies are all closures built inside `resolveImport`'s by-name
+  # switch). Splitting is not available here: each `if (name === "…")` arm
+  # closes over `deps`/`callbackState`/`globalSandbox`, and moving one out
+  # means threading that whole environment through a new signature — far more
+  # than 24 lines, for arms that shrank to a single changed condition.
+  - src/runtime.ts::resolveImport
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
   # forced it (see the LOC rationale above; the exclusion is the one thing
@@ -9402,3 +9421,170 @@ growth) · `check:dead-exports` 0 · `check-compiler-boundaries --mode inventory
 Logs: `.tmp/6651/T1-{sa,host}-{base,after}.log`,
 `.tmp/6651/corpus-{base,new,new2}.txt`, manifests
 `.tmp/6651/T1-{all,control,target}.txt`.
+
+---
+
+## 2026-09-24 — lane W1: `with` / Object Environment Record (§9.1.1.2)
+
+`language/statements/with/**` — 4 defects fixed, **+4 rows on EACH lane, 0
+regressions**. Host `123 → 127 / 181`; standalone `169 → 173 / 181`.
+
+### What the brief said vs what main actually did
+
+The dispatch brief's signatures were measured by an earlier lane and **three of
+them were already stale**; re-measured on `e3bb60ac` before any edit:
+
+| brief claim | measured on main |
+| --- | --- |
+| `Symbol()` instead of `Symbol(Symbol.unscopables)` | **HOST is fine** — this is a STANDALONE-only defect |
+| `has-binding-idref-with-proxy-env.js` in the failing set | passes on both lanes |
+| `set-…-typed-array-in-proto-chain.js` (non-strict) failing on both | passes on HOST; fails only standalone |
+| — (not in the brief) | `unscopables-get-err.js` / `unscopables-prop-get-err.js` fail on HOST only, and were in reach |
+
+The brief also missed that HOST performs an extra, non-spec `has:` trap that
+STANDALONE does not, and that STANDALONE omits a `has:` that HOST supplies by
+accident — i.e. the two lanes had **disjoint** defect sets producing
+superficially similar diffs.
+
+### The defects
+
+1. **§10.5.8 — a spec `Get` on a Proxy must fire only the `get` trap.**
+   `__extern_get` (both the by-name binding and the `extern_get` intent) probed
+   presence with `key in Object(obj)` first, so HasBinding step 5's
+   `Get(bindingObject, @@unscopables)` logged `has:Symbol(Symbol.unscopables)`
+   before `get:`. A tracked user Proxy now takes the direct read
+   unconditionally — also strictly FEWER traps for an absent key (`in` → `get`
+   → `getPrototypeOf` collapses to one `get`).
+2. **§9.1.1.2.6 GetBindingValue steps 2–3 did not exist.** The `stillExists`
+   HasProperty re-check after the @@unscopables getter ran, and the strict-mode
+   `ReferenceError` when the binding vanished. The host lane only *looked* like
+   it had step 2 because defect 1's `in` probe happened to land in the right
+   place; removing the probe without adding the real step would have made the
+   trace shorter, not righter.
+3. **§9.1.1.2.5 SetMutableBinding steps 2–3 did not exist** — same on the write
+   side. Step 2 is emitted UNCONDITIONALLY (it is observable); only the throw is
+   strict-gated, and step 4's Set still runs in sloppy code.
+4. **The static (Tier-1) projection swallowed `Object.defineProperty(env,
+   Symbol.unscopables, …)`.** `targetReceivesDynamicElementWrite` looked only
+   for element-access WRITES, so the MOP spelling of the same install was
+   invisible, `with` took the zero-overhead struct path, and HasBinding never
+   ran at all — the throwing getter the row asserts on was never invoked.
+   Renamed `targetReceivesDynamicOwnPropertyInstall` and widened to
+   `Object.defineProperty` / `Object.defineProperties` / `Reflect.defineProperty`.
+   Paired with letting step 5's / step 5.a's `?` PROPAGATE (the blanket
+   try/catch now re-throws for every non-opaque receiver).
+5. **§20.4.2 well-known [[Description]] (standalone).** `__box_symbol(<reserved
+   id>)` never touches the id→description side table, so every well-known symbol
+   rendered `"Symbol()"`. The description LOAD now falls back to an inline
+   id→constant chain (one interned `global.get` per level, ~5 instructions per
+   id); a stored description still wins. **This alone was the last blocker on 3
+   standalone rows.**
+
+Strictness is a property of the REFERENCE, not of the `with`: `with` is a
+SyntaxError in strict code, so the strict case is always a nested strict
+function whose body still resolves through the object environment record. The
+new `siteNode` parameter carries the identifier and is read with
+`isStrictContext`. It sits BEFORE the trailing callback on purpose — placing it
+last made prettier expand two god-file call sites and cost +19 LOC for nothing.
+
+### Measurement (per-ROW set diffs, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`)
+
+461 rows per lane per phase, both lanes, before and after = **1,844 row
+measurements. Zero `error` rows in any log.** QuickJS eval provider confirmed
+live in every log banner.
+
+| neighbourhood | rows | host base → after | standalone base → after |
+| --- | --- | --- | --- |
+| `language/statements/with/**` | 181 | 123 → **127** (+4, −0) | 169 → **173** (+4, −0) |
+| `language/block-scope/**` + `language/global-code/**` | 187 | 168 → 168 (0, 0) | 177 → 177 (0, 0) |
+| `built-ins/Proxy/{get,has,set,getOwnPropertyDescriptor}/**` | 93 | 64 → 64 (0, 0) | 67 → 67 (0, 0) |
+
+Control choice: the change alters **identifier resolution** and **Proxy trap
+sequencing**, so the control has to cover both. `block-scope` + `global-code`
+are the ordinary (non-`with`) identifier-resolution neighbourhoods — and
+`global-code` is itself an object environment record, the closest non-`with`
+analogue of the code being changed. `language/identifiers` was considered and
+dropped: it is predominantly identifier-NAME lexing (Unicode escapes, reserved
+words), which no change here can reach. `built-ins/Proxy/*` covers defect 1's
+only reach outside `with`; its row set is **identical** before and after on both
+lanes.
+
+Rows fixed (by path, both lanes unless noted):
+`get-binding-value-idref-with-proxy-env.js` ·
+`set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain-strict-mode.js` ·
+`unscopables-get-err.js` (host) · `unscopables-prop-get-err.js` (host) ·
+`set-mutable-binding-idref-with-proxy-env.js` (standalone) ·
+`set-mutable-binding-idref-compound-assign-with-proxy-env.js` (standalone).
+
+### Left out, with the reason (each is now a SINGLE named defect)
+
+- **`set-mutable-binding-idref{,-compound-assign}-with-proxy-env.js` on HOST**
+  — trace is now correct through `set:p`; the only missing entries are
+  `getOwnPropertyDescriptor:p, defineProperty:p`. Probed directly: on the host
+  lane **`Reflect.set(t, k, v, receiver)` with an explicit 4th argument
+  performs NO trap at all** (`.tmp/6651w/probe5.mts` case 1 returns `[]`) —
+  `__reflect_set_receiver` has no host implementation in `src/runtime.ts`, so
+  the 4-argument arm in `call-namespace-static.ts` silently drops the write.
+  Standalone, which HAS that native, emits both traps and the rows pass. This
+  is a `Reflect.set` defect, not a `with` defect, and that file already carries
+  a `#6651 E6` lane tag — left to whoever owns it.
+- **`get-binding-value-call-with-proxy-env.js` / `has-binding-call-with-proxy-env.js`
+  (both lanes)** — `with (proxy) { Object(); }` logs `[]`: a bare-identifier
+  CALLEE is never routed through the with-environment at all. This is not a
+  `HasBinding` bug but a missing `EvaluateCall` path — and doing it right also
+  means §9.1.1.2.3 `WithBaseObject`, i.e. the call's `this` must become the
+  with object. Out of this slice.
+- **`{get,set}-mutable-binding-binding-deleted-in-get-unscopables{,-strict-mode}.js`
+  (4 rows, both lanes)** — blocked upstream of `with` entirely: a computed
+  **symbol-keyed ACCESSOR in an object literal** (`get [Symbol.unscopables]() {}`)
+  is DROPPED by codegen. Probed: `env[Symbol.unscopables]` reads `undefined`
+  and the getter never runs, even with the `with` target forced onto the
+  dynamic path. The data form (`[Symbol.unscopables]: {…}`) works end-to-end.
+  Fixing this is a `literals.ts` feature, not an environment-record one.
+- **`unscopables-inc-dec.js`** — confirmed still the #1387 compile-error
+  signature verbatim on both lanes; the IR slice was deliberately not widened.
+- **`set-…-typed-array-in-proto-chain.js` (non-strict, standalone only)** —
+  needs §10.4.5.5's integer-indexed `[[Set]]` for a CanonicalNumericIndexString
+  (`"NaN"`) reached through a TypedArray PROTOTYPE, so that the Set creates no
+  own property. Host already models it. Unrelated to the environment record.
+- **A separate, larger HOST-only bucket lives in this same directory:** 45 of
+  the 53 remaining host failures are the `S12.10_A1.*` / `A3.6` / `A4` / `A5`
+  families (`value === undefined. Actual: null`, `myObj.p1 !== "a"`), which
+  standalone passes. That is a host `with`-over-object-literal value/null
+  defect worth its own slice — it is 45 rows, more than everything above
+  combined.
+
+### Regression test
+
+`tests/issue-6651-with-object-env-record.test.ts`, 7 cases. **6 are RED on the
+parent commit** (verified by the file-copy A/B in `.tmp/6651w/ab.sh`): the
+@@unscopables `get`-trap-only sequence, GetBindingValue step 2, SetMutableBinding
+step 2, the strict `ReferenceError`, and both throwing-getter propagations. The
+7th (a SLOPPY deleted-binding write must NOT throw) is green on base by design —
+it is the guard against over-throwing, and a test that only ever goes from red to
+green cannot catch that.
+
+Pre-existing and NOT caused by this change (identical failing sets measured on
+base and after via the same A/B): 4 in `issue-2663-unscopables.test.ts`, 3 in
+`issue-2663.test.ts`, 2 in `issue-1387-with-diagnostic.test.ts`;
+`issue-5271-es2015-statements-r2.test.ts` OOMs the vitest worker on this box on
+base as well.
+
+### Gates (bare, never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 · both again with
+`LOC_GATE_BASE=$(git rev-parse origin/main)` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 (no net checker growth) · `check:dead-exports` 0 ·
+`check-compiler-boundaries --mode inventory --base HEAD^1` 0
+(`inventoryValid: true`; no new file under `src/`) · `typecheck` 0 ·
+`biome lint --diagnostic-level=error` 0 · `scripts/equivalence-gate.mjs` 0
+(22 failing / 1,720 passing / 22 known — no new).
+
+Grants: dated W1 notes at the head of this file's `loc-budget-allow`
+(`src/runtime.ts` +24) and `func-budget-allow`
+(`src/runtime.ts::resolveImport` +24) — the same 24 lines, ~19 of them comment,
+inside three host-import bodies that cannot leave `resolveImport`'s closure.
+
+Logs: `.tmp/6651w/{with,ctl,prx}-{host,sa}-{base,after}.log` and the derived
+`.rows` set files; manifests `.tmp/6651w/{with-all,control,proxy,targets}.txt`;
+probes `.tmp/6651w/probe{,2,3,4,5}.mts`.
