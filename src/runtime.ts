@@ -17819,6 +17819,16 @@ assert._isSameValue = isSameValue;
       if (name === "__iterator_strict") return (obj: any) => _strictIteratorHostRuntime.getIterator(obj, callbackState);
       if (name === "__iterator_next_strict")
         return (iter: any): [number, any] => _strictIteratorHostRuntime.iteratorNext(iter, callbackState);
+      // (#1691) `yield*` resumption for the JS-host native generator arm; the
+      // TypeErrors belong to the module's realm (`caught.constructor`).
+      if (name === "__gen_yield_star_step") {
+        const TypeErrorCtor = builtin("TypeError", TypeError);
+        return (iter: any, mode: number, received: any): [number, any] =>
+          _strictIteratorHostRuntime.yieldStarStep(iter, mode, received, callbackState, {
+            typeError: (message) => new TypeErrorCtor(message),
+            structHasOwn: (value, key) => _wasmStructHasOwn(value, key, callbackState?.getExports()),
+          });
+      }
       // Iterator protocol: host-delegated iteration for non-array types
       if (name === "__iterator")
         return (obj: any) => {
