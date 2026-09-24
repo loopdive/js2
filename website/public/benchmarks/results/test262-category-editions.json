@@ -335,8 +335,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 104,
-      "fail": 108,
+      "pass": 105,
+      "fail": 107,
       "ce": 0,
       "skip": 0
     },
@@ -1269,6 +1269,14 @@
       "skip": 0
     }
   },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 23,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/eval-code": {
     "ES5": {
       "pass": 51,
@@ -1289,10 +1297,10 @@
       "skip": 0
     }
   },
-  "language/statementList": {
-    "ES2015": {
-      "pass": 23,
-      "fail": 15,
+  "built-ins/ShadowRealm": {
+    "ES2023": {
+      "pass": 0,
+      "fail": 64,
       "ce": 0,
       "skip": 0
     }
@@ -1307,14 +1315,6 @@
     "ES2022": {
       "pass": 0,
       "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/ShadowRealm": {
-    "ES2023": {
-      "pass": 0,
-      "fail": 64,
       "ce": 0,
       "skip": 0
     }
@@ -1445,17 +1445,17 @@
       "skip": 0
     }
   },
-  "language/keywords": {
+  "language/asi": {
     "ES5": {
-      "pass": 25,
+      "pass": 101,
       "fail": 0,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/asi": {
+  "language/keywords": {
     "ES5": {
-      "pass": 101,
+      "pass": 25,
       "fail": 0,
       "ce": 0,
       "skip": 0
@@ -1682,8 +1682,8 @@
   "built-ins/AsyncFromSyncIteratorPrototype": {
     "ES2018": {
       "pass": 6,
-      "fail": 32,
-      "ce": 0,
+      "fail": 31,
+      "ce": 1,
       "skip": 0
     }
   },

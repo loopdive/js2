@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10919,
-    "fail": 693,
+    "pass": 10918,
+    "fail": 694,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 310,
-        "fail": 118,
+        "pass": 309,
+        "fail": 119,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -471,12 +471,12 @@
       },
       {
         "name": "error-stack-accessor",
-        "pass": 2,
-        "fail": 9,
+        "pass": 1,
+        "fail": 10,
         "ce": 0,
         "skip": 0,
         "total": 11,
-        "pct": 18
+        "pct": 9
       },
       {
         "name": "DataView.prototype.getFloat32",
