@@ -15704,7 +15704,10 @@ assert._isSameValue = isSameValue;
           {
             const slot = _PROTO_CB_SLOTS[methodName];
             if (slot && wrappedArgs.length > slot.argIdx) {
-              wrappedArgs[slot.argIdx] = _maybeWrapCallable(wrappedArgs[slot.argIdx], slot.arity, callbackState);
+              // Classify the RAW arg: a host-wrapped struct Proxy is not a Wasm ref,
+              // so `__is_closure` rejects it and the callback stays uncallable.
+              const cb = _maybeWrapCallable(args[slot.argIdx], slot.arity, callbackState);
+              if (typeof cb === "function") wrappedArgs[slot.argIdx] = cb;
             }
           }
           // #1234 — sparse-aware fast path for Array.prototype.{unshift,reverse,forEach}

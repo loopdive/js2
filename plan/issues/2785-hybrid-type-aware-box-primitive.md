@@ -6,7 +6,7 @@ completed: 2026-06-28
 assignee: ttraenkler/sendev-box
 sprint: 69
 created: 2026-06-28
-updated: 2026-07-03
+updated: 2026-09-24
 priority: high
 horizon: m
 feasibility: hard
@@ -16,6 +16,12 @@ area: codegen
 language_feature: boxing
 goal: correctness
 related: [2760, 2766, 2782, 2105, 1788, 864]
+# 2026-09-24: +3 lines in `__proto_method_call` so the callback slot is
+# classified from the raw arg, not its host Proxy (map-on-array-like canary).
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 # #2785 — Type-aware box primitive (box keyed on the TS type, not the Wasm kind)
@@ -191,3 +197,18 @@ Empirical probes (host + standalone), all correct:
   `[1,-1,2].map(x=>x>0)[i] === true/false` (the 2nd-park boolean-map shape);
   `Array.prototype.map.call(arrayLike, cb)[2] === false` (S2 externref OOB,
   host — unchanged).
+
+## Follow-up (2026-09-24): map-on-array-like canary regressed on main
+
+The host canary `map-on-array-like (15.4.4.19-8-b-2)` in
+`tests/issue-2785.test.ts` failed on `main` with `TypeError: object is not a
+function`. Nothing ran it: CI only runs the test files a PR touches, and it
+surfaced when PR #6044 edited this file's harness.
+
+Cause: `__proto_method_call` host-wraps every struct arg first, then passed
+that Proxy to `_maybeWrapCallable`. A Proxy is not a Wasm ref, so
+`__is_closure` rejected it and the compiled callback reached V8 as a plain
+object. Any `Array.prototype.<callback-method>.call(nonArray, fn)` hit it.
+
+Fix: classify the RAW arg and substitute the wrapper only when it is callable.
+Regression test: `tests/issue-2785-proto-call-callback.test.ts`.
