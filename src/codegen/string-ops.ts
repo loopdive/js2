@@ -67,7 +67,7 @@ import {
   tryCompileStandaloneStringSplit,
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
-import { tryCompileStandaloneDynamicReplace } from "./string-replace-dynamic.js";
+import { tryCompileStandaloneDynamicStringRegExpCall } from "./string-regexp-dynamic.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
@@ -4009,8 +4009,10 @@ export function compileNativeStringMethodCall(
       (method === "replace" || method === "replaceAll" || method === "split") &&
       expr.arguments.length > 0 &&
       !firstArgIsStringLike;
-    // (#6662) An unclassifiable replace/replaceAll search value dispatches at runtime.
-    const dynamic = symbolProtocolArgForm && tryCompileStandaloneDynamicReplace(ctx, fctx, expr, method, emitReceiver);
+    // (#6662/#6665) An unclassifiable replace/replaceAll/match/search/split search value dispatches at runtime.
+    const dynamic =
+      (alwaysRegExp || symbolProtocolArgForm) &&
+      tryCompileStandaloneDynamicStringRegExpCall(ctx, fctx, expr, method, emitReceiver);
     if (dynamic) return dynamic;
     if (alwaysRegExp || symbolProtocolArgForm) {
       reportError(
