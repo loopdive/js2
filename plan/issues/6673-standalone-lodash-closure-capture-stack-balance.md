@@ -26,10 +26,11 @@ first error (it was already present behind the refusals — the parent's full
 error list carries it too, and #6661 recorded it):
 
 ```
-Codegen error: stack-balance invariant (entry): '__cb_7' references local 327, but only 3 params + 61 locals are declared (locals: 3:__cap_ref, 4:stack, 5:Stack, 6:object, ...
+Codegen error: stack-balance invariant (entry): '__closure_72' references local 327, but only 3 params + 59 locals are declared (locals: 3:__self_cast, 4:stack, 5:Stack, 6:object, ...
 ```
 
-`__cb_7` is the `baseFor` callback inside `baseMerge` (`lodash.js:3647`):
+(on upstream/main 7d94ea72bf; the closure was named `'__cb_7'` with 61
+locals on d772cc772d). The closure is the `baseFor` callback inside `baseMerge` (`lodash.js:3647`):
 
 ```js
 baseFor(source, function(srcValue, key) {

@@ -140,14 +140,16 @@ call the methods on typed operands the static arms already serve).
 pass. No pass → non-pass flips.
 
 **npm-compat standalone-dynamic lane** (`generate-npm-compat-report.mjs --only
-<pkg> --no-write --perf-only --lane standalone-dynamic`), before → after:
+<pkg> --no-write --perf-only --lane standalone-dynamic`), before (parent
+d772cc772d) → after (this branch, re-measured after merging upstream/main
+7d94ea72bf — same blockers as before the merge):
 
 | package | before (parent) | after (this branch) |
 | --- | --- | --- |
 | hono | compile-error `String.prototype.match(...) … (#1474)` | compile-error `Array.prototype.flat() is not yet supported in --target standalone/wasi (#2717)` |
 | marked | compile-error `String.prototype.search(...) … (#1474)` | **compiles**; runtime-error (checksum) `Error: Infinite loop on byte: 35` ([#6672](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6672-standalone-exec-untyped-property-chain-null)) |
 | moment | compile-error `String.prototype.match(...) … (#1474)` | **compiles**; runtime-error (module-init) `TypeError: Object.prototype.toString is not yet implemented in --target standalone` |
-| lodash | compile-error `String.prototype.split(...) … (#1474)` | compile-error `stack-balance invariant (entry): '__cb_7' references local 327 …` (pre-existing, also in the parent's error list — [#6673](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6673-standalone-lodash-closure-capture-stack-balance)) |
+| lodash | compile-error `String.prototype.split(...) … (#1474)` | compile-error `stack-balance invariant (entry): '__closure_72' references local 327, but only 3 params + 59 locals are declared …` (pre-existing; named `'__cb_7'` before the upstream merge, also in the parent's error list — [#6673](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6673-standalone-lodash-closure-capture-stack-balance)) |
 | lodash-es | compile-error `String.prototype.match(...) … (#1474)` | **compiles**; host-import-error `standalone binary retained 4 host import(s)` (`env.setTimeout`, `env.clearTimeout`, `js2wasm:runtime-eval.__runtime_new_function`, `__runtime_apply_interpreted`) |
 | prettier | compile-error `String.prototype.split(...) … (#1474)` | compile-error `native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680)` |
 
