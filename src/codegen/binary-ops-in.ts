@@ -774,13 +774,24 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         : null
       : [...new Set([...structFieldNames, ...inheritedMethodNames])];
   if (dynamicKeyNames !== null && dynamicKeyNames.length > 0 && keyIsRefLike) {
+    // Compare key against each field name using wasm:js-string equals
+    const equalsIdx = ctx.funcMap.get("__str_eq") ?? ctx.funcMap.get("string_equals");
+    const jsStrEquals = ctx.mod.imports.findIndex((imp) => imp.module === "wasm:js-string" && imp.name === "equals");
+    const eqFunc = jsStrEquals >= 0 ? jsStrEquals : equalsIdx;
+    // (#6670) Standalone has neither equality helper (strings are native GC
+    // structs, not `string_constants` globals). This arm used to compile the
+    // key FIRST and then bail, leaving it on the stack for the generic arm
+    // below, which re-compiled both operands and folded `false`: every
+    // `key in closedStruct` answered false and, inside `a || k in o`, the
+    // stray key made the block invalid (styled-components' `De`). Ask the
+    // native [[HasProperty]] helper instead, which reads the struct's fields.
+    if ((eqFunc === undefined || eqFunc < 0) && (ctx.standalone || ctx.wasi)) {
+      const runtimeHas = emitRuntimeExternHas(ctx, fctx, expr);
+      if (runtimeHas !== undefined) return runtimeHas;
+    }
     // Compile the key expression (should produce a string/externref)
-    const keyType = compileExpression(ctx, fctx, expr.left);
+    const keyType = eqFunc !== undefined && eqFunc >= 0 ? compileExpression(ctx, fctx, expr.left) : null;
     if (keyType) {
-      // Compare key against each field name using wasm:js-string equals
-      const equalsIdx = ctx.funcMap.get("__str_eq") ?? ctx.funcMap.get("string_equals");
-      const jsStrEquals = ctx.mod.imports.findIndex((imp) => imp.module === "wasm:js-string" && imp.name === "equals");
-      const eqFunc = jsStrEquals >= 0 ? jsStrEquals : equalsIdx;
       if (eqFunc !== undefined && eqFunc >= 0) {
         const keyLocal = allocLocal(fctx, `__in_key_${fctx.locals.length}`, keyType);
         fctx.body.push({ op: "local.set", index: keyLocal });
@@ -813,45 +824,8 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     if (rightWasm.kind === "externref" || rightWasm.kind === "anyref") {
       // (#5358) The host answers a class instance's prototype methods through
       // the same `__member_kind_<key>` bridge the read uses — publish them.
-      if (!isNumericIndexExpression(ctx, expr.left, fctx)) {
-        recordRuntimeKeyClassMethodRead(ctx, undefined);
-        // (#5383 S2h) `k in c` has the same prototype gap as the read, and
-        // `__extern_has` delegates through the same `__class_proto_lookup`.
-        recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
-      }
-      const hasIdx = ensureLateImport(
-        ctx,
-        "__extern_has",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "i32" }],
-      );
-      if (hasIdx !== undefined) {
-        flushLateImportShifts(ctx, fctx);
-        // (#2741) §13.10.1 evaluates the LHS (key, steps 1-2) BEFORE the RHS
-        // (object, steps 3-4) — e.g. `x() in y()` must throw from `x()` first,
-        // and an unresolvable LHS reference (`undef in obj`) must throw before
-        // the object is evaluated. Evaluate the key first into a temp, then the
-        // object, then re-push the key so the call args stay `(obj, key)`.
-        // coerceType (not a bare extern.convert_any) boxes a non-ref key.
-        const leftResult = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-        if (leftResult === null) {
-          fctx.body.push({ op: "ref.null.extern" });
-        } else if (leftResult.kind !== "externref") {
-          coerceType(ctx, fctx, leftResult, { kind: "externref" });
-        }
-        const keyTmp = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: keyTmp });
-        const rightResult = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-        if (rightResult === null) {
-          fctx.body.push({ op: "ref.null.extern" });
-        } else if (rightResult.kind !== "externref") {
-          coerceType(ctx, fctx, rightResult, { kind: "externref" });
-        }
-        fctx.body.push({ op: "local.get", index: keyTmp });
-        releaseTempLocal(fctx, keyTmp);
-        fctx.body.push({ op: "call", funcIdx: hasIdx });
-        return { kind: "i32" };
-      }
+      const runtimeHas = emitRuntimeExternHas(ctx, fctx, expr);
+      if (runtimeHas !== undefined) return runtimeHas;
     }
 
     const leftResult = compileExpression(ctx, fctx, expr.left);
@@ -879,6 +853,57 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
+}
+
+/**
+ * Dynamic-key `key in obj` through the runtime `__extern_has` helper. Returns
+ * undefined (nothing emitted) when the helper cannot be imported.
+ */
+function emitRuntimeExternHas(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+): InnerResult | undefined {
+  // (#5358) The host answers a class instance's prototype methods through
+  // the same `__member_kind_<key>` bridge the read uses — publish them.
+  if (!isNumericIndexExpression(ctx, expr.left, fctx)) {
+    recordRuntimeKeyClassMethodRead(ctx, undefined);
+    // (#5383 S2h) `k in c` has the same prototype gap as the read, and
+    // `__extern_has` delegates through the same `__class_proto_lookup`.
+    recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
+  }
+  const hasIdx = ensureLateImport(
+    ctx,
+    "__extern_has",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
+  if (hasIdx === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+  // (#2741) §13.10.1 evaluates the LHS (key, steps 1-2) BEFORE the RHS
+  // (object, steps 3-4) — e.g. `x() in y()` must throw from `x()` first,
+  // and an unresolvable LHS reference (`undef in obj`) must throw before
+  // the object is evaluated. Evaluate the key first into a temp, then the
+  // object, then re-push the key so the call args stay `(obj, key)`.
+  // coerceType (not a bare extern.convert_any) boxes a non-ref key.
+  const leftResult = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
+  if (leftResult === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (leftResult.kind !== "externref") {
+    coerceType(ctx, fctx, leftResult, { kind: "externref" });
+  }
+  const keyTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: keyTmp });
+  const rightResult = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+  if (rightResult === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (rightResult.kind !== "externref") {
+    coerceType(ctx, fctx, rightResult, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.get", index: keyTmp });
+  releaseTempLocal(fctx, keyTmp);
+  fctx.body.push({ op: "call", funcIdx: hasIdx });
+  return { kind: "i32" };
 }
 
 /** (#4491 T11) True iff the `__vec_*` struct at `vecTypeIdx` stores f64 elements. */
