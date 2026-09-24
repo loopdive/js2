@@ -2165,7 +2165,9 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     // A lane that cannot SEE the artifact can never link it. Both shard jobs
     // used to skip the download on standalone cells.
     expect(workflow).not.toMatch(/Download compiled Temporal provider \(#5353\)\n\s+if:/);
-    expect(workflow.match(/Download compiled Temporal provider \(#5353\)/g)?.length).toBe(2);
+    // Three downloads: `test262-shard` and `test262-shard-mg` (both lanes), plus
+    // the host-only honest-audit shard, which reads the same artifact.
+    expect(workflow.match(/Download compiled Temporal provider \(#5353\)/g)?.length).toBe(3);
     // And the directory is always uploadable, even when the soft build failed —
     // `download-artifact` fails hard on a missing artifact, which would turn
     // this slice's fail-soft into a red standalone lane.
