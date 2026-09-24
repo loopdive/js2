@@ -626,3 +626,59 @@ standalone + gc sha256 unchanged on a ToPrimitive-heavy probe).
 → `"[object Object]"`, arity-0 `toString` throws; after, all correct, local
 controls unchanged. test262 standalone: the two target rows fail → pass;
 `.tmp/s74b/target8-rel.txt` 3/8 → 5/8 (the two targets; no row regressed).
+
+### 2026-09-23 — JSBI "Convert … using `toNumber`" cluster (287 standalone Temporal rows)
+
+**Not an Array-subclass dispatch bug.** JSBI's `valueOf` throws, and nothing
+in the polyfill calls it; the compiler did, through unsound call-site
+parameter inference. Each fix below was found by reducing a row to a
+polyfill probe (`compileWithTemporalGlobal` + patched provider source), then
+to a tiny standalone JS repro. Witness: `tests/issue-2917-jsbi-param-inference.test.ts`
+(all five arms fail on base).
+
+1. **Opaque `any` argument withdrew only a REF narrowing** —
+   `inferParamTypeFromCallSites` (#4530 rule). `ApplyUnsignedRoundingMode(r1,
+   r2, …)` (`le`) is called with numbers by `RoundNumberToIncrement` and with
+   JSBI locals (checker: `any`, opaque local origin) by `TimeDuration.round`.
+   The number sites pinned `r1`/`r2` to f64 → the JSBI call site ran ToNumber
+   → `valueOf` threw. "Coerce, don't trap" is not safe for scalars: ToNumber
+   is observable. Now every non-externref narrowing is withdrawn.
+2. **`any` identifiers were "trusted" to carry the other sites' agreement** —
+   same function. A forwarded implicit-any PARAMETER now contributes its own
+   function's ABI type (`forwardedParamAbiType` → `inferImplicitAnyParamType`,
+   cycle-guarded by a param set), and a destructured binding is opaque.
+   `Vn(…, cond ? "minute" : "auto")` had pinned the fractional-second
+   precision param to a native string; `nr` forwarded the number 6 and
+   `Instant#toString` passed `const { precision: a } = At(…)`, so the number
+   arrived as a null string and `slice(0, precision)` printed `40.Z`.
+3. **The numeric fixpoint mirrored the old agreement** —
+   `numeric-property-analysis.ts` parameter seeding. With (1) the ABI stayed
+   externref but the fixpoint still called `r1` numeric, so `return cmp < 0 ?
+   r1 : r2` got an f64 return (ToNumber again). Opaque-shaped args now set
+   `dynamicConflict` (`isOpaqueArgShape`), which vetoes only when unproven.
+4. **IIFE `return a, {…}` not unwrapped by the #3128 return scan** —
+   `compileTailDispatch`. The ret local kept the TS struct type while the
+   literal lowered to an open `$Object`; the guarded cast answered null →
+   `m.duration` "Cannot access property on null or undefined"
+   (PlainDateTime/PlainTime since/until, Duration#round with relativeTo).
+5. **Same-domain, different-struct reassignment** — `bindingHasMixedAssignmentCarrier`.
+   `let m = qr(this); … m = Jr(…)` in `Duration#round`: both unannotated
+   functions return object literals ("object" domain both), lowered to
+   different structs; the slot kept `qr`'s struct and `m = Jr(…)` cast to null.
+   Two DIFFERENT unannotated call targets now force the boxed carrier.
+
+Known, not fixed here (out of this lane): an `AnyValue` tag-5 box treats any
+externref as a string (`__any_typeof` → "string", `ToNumber` → 0) when a
+`string | number` union local is fed from a property read — reachable only
+when the TS union is concrete, which the polyfill's `any`-typed paths avoid.
+
+**Measured** (`run-test262-paths.mts --standalone --isolate`, linked standalone
+Temporal provider rebuilt per compiler): the 287-row list
+(`.tmp/s75-B-jsbi.txt`, all failing on `9b1ba0d19f`) → 274/287 after fixes
+1–4; after fix 5 the 13 leftovers were re-run with 10 now passing, plus 29
+sampled cluster passes and 40 sampled previously-passing Temporal rows, all
+still passing → **284/287**. The three left are BigInt, not JSBI:
+`Instant|Duration/prototype/round/roundingincrement-wrong-type.js` (`2n`
+crossing into the provider is not `typeof "bigint"`, so ToNumber answers NaN →
+RangeError instead of TypeError) and `Instant/prototype/round/rounding-direction.js`
+(a negative epoch below −2^63 wraps: `8525729894838206464n`).

@@ -21,6 +21,10 @@
  *    return local from the TS struct type while the literal lowered to an open
  *    object; the guarded cast answered null (`m.duration` → "Cannot access
  *    property on null or undefined" in `Duration#round` / `since` / `until`).
+ *  - `crossReturn`: `let m = qr(this); … m = Jr(…)` — both unannotated
+ *    functions return object literals, so both are "object" to the
+ *    mixed-assignment carrier while lowering to different structs; the slot
+ *    kept `qr`'s struct and `m = Jr(…)` cast to null (`Duration#round`).
  */
 import { describe, expect, it } from "vitest";
 import { compileMulti } from "../src/index.js";
@@ -68,9 +72,23 @@ function sole(t) { let m; m = function (x) { return 0, { d: { time: x } }; }(t);
 export function iifeComma() {
   try { return nudge(5, "x", false) === 5 && nudge(5, "date", false) === 6 && sole(5) === 5 ? 1 : 0; } catch (e) { return -1; }
 }
+
+// crossReturn
+class TD { constructor(n) { this.n = n; } add(o) { return new TD(this.n + o.n); } }
+function Jr(e, t) { return t.n, { date: e, time: t }; }
+function qr(n) { return { date: { years: 1, days: 0 }, time: new TD(n) }; }
+function roundDur(c, n) {
+  let m = qr(n);
+  if ("day" === c) m = Jr({ years: 0, days: 5 }, new TD(0));
+  else m = Jr({ years: 0, days: 0 }, m.time.add(new TD(1)));
+  return m.date.years + ":" + m.date.days + ":" + m.time.n;
+}
+export function crossReturn() {
+  try { return roundDur("hour", 5) === "0:0:6" && roundDur("day", 5) === "0:5:0" ? 1 : 0; } catch (e) { return -1; }
+}
 `;
 
-const NAMES = ["scalar", "forwarded", "destructured", "iifeComma"];
+const NAMES = ["scalar", "forwarded", "destructured", "iifeComma", "crossReturn"];
 
 describe("#2917 — call-site param inference soundness (standalone)", () => {
   it("keeps opaque/forwarded/destructured arguments out of the agreement", { timeout: 120_000 }, async () => {
@@ -97,6 +115,6 @@ describe("#2917 — call-site param inference soundness (standalone)", () => {
         answers[name] = `trap: ${(e as Error).message}`;
       }
     }
-    expect(answers).toEqual({ scalar: 1, forwarded: 1, destructured: 1, iifeComma: 1 });
+    expect(answers).toEqual({ scalar: 1, forwarded: 1, destructured: 1, iifeComma: 1, crossReturn: 1 });
   });
 });
