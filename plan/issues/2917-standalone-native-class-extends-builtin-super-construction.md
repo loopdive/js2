@@ -30,7 +30,11 @@ loc-budget-allow:
   - src/codegen/expressions/identifiers.ts
   - src/codegen/index.ts
   - src/codegen/type-coercion.ts
+  - src/codegen/declarations/param-return-inference.ts
+  - src/codegen/numeric-property-analysis.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
 func-budget-allow:
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/class-bodies.ts::compileSuperCall
@@ -62,6 +66,16 @@ compileBuiltinStaticCall (+2, next to the user-class parent fold it extends),
 one finalize call in each of generateModule / generateMultiModule (+1 each,
 beside their `fillStandaloneClassInstanceProtoArm` twins), and the import
 feeding the one-line alias wrap in coerceType (type-coercion.ts +1).
+-->
+
+<!--
+2026-09-23 budget rationale (JSBI "Convert … using `toNumber`" slice): the
+param-inference soundness helpers (`forwardedParamAbiType`, `sameValType`,
++48 with docs) sit next to `inferParamTypeFromCallSites`, which they recurse
+through (`inferImplicitAnyParamType`), so a separate module would be an import
+cycle; `isOpaqueArgShape` (+29) needs the numeric fixpoint's private
+`ScopeTable`/`Slot`; the IIFE comma-return unwrap is +3 inside the #3128
+return scan of compileTailDispatch, where that scan lives.
 -->
 
 # #2917 — Standalone native `class X extends <Builtin>` super-construction

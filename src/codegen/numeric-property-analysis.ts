@@ -1299,6 +1299,33 @@ function noVerdicts(): PropertyKindVerdicts {
   };
 }
 
+/**
+ * (#2917) Mirror of the #4530 / #2917 opaque-argument rule in
+ * `inferParamTypeFromCallSites`: an argument this fixpoint cannot prove, whose
+ * value is a dynamic member/call result (directly, or through a local whose
+ * definition is one, or a destructured / uninitialised local), vetoes the
+ * parameter instead of contributing "no evidence". The ABI side already keeps
+ * such a parameter on `externref`; if this side still called it numeric, a read
+ * of the parameter (e.g. `return cmp < 0 ? r1 : r2`) would be promoted to f64
+ * and run ToNumber on the object — the JSBI "Convert … using `toNumber`" throw.
+ * Identifiers bound to other parameters (and unresolved names) stay trusted,
+ * exactly as on the ABI side. Only consulted when the def is NOT proven.
+ */
+function isOpaqueArgShape(arg: ts.Expression, scopes: ScopeTable, host: NumericPropertyAnalysisHost): boolean {
+  const value = unwrap(arg);
+  if (!ts.isIdentifier(value)) return true;
+  const slot = scopes.resolve(value, value.text);
+  if (!slot || slot.isParam) return false;
+  return slot.defs.some((def) => {
+    if (def.forcedNumeric === true) return false;
+    if (def.expr === undefined) return true;
+    const source = unwrap(def.expr);
+    if (ts.isIdentifier(source)) return false;
+    const kind = host.oracle?.typeFactOf(source).kind;
+    return kind === "any" || kind === "unknown" || kind === "unresolvable";
+  });
+}
+
 export function analyzeNumericPropertyNames(
   host: NumericPropertyAnalysisHost,
   sourceFiles: readonly ts.SourceFile[],
@@ -1324,7 +1351,9 @@ export function analyzeNumericPropertyNames(
     if (parameter.initializer) parameter.slot.defs.push({ expr: parameter.initializer });
     for (const call of facts.calls.get(parameter.owner) ?? []) {
       const arg = call.args[parameter.index];
-      parameter.slot.defs.push(arg ? { expr: arg, dynamicConflict: call.recursive } : {});
+      parameter.slot.defs.push(
+        arg ? { expr: arg, dynamicConflict: call.recursive || isOpaqueArgShape(arg, scopes, host) } : {},
+      );
     }
     if (parameter.slot.defs.length === before) parameter.slot.defs.push({});
   }
