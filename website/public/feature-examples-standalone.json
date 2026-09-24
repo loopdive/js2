@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 111,
+      "passCount": 112,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -783,7 +783,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 26,
+          "pass": 27,
           "total": 60
         }
       ]
