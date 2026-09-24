@@ -56,6 +56,19 @@ function propertyChainRoot(pae: ts.PropertyAccessExpression): { root: string; de
   return ts.isIdentifier(expression) ? { root: expression.text, depth } : null;
 }
 
+/**
+ * (#6651 B7) A slot seeded by `o.p = undefined`/`null` (the i32 sentinel) cannot
+ * keep that carrier once a PRIMITIVE is written: `r.global = undefined;
+ * r.global = "string"` stored i32 0 (`RegExp/prototype/flags/coercion-*`).
+ * Object-valued later writes keep the #3669 sentinel carve-out.
+ */
+function sentinelSlotTakesPrimitive(existing: WidenedPropCandidate, tsType: ts.Type): boolean {
+  const primitive =
+    ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.ESSymbolLike;
+  const sentinel = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
+  return existing.type.kind === "i32" && (tsType.flags & primitive) !== 0 && (tsType.flags & sentinel) === 0;
+}
+
 function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
   const sentinelFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
   return isUnboxedPrimitiveCarrier(type) && (tsType.flags & sentinelFlags) === 0;
@@ -2517,7 +2530,12 @@ export function collectPropsFromStatements(
           // widening an anticipated `undefined -> null` property changes its
           // empty-object default and can null-deref reads before the first write.
           const existing = extraProps.find((p) => p.name === propName);
-          if (existing?.primitiveSeed && !valTypesMatch(existing.type, wasmType)) {
+          if (
+            existing &&
+            (existing.primitiveSeed
+              ? !valTypesMatch(existing.type, wasmType)
+              : sentinelSlotTakesPrimitive(existing, rhsType))
+          ) {
             existing.type = { kind: "externref" };
           }
         }
