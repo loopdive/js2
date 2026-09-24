@@ -5135,6 +5135,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     const plan = coercionPlan(from, to, {
       boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
       unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+      boxBigIntIdx: ctx.funcMap.get("__box_bigint") ?? null,
     });
     if (plan && !plan.lossy) return plan.instrs;
   }

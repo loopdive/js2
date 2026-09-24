@@ -4188,6 +4188,22 @@ export function collectMutatedCaptureNames(
   return result;
 }
 
+/**
+ * (#5407) True when `compileArrowAsCallback` could only end in its #3235
+ * degrade-to-closure arm: a host-free lane (standalone/WASI) with no callback
+ * bridge registered. Asked BEFORE the callback body is compiled — asking after
+ * (as the degrade arm does) first compiled the whole body into an
+ * exported-but-never-called `__cb_<id>`, so every `assert.throws(E, () => …)`
+ * arrow in a standalone module was emitted twice per init pass. On this lane
+ * `resolveCallbackMakerName` picks the same name with no side effects, and the
+ * bridge imports are registered before codegen, so the answer cannot change
+ * while the body compiles.
+ */
+function hostFreeCallbackBridgeMissing(ctx: CodegenContext, needsThis: boolean): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  return !ctx.funcMap.has(needsThis ? "__make_getter_callback" : "__make_callback");
+}
+
 /** (#2128) Per-literal registry of shared capture ref cells — see compileArrowAsCallback. */
 export type SharedRefCellMap = Map<string, { refCellLocal: number; refCellTypeIdx: number; valType: ValType }>;
 
@@ -4245,6 +4261,8 @@ export function compileArrowAsCallback(
   ) {
     return compileArrowAsClosure(ctx, fctx, arrow);
   }
+
+  if (hostFreeCallbackBridgeMissing(ctx, options?.needsThis === true)) return compileArrowAsClosure(ctx, fctx, arrow);
 
   const cbId = ctx.callbackCounter++;
   const cbName = `__cb_${cbId}`;

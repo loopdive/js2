@@ -35,7 +35,7 @@ import {
 } from "../checker/type-mapper.js";
 import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
-import { isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
+import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
@@ -4885,7 +4885,10 @@ export function finalizeStructAndDynamicMemberGet(
         openObjectReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
-        foreignReturnReceiver;
+        foreignReturnReceiver ||
+        // (#5383) …and for any read in a module on a standalone link, whose
+        // receiver may be the peer's object (see the predicate).
+        dynamicReadCrossesStandaloneLink(ctx);
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",

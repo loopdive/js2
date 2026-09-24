@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-23
+updated: 2026-09-24
 priority: high
 horizon: xl
 feasibility: hard
@@ -8837,6 +8837,260 @@ the partition stands as proposed.
   `test:equivalence:gate` 0 (22 failing / 1720 passing / 22 known — no new
   regressions).
 
+### 2026-09-24 — Cluster A (native generator lowering, standalone), slice A5: computed keys from `yield`, `yield*` inside a for-of body, `obj.foo = yield`
+
+Claimed 2026-09-24 by this lane (senior-dev, Opus 5 High), branch `a5`, based
+on `origin/main` @ `5a05fff094` (A3 + A4 landed). The before-state was measured
+in a source-clean `git archive HEAD` extract (`.tmp/basetree`); engine
+`JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter
+`d4799bda84cfed0d`); every pass `--standalone --isolate`, 24-row chunks, one
+runner at a time, src frozen (md5-checked) for the whole after-run.
+
+| A manifest, 197 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/a5/A-base.tsv`) | 152 | 2 | 43 |
+| after, final src (`.tmp/a5/A-final.tsv`) | **165** | 4 | 28 |
+
+**+13 pass, 0 pass → non-pass** (per-row join). The two other moves are
+CE → fail: `{expressions,statements}/class/accessor-name-static-computed-yield-expr.js`
+(see residuals — the generator half is right, the static setter dispatch is not).
+
+| target | rows gained |
+| --- | --- |
+| 1 — computed keys from `yield` (object literal, class, + `yield` in call args of the same generators) | 9: `cpn-obj-lit-…`, `object/accessor-name-computed-yield-expr`, `object/method-definition/computed-property-name-yield-expression`, `{expressions,statements}/class/accessor-name-inst-computed-yield-expr`, `cpn-class-{expr,decl}-{computed,accessors}-…` |
+| 2 — `yield*` inside a for-of body | 4: `for-of/yield-star{,-from-try,-from-catch,-from-finally}.js` |
+| 3 — `obj.foo = yield` | 0 — not attempted, see below |
+
+#### Target 1 — a `yield` inside a computed key
+
+New leaf `src/codegen/generator-yield-nested.ts`. A statement holding nested
+yields is DEFERRED past its last suspension, as #680 already does for direct
+yields, but the order proof is made per statement instead of per syntactic
+root: the root is walked in spec evaluation order (§13.2.5.5 key-then-value
+for object literals; §15.7.14 heritage then computed keys in element order for
+classes; callee then arguments for calls; base, key, RHS for member
+assignments) into atoms. Before the last yield each atom must be a yield
+(suspends in order), REPLAYABLE (a literal, or a binding of this generator no
+closure mentions and the statement does not write — it cannot change while
+suspended), or CAPTURED once into a spill via the existing
+`captureContinuationOperand`. The statement is then compiled in the final
+state with every yield / capture node read from its spill (the existing
+replacement map). Pinned: a value evaluated before a later key's yield runs
+before that yield, exactly once.
+
+One documented approximation: a CALLEE before a yield (`assert.sameValue(o[yield 9], 9)`)
+cannot be captured without losing its `this`, so it is replayed when it is a
+module-scope function declaration / lib global or `<such>.name`; that is only
+observable if the caller rebinds the name or rewrites the property while the
+generator is suspended. Any other callee refuses.
+
+Gate: only generators whose body holds a yield inside a COMPUTED PROPERTY NAME
+(`bodyHasComputedKeyYield`, standalone/WASI) — every one of them was a #680
+refusal before — and they move to the boxed-any carrier, because the resumed
+value becomes a KEY (`iter.next('first')` names the accessor). A class FIELD
+keyed by a yield is refused on purpose: the class lowering skips runtime-keyed
+fields ("dynamic computed name — skip"), so admitting it turned 4
+`cpn-class-*-fields-*` rows from a loud refusal into a class silently missing
+the field (measured, then refused; pinned as a control).
+
+#### Target 2 — `yield*` inside a for-of body
+
+A2's bail 4. The native-gen delegation arm now admits a chain carrying the
+loop's `iter-close` (plus `replay` / `catch` entries): the delegation state
+gets the innermost-first `unwind` chain instead of the replay-only finalizers,
+and the D2 delegate-close forwarding (forward the abrupt completion to the
+inner generator first) is lifted verbatim into `emitDelegateCloseForward` and
+called from BOTH abrupt paths, so `.return()` / `.throw()` at the delegated
+yield closes the inner, then the loop iterator. Pinned in both directions
+(`closed === 12`, rethrow). The vec kind still refuses a non-replay chain; the
+protocol-iterable kind already walked the full chain.
+
+#### Target 3 — not attempted, and why
+
+`built-ins/GeneratorPrototype/return/try-finally-set-property-within-try.js`
+needs three things, none of them a temporary: (a) a yield-free `finally` that
+itself `return`s is lowered on the LEGACY replay path, which compiles the
+`return` raw in the resume function — measured: even the plain
+`try { yield; } finally { return 1; }` traps (`dereferencing a null pointer in
+__gen_resume_g`) on `.return(45)`, so the replay is the defect; routing such a
+try onto `lowerTryRegion` (whose finally lowers a `return` as a completion) is
+the likely fix; (b) the try part is lowered with continuations disabled, so the
+member-target statement needs this slice's deferral admitted inside a try
+region with the unwind chain threaded into each suspension; (c) the generator
+has no computed key, so the carrier gate would have to widen. `f(yield)` /
+`new C(yield)` fall out of target 1's mechanism (pinned inside a gated
+generator) but are NOT admitted on their own: the gate is a computed key; the
+Sept-21 standalone baseline shows no non-pass sync-generator row that needs
+them outside the target-1 set.
+
+#### Controls run
+
+- A manifest before/after above (final src, md5-checked).
+- New pin suite `tests/issue-6651-a5-computed-key-yield.test.ts`, 9 cases:
+  **7 red on the base tree**, 2 scope CONTROLS green on both (a call-arg yield
+  alone still refuses; a yield-keyed class field still refuses).
+- `npm run -s typecheck`; `npx biome lint src tests scripts
+  --diagnostic-level=error`; prettier; `check-loc-budget` / `check-func-budget`
+  / `check-coercion-sites` / `check:oracle-ratchet` (+0 / +0) /
+  `check:dead-exports`; `check-compiler-boundaries --mode inventory` (new leaf
+  classified) — all green against the fork point.
+- `LOC_GATE_BASE=origin/main` (`986a45359d`): loc green; func reports
+  `statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  1246 > 1238` — a function this branch does not touch (main shrank it after
+  the fork point); it disappears once `origin/main` is merged in.
+
+#### Residuals
+
+| rows | shape | what it needs |
+| ---: | --- | --- |
+| 2 | `accessor-name-static-computed-yield-expr` ×2 (now fail) | the static getter read is right; `C.second = v` does not dispatch a runtime-keyed STATIC setter on a class value — class lowering (cluster C), reproduces with no generator |
+| 4 | `cpn-class-{expr,decl}-fields{,-methods}-…` (outside the manifest) | runtime-keyed class fields (class lowering skips them) |
+| 1 | `obj.foo = yield` in `try {} finally { return 1 }` | target 3 above |
+
+#### Suspended work — 2026-09-24
+
+Session wrap-up ordered before the regression controls ran. **Not mergeable
+yet.**
+
+- Worktree `/home/user/js2/.claude/worktrees/agent-ab4ec40c80235671d`, branch
+  `a5`, WIP commit `a80f49d064` (parent `5a05fff094`), not pushed.
+- Measured: the A manifest (above), the pin suite red/green split, every
+  source gate.
+- NOT run: (1) the compile-only byte differential on BOTH targets over the
+  747 reachable rows (`.tmp/a5/ctl-reach.txt` = A4's 2,016-row set ∩ sources
+  containing `yield*` or a `[`…`yield`; no harness file matches either
+  pattern), and verdicts on rows whose bytes change; (2) 32/32 byte identity on
+  `website/playground/examples/` + `benchmarks/` (`.tmp/a5/bytes.mts`); (3)
+  `node scripts/equivalence-gate.mjs`; (4) `pnpm run check:ir-fallbacks`; (5)
+  the A-family pin suites (`tests/issue-6651-a3-*`, `-a4-*`,
+  `-generator-*`, `issue-680-*`, `*generator*.test.ts`) on both trees.
+- Resume: `cd` the worktree; `.tmp/basetree` is the source-clean base (it has
+  `.tmp/a5/{sha,bytes}.mts`). Run, one at a time:
+  `.tmp/a5/shaall.sh <tree> <abs-outdir> .tmp/a5/ctl/c-*` for the basetree and
+  the worktree, then `node .tmp/a5/shadiff.mjs <base-out> <after-out>
+  .tmp/a5/changed`; expected: host 0 changed (every widening is gated on
+  standalone/WASI or on an `iter-close` entry, which only exists there);
+  standalone changed ⊆ the 13 gained rows + the 2 static-accessor rows + other
+  computed-key / for-of-`yield*` rows, each needing a verdict. Then (2)-(5).
+  Then `git merge origin/main`, re-run the func gate, and hand the SHA over.
+
+### 2026-09-24 — Cluster E, slice E8
+
+**Status: WIP, suspended at the session wrap-up — NOT mergeable yet** (the
+corpus controls were not run; see "Suspended work" below).
+
+- **Branch** `e8` (local, not pushed), written on `origin/main` @ `986a45359d`
+  (E7 / #6075 in). Engine for every verdict: QuickJS
+  (`JS2WASM_EVAL_ENGINE=quickjs`, adapter `d4799bda84cfed0d`), `--standalone`.
+  Base = the `origin/main` copies of the edited sources swapped in
+  (`.tmp/base/`, file copies, `.tmp/e8/swap.sh base|new`).
+
+#### What is written
+
+1. **Real standalone bodies for the `toLocaleString` VALUES** (target 1). The
+   member closures were the #2984 refusal ("… is not yet implemented in
+   --target standalone"), so every generic `Invoke(x, "toLocaleString")`
+   threw. Now:
+   - `Number.prototype.toLocaleString` (§21.1.3.4) — `? thisNumberValue(this)`
+     (TypeError on a non-Number), then `Number::toString(x)`; the same string
+     the direct `(n).toLocaleString()` arm (#2160) already emits
+     (`number-proto-format.ts`).
+   - `BigInt.prototype.toLocaleString` (§21.2.3.2) — `__typeof_bigint` brand
+     check, then `__extern_toString` (new leaf `proto-to-locale-string.ts`).
+     Needed because the TypedArray helper's BigInt64/BigUint64 elements Invoke
+     it.
+   - `Object.prototype.toLocaleString` (§20.1.3.5) — `Invoke(this, "toString")`
+     via `__extern_get` + `__apply_closure` (the #4655 spelling); nullish `this`
+     throws; an unseen `toString` falls back to `__extern_toString`
+     (absent-not-wrong, as `array-tolocalestring.ts`).
+   - `String.prototype` and `Boolean.prototype` have NO own `toLocaleString`
+     (they inherit Object's), so there is nothing to write for them.
+   - **Byte-identity gate:** all three bodies emit only when some source file
+     of the module spells `toLocaleString` (`moduleMentionsToLocaleString`, a
+     text scan, not an AST walk). Needed because a builtin prototype's
+     companion object is seeded with a closure for EVERY member of its CSV
+     (`native-proto.ts`, `__nativeproto_seed_<Brand>`), and `Object.prototype`'s
+     companion is seeded in a large share of the corpus; without the gate all
+     of those modules would change bytes. A module that never names the member
+     keeps the refusal body.
+2. **E7's dropped `%TypedArray%.prototype.toLocaleString` helper, re-landed**
+   (target 2): `ta-to-locale-string.ts` (the preserved
+   `dropped-ta-to-locale-string.ts` minus the `__ta_to_string` half, which E7
+   kept in `ta-to-string.ts`) plus the three-line `any`-receiver
+   `.toLocaleString()` arm in `call-receiver-method.ts`.
+3. `scripts/compiler-boundaries.json` classifies both new leaves.
+4. Pins `tests/issue-6651-e8-tolocalestring.test.ts` (6 cases; the three
+   TypedArray ones are E7's dropped pins, plus Number/BigInt/Object value
+   bodies and an unpatched-element guard).
+
+#### Measured
+
+| what | result |
+| --- | --- |
+| manifest `E-typedarray-buffers.txt`, base (`986a45359d`, source-clean), 24-row `--isolate` chunks | **61 pass / 83 fail** (`.tmp/e8/m-base.tsv`) — equals E7's committed figure |
+| probes (runner-wrapped, module scope, after tree) | `Number.prototype.toLocaleString` read as a value then `.call(3)` → `"3"`, `.call("x")` → TypeError; `Object.prototype.toLocaleString.call({toString(){return "T"}})` → `"T"`; `BigInt.prototype.toLocaleString.call(42n)` → `"42"` — all three threw "not yet implemented" on the base |
+| pins, after tree | 6/6 green; the three TypedArray cases were red on the pre-helper tree; red-on-base for all six NOT re-verified |
+| gates, after tree | `typecheck`, biome lint (error level), loc/func budgets (also with `LOC_GATE_BASE=586b37dcac`), coercion sites, oracle ratchet, dead exports, compiler-boundaries inventory (`errors: []`) — all exit 0 with the grants added to this file's frontmatter |
+
+**Not measured** (why this is WIP): the manifest AFTER, the compile-all control
+(3,265 rows, `.tmp/e8/ctl-all.txt` = E7's set, which already contains all 143
+`built-ins` rows mentioning `toLocaleString`) on either target, verdicts on the
+changed rows, 32/32 playground/benchmark byte identity, the equivalence gate,
+`check:ir-fallbacks`, and the E-family pins. The base standalone compile-all
+was started and was still running at the stop (`.tmp/e8/ctl/base-standalone.sha`).
+
+#### Residuals already known (from probes, not a control)
+
+- `toLocaleString/{calls-valueof-from-each-value, return-abrupt-from-{first,next}element-valueof}`
+  (target 2's `valueOf` rows): NOT a single localized cause. The element's
+  `toLocaleString` returns an object LITERAL `{ toString: undefined, valueOf }`,
+  a closed struct, so ToString goes `__to_primitive` → `__class_to_primitive`
+  (class-to-primitive.ts). Its string-hint arm cannot tell "own `toString`
+  present but not callable" (spec: fall to `valueOf`) from "no own `toString`"
+  (inherited `Object.prototype.toString` → `"[object Object]"`) — the per-struct
+  `__call_toString` dispatcher answers null for both. Probe: `String({toString:
+  undefined, valueOf(){return "z"}})` → `"[object Object]"`, while `{toString(){
+  return {}}, valueOf(){return "z"}}` → `"z"`. Needs the dispatchers to report
+  field presence; cross-cluster (ToString), not taken.
+- Target 3 (`Array.prototype.toLocaleString`): does NOT share the mechanism.
+  Its failing rows (standalone, measured on the pre-E7 tree with these bodies)
+  are `invoke-element-tolocalestring` (spread-args destructure TypeError),
+  `primitive_this_value{,_getter}` (a primitive element's overridden
+  `Boolean.prototype.toString` is ignored — #4655's recorded residual), and
+  three ES2024 resizable-buffer rows (illegal cast).
+- A pre-existing, unrelated oddity seen while writing pins: inside
+  `export function test(): number`, `Number.prototype.toString.call(1.5)` (and
+  `toPrecision`, `toLocaleString`) throws; the same body under `: any` returns
+  `"1.5"`. The pins use `: any`.
+
+#### Suspended work — 2026-09-24
+
+- Worktree `/home/user/js2/.claude/worktrees/agent-a0410e6d39e96b1ae`, branch
+  `e8`, WIP commit `215c200895` (parent `986a45359d`), not pushed.
+- Edited: `src/codegen/{array-object-proto,number-proto-format,ta-to-string}.ts`,
+  `src/codegen/expressions/call-receiver-method.ts`; new
+  `src/codegen/{proto-to-locale-string,ta-to-locale-string}.ts`,
+  `tests/issue-6651-e8-tolocalestring.test.ts`,
+  `scripts/compiler-boundaries.json`, this file's frontmatter grants.
+- Resume steps (one runner at a time, QuickJS adapter built first):
+  1. `bash .tmp/e8/manifest.sh .tmp/e8/m-after` on the committed tree; join
+     per-row against `.tmp/e8/m-base.tsv`.
+  2. Compile-all: `bash .tmp/e8/ctl-shas.sh after standalone` and `… after gc`;
+     then `bash .tmp/e8/swap.sh base`, `… base gc` (and re-run `… base
+     standalone` if `.tmp/e8/ctl/base-standalone.sha` is short of 3,265
+     lines), `bash .tmp/e8/swap.sh new`.
+  3. Verdicts (`--standalone`, 200-row in-process chunks, `--isolate` on a
+     dying chunk) on every row whose standalone bytes changed, after then base;
+     require zero pass→non-pass. gc is expected byte-identical (every hook is
+     `ctx.standalone`-gated) — confirm from the shas.
+  4. `npx tsx .tmp/e8/bytes.mts` on both trees (32/32), `node
+     scripts/equivalence-gate.mjs` (22 known), `pnpm run check:ir-fallbacks`,
+     E-family pins with `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, and the E8 pins
+     against the swapped-in base (expect red).
+  5. If a control regresses and cannot be fixed, drop that widening (the
+     helper and the value bodies are separable: the bodies alone change no
+     manifest row's route except through Invoke) and record the evidence.
+
 ## Handoff — 2026-09-24, round 3 closed (this lane: B/C/D/E/G + claimed A)
 
 Round 3 ran 2026-09-23 09:40 → 2026-09-24 06:00 UTC on
@@ -8918,6 +9172,59 @@ the next owner's first job (see "Next dispatch").
 4. Re-run the round-2/3 merged tree against the other lane's F/H/I entries to
    confirm no cross-cluster overlap before round 4 (the lane partition of
    2026-09-22 still stands; cluster A is now this lane's by claim, A3/A4).
+
+## Handoff — 2026-09-24, session wrap-up (round 4 state: E8 + A5 suspended)
+
+Written at the user's "wrap up, handoff, open pr" (07:14 UTC). Round 3 is
+fully landed (see the previous handoff; branch `claude/es2015-test262-plan-54tooh`
+= `origin/main` @ `e3bb60ac10` at wrap-up start). Round 4 dispatched two
+slices; **neither is mergeable** — both were stopped before their regression
+controls ran and are committed as WIP in their worktrees. Nothing from round 4
+is on `main` or in any PR; this PR carries only this record and the two
+cluster entries above.
+
+| slice | worktree | branch / WIP SHA | based on | measured | not run |
+| --- | --- | --- | --- | --- | --- |
+| **E8** — standalone `toLocaleString` value bodies (Number/BigInt/Object) + E7's re-landed TypedArray helper | `/home/user/js2/.claude/worktrees/agent-a0410e6d39e96b1ae` | `e8` / `215c200895` | `986a45359d` | E-manifest BASE 61/83; probes; 6/6 pins on the after tree; all source gates | manifest AFTER, 3,265-row compile-all on both targets + verdicts on changed rows, 32/32 byte identity, equivalence gate, `check:ir-fallbacks`, E-family pins |
+| **A5** — `yield` in computed keys, `yield*` inside a for-of body | `/home/user/js2/.claude/worktrees/agent-ab4ec40c80235671d` | `a5` / `a80f49d064` | `5a05fff094` | A-manifest 152→165 pass, 0 lost (43→28 CE); 7/9 pins red-on-base; all source gates | 747-row byte differential on both targets + verdicts, 32/32 byte identity, equivalence gate, `check:ir-fallbacks`, A-family pins |
+
+Resume steps for each are in the `#### Suspended work — 2026-09-24` block of
+its cluster entry. Both worktrees keep their `.tmp/` control scripts and base
+trees (A5's is ~389 MB); do not delete them before resuming. The A5 func-gate
+note: `nested-declarations.ts::compileNestedFunctionDeclarationInScope` flags
+against current main only because main shrank it after A5's fork point — a
+`git merge origin/main` clears it.
+
+### Known residuals recorded by round 4 (not taken)
+
+- **E8 target 2's three `valueOf` rows** — ToString cannot distinguish an own
+  `toString: undefined` (spec: fall to `valueOf`) from an absent one; the
+  per-shape `__call_toString` dispatcher answers null for both. ToString
+  cluster, cross-cutting.
+- **E8 target 3 (`Array.prototype.toLocaleString`)** — three distinct causes
+  (spread-args destructure, overridden `Boolean.prototype.toString` on a
+  primitive element = #4655's residual, ES2024 resizable-buffer casts).
+- **A5 target 3 (`obj.foo = yield` under `try/finally`)** — the existing
+  finally-replay path null-derefs on `.return()` even without the yield
+  mechanism; fix that first.
+- **`accessor-name-static-computed-yield-expr` ×2** — now `fail` instead of
+  CE; the remaining half is `C.second = v` not calling a runtime-keyed static
+  setter (cluster C, reproduces with no generator).
+- **Pre-existing oddity** (both agents): inside `export function test(): number`,
+  `Number.prototype.toString.call(1.5)` / `toPrecision` / `toLocaleString`
+  throw; under `: any` they work. Untriaged.
+
+### Next dispatch order (unchanged from the round-3 handoff, with round 4 folded in)
+
+1. Resume **E8** and **A5** from their worktrees (controls only — the code is
+   written). Opus High, one runner at a time.
+2. **B8** (dynamic RegExp grammar), **D3** (class Promise receivers), **G4**.
+3. Value-representation items (#1888, #2358); eval-provider items.
+4. File the cross-realm wont-fix issue; census + edition-ratchet bank from a
+   full standalone run.
+
+Active automation at wrap-up: the hourly `send_later` check-in for this PR
+(created at PR open); every other trigger from this session was deleted.
 
 ## Manifest generator note
 
