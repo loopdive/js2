@@ -294,6 +294,38 @@ export function planElementAccessMethodReceiverBind(
 }
 
 /**
+ * Tagged-template twin: `` obj.fn`x` `` (#6651, §13.2.8).
+ *
+ * A tagged template IS a call, so a member-expression tag is a METHOD call and
+ * its `this` is the receiver. `compileTaggedTemplateExpression`'s arms compile
+ * the tag to a closure and `call_ref` it without ever writing `__current_this`
+ * — the same missing writer this module exists for, one call shape further out
+ * (measured before the fix: `[object Object]`, not `obj`).
+ *
+ * Two refusals, both inherited from the element-access twin above and for the
+ * same two reasons:
+ *
+ *  - **a plain IDENTIFIER receiver only.** The tagged-template arms compile the
+ *    whole tag expression themselves, so the receiver has to be read a SECOND
+ *    time; an identifier re-read is free of observable effects, `a[i].fn` is
+ *    not.
+ *  - **no substitution may reference `this`.** The install has to precede the
+ *    arms (they own the argument emission), so a substitution reading the
+ *    CALLER's `this` would be handed the callee's receiver instead — trading
+ *    one wrong answer for another.
+ */
+export function planTaggedTemplateReceiverBind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  tag: ts.Expression,
+  substitutions: readonly ts.Expression[],
+): ObjectLiteralMethodReceiverBind | undefined {
+  if (!ts.isPropertyAccessExpression(tag) || !ts.isIdentifier(tag.expression)) return undefined;
+  for (const s of substitutions) if (bodyReferencesOwnThis(s)) return undefined;
+  return planObjectLiteralMethodReceiverBind(ctx, fctx, tag.name);
+}
+
+/**
  * Runtime-key twin: `obj[k]()`, where `k` is a variable so no property symbol
  * exists to interrogate.
  *
