@@ -61,11 +61,13 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { isConsoleValueIdentifier } from "../standalone-console-object.js";
 
 /** Accumulated state for the single-pass collector */
 export interface UnifiedCollectorState {
   // -- collectConsoleImports --
   consoleNeededByMethod: Map<string, Set<"number" | "bool" | "string" | "externref">>;
+  consoleValueRead: boolean; // (#6671) the console object's methods need the sink too
   // -- collectPrimitiveMethodImports --
   primitiveNeeded: Set<string>;
   // -- collectStringLiterals --
@@ -183,6 +185,7 @@ const HOST_PROMISE_SOURCE_METHOD_NAMES = new Set(["allKeyed", "allSettledKeyed",
 export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedCollectorState {
   return {
     consoleNeededByMethod: new Map(),
+    consoleValueRead: false,
     primitiveNeeded: new Set(),
     stringLiterals: new Set(),
     hasTypeofExprForStrings: false,
@@ -461,6 +464,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   }
 
   // ── collectConsoleImports ──
+  if (ctx.standalone && !state.consoleValueRead) state.consoleValueRead = isConsoleValueIdentifier(node); // (#6671)
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
@@ -1567,7 +1571,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // finalize emits the `__stdout_prepare`/`__stdout_char` readout exports. The
   // sink stays 100% host-free (WasmGC in-module), so the #2961 import-leak gate
   // still rejects genuine host imports.
-  if (ctx.standalone && state.consoleNeededByMethod.size > 0) {
+  if (ctx.standalone && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
     ctx.usesStandaloneConsoleSink = true;
   }
 
