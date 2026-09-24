@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3711,
-    "fail": 1109,
-    "ce": 3,
+    "fail": 1108,
+    "ce": 4,
     "skip": 0,
     "total": 4823,
     "pct": 77,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2769,
-        "fail": 1039,
-        "ce": 2,
+        "fail": 1038,
+        "ce": 3,
         "skip": 0,
         "total": 3810,
         "pct": 73
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4419,
-    "fail": 1322,
+    "pass": 4420,
+    "fail": 1321,
     "ce": 51,
     "skip": 0,
     "total": 5792,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 189,
-        "fail": 241,
+        "pass": 190,
+        "fail": 240,
         "ce": 2,
         "skip": 0,
         "total": 432,
@@ -2348,8 +2348,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 107,
-        "fail": 24,
+        "pass": 108,
+        "fail": 23,
         "ce": 0,
         "skip": 0,
         "total": 131,
@@ -2384,21 +2384,21 @@
       },
       {
         "name": "ArrayBuffer",
-        "pass": 38,
-        "fail": 23,
+        "pass": 39,
+        "fail": 22,
         "ce": 0,
         "skip": 0,
         "total": 61,
-        "pct": 62
+        "pct": 64
       },
       {
         "name": "arrow-function",
-        "pass": 52,
-        "fail": 1,
+        "pass": 53,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 53,
-        "pct": 98
+        "pct": 100
       },
       {
         "name": "Symbol",
@@ -2420,12 +2420,12 @@
       },
       {
         "name": "BigInt",
-        "pass": 38,
-        "fail": 2,
+        "pass": 39,
+        "fail": 1,
         "ce": 2,
         "skip": 0,
         "total": 42,
-        "pct": 90
+        "pct": 93
       },
       {
         "name": "logical-assignment-operators",
