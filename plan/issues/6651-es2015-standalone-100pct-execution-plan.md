@@ -8205,3 +8205,122 @@ computed-property-names; G = `for-of`, `expressions/assignment`, `for/`,
 generators (runtime), `GeneratorPrototype`, `GeneratorFunction`, `Iterator`,
 `ArrayIteratorPrototype`; H = remaining `built-ins/*`; I = the rest.
 Manifest SHA-256s are in the commit that added them.
+
+## Handoff — 2026-09-24, lane-I6 (cluster I residual triage; measurement only, no source change)
+
+**Result in one line: cluster I has no standalone-reachable family left. All
+34 rows in the dispatched probe set fail identically on BOTH lanes, and across
+the whole 114-row manifest only 4 rows pass on host while failing on
+standalone — three of them in families this lane was told not to touch.**
+
+This re-measures, per row and on both targets, the claim the 2026-09-22
+project-thread handoff made from a partial probe ("cluster I is almost entirely
+a front-end cluster"). It holds, and it now holds for the entire manifest
+rather than seven buckets of it.
+
+### Runs (never piped, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, src frozen)
+
+| log | lane | manifest | counts | sha256 |
+| --- | --- | --- | --- | --- |
+| `.tmp/6651/I6-base.log` | `--standalone` | 114-row `I-language-misc.txt` | pass 14 / CE 11 / fail 89 | `8e6c2691…a835d0` |
+| `.tmp/6651/I6-host-full.log` | default (host) | same 114 rows | pass 18 / CE 4 / fail 92 | `d1cd3f1f…d35217` |
+| `.tmp/6651/I6-host-probe.log` | default (host) | 34-row dispatched probe set | fail 34 / pass 0 | `f1b391a0…eff79c` |
+
+Zero `error` rows in all three — the QuickJS eval provider was present via the
+`.test262-cache` symlink (banner: artifact `073742801ba7`, adapter key
+`d4799bda84cfed0d`), so none of the 40 eval/realm rows degraded to
+"not measured".
+
+### Phase 1 — per-row host verdict for the dispatched families
+
+Every row below is `fail` on standalone **and** `fail` on host. None is
+standalone-reachable; each is shared front-end work.
+
+| family (rows) | host | shared cause | in scope? |
+| --- | --- | --- | --- |
+| `global-code/{decl-lex,script-decl-*}` (7) | 7 fail | every row drives `$262.evalScript(...)`; the script-goal declaration it creates is never installed as a global binding/property (`test262let is not defined`, `brandNew should be an own property`). **eval capability gap** | NO — excluded by dispatch |
+| `statementList/eval-class-*` (4) | 4 fail | `eval('class C {}[];')` evaluates to `undefined` (`Cannot convert undefined to object`). **eval capability gap** | NO — excluded by dispatch |
+| `{expressions,statements}/function/params-dflt-ref-arguments` (2) | 2 fail | `arguments` read inside a parameter DEFAULT lowers to `ref.null extern` → `TypeError: Cannot access property on null or undefined`. Root cause proven below. | front-end |
+| `expressions/function/arguments-with-arguments-{fn,lex}` + `statements/function/arguments-with-arguments-lex` (3) | 3 fail | same parameter-scope `arguments` binding; surfaces as `RuntimeError: illegal cast` (lex ×2) and `typeof args === "function"` (fn). | front-end |
+| `{expressions,statements}/function/dstr/ary-ptrn-elem-ary-rest-init` (2) | 2 fail | `f([[...x] = values])` — the nested rest-with-initializer element reads null. Known as #5271 **G3**, explicitly deferred there ("high blast radius"). | front-end |
+| `rest-parameters/arrow-function` (1) | fail | `(a, b, ...c) => c` yields a primitive/null instead of an array. | front-end |
+| `rest-parameters/with-new-target` (1) | fail | `arguments.length` is 1 where the rest param has 3 (`class Base { constructor(...a) }`). Same `arguments`-vs-non-simple-parameter-list area. | front-end |
+| `statements/{const,let}/block-local-closure-*-before-initialization` (3) | 3 fail | no ReferenceError: a hoisted `function f(){ return x + 1 }` in the same block as `let x` does not observe the block binding's TDZ flag. This is #5271 **B2**, recorded there as NOT done, with `preallocateBlockScopedSlots` deliberately skipping any block that hoists a function declaration. | front-end |
+| `statements/variable/binding-resolution` (1) | fail | uses `with (obj)`. | NO — excluded by dispatch |
+| `expressions/call/with-base-obj` (1) | fail | uses `with (obj)`; `method is not defined`. | NO — excluded by dispatch |
+| `expressions/equals/coerce-symbol-to-prim-return-prim` (1) | fail | loose `==` between an object with `@@toPrimitive` and a **string** primitive returns false. | front-end |
+| `expressions/instanceof/prototype-getter-with-object` (1) | fail | `Get(C,"prototype")` must call an accessor installed on `Function.prototype`; the getter is not invoked. Bucket B8's remaining half. | front-end |
+| `expressions/call/tco-non-eval-{function,function-dynamic,global}` (3) | 3 fail | proper tail calls at `$MAX_ITERATIONS` (1e5) through a locally-shadowed `eval` binding; `tco-non-eval-function` is a literal `RangeError: Maximum call stack size exceeded`, i.e. no TCO on that shape. | front-end |
+| `types/reference/{get,put}-value-prop-base-primitive` (2) | 2 fail | property lookup/assignment on a primitive base does not consult a user-extended `Number/String/Boolean/Symbol.prototype` (`1..test262` reads null). | front-end |
+| `types/reference/{get,put}-value-prop-base-primitive-realm` (2) | 2 fail | same, plus `$262.createRealm()` + `other.eval`. | NO — cross-realm/eval |
+
+### The only standalone-reachable rows in the whole cluster
+
+`rowdiff.mjs I6-base.log I6-host-full.log I-language-misc.txt` — GAINED 4,
+LOST 0 (standalone is a strict subset of host here):
+
+- `language/expressions/tagged-template/cache-realm.js` — **reserved for the other lane** (tagged-template).
+- `language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain.js` — **reserved** (`with/`).
+- `language/expressions/call/eval-realm-indirect.js` — eval/realm capability gap, **excluded**.
+- `annexB/language/literals/regexp/identity-escape.js` — the one genuinely
+  available row. It is a standalone **compile error**, not a miscompile:
+  `standalone RegExp engine does not support Unicode property escape \P{…}
+  (#1539 Phase 2d)`. One annexB row gated on a large, separately-tracked
+  RegExp-engine feature — not a family, and not ES2015 language.
+
+So phase 2 had no target under the dispatch's own definition, and this lane
+deliberately shipped no source change rather than fake one.
+
+Worth recording because it changes what a future cluster-I dispatch should
+fund: 5 rows (`module-code/{eval-export-dflt-expr-gen-anon,eval-export-dflt-expr-gen-named,instn-iee-bndng-gen,instn-named-bndng-dflt-gen-named,instn-named-bndng-gen}`)
+are standalone compile errors with one shared cause — *"standalone target
+emitted host imports: env::g / env::B / env::g2 (#2961)"*, an exported
+**generator** binding leaking out as a host import. Closing it is real
+standalone work, but it buys **0 passes**: all five also fail on host, so they
+would merely become `fail`. Any plan that counts them as standalone wins is
+counting wrong.
+
+### Root cause proven for the largest front-end family (5 rows), handed over unimplemented
+
+Bucket B11/B12's `arguments`-in-parameter-scope rows reduce to one ordering
+defect, verified in the emitted WAT rather than inferred:
+
+- Repro `.tmp/6651/probe-args.mts` — `f = function (x = arguments[2], y = arguments[3], z) {}; f(undefined, undefined, "third", "fourth")` throws a `WebAssembly.Exception` on the default target.
+- In the WAT (`.tmp/6651/probe.wat`, `$__closure_0`) the default branch for `x`
+  begins `ref.null extern; local.tee 7; ref.is_null; (if (then … throw))` — the
+  receiver is a literal null — while `local $arguments` is built from
+  `__extras_argv` **further down**, after every default.
+- Cause: `allocLocal(fctx, "arguments", …)` happens inside `emitArgumentsObject`,
+  which all three lanes call AFTER parameter defaults and destructuring, so
+  while a default is compiled `fctx.localMap` has no `arguments` entry and the
+  identifier resolves to nothing. §10.2.11 creates the arguments object at
+  step 22, *before* IteratorBindingInitialization of the formals.
+- Exact sites: `src/codegen/function-body.ts` — defaults L412-570, destructuring
+  L601-609, arguments object L614-672; `src/codegen/statements/nested-declarations.ts`
+  — L1964 then L1990, and L2467 then L2493.
+- #5139 already fixed the *detection* half (`needsImplicitArgumentsObject`
+  scans parameter initializers, with a comment naming exactly this case); only
+  the *emission order* is left.
+- Shape of the fix, and why it should be cheap to gate: hoist the
+  arguments-object emission above the defaults **only when
+  `isSimpleParameterList(decl.parameters)` is false**. A simple parameter list
+  has no defaults or destructuring to reorder against, so that lane stays
+  byte-identical; and a non-simple list already gets an **unmapped** arguments
+  object (§10.2.11 step 22.a), so no param↔`arguments` aliasing is disturbed.
+  Taking the snapshot before defaults is independently the spec-correct
+  reading: today `arguments[0]` of `f(undefined, …)` would observe the
+  *defaulted* value.
+- Not implemented here: it moves host rows, not standalone-only ones, so it is
+  outside this lane's remit; and cluster H is concurrently editing `arguments`
+  (`vec-length-descriptor.ts`, ordinary `length`), which makes an unsolicited
+  reorder of the same subsystem a poor idea from a second lane.
+
+### Left out, with sites
+
+- Nothing was implemented, so no gate deltas, no byte-identity check, and no
+  control sweep are reported — there is no `after` state to compare. The
+  control manifest that a follow-up should use is prepared at
+  `.tmp/6651/ctl-I6.txt` (164 rows, a 1-in-3 subsample of
+  `language/arguments-object/**` ∪ `language/rest-parameters/**` ∪ the
+  `params-*` / `dflt-*` / `arguments-*` rows of
+  `language/{expressions,statements}/function/`).
