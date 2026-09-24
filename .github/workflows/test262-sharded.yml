@@ -1018,6 +1018,18 @@ jobs:
       TEST262_TARGET: gc
       TEST262_RESULT_PREFIX: test262-native-first
       TEST262_SEMANTIC_PROVIDERS: native-first
+      # (#5385) Measure the native semantic REGIME in the JS environment —
+      # the standalone provider arms plus the JS value bridge. Opt-in until
+      # the environment-shaped codegen gates are re-keyed; this lane never
+      # promotes host baselines, so it is the safe place to measure it.
+      JS2WASM_NATIVE_REGIME_JS: "1"
+      # (#5385) Under the native regime every assembled row carries the
+      # `js2wasm:runtime-eval` import (the `$262.evalScript` shim mentions
+      # `eval`), exactly like the standalone lane. This measurement lane links
+      # the cheap REFUSAL interpreter tier built in-job rather than depending
+      # on the standalone provider job, which does not run on `schedule`.
+      # Eval-dependent rows therefore fail honestly; everything else runs.
+      JS2WASM_EVAL_ENGINE: interpreter
 
     steps:
       - name: Checkout
@@ -1037,6 +1049,9 @@ jobs:
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Build runtime-eval REFUSAL provider (#5385 / #2928 E7)
+        run: node scripts/build-runtime-eval-provider.mjs --refusal-only
 
       - name: Run shard
         run: |
