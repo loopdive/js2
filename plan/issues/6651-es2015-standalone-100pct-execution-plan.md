@@ -8499,9 +8499,34 @@ simple-list regression would show up as a new failure.
   — so it is not a `super()` ABI gap and not an ordering bug. It needs its own
   slice against `emitArgumentsVecBody`'s formals-plus-extras concatenation,
   which counts the rest array as one formal.
-- The `equivalence/` suite OOMs the box when run file-parallel (documented in
-  CLAUDE.md); it was re-run single-threaded instead. CI's `equivalence-gate` is
-  the authority.
+- The `equivalence/` suite OOMs the box on the FULL directory in this container
+  — file-parallel AND `--no-file-parallelism` both die with
+  "Reached heap limit", which CLAUDE.md already documents for `npm test`. It was
+  run as targeted subsets instead (164 tests across `arguments-object`,
+  `arguments-nested-and-loops`, `default-params`, `default-parameters`,
+  `rest-params-call`, `function-arity-mismatch`, `iife-and-call-expressions`,
+  `this-receiver-apply`, `arrow-call-apply`, plus the 8 param-default /
+  destructuring-default `issue-*` suites). CI's `equivalence-gate` is the
+  authority for the whole directory.
+
+### Re-measured after `git merge origin/main` (3a891033)
+
+`origin/main` had advanced 1 commit past the base and touched
+`nested-declarations.ts` (auto-merged) plus the issue file (append/append
+conflict with the lane-I6 handoff below, resolved by keeping both). Everything
+above was re-measured on the merged tree against a post-merge base — the four
+edited files reverted to their `3a891033` contents, same 168-row manifest, same
+flags: **identical result, host 154 → 159 and standalone 137 → 142, the same
+five rows, zero `error` rows, and the byte-identity probe again 335/335 +
+173/173 with 0 compile-success flips.**
+
+**One pre-existing failure found and attributed, not caused here.**
+`tests/equivalence/arguments-nested-and-loops.test.ts > "for-loop with function
+declaration in body"` returns 30 where JS returns 33 (a `function` declared in a
+`for` body captures `i` as 0). It fails identically with the four edited files
+reverted to `3a891033`, so it is `origin/main`'s, not this change's — and the
+shape contains no `arguments` and only simple parameter lists, so this change
+cannot reach it. Worth its own issue.
 
 ## Handoff — 2026-09-24, lane-I6 (cluster I residual triage; measurement only, no source change)
 
