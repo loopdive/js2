@@ -9748,3 +9748,96 @@ Not attempted, deliberately: the §10.4.6 exotic object itself. Items 1, 2 and
 most of 3 collapse into it, and it is a larger design decision (a namespace
 brand in the object runtime on both lanes) than a conformance slice should make
 unilaterally.
+
+## Handoff — 2026-09-24, rounds 6–9 closed (the project-thread lane signs off)
+
+This is the state of #6651 as this lane hands it back. Everything below is
+measured, not estimated; each round's receipt section above carries the raw
+numbers and the per-row set diffs.
+
+### What landed
+
+| round | PR | what | rows |
+| --- | --- | --- | --- |
+| 6 | #6068 | `super.voidMethod()` calls were compiled away silently (`VOID_RESULT` vs bare `null` at the #1919 speculative-compile boundary) | +2 |
+| 7 | #6073 | arguments object built BEFORE parameter defaults (§10.2.11 step 22); tagged-template method receiver | +7 |
+| 8 | #6079 | `instanceof` / `@@hasInstance` — `F[Symbol.hasInstance as any] = fn` cast made the compiler think no handler was installed | 0 (TS-only) |
+| 9 | #6092 | module namespace objects with live bindings (+11); `with` / Object Environment Record (+4) | +15 |
+
+Round 9 is open as PR #6092 at the time of writing and is not yet merged.
+
+### Scope state
+
+- **Cluster I is closed** with a verified negative result: exactly four rows
+  pass on host and fail on standalone; three were already claimed, and the
+  fourth is an annexB RegExp compile error behind #1539 Phase 2d. There is no
+  remaining standalone-lowering work in cluster I.
+- **All four shared front-end families are claimed by this thread**: tagged
+  templates, module namespaces, `with`, `eval`. Of those, **`eval` (~10 rows)
+  was never dispatched** — it is the largest untouched piece and the obvious
+  next slice.
+- Standalone-reachable rows in the original census are exhausted. Remaining
+  work is shared front-end, which fails on host too; a host-lane probe is the
+  baseline for these families, not a scope filter.
+
+### Named residuals, with sites
+
+**`eval` capability rows (~10)** — claimed, never dispatched, no probe run.
+
+**Tagged templates — 4 residuals**, sites recorded in the T1 section above.
+
+**Module namespaces — 15–16 MOP residuals**, itemised in the N1 section
+immediately above: TDZ on uninitialised bindings (7, most needing a real
+§10.4.6 exotic object rather than getter-side TDZ), data-vs-accessor
+descriptor (1), `Reflect.defineProperty` non-extensible arm returning instead
+of throwing (1, a `src/runtime.ts` defect that will affect other rows),
+`ns instanceof Object` still true (1), nested namespaces (2), indirect self
+re-export (1), and a standalone-only `illegal cast` on a 16-export module with
+non-ASCII names (1) — a genuine miscompile this slice uncovered.
+
+**`with` residuals** — `Reflect.set` with an explicit receiver performs no trap
+on host; a bare-identifier callee is never routed through the with-environment;
+a computed symbol-keyed accessor in an object literal is dropped by codegen
+(4 rows); `unscopables-inc-dec.js` is behind #1387.
+
+**The largest single remaining `with` bucket is worth its own dispatch:** of 53
+remaining host `with/` failures, **45 are one bucket** (`S12.10_A1.*`,
+`A3.6`, `A4`, `A5`) that standalone already passes. One host-side cause, 45
+rows.
+
+**Also open:** `rest-parameters/with-new-target.js`; and the
+`arguments-nested-and-loops` for-loop equivalence failure, which is
+pre-existing — attributed to this work by proximity, not caused by it.
+
+### Two process lessons, both paid for
+
+1. **Before dispatching a lane from a plan-file root-cause note, run
+   `git log --oneline -3 -- <each file the note names>`.** A plan file
+   accumulates root-cause notes written by lanes at different times. A note is
+   a point-in-time observation, and **nothing marks one as superseded when the
+   fix ships**. Lane H2's brief described a tree older than `main`; the exact
+   change it proposed had already landed in `0c05cb16`, and the lane burned a
+   cycle establishing that. `claim-issue` and `pre-dispatch-gate` do not catch
+   this — they check issue ids and open PRs, and this was overlap by *content*
+   under the same issue id.
+2. **A recorded diagnosis can be wrong about size, not just about staleness.**
+   The plan file's entry for module namespaces claimed a runner blocker that
+   does not exist (`runTest262File` never calls `wrapTest`), which had sized
+   the family as an unstarted XL. The real cause was a single decline in
+   `namespaceFunctionExports`. Twelve rows for one line of reasoning. Re-probe
+   before you believe a size.
+
+### Standing discipline for the next lane
+
+- Re-derive every lane's numbers from **its own logs** before integrating; a
+  count comparison hides a regression plus an improvement, so diff per row.
+- An `error` row is "not measured", never a verdict. Always set
+  `JS2WASM_ROW_TIMEOUT_MS=420000`; `--isolate` is the only mode that bounds a
+  compiler hang.
+- Run every regression test against **reverted base sources** to confirm it is
+  genuinely red before trusting it.
+- The container has 4 cores and `pre-agent-spawn.sh` blocks at 1-min load ≥ 2,
+  so **two** concurrent measurement lanes is the hard ceiling.
+- Never `pkill -f run-test262-paths` — it kills other lanes' runs. And
+  `pgrep -fc 'run-test262-paths'` matches its own command line, so a poll loop
+  written that way never terminates.
