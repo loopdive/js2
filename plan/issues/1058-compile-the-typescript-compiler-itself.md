@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-23
+updated: 2026-09-24
 priority: high
 feasibility: hard
 model: fable
@@ -86,6 +86,9 @@ loc-budget-allow:
   # subsystem modules (declaration-bound-callee, undefined-holding-variable,
   # null-ref-undefined-box, unmatched-closure-host-call).
 func-budget-allow:
+  # 2026-09-24: the literal-promotion guard learns to leave a capture cell's
+  # type alone (3 lines).
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
   # 2026-09-23: binder slice. compileIdentifierCall's body moves verbatim into
   # compileBoundIdentifierCall behind the declaration-bound callee wrapper; the
   # numeric-key switch learns enum keys and an undefined miss.
@@ -1796,9 +1799,99 @@ list per capture (now one map per call).
 
 With those fixes the compile gets much further per minute: it reached about
 12.5 GB RSS within 20 minutes (the old run reached 8 GB after 56) and was
-OOM-killed there. Memory is now the limit. The likely cause (not yet measured)
-is the capture ABI: every call pushes each of ~380 captures, each with its TDZ
-check. Measuring that, then the shared capture-environment struct, is next.
+OOM-killed there. Memory is now the limit. The measured cause was not the
+capture ABI; see the next section.
+
+## Checker compile: memory (2026-09-24)
+
+After the compile-speed fixes (#6061, #6066) the full checker compile ran out of
+memory instead of time: it reached about 12.5 GB RSS within 20 minutes and was
+killed. A heap sample at 6 GB put about 4 GB under
+`emitMemoizedNestedFnClosure` / `materializeHoistedFunctionValueBinding`
+(`src/codegen/closures/funcref-as-closure.ts`).
+
+Cause: filling the value of an inner function that captures other inner
+functions filled each captured function inside its own closure-build branch,
+and each of those did the same for its captures. One use site emitted a copy
+per dependency path. A 12-function chain produced a 112 KB module; 16 functions
+ran out of memory.
+
+Fix: the captured values are filled before the build branch, straight-line
+with the use site, and a value already published earlier in the same body
+array is not published again. The checker compile then finishes in about 23
+minutes at about 6 GB peak RSS. Regression test:
+`tests/issue-1058-hoisted-fn-value-chain.test.ts`.
+
+Next blocker, reached for the first time: `nested function checkArrayLiteral
+changed capture noIterationTypes's physical ABI after reservation`. At phase-0
+reservation the capture was a plain externref; when `checkArrayLiteral` is
+compiled the declaring frame has a box registered for `noIterationTypes` while
+its `localMap` slot is still the raw externref local.
+
+### Next two checker errors (2026-09-24)
+
+`noIterationTypes` ABI change: an earlier sibling's mutable capture had already
+boxed the outer binding, so its `localMap` slot held the capture cell. The
+#5148 literal-promotion step in `compileNestedFunctionDeclarationInScope` read
+that ref-typed slot as a stale literal type and rewrote it, so the later
+sibling's reserved capture plan no longer matched. The step now skips a slot
+whose type is the binding's own capture cell.
+
+Recursive struct narrowing: passing a struct where a narrower struct type is
+expected copies the shared fields. When a field holds the struct's own type
+(the checker's `MappedType.target`), that copy inlined the same conversion
+into itself until the compiler's stack overflowed. A repeated
+`from>to` pair now calls an outlined `__struct_narrow_<from>_<to>` helper,
+which recurses at runtime. Test:
+`tests/issue-1058-recursive-struct-narrowing.test.ts`.
+
+Next blocker: `stack-balance invariant (entry):
+'SyntacticTypeNodeBuilderResolver_shouldRemoveDeclaration' references local
+284, but only 3 params + 18 locals are declared` (an object-literal method
+inside `createNodeBuilder`, checker.ts line 6238).
+
+### Handoff (2026-09-24)
+
+State: parser, binder and checker-slice oracles pass. The full checker
+(`createTypeChecker`) compile runs about 23 minutes at about 6 GB peak RSS and
+now stops at the `shouldRemoveDeclaration` error above. The checker oracles
+(`pnpm run dogfood:typescript-checker-source`: `assign-mismatch=67858`,
+`assign-ok=0`, `two-mismatches=133394`) have not run yet; printer/emitter and
+self-hosting come after.
+
+Next step: find which instruction in that method's body references local 284.
+The error message embeds the whole body as JSON. Local 284 is far past the
+method's 21 slots, so it is most likely an index from an enclosing frame
+(`createNodeBuilder` or `createTypeChecker`) emitted into the method. Suspects
+are the captured-function value for `checkComputedPropertyName` and the
+`__tdz_box_checker` local the method declares. A small repro (an interface-typed
+object literal inside a nested builder whose method calls a capturing outer
+helper, with `context as X` casts) compiles and runs correctly, so the trigger
+needs something more from the real file.
+
+Driver used for the full compile (keep it under `.tmp/`, not committed):
+
+```ts
+import { writeFileSync } from "node:fs";
+import { compileProject } from "../src/index.ts";
+const r: any = await compileProject("tests/dogfood/fixtures/typescript-checker-workload.ts", {
+  allowJs: true, skipSemanticDiagnostics: true, target: "gc", platform: "node", emitWat: false,
+  resolve: { consumerDrivenBarrels: true },
+} as any);
+const errs = (r.errors ?? []).filter((e: any) => e.severity !== "warning");
+writeFileSync(".tmp/checker-errors.json", JSON.stringify(errs, null, 1));
+if (r.binary?.length) writeFileSync(".tmp/checker.wasm", r.binary);
+```
+
+Run it with `node --max-old-space-size=11000 --stack-size=8000 --import tsx`.
+Profile the same run with `--inspect-brk` and a CDP client (CPU profile or
+heap sampling). Keep the shell's working directory outside the nested
+TypeScript checkout under `tests/dogfood/.npm-upstream-suites/typescript`,
+because the repo's hooks break when run from there.
+
+Known and not addressed: two `tests/issue-2976.test.ts` cases fail on main
+(the V8 capability protocol case and the reassigned-capture case) and are
+unchanged by this work.
 
 ## Acceptance criteria
 

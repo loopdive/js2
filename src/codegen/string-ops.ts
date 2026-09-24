@@ -67,7 +67,7 @@ import {
   tryCompileStandaloneStringSplit,
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
-import { tryCompileStandaloneDynamicReplace } from "./string-replace-dynamic.js";
+import { tryCompileStandaloneDynamicStringRegExpCall } from "./string-regexp-dynamic.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
@@ -90,7 +90,17 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { publishTaggedTemplateArguments, resetTaggedTemplateArguments } from "./tagged-template-arguments.js";
+import {
+  emitObjectLiteralMethodThisInstall,
+  emitStandaloneReceiverCapture,
+  finishObjectLiteralMethodCall,
+  planTaggedTemplateReceiverBind,
+} from "./object-literal-method-receiver.js"; // (#6651) §13.2.8 member-expression tag
+import {
+  publishTagCallArguments,
+  publishTaggedTemplateArguments,
+  resetTaggedTemplateArguments,
+} from "./tagged-template-arguments.js";
 import {
   coerceType,
   emitGuardedRefCast,
@@ -1541,6 +1551,14 @@ export function compileTaggedTemplateExpression(
   // then find a matching registered closure by signature. This handles cases like
   // getTag()`hello`, (function(s){ return s; })`hello`, etc.
   {
+    // (#6651) §13.2.8 — `` obj.fn`x` `` is a method call, so its `this` is
+    // `obj`. Admission, refusals and rationale all live with the sibling call
+    // shapes in object-literal-method-receiver.ts.
+    const ttRecvBind = planTaggedTemplateReceiverBind(ctx, fctx, expr.tag, substitutions);
+    if (ttRecvBind) {
+      const recvExpr = (expr.tag as ts.PropertyAccessExpression).expression;
+      emitStandaloneReceiverCapture(fctx, compileExpression(ctx, fctx, recvExpr, { kind: "externref" }), ttRecvBind);
+    }
     // First, try to resolve the tag expression's type and find a matching closure
     const tagTsType = ctx.checker.getTypeAtLocation(expr.tag);
     const callSigs = tagTsType.getCallSignatures?.();
@@ -1633,13 +1651,18 @@ export function compileTaggedTemplateExpression(
       // signature shape the tag expression resolves to, never proof of which
       // function runs. Publish the surplus substitutions unconditionally and
       // clear the globals after the call.
-      const publishedMatchedClosure = publishTaggedTemplateArguments(
+      const publishedMatchedClosure = publishTagCallArguments(
         ctx,
         fctx,
         substitutions,
         matchedClosureInfo.paramTypes.length,
         Math.max(0, closureMaxSubs),
+        stringsLocal,
       );
+
+      // The receiver install goes AFTER the arguments, immediately before the
+      // call — see the ordering note in object-literal-method-receiver.ts.
+      if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
 
       // Push funcref from closure struct field 0 and call_ref
       fctx.body.push({ op: "local.get", index: closureLocal });
@@ -1657,7 +1680,7 @@ export function compileTaggedTemplateExpression(
       });
       if (publishedMatchedClosure) resetTaggedTemplateArguments(ctx, fctx);
 
-      return matchedClosureInfo.returnType ?? VOID_RESULT;
+      return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, matchedClosureInfo.returnType ?? VOID_RESULT);
     }
 
     // No matching closure found — try compiling the tag as a general expression
@@ -1690,13 +1713,16 @@ export function compileTaggedTemplateExpression(
             pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
           }
           // (#5338) Same dynamic-callee reasoning as the signature-matched arm.
-          const publishedDynClosure = publishTaggedTemplateArguments(
+          const publishedDynClosure = publishTagCallArguments(
             ctx,
             fctx,
             substitutions,
             closureInfo.paramTypes.length,
             Math.max(0, closureMaxSubs),
+            stringsLocal,
           );
+
+          if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
 
           fctx.body.push({ op: "local.get", index: closureLocal });
           fctx.body.push({
@@ -1709,7 +1735,7 @@ export function compileTaggedTemplateExpression(
           fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
           if (publishedDynClosure) resetTaggedTemplateArguments(ctx, fctx);
 
-          return closureInfo.returnType ?? VOID_RESULT;
+          return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, closureInfo.returnType ?? VOID_RESULT);
         }
       }
 
@@ -1750,13 +1776,14 @@ export function compileTaggedTemplateExpression(
         }
 
         // Call __tagged_template(tag, strings, subs)
+        if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
         fctx.body.push({ op: "local.get", index: tagLocal });
         fctx.body.push({ op: "local.get", index: stringsLocal });
         fctx.body.push({ op: "extern.convert_any" }); // template vec struct -> externref
         fctx.body.push({ op: "local.get", index: subsArrLocal });
         fctx.body.push({ op: "call", funcIdx: ttIdx });
 
-        return { kind: "externref" };
+        return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, { kind: "externref" } as ValType);
       }
     }
   }
@@ -3982,8 +4009,10 @@ export function compileNativeStringMethodCall(
       (method === "replace" || method === "replaceAll" || method === "split") &&
       expr.arguments.length > 0 &&
       !firstArgIsStringLike;
-    // (#6662) An unclassifiable replace/replaceAll search value dispatches at runtime.
-    const dynamic = symbolProtocolArgForm && tryCompileStandaloneDynamicReplace(ctx, fctx, expr, method, emitReceiver);
+    // (#6662/#6665) An unclassifiable replace/replaceAll/match/search/split search value dispatches at runtime.
+    const dynamic =
+      (alwaysRegExp || symbolProtocolArgForm) &&
+      tryCompileStandaloneDynamicStringRegExpCall(ctx, fctx, expr, method, emitReceiver);
     if (dynamic) return dynamic;
     if (alwaysRegExp || symbolProtocolArgForm) {
       reportError(
@@ -4329,6 +4358,13 @@ export function compileGuardedNativeStringMethodCall(
     then: thenInstrs,
     else: elseInstrs,
   });
+  // (#5383) The three predicate methods answer a BOOLEAN. A bare i32 whose
+  // static type is `any` is boxed as a NUMBER, so `monthCode.endsWith("L")`
+  // reached `assert.sameValue(…, false)` as «0» (4 Temporal `no-leap-months`
+  // rows). The brand makes `coerceType` box it with `__box_boolean`.
+  if (resultType.kind === "i32" && (method === "includes" || method === "startsWith" || method === "endsWith")) {
+    return { kind: "i32", boolean: true };
+  }
   return resultType;
 }
 

@@ -56,6 +56,19 @@ function propertyChainRoot(pae: ts.PropertyAccessExpression): { root: string; de
   return ts.isIdentifier(expression) ? { root: expression.text, depth } : null;
 }
 
+/**
+ * (#6651 B7) A slot seeded by `o.p = undefined`/`null` (the i32 sentinel) cannot
+ * keep that carrier once a PRIMITIVE is written: `r.global = undefined;
+ * r.global = "string"` stored i32 0 (`RegExp/prototype/flags/coercion-*`).
+ * Object-valued later writes keep the #3669 sentinel carve-out.
+ */
+function sentinelSlotTakesPrimitive(existing: WidenedPropCandidate, tsType: ts.Type): boolean {
+  const primitive =
+    ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.ESSymbolLike;
+  const sentinel = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
+  return existing.type.kind === "i32" && (tsType.flags & primitive) !== 0 && (tsType.flags & sentinel) === 0;
+}
+
 function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
   const sentinelFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
   return isUnboxedPrimitiveCarrier(type) && (tsType.flags & sentinelFlags) === 0;
@@ -543,6 +556,7 @@ export function collectEmptyObjectWidening(
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, ctx.objectHashConsumerVars);
             }
+            markUseBeforeFirstPropertyWrite(stmts, stmt, varName, ctx.objectHashConsumerVars);
           }
 
           // (#2992 S5, standalone) An ACCESSOR-descriptor
@@ -1943,6 +1957,55 @@ function markStandaloneEnumeratedGrowthTargets(
   if (enumerated && grown && !arithmeticFieldRead) poisonSet.add(varName);
 }
 
+/**
+ * (#5383) `var o = {}` that is USED before its first property write cannot be
+ * a widened closed struct: the struct is allocated with every later-written
+ * field already present (a numeric slot at 0), so a callee handed `o` before
+ * `o.minute = 30` runs sees `o.minute === 0` and `"minute" in o` — not the
+ * absent property. Temporal's `ToTemporalTimeRecord` then finds a time unit
+ * on an empty bag and never throws its TypeError (9
+ * `plaintime-propertybag-no-time-units` rows). Poison when a statement between
+ * the declaration and the first statement that writes a property of `o`
+ * references `o` at all; hoisted function declarations do not run there and
+ * are skipped. A use inside the write statement itself is not tracked.
+ */
+function markUseBeforeFirstPropertyWrite(
+  stmts: readonly ts.Statement[],
+  declStmt: ts.Statement,
+  varName: string,
+  poisonSet: Set<string>,
+): void {
+  const start = stmts.indexOf(declStmt);
+  if (start < 0 || poisonSet.has(varName)) return;
+  const isVar = (e: ts.Expression): boolean => ts.isIdentifier(e) && e.text === varName;
+  const contains = (root: ts.Node, pred: (n: ts.Node, parent: ts.Node) => boolean): boolean => {
+    const visit = (n: ts.Node, parent: ts.Node): boolean =>
+      pred(n, parent) || (ts.forEachChild(n, (child) => (visit(child, n) ? true : undefined)) ?? false);
+    return visit(root, root);
+  };
+  const writes = (n: ts.Node): boolean =>
+    ts.isBinaryExpression(n) &&
+    n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+    (ts.isPropertyAccessExpression(n.left) || ts.isElementAccessExpression(n.left)) &&
+    isVar(n.left.expression);
+  const references = (n: ts.Node, parent: ts.Node): boolean =>
+    ts.isIdentifier(n) &&
+    n.text === varName &&
+    !(ts.isPropertyAccessExpression(parent) && parent.name === n) &&
+    !(ts.isPropertyAssignment(parent) && parent.name === n);
+  let used = false;
+  for (let i = start + 1; i < stmts.length; i++) {
+    const stmt = stmts[i]!;
+    if (ts.isFunctionDeclaration(stmt)) continue;
+    if (contains(stmt, writes)) {
+      if (used) poisonSet.add(varName);
+      return;
+    }
+    used ||= contains(stmt, references);
+  }
+}
+
 function markStandaloneDeleteTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
   const visit = (n: ts.Node): void => {
     if (ts.isDeleteExpression(n)) {
@@ -2518,7 +2581,12 @@ export function collectPropsFromStatements(
           // widening an anticipated `undefined -> null` property changes its
           // empty-object default and can null-deref reads before the first write.
           const existing = extraProps.find((p) => p.name === propName);
-          if (existing?.primitiveSeed && !valTypesMatch(existing.type, wasmType)) {
+          if (
+            existing &&
+            (existing.primitiveSeed
+              ? !valTypesMatch(existing.type, wasmType)
+              : sentinelSlotTakesPrimitive(existing, rhsType))
+          ) {
             existing.type = { kind: "externref" };
           }
         }

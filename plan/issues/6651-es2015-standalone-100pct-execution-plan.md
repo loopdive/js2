@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-23
+updated: 2026-09-24
 priority: high
 horizon: xl
 feasibility: hard
@@ -184,6 +184,21 @@ loc-budget-allow:
   # `language/module-code/namespace/internals/**`, 0 regressions across
   # `language/module-code/**` (597 rows, both lanes).
   - src/codegen/module-namespace-value.ts
+  # 2026-09-24 — lane A1 (arguments object created BEFORE parameter defaults,
+  # §10.2.11 step 22). `nested-declarations.ts` +86 and `closures.ts` +54, both
+  # already listed below. The growth is the SEAM, not the mechanism: the
+  # emission had to become callable at two points instead of one, so each file
+  # gains a small begin/end pair (`beginNestedArgumentsObject` /
+  # `endNestedArgumentsObject`; `emitLiftedClosureArgumentsObject`) around code
+  # that already lived there — the extraction SHRANK both host functions
+  # (`compileLiftedClosureBody` −36, `compileNestedFunctionDeclarationInScope`
+  # below its ceiling), so no func-budget grant is needed. It cannot move to a
+  # leaf module: the two call points straddle `emitDefaultParamInit` and the
+  # destructuring loop inside those functions, and the whole fact being encoded
+  # is WHERE in that sequence the object is created. ~60 % of the added lines
+  # are the comments recording that ordering and the two effects it forced
+  # (`__argc` is consumed by the vec body; a body `let arguments` is a separate
+  # binding) — both of which were live bugs found by measurement, not theory.
   # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
   # not as its TARGET's static shape). `property-access.ts` +13 — three lines
   # at the dot-property arm in `compilePropertyAccess`, three at its computed
@@ -567,7 +582,6 @@ loc-budget-allow:
   # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
   # gate it relaxes — the candidate gate is the single source of truth three
   # emit sites and the host-import scan consult, so it cannot move).
-  - src/codegen/property-access.ts
 # 2026-09-23 — cluster H slice H5 (the SYMBOL brand on a wrapper's
 # `[[PrimitiveValue]]` slot). `proto-index-store.ts` +22 inside
 # `fillBrandOffBody`'s wrapper-classification arm: one `SYMBOL_OFF` constant and
@@ -601,6 +615,28 @@ loc-budget-allow:
   # `compileState` / `emitUnwindWalk`, the carrier override in
   # `generatorElemValType`, and the binary / template roots of the #680
   # continuation (`lowerSequencedContinuation`, which the comma arm now shares).
+  # 2026-09-24 — cluster B, slice B7. `regexp-standalone.ts` +9: the two-line
+  # hand-off in `compileStandaloneRegExpConstructor` to the new leaf
+  # `src/codegen/regexp-ctor-regexp-like.ts` (§22.2.4.1 over an object pattern),
+  # its imports, and the spec-ToString provider in `emitRegExpCompileInPlace`
+  # (Annex B compile's ToString must reject a Symbol; the call sits where the
+  # recompile resolves its ToString). `declarations/object-shape-widening.ts`
+  # +18: `sentinelSlotTakesPrimitive` and its use at the ONE place the empty-
+  # object widening pre-pass decides a later write's slot type (#3669's arm) —
+  # a slot seeded by `o.p = undefined` kept its i32 sentinel under a later
+  # string write.
+  - src/codegen/declarations/object-shape-widening.ts
+  # 2026-09-24 — cluster E, slice E7. The mechanisms live in two NEW leaves
+  # (`ta-static-view-mop.ts`, `ta-to-string.ts`); god-file growth is the
+  # sites that must name them. `index.ts` +4 (import + the one finalize call,
+  # which has to follow `fillTaDynViewMopArms`/`fillTaDynViewOwnKeyArms` because
+  # it prepends in front of their arms), `closures.ts` +2 (the static-view
+  # clause of `closureReturnsExternrefBinding`, the one predicate that decides a
+  # closure keeps its value on the externref carrier), `call-receiver-method.ts`
+  # +3 (the helper call at the `any`-receiver `toString()` site that otherwise
+  # calls `__extern_toString` directly) and
+  # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
+  # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
@@ -619,6 +655,24 @@ func-budget-allow:
   # was verified byte-neutral — all 30 binaries of the 15-program dual-target
   # corpus are identical before and after it.
   - src/codegen/property-access.ts::compileElementAccess
+  # 2026-09-24 — cluster I slice T1 (tagged templates, §13.2.8): +17 inside
+  # `compileTaggedTemplateExpression`. Two module-scope extractions were taken
+  # FIRST rather than grant the first number the gate reported (+37): the
+  # receiver admission moved to `planTaggedTemplateReceiverBind` in
+  # `object-literal-method-receiver.ts`, beside the `obj.m()` / `obj["m"]()` /
+  # `obj[k]()` twins whose refusals it inherits, and the two publish arms
+  # collapsed onto one `publishTagCallArguments` entry point in
+  # `tagged-template-arguments.ts`. What cannot move is one line per arm: the
+  # tagged-template lowering has THREE call sites (signature-matched closure,
+  # dynamic closure, `__tagged_template` host bridge) and §10.2.1.2's receiver
+  # must be installed after that arm's own arguments and restored after its own
+  # call, so the install/restore pair is per-arm by construction. The rest is
+  # the plan + capture at the head of the fallback block and the three
+  # `finishObjectLiteralMethodCall` returns. Measured: +2 rows on BOTH targets
+  # (`member-expression-context.js`, `member-expression-argument-list-
+  # evaluation.js`), 0 lost over a 273-row two-lane sweep; 5 of 190 corpus
+  # programs move, all under `tagged-template/`.
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
   # 2026-09-23 — cluster D slice D2b: `compileNamespaceStaticCall` +4, the
   # dispatch line described under the LOC grant (dynamic-iterable all/race →
   # `emitStandalonePromiseCombinatorDrive`, with the legacy drain as fallback).
@@ -839,6 +893,12 @@ func-budget-allow:
 # binary / template continuation roots). The adapter must close over the
 # builder's private cursor, so it cannot leave the function; the planner itself
 # is in `generator-yield-linearize.ts`.
+  # 2026-09-24 — cluster E slice E7: `emitTaDynCtorConstructFromLocals` +17 —
+  # the callable disjunct of the object-arm guard (see the loc rationale). The
+  # guard is built from locals only this function holds (the peeled candidate
+  # and the iterable prelude that owns `__typeof_function`). `generateModule` +3
+  # and `compileReceiverMethodCall` +4 are listed above.
+  - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -906,6 +966,12 @@ coercion-sites-allow:
 # externref `join`, which has to sit between the separator's evaluation and its
 # coercion) — all five paths/functions already listed above.
   - src/codegen/object-runtime-ordinary-set.ts
+# 2026-09-24 — cluster E, slice E7: `ta-to-string.ts` names `__extern_toString`
+# ×1 (one module constant, +1 net). It is not a new ToString: the helper FALLS
+# BACK to exactly the call the `any`-receiver `x.toString()` site made before,
+# after the detached-buffer check. It is a defined native with its own
+# `FunctionContext`, so the fallback has to name the native it delegates to.
+  - src/codegen/ta-to-string.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -1046,16 +1112,20 @@ sweep on the round-6 integrated branch:
 
 | family | rows remaining | owner |
 | --- | ---: | --- |
-| `language/expressions/tagged-template/` | 8 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `language/expressions/tagged-template/` | 8 → **6** (slice T1, 2026-09-24: 2 closed on both lanes; the other 6 are named with their exact site in the T1 receipt at the end of this file) | **this thread (`claude/project-thread-yhj9pp`)** |
 | `language/module-code/namespace/internals/` | 12 | **this thread (`claude/project-thread-yhj9pp`)** |
-| `language/statements/with/` | 11 | **UNCLAIMED — reserved for a JS-host lane** |
-| `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **UNCLAIMED — reserved for a JS-host lane** |
+| `language/statements/with/` | 11 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **this thread (`claude/project-thread-yhj9pp`)** |
 
-**If you are an outside lane reading this: do not start tagged templates or
-module namespaces.** They are claimed here, and #6651 now carries a live claim
-on `origin/issue-assignments` for `ttraenkler/project-thread-yhj9pp`. `with` and
-`eval` are deliberately left open; take those, and add your own claim line here
-before you start so this table stays the lock.
+**If you are an outside lane reading this: do not start any of these four.**
+As of 2026-09-24 all four families are claimed by this thread, and #6651 carries
+a live claim on `origin/issue-assignments` for
+`ttraenkler/project-thread-yhj9pp`.
+
+`with` and `eval` were held open for a JS-host lane until 2026-09-24. No such
+lane was ever started in this project, so holding them open only stranded the
+two largest remaining families. They are now this thread's, and the split
+question is closed: there is one lane, and it takes all four.
 
 Why the table exists: on 2026-09-21 three cluster slices (A2, C3, E2) were
 implemented twice because two sessions worked this issue in parallel without
@@ -7234,6 +7304,364 @@ runtime throw from a pattern-head for-of BODY statement does not close the loop
 iterator (the same limitation A2's `for-of-step` has — only abrupt resumes and
 throws from the head's own ops close it); neither shape occurs in this bucket.
 
+### 2026-09-24 — Cluster B, slice B7: `RegExp(pattern)` over an object, Annex B `compile`'s ToString, a sentinel-seeded expando slot
+
+- **Branch** `b7` (local, not pushed), base `origin/main` @ `9950e34f30`. The
+  slice was started by a previous owner killed by a container restart before any
+  source edit; its draft module (`.tmp/b7/regexp-ctor-regexp-like.ts` in the
+  dead worktree, never compiled) was carried over, fixed (three defects below)
+  and measured here.
+- **Engine for every verdict: QuickJS** (artifact `073742801ba7`),
+  `--standalone --isolate`, 50-row chunks in fresh processes, one runner at a
+  time, source sha checked unchanged first→last chunk (`.tmp/b7/*.srcsha.*`).
+  The eval adapter rebuilt by the edited compiler is byte-identical to the base
+  one (`cmp` of `quickjs-eval-adapter-{d4799bda84cfed0d,15b12244c91ac6c3}.wasm`),
+  so the local-cache caveat B6 recorded does not apply to this slice.
+
+#### What landed, per target
+
+1. **§22.2.4.1 over an OBJECT pattern** (new leaf
+   `src/codegen/regexp-ctor-regexp-like.ts`, a two-line hand-off at the top of
+   `compileStandaloneRegExpConstructor`). An object-typed pattern used to take
+   the string lane — `ToString(obj)`, the pattern `[object Object]`. It now runs
+   the spec's steps at run time: IsRegExp via `Get(pattern, @@match)` (getter
+   runs; `undefined` ⇒ the `$NativeRegExp` brand test), the CALL spelling's
+   `Get(pattern,"constructor")` SameValue `%RegExp%` short-circuit (returns the
+   pattern itself — so the call spelling answers externref; `new` keeps the
+   struct type), a genuine carrier cloned or recompiled from its source, a
+   regexp-like object's `source` then `flags` read with `Get` (the `flags` read
+   skipped when `flags` is supplied), and RegExpInitialize's `undefined ⇒ ""`
+   else spec ToString. The gate is the oracle fact: `object`, or `class` —
+   **`class` is load-bearing**: a JS expando object (`var obj = {};
+   Object.defineProperty(obj, …)`) gets the variable's own symbol, so its fact is
+   `{kind:"class", name:"obj"}`; with `object` alone 2 of the 7 rows stayed red
+   (`get-flags-err`, `get-source-err`). Defects fixed in the carried draft: an
+   absent `flags` was pushed as `ref.null` (under the #2106 regime that is
+   `null`, not `undefined`); the dynamic compiler was resolved from `funcMap`
+   (it lives in `nativeRegexHelpers`); and its registration flushed late imports
+   with a null `fctx` after this site's own imports were pending, which would
+   leave the site's calls one import stale. `RegExp[@@species]` and every
+   `prototype/*/this-val-regexp-prototype` row already PASS on this base
+   (`.tmp/b7/p/t1.log`, 14/14) — nothing to do there.
+2. **Flag-getter `coercion-*`** — the defect was NOT in the getter (B4 was
+   right). `r.global = undefined` seeds the empty-object widening pre-pass with
+   the i32 "missing-value" sentinel, and #3669's later-write arm deliberately
+   does not widen a sentinel-seeded slot, so `r.global = "string"` stored i32 0
+   (probe `.tmp/b7/p/c1.js`: `String(r.global)` read `"0"`). New
+   `sentinelSlotTakesPrimitive` in `declarations/object-shape-widening.ts`
+   widens such a slot to externref when a later write is a PRIMITIVE; an
+   object-valued later write keeps #3669's carve-out untouched.
+3. **`compile`** — §B.2.4.1 steps 4.a/4.b now use the spec ToString
+   (`__extern_to_string_spec`): a Symbol pattern or flags throws a TypeError
+   instead of compiling its rendered text (`{pattern,flags}-to-string-err`).
+4. **Not attempted**: `String.prototype.*` step orders and
+   `exec/*-lastindex-access` (below).
+
+#### Measurements
+
+| set | rows | before | after | Δ |
+| --- | ---: | ---: | ---: | --- |
+| manifest `B-regexp-protocol.txt`, standalone | 147 | 102 pass / 44 fail / 1 CE (`.tmp/b7/bm-0{0,1,2}.log`) | **116** / 30 / 1 (`.tmp/b7/fm-0{0,1,2}.log`, frozen source) | **+14, 0 pass→non-pass** (every after non-pass row was non-pass before, same status) |
+
+The 14: `from-regexp-like{,-flag-override,-get-ctor-err,-get-flags-err,-get-source-err,-short-circuit}`,
+`call_with_non_regexp_same_constructor` (target 1, 7); `flags/coercion-{global,ignoreCase,multiline,sticky,unicode}`
+(target 2, 5); `compile/{pattern,flags}-to-string-err` (target 3, 2).
+
+#### Controls — zero pass → non-pass
+
+Control universe (`.tmp/b7/ctrl-all.txt`, 2,581 rows): B5/B6's 599-row set
+(`c599`, re-used from the B6 worktree) ∪ every row under
+`{,annexB/}built-ins/RegExp/**` (1,941) ∪ every row whose source says
+`RegExp(` or `.compile(` (480) ∪ every row with a top-level-statement
+`x.p = undefined|null|void 0` (203, the only shape the widening change can
+reach). Method: compile every row on a `git archive` extract of the base
+(`.tmp/basetree`) and on the frozen after tree, primary + strict rerun, and
+compare wasm sha256; verdicts only where bytes changed. The target split
+follows reachability — the ctor lane and `compile` are standalone-only
+(`hasStandaloneRegExpEngine` / `usesNativeRegExpProvider`), the widening
+reaches both targets:
+
+| lane | rows compiled | bytes changed | verdicts on the changed rows, base → after |
+| --- | ---: | ---: | --- |
+| standalone, every control row that mentions `RegExp`/`compile` + the 203 widening candidates (`.tmp/b7/sha-sa`) | 1,391 | 190 (3 are stray `probe-b4/*` files, dropped) | 187 rows: **125 → 141 pass**, 0 pass→non-pass, every other status identical (`.tmp/b7/v{b,a}-00.log`, 200-row in-process chunk) |
+| standalone, the remaining 1,190 control rows (`.tmp/b7/sha-sr`) | 1,190 | 5 | 4 pass / 1 fail → identical (`.tmp/b7/r{b,a}-00.log`) |
+| host, the 203 widening candidates (`.tmp/b7/sha-wh`) | 203 | 10 (3 `probe-b4`) | 7 `flags/coercion-*`: **0 → 7 pass** (`.tmp/b7/h{b,a}-00.log`) |
+
+The +16 standalone are the manifest's 14 plus `flags/coercion-{dotAll,hasIndices}`
+(post-ES2015, outside the manifest). Bytes changed on RegExp rows that never
+construct from an object because the reified `RegExp.prototype.compile`
+closure body now calls the spec ToString; TypedArray/DataView rows changed
+through the widening. The 5 in the second row (`match-indices/*` ×3,
+`@@replace/poisoned-stdlib`, `String.prototype.replaceAll/replaceAll`) mention
+neither `RegExp(` nor `compile` in their own text — a text-grep control would
+have missed them, which is why every control row was compiled. The host lane's other 2,378 control rows were NOT
+compiled (time-box); nothing host-reachable in this diff can touch a row
+without the widening's statement shape.
+
+- **Byte identity**: `website/playground/examples/**` + 3 benchmarks, both
+  targets, **32/32 identical** (`.tmp/b7/bytes-{base,after}.txt`).
+- `node scripts/equivalence-gate.mjs`: 22 failing = the 22 known, no new.
+  `pnpm run check:ir-fallbacks`: OK.
+- **Pins**: new `tests/issue-6651-b7-regexp-ctor-compile-flags.test.ts` (6
+  test262 rows) and `…-inline.test.ts` (2 programs) — **6/6 and 2/2 red on the
+  base tree** (`.tmp/b7/pin-rows-ONBASE.log`, `pin-inline-ONBASE.log`), green
+  after. B-family pins green: B3 13/13, B4 14/14, B5 7+7+4+5, B6 7+3, exec
+  protocol 13/13, `string-symbol-protocol` 9/9, `issue-3794` 4/4. **Every
+  test262-ROW pin suite (B1, B2, B3, B6, B7) OOMs in a default 512 MB vitest
+  fork on this box** (not checked on the base tree) and passes with
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048` (`.tmp/b7/pin2-*.log`).
+- Gates: loc (grant below), func, coercion-sites, oracle-ratchet, dead-exports,
+  typecheck, biome, compiler-boundaries inventory all exit 0. With
+  `LOC_GATE_BASE=origin/main@3a891033b6` the loc gate passes; the func gate
+  reports `binary-ops-in.ts::compileInOperator +26`, a file this slice does not
+  touch — main's `f76cf31d62` shrank it after this branch's base, so the
+  comparison reads it backwards; it clears on the coordinator's merge.
+
+#### Residuals in the manifest (31)
+
+| rows | first failure after B7 | what it needs |
+| ---: | --- | --- |
+| 8 | `*/cross-realm` (6), `proto-from-ctor-realm`, `@@split/splitter-proto-from-ctor-realm` | `$262.createRealm` |
+| 2 | `@@split/{species-ctor,species-ctor-ctor-non-obj}` | out of scope (#3981; out-of-grammar `"[object Object]"`) |
+| 1 | `@@split/coerce-flags-err` | cluster C/H: `var u = {…}; u = {flags: Symbol.split}` null-derefs in `__module_init` (B6's probe) |
+| 2 | `@@match/g-match-empty-{coerce,set}-lastindex-err` | object-literal accessor with captured locals never runs under `Get` — reproduced independently here: a `get source() { log.push(…) }` on a function-local literal is not invoked by the new ctor lane's `Get(pattern,"source")` while a capture-free getter is (probes `.tmp/b7/p/i1.js` first version vs `i2.js`) |
+| 2 | `exec/{failure,success}-lastindex-access` | re-probed (`.tmp/b7/p/e1.js`): `r.lastIndex === counter` is true, but `var li = r.lastIndex`, a JS helper `same(r.lastIndex, counter)`, and `typeof r.lastIndex` all see a NUMBER — the static read is typed `number`, so an inferred parameter / local is f64 and the pending object is converted. Not one localized cause: it is the lib.d.ts type of `lastIndex` flowing into param/local inference |
+| 4 | `compile/flags-to-string` (the static `.test` lane keeps the `/a/g` literal's compile-time flags after `compile('a','i')`), `compile/pattern-string-invalid{,-u}` (the dynamic compiler accepts `{`/`?`), `compile/pattern-string-u` (no `u`-mode surrogate class in the dynamic compiler) | dynamic-pattern grammar + static-flag invalidation on `compile` |
+| 4 | `RegExp-invalid-control-escape-character-class`, `unicode_restricted_identity_escape{,_alpha,_c}` | dynamic-pattern grammar (`\c`, `u`-mode identity escapes) |
+| 2 | `String.prototype.indexOf/searchstring-tostring-{errors,toprimitive}` | ToPrimitive/Symbol order in `indexOf` |
+| 2 | `String.prototype.{match,search}/cstm-*-is-null` | the `@@x`-is-null skip now works; RegExpCreate then hands `"\\d"` to `__regex_compile_dynamic_simple`, which throws `Unsupported dynamic regular expression pattern` — dynamic grammar again |
+| 3 | `String.prototype.match/invoke-builtin-match`, `search/invoke-builtin-search{,-searcher-undef}` | a reassigned `RegExp.prototype[@@match]`/`[@@search]` is not what `String.prototype.match(string)`'s RegExpCreate route calls |
+| 1 (CE) | `String.prototype.replace/cstm-replace-get-err` | the #1474 one-argument `replace` refusal |
+
+**The single biggest lever left in cluster B is the dynamic pattern compiler's
+grammar** (`__regex_compile_dynamic_simple`): 9 of the 31 rows end there, and
+it also bounds what this slice's ctor lane can do — a regexp-like
+`{source: "a+b"}` constructs, but `.test` on it throws `Unsupported dynamic
+regular expression pattern` (probe `.tmp/b7/p/i4.js`, step 5).
+
+#### Found while probing (not in the manifest)
+
+- **TS narrowing hides the object fact.** After `if (RegExp(obj) !== obj)
+  return …`, the checker narrows `obj` to an intersection and the oracle answers
+  `{kind:"unresolvable"}` for the next `new RegExp(obj)`, so the lane declines
+  and that call takes the old ToString route (probe `.tmp/b7/p/i3.js`). No
+  measured row has the shape; the pin program compares through a helper instead.
+- `annexB/…/compile/this-subclass-instance.js` is a Wasm validation error
+  (`extern.convert_any[0] expected type anyref, found … externref` in
+  `__module_init`) on BOTH trees — pre-existing, not in the manifest.
+- **Known edge, not guarded:** the call spelling's step-2 SameValue reads the
+  reserved `%RegExp%` identity global, which stays `null` until something
+  evaluates `RegExp` as a value. Outside the #2106 undefined-singleton regime a
+  null-prototype regexp-like object with no `constructor` would then compare
+  equal and be returned as-is. Standalone runs under the regime (absent reads
+  are the singleton, not null) and an ordinary object inherits
+  `Object.prototype.constructor`, so no measured row reaches it; a
+  `global.get; ref.is_null` guard would close it.
+- Someone left `probe-b4/*.js` inside the shared `test262/test/` directory; the
+  grep-built control lists picked them up and they were dropped from the
+  verdict runs.
+
+### 2026-09-24 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E7: a static view in a generic slot, `toString` on a detached view, and a callable constructor argument
+
+- **Branch** `e7` (local, not pushed). Written on `origin/main` @ `b6a77738f9`
+  (E6 / #6058 in); a container restart killed the first owner mid-control, and
+  the edits were carried onto `origin/main` @ `9950e34f30` (#6060, #6061,
+  #1058 in — none touches a file this slice edits; the patches applied
+  cleanly) by a second owner, who re-measured everything below on that base.
+  Engine for every verdict: **QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`,
+  adapter `d4799bda84cfed0d`, rebuilt), `--standalone`. Base = `origin/main`
+  copies of the four edited sources swapped in (`.tmp/base/`, file copies),
+  after = the edited tree; no source edit between the first and last chunk of
+  any measurement.
+- Manifest: 24-row `--isolate` chunks, fresh processes, one runner at a time,
+  per-row verdicts. Before = the first owner's two base runs (`b6a77738f9`:
+  E6 PR head and merged main, identical per-row, 56 pass,
+  `.tmp/e7/base2.tsv`), re-confirmed on `9950e34f30` for every row whose bytes
+  changed (see Controls). After = re-run on `9950e34f30`
+  (`.tmp/e7/m-after/`, `m-after.tsv`) — per-row identical to the first
+  owner's after on `b6a77738f9` (`after.tsv`). Those 68 include target 2's
+  `toLocaleString` helper, which the control then showed regressing 4 rows and
+  which was DROPPED (below); the committed tree's figure is 61.
+
+| manifest `E-typedarray-buffers.txt`, 144 rows | pass | non-pass |
+| --- | ---: | ---: |
+| before | 56 | 88 |
+| after, as first written (with the `toLocaleString` helper) | 68 | 76 |
+| after, committed (helper dropped) | **61** | 83 |
+
+**Committed: +5** (`from-{array,typedarray}-mapper-detaches-result`,
+`toString/detached-buffer`, `object-arg/iterator-{not-callable-,}throws`), zero
+pass→non-pass in the manifest (per-row join). The committed figure is the 68-row
+after minus the seven `toLocaleString` rows, each re-run on the committed tree
+(`.tmp/e7/tls-after/`, all seven `fail` again, as on the base); the other 137
+manifest rows' code paths are unchanged by the drop (the dropped hunk touched
+only the `any`-receiver `.toLocaleString()` call site).
+
+#### Bucketing the 88 base failures, and which targets they reach
+
+| target | rows it reached | first failure on the base |
+| --- | ---: | --- |
+| 1 static view in a generic slot | 2 (`from-{array,typedarray}-mapper-detaches-result`) | `SameValue(«10,11,12», «,,»)` |
+| 2 `toLocaleString` / `toString` | 7 of 10 (+ `toString/detached-buffer`) — **only `toString/detached-buffer` kept**, see "Dropped" | `«"42,0"»` for `«"hacks1,hacks2"»`; no throw |
+| 3 callable ctor argument | 2 of 5 (`iterator-{not-callable-,}throws`) | no TypeError / no Test262Error |
+| 4 non-`$Object` prototype | 0 — declined, see residuals | — |
+
+E6's T2 re-diagnosis guessed that the `toString`/`toLocaleString` detached rows
+and `subarray` ×2 also route through the static-view gap. **Measured: they do
+not** — all four build their view through `testWithTypedArrayConstructors`, i.e.
+a DYNAMIC view; the two `toString`/`toLocaleString` rows are target 2's, and the
+two `subarray` rows are unchanged.
+
+#### What landed (three mechanisms + a `toString` detach check, each probed before it was written)
+
+1. **A closure returning a static view keeps the view**
+   (`closures.ts::closureReturnsExternrefBinding` + `isStaticTaViewBinding` in
+   the new `ta-static-view-mop.ts`). `function () { return target; }`, with
+   `target = new Int8Array(ab)`, took the checker's return type `Int8Array` →
+   the packed-vec carrier, and the guarded return cast of a `$__ta_view` to it
+   answered **null** (WAT: `ref.test (ref $vec_i8)` on a `$__ta_view` local).
+   So `from.call(ctor, …)`'s construct driver never saw `target`. A return
+   expression that is a bare identifier bound (by `ctx.oracle
+   .variableDeclarationOf`) to a `new <View>(<ArrayBuffer>)` initializer now
+   keeps the closure result on the externref carrier, the widening Proxy
+   bindings already get (#4707). Host lane untouched (`noJsHost`).
+2. **A static view in an externref slot answers the §10.4.5 MOP**
+   (`fillTaStaticViewMopArms`, new module). The dyn-view arms
+   (`ta-dyn-mop.ts`) test `$__ta_dyn_view` only; a static `$__ta_view` fell to
+   the `$__vec_base` handling — `__extern_length` answered the stored length
+   (no detach, and the `-1` length-tracking sentinel read as `-1`), string-key
+   element reads answered `undefined`, writes were dropped. The two carriers
+   share fields 0–3 exactly (`length, buf, byteOffset, kind`; the dyn view only
+   appends `expando`/`constructProto`) and `kind` indexes `TA_CTOR_KINDS` in
+   both, so each of `__extern_length` / `__extern_get_idx` / `__extern_has_idx`
+   / `__extern_get` / `__extern_has` / `__extern_set` / `__getPrototypeOf` gains
+   a front arm that re-expresses a static view as a dyn view over the SAME
+   buffer and re-enters itself. Every dyn-view rule then applies (detach,
+   canonical numeric keys, `buffer` identity, `constructor`, per-kind proto),
+   writes land in the shared bytes, and the value in the slot is still the
+   original struct, so identity holds (`result === target`). Installed only in
+   a standalone module that registered BOTH carriers; every other module is
+   byte-identical. Probe (`.tmp/e7/p/t3.js`, `Int16Array` + windowed
+   `Uint8Array` behind an `any` param), before → after: `g["1"]`
+   `undefined → -7`, `g["3"] = 5` visible through `target`, `g.buffer === ab`
+   `false → true`, `g.constructor === Int16Array` `false → true`,
+   `getPrototypeOf` `false → true`, length after detach `4/2 → 0/0`.
+3. **`x.toString()` on a detached view throws** (`ta-to-string.ts`, wired at
+   the `any`-receiver `toString()` site in `compileReceiverMethodCall`).
+   §23.2.3.32 is `Array.prototype.toString` → `join` → ValidateTypedArray, but
+   the standalone lowering called `__extern_toString` directly, which renders
+   a detached view as an empty join. `__ta_to_string` runs the #6501 detached
+   prologue and then the unchanged `__extern_toString` call; reached only from
+   a module the pre-scan marks as using dynamic views.
+4. **`new TA(fn)` consults `fn[@@iterator]`** (`dataview-native.ts`,
+   `emitTaDynCtorConstructFromLocals`). §23.2.5.1 step 6.b sends EVERY Object
+   argument through GetMethod(@@iterator) and then array-like; the object arm
+   was gated on `ref.test $Object`, so a callable fell to the count form
+   (ToIndex(fn) = 0) and never read the method. The guard now also admits
+   `__typeof_function(arg)` — only when the iterable prelude is armed (it owns
+   that native).
+
+**Dropped — the `%TypedArray%.prototype.toLocaleString` helper (target 2).**
+`__ta_to_locale_string` ran §23.2.3.31 for a view receiver: the detached
+prologue, the internal length, then `ToString(Invoke(elem, "toLocaleString"))`
+per element, reusing `Array.prototype.toLocaleString`'s element tail
+(`buildExternJoinElementToString`) and fold. It took 7 manifest rows, but the
+control found **4 pass→non-pass**:
+`TypedArray/prototype/toLocaleString/{return-result,get-length-uses-internal-arraylength}.js`
+and their `BigInt/` twins, all `TypeError: Number.prototype.toLocaleString is
+not yet implemented in --target standalone`. Mechanism: for an UNPATCHED
+Number element, `Invoke(elem, "toLocaleString")` resolves through
+`__extern_get` to the standalone value stub for
+`Number.prototype.toLocaleString` (`builtin-value-read.ts`, the #2984
+degrade-to-throw body), and calling it throws; the base never invoked the
+method, it rendered the number with ToString. The prerequisite for re-landing
+the helper is a real standalone `Number.prototype.toLocaleString` value body
+(`ToString(thisNumberValue)`), which changes every module that reads that
+value and needs its own corpus control. The dropped source is kept at
+`.tmp/e7/dropped-ta-to-locale-string.ts` (with the call-site version in
+`dropped-call-receiver-method.ts` and its three pins in
+`dropped-e7-pins.test.ts`) in the E7 worktree.
+
+Target 4 was declined, as the brief allowed: `$Object.$proto` is
+`ref null $Object`, so admitting a TypedArray (or an Array) as a prototype is a
+field-type change on the ordinary-object carrier, not a localized widening.
+
+#### Controls
+
+The first owner's control (`.tmp/e7/ctl-after/`, standalone verdicts on the
+old `b6a77738f9` after tree, chunks 00–05 of 17 written, no before side) was
+**not** used: it had no base to join against and was on the old base. Every
+control figure below was re-run on `9950e34f30`.
+
+- **Control set** (`.tmp/e7/ctl-all.txt`, 3,265 rows): every row under
+  `built-ins/{TypedArray,TypedArrayConstructors,ArrayBuffer,DataView}/`
+  (2,966) plus every other row mentioning `toLocaleString`, `subarray`,
+  `$DETACHBUFFER` or `detachArrayBuffer`.
+- **Compile-all, standalone** (`.tmp/e7/ctl/{base,after}-standalone.sha`, the
+  runner's own `wrapTest` + compile options, sha256 of the binary): 3,265/3,265
+  compile on both sides (no new CE/throw); **1,913 rows changed bytes** — every
+  module that registers both view carriers gets the E7 arms.
+- **Verdicts on the 1,913 changed rows, after — measured WITH the
+  `toLocaleString` helper** (200-row in-process chunks,
+  `.tmp/e7/ctl/v-after/`, joined `v-after.tsv`): 1,338 pass, 514 fail, 60
+  compile_error, 1 error (the join counts runner skips as pass on both sides;
+  harmless for a pass→non-pass check, since skip is decided by metadata). One 200-row chunk (`chunk-06`) died silently on the
+  first attempt and its first half OOMed the runner in-process (8 GB heap) on
+  the second; that half (100 rows, `v-after-06/chunk-00`) was re-run
+  `--isolate`, where the one row that did not finish is
+  `subarray/coerced-begin-end-shrink.js` (ES2024 resizable buffer,
+  `spawnSync ETIMEDOUT`).
+- **Verdicts on the 587 after-non-pass rows (+ the 12 manifest gains), base**
+  (`.tmp/e7/ctl/v-base/`, `v-base-iso/` for the OOM-prone half):
+  587 rows, all measured: 583 non-pass on the base too; **4 pass on the base**
+  — the four `toLocaleString` rows named under "Dropped" — so the helper was
+  removed. `subarray/coerced-begin-end-shrink.js` times out on both sides. The
+  12 manifest gains are all non-pass on the `9950e34f30` base, confirming the
+  inherited before.
+- **After the drop** (committed tree): every changed row under
+  `TypedArray/prototype/{toString,toLocaleString}/` plus every other changed
+  row mentioning either (68 rows, `.tmp/e7/tls-after/`, joined against
+  `v-after.tsv`): the 4 regressed rows pass again; 8 rows went from pass back
+  to fail — the 7 manifest `toLocaleString` gains (fail on the base,
+  `base2.tsv`) and `toLocaleString/BigInt/detached-buffer.js` (re-run on the
+  base: fail). The remaining 1,845 changed rows were not re-run after the drop;
+  the dropped hunk is the `any`-receiver `.toLocaleString()` call site only.
+  E7 pins, gates, byte identity and the boundaries inventory were re-run on the
+  committed tree.
+- **Host (gc) lane**: all four hooks are gated on `ctx.standalone` /
+  `noJsHost`. Compile-all on a 192-row sample of the changed set (every 10th
+  row, `.tmp/e7/ctl/{base,after}-gc-sample.sha`): **192/192 byte-identical**.
+  The full 3,265-row gc compile-all was not run (time box).
+- **Byte identity** (`website/playground/examples/` + three benchmarks, both
+  targets, `.tmp/e7/gates/bytes-{base,after}.txt`): **32/32 identical**.
+- **Gates** on the after tree: loc/func budgets (also with
+  `LOC_GATE_BASE=9950e34f30`), coercion sites, oracle ratchet, dead exports,
+  `typecheck`, biome lint (error level), compiler-boundaries inventory
+  (`errors: []`), `check:ir-fallbacks` OK, equivalence gate 22 failing = 22
+  known, no new. Pins: E-family (`issue-6651-e-typedarray`, `e2`–`e6`) green;
+  the new `tests/issue-6651-e7-typedarray-view-detach.test.ts` 5/5 green, and
+  4/5 **red** with the `origin/main` sources swapped in (the fifth is the
+  attached-`toString` guard, green on both by design).
+
+#### Residuals after E7 (83 rows)
+
+| rows | first failure | what it needs |
+| --- | --- | --- |
+| `toLocaleString/*` (7) | as on the base | the dropped helper (above); prerequisite is a real standalone `Number.prototype.toLocaleString` value body |
+| `toLocaleString/{calls-valueof-from-each-value, return-abrupt-from-{first,next}element-valueof}` (3) | `«"[object Object],…"»` / no throw | NOT a TypedArray gap: `__extern_toString` on an ordinary object whose own `toString` is `undefined` answers `"[object Object]"` instead of falling to `valueOf` (OrdinaryToPrimitive step 5). Probe: `q = {}; q.toString = undefined; q.valueOf = () => "z"; String(q)` answers `[object Object]` with no view involved, while `__to_primitive` itself handles it — the ToString native does not route an `$Object` through it. Cross-cluster (ToString), 3 rows here |
+| `ctors/object-arg/iterator-is-null-as-array-like`, `map/return-new-typedarray-from-empty-length`, `subarray/result-is-new-instance-from-same-ctor` (3) | `instanceof` false | NOT the iterator protocol (the arm now reads `@@iterator` and the array-like values correctly: length 2, `[0] === 1`): `new C(2) instanceof C` is false for a runtime ctor `C`, and `Object.getPrototypeOf(new C(2)) === Float64Array.prototype` is false while `C.prototype === Float64Array.prototype` is true (probe `.tmp/e7/p/t9.js`, base and after alike) — the dyn view's `__getPrototypeOf` glue and the static `<View>.prototype` read no longer name the same object. An identity bucket |
+| `ctors/object-arg/iterating-throws` (1) | Test262Error expected, TypeError got | a GENERATOR OBJECT argument is neither `$Object` nor callable, so it still takes the count form. Widening the guard to "any object" (null excluded) is the general §23.2.5.1 rule; not taken here — every non-primitive carrier reaching that arm would change route |
+| `ctors/object-arg/iterated-array-with-modified-array-iterator` (1) | length 1 for 4 | an Array argument takes the vec copy arm, never `%ArrayIteratorPrototype%.next` (the §23.2.5.1 fast path is only valid while the iterator is unmodified) |
+| `internals/Set/*` (5) | unchanged from E6 | E6's two residual rows: #2358 identity (3), non-`$Object` prototype link (2 — target 4, declined above) |
+| `from-typedarray-into-itself-mapper-detaches-result` (1) | illegal cast in `__module_init_chunk_0` | passing the static view as the SOURCE of `from` casts it on the runner's chunked module-init path; the E7 probe compile (non-chunked) does not trap — not chased |
+| `subarray/{detached-buffer,byteoffset-with-detached-buffer}` (2) | unchanged | dyn views, not the static-view gap (see above) |
+| rest (60) | unchanged | ArrayBuffer/DataView constructor-prototype and `Object.prototype.toString` rows, `%ArrayIteratorPrototype%` results, species/`this`-identity, method-as-value brand checks, `OwnPropertyKeys` on a `new` expression, BigInt kinds |
+
+Half-done: target 2 (dropped, see above). A static-only module (static views, no dyn-view carrier)
+still gets no arms; test262's TypedArray modules always have both, and
+registering the dyn carrier just for the arms would change every static-view
+module's bytes.
+
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
 ### What landed
@@ -8390,6 +8818,395 @@ the partition stands as proposed.
   `test:equivalence:gate` 0 (22 failing / 1720 passing / 22 known — no new
   regressions).
 
+### 2026-09-24 — Cluster A (native generator lowering, standalone), slice A5: computed keys from `yield`, `yield*` inside a for-of body, `obj.foo = yield`
+
+Claimed 2026-09-24 by this lane (senior-dev, Opus 5 High), branch `a5`, based
+on `origin/main` @ `5a05fff094` (A3 + A4 landed). The before-state was measured
+in a source-clean `git archive HEAD` extract (`.tmp/basetree`); engine
+`JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter
+`d4799bda84cfed0d`); every pass `--standalone --isolate`, 24-row chunks, one
+runner at a time, src frozen (md5-checked) for the whole after-run.
+
+| A manifest, 197 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/a5/A-base.tsv`) | 152 | 2 | 43 |
+| after, final src (`.tmp/a5/A-final.tsv`) | **165** | 4 | 28 |
+
+**+13 pass, 0 pass → non-pass** (per-row join). The two other moves are
+CE → fail: `{expressions,statements}/class/accessor-name-static-computed-yield-expr.js`
+(see residuals — the generator half is right, the static setter dispatch is not).
+
+| target | rows gained |
+| --- | --- |
+| 1 — computed keys from `yield` (object literal, class, + `yield` in call args of the same generators) | 9: `cpn-obj-lit-…`, `object/accessor-name-computed-yield-expr`, `object/method-definition/computed-property-name-yield-expression`, `{expressions,statements}/class/accessor-name-inst-computed-yield-expr`, `cpn-class-{expr,decl}-{computed,accessors}-…` |
+| 2 — `yield*` inside a for-of body | 4: `for-of/yield-star{,-from-try,-from-catch,-from-finally}.js` |
+| 3 — `obj.foo = yield` | 0 — not attempted, see below |
+
+#### Target 1 — a `yield` inside a computed key
+
+New leaf `src/codegen/generator-yield-nested.ts`. A statement holding nested
+yields is DEFERRED past its last suspension, as #680 already does for direct
+yields, but the order proof is made per statement instead of per syntactic
+root: the root is walked in spec evaluation order (§13.2.5.5 key-then-value
+for object literals; §15.7.14 heritage then computed keys in element order for
+classes; callee then arguments for calls; base, key, RHS for member
+assignments) into atoms. Before the last yield each atom must be a yield
+(suspends in order), REPLAYABLE (a literal, or a binding of this generator no
+closure mentions and the statement does not write — it cannot change while
+suspended), or CAPTURED once into a spill via the existing
+`captureContinuationOperand`. The statement is then compiled in the final
+state with every yield / capture node read from its spill (the existing
+replacement map). Pinned: a value evaluated before a later key's yield runs
+before that yield, exactly once.
+
+One documented approximation: a CALLEE before a yield (`assert.sameValue(o[yield 9], 9)`)
+cannot be captured without losing its `this`, so it is replayed when it is a
+module-scope function declaration / lib global or `<such>.name`; that is only
+observable if the caller rebinds the name or rewrites the property while the
+generator is suspended. Any other callee refuses.
+
+Gate: only generators whose body holds a yield inside a COMPUTED PROPERTY NAME
+(`bodyHasComputedKeyYield`, standalone/WASI) — every one of them was a #680
+refusal before — and they move to the boxed-any carrier, because the resumed
+value becomes a KEY (`iter.next('first')` names the accessor). A class FIELD
+keyed by a yield is refused on purpose: the class lowering skips runtime-keyed
+fields ("dynamic computed name — skip"), so admitting it turned 4
+`cpn-class-*-fields-*` rows from a loud refusal into a class silently missing
+the field (measured, then refused; pinned as a control).
+
+#### Target 2 — `yield*` inside a for-of body
+
+A2's bail 4. The native-gen delegation arm now admits a chain carrying the
+loop's `iter-close` (plus `replay` / `catch` entries): the delegation state
+gets the innermost-first `unwind` chain instead of the replay-only finalizers,
+and the D2 delegate-close forwarding (forward the abrupt completion to the
+inner generator first) is lifted verbatim into `emitDelegateCloseForward` and
+called from BOTH abrupt paths, so `.return()` / `.throw()` at the delegated
+yield closes the inner, then the loop iterator. Pinned in both directions
+(`closed === 12`, rethrow). The vec kind still refuses a non-replay chain; the
+protocol-iterable kind already walked the full chain.
+
+#### Target 3 — not attempted, and why
+
+`built-ins/GeneratorPrototype/return/try-finally-set-property-within-try.js`
+needs three things, none of them a temporary: (a) a yield-free `finally` that
+itself `return`s is lowered on the LEGACY replay path, which compiles the
+`return` raw in the resume function — measured: even the plain
+`try { yield; } finally { return 1; }` traps (`dereferencing a null pointer in
+__gen_resume_g`) on `.return(45)`, so the replay is the defect; routing such a
+try onto `lowerTryRegion` (whose finally lowers a `return` as a completion) is
+the likely fix; (b) the try part is lowered with continuations disabled, so the
+member-target statement needs this slice's deferral admitted inside a try
+region with the unwind chain threaded into each suspension; (c) the generator
+has no computed key, so the carrier gate would have to widen. `f(yield)` /
+`new C(yield)` fall out of target 1's mechanism (pinned inside a gated
+generator) but are NOT admitted on their own: the gate is a computed key; the
+Sept-21 standalone baseline shows no non-pass sync-generator row that needs
+them outside the target-1 set.
+
+#### Controls run
+
+- A manifest before/after above (final src, md5-checked).
+- New pin suite `tests/issue-6651-a5-computed-key-yield.test.ts`, 9 cases:
+  **7 red on the base tree**, 2 scope CONTROLS green on both (a call-arg yield
+  alone still refuses; a yield-keyed class field still refuses).
+- `npm run -s typecheck`; `npx biome lint src tests scripts
+  --diagnostic-level=error`; prettier; `check-loc-budget` / `check-func-budget`
+  / `check-coercion-sites` / `check:oracle-ratchet` (+0 / +0) /
+  `check:dead-exports`; `check-compiler-boundaries --mode inventory` (new leaf
+  classified) — all green against the fork point.
+- `LOC_GATE_BASE=origin/main` (`986a45359d`): loc green; func reports
+  `statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  1246 > 1238` — a function this branch does not touch (main shrank it after
+  the fork point); it disappears once `origin/main` is merged in.
+
+#### Residuals
+
+| rows | shape | what it needs |
+| ---: | --- | --- |
+| 2 | `accessor-name-static-computed-yield-expr` ×2 (now fail) | the static getter read is right; `C.second = v` does not dispatch a runtime-keyed STATIC setter on a class value — class lowering (cluster C), reproduces with no generator |
+| 4 | `cpn-class-{expr,decl}-fields{,-methods}-…` (outside the manifest) | runtime-keyed class fields (class lowering skips them) |
+| 1 | `obj.foo = yield` in `try {} finally { return 1 }` | target 3 above |
+
+#### Suspended work — 2026-09-24
+
+Session wrap-up ordered before the regression controls ran. **Not mergeable
+yet.**
+
+- Worktree `/home/user/js2/.claude/worktrees/agent-ab4ec40c80235671d`, branch
+  `a5`, WIP commit `a80f49d064` (parent `5a05fff094`), not pushed.
+- Measured: the A manifest (above), the pin suite red/green split, every
+  source gate.
+- NOT run: (1) the compile-only byte differential on BOTH targets over the
+  747 reachable rows (`.tmp/a5/ctl-reach.txt` = A4's 2,016-row set ∩ sources
+  containing `yield*` or a `[`…`yield`; no harness file matches either
+  pattern), and verdicts on rows whose bytes change; (2) 32/32 byte identity on
+  `website/playground/examples/` + `benchmarks/` (`.tmp/a5/bytes.mts`); (3)
+  `node scripts/equivalence-gate.mjs`; (4) `pnpm run check:ir-fallbacks`; (5)
+  the A-family pin suites (`tests/issue-6651-a3-*`, `-a4-*`,
+  `-generator-*`, `issue-680-*`, `*generator*.test.ts`) on both trees.
+- Resume: `cd` the worktree; `.tmp/basetree` is the source-clean base (it has
+  `.tmp/a5/{sha,bytes}.mts`). Run, one at a time:
+  `.tmp/a5/shaall.sh <tree> <abs-outdir> .tmp/a5/ctl/c-*` for the basetree and
+  the worktree, then `node .tmp/a5/shadiff.mjs <base-out> <after-out>
+  .tmp/a5/changed`; expected: host 0 changed (every widening is gated on
+  standalone/WASI or on an `iter-close` entry, which only exists there);
+  standalone changed ⊆ the 13 gained rows + the 2 static-accessor rows + other
+  computed-key / for-of-`yield*` rows, each needing a verdict. Then (2)-(5).
+  Then `git merge origin/main`, re-run the func gate, and hand the SHA over.
+
+### 2026-09-24 — Cluster E, slice E8
+
+**Status: WIP, suspended at the session wrap-up — NOT mergeable yet** (the
+corpus controls were not run; see "Suspended work" below).
+
+- **Branch** `e8` (local, not pushed), written on `origin/main` @ `986a45359d`
+  (E7 / #6075 in). Engine for every verdict: QuickJS
+  (`JS2WASM_EVAL_ENGINE=quickjs`, adapter `d4799bda84cfed0d`), `--standalone`.
+  Base = the `origin/main` copies of the edited sources swapped in
+  (`.tmp/base/`, file copies, `.tmp/e8/swap.sh base|new`).
+
+#### What is written
+
+1. **Real standalone bodies for the `toLocaleString` VALUES** (target 1). The
+   member closures were the #2984 refusal ("… is not yet implemented in
+   --target standalone"), so every generic `Invoke(x, "toLocaleString")`
+   threw. Now:
+   - `Number.prototype.toLocaleString` (§21.1.3.4) — `? thisNumberValue(this)`
+     (TypeError on a non-Number), then `Number::toString(x)`; the same string
+     the direct `(n).toLocaleString()` arm (#2160) already emits
+     (`number-proto-format.ts`).
+   - `BigInt.prototype.toLocaleString` (§21.2.3.2) — `__typeof_bigint` brand
+     check, then `__extern_toString` (new leaf `proto-to-locale-string.ts`).
+     Needed because the TypedArray helper's BigInt64/BigUint64 elements Invoke
+     it.
+   - `Object.prototype.toLocaleString` (§20.1.3.5) — `Invoke(this, "toString")`
+     via `__extern_get` + `__apply_closure` (the #4655 spelling); nullish `this`
+     throws; an unseen `toString` falls back to `__extern_toString`
+     (absent-not-wrong, as `array-tolocalestring.ts`).
+   - `String.prototype` and `Boolean.prototype` have NO own `toLocaleString`
+     (they inherit Object's), so there is nothing to write for them.
+   - **Byte-identity gate:** all three bodies emit only when some source file
+     of the module spells `toLocaleString` (`moduleMentionsToLocaleString`, a
+     text scan, not an AST walk). Needed because a builtin prototype's
+     companion object is seeded with a closure for EVERY member of its CSV
+     (`native-proto.ts`, `__nativeproto_seed_<Brand>`), and `Object.prototype`'s
+     companion is seeded in a large share of the corpus; without the gate all
+     of those modules would change bytes. A module that never names the member
+     keeps the refusal body.
+2. **E7's dropped `%TypedArray%.prototype.toLocaleString` helper, re-landed**
+   (target 2): `ta-to-locale-string.ts` (the preserved
+   `dropped-ta-to-locale-string.ts` minus the `__ta_to_string` half, which E7
+   kept in `ta-to-string.ts`) plus the three-line `any`-receiver
+   `.toLocaleString()` arm in `call-receiver-method.ts`.
+3. `scripts/compiler-boundaries.json` classifies both new leaves.
+4. Pins `tests/issue-6651-e8-tolocalestring.test.ts` (6 cases; the three
+   TypedArray ones are E7's dropped pins, plus Number/BigInt/Object value
+   bodies and an unpatched-element guard).
+
+#### Measured
+
+| what | result |
+| --- | --- |
+| manifest `E-typedarray-buffers.txt`, base (`986a45359d`, source-clean), 24-row `--isolate` chunks | **61 pass / 83 fail** (`.tmp/e8/m-base.tsv`) — equals E7's committed figure |
+| probes (runner-wrapped, module scope, after tree) | `Number.prototype.toLocaleString` read as a value then `.call(3)` → `"3"`, `.call("x")` → TypeError; `Object.prototype.toLocaleString.call({toString(){return "T"}})` → `"T"`; `BigInt.prototype.toLocaleString.call(42n)` → `"42"` — all three threw "not yet implemented" on the base |
+| pins, after tree | 6/6 green; the three TypedArray cases were red on the pre-helper tree; red-on-base for all six NOT re-verified |
+| gates, after tree | `typecheck`, biome lint (error level), loc/func budgets (also with `LOC_GATE_BASE=586b37dcac`), coercion sites, oracle ratchet, dead exports, compiler-boundaries inventory (`errors: []`) — all exit 0 with the grants added to this file's frontmatter |
+
+**Not measured** (why this is WIP): the manifest AFTER, the compile-all control
+(3,265 rows, `.tmp/e8/ctl-all.txt` = E7's set, which already contains all 143
+`built-ins` rows mentioning `toLocaleString`) on either target, verdicts on the
+changed rows, 32/32 playground/benchmark byte identity, the equivalence gate,
+`check:ir-fallbacks`, and the E-family pins. The base standalone compile-all
+was started and was still running at the stop (`.tmp/e8/ctl/base-standalone.sha`).
+
+#### Residuals already known (from probes, not a control)
+
+- `toLocaleString/{calls-valueof-from-each-value, return-abrupt-from-{first,next}element-valueof}`
+  (target 2's `valueOf` rows): NOT a single localized cause. The element's
+  `toLocaleString` returns an object LITERAL `{ toString: undefined, valueOf }`,
+  a closed struct, so ToString goes `__to_primitive` → `__class_to_primitive`
+  (class-to-primitive.ts). Its string-hint arm cannot tell "own `toString`
+  present but not callable" (spec: fall to `valueOf`) from "no own `toString`"
+  (inherited `Object.prototype.toString` → `"[object Object]"`) — the per-struct
+  `__call_toString` dispatcher answers null for both. Probe: `String({toString:
+  undefined, valueOf(){return "z"}})` → `"[object Object]"`, while `{toString(){
+  return {}}, valueOf(){return "z"}}` → `"z"`. Needs the dispatchers to report
+  field presence; cross-cluster (ToString), not taken.
+- Target 3 (`Array.prototype.toLocaleString`): does NOT share the mechanism.
+  Its failing rows (standalone, measured on the pre-E7 tree with these bodies)
+  are `invoke-element-tolocalestring` (spread-args destructure TypeError),
+  `primitive_this_value{,_getter}` (a primitive element's overridden
+  `Boolean.prototype.toString` is ignored — #4655's recorded residual), and
+  three ES2024 resizable-buffer rows (illegal cast).
+- A pre-existing, unrelated oddity seen while writing pins: inside
+  `export function test(): number`, `Number.prototype.toString.call(1.5)` (and
+  `toPrecision`, `toLocaleString`) throws; the same body under `: any` returns
+  `"1.5"`. The pins use `: any`.
+
+#### Suspended work — 2026-09-24
+
+- Worktree `/home/user/js2/.claude/worktrees/agent-a0410e6d39e96b1ae`, branch
+  `e8`, WIP commit `215c200895` (parent `986a45359d`), not pushed.
+- Edited: `src/codegen/{array-object-proto,number-proto-format,ta-to-string}.ts`,
+  `src/codegen/expressions/call-receiver-method.ts`; new
+  `src/codegen/{proto-to-locale-string,ta-to-locale-string}.ts`,
+  `tests/issue-6651-e8-tolocalestring.test.ts`,
+  `scripts/compiler-boundaries.json`, this file's frontmatter grants.
+- Resume steps (one runner at a time, QuickJS adapter built first):
+  1. `bash .tmp/e8/manifest.sh .tmp/e8/m-after` on the committed tree; join
+     per-row against `.tmp/e8/m-base.tsv`.
+  2. Compile-all: `bash .tmp/e8/ctl-shas.sh after standalone` and `… after gc`;
+     then `bash .tmp/e8/swap.sh base`, `… base gc` (and re-run `… base
+     standalone` if `.tmp/e8/ctl/base-standalone.sha` is short of 3,265
+     lines), `bash .tmp/e8/swap.sh new`.
+  3. Verdicts (`--standalone`, 200-row in-process chunks, `--isolate` on a
+     dying chunk) on every row whose standalone bytes changed, after then base;
+     require zero pass→non-pass. gc is expected byte-identical (every hook is
+     `ctx.standalone`-gated) — confirm from the shas.
+  4. `npx tsx .tmp/e8/bytes.mts` on both trees (32/32), `node
+     scripts/equivalence-gate.mjs` (22 known), `pnpm run check:ir-fallbacks`,
+     E-family pins with `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, and the E8 pins
+     against the swapped-in base (expect red).
+  5. If a control regresses and cannot be fixed, drop that widening (the
+     helper and the value bodies are separable: the bodies alone change no
+     manifest row's route except through Invoke) and record the evidence.
+
+## Handoff — 2026-09-24, round 3 closed (this lane: B/C/D/E/G + claimed A)
+
+Round 3 ran 2026-09-23 09:40 → 2026-09-24 06:00 UTC on
+`claude/es2015-test262-plan-54tooh`. Every slice was implemented by an Opus
+subagent from a brief, measured by its owner on a source-clean base under
+`JS2WASM_EVAL_ENGINE=quickjs --standalone --isolate`, controlled on both
+targets, merged by the coordinator with the full gate chain, and landed through
+the merge queue with a dedicated shepherd. Twelve slices merged, zero
+pass→non-pass in every owner control.
+
+### Merged this round
+
+| slice | PR | manifest delta (standalone) | notes |
+| --- | --- | --- | --- |
+| B5 / B5b | #6038 | B 0 → 55 (residual 112) | generic `@@split` / `@@replace` |
+| C4 | #6038 | `dflt` 21 → 31; +27 across 464 reaching rows | tuple-struct patterns past the width |
+| E5 | #6040 | E 39 → 42; +4 in the 117-row control | `%TypedArray%.from/of` as values, mapfn order |
+| G2 | #6042 | G 30 → 31; +7 control | drive admits defaults/nesting; 21 Iterator-helper rows out of scope |
+| B6 | #6043 | B 90 → 102 | two-slot `lastIndex`, `ToString(Symbol)`, split step order |
+| D2b | #6048 | D 47 → 61; all 729 Promise rows 421 → 435 | spec-order combinator drive + IteratorClose (H1 closed) |
+| G3 | #6050 | G 31 → 35; +4 control | struct iterables in array assignment; any-value element reads |
+| A3 | #6055 | A 94 → 100; GeneratorFunction rows 6 → 13; +3 C4 residuals | `%GeneratorFunction%` reified, native generator methods |
+| E6 | #6058 | E 42 → 56 | `Reflect.set` receiver step, HOF detach clones, fill/copyWithin/join |
+| A4 | #6065 | A 100 → 152 | `yield` inside patterns / for-of heads linearised |
+| B7 | #6072 | B 102 → 116; +7 host | `RegExp(obj)`, flag-getter slot widening, `compile` ToString |
+| E7 | #6075 | E 56 → 61 | static views in generic slots, `toString` detach, callable ctor arg |
+
+Manifest rows gained this round: **+202** standalone (B +116, C +10, D +14,
+E +22, G +5, A +58, minus overlaps counted once), plus the out-of-manifest
+gains each entry lists. Authoritative census after the queue lands #6075 is
+the next owner's first job (see "Next dispatch").
+
+### Process facts worth keeping
+
+- **Corpus controls caught two real regressions before merge** — E7's
+  element-wise `toLocaleString` (4 rows, the standalone
+  `Number.prototype.toLocaleString` stub throws) and G3's first-leak-only fix
+  (`Array.prototype.Symbol.iterator`). Both were dropped or completed before
+  commit. A change to a generic ladder (`__extern_*`, boxing, element reads)
+  needs the compile-all + verdicts-on-changed-bytes control, not a grep-scoped
+  one; B7 found 5 changed rows that no text grep would have selected.
+- **Two container restarts and one disk-full stall.** Worktrees survive; agents
+  do not. Resuming from a killed agent's worktree (copy the edited files and
+  `.tmp/` into a fresh worktree on current main, re-run the controls) worked
+  twice (B6, E7). The box has a fixed writable allowance: stale vitest SSR
+  caches under `/tmp/<id>/ssr` older than 90 min with no open files are the
+  first thing to reclaim (~6 GB on 2026-09-24 00:30).
+- **A push while the PR is enqueued is rejected (GH006)** — hold the next
+  slice locally until the merge event, then fast-forward and push it as a new
+  PR. Slices never had to wait more than ~40 min.
+- Pin suites that run test262 rows need `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`
+  on a loaded box (B7); the `onTaskUpdate` worker-timeout with all tests
+  passing is box contention, not a failure.
+
+### Residual levers, this lane's clusters (rows-per-fix order)
+
+| cluster | lever | rows | owner shape |
+| --- | --- | ---: | --- |
+| E | real standalone `Number.prototype.toLocaleString` body, then re-land E7's dropped helper (`.tmp/e7/dropped-*.ts` in worktree `agent-a13c15f27e7994905`) | 7 + 3 `valueOf` | E8, Opus high |
+| B | dynamic pattern compiler grammar (`a+b`, `\d`, character classes at run time) | 9 (+ `species-ctor-ctor-non-obj`) | B8, Opus high |
+| A | computed keys from `yield` in object/class literals; `yield*` in a for-of body (A2 bail 4) | 9 + 4 | A5, Opus high |
+| D | `class X extends Promise` / `class BadPromise {}` receivers: `Construct(C, «executor»)` for a compiled class (#5197 G9/G10) | 14 CE | D3, Opus max — three separate causes per D2b |
+| E | `internals/Set` ×5 (object identity #2358; `Object.create(ta)` non-plain proto = `$Object.$proto` field-type change) | 5 | cross-cluster, needs a value-rep decision |
+| G | for-of step-loop protocol (`next` cached once, non-object result TypeError, throwing index getter); `[a] = {x:1}` must throw; `for-of/map.js` element-type widening | 3 + 1 + 1 | G4, Opus high |
+| G/C | generic boxing into a union-typed variable wraps a number as a string (#1888) | many; global fix measured −788 | needs a design, not a slice |
+| B | `invoke-builtin-*` (reassigned `RegExp.prototype[@@match]` not seen by `String.prototype.match`), `indexOf` order, `exec/*-lastindex-access` typing, `g-match-empty-*` captured getter | 3 + 2 + 2 + 2 | B8 tail |
+| A | `GeneratorFunction` from a source string (QuickJS provider `__runtime_new_function` has no generator mode), `has-instance`, `class extends GeneratorFunction` | 14 + 1 + 5 | eval-provider work, not lowering |
+| all | cross-realm (`$262.createRealm`) rows | ~130 | wont-fix issue per definition of done, still to file |
+
+### Next dispatch (in order)
+
+1. Land #6075, fast-forward, run the authoritative standalone census on the
+   ES2015 manifest set (`plan/agent-context/6651/*.txt`, `--isolate`, quickjs)
+   and record it under `## Census`; bank the ES2015 floor with
+   `check:edition-ratchet:update` only from a full run.
+2. E8, A5, B8, G4 in parallel (two at a time under the load cap), then D3.
+3. File the wont-fix issue for realm/eval/proposal rows so the definition of
+   done can be evaluated as `measurable == pass`.
+4. Re-run the round-2/3 merged tree against the other lane's F/H/I entries to
+   confirm no cross-cluster overlap before round 4 (the lane partition of
+   2026-09-22 still stands; cluster A is now this lane's by claim, A3/A4).
+
+## Handoff — 2026-09-24, session wrap-up (round 4 state: E8 + A5 suspended)
+
+Written at the user's "wrap up, handoff, open pr" (07:14 UTC). Round 3 is
+fully landed (see the previous handoff; branch `claude/es2015-test262-plan-54tooh`
+= `origin/main` @ `e3bb60ac10` at wrap-up start). Round 4 dispatched two
+slices; **neither is mergeable** — both were stopped before their regression
+controls ran and are committed as WIP in their worktrees. Nothing from round 4
+is on `main` or in any PR; this PR carries only this record and the two
+cluster entries above.
+
+| slice | worktree | branch / WIP SHA | based on | measured | not run |
+| --- | --- | --- | --- | --- | --- |
+| **E8** — standalone `toLocaleString` value bodies (Number/BigInt/Object) + E7's re-landed TypedArray helper | `/home/user/js2/.claude/worktrees/agent-a0410e6d39e96b1ae` | `e8` / `215c200895` | `986a45359d` | E-manifest BASE 61/83; probes; 6/6 pins on the after tree; all source gates | manifest AFTER, 3,265-row compile-all on both targets + verdicts on changed rows, 32/32 byte identity, equivalence gate, `check:ir-fallbacks`, E-family pins |
+| **A5** — `yield` in computed keys, `yield*` inside a for-of body | `/home/user/js2/.claude/worktrees/agent-ab4ec40c80235671d` | `a5` / `a80f49d064` | `5a05fff094` | A-manifest 152→165 pass, 0 lost (43→28 CE); 7/9 pins red-on-base; all source gates | 747-row byte differential on both targets + verdicts, 32/32 byte identity, equivalence gate, `check:ir-fallbacks`, A-family pins |
+
+Resume steps for each are in the `#### Suspended work — 2026-09-24` block of
+its cluster entry. Both worktrees keep their `.tmp/` control scripts and base
+trees (A5's is ~389 MB); do not delete them before resuming. The A5 func-gate
+note: `nested-declarations.ts::compileNestedFunctionDeclarationInScope` flags
+against current main only because main shrank it after A5's fork point — a
+`git merge origin/main` clears it.
+
+### Known residuals recorded by round 4 (not taken)
+
+- **E8 target 2's three `valueOf` rows** — ToString cannot distinguish an own
+  `toString: undefined` (spec: fall to `valueOf`) from an absent one; the
+  per-shape `__call_toString` dispatcher answers null for both. ToString
+  cluster, cross-cutting.
+- **E8 target 3 (`Array.prototype.toLocaleString`)** — three distinct causes
+  (spread-args destructure, overridden `Boolean.prototype.toString` on a
+  primitive element = #4655's residual, ES2024 resizable-buffer casts).
+- **A5 target 3 (`obj.foo = yield` under `try/finally`)** — the existing
+  finally-replay path null-derefs on `.return()` even without the yield
+  mechanism; fix that first.
+- **`accessor-name-static-computed-yield-expr` ×2** — now `fail` instead of
+  CE; the remaining half is `C.second = v` not calling a runtime-keyed static
+  setter (cluster C, reproduces with no generator).
+- **Pre-existing oddity** (both agents): inside `export function test(): number`,
+  `Number.prototype.toString.call(1.5)` / `toPrecision` / `toLocaleString`
+  throw; under `: any` they work. Untriaged.
+
+### Next dispatch order (unchanged from the round-3 handoff, with round 4 folded in)
+
+1. Resume **E8** and **A5** from their worktrees (controls only — the code is
+   written). Opus High, one runner at a time.
+2. **B8** (dynamic RegExp grammar), **D3** (class Promise receivers), **G4**.
+3. Value-representation items (#1888, #2358); eval-provider items.
+4. File the cross-realm wont-fix issue; census + edition-ratchet bank from a
+   full standalone run.
+
+Active automation at wrap-up: the hourly `send_later` check-in for this PR
+(created at PR open); every other trigger from this session was deleted.
+
 ## Manifest generator note
 
 Partition rule applied to the 1,320 non-pass rows, first match wins:
@@ -8402,6 +9219,131 @@ computed-property-names; G = `for-of`, `expressions/assignment`, `for/`,
 generators (runtime), `GeneratorPrototype`, `GeneratorFunction`, `Iterator`,
 `ArrayIteratorPrototype`; H = remaining `built-ins/*`; I = the rest.
 Manifest SHA-256s are in the commit that added them.
+
+## 2026-09-24 — lane A1: arguments object created BEFORE parameter defaults (§10.2.11 step 22)
+
+**Result: +5 rows on BOTH lanes, 0 regressions.** Per-row set diff over a
+168-row manifest (the 164-row `arguments-object` / `rest-parameters` /
+`params-*`-`dflt-*`-`arguments-*` control manifest ∪ the 6 target rows),
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, **zero `error` rows in any of the
+four logs**. Base = `5459b1fe`.
+
+| lane | base pass | fix pass | flipped |
+| --- | --- | --- | --- |
+| host (default) | 154 | 159 | 5 × fail→pass, 0 pass→fail |
+| standalone | 137 | 142 | 5 × fail→pass, 0 pass→fail |
+
+Identical flip set on both lanes:
+`language/{expressions,statements}/function/params-dflt-ref-arguments.js`,
+`language/expressions/function/arguments-with-arguments-fn.js`,
+`language/{expressions,statements}/function/arguments-with-arguments-lex.js`.
+
+### Root cause (reproduced from the emitted WAT before changing anything)
+
+`f = function (x = arguments[2], y = arguments[3], z) {}` compiled the default's
+receiver as a literal `ref.null extern` (`$__closure_0`: `ref.null extern;
+local.tee 9; ref.is_null; (if (then … throw))`), because `allocLocal(fctx,
+"arguments", …)` ran only AFTER the defaults, so `fctx.localMap` had no
+`arguments` entry while the default was compiled. §10.2.11 step 22 creates the
+object BEFORE IteratorBindingInitialization of the formals.
+
+### What changed
+
+The emission is now hoisted above the parameter defaults **only when
+`isSimpleParameterList(parameters)` is false**, in all FOUR lowering paths —
+the brief named two; `closures.ts` (lifted function EXPRESSION) is the path the
+repro actually used, and it had to be fixed for 3 of the 5 rows:
+
+- `src/codegen/function-body.ts` — new `emitDeclarationArgumentsObject`.
+- `src/codegen/statements/nested-declarations.ts` — new
+  `beginNestedArgumentsObject` / `endNestedArgumentsObject` pair, used by both
+  the capture-free and capturing lift sites.
+- `src/codegen/closures.ts` — new module-level
+  `emitLiftedClosureArgumentsObject`.
+- `src/codegen/helpers/body-uses-arguments.ts` — new
+  `bodyLexicallyBindsArguments`.
+
+Two downstream effects the reorder forced, both found by measurement:
+
+1. **`__argc` is CONSUMED by `emitArgumentsVecBody`** (it reads the global and
+   clears it to the -1 "unknown caller" sentinel). Hoisting put that ahead of
+   the default prologue's `cacheParamDefaultArgc`, which would then have cached
+   -1 — making every scalar "was this arg omitted?" check read "unknown
+   caller", so f64 defaults fall back to the sNaN sentinel and i32 defaults
+   never fire. Fixed by caching argc FIRST in the hoisted lane
+   (`precacheParamDefaultArgc`, idempotent, so the later prologue reuses it).
+2. **`let arguments` in the body is a separate binding.** All paths key locals
+   by spelling, so the body's declaration stored its `undefined` initializer
+   into the vec-typed `arguments` local → `RuntimeError: illegal cast`. The
+   name is now dropped from the local map AFTER the defaults have compiled (they
+   legitimately see the object) and BEFORE the body. Deleting it before the
+   defaults instead — the first cut — silently broke the default's read.
+
+### Simple-parameter-list lane: byte-identity
+
+641 test262 `language/**` programs (every 37th, sorted) compiled under base and
+under the fix; 508 compiled successfully on both (133 are compile errors on
+both — 0 compile-success flips, 0 changed error signatures).
+
+- **335 programs whose every function-like has a simple parameter list: 335
+  byte-identical, 0 different.**
+- 173 programs that do contain a non-simple list: also 173 byte-identical —
+  the reorder only moves bytes when the function actually needs an arguments
+  object.
+
+What this does and does not show: it shows the gate keeps the untouched lane
+literally byte-for-byte, which is the strongest available evidence that nothing
+outside the intended shape moved. It does NOT show the hoisted lane is correct —
+that is what the 168-row two-lane row diff and the regression test are for — and
+it is a 641-program sample of `language/**`, not the whole corpus.
+
+### Regression test
+
+`tests/issue-6651-arguments-before-param-defaults.test.ts` — 6 cases. **4 are
+RED on base `5459b1fe`** (expression-form default reads `arguments`;
+declaration-form ditto; `arguments[0]` must be the ARGUMENT not the defaulted
+value; body `let arguments` shadowing) and **2 are controls that are GREEN on
+base** (mapped arguments round-trip, `arguments.length` from the call site) so a
+simple-list regression would show up as a new failure.
+
+### Left out, deliberately
+
+- **`language/rest-parameters/with-new-target.js` is NOT fixed.** It is a
+  different defect: a rest parameter's `arguments.length` reports the declared
+  arity, not the call-site count. Measured on base and on the fix, all three
+  shapes are equally wrong — plain `function (...a) { arguments.length }` called
+  with 3 args, the same in a class constructor via `new`, and via `super(1,2,3)`
+  — so it is not a `super()` ABI gap and not an ordering bug. It needs its own
+  slice against `emitArgumentsVecBody`'s formals-plus-extras concatenation,
+  which counts the rest array as one formal.
+- The `equivalence/` suite OOMs the box on the FULL directory in this container
+  — file-parallel AND `--no-file-parallelism` both die with
+  "Reached heap limit", which CLAUDE.md already documents for `npm test`. It was
+  run as targeted subsets instead (164 tests across `arguments-object`,
+  `arguments-nested-and-loops`, `default-params`, `default-parameters`,
+  `rest-params-call`, `function-arity-mismatch`, `iife-and-call-expressions`,
+  `this-receiver-apply`, `arrow-call-apply`, plus the 8 param-default /
+  destructuring-default `issue-*` suites). CI's `equivalence-gate` is the
+  authority for the whole directory.
+
+### Re-measured after `git merge origin/main` (3a891033)
+
+`origin/main` had advanced 1 commit past the base and touched
+`nested-declarations.ts` (auto-merged) plus the issue file (append/append
+conflict with the lane-I6 handoff below, resolved by keeping both). Everything
+above was re-measured on the merged tree against a post-merge base — the four
+edited files reverted to their `3a891033` contents, same 168-row manifest, same
+flags: **identical result, host 154 → 159 and standalone 137 → 142, the same
+five rows, zero `error` rows, and the byte-identity probe again 335/335 +
+173/173 with 0 compile-success flips.**
+
+**One pre-existing failure found and attributed, not caused here.**
+`tests/equivalence/arguments-nested-and-loops.test.ts > "for-loop with function
+declaration in body"` returns 30 where JS returns 33 (a `function` declared in a
+`for` body captures `i` as 0). It fails identically with the four edited files
+reverted to `3a891033`, so it is `origin/main`'s, not this change's — and the
+shape contains no `arguments` and only simple parameter lists, so this change
+cannot reach it. Worth its own issue.
 
 ## Handoff — 2026-09-24, lane-I6 (cluster I residual triage; measurement only, no source change)
 
@@ -8667,3 +9609,263 @@ Not attempted, deliberately: the §10.4.6 exotic object itself. Items 1, 2 and
 most of 3 collapse into it, and it is a larger design decision (a namespace
 brand in the object runtime on both lanes) than a conformance slice should make
 unilaterally.
+## 2026-09-24 — lane H2 (`@@hasInstance` in `instanceof`): the slice was ALREADY LANDED; what I added instead
+
+**Dispatched task:** make `instanceof` consult `@@hasInstance` for
+`symbol-hasinstance-{invocation,to-boolean,get-err}.js`.
+
+**Finding, first thing: that work is on `main`.** Commit `0c05cb16`
+(2026-09-23, "cluster I, slice I2") added `__instanceof_operator` and is an
+ancestor of `origin/main`. Re-measured here rather than assumed, on base
+`3a891033`, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, QuickJS eval tier
+confirmed in the log banner:
+
+| sweep | rows | standalone | host |
+| --- | --- | --- | --- |
+| the three target rows | 3 | **3 pass** | 3 pass |
+| `language/expressions/instanceof/**` | 43 | 42 pass, 1 fail | 35 pass, 8 fail |
+
+The single standalone residual is `prototype-getter-with-object.js`
+(`'prototype' getter called once` — a getter-caching question, not
+`@@hasInstance`). The 8 host-lane failures are the builtin-constructor-alias
+family (`var OBJECT = Object`), also unrelated. **Nothing on the dispatched
+task remained to implement.**
+
+### What I shipped instead
+
+**1. The behavioural pin the landed slice never got.**
+`tests/issue-6651-instanceof-hasinstance.test.ts`, 24 cases. `issue-4484.test.ts`
+already covers the weaker half — it asserts `.not.toBe(3)`, "the operator did
+not throw", which stays green whether the handler runs or is ignored. The new
+file asserts what the three rows actually turn on: the handler RUNS, receives
+`this === C` and the left operand as its single argument, and its result is
+ToBoolean-ed.
+
+RED-on-base evidence (a pin green on base proves nothing): with the I2 route
+reconstructed away on today's tree — the primitive-fold decline forced off in
+`identifiers.ts`, `operatorIdx` forced to `undefined` in
+`native-dynamic-instanceof.ts`, and `native-ordinary-instanceof.ts` restored
+from `0c05cb16^` — **14 of 24 cases fail**. The 10 that stay green are the
+controls and the two answers that were already right (`null` handler ⇒
+TypeError; a handler returning `false`).
+
+**2. One real defect, found by writing the pin: the installation scan is blind
+to TypeScript type-only syntax.** `isSymbolHasInstanceKey` required a bare
+`Symbol.hasInstance` property access, so
+
+```ts
+F[Symbol.hasInstance as any] = fn;                     // and
+Object.defineProperty(F, Symbol.hasInstance as any, …) // and F[(Symbol.hasInstance)]
+```
+
+read as "this module installs no handler", the #4484 A step-1 arm fired, and
+`0 instanceof F` threw `TypeError: Right-hand side of 'instanceof' is not
+callable` — a wrong THROW out of a correct program, and for the getter spelling
+it swallowed the accessor's own abrupt completion. `as`/`satisfies`/`!`/`<T>`/
+parentheses erase at runtime and cannot change whether a handler exists. Fixed
+by unwrapping them in the key matcher, which also now accepts
+`Symbol["hasInstance"]`. Strictly a WIDENING: every consumer of the gate uses it
+to DECLINE a static shortcut, so a wider match can only route more sites to the
+spec operator.
+
+### Control sweep (the gate is module-scoped, so this is the load-bearing part)
+
+Neighbourhood = all 43 `language/expressions/instanceof/**` rows ∪ all 49 other
+corpus files mentioning `hasInstance` = **92 rows**, both lanes, before and
+after, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, **zero `error` rows in any
+of the four logs**:
+
+| lane | before | after | per-ROW diff |
+| --- | --- | --- | --- |
+| standalone | 71 pass / 13 fail / 3 compile_error / 5 skip | identical | **non-pass set IDENTICAL (16 rows)** |
+| host | 59 pass / 28 fail / 5 skip | identical | **non-pass set IDENTICAL (28 rows)** |
+
+**Row-neutral, and that is expected rather than disappointing:** test262 is
+JavaScript, so `as any` cannot occur there, and a corpus-wide grep finds **no**
+file using the `Symbol["hasInstance"]` element-access spelling either. The fix
+is for TypeScript sources the compiler is actually pointed at (its own dogfood
+corpus included), where the cast spelling is the ordinary way to index a
+non-symbol-keyed object. A negative row result with the numbers behind it.
+
+### Gates
+
+`check-loc-budget` (net +43 on the touched file), `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet` (getTypeAtLocation +0,
+`ctx.checker` +0), `check:dead-exports`, and
+`check-compiler-boundaries --mode inventory --base HEAD^1` — all exit 0, run
+bare. CI-base simulation with `LOC_GATE_BASE=$(git rev-parse origin/main)` also
+0 on both budget gates. No `scripts/*-baseline.json` touched; no growth
+allowance needed.
+
+### Left out, and why
+
+- **`prototype-getter-with-object.js`** (the one standalone `instanceof`
+  residual) — it is about how often the `prototype` getter is read, a different
+  mechanism from §13.10.2, and moving it was not this slice's remit.
+- **The 8 host-lane `instanceof` failures** (builtin-constructor alias,
+  `var OBJECT = Object`) — host lane, and `resolveBuiltinCtorAliasName` is
+  deliberately `noJsHost`-only.
+- **`isDefinitelyNotCallableValue` was NOT given the same unwrapping.** Doing so
+  would NARROW the gate (`null as any` would start taking the static throw), and
+  the conservative answer there is also the correct one — it routes to the
+  runtime operator, which reaches the same TypeError by the spec path.
+- **`function C(){}; new (C as any)()` answers `false` for `o instanceof C` in
+  the TS harness, with AND without a handler in the module.** Pre-existing, not
+  this route; recorded because it first looked like a module-scope regression
+  and would have been reported as one by a control that did not check its own
+  base.
+
+## 2026-09-24 — cluster I slice T1: tagged templates (§13.2.8), the first SHARED front-end family
+
+Branch `issue-6651-t1-tagged-templates`, based on
+`origin/claude/project-thread-yhj9pp` (rounds 3–6 + the ownership claim).
+
+**Result: +2 rows on BOTH targets, 0 lost, 0 verdict changes, over a 273-row
+two-lane sweep.** The fix is target-independent and therefore **ungated** — no
+`ctx.standalone` branch — and the claim rests on the host row sweep, not on a
+byte-identity check (the lane-I5 pattern).
+
+### The two-lane probe, measured BEFORE any edit
+
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, one run per log, cache symlinked
+(`.test262-cache` → the shared cache) so realm/eval rows have a provider.
+
+| row (`language/expressions/tagged-template/`) | host before | standalone before | after |
+| --- | --- | --- | --- |
+| `member-expression-context.js` | fail — `this` was `[object Object]`, not `obj` | fail, same | **pass / pass** |
+| `member-expression-argument-list-evaluation.js` | fail — `arguments.length` 0, want 1 | fail, same | **pass / pass** |
+| `call-expression-context-strict.js` | fail — `this` an object, want `undefined` | fail, same | fail / fail |
+| `call-expression-argument-list-evaluation.js` | fail — `tag is not a function` | compile_error — `standalone target emitted host imports: __js_array_new, __js_array_push, __tagged_template (#2961)` | unchanged |
+| `constructor-invocation.js` | fail — `is not a constructor` | fail, same | fail / fail |
+| `template-object-frozen-non-strict.js` | fail — template object accepts writes | fail, same | fail / fail |
+| `template-object-frozen-strict.js` | fail — no TypeError on write | fail, same | fail / fail |
+| `cache-realm.js` | **pass** | fail — `Cannot access property on null or undefined` | unchanged |
+
+Seven of the eight fail **identically on both lanes**, which is the evidence
+that this family is shared front-end work rather than standalone lowering. The
+eighth, `cache-realm.js`, is the opposite: it passes on host and its standalone
+failure is not a tagged-template defect at all (see residuals).
+
+### What changed, and why
+
+Two defects, both in `compileTaggedTemplateExpression`'s general-tag fallback.
+
+1. **A member-expression tag is a METHOD call.** `` obj.fn`x` `` must bind
+   `this` to `obj` (§13.2.8 → §13.3.6.2 → OrdinaryCallBindThis). Every arm of
+   the fallback compiled the tag to a closure and `call_ref`ed it **without ever
+   writing `__current_this`** — the exact missing-writer defect
+   `object-literal-method-receiver.ts` was written for (`obj.m()`), one call
+   shape further out. So the fix reuses that module rather than re-deriving it:
+   a new `planTaggedTemplateReceiverBind` sits beside its `obj.m()` /
+   `obj["m"]()` / `obj[k]()` twins and inherits their two refusals — a plain
+   IDENTIFIER receiver only (the arms compile the whole tag themselves, so the
+   receiver must be read a second time, and only an identifier re-read is
+   effect-free), and no substitution may reference `this` (the install has to
+   precede the arms, which own the argument emission).
+2. **A zero-parameter tag still receives one argument.**
+   `` (function(){ … })`x` `` owes `arguments.length === 1`. A zero-formal
+   callee takes its whole call-site list through `__extras_argv`
+   (`emitArgumentsVecTail`: `totalLen = argc + extrasLen`, `argc` 0 with no
+   formals), and `publishTaggedTemplateArguments` explicitly refused that shape
+   because it can only source AST expressions and the template object lives in
+   a local. `publishZeroParamTagArguments` builds the one-element vec directly
+   and pins `__argc` to 0; `publishTagCallArguments` is the single entry point
+   the arms now call.
+
+**The `null`-return hazard was checked, and there is no fourth instance here.**
+The brief flagged it because a tagged-template call is the right shape for one.
+`compileTaggedTemplateExpression` has four bare `return null`s — the invalid-vec
+guard (nothing emitted yet) and three `reportError` arms in `compileStringRaw` /
+the closure-not-found arm. All four are diagnostic paths that fail the compile,
+not "legitimately no value" paths, so `VOID_RESULT` is not the right answer for
+any of them. The arms this slice touched already returned `… ?? VOID_RESULT`,
+and the three `finishObjectLiteralMethodCall` wrappers preserve that
+(`innerResultValType` treats the symbol as "nothing on the stack").
+
+### Measurements
+
+Manifests: `.tmp/6651/T1-all.txt` = the 114-row cluster-I manifest ∪ the 177-row
+control neighbourhood (`language/expressions/{template-literal,tagged-template,
+call,member-expression}/`, every `.js`), 273 rows deduped. Scoring is per-ROW
+set diff (`rowdiff.mjs before after manifest`), never counts.
+
+| lane | log pair | 273-row manifest | 177-row control | the 8 target rows |
+| --- | --- | --- | --- | --- |
+| standalone | `T1-sa-base.log` → `T1-sa-after.log` | 157 → 159 pass, **+2 / −0 / 0 changed** | 143 → 145, **+2 / −0** | 0 → 2 pass |
+| host (default) | `T1-host-base.log` → `T1-host-after.log` | 159 → 161 pass, **+2 / −0 / 0 changed** | 143 → 145, **+2 / −0** | 1 → 3 pass |
+
+Both gained rows are the same two on both lanes. No row changed verdict
+non-pass → non-pass, so this is not a count-neutral swap.
+
+**Host corpus hash delta (information, not a gate).** 190 programs — the 13
+`examples/*.ts` plus the 177 control test262 bodies — compiled on the default
+target with the base sources and with the shipped sources
+(`.tmp/6651/corpus-{base,new}.txt`, via the file-copy A/B captured at the first
+edit): **5 of 190 moved**, all five under `tagged-template/`
+(`call-expression-{argument-list-evaluation,context-no-strict,context-strict}`,
+`member-expression-{argument-list-evaluation,context}`). Byte-identity was never
+expected to hold on host — the fix is deliberately ungated — and the row sweep
+above is what certifies behaviour. The two module-scope extractions taken to
+clear the function budget were verified **byte-neutral**: all 190 hashes are
+identical before and after the refactor (`corpus-new.txt` vs `corpus-new2.txt`),
+so the corpus delta and the sweeps both describe the shipped tree.
+
+### Residuals — named with their exact site, so the next slice starts measured
+
+- **`call-expression-context-strict.js`** — TWO independent defects, both
+  reproduced outside test262 (`fn()` tag, top-level script, `"use strict"`):
+  - case 1 (`return function(){ context = this }`): the tag IS invoked (a call
+    counter increments) but `this` reads back as **`null`**, not `undefined`.
+    The same program *without* the file's later arrow reassignment answers
+    `undefined` correctly — so the presence of a second 0-param/void closure
+    changes the first one's answer, which points at the signature-match search
+    in the fallback (`ctx.closureInfoByTypeIdx`, first paramTypes/return match
+    wins) rather than at `this` resolution.
+  - case 2 (`return () => { context = this }`): the arrow's lexical `this`
+    resolves to **`globalThis`**. `fn()` is an unbound strict call, so `fn`'s
+    `this` is `undefined` and the arrow must inherit that; the arrow instead
+    lands on the sloppy/global rung.
+- **`call-expression-argument-list-evaluation.js`** — the IIFE-call tag matches
+  no registered closure by signature, so it falls to the `__tagged_template`
+  host bridge: on host the bridge is handed the closure carrier and reports
+  `tag is not a function`; on standalone that bridge is a forbidden host import
+  and the row is a compile_error. Same root cause as case 1 above.
+- **`constructor-invocation.js`** — `` new tag`x` `` parses correctly (TS gives
+  `NewExpression(callee = TaggedTemplateExpression)`, which is what §13.3.5
+  wants), but `compileNewExpression` has no arm for that callee shape: the
+  dynamic-new fallback admits an identifier, a member access, or (host-free
+  only, #6607) a call callee, and a tagged-template callee matches none. It
+  currently traps.
+- **`template-object-frozen-{strict,non-strict}.js`** — the template object is a
+  `__template_vec_externref` struct, not a frozen array with an own frozen
+  `raw`. Needs integrity-level support for that carrier on both lanes; the
+  neighbouring `template-object.js` (not in the manifest) fails the same way
+  (`raw should be an own property` / `Array.isArray` false).
+- **`cache-realm.js`** — **not a tagged-template defect.** It PASSES on host.
+  Its standalone failure is the runner's `$262.createRealm()` stub object
+  literal resolving to null in the standalone object model, so
+  `other.eval(...)` throws before the assertion. Belongs to whoever takes the
+  standalone `$262` surface, not to this family.
+- **Deliberately left alone:** the two identifier-tag arms (`ctx.closureMap` and
+  `ctx.funcMap`) still call `publishTaggedTemplateArguments` directly, so a
+  zero-parameter NAMED tag keeps its empty `arguments`. Extending
+  `publishTagCallArguments` to them is consistent but was not measured by this
+  slice's sweeps, and shipping unmeasured breadth is what the per-row discipline
+  exists to prevent. Likewise `publishZeroParamTagArguments` REFUSES a
+  zero-param tag that has substitutions (it would need `emitSetExtrasArgv`'s
+  boxing for the AST operands, and that helper owns the extras global) rather
+  than publish a one-element list that is wrong in a new way.
+
+### Gates (bare, never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 (with the dated
+`compileTaggedTemplateExpression` +17 grant added to this file's frontmatter,
+taken only AFTER two byte-neutral module-scope extractions cut the inline cost
+from +37) · `check-coercion-sites` 0 · `check:oracle-ratchet` 0 (no net checker
+growth) · `check:dead-exports` 0 · `check-compiler-boundaries --mode inventory`
+0 (`inventoryValid: true`; no new file under `src/`) · `typecheck` 0 ·
+`biome lint --diagnostic-level=error` 0.
+
+Logs: `.tmp/6651/T1-{sa,host}-{base,after}.log`,
+`.tmp/6651/corpus-{base,new,new2}.txt`, manifests
+`.tmp/6651/T1-{all,control,target}.txt`.

@@ -11,6 +11,46 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-24 (S75 lane C, any op bigint) — binary-ops.ts +8: the mixed
+  #   BigInt branch of `compileBinaryExpression` asks the host-free twin of
+  #   the #3481 host arm (`emitStandaloneAnyBigIntBinary`, new file
+  #   bigint-any-operand.ts, which owns every gate) before its static throw.
+  - src/codegen/binary-ops.ts
+  # 2026-09-24 (S75 lane C, string predicates) — string-ops.ts +7: the
+  #   `any`-receiver guarded native-string dispatch returns its
+  #   includes/startsWith/endsWith i32 with the boolean brand, so `coerceType`
+  #   boxes a boolean, not the number 0/1 (4 Temporal monthCode rows).
+  - src/codegen/string-ops.ts
+  # 2026-09-24 (S75 lane C, null-returning peer method) — object-runtime.ts +4:
+  #   the forward peer arm of `__extern_method_call` splices
+  #   `peerNullMethodResultInstrs` (standalone-link-boundary.ts), so a provider
+  #   class method that returns null is answered, not re-dispatched locally.
+  - src/codegen/object-runtime.ts
+  # 2026-09-24 (S75 lane C, use before first write) — object-shape-widening.ts
+  #   +50: `markUseBeforeFirstPropertyWrite` poisons the closed-struct widening
+  #   of a `var o = {}` referenced before its first property write (the struct
+  #   carries the later field from allocation, so `o.minute` read 0 and
+  #   `"minute" in o` held on an empty bag — 9 Temporal property-bag rows).
+  #   Helper + doc; one call beside the other standalone poison scans.
+  - src/codegen/declarations/object-shape-widening.ts
+  # 2026-09-23 (S75 lane C, link reads) — a module on a standalone wasm↔wasm
+  #   link is not a closed world: a property read may land on the PEER's
+  #   object. numeric-property-analysis.ts +13: the `openWorldPropertyReads`
+  #   host flag (documented) and its `closedRead` guard on the three name-keyed
+  #   read arms. index.ts +3: both analysis hosts set it, plus the import.
+  #   property-access-dispatch.ts +3: the Phase-3 vote keeps the externref
+  #   carrier on a link.
+  - src/codegen/numeric-property-analysis.ts
+  - src/codegen/index.ts
+  - src/codegen/property-access-dispatch.ts
+  # 2026-09-23 (S75 lane C, bigint slots) — a bigint-branded i64 struct slot
+  #   read through a dynamic receiver boxed as a NUMBER. object-runtime.ts +5:
+  #   the closed-struct `__extern_get` ladder admits i64 slots and boxes them by
+  #   brand (they were skipped, so `o[k]` answered undefined). type-coercion.ts
+  #   +1: `coercionInstrs` hands the bigint helper to `coercionPlan`, which
+  #   owns the new row, so the member-get dispatcher's field box is brand-aware.
+  - src/codegen/object-runtime.ts
+  - src/codegen/type-coercion.ts
   # 2026-09-18 (S46, #6632) — `compileTypeofExpression`'s ref/ref_null operand
   #   arm now routes through `coerceType` (like the f64/undefSentinel arm
   #   immediately above it, #5378) instead of a bare `extern.convert_any`, so a
@@ -192,6 +232,17 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-24 (S75 lane C, any op bigint) — +7: the one delegating call to
+  #   `emitStandaloneAnyBigIntBinary`; its gates live in the new module.
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  # 2026-09-24 (S75 lane C, use before first write) — +1 line each: the one
+  #   `markUseBeforeFirstPropertyWrite` call inside the nested scan.
+  - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements
+  # 2026-09-23 (S75 lane C) — `fillClosedStructExternGetArms` +5: the i64
+  #   slot admission and its brand-split box, inline in the per-entry ladder
+  #   builder where every other slot kind's box already lives.
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
   # 2026-09-18 (S46, #6632) — `compileTypeofExpression` +14: the ref/ref_null
   #   operand arm now calls `coerceType` (routing through the #4741
   #   $AnyString-null resurrection) instead of a bare `extern.convert_any`,
@@ -12828,3 +12879,57 @@ completed the checks below.
 | gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | see the landing commit's trailer |
 
 Four-family: 463 → 465/480 (ZDT 118, Duration 110); add/subtract 138 → 139/150.
+
+## Handoff (2026-09-24) — standalone Temporal "measure and fix all"
+
+**Baseline measured (main 9b1ba0d19f, polyfill linked):**
+`TEST262_TARGET=standalone JS2WASM_TEST262_TEMPORAL_STANDALONE=1 TEST262_PATH_FILTER="Temporal/" pnpm run test:262`
+→ **3,776 / 4,603 pass (82.0%)**. CI's standalone lane does NOT link the
+polyfill (`standalone_temporal` input, off by default in
+`test262-sharded.yml`), so the dashboard shows ~170/4,603 ("Temporal is not
+defined") and none of the fixes below move it. Turning it on is the owner's
+decision, pending.
+
+**Landed / in this PR (per-lane measurements, no full re-run yet):**
+
+| Cluster | Rows | Fixed | Where |
+|---|---|---|---|
+| `RangeError: value out of range` | 308 | 299 | PR #6056 (#6668) — dynamic-construct missing arg padded with `undefined` |
+| `Convert JSBI instances to native numbers` | 287 | 284 | PR #6063 (#2917) — sound call-site param inference |
+| Long tail | 232 | 145 | this PR — 10 root causes, witness `tests/issue-5383-temporal-tail.test.ts` |
+
+Estimated now ~4,350 / 4,603 (~94.5%). **First step for the next session:
+re-run the full linked standalone Temporal suite on main to replace the
+estimate with a measurement.**
+
+**Remaining ~250 rows, by reason:** polyfill limitation (fails identically in
+node) ~28; BigInt beyond 64 bits (#6656 runtime limb arithmetic: `+ - * / %
+**`, shifts, `<`, i64 locals) ~30; precision/range rows likely the same
+64-bit limit, unverified ~12; Intl.DateTimeFormat 7; Array.prototype.values as
+a value 4; native JSON.stringify of a closed typed vec (compile error) 3;
+`unreachable` in `__apply_closure`, undiagnosed 5; float64-representable-
+integer `until` 3; singletons ~10. Details: lane reports in this file above
+and in #6668 / #2917.
+
+**Link cost (#5407):** linked rows were 2.3–2.7× slower to compile because
+every dynamic `new` inlined the ~40 KB typed-array construct. This PR shares
+it (limits.js linked 16.1 s → 8.3 s, 7.8 MB → 2.3 MB). Still ~1.5× vs the
+≤1.3× bar. Not yet run: the standalone test262 TypedArray slice
+(`.tmp/ta-slice.txt`, 2,184 rows) and ~50 linked Temporal rows.
+
+**Queued, approved by the owner (2026-09-24):**
+1. Give the linked `Temporal` binding the polyfill's real type instead of
+   `any`, so static sites skip the dynamic-`new` fallback.
+2. Direct constructor calls: the provider exports each constructor and
+   `new Temporal.X(...)` compiles to a direct call into the provider.
+
+**Known bugs seen, not fixed:** `.call`/`.apply` on a peer method closure;
+`Number(anyBigInt)` → NaN; `Date.now()` → 0 in the standalone runner;
+`e instanceof C` false when `C` is an any-typed `RangeError`; growing
+`length` after truncation re-exposes old values; default `sort()` traps on
+externref vecs.
+
+**Gotcha:** the Temporal provider disk cache key ignores the compiler
+version — clear it (or use a private `JS2WASM_TEMPORAL_CACHE`) and re-run
+`build-quickjs-eval-provider.mjs` after any compiler change, or rows run
+stale.

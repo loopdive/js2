@@ -100,6 +100,8 @@ import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
 import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
 import { emitRegExpSymbolSplitBody } from "./regexp-split-protocol.js";
+import { tryCompileRegExpCtorFromObject } from "./regexp-ctor-regexp-like.js";
+import { ensureSpecExternrefToStringProvider, getExternrefToStringProvider } from "./coercion-engine.js";
 import {
   emitRegExpSymbolProtocolApply,
   fileMentionsSymbolMatch,
@@ -2733,6 +2735,9 @@ export function compileStandaloneRegExpConstructor(
   // either may have been overridden, the fold is declined and the clone arm
   // below runs instead, which is what §22.2.3.1's construct path does.
   const identityIsProvable = patternIsRegExp && regExpIdentityBrandIsProvable(patternArg!);
+  // (#6651 B7) An OBJECT-typed pattern: §22.2.4.1 at run time (regexp-ctor-regexp-like.ts).
+  const fromObject = patternIsRegExp ? undefined : tryCompileRegExpCtorFromObject(ctx, fctx, args, node);
+  if (fromObject !== undefined) return fromObject;
   //
   // `staticConstStringValue(...) === undefined` is the THIRD static spelling
   // and the one S15.10.3.1_A1_T3 needs: a never-written `var x;` with no
@@ -4203,6 +4208,8 @@ export function tryCompileStandaloneStringMatch(
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
     return undefined;
   }
+  // (#6665) Runtime-only flags: the `string-regexp-dynamic.ts` dispatcher runs the generic @@match body.
+  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpFlags(ctx, argExpr) === null) return undefined;
 
   // String-method operand order: subject = receiver, regex = arg.
   return emitStandaloneRegExpMatchCore(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride);
@@ -4778,6 +4785,9 @@ export function tryCompileStandaloneStringSplit(
     return null;
   }
   const limitExpr = expr.arguments[1];
+  // (#6665) A runtime-only RegExp: the `string-regexp-dynamic.ts` dispatcher runs the generic @@split body.
+  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpPatternFlags(ctx, reExpr) === null)
+    return undefined;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpSplitCore(
@@ -5943,10 +5953,14 @@ function emitRegExpCompileInPlace(
 ): boolean {
   ensureNativeStringHelpers(ctx);
   const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-  const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
+  ensureRuntimeToStringIdx(ctx, fctx);
+  // (#6651 B7) steps 4.a/4.b are the SPEC ToString: a Symbol throws a TypeError.
+  ensureObjectRuntime(ctx);
+  ensureSpecExternrefToStringProvider(ctx, fctx);
   const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
   const flagsStrIdx = ensureRegexFlagsStr(ctx);
   flushLateImportShifts(ctx, fctx);
+  const toStringIdx = ctx.funcMap.get("__extern_to_string_spec") ?? getExternrefToStringProvider(ctx);
   if (isUndefIdx === undefined || toStringIdx === undefined) return false;
 
   const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
