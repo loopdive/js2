@@ -12879,3 +12879,57 @@ completed the checks below.
 | gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | see the landing commit's trailer |
 
 Four-family: 463 → 465/480 (ZDT 118, Duration 110); add/subtract 138 → 139/150.
+
+## Handoff (2026-09-24) — standalone Temporal "measure and fix all"
+
+**Baseline measured (main 9b1ba0d19f, polyfill linked):**
+`TEST262_TARGET=standalone JS2WASM_TEST262_TEMPORAL_STANDALONE=1 TEST262_PATH_FILTER="Temporal/" pnpm run test:262`
+→ **3,776 / 4,603 pass (82.0%)**. CI's standalone lane does NOT link the
+polyfill (`standalone_temporal` input, off by default in
+`test262-sharded.yml`), so the dashboard shows ~170/4,603 ("Temporal is not
+defined") and none of the fixes below move it. Turning it on is the owner's
+decision, pending.
+
+**Landed / in this PR (per-lane measurements, no full re-run yet):**
+
+| Cluster | Rows | Fixed | Where |
+|---|---|---|---|
+| `RangeError: value out of range` | 308 | 299 | PR #6056 (#6668) — dynamic-construct missing arg padded with `undefined` |
+| `Convert JSBI instances to native numbers` | 287 | 284 | PR #6063 (#2917) — sound call-site param inference |
+| Long tail | 232 | 145 | this PR — 10 root causes, witness `tests/issue-5383-temporal-tail.test.ts` |
+
+Estimated now ~4,350 / 4,603 (~94.5%). **First step for the next session:
+re-run the full linked standalone Temporal suite on main to replace the
+estimate with a measurement.**
+
+**Remaining ~250 rows, by reason:** polyfill limitation (fails identically in
+node) ~28; BigInt beyond 64 bits (#6656 runtime limb arithmetic: `+ - * / %
+**`, shifts, `<`, i64 locals) ~30; precision/range rows likely the same
+64-bit limit, unverified ~12; Intl.DateTimeFormat 7; Array.prototype.values as
+a value 4; native JSON.stringify of a closed typed vec (compile error) 3;
+`unreachable` in `__apply_closure`, undiagnosed 5; float64-representable-
+integer `until` 3; singletons ~10. Details: lane reports in this file above
+and in #6668 / #2917.
+
+**Link cost (#5407):** linked rows were 2.3–2.7× slower to compile because
+every dynamic `new` inlined the ~40 KB typed-array construct. This PR shares
+it (limits.js linked 16.1 s → 8.3 s, 7.8 MB → 2.3 MB). Still ~1.5× vs the
+≤1.3× bar. Not yet run: the standalone test262 TypedArray slice
+(`.tmp/ta-slice.txt`, 2,184 rows) and ~50 linked Temporal rows.
+
+**Queued, approved by the owner (2026-09-24):**
+1. Give the linked `Temporal` binding the polyfill's real type instead of
+   `any`, so static sites skip the dynamic-`new` fallback.
+2. Direct constructor calls: the provider exports each constructor and
+   `new Temporal.X(...)` compiles to a direct call into the provider.
+
+**Known bugs seen, not fixed:** `.call`/`.apply` on a peer method closure;
+`Number(anyBigInt)` → NaN; `Date.now()` → 0 in the standalone runner;
+`e instanceof C` false when `C` is an any-typed `RangeError`; growing
+`length` after truncation re-exposes old values; default `sort()` traps on
+externref vecs.
+
+**Gotcha:** the Temporal provider disk cache key ignores the compiler
+version — clear it (or use a private `JS2WASM_TEMPORAL_CACHE`) and re-run
+`build-quickjs-eval-provider.mjs` after any compiler change, or rows run
+stale.
