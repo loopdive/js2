@@ -176,6 +176,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
+  runtimeEvalProvider?: boolean; // see CompileOptions.runtimeEvalProvider (#6676)
   /**
    * (#4035) Host-bridge export policy — see `CompileOptions.hostBridge`.
    * `"auto"` (default) resolves to `"always"` for js-host and `"off"` for
@@ -4226,6 +4227,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   nativeGlobalThisSeedBuilding?: boolean;
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
+  runtimeEvalProviderAbsent?: boolean; // (#6676) standalone, no runtime-eval provider linked
   /** Private externref-array carrier used only by reified JS-host direct eval. */
   hostRuntimeEvalVecTypeIdx?: number;
   /** (#2141 S1) Honest generic `any` boxing regime flag — see the

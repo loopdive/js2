@@ -419,6 +419,7 @@ export function createCodegenContext(
     standalone: targetProfile.target === "standalone",
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     directEvalMode: options?.directEval ?? "legacy",
+    runtimeEvalProviderAbsent: targetProfile.target === "standalone" && options?.runtimeEvalProvider === false,
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.
     honestAnyBoxing: options?.honestAnyBoxing ?? false,

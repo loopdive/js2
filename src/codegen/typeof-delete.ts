@@ -64,6 +64,7 @@ import * as tf from "./typeof-static-folds.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
 import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
+import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -112,6 +113,7 @@ function ambientIdentifierIsUnavailable(
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) return false;
   if (!sym?.declarations?.length || !sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)) return false;
   if (ident.text === "structuredClone") return true;
+  if (isStandaloneUnavailableTimerGlobal(ctx, ident.text)) return true;
   if (!HOST_ONLY_AMBIENT_GLOBALS.has(ident.text)) return false;
   return !(ctx.standalone && ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
 }
