@@ -16,12 +16,6 @@ area: codegen
 language_feature: boxing
 goal: correctness
 related: [2760, 2766, 2782, 2105, 1788, 864]
-# 2026-09-24: +3 lines in `__proto_method_call` so the callback slot is
-# classified from the raw arg, not its host Proxy (map-on-array-like canary).
-loc-budget-allow:
-  - src/runtime.ts
-func-budget-allow:
-  - src/runtime.ts::resolveImport
 ---
 
 # #2785 — Type-aware box primitive (box keyed on the TS type, not the Wasm kind)

@@ -15697,15 +15697,12 @@ assert._isSameValue = isSameValue;
           }
           const wrappedArgs = (args ?? []).map((a) => (_isWasmStruct(a) ? _wrapForHost(a, exports) : a));
           // (#1382) Replace a Wasm-closure callback arg with a JS-callable
-          // wrapper BEFORE dispatching into the native engine. Without this,
-          // V8 throws "callback is not a function" when the host tries to
-          // invoke the closure struct directly. Lookup is keyed on
-          // methodName so methods without a callback slot are unaffected.
+          // wrapper BEFORE dispatching into the native engine, or V8 throws
+          // "callback is not a function". Keyed on methodName; classify the RAW
+          // arg, since a host-wrapped struct Proxy is not a Wasm ref (#2785).
           {
             const slot = _PROTO_CB_SLOTS[methodName];
             if (slot && wrappedArgs.length > slot.argIdx) {
-              // Classify the RAW arg: a host-wrapped struct Proxy is not a Wasm ref,
-              // so `__is_closure` rejects it and the callback stays uncallable.
               const cb = _maybeWrapCallable(args[slot.argIdx], slot.arity, callbackState);
               if (typeof cb === "function") wrappedArgs[slot.argIdx] = cb;
             }
