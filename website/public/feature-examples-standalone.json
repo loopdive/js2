@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 111,
+      "passCount": 112,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -783,7 +783,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 26,
+          "pass": 27,
           "total": 60
         }
       ]
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 170,
+      "passCount": 4492,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 170,
+          "pass": 4492,
           "total": 4603
         }
       ]

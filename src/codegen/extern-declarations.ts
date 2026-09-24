@@ -40,6 +40,7 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
+import { isStandaloneUnprovidedExternClass } from "./standalone-unavailable-globals.js";
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -907,6 +908,9 @@ function collectExternDeclarationsImpl(
       // (correct semantics — standalone has no structuredClone). Host mode still
       // registers the import so a real host can satisfy it.
       if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
+      // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
+      // microtask queue (standalone-queue-microtask.ts), never on the host.
+      if (ctx.standalone && name === "queueMicrotask") continue;
       if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
       if (!ctx.funcMap.has(name)) {
         // (#4238) Under `externNativeTypes` an explicit native annotation
@@ -1148,6 +1152,9 @@ function collectExternFromDeclareVar(ctx: CodegenContext, decl: ts.VariableDecla
   // declaration — otherwise the extern-class import registration eagerly
   // emits a `Map_new` host import the standalone module can't satisfy.
   if (className === "Map" && ctx.nativeStrings) return;
+  // (#6664) lib.dom classes with no standalone provider: every member would
+  // otherwise lower to an `env::` import (`MessageChannel_new`, …).
+  if (isStandaloneUnprovidedExternClass(ctx, className)) return;
   if (ctx.externClasses.has(className)) return;
 
   // (#4218) Lib path: the merged `interface <className>` declarations come
