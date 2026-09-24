@@ -2123,7 +2123,7 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     expect(script).toContain("buildTemporalProvider({ polyfillSource, cacheDir, compileOptions })");
   });
 
-  it("the standalone provider is OPT-IN, in CI and locally", () => {
+  it("the standalone provider is ON by default in CI (opt-out on dispatch) and opt-in locally", () => {
     // Measured 2026-09-12: linking multiplies an ASSEMBLED standalone row's
     // compile time ~2.5-3.5x (17.4 s → 61.1 s on a 60 KB-harness intl402 row;
     // 4.2 s → 10.9 s on a 10.6 KB one). The fork kill is 30 s, so a default-on
@@ -2132,7 +2132,11 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     // whether the artifact EXISTS, and the stamp gate does the rest.
     const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
     expect(workflow).toContain("standalone_temporal:");
-    expect(workflow).toContain("needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal");
+    // 2026-09-24: owner turned it on by default after #5407 halved the linked
+    // compile cost. Non-dispatch events have no `inputs`, so they always build.
+    expect(workflow).toContain(
+      "needs.changes.outputs.run_standalone != 'false' && (github.event_name != 'workflow_dispatch' || inputs.standalone_temporal)",
+    );
     const script = readRepoFile("scripts", "run-test262-vitest.sh");
     expect(script).toContain("JS2WASM_TEST262_TEMPORAL_STANDALONE");
   });
