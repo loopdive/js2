@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10904,
-    "fail": 708,
+    "pass": 10914,
+    "fail": 698,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2357,
-        "fail": 89,
+        "pass": 2360,
+        "fail": 86,
         "ce": 40,
         "skip": 0,
         "total": 2486,
@@ -75,8 +75,8 @@
       },
       {
         "name": "default-parameters",
-        "pass": 1545,
-        "fail": 7,
+        "pass": 1549,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 1552,
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4192,
-    "fail": 1207,
+    "pass": 4193,
+    "fail": 1206,
     "ce": 393,
     "skip": 0,
     "total": 5792,
@@ -2366,12 +2366,12 @@
       },
       {
         "name": "class-static-block",
-        "pass": 46,
-        "fail": 7,
+        "pass": 47,
+        "fail": 6,
         "ce": 10,
         "skip": 0,
         "total": 63,
-        "pct": 73
+        "pct": 75
       },
       {
         "name": "Object.hasOwn",

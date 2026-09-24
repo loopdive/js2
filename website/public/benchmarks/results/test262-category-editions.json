@@ -99,6 +99,20 @@
       "skip": 0
     }
   },
+  "built-ins/Boolean": {
+    "ES5": {
+      "pass": 6,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 4,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/String": {
     "ES5": {
       "pass": 660,
@@ -151,20 +165,6 @@
     "ES2025": {
       "pass": 2,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/Boolean": {
-    "ES5": {
-      "pass": 6,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 4,
-      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -481,8 +481,8 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 2665,
-      "fail": 370,
+      "pass": 2673,
+      "fail": 362,
       "ce": 2,
       "skip": 0
     },
@@ -647,8 +647,8 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 3019,
-      "fail": 310,
+      "pass": 3025,
+      "fail": 304,
       "ce": 8,
       "skip": 0
     },
@@ -689,8 +689,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 1901,
-      "fail": 522,
+      "pass": 1902,
+      "fail": 521,
       "ce": 5,
       "skip": 0
     },
@@ -1289,14 +1289,6 @@
       "skip": 0
     }
   },
-  "language/statementList": {
-    "ES2015": {
-      "pass": 23,
-      "fail": 15,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/destructuring": {
     "ES2015": {
       "pass": 17,
@@ -1315,6 +1307,14 @@
     "ES2023": {
       "pass": 0,
       "fail": 64,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 23,
+      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1359,6 +1359,14 @@
       "skip": 0
     }
   },
+  "built-ins/isNaN": {
+    "ES2015": {
+      "pass": 6,
+      "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/ThrowTypeError": {
     "ES2015": {
       "pass": 0,
@@ -1367,10 +1375,10 @@
       "skip": 0
     }
   },
-  "built-ins/isNaN": {
+  "built-ins/ArrayIteratorPrototype": {
     "ES2015": {
-      "pass": 6,
-      "fail": 2,
+      "pass": 17,
+      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1397,14 +1405,6 @@
     "ES2020": {
       "pass": 2,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/ArrayIteratorPrototype": {
-    "ES2015": {
-      "pass": 17,
-      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1445,17 +1445,17 @@
       "skip": 0
     }
   },
-  "language/asi": {
+  "language/keywords": {
     "ES5": {
-      "pass": 101,
+      "pass": 25,
       "fail": 0,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/keywords": {
+  "language/asi": {
     "ES5": {
-      "pass": 25,
+      "pass": 101,
       "fail": 0,
       "ce": 0,
       "skip": 0
