@@ -2940,6 +2940,14 @@ function emitEagerNestedCallCaptureBoxes(
   }>,
   referencedCalleeNames: ReadonlySet<string>,
 ): void {
+  // (#1058) First referenced callee's mutable capture per name, as the per-cap
+  // search below used to find it; that search was captures × callees × captures.
+  const calleeMutableValType = new Map<string, ValType>();
+  for (const g of referencedCalleeNames) {
+    for (const c of ctx.nestedFuncCaptures.get(g) ?? []) {
+      if (c.mutable && c.valType && !calleeMutableValType.has(c.name)) calleeMutableValType.set(c.name, c.valType);
+    }
+  }
   for (const cap of captures) {
     // Only plain by-value `var`/param captures. Mutable → already a box param;
     // alreadyBoxed → outer cell threaded through; hasTdzFlag → kept lazy here
@@ -2949,16 +2957,7 @@ function emitEagerNestedCallCaptureBoxes(
     if (cap.mutable || cap.alreadyBoxed || cap.hasTdzFlag) continue;
     // Find a referenced sibling that mutably captures this same name, and adopt
     // ITS ref-cell value type so our refCellTypeIdx matches the lazy call-site's.
-    let calleeValType: ValType | undefined;
-    for (const g of referencedCalleeNames) {
-      const gCaps = ctx.nestedFuncCaptures.get(g);
-      if (!gCaps) continue;
-      const m = gCaps.find((c) => c.name === cap.name && c.mutable && c.valType);
-      if (m) {
-        calleeValType = m.valType;
-        break;
-      }
-    }
+    const calleeValType = calleeMutableValType.get(cap.name);
     if (!calleeValType) continue;
     // The box is built from the by-value param via `local.get` (type `cap.type`);
     // the cell field type must match. Both derive from the SAME outer variable,
