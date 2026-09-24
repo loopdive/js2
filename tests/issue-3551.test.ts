@@ -45,15 +45,32 @@ async function runTest(src: string): Promise<unknown> {
   return exports.test();
 }
 
-// The exact divergence shape: `poly`'s params stay boxed under legacy
-// inference (polymorphic — post-#3471), while the IR TypeMap propagates the
-// numeric call-site types and re-types them f64 → parity withdrawal.
+// The divergence shape: `poly`'s params stay boxed under legacy inference,
+// while the IR TypeMap propagates the numeric call-site types and re-types
+// them f64 → parity withdrawal.
+//
+// Why `spin`/`spin2` are here (#2917): this fixture used to be `poly` alone,
+// reached only through `mid(a, b) { return poly(a, b); }`. Legacy call-site
+// inference then treated the forwarded identifiers as unproven and boxed
+// `poly`. #2917 taught legacy to see through a forwarded untyped param
+// (`forwardedParamAbiType`), so `mid`'s f64 params now prove `poly`'s f64 too,
+// both lanes agree, and the plain chain no longer produces ANY parity
+// mismatch. So the guard went vacuous, not wrong. The one forwarding shape where
+// legacy is still deliberately weaker than IR propagation is a forwarding
+// CYCLE: `forwardedParamsInProgress` cuts the recursion, so `spin`'s `b`
+// (fed only by `spin2`, which is fed only by `spin`) stays unproven. Its
+// forward into `poly` then withdraws `poly`'s narrowing and leaves the legacy
+// ABI boxed, while the IR still resolves `poly` as f64. `poly`'s body and the
+// `mid` chain under test are unchanged. Only the cycle that keeps the
+// divergence real was added.
 const POLY = `
 function poly(a, b) {
   if (a === 0 && b === 0) return 1 / a === 1 / b;
   if (a !== a && b !== b) return true;
   return a === b;
-}`;
+}
+function spin(a, b) { return a > 0 ? spin2(a, b) : poly(a, b); }
+function spin2(a, b) { return spin(a - 1, b); }`;
 
 describe("#3551 — parity withdrawal cascades to committed IR callers", () => {
   it("caller of a parity-withdrawn callee instantiates and runs (the #3503 regression shape)", async () => {

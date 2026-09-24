@@ -418,6 +418,54 @@ function anyIdentifierHasOpaqueLocalOrigin(
   return (initializerType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
 }
 
+function sameValType(a: ValType, b: ValType): boolean {
+  if (a.kind !== b.kind) return false;
+  if ((a.kind === "ref" || a.kind === "ref_null") && (b.kind === "ref" || b.kind === "ref_null")) {
+    return (a as { typeIdx: number }).typeIdx === (b as { typeIdx: number }).typeIdx;
+  }
+  return true;
+}
+
+/** Parameters whose forwarded ABI type is being computed (cycle guard). */
+const forwardedParamsInProgress = new Set<ts.ParameterDeclaration>();
+
+/**
+ * (#2917) The wasm ABI type of an untyped PARAMETER of a named function
+ * declaration that is forwarded as a call argument (`function nr(n) {
+ * return Vn(…, n); }`). The identifier's checker type is `any`; the value it
+ * holds at runtime is whatever `nr`'s own ABI says — so it is evidence for the
+ * callee only through that type. Treating it as "trusted" (it carries whatever
+ * the OTHER sites agreed on) let the Temporal polyfill's
+ * `Vn(…, cond ? "minute" : "auto")` site pin `Vn`'s precision parameter to a
+ * native string while `nr` forwarded the number 6 into it — the number
+ * coerced to a null string and `slice(0, precision)` answered "".
+ *
+ * A DESTRUCTURED binding (`const { precision: a } = At(o, n)`) whose checker
+ * type is `any` is a property read of an opaque value — the same evidence as
+ * the direct `f(obj.precision)` shape #4530 already treats as opaque.
+ *
+ *  - `undefined`: not a plain forwarded parameter of a function declaration,
+ *    or a cycle — no evidence either way (the pre-#2917 behaviour).
+ *  - `null`: the value is dynamic (`externref`), so it can hold anything.
+ *  - a type: the parameter's inferred ABI type.
+ */
+function forwardedParamAbiType(ctx: CodegenContext, arg: ts.Identifier): ValType | null | undefined {
+  const decl = ctx.oracle.valueDeclarationOf(arg);
+  if (decl && ts.isBindingElement(decl)) return null;
+  if (!decl || !ts.isParameter(decl) || !ts.isIdentifier(decl.name)) return undefined;
+  if (decl.type !== undefined || decl.initializer !== undefined || decl.dotDotDotToken !== undefined) return undefined;
+  const owner = decl.parent;
+  if (!ts.isFunctionDeclaration(owner) || !owner.name || !owner.body) return undefined;
+  if (forwardedParamsInProgress.has(decl)) return undefined;
+  forwardedParamsInProgress.add(decl);
+  try {
+    const index = owner.parameters.indexOf(decl);
+    return inferImplicitAnyParamType(ctx, owner.name.text, index, owner.getSourceFile(), owner);
+  } finally {
+    forwardedParamsInProgress.delete(decl);
+  }
+}
+
 export function inferParamTypeFromCallSites(
   ctx: CodegenContext,
   funcName: string,
@@ -592,6 +640,11 @@ export function inferParamTypeFromCallSites(
                   // #4530 withdrawal above (Marked's reference definition
                   // record is the real-world shape).
                   sawOpaqueAnyArg = true;
+                } else {
+                  const forwarded = forwardedParamAbiType(ctx, arg); // (#2917)
+                  if (forwarded === null) sawOpaqueAnyArg = true;
+                  else if (forwarded && agreed && !sameValType(agreed, forwarded)) conflict = true;
+                  else if (forwarded) agreed = forwarded;
                 }
               }
             } else if (isRecursiveCall(node)) {
@@ -700,9 +753,9 @@ export function inferParamTypeFromCallSites(
   // sites is unproven — clsx's `toVal(mix)` had one object-literal site and one
   // `toVal(arguments[i])` site; the literal narrowed `mix` to that struct,
   // `typeof mix` then static-folded to "object", and every string/number/array
-  // argument silently took the object branch with zero enumerable keys. Only
-  // the trapping/misfolding ref narrowing is withdrawn; scalar narrowings keep
-  // their existing coerce-don't-trap risk profile (same split as #2867 S2).
+  // argument silently took the object branch with zero enumerable keys.
+  // (#2917) Scalar narrowings are withdrawn too: an f64 boundary runs ToNumber
+  // on the opaque value (JSBI's `valueOf` throws — 287 Temporal rows).
   // (#4616 smoke regression) The opaque-any withdrawal is scoped to
   // SPECULATIVE narrowings on UNANNOTATED params. A param with an explicit
   // concrete type annotation (`buf: Uint8Array` in the native-messaging
@@ -732,12 +785,7 @@ export function inferParamTypeFromCallSites(
     scan(sourceFile);
     return found;
   };
-  if (
-    sawOpaqueAnyArg &&
-    type !== null &&
-    (type.kind === "ref" || type.kind === "ref_null") &&
-    !paramHasConcreteAnnotation()
-  ) {
+  if (sawOpaqueAnyArg && type !== null && type.kind !== "externref" && !paramHasConcreteAnnotation()) {
     type = null;
   }
   // (#4630) A catch-clause binding withdraws ANY GC-`ref` agreement, not just a
