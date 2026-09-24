@@ -68,3 +68,23 @@ This is a profile-then-fix issue. Do not optimize anything before step 3.
 - [ ] All six sweep-timeout entries compile to engine-valid modules; wall
       times recorded.
 - [ ] Equivalence + test262 gates green (merge queue authority).
+
+## Re-measurement (2026-09-24, main a0c3b701, 4-core container)
+
+- Front end had regressed: `compileFiles("src/resolve.ts")` and
+  `src/index.ts` failed after ~195 s with 9 type errors, because
+  `src/codegen/ir-program-callable-context.ts` (a `CodegenContext` module
+  augmentation, added 2026-09-20) was imported by nothing, so an entry-rooted
+  program never saw it (`tsc -p` includes every file and stayed green).
+  Fixed in the same PR as this note by importing it from
+  `multi-prepared-callable-orchestration.ts`, guarded by
+  `tests/module-augmentation-reachable.test.ts`.
+- With that fixed, both entries clear the front end (0 diagnostics, ~170 s)
+  and still do not finish codegen inside a 45-minute cap (two runs in
+  parallel). The throughput problem this issue describes is unchanged.
+- Small entries still compile to engine-valid modules in 2–5 s
+  (`cjs-rewrite`, `import-resolver`, `checker/oracle`, `shape-inference`,
+  `codegen/peephole`, `optimize`), but running one (`cjs-rewrite`) throws at
+  module init: `ts` is `null` (`ts-api.ts:280`, `ts.TypeFlags`), because
+  `import ts from "typescript"` has no import representation — #4422, even
+  with `compileProject(..., { externals: ["typescript"] })`.
