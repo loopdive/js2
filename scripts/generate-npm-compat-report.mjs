@@ -94,7 +94,9 @@ import {
   npmPerfOptimizationOmittedPasses,
   npmPerfRows,
   packagePerfRecord,
+  resolveStandalonePerfLanes,
   skippedPerfLane,
+  STANDALONE_PERF_LANES,
 } from "./lib/npm-compat-perf.mjs";
 import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
@@ -1786,17 +1788,19 @@ function renderModuleInitThrow(error, instance) {
 const NPM_COMPAT_REPORT_SCRIPT = join(ROOT, "scripts", "generate-npm-compat-report.mjs");
 
 /**
- * (#6661) Measure one package's standalone-dynamic lane in a child process
- * with a wall-clock budget. Used when the JS-host package-entry gate failed:
- * the in-process lane has no budget, and a graph that exhausted the host
- * harness (TypeScript, webpack, ...) would otherwise stall the whole refresh.
- * Returns the child's lane record verbatim, or a failed lane naming the budget
- * overrun / child failure — never a placeholder.
+ * (#6661, #6660) Measure one package's standalone lane (`standalone-static` or
+ * `standalone-dynamic`) in a child process with a wall-clock budget. Used when
+ * the JS-host package-entry gate failed: the in-process lane has no budget,
+ * and a graph that exhausted the host harness (TypeScript, webpack, ...) would
+ * otherwise stall the whole refresh. Returns the child's lane record verbatim,
+ * or a failed lane naming the budget overrun / child failure — never the host
+ * lane's diagnostic.
  */
-function standaloneDynamicLaneInChild(name, budgetMs) {
-  const partial = join(ROOT, ".tmp", "npm-compat-lane", `${name}-standalone-dynamic-${process.pid}.json`);
+function standaloneLaneInChild(name, lane, budgetMs) {
+  const { key, inputMode } = STANDALONE_PERF_LANES.find((entry) => entry.lane === lane);
+  const partial = join(ROOT, ".tmp", "npm-compat-lane", `${name}-${lane}-${process.pid}.json`);
   const args = ["--import", "tsx", NPM_COMPAT_REPORT_SCRIPT, "--only", name, "--no-write", "--perf-only"];
-  args.push("--lane", "standalone-dynamic", "--partial-output", partial);
+  args.push("--lane", lane, "--partial-output", partial);
   if (preserveDebugNames) args.push("--preserve-debug-names");
   const started = performance.now();
   const child = spawnSync(process.execPath, args, {
@@ -1806,19 +1810,19 @@ function standaloneDynamicLaneInChild(name, budgetMs) {
     timeout: budgetMs,
     killSignal: "SIGKILL",
   });
-  const extra = { inputMode: "runtime-dynamic", compileDurationMs: performance.now() - started };
+  const extra = { inputMode, compileDurationMs: performance.now() - started };
   if (child.error?.code === "ETIMEDOUT") {
     return failedOptimizedPerfLane(
       "standalone",
       "compile-error",
-      `standalone-dynamic lane exceeded the ${budgetMs}ms harness budget (compile-budget)`,
+      `${lane} lane exceeded the ${budgetMs}ms harness budget (compile-budget)`,
       extra,
     );
   }
   try {
-    const lane = JSON.parse(readFileSync(partial, "utf-8")).packages?.find((entry) => entry.name === name)?.perf?.lanes
-      ?.standaloneDynamic;
-    if (lane) return lane;
+    const record = JSON.parse(readFileSync(partial, "utf-8")).packages?.find((entry) => entry.name === name)?.perf
+      ?.lanes?.[key];
+    if (record) return record;
   } catch {
     // Fall through to the child's own failure text.
   } finally {
@@ -1828,7 +1832,7 @@ function standaloneDynamicLaneInChild(name, budgetMs) {
   return failedOptimizedPerfLane(
     "standalone",
     "compile-error",
-    `standalone-dynamic lane child exited ${child.status ?? child.signal ?? "abnormally"}: ${tail ?? "no output"}`,
+    `${lane} lane child exited ${child.status ?? child.signal ?? "abnormally"}: ${tail ?? "no output"}`,
     extra,
   );
 }
@@ -1843,14 +1847,29 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     return packagePerfFailure(spec, error instanceof Error ? error.message : String(error));
   }
   let nativeModule;
+  let nativeImportFailure = null;
   try {
     nativeModule = await import(pathToFileURL(setup.entryModulePath).href);
   } catch (error) {
-    return packagePerfFailure(
-      spec,
-      `native package import failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    nativeImportFailure = `native package import failed: ${error instanceof Error ? error.message : String(error)}`;
   }
+  // (#6660) Without the native module there is no checksum oracle. The JS-host
+  // lanes keep reporting that as their failure; a standalone lane still runs
+  // its own compile so the record shows ITS compile status, and only the
+  // unmeasurable checksum is attributed to the missing oracle.
+  const oracleUnavailable = (compiled, inputMode) =>
+    failedOptimizedPerfLane(
+      "standalone",
+      "oracle-unavailable",
+      `standalone lane compiled (${compiled.result.binary.length} bytes) but cannot be checked: ${nativeImportFailure}`,
+      {
+        phase: "checksum",
+        inputMode,
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      },
+    );
 
   const runHost = async (lane = "js-host") => {
     const compiled = await compileNpmCompatPerfLane({ setup, spec, lane, compileOptions });
@@ -1921,6 +1940,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
   const runStatic = async () => {
     const compiled = await compileNpmCompatPerfLane({ setup, spec, lane: "standalone-static", compileOptions });
     if (compiled.failure) return compiled.failure;
+    if (nativeImportFailure) return oracleUnavailable(compiled, "compile-time-static");
     let expectedChecksum;
     let actualChecksum;
     try {
@@ -1987,6 +2007,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
   const runDynamic = async () => {
     const compiled = await compileNpmCompatPerfLane({ setup, spec, lane: "standalone-dynamic", compileOptions });
     if (compiled.failure) return compiled.failure;
+    if (nativeImportFailure) return oracleUnavailable(compiled, "runtime-dynamic");
     const seed = GENERIC_PERF_RUNTIME_SEED;
     let expectedChecksum;
     let actualChecksum;
@@ -2054,25 +2075,31 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
   };
 
   // A host-assisted correctness failure is not evidence about native-first.
-  // Preserve the existing compatibility gate for the older lanes only.
-  const blocked =
-    report && (report.compile?.success === false || report.validation?.validates === false)
-      ? packagePerfFailure(spec, packageEntryBlockReason(report)).lanes
-      : null;
-  const jsHost =
-    blocked?.jsHost ?? (runJsHostLane ? await collectJsHostPerfLane(() => runHost()) : skippedPerfLane("js-host"));
-  const jsHostNative = await nativeFirstPerfLane(() => runHost("js-host-native"));
-  const standalone = blocked?.standalone ?? (runStandaloneLane ? await runStatic() : skippedPerfLane("standalone"));
-  // (#6661) The standalone-dynamic lane compiles its own host-free graph, so a
-  // JS-host compile/validation failure is not evidence about it. When the host
-  // gate blocked, measure the real lane in a bounded child process (the same
-  // `--perf-only --lane standalone-dynamic` run a developer would use) so its
-  // own error — or its own budget overrun — is what the report shows.
-  const standaloneDynamic = !runStandaloneDynamicLane
-    ? skippedPerfLane("standalone", "runtime-dynamic")
-    : blocked
-      ? standaloneDynamicLaneInChild(name, report.compile?.timeoutMs ?? 120_000)
-      : await runDynamic();
+  // Preserve the existing compatibility gate for the JS-host lane only.
+  const hostBlocked = Boolean(report && (report.compile?.success === false || report.validation?.validates === false));
+  let jsHost;
+  let jsHostNative;
+  if (nativeImportFailure) {
+    ({ jsHost, jsHostNative } = packagePerfFailure(spec, nativeImportFailure).lanes);
+  } else {
+    jsHost = hostBlocked
+      ? packagePerfFailure(spec, packageEntryBlockReason(report)).lanes.jsHost
+      : runJsHostLane
+        ? await collectJsHostPerfLane(() => runHost())
+        : skippedPerfLane("js-host");
+    jsHostNative = await nativeFirstPerfLane(() => runHost("js-host-native"));
+  }
+  // (#6661, #6660) Both standalone lanes compile their own host-free graph, so
+  // a JS-host compile/validation failure is not evidence about them. When the
+  // host gate blocked, each selected lane is measured in a bounded child
+  // process (the same `--perf-only --lane <lane>` run a developer would use)
+  // so its own error — or its own budget overrun — is what the report shows.
+  const { standalone, standaloneDynamic } = await resolveStandalonePerfLanes({
+    hostBlocked,
+    selected: { "standalone-static": runStandaloneLane, "standalone-dynamic": runStandaloneDynamicLane },
+    inProcess: (lane) => (lane === "standalone-static" ? runStatic() : runDynamic()),
+    inChild: (lane) => standaloneLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
+  });
   return packagePerfRecord(spec.sampleOp, jsHost, standalone, { jsHostNative, standaloneDynamic });
 }
 
