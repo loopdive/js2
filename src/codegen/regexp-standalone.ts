@@ -4203,6 +4203,8 @@ export function tryCompileStandaloneStringMatch(
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
     return undefined;
   }
+  // (#6665) Runtime-only flags: the `string-regexp-dynamic.ts` dispatcher runs the generic @@match body.
+  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpFlags(ctx, argExpr) === null) return undefined;
 
   // String-method operand order: subject = receiver, regex = arg.
   return emitStandaloneRegExpMatchCore(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride);
@@ -4778,6 +4780,9 @@ export function tryCompileStandaloneStringSplit(
     return null;
   }
   const limitExpr = expr.arguments[1];
+  // (#6665) A runtime-only RegExp: the `string-regexp-dynamic.ts` dispatcher runs the generic @@split body.
+  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpPatternFlags(ctx, reExpr) === null)
+    return undefined;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpSplitCore(

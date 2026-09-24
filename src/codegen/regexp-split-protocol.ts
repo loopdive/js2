@@ -116,7 +116,7 @@ const SYMBOL_SPECIES_ID = 5;
 const TWO_POW_32 = 4294967296;
 
 /** Everything the `@@split` body needs beyond the RegExpExec substrate and the match-loop readers. */
-interface SplitDeps {
+export interface SplitDeps {
   readonly boxSymbol: number;
   readonly isUndefined: number;
   readonly typeofFunction: number;
@@ -133,7 +133,7 @@ interface SplitDeps {
   readonly regexpCtorGlobal: number;
 }
 
-function prepareSplitDeps(ctx: CodegenContext, fctx: FunctionContext): SplitDeps | undefined {
+export function prepareSplitDeps(ctx: CodegenContext, fctx: FunctionContext): SplitDeps | undefined {
   ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
   ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [I32]);
   ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [I32]);
@@ -203,7 +203,7 @@ function prepareSplitDeps(ctx: CodegenContext, fctx: FunctionContext): SplitDeps
  * `ToUint32(null)` is 0, not "no limit". Without the regime they share one
  * representation and the conservative answer is the only one available.
  */
-function isUndefinedInstrs(ctx: CodegenContext, split: SplitDeps, local: number): Instr[] {
+export function isUndefinedInstrs(ctx: CodegenContext, split: SplitDeps, local: number): Instr[] {
   const base: Instr[] = [
     { op: "local.get", index: local },
     { op: "call", funcIdx: split.isUndefined },
@@ -318,7 +318,7 @@ function buildSpeciesConstructorInstrs(
  * `[externref] → [f64]` — ℝ(ToUint32(v)) for a value already known not to be
  * undefined: ToNumber, then NaN/±∞ ⇒ 0, else truncate and reduce modulo 2^32.
  */
-function buildToUint32Instrs(split: SplitDeps, nLocal: number): Instr[] {
+export function buildToUint32Instrs(split: SplitDeps, nLocal: number): Instr[] {
   return [
     ...split.toNumber(),
     { op: "local.set", index: nLocal },
