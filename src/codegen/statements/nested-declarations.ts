@@ -37,7 +37,10 @@ import {
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { recordEagerCaptureBox } from "./eager-capture-box.js";
-import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
+import {
+  collectOwnerBindingsWrittenAfterDeclaration,
+  scopeVariableDeclarations,
+} from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
@@ -1606,17 +1609,7 @@ function compileNestedFunctionDeclarationInScope(
   const findScopedVariableDeclaration = (from: ts.Node, name: string): ts.VariableDeclaration | undefined => {
     let scope: ts.Node | undefined = from.parent;
     while (scope !== undefined) {
-      let found: ts.VariableDeclaration | undefined;
-      const scan = (node: ts.Node): void => {
-        if (found) return;
-        if (node !== scope && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
-        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-          found = node;
-          return;
-        }
-        ts.forEachChild(node, scan);
-      };
-      scan(scope);
+      const found = scopeVariableDeclarations(scope).get(name);
       if (found) return found;
       if (ts.isFunctionLike(scope) || ts.isSourceFile(scope)) return undefined;
       scope = scope.parent;
