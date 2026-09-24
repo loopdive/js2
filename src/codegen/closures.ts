@@ -170,7 +170,7 @@ import {
 export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument };
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
@@ -2632,6 +2632,87 @@ export interface LiftedClosureBodyResult {
  * register closure binding info — those stay with the caller (they must happen
  * exactly ONCE per arrow even when two bodies are emitted).
  */
+/**
+ * Set up the `arguments` object for a lifted FUNCTION EXPRESSION (arrow
+ * functions have no `arguments` binding of their own).
+ *
+ * (#6651) Extracted from `compileLiftedClosureBody` so it can run at either of
+ * two points: BEFORE the parameter defaults for a non-simple parameter list
+ * (§10.2.11 step 22 order, so a default can read `arguments`), or at the
+ * historical post-destructuring point for a simple list, where nothing
+ * intervenes and the emission is byte-for-byte unchanged.
+ */
+function emitLiftedClosureArgumentsObject(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+  body: ts.Node,
+  arrowParams: ValType[],
+  reachesDirectEval: boolean,
+): void {
+  if (!ts.isFunctionExpression(arrow) || !ts.isBlock(body) || !needsImplicitArgumentsObject(arrow, reachesDirectEval)) {
+    return;
+  }
+  // Ensure __box_number is available for boxing numeric params
+  const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
+  if (hasNumericParam) {
+    ensureLateImportShared(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    flushLateImportShiftsShared(ctx, liftedFctx);
+  }
+
+  const vti = getOrRegisterVecType(ctx, "arguments");
+  const ati = getArrTypeIdxFromVec(ctx, vti);
+  const vecRef: ValType = { kind: "ref", typeIdx: vti };
+  const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
+  const arrTmp = allocLocal(liftedFctx, "__args_arr_tmp", { kind: "ref", typeIdx: ati });
+
+  // (#4491) §10.2.11 step 22.a — a non-strict function expression with a simple
+  // parameter list gets a MAPPED arguments object, exactly like the declaration
+  // form. The reverse sync unboxes into an f64/i32 param, so `__unbox_number`
+  // must exist before the mapped emitters look it up.
+  if (hasNumericParam) {
+    ensureLateImportShared(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+    flushLateImportShiftsShared(ctx, liftedFctx);
+  }
+  // `compileFunctionBody` has installed this for DECLARATIONS since #849; the
+  // lifted expression form built the identical vec and never did, so
+  // `(function (a) { arguments[0] = 1; })(0)` left `a` untouched while
+  // `function f(a) { … }` updated it. Every mapped emitter keys off
+  // `mappedArgsInfo`, so this is what turns them on for the expression form.
+  const argsParams = runtimeParameters(arrow);
+  if (
+    arrowParams.length > 0 &&
+    isSimpleParameterList(argsParams) &&
+    !isStrictFunction(arrow, ctx.inferModuleStrictArguments)
+  ) {
+    liftedFctx.mappedArgsInfo = {
+      argsLocalIdx: argsLocal,
+      arrTypeIdx: ati,
+      vecTypeIdx: vti,
+      paramCount: arrowParams.length,
+      paramOffset: 1, // lifted closures carry __self at local 0
+      paramTypes: arrowParams.slice(),
+    };
+    // (#2676) Keyed by the declaration so a `delete args[i]` in a nested
+    // strict closure can resolve an aliased `arguments` back to here.
+    ctx.mappedArgsInfoByFunc.set(arrow, liftedFctx.mappedArgsInfo);
+  }
+
+  // (#779e) Build the arguments vec via the shared extras-aware helper so the
+  // closure sees the TRUE call-site argument count (from __argc/__extras_argv
+  // set by the closure call site, #1511) — not just its declared arity.
+  // paramOffset is 1 because lifted closures carry __self at local index 0.
+  emitArgumentsVecBody(ctx, liftedFctx, arrowParams, 1, {
+    vecTypeIdx: vti,
+    arrTypeIdx: ati,
+    argsLocalIdx: argsLocal,
+    arrTmpIdx: arrTmp,
+  });
+
+  // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
+  seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
+}
+
 export function compileLiftedClosureBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2967,73 +3048,46 @@ export function compileLiftedClosureBody(
     });
   }
 
+  // (#6651) §10.2.11 step 22 creates the arguments object BEFORE
+  // IteratorBindingInitialization of the formals, so a parameter default may
+  // read it (`(function (x = arguments[2]) {})(…)`). Emit it here for a
+  // NON-SIMPLE parameter list — the only shape with a default/destructuring to
+  // order against, and the shape that is already *unmapped* (step 22.a), so no
+  // param↔arguments aliasing is disturbed. A simple list keeps the original
+  // emission point below, where nothing intervenes.
+  const hoistArgsClosure = !isSimpleParameterList(runtimeParameters(arrow));
+  if (hoistArgsClosure) {
+    // The hoisted emission consumes `__argc`; cache it first so the default
+    // prologue below does not cache the cleared -1 sentinel (idempotent — see
+    // precacheParamDefaultArgc's doc in statements/nested-declarations.ts).
+    if (
+      runtimeParameters(arrow).some(
+        (param, i) => param.initializer !== undefined && paramDefaultNeedsArgc(liftedFctx.params[1 + i]?.type),
+      )
+    ) {
+      cacheParamDefaultArgc(ctx, liftedFctx);
+    }
+    emitLiftedClosureArgumentsObject(ctx, liftedFctx, arrow, body, arrowParams, reachesDirectEval);
+  }
+
   // Emit default-value initialization for simple params with defaults
   emitArrowParamDefaults(ctx, liftedFctx, arrow, 1 /* skip __self */);
 
   // Destructuring initialization for binding-pattern params — see emitClosureParamDestructuring.
   emitClosureParamDestructuring(ctx, liftedFctx, arrow, arrowParams);
 
-  // Set up `arguments` object for function expressions (not arrow functions).
+  // Set up `arguments` object for function expressions (not arrow functions) —
+  // SIMPLE parameter lists only; a non-simple list already emitted it above,
+  // before the defaults ran (#6651, §10.2.11 step 22).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && needsImplicitArgumentsObject(arrow, reachesDirectEval)) {
-    // Ensure __box_number is available for boxing numeric params
-    const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
-    if (hasNumericParam) {
-      ensureLateImportShared(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      flushLateImportShiftsShared(ctx, liftedFctx);
-    }
-
-    const vti = getOrRegisterVecType(ctx, "arguments");
-    const ati = getArrTypeIdxFromVec(ctx, vti);
-    const vecRef: ValType = { kind: "ref", typeIdx: vti };
-    const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
-    const arrTmp = allocLocal(liftedFctx, "__args_arr_tmp", { kind: "ref", typeIdx: ati });
-
-    // (#4491) §10.2.11 step 22.a — a non-strict function expression with a simple
-    // parameter list gets a MAPPED arguments object, exactly like the declaration
-    // form. The reverse sync unboxes into an f64/i32 param, so `__unbox_number`
-    // must exist before the mapped emitters look it up.
-    if (hasNumericParam) {
-      ensureLateImportShared(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-      flushLateImportShiftsShared(ctx, liftedFctx);
-    }
-    // `compileFunctionBody` has installed this for DECLARATIONS since #849; the
-    // lifted expression form built the identical vec and never did, so
-    // `(function (a) { arguments[0] = 1; })(0)` left `a` untouched while
-    // `function f(a) { … }` updated it. Every mapped emitter keys off
-    // `mappedArgsInfo`, so this is what turns them on for the expression form.
-    const argsParams = runtimeParameters(arrow);
-    if (
-      arrowParams.length > 0 &&
-      isSimpleParameterList(argsParams) &&
-      !isStrictFunction(arrow, ctx.inferModuleStrictArguments)
-    ) {
-      liftedFctx.mappedArgsInfo = {
-        argsLocalIdx: argsLocal,
-        arrTypeIdx: ati,
-        vecTypeIdx: vti,
-        paramCount: arrowParams.length,
-        paramOffset: 1, // lifted closures carry __self at local 0
-        paramTypes: arrowParams.slice(),
-      };
-      // (#2676) Keyed by the declaration so a `delete args[i]` in a nested
-      // strict closure can resolve an aliased `arguments` back to here.
-      ctx.mappedArgsInfoByFunc.set(arrow, liftedFctx.mappedArgsInfo);
-    }
-
-    // (#779e) Build the arguments vec via the shared extras-aware helper so the
-    // closure sees the TRUE call-site argument count (from __argc/__extras_argv
-    // set by the closure call site, #1511) — not just its declared arity.
-    // paramOffset is 1 because lifted closures carry __self at local index 0.
-    emitArgumentsVecBody(ctx, liftedFctx, arrowParams, 1, {
-      vecTypeIdx: vti,
-      arrTypeIdx: ati,
-      argsLocalIdx: argsLocal,
-      arrTmpIdx: arrTmp,
-    });
-
-    // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
-    seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
+  if (!hoistArgsClosure) {
+    emitLiftedClosureArgumentsObject(ctx, liftedFctx, arrow, body, arrowParams, reachesDirectEval);
+  } else if (bodyLexicallyBindsArguments(body)) {
+    // The body's own `let arguments` is a SEPARATE binding that shadows the
+    // object for the whole body, while the parameter defaults just compiled
+    // above legitimately saw it. Drop the name HERE — after the defaults, before
+    // the body — so the body's declaration allocates its own slot (helper doc).
+    liftedFctx.localMap.delete("arguments");
   }
 
   let conciseBodyHasValue = false;

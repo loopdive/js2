@@ -169,6 +169,21 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-24 — lane A1 (arguments object created BEFORE parameter defaults,
+  # §10.2.11 step 22). `nested-declarations.ts` +86 and `closures.ts` +54, both
+  # already listed below. The growth is the SEAM, not the mechanism: the
+  # emission had to become callable at two points instead of one, so each file
+  # gains a small begin/end pair (`beginNestedArgumentsObject` /
+  # `endNestedArgumentsObject`; `emitLiftedClosureArgumentsObject`) around code
+  # that already lived there — the extraction SHRANK both host functions
+  # (`compileLiftedClosureBody` −36, `compileNestedFunctionDeclarationInScope`
+  # below its ceiling), so no func-budget grant is needed. It cannot move to a
+  # leaf module: the two call points straddle `emitDefaultParamInit` and the
+  # destructuring loop inside those functions, and the whole fact being encoded
+  # is WHERE in that sequence the object is created. ~60 % of the added lines
+  # are the comments recording that ordering and the two effects it forced
+  # (`__argc` is consumed by the vec body; a body `let arguments` is a separate
+  # binding) — both of which were live bugs found by measurement, not theory.
   # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
   # not as its TARGET's static shape). `property-access.ts` +13 — three lines
   # at the dot-property arm in `compilePropertyAccess`, three at its computed
@@ -614,6 +629,24 @@ func-budget-allow:
   # was verified byte-neutral — all 30 binaries of the 15-program dual-target
   # corpus are identical before and after it.
   - src/codegen/property-access.ts::compileElementAccess
+  # 2026-09-24 — cluster I slice T1 (tagged templates, §13.2.8): +17 inside
+  # `compileTaggedTemplateExpression`. Two module-scope extractions were taken
+  # FIRST rather than grant the first number the gate reported (+37): the
+  # receiver admission moved to `planTaggedTemplateReceiverBind` in
+  # `object-literal-method-receiver.ts`, beside the `obj.m()` / `obj["m"]()` /
+  # `obj[k]()` twins whose refusals it inherits, and the two publish arms
+  # collapsed onto one `publishTagCallArguments` entry point in
+  # `tagged-template-arguments.ts`. What cannot move is one line per arm: the
+  # tagged-template lowering has THREE call sites (signature-matched closure,
+  # dynamic closure, `__tagged_template` host bridge) and §10.2.1.2's receiver
+  # must be installed after that arm's own arguments and restored after its own
+  # call, so the install/restore pair is per-arm by construction. The rest is
+  # the plan + capture at the head of the fallback block and the three
+  # `finishObjectLiteralMethodCall` returns. Measured: +2 rows on BOTH targets
+  # (`member-expression-context.js`, `member-expression-argument-list-
+  # evaluation.js`), 0 lost over a 273-row two-lane sweep; 5 of 190 corpus
+  # programs move, all under `tagged-template/`.
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
   # 2026-09-23 — cluster D slice D2b: `compileNamespaceStaticCall` +4, the
   # dispatch line described under the LOC grant (dynamic-iterable all/race →
   # `emitStandalonePromiseCombinatorDrive`, with the legacy drain as fallback).
@@ -1041,7 +1074,7 @@ sweep on the round-6 integrated branch:
 
 | family | rows remaining | owner |
 | --- | ---: | --- |
-| `language/expressions/tagged-template/` | 8 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `language/expressions/tagged-template/` | 8 → **6** (slice T1, 2026-09-24: 2 closed on both lanes; the other 6 are named with their exact site in the T1 receipt at the end of this file) | **this thread (`claude/project-thread-yhj9pp`)** |
 | `language/module-code/namespace/internals/` | 12 | **this thread (`claude/project-thread-yhj9pp`)** |
 | `language/statements/with/` | 11 | **UNCLAIMED — reserved for a JS-host lane** |
 | `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **UNCLAIMED — reserved for a JS-host lane** |
@@ -8555,6 +8588,131 @@ generators (runtime), `GeneratorPrototype`, `GeneratorFunction`, `Iterator`,
 `ArrayIteratorPrototype`; H = remaining `built-ins/*`; I = the rest.
 Manifest SHA-256s are in the commit that added them.
 
+## 2026-09-24 — lane A1: arguments object created BEFORE parameter defaults (§10.2.11 step 22)
+
+**Result: +5 rows on BOTH lanes, 0 regressions.** Per-row set diff over a
+168-row manifest (the 164-row `arguments-object` / `rest-parameters` /
+`params-*`-`dflt-*`-`arguments-*` control manifest ∪ the 6 target rows),
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, **zero `error` rows in any of the
+four logs**. Base = `5459b1fe`.
+
+| lane | base pass | fix pass | flipped |
+| --- | --- | --- | --- |
+| host (default) | 154 | 159 | 5 × fail→pass, 0 pass→fail |
+| standalone | 137 | 142 | 5 × fail→pass, 0 pass→fail |
+
+Identical flip set on both lanes:
+`language/{expressions,statements}/function/params-dflt-ref-arguments.js`,
+`language/expressions/function/arguments-with-arguments-fn.js`,
+`language/{expressions,statements}/function/arguments-with-arguments-lex.js`.
+
+### Root cause (reproduced from the emitted WAT before changing anything)
+
+`f = function (x = arguments[2], y = arguments[3], z) {}` compiled the default's
+receiver as a literal `ref.null extern` (`$__closure_0`: `ref.null extern;
+local.tee 9; ref.is_null; (if (then … throw))`), because `allocLocal(fctx,
+"arguments", …)` ran only AFTER the defaults, so `fctx.localMap` had no
+`arguments` entry while the default was compiled. §10.2.11 step 22 creates the
+object BEFORE IteratorBindingInitialization of the formals.
+
+### What changed
+
+The emission is now hoisted above the parameter defaults **only when
+`isSimpleParameterList(parameters)` is false**, in all FOUR lowering paths —
+the brief named two; `closures.ts` (lifted function EXPRESSION) is the path the
+repro actually used, and it had to be fixed for 3 of the 5 rows:
+
+- `src/codegen/function-body.ts` — new `emitDeclarationArgumentsObject`.
+- `src/codegen/statements/nested-declarations.ts` — new
+  `beginNestedArgumentsObject` / `endNestedArgumentsObject` pair, used by both
+  the capture-free and capturing lift sites.
+- `src/codegen/closures.ts` — new module-level
+  `emitLiftedClosureArgumentsObject`.
+- `src/codegen/helpers/body-uses-arguments.ts` — new
+  `bodyLexicallyBindsArguments`.
+
+Two downstream effects the reorder forced, both found by measurement:
+
+1. **`__argc` is CONSUMED by `emitArgumentsVecBody`** (it reads the global and
+   clears it to the -1 "unknown caller" sentinel). Hoisting put that ahead of
+   the default prologue's `cacheParamDefaultArgc`, which would then have cached
+   -1 — making every scalar "was this arg omitted?" check read "unknown
+   caller", so f64 defaults fall back to the sNaN sentinel and i32 defaults
+   never fire. Fixed by caching argc FIRST in the hoisted lane
+   (`precacheParamDefaultArgc`, idempotent, so the later prologue reuses it).
+2. **`let arguments` in the body is a separate binding.** All paths key locals
+   by spelling, so the body's declaration stored its `undefined` initializer
+   into the vec-typed `arguments` local → `RuntimeError: illegal cast`. The
+   name is now dropped from the local map AFTER the defaults have compiled (they
+   legitimately see the object) and BEFORE the body. Deleting it before the
+   defaults instead — the first cut — silently broke the default's read.
+
+### Simple-parameter-list lane: byte-identity
+
+641 test262 `language/**` programs (every 37th, sorted) compiled under base and
+under the fix; 508 compiled successfully on both (133 are compile errors on
+both — 0 compile-success flips, 0 changed error signatures).
+
+- **335 programs whose every function-like has a simple parameter list: 335
+  byte-identical, 0 different.**
+- 173 programs that do contain a non-simple list: also 173 byte-identical —
+  the reorder only moves bytes when the function actually needs an arguments
+  object.
+
+What this does and does not show: it shows the gate keeps the untouched lane
+literally byte-for-byte, which is the strongest available evidence that nothing
+outside the intended shape moved. It does NOT show the hoisted lane is correct —
+that is what the 168-row two-lane row diff and the regression test are for — and
+it is a 641-program sample of `language/**`, not the whole corpus.
+
+### Regression test
+
+`tests/issue-6651-arguments-before-param-defaults.test.ts` — 6 cases. **4 are
+RED on base `5459b1fe`** (expression-form default reads `arguments`;
+declaration-form ditto; `arguments[0]` must be the ARGUMENT not the defaulted
+value; body `let arguments` shadowing) and **2 are controls that are GREEN on
+base** (mapped arguments round-trip, `arguments.length` from the call site) so a
+simple-list regression would show up as a new failure.
+
+### Left out, deliberately
+
+- **`language/rest-parameters/with-new-target.js` is NOT fixed.** It is a
+  different defect: a rest parameter's `arguments.length` reports the declared
+  arity, not the call-site count. Measured on base and on the fix, all three
+  shapes are equally wrong — plain `function (...a) { arguments.length }` called
+  with 3 args, the same in a class constructor via `new`, and via `super(1,2,3)`
+  — so it is not a `super()` ABI gap and not an ordering bug. It needs its own
+  slice against `emitArgumentsVecBody`'s formals-plus-extras concatenation,
+  which counts the rest array as one formal.
+- The `equivalence/` suite OOMs the box on the FULL directory in this container
+  — file-parallel AND `--no-file-parallelism` both die with
+  "Reached heap limit", which CLAUDE.md already documents for `npm test`. It was
+  run as targeted subsets instead (164 tests across `arguments-object`,
+  `arguments-nested-and-loops`, `default-params`, `default-parameters`,
+  `rest-params-call`, `function-arity-mismatch`, `iife-and-call-expressions`,
+  `this-receiver-apply`, `arrow-call-apply`, plus the 8 param-default /
+  destructuring-default `issue-*` suites). CI's `equivalence-gate` is the
+  authority for the whole directory.
+
+### Re-measured after `git merge origin/main` (3a891033)
+
+`origin/main` had advanced 1 commit past the base and touched
+`nested-declarations.ts` (auto-merged) plus the issue file (append/append
+conflict with the lane-I6 handoff below, resolved by keeping both). Everything
+above was re-measured on the merged tree against a post-merge base — the four
+edited files reverted to their `3a891033` contents, same 168-row manifest, same
+flags: **identical result, host 154 → 159 and standalone 137 → 142, the same
+five rows, zero `error` rows, and the byte-identity probe again 335/335 +
+173/173 with 0 compile-success flips.**
+
+**One pre-existing failure found and attributed, not caused here.**
+`tests/equivalence/arguments-nested-and-loops.test.ts > "for-loop with function
+declaration in body"` returns 30 where JS returns 33 (a `function` declared in a
+`for` body captures `i` as 0). It fails identically with the four edited files
+reverted to `3a891033`, so it is `origin/main`'s, not this change's — and the
+shape contains no `arguments` and only simple parameter lists, so this change
+cannot reach it. Worth its own issue.
+
 ## Handoff — 2026-09-24, lane-I6 (cluster I residual triage; measurement only, no source change)
 
 **Result in one line: cluster I has no standalone-reachable family left. All
@@ -8673,3 +8831,157 @@ defect, verified in the emitted WAT rather than inferred:
   `language/arguments-object/**` ∪ `language/rest-parameters/**` ∪ the
   `params-*` / `dflt-*` / `arguments-*` rows of
   `language/{expressions,statements}/function/`).
+## 2026-09-24 — cluster I slice T1: tagged templates (§13.2.8), the first SHARED front-end family
+
+Branch `issue-6651-t1-tagged-templates`, based on
+`origin/claude/project-thread-yhj9pp` (rounds 3–6 + the ownership claim).
+
+**Result: +2 rows on BOTH targets, 0 lost, 0 verdict changes, over a 273-row
+two-lane sweep.** The fix is target-independent and therefore **ungated** — no
+`ctx.standalone` branch — and the claim rests on the host row sweep, not on a
+byte-identity check (the lane-I5 pattern).
+
+### The two-lane probe, measured BEFORE any edit
+
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, one run per log, cache symlinked
+(`.test262-cache` → the shared cache) so realm/eval rows have a provider.
+
+| row (`language/expressions/tagged-template/`) | host before | standalone before | after |
+| --- | --- | --- | --- |
+| `member-expression-context.js` | fail — `this` was `[object Object]`, not `obj` | fail, same | **pass / pass** |
+| `member-expression-argument-list-evaluation.js` | fail — `arguments.length` 0, want 1 | fail, same | **pass / pass** |
+| `call-expression-context-strict.js` | fail — `this` an object, want `undefined` | fail, same | fail / fail |
+| `call-expression-argument-list-evaluation.js` | fail — `tag is not a function` | compile_error — `standalone target emitted host imports: __js_array_new, __js_array_push, __tagged_template (#2961)` | unchanged |
+| `constructor-invocation.js` | fail — `is not a constructor` | fail, same | fail / fail |
+| `template-object-frozen-non-strict.js` | fail — template object accepts writes | fail, same | fail / fail |
+| `template-object-frozen-strict.js` | fail — no TypeError on write | fail, same | fail / fail |
+| `cache-realm.js` | **pass** | fail — `Cannot access property on null or undefined` | unchanged |
+
+Seven of the eight fail **identically on both lanes**, which is the evidence
+that this family is shared front-end work rather than standalone lowering. The
+eighth, `cache-realm.js`, is the opposite: it passes on host and its standalone
+failure is not a tagged-template defect at all (see residuals).
+
+### What changed, and why
+
+Two defects, both in `compileTaggedTemplateExpression`'s general-tag fallback.
+
+1. **A member-expression tag is a METHOD call.** `` obj.fn`x` `` must bind
+   `this` to `obj` (§13.2.8 → §13.3.6.2 → OrdinaryCallBindThis). Every arm of
+   the fallback compiled the tag to a closure and `call_ref`ed it **without ever
+   writing `__current_this`** — the exact missing-writer defect
+   `object-literal-method-receiver.ts` was written for (`obj.m()`), one call
+   shape further out. So the fix reuses that module rather than re-deriving it:
+   a new `planTaggedTemplateReceiverBind` sits beside its `obj.m()` /
+   `obj["m"]()` / `obj[k]()` twins and inherits their two refusals — a plain
+   IDENTIFIER receiver only (the arms compile the whole tag themselves, so the
+   receiver must be read a second time, and only an identifier re-read is
+   effect-free), and no substitution may reference `this` (the install has to
+   precede the arms, which own the argument emission).
+2. **A zero-parameter tag still receives one argument.**
+   `` (function(){ … })`x` `` owes `arguments.length === 1`. A zero-formal
+   callee takes its whole call-site list through `__extras_argv`
+   (`emitArgumentsVecTail`: `totalLen = argc + extrasLen`, `argc` 0 with no
+   formals), and `publishTaggedTemplateArguments` explicitly refused that shape
+   because it can only source AST expressions and the template object lives in
+   a local. `publishZeroParamTagArguments` builds the one-element vec directly
+   and pins `__argc` to 0; `publishTagCallArguments` is the single entry point
+   the arms now call.
+
+**The `null`-return hazard was checked, and there is no fourth instance here.**
+The brief flagged it because a tagged-template call is the right shape for one.
+`compileTaggedTemplateExpression` has four bare `return null`s — the invalid-vec
+guard (nothing emitted yet) and three `reportError` arms in `compileStringRaw` /
+the closure-not-found arm. All four are diagnostic paths that fail the compile,
+not "legitimately no value" paths, so `VOID_RESULT` is not the right answer for
+any of them. The arms this slice touched already returned `… ?? VOID_RESULT`,
+and the three `finishObjectLiteralMethodCall` wrappers preserve that
+(`innerResultValType` treats the symbol as "nothing on the stack").
+
+### Measurements
+
+Manifests: `.tmp/6651/T1-all.txt` = the 114-row cluster-I manifest ∪ the 177-row
+control neighbourhood (`language/expressions/{template-literal,tagged-template,
+call,member-expression}/`, every `.js`), 273 rows deduped. Scoring is per-ROW
+set diff (`rowdiff.mjs before after manifest`), never counts.
+
+| lane | log pair | 273-row manifest | 177-row control | the 8 target rows |
+| --- | --- | --- | --- | --- |
+| standalone | `T1-sa-base.log` → `T1-sa-after.log` | 157 → 159 pass, **+2 / −0 / 0 changed** | 143 → 145, **+2 / −0** | 0 → 2 pass |
+| host (default) | `T1-host-base.log` → `T1-host-after.log` | 159 → 161 pass, **+2 / −0 / 0 changed** | 143 → 145, **+2 / −0** | 1 → 3 pass |
+
+Both gained rows are the same two on both lanes. No row changed verdict
+non-pass → non-pass, so this is not a count-neutral swap.
+
+**Host corpus hash delta (information, not a gate).** 190 programs — the 13
+`examples/*.ts` plus the 177 control test262 bodies — compiled on the default
+target with the base sources and with the shipped sources
+(`.tmp/6651/corpus-{base,new}.txt`, via the file-copy A/B captured at the first
+edit): **5 of 190 moved**, all five under `tagged-template/`
+(`call-expression-{argument-list-evaluation,context-no-strict,context-strict}`,
+`member-expression-{argument-list-evaluation,context}`). Byte-identity was never
+expected to hold on host — the fix is deliberately ungated — and the row sweep
+above is what certifies behaviour. The two module-scope extractions taken to
+clear the function budget were verified **byte-neutral**: all 190 hashes are
+identical before and after the refactor (`corpus-new.txt` vs `corpus-new2.txt`),
+so the corpus delta and the sweeps both describe the shipped tree.
+
+### Residuals — named with their exact site, so the next slice starts measured
+
+- **`call-expression-context-strict.js`** — TWO independent defects, both
+  reproduced outside test262 (`fn()` tag, top-level script, `"use strict"`):
+  - case 1 (`return function(){ context = this }`): the tag IS invoked (a call
+    counter increments) but `this` reads back as **`null`**, not `undefined`.
+    The same program *without* the file's later arrow reassignment answers
+    `undefined` correctly — so the presence of a second 0-param/void closure
+    changes the first one's answer, which points at the signature-match search
+    in the fallback (`ctx.closureInfoByTypeIdx`, first paramTypes/return match
+    wins) rather than at `this` resolution.
+  - case 2 (`return () => { context = this }`): the arrow's lexical `this`
+    resolves to **`globalThis`**. `fn()` is an unbound strict call, so `fn`'s
+    `this` is `undefined` and the arrow must inherit that; the arrow instead
+    lands on the sloppy/global rung.
+- **`call-expression-argument-list-evaluation.js`** — the IIFE-call tag matches
+  no registered closure by signature, so it falls to the `__tagged_template`
+  host bridge: on host the bridge is handed the closure carrier and reports
+  `tag is not a function`; on standalone that bridge is a forbidden host import
+  and the row is a compile_error. Same root cause as case 1 above.
+- **`constructor-invocation.js`** — `` new tag`x` `` parses correctly (TS gives
+  `NewExpression(callee = TaggedTemplateExpression)`, which is what §13.3.5
+  wants), but `compileNewExpression` has no arm for that callee shape: the
+  dynamic-new fallback admits an identifier, a member access, or (host-free
+  only, #6607) a call callee, and a tagged-template callee matches none. It
+  currently traps.
+- **`template-object-frozen-{strict,non-strict}.js`** — the template object is a
+  `__template_vec_externref` struct, not a frozen array with an own frozen
+  `raw`. Needs integrity-level support for that carrier on both lanes; the
+  neighbouring `template-object.js` (not in the manifest) fails the same way
+  (`raw should be an own property` / `Array.isArray` false).
+- **`cache-realm.js`** — **not a tagged-template defect.** It PASSES on host.
+  Its standalone failure is the runner's `$262.createRealm()` stub object
+  literal resolving to null in the standalone object model, so
+  `other.eval(...)` throws before the assertion. Belongs to whoever takes the
+  standalone `$262` surface, not to this family.
+- **Deliberately left alone:** the two identifier-tag arms (`ctx.closureMap` and
+  `ctx.funcMap`) still call `publishTaggedTemplateArguments` directly, so a
+  zero-parameter NAMED tag keeps its empty `arguments`. Extending
+  `publishTagCallArguments` to them is consistent but was not measured by this
+  slice's sweeps, and shipping unmeasured breadth is what the per-row discipline
+  exists to prevent. Likewise `publishZeroParamTagArguments` REFUSES a
+  zero-param tag that has substitutions (it would need `emitSetExtrasArgv`'s
+  boxing for the AST operands, and that helper owns the extras global) rather
+  than publish a one-element list that is wrong in a new way.
+
+### Gates (bare, never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 (with the dated
+`compileTaggedTemplateExpression` +17 grant added to this file's frontmatter,
+taken only AFTER two byte-neutral module-scope extractions cut the inline cost
+from +37) · `check-coercion-sites` 0 · `check:oracle-ratchet` 0 (no net checker
+growth) · `check:dead-exports` 0 · `check-compiler-boundaries --mode inventory`
+0 (`inventoryValid: true`; no new file under `src/`) · `typecheck` 0 ·
+`biome lint --diagnostic-level=error` 0.
+
+Logs: `.tmp/6651/T1-{sa,host}-{base,after}.log`,
+`.tmp/6651/corpus-{base,new,new2}.txt`, manifests
+`.tmp/6651/T1-{all,control,target}.txt`.
