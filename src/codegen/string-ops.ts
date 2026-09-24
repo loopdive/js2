@@ -4356,6 +4356,13 @@ export function compileGuardedNativeStringMethodCall(
     then: thenInstrs,
     else: elseInstrs,
   });
+  // (#5383) The three predicate methods answer a BOOLEAN. A bare i32 whose
+  // static type is `any` is boxed as a NUMBER, so `monthCode.endsWith("L")`
+  // reached `assert.sameValue(…, false)` as «0» (4 Temporal `no-leap-months`
+  // rows). The brand makes `coerceType` box it with `__box_boolean`.
+  if (resultType.kind === "i32" && (method === "includes" || method === "startsWith" || method === "endsWith")) {
+    return { kind: "i32", boolean: true };
+  }
   return resultType;
 }
 
