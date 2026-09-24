@@ -77,6 +77,7 @@ import {
   hoistVarDeclarations, // (#2641)
   resolveWasmType,
 } from "./index.js";
+import { replayMissingSuperBody } from "./missing-super-replay.js";
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
@@ -2965,6 +2966,7 @@ function compileClassBodiesInner(
     const ctorMissingSuper = isDerivedClass && ctor?.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
 
     if (ctorMissingSuper) {
+      replayMissingSuperBody(ctx, fctx, ctor); // (#5350) body effects precede the fallthrough throw
       // A derived constructor that returns a primitive before calling
       // `super()` still reaches [[Construct]]'s return-value check.  The
       // missing-`super` ReferenceError is correct when the body falls through

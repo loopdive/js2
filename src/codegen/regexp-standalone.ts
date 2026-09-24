@@ -5270,6 +5270,14 @@ export function tryCompileStandaloneRegExpCompile(
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
+  // Keep this proof deliberately narrower than staticConstStringValue: this
+  // call path must still evaluate arbitrary arguments and perform their
+  // observable ToString coercions. Only primitive literals / void 0 have no
+  // conversion effects, so only they can reuse the constructor's syntax oracle
+  // before RegExpInitialize mutates the receiver. In particular, a binding
+  // named `undefined` is never assumed to be the global undefined value.
+  const staticSyntaxCandidate = staticDirectRegExpCompileSyntaxCandidate(expr.arguments[0], expr.arguments[1]);
+
   // Both operands are evaluated (left-to-right) into externref locals BEFORE
   // any coercion runs, matching the spec's argument-evaluation order.
   const argLocals: number[] = [];
@@ -5289,12 +5297,54 @@ export function tryCompileStandaloneRegExpCompile(
     argLocals.push(local);
   }
 
+  // §B.2.5.1 reaches RegExpInitialize only after receiver and argument
+  // evaluation. A statically-proven invalid primitive pair can throw here,
+  // before the dynamic compiler's valid-but-unsupported poison would be copied
+  // into the existing receiver. Dynamic values and every host-valid pair keep
+  // the established shared in-place path below.
+  if (staticSyntaxCandidate !== null) {
+    const syntaxMessage = hostRegExpSyntaxErrorMessage(staticSyntaxCandidate.pattern, staticSyntaxCandidate.flags);
+    if (syntaxMessage !== null) return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMessage);
+  }
+
   if (!emitRegExpCompileInPlace(ctx, fctx, regexpLocal, structTypeIdx, argLocals[0]!, argLocals[1]!)) {
     return null;
   }
   // Step 6 — return the receiver itself.
   fctx.body.push({ op: "local.get", index: regexpLocal });
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+interface StaticDirectRegExpCompileSyntaxCandidate {
+  pattern: string;
+  flags: string;
+}
+
+/**
+ * Side-effect-free primitive operands whose RegExp syntax can be classified at
+ * compile time without skipping user-visible argument coercion. `undefined`
+ * identifiers intentionally decline: a local parameter/binding may shadow the
+ * global value. `void 0` is the sole accepted explicit undefined spelling.
+ */
+function staticDirectRegExpCompileOperand(expr: ts.Expression | undefined): string | undefined | null {
+  if (expr === undefined) return undefined;
+  const unwrapped = stripStaticWrapper(expr);
+  if (ts.isStringLiteral(unwrapped) || ts.isNoSubstitutionTemplateLiteral(unwrapped)) return unwrapped.text;
+  if (ts.isVoidExpression(unwrapped)) {
+    const operand = stripStaticWrapper(unwrapped.expression);
+    if (ts.isNumericLiteral(operand) && operand.text === "0") return undefined;
+  }
+  return null;
+}
+
+function staticDirectRegExpCompileSyntaxCandidate(
+  patternArg: ts.Expression | undefined,
+  flagsArg: ts.Expression | undefined,
+): StaticDirectRegExpCompileSyntaxCandidate | null {
+  const pattern = staticDirectRegExpCompileOperand(patternArg);
+  const flags = staticDirectRegExpCompileOperand(flagsArg);
+  if (pattern === null || flags === null) return null;
+  return { pattern: pattern ?? "", flags: flags ?? "" };
 }
 
 /**
