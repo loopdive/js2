@@ -8799,6 +8799,88 @@ the partition stands as proposed.
   `test:equivalence:gate` 0 (22 failing / 1720 passing / 22 known — no new
   regressions).
 
+## Handoff — 2026-09-24, round 3 closed (this lane: B/C/D/E/G + claimed A)
+
+Round 3 ran 2026-09-23 09:40 → 2026-09-24 06:00 UTC on
+`claude/es2015-test262-plan-54tooh`. Every slice was implemented by an Opus
+subagent from a brief, measured by its owner on a source-clean base under
+`JS2WASM_EVAL_ENGINE=quickjs --standalone --isolate`, controlled on both
+targets, merged by the coordinator with the full gate chain, and landed through
+the merge queue with a dedicated shepherd. Twelve slices merged, zero
+pass→non-pass in every owner control.
+
+### Merged this round
+
+| slice | PR | manifest delta (standalone) | notes |
+| --- | --- | --- | --- |
+| B5 / B5b | #6038 | B 0 → 55 (residual 112) | generic `@@split` / `@@replace` |
+| C4 | #6038 | `dflt` 21 → 31; +27 across 464 reaching rows | tuple-struct patterns past the width |
+| E5 | #6040 | E 39 → 42; +4 in the 117-row control | `%TypedArray%.from/of` as values, mapfn order |
+| G2 | #6042 | G 30 → 31; +7 control | drive admits defaults/nesting; 21 Iterator-helper rows out of scope |
+| B6 | #6043 | B 90 → 102 | two-slot `lastIndex`, `ToString(Symbol)`, split step order |
+| D2b | #6048 | D 47 → 61; all 729 Promise rows 421 → 435 | spec-order combinator drive + IteratorClose (H1 closed) |
+| G3 | #6050 | G 31 → 35; +4 control | struct iterables in array assignment; any-value element reads |
+| A3 | #6055 | A 94 → 100; GeneratorFunction rows 6 → 13; +3 C4 residuals | `%GeneratorFunction%` reified, native generator methods |
+| E6 | #6058 | E 42 → 56 | `Reflect.set` receiver step, HOF detach clones, fill/copyWithin/join |
+| A4 | #6065 | A 100 → 152 | `yield` inside patterns / for-of heads linearised |
+| B7 | #6072 | B 102 → 116; +7 host | `RegExp(obj)`, flag-getter slot widening, `compile` ToString |
+| E7 | #6075 | E 56 → 61 | static views in generic slots, `toString` detach, callable ctor arg |
+
+Manifest rows gained this round: **+202** standalone (B +116, C +10, D +14,
+E +22, G +5, A +58, minus overlaps counted once), plus the out-of-manifest
+gains each entry lists. Authoritative census after the queue lands #6075 is
+the next owner's first job (see "Next dispatch").
+
+### Process facts worth keeping
+
+- **Corpus controls caught two real regressions before merge** — E7's
+  element-wise `toLocaleString` (4 rows, the standalone
+  `Number.prototype.toLocaleString` stub throws) and G3's first-leak-only fix
+  (`Array.prototype.Symbol.iterator`). Both were dropped or completed before
+  commit. A change to a generic ladder (`__extern_*`, boxing, element reads)
+  needs the compile-all + verdicts-on-changed-bytes control, not a grep-scoped
+  one; B7 found 5 changed rows that no text grep would have selected.
+- **Two container restarts and one disk-full stall.** Worktrees survive; agents
+  do not. Resuming from a killed agent's worktree (copy the edited files and
+  `.tmp/` into a fresh worktree on current main, re-run the controls) worked
+  twice (B6, E7). The box has a fixed writable allowance: stale vitest SSR
+  caches under `/tmp/<id>/ssr` older than 90 min with no open files are the
+  first thing to reclaim (~6 GB on 2026-09-24 00:30).
+- **A push while the PR is enqueued is rejected (GH006)** — hold the next
+  slice locally until the merge event, then fast-forward and push it as a new
+  PR. Slices never had to wait more than ~40 min.
+- Pin suites that run test262 rows need `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`
+  on a loaded box (B7); the `onTaskUpdate` worker-timeout with all tests
+  passing is box contention, not a failure.
+
+### Residual levers, this lane's clusters (rows-per-fix order)
+
+| cluster | lever | rows | owner shape |
+| --- | --- | ---: | --- |
+| E | real standalone `Number.prototype.toLocaleString` body, then re-land E7's dropped helper (`.tmp/e7/dropped-*.ts` in worktree `agent-a13c15f27e7994905`) | 7 + 3 `valueOf` | E8, Opus high |
+| B | dynamic pattern compiler grammar (`a+b`, `\d`, character classes at run time) | 9 (+ `species-ctor-ctor-non-obj`) | B8, Opus high |
+| A | computed keys from `yield` in object/class literals; `yield*` in a for-of body (A2 bail 4) | 9 + 4 | A5, Opus high |
+| D | `class X extends Promise` / `class BadPromise {}` receivers: `Construct(C, «executor»)` for a compiled class (#5197 G9/G10) | 14 CE | D3, Opus max — three separate causes per D2b |
+| E | `internals/Set` ×5 (object identity #2358; `Object.create(ta)` non-plain proto = `$Object.$proto` field-type change) | 5 | cross-cluster, needs a value-rep decision |
+| G | for-of step-loop protocol (`next` cached once, non-object result TypeError, throwing index getter); `[a] = {x:1}` must throw; `for-of/map.js` element-type widening | 3 + 1 + 1 | G4, Opus high |
+| G/C | generic boxing into a union-typed variable wraps a number as a string (#1888) | many; global fix measured −788 | needs a design, not a slice |
+| B | `invoke-builtin-*` (reassigned `RegExp.prototype[@@match]` not seen by `String.prototype.match`), `indexOf` order, `exec/*-lastindex-access` typing, `g-match-empty-*` captured getter | 3 + 2 + 2 + 2 | B8 tail |
+| A | `GeneratorFunction` from a source string (QuickJS provider `__runtime_new_function` has no generator mode), `has-instance`, `class extends GeneratorFunction` | 14 + 1 + 5 | eval-provider work, not lowering |
+| all | cross-realm (`$262.createRealm`) rows | ~130 | wont-fix issue per definition of done, still to file |
+
+### Next dispatch (in order)
+
+1. Land #6075, fast-forward, run the authoritative standalone census on the
+   ES2015 manifest set (`plan/agent-context/6651/*.txt`, `--isolate`, quickjs)
+   and record it under `## Census`; bank the ES2015 floor with
+   `check:edition-ratchet:update` only from a full run.
+2. E8, A5, B8, G4 in parallel (two at a time under the load cap), then D3.
+3. File the wont-fix issue for realm/eval/proposal rows so the definition of
+   done can be evaluated as `measurable == pass`.
+4. Re-run the round-2/3 merged tree against the other lane's F/H/I entries to
+   confirm no cross-cluster overlap before round 4 (the lane partition of
+   2026-09-22 still stands; cluster A is now this lane's by claim, A3/A4).
+
 ## Manifest generator note
 
 Partition rule applied to the 1,320 non-pass rows, first match wins:
