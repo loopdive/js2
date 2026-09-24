@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10904,
-    "fail": 708,
+    "pass": 10919,
+    "fail": 693,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2357,
-        "fail": 89,
+        "pass": 2360,
+        "fail": 86,
         "ce": 40,
         "skip": 0,
         "total": 2486,
@@ -75,8 +75,8 @@
       },
       {
         "name": "default-parameters",
-        "pass": 1545,
-        "fail": 7,
+        "pass": 1549,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 1552,
@@ -84,17 +84,17 @@
       },
       {
         "name": "TypedArray",
-        "pass": 977,
-        "fail": 73,
+        "pass": 982,
+        "fail": 68,
         "ce": 0,
         "skip": 0,
         "total": 1050,
-        "pct": 93
+        "pct": 94
       },
       {
         "name": "Symbol.iterator",
-        "pass": 762,
-        "fail": 33,
+        "pass": 764,
+        "fail": 31,
         "ce": 0,
         "skip": 0,
         "total": 795,
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1022,
-    "fail": 502,
+    "pass": 1025,
+    "fail": 499,
     "ce": 493,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 614,
-        "fail": 356,
+        "pass": 617,
+        "fail": 353,
         "ce": 78,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 401,
-        "fail": 232,
+        "pass": 404,
+        "fail": 229,
         "ce": 75,
         "skip": 0,
         "total": 708,
@@ -1651,12 +1651,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 10,
-        "fail": 36,
+        "pass": 12,
+        "fail": 34,
         "ce": 5,
         "skip": 0,
         "total": 51,
-        "pct": 20
+        "pct": 24
       },
       {
         "name": "Reflect",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4192,
-    "fail": 1207,
+    "pass": 4197,
+    "fail": 1202,
     "ce": 393,
     "skip": 0,
     "total": 5792,
@@ -2276,12 +2276,12 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 112,
-        "fail": 291,
+        "pass": 116,
+        "fail": 287,
         "ce": 29,
         "skip": 0,
         "total": 432,
-        "pct": 26
+        "pct": 27
       },
       {
         "name": "class-static-fields-private",
@@ -2348,12 +2348,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 58,
-        "fail": 69,
+        "pass": 62,
+        "fail": 65,
         "ce": 4,
         "skip": 0,
         "total": 131,
-        "pct": 44
+        "pct": 47
       },
       {
         "name": "object-rest",
@@ -2366,12 +2366,12 @@
       },
       {
         "name": "class-static-block",
-        "pass": 46,
-        "fail": 7,
+        "pass": 47,
+        "fail": 6,
         "ce": 10,
         "skip": 0,
         "total": 63,
-        "pct": 73
+        "pct": 75
       },
       {
         "name": "Object.hasOwn",

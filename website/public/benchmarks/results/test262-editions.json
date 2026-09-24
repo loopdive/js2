@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10159,
-    "fail": 1527,
+    "pass": 10173,
+    "fail": 1513,
     "ce": 18,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2131,
-        "fail": 355,
+        "pass": 2137,
+        "fail": 349,
         "ce": 0,
         "skip": 0,
         "total": 2486,
@@ -75,8 +75,8 @@
       },
       {
         "name": "default-parameters",
-        "pass": 1483,
-        "fail": 69,
+        "pass": 1487,
+        "fail": 65,
         "ce": 0,
         "skip": 0,
         "total": 1552,
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3711,
-    "fail": 1108,
-    "ce": 4,
+    "fail": 1109,
+    "ce": 3,
     "skip": 0,
     "total": 4823,
     "pct": 77,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2769,
-        "fail": 1038,
-        "ce": 3,
+        "fail": 1039,
+        "ce": 2,
         "skip": 0,
         "total": 3810,
         "pct": 73
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4418,
-    "fail": 1323,
+    "pass": 4419,
+    "fail": 1322,
     "ce": 51,
     "skip": 0,
     "total": 5792,
@@ -2366,12 +2366,12 @@
       },
       {
         "name": "class-static-block",
-        "pass": 55,
-        "fail": 8,
+        "pass": 56,
+        "fail": 7,
         "ce": 0,
         "skip": 0,
         "total": 63,
-        "pct": 87
+        "pct": 89
       },
       {
         "name": "Object.hasOwn",

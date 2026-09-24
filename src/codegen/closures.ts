@@ -225,6 +225,7 @@ import {
   widenClosureReturnForDirectEval as widenEvalReturn,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
+import { isStaticTaViewBinding } from "./ta-static-view-mop.js"; // (#6651 E7)
 import {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -346,7 +347,10 @@ function closureReturnsExternrefBinding(
     ) {
       current = current.expression;
     }
-    return ts.isIdentifier(current) && ctx.externrefAccessorVars.has(current.text);
+    // (#6651 E7) …or a static `$__ta_view` binding, which no vec return type holds.
+    return (
+      ts.isIdentifier(current) && (ctx.externrefAccessorVars.has(current.text) || isStaticTaViewBinding(ctx, current))
+    );
   };
 
   const body = fn.body;
