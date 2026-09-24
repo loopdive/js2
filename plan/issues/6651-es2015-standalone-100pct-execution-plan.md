@@ -552,6 +552,30 @@ loc-budget-allow:
   # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
   # gate it relaxes — the candidate gate is the single source of truth three
   # emit sites and the host-import scan consult, so it cannot move).
+  - src/codegen/property-access.ts
+# 2026-09-23 — cluster H slice H5 (the SYMBOL brand on a wrapper's
+# `[[PrimitiveValue]]` slot). `proto-index-store.ts` +22 inside
+# `fillBrandOffBody`'s wrapper-classification arm: one `SYMBOL_OFF` constant and
+# a six-instruction `ref.test $Symbol → ret(SYMBOL_OFF)` row, the rest comment.
+# The row cannot move to a subsystem module: it is one more rung of an EXISTING
+# in-place `ref.test` ladder over the box type in the slot (`$AnyString` →
+# String, `$__box_number`/i31 → Number, `$__box_boolean` → Boolean), and the
+# whole point of the change is that a reader of those three rows sees the fourth
+# beside them. Extracting it would put the Symbol answer somewhere the other
+# three are not, which is exactly the split that made the Symbol wrapper answer
+# the Object brand in the first place.
+#
+# What the growth buys, measured and stated plainly: it makes
+# `Object(Symbol.toPrimitive)[Symbol.toPrimitive]()` and
+# `Object(sym).toString === Symbol.prototype.toString` correct on standalone
+# (4 of 11 cases in `tests/issue-6651-h5-symbol-brand.test.ts` are RED on the
+# base tree), and it moves ZERO test262 rows — an 865-row per-row set diff over
+# manifests H and I plus a 561-row wrapper control found no gain and no loss.
+# The reason is recorded in the H5 receipt below: every corpus row that would
+# exercise it fails the #2175 proto-member-dirty gate. Arming that gate from
+# `Object(sym)` was measured at +57,125 bytes on the smallest program that shows
+# the defect, which is why this slice does not do it.
+  - src/codegen/proto-index-store.ts
 func-budget-allow:
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
@@ -5548,6 +5572,145 @@ observed. It is not a regression: the base answered `false` for that probe too
   `array-inline-return`/`reflect-api` — and shard 4 OOMs on both trees, so that
   ~28-file slice is unmeasured here and is left to CI's sharded
   `equivalence-gate`.
+### 2026-09-24 — Cluster H, slice H5: the SYMBOL brand on a wrapper's `[[PrimitiveValue]]` slot
+
+**Headline: the brand row is real and correct, and it moves ZERO test262 rows.**
+It is blocked one layer down by the #2175 proto-member-dirty gate, and buying
+past that gate was measured at **+57,125 bytes per module** — far more than the
+one row it would move. That question is now closed with numbers rather than
+left open.
+
+- **Branch** `issue-6651-h5-symbol-brand`, base `claude/project-thread-yhj9pp`
+  (`dda62641`, which carries I4). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a5f1e95d4176fdae1`.
+
+- **Host-lane probe FIRST, before any source edit** (`.tmp/6651/cand-host.log`,
+  DEFAULT target, 9 rows, 6 pass / 3 fail). The three host FAILURES are shared
+  front-end work and were dropped from scope on that evidence — including both
+  "nearby residuals" the dispatch named:
+  `language/computed-property-names/basics/symbol.js` (host: `object[sym2]` reads
+  `undefined`) and `language/arguments-object/{mapped,unmapped}/Symbol.iterator.js`
+  (host: "Symbol(Symbol.iterator) should be an own property"). Do not re-open
+  them from this cluster; they are not standalone lowering.
+
+- **Row-level result**, `--standalone --isolate`,
+  `JS2WASM_ROW_TIMEOUT_MS=420000`, scored by per-row set diff
+  (`.tmp/6651/rowdiff.mjs`), never by counts. **Zero `error` rows in either
+  sweep**, so all 865 rows are measured rather than skipped.
+
+  | manifest | rows | before (`H5-base.log`) | after (`H5-after2.log`) | gained | lost | changed |
+  | --- | ---: | --- | --- | ---: | ---: | ---: |
+  | `H-builtins-misc.txt` | 217 | 12 pass / 199 fail / 6 CE | 12 / 199 / 6 | **0** | 0 | 0 |
+  | `I-language-misc.txt` | 114 | 12 pass / 91 fail / 11 CE | 12 / 91 / 11 | **0** | 0 | 0 |
+  | control (below) | 561 | 497 pass / 60 fail / 4 CE | 497 / 60 / 4 | **0** | 0 | 0 |
+
+- **Control** (`.tmp/6651/H5-control.txt`, 561 rows) — this ladder is on the read
+  path of every wrapper in the corpus, so the control is the point of the slice:
+  every `built-ins/Symbol/` (98), every `built-ins/Number/prototype/` (168),
+  every `built-ins/Boolean/prototype/` (26), and a deterministic **every-fourth**
+  slice of `built-ins/String/prototype/` (269 of 1,073). **What was bounded and
+  why:** String/prototype alone is 1,073 rows and would have roughly doubled a
+  sweep that already ran ~2 h per side on a shared 4-core box with another lane
+  active; the `NR%4==1` slice is spread across every method directory rather
+  than truncated, so no method family is unrepresented. The other three
+  neighbourhoods are complete.
+
+- **Host lane byte-identity.** Ten representative programs compiled on the
+  DEFAULT target before and after, sha256 per binary
+  (`.tmp/6651/hash-base.txt` vs `hash-after2.txt`, script `.tmp/6651/h5hash.mts`):
+  **all ten identical**, including the String/Number/Boolean/Symbol wrapper
+  reads, the proto-reflection program and the symbol-keyed read. The arm lives in
+  a `ctx.standalone`-only fill, so this is a check of that gating, not an
+  assertion about it.
+
+- **What landed.** One row in `fillBrandOffBody`'s wrapper-classification ladder
+  (`src/codegen/proto-index-store.ts`): a `[[PrimitiveValue]]` slot holding the
+  `$Symbol` carrier (#2866) now answers `SYMBOL_OFF` instead of falling through
+  to the Object default. §10.4.3 — a wrapper's implicit chain starts at its OWN
+  prototype — is the same rule the three existing rows state; Symbol was simply
+  missing from the list.
+
+  **The lever is `__protoidx_brand_off`, NOT the `wrapperClassify` twin that I4's
+  residual named first.** Measured three ways, so this correction is worth
+  recording: `__protoidx_brand_off` classifies the RECEIVER and is key-AGNOSTIC
+  (`__protoidx_get_k` hands the key straight to `__obj_find`), so it is the only
+  one of the two that can serve a SYMBOL key — and symbol-keyed reads carry a
+  boxed `$Symbol` externref, never a string, so `wrapperClassify`'s string-key
+  ladder cannot look at `[Symbol.toPrimitive]` at all. A three-way A/B on the
+  identity probe (`.tmp/6651/probe5.mts`) showed the `brand_off` hunk ALONE
+  produces every gain, including the §21.1.5 VALUE-identity read
+  `Object(sym).toString === Symbol.prototype.toString` that `wrapperClassify`
+  exists for — the companion consult answers it first.
+
+  **So the `wrapperClassify` hunk was written, measured, and then DROPPED.** It
+  changed no answer in any of six constructed shapes plus all 865 corpus rows,
+  while costing **+112…+157 bytes** in every proto-member-dirty standalone
+  module (`.tmp/6651/sahash-swept.txt` vs `sahash-shipped.txt`). The 865-row
+  sweep was then **re-run on the tree that actually ships** rather than inherited
+  from the two-hunk tree — the two trees are NOT byte-identical, so transferring
+  the number would have been attribution, not measurement.
+
+- **Why zero rows moved, and what it would cost to move them.** Both ladders live
+  inside the #2175 proto-index store, which a module materializes only when it is
+  **proto-member dirty** — when a builtin `.prototype` reaches the dynamic reader
+  as a VALUE. `built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-obj-symbol-wrapper.js`
+  never names a builtin prototype, so neither the store nor the Symbol companion
+  seeder is armed and the new row is inert there. Measured on the smallest
+  program that shows the defect (`.tmp/6651/probe4.mts`):
+
+  | program | store armed | bytes |
+  | --- | --- | ---: |
+  | `Object(Symbol.toPrimitive)[Symbol.toPrimitive]()` alone | no | 139,254 |
+  | …plus one `Symbol.prototype` VALUE read | yes | 196,379 |
+
+  Arming the store from `Object(sym)` therefore costs **+57,125 bytes (+41 %)**
+  on every module that builds a Symbol wrapper, to move one test262 row. Not
+  done, deliberately. A user-class prototype write (`T.prototype.toString = …`)
+  and an `Object.prototype.toString` VALUE read were both checked and neither
+  arms it, so there is no cheap incidental trigger either.
+
+- **What the change DOES buy** (unit-tested, not corpus-visible):
+  `tests/issue-6651-h5-symbol-brand.test.ts`, 11 cases, all green. **4 of the 7
+  non-control cases are RED on this slice's base**, verified by a file-copy A/B
+  (`.tmp/6651/h5test-base.log`): the symbol-keyed `@@toPrimitive` read, its call,
+  the inline spelling test262 uses, and the transferred `.call(wrapper)` form.
+  The `toString`/`valueOf` CALL cases pass on base already (a different lowering
+  serves them) and are kept as controls. One case is a deliberate **LOCK** on the
+  dirty gate above: a module naming no builtin prototype still answers
+  `undefined`, and that is the gate, not a regression.
+
+- **Residuals, measured not assumed.**
+  - `built-ins/Symbol/prototype/description/wrapper.js` (host PASS, in no
+    manifest) does **not** move, and I4's note that the brand row would also
+    reach it is **incorrect** — checked, not assumed. `description` is not a
+    member of the Symbol glue at all: `SYMBOL_PROTO_METHODS` in
+    `src/codegen/array-object-proto.ts` (~L418) is `["@@3", "toString",
+    "valueOf"]`, so the seeder installs no `description` companion entry for the
+    consult to find. Closing it needs `description` added there as a **getter**
+    (`makeGlue`'s `memberKind` is a flat `() => "method"`; `makeGlueWithGetters`
+    is the existing shape) plus a `thisSymbolValue(this).[[Description]]` body
+    beside `emitSymbolProtoValueOfBody` in `src/codegen/symbol-proto-valueof.ts`.
+    That also changes `Symbol.prototype`'s own-property SET, so it needs its own
+    `built-ins/Symbol/prototype/description/` sweep — a separate slice, not a
+    ride-along, for the same reason this one was.
+  - `built-ins/Symbol/prototype/toString/toString.js` — out of scope by the
+    dispatch, unchanged, and confirmed still failing for the stated reason (a
+    *primitive* symbol receiver, a borrowed-method gap). Adding a bare-`$Symbol`
+    `testArm` to the same ladder would be three more lines and might reach it;
+    NOT attempted here, and it would inherit the same dirty-gate blocker.
+
+- **Gates** (run bare, never piped): `check-loc-budget` OK **after** a new dated
+  grant for `src/codegen/proto-index-store.ts` (+22, rationale at the grant),
+  also re-run with `LOC_GATE_BASE=origin/main` (OK); `check-func-budget` OK on
+  both bases; `check-coercion-sites` OK; `check:oracle-ratchet` OK
+  (`getTypeAtLocation` +0, `ctx.checker` +0); `check:dead-exports` exit 0;
+  `npm run -s typecheck` exit 0; `biome lint --diagnostic-level=error` clean.
+
+- **Not run:** the equivalence suite (it OOMs whole in this container; I4's
+  eight-shard workaround was not repeated for a one-arm standalone-only fill
+  that is byte-identical on the host lane and zero-delta on 865 standalone
+  rows). CI's `equivalence-gate` covers it.
+
 ### 2026-09-23 — Cluster B (RegExp `@@` protocol, standalone), slice B5: `RegExp.prototype[@@split]` (§22.2.6.14)
 
 - **Base** `claude/es2015-test262-plan-54tooh` @ `1b24a5e3a2` (origin/main + E4,
