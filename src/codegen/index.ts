@@ -683,6 +683,7 @@ import {
   refineNumericLocalsWithCallReturns,
 } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import type { NumericPropertyAnalysisHost } from "./numeric-property-analysis.js";
+import { dynamicReadCrossesStandaloneLink } from "./dynamic-read-narrowing.js"; // (#5383)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -5314,6 +5315,7 @@ export function generateModule(
       fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
       excludeNames: booleanExclusions.properties,
       excludeFunctionNames: retUnboxNumericFilterEnabled() ? booleanExclusions.functions : undefined,
+      openWorldPropertyReads: dynamicReadCrossesStandaloneLink(ctx), // (#5383)
     };
     applyNumericPropertyAnalysis(ctx, numericAnalysisHost, [ast.sourceFile]);
     priorNumericFunctions = ctx.numericFunctionNames;
@@ -10859,6 +10861,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         oracle: ctx.oracle,
         excludeNames: ctx.booleanPropertyNames,
         excludeFunctionNames: retUnboxNumericFilterEnabled() ? ctx.booleanFunctionNames : undefined,
+        openWorldPropertyReads: dynamicReadCrossesStandaloneLink(ctx), // (#5383)
       };
       const localVerdicts = profilePhase("numeric-local-analysis", () =>
         analyzeNumericPropertyNames(linkedNumericHost!, multiAst.sourceFiles),

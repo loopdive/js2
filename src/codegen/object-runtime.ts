@@ -260,6 +260,7 @@ import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enu
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   emitStandaloneLinkBoundaryTerminals,
+  peerNullMethodResultInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
 } from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
@@ -6773,6 +6774,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   blockType: { kind: "empty" },
                   then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
                 },
+                // (#5383) …or a peer method that returned `null` (see helper).
+                ...(boundaryObjectCallIdx === undefined
+                  ? peerNullMethodResultInstrs(ctx, peerMemberGetIdx, peerGetPrototypeOfIdx, boundaryCallResultLocal)
+                  : []),
               ] satisfies Instr[])
             : []),
           ...(reverseMethodCallIdx !== undefined && boundaryCallResultLocal !== undefined
@@ -10184,6 +10189,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  const boxBigIntIdx = ctx.funcMap.get("__box_bigint"); // (#5383) a bigint-branded i64 slot boxes as a BigInt
   const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
   const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
@@ -10241,6 +10247,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
         field.type.kind === "ref" ||
         field.type.kind === "ref_null" ||
         (field.type.kind === "f64" && boxNumberIdx !== undefined) ||
+        (field.type.kind === "i64" && (field.type.bigint ? boxBigIntIdx : boxNumberIdx) !== undefined) ||
         (field.type.kind === "i32" &&
           (field.jsBoolean || field.type.boolean
             ? boxBooleanIdx !== undefined
@@ -10446,6 +10453,9 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       if (entry.jsBoolean) read.push({ op: "call", funcIdx: boxBooleanIdx! });
       else if (entry.fieldType.symbol === true) read.push({ op: "call", funcIdx: boxSymbolIdx! });
       else read.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx! });
+    } else if (entry.fieldType.kind === "i64") {
+      if (entry.fieldType.bigint) read.push({ op: "call", funcIdx: boxBigIntIdx! });
+      else read.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx! });
     } else if (entry.fieldType.kind !== "externref" && entry.fieldType.kind !== "ref_extern") {
       read.push({ op: "extern.convert_any" });
     }

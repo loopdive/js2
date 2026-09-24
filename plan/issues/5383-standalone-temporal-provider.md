@@ -11,6 +11,46 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-24 (S75 lane C, any op bigint) — binary-ops.ts +8: the mixed
+  #   BigInt branch of `compileBinaryExpression` asks the host-free twin of
+  #   the #3481 host arm (`emitStandaloneAnyBigIntBinary`, new file
+  #   bigint-any-operand.ts, which owns every gate) before its static throw.
+  - src/codegen/binary-ops.ts
+  # 2026-09-24 (S75 lane C, string predicates) — string-ops.ts +7: the
+  #   `any`-receiver guarded native-string dispatch returns its
+  #   includes/startsWith/endsWith i32 with the boolean brand, so `coerceType`
+  #   boxes a boolean, not the number 0/1 (4 Temporal monthCode rows).
+  - src/codegen/string-ops.ts
+  # 2026-09-24 (S75 lane C, null-returning peer method) — object-runtime.ts +4:
+  #   the forward peer arm of `__extern_method_call` splices
+  #   `peerNullMethodResultInstrs` (standalone-link-boundary.ts), so a provider
+  #   class method that returns null is answered, not re-dispatched locally.
+  - src/codegen/object-runtime.ts
+  # 2026-09-24 (S75 lane C, use before first write) — object-shape-widening.ts
+  #   +50: `markUseBeforeFirstPropertyWrite` poisons the closed-struct widening
+  #   of a `var o = {}` referenced before its first property write (the struct
+  #   carries the later field from allocation, so `o.minute` read 0 and
+  #   `"minute" in o` held on an empty bag — 9 Temporal property-bag rows).
+  #   Helper + doc; one call beside the other standalone poison scans.
+  - src/codegen/declarations/object-shape-widening.ts
+  # 2026-09-23 (S75 lane C, link reads) — a module on a standalone wasm↔wasm
+  #   link is not a closed world: a property read may land on the PEER's
+  #   object. numeric-property-analysis.ts +13: the `openWorldPropertyReads`
+  #   host flag (documented) and its `closedRead` guard on the three name-keyed
+  #   read arms. index.ts +3: both analysis hosts set it, plus the import.
+  #   property-access-dispatch.ts +3: the Phase-3 vote keeps the externref
+  #   carrier on a link.
+  - src/codegen/numeric-property-analysis.ts
+  - src/codegen/index.ts
+  - src/codegen/property-access-dispatch.ts
+  # 2026-09-23 (S75 lane C, bigint slots) — a bigint-branded i64 struct slot
+  #   read through a dynamic receiver boxed as a NUMBER. object-runtime.ts +5:
+  #   the closed-struct `__extern_get` ladder admits i64 slots and boxes them by
+  #   brand (they were skipped, so `o[k]` answered undefined). type-coercion.ts
+  #   +1: `coercionInstrs` hands the bigint helper to `coercionPlan`, which
+  #   owns the new row, so the member-get dispatcher's field box is brand-aware.
+  - src/codegen/object-runtime.ts
+  - src/codegen/type-coercion.ts
   # 2026-09-18 (S46, #6632) — `compileTypeofExpression`'s ref/ref_null operand
   #   arm now routes through `coerceType` (like the f64/undefSentinel arm
   #   immediately above it, #5378) instead of a bare `extern.convert_any`, so a
@@ -192,6 +232,17 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-24 (S75 lane C, any op bigint) — +7: the one delegating call to
+  #   `emitStandaloneAnyBigIntBinary`; its gates live in the new module.
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  # 2026-09-24 (S75 lane C, use before first write) — +1 line each: the one
+  #   `markUseBeforeFirstPropertyWrite` call inside the nested scan.
+  - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements
+  # 2026-09-23 (S75 lane C) — `fillClosedStructExternGetArms` +5: the i64
+  #   slot admission and its brand-split box, inline in the per-entry ladder
+  #   builder where every other slot kind's box already lives.
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
   # 2026-09-18 (S46, #6632) — `compileTypeofExpression` +14: the ref/ref_null
   #   operand arm now calls `coerceType` (routing through the #4741
   #   $AnyString-null resurrection) instead of a bare `extern.convert_any`,
