@@ -164,6 +164,19 @@ function emitMemoizedNestedFnClosure(
     (fctx.nestedFnClosureMemos ??= new Map()).set(funcName, memoLocal);
   }
 
+  const isSelfRef = fctx.name === funcName;
+  // An identity-observed FunctionDeclaration has one stable lexical value,
+  // materialized at its first dynamic use. A sibling closure that captures
+  // that binding is itself such a use: reading the preallocated externref
+  // local directly would otherwise snapshot its initial null value. Fill the
+  // bindings BEFORE the guard, straight-line with this site: inside the
+  // then-arm, each capture's own build nested the same fill for its captures,
+  // so one reference emitted a copy per dependency path (#1058 — the checker's
+  // mutually-referencing inner functions ran out of memory on this).
+  if (!isSelfRef) {
+    for (const cap of nestedCaptures) materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
+  }
+
   fctx.body.push({ op: "local.get", index: memoLocal });
   fctx.body.push({ op: "ref.is_null" });
 
@@ -182,7 +195,6 @@ function emitMemoizedNestedFnClosure(
   // dereference `cap.outerLocalIdx`, which points into a different
   // (outer) scope and yields garbage / null when reused inside the
   // current lifted body.
-  const isSelfRef = fctx.name === funcName;
   for (let i = 0; i < nestedCaptures.length; i++) {
     const cap = nestedCaptures[i]!;
     if (isSelfRef) {
@@ -190,13 +202,6 @@ function emitMemoizedNestedFnClosure(
       fctx.body.push({ op: "local.get", index: i });
       continue;
     }
-    // An identity-observed FunctionDeclaration has one stable lexical value,
-    // materialized at its first dynamic use. A sibling closure that captures
-    // that binding is itself such a use: reading the preallocated externref
-    // local directly would otherwise snapshot its initial null value. Keep the
-    // lazy timing (important when the function captures later initializers),
-    // but fill the binding immediately before this closure copies it.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     // (#2029 family A) Cross-fctx capture sourcing. `cap.outerLocalIdx` is a
     // slot in the function that DECLARED the nested fn; when this
     // materialization runs inside a DIFFERENT function (an object-literal
@@ -705,6 +710,21 @@ export function emitFuncRefAsClosure(
 }
 
 /**
+ * (#1058) Where each binding was last published in a straight-line body: the
+ * store instruction and its index. A re-emit is redundant while that store is
+ * still in place earlier in the same body array, because it then runs before
+ * any later instruction of the array. A rollback that truncates the body, or
+ * an insert before the store, moves or replaces the recorded instruction, so
+ * the check fails and the value is published again.
+ */
+const publishedBindings = new WeakMap<Instr[], Map<string, { index: number; instr: Instr }>>();
+
+function publishedEarlierInBody(body: Instr[], name: string): boolean {
+  const mark = publishedBindings.get(body)?.get(name);
+  return mark !== undefined && body[mark.index] === mark.instr;
+}
+
+/**
  * Materialize the stable lexical value of a hoisted FunctionDeclaration at
  * its first dynamic value use. Returns true when the binding is already ready
  * or was filled by this call.
@@ -720,7 +740,8 @@ export function materializeHoistedFunctionValueBinding(
     !fctx.hoistedFunctionValueBindings?.has(name) ||
     fctx.liftedCaptureNames?.has(name) ||
     (alreadyMaterialized && !reemitForImmutableCapture) ||
-    fctx.materializingHoistedFunctionValueBindings?.has(name)
+    fctx.materializingHoistedFunctionValueBindings?.has(name) ||
+    (alreadyMaterialized && publishedEarlierInBody(fctx.body, name))
   ) {
     return alreadyMaterialized || fctx.materializingHoistedFunctionValueBindings?.has(name) || false;
   }
@@ -785,5 +806,8 @@ export function materializeHoistedFunctionValueBinding(
   }
   fctx.materializingHoistedFunctionValueBindings.delete(name);
   (fctx.materializedHoistedFunctionValueBindings ??= new Set()).add(name);
+  let published = publishedBindings.get(fctx.body);
+  if (!published) publishedBindings.set(fctx.body, (published = new Map()));
+  published.set(name, { index: fctx.body.length - 1, instr: fctx.body[fctx.body.length - 1]! });
   return true;
 }

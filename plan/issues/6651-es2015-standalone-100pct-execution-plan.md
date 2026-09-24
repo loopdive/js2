@@ -567,7 +567,6 @@ loc-budget-allow:
   # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
   # gate it relaxes — the candidate gate is the single source of truth three
   # emit sites and the host-import scan consult, so it cannot move).
-  - src/codegen/property-access.ts
 # 2026-09-23 — cluster H slice H5 (the SYMBOL brand on a wrapper's
 # `[[PrimitiveValue]]` slot). `proto-index-store.ts` +22 inside
 # `fillBrandOffBody`'s wrapper-classification arm: one `SYMBOL_OFF` constant and
@@ -601,6 +600,17 @@ loc-budget-allow:
   # `compileState` / `emitUnwindWalk`, the carrier override in
   # `generatorElemValType`, and the binary / template roots of the #680
   # continuation (`lowerSequencedContinuation`, which the comma arm now shares).
+  # 2026-09-24 — cluster B, slice B7. `regexp-standalone.ts` +9: the two-line
+  # hand-off in `compileStandaloneRegExpConstructor` to the new leaf
+  # `src/codegen/regexp-ctor-regexp-like.ts` (§22.2.4.1 over an object pattern),
+  # its imports, and the spec-ToString provider in `emitRegExpCompileInPlace`
+  # (Annex B compile's ToString must reject a Symbol; the call sits where the
+  # recompile resolves its ToString). `declarations/object-shape-widening.ts`
+  # +18: `sentinelSlotTakesPrimitive` and its use at the ONE place the empty-
+  # object widening pre-pass decides a later write's slot type (#3669's arm) —
+  # a slot seeded by `o.p = undefined` kept its i32 sentinel under a later
+  # string write.
+  - src/codegen/declarations/object-shape-widening.ts
 func-budget-allow:
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
@@ -7255,6 +7265,163 @@ Half-done: nothing is half-landed. The `for-of` pattern head refuses a
 runtime throw from a pattern-head for-of BODY statement does not close the loop
 iterator (the same limitation A2's `for-of-step` has — only abrupt resumes and
 throws from the head's own ops close it); neither shape occurs in this bucket.
+
+### 2026-09-24 — Cluster B, slice B7: `RegExp(pattern)` over an object, Annex B `compile`'s ToString, a sentinel-seeded expando slot
+
+- **Branch** `b7` (local, not pushed), base `origin/main` @ `9950e34f30`. The
+  slice was started by a previous owner killed by a container restart before any
+  source edit; its draft module (`.tmp/b7/regexp-ctor-regexp-like.ts` in the
+  dead worktree, never compiled) was carried over, fixed (three defects below)
+  and measured here.
+- **Engine for every verdict: QuickJS** (artifact `073742801ba7`),
+  `--standalone --isolate`, 50-row chunks in fresh processes, one runner at a
+  time, source sha checked unchanged first→last chunk (`.tmp/b7/*.srcsha.*`).
+  The eval adapter rebuilt by the edited compiler is byte-identical to the base
+  one (`cmp` of `quickjs-eval-adapter-{d4799bda84cfed0d,15b12244c91ac6c3}.wasm`),
+  so the local-cache caveat B6 recorded does not apply to this slice.
+
+#### What landed, per target
+
+1. **§22.2.4.1 over an OBJECT pattern** (new leaf
+   `src/codegen/regexp-ctor-regexp-like.ts`, a two-line hand-off at the top of
+   `compileStandaloneRegExpConstructor`). An object-typed pattern used to take
+   the string lane — `ToString(obj)`, the pattern `[object Object]`. It now runs
+   the spec's steps at run time: IsRegExp via `Get(pattern, @@match)` (getter
+   runs; `undefined` ⇒ the `$NativeRegExp` brand test), the CALL spelling's
+   `Get(pattern,"constructor")` SameValue `%RegExp%` short-circuit (returns the
+   pattern itself — so the call spelling answers externref; `new` keeps the
+   struct type), a genuine carrier cloned or recompiled from its source, a
+   regexp-like object's `source` then `flags` read with `Get` (the `flags` read
+   skipped when `flags` is supplied), and RegExpInitialize's `undefined ⇒ ""`
+   else spec ToString. The gate is the oracle fact: `object`, or `class` —
+   **`class` is load-bearing**: a JS expando object (`var obj = {};
+   Object.defineProperty(obj, …)`) gets the variable's own symbol, so its fact is
+   `{kind:"class", name:"obj"}`; with `object` alone 2 of the 7 rows stayed red
+   (`get-flags-err`, `get-source-err`). Defects fixed in the carried draft: an
+   absent `flags` was pushed as `ref.null` (under the #2106 regime that is
+   `null`, not `undefined`); the dynamic compiler was resolved from `funcMap`
+   (it lives in `nativeRegexHelpers`); and its registration flushed late imports
+   with a null `fctx` after this site's own imports were pending, which would
+   leave the site's calls one import stale. `RegExp[@@species]` and every
+   `prototype/*/this-val-regexp-prototype` row already PASS on this base
+   (`.tmp/b7/p/t1.log`, 14/14) — nothing to do there.
+2. **Flag-getter `coercion-*`** — the defect was NOT in the getter (B4 was
+   right). `r.global = undefined` seeds the empty-object widening pre-pass with
+   the i32 "missing-value" sentinel, and #3669's later-write arm deliberately
+   does not widen a sentinel-seeded slot, so `r.global = "string"` stored i32 0
+   (probe `.tmp/b7/p/c1.js`: `String(r.global)` read `"0"`). New
+   `sentinelSlotTakesPrimitive` in `declarations/object-shape-widening.ts`
+   widens such a slot to externref when a later write is a PRIMITIVE; an
+   object-valued later write keeps #3669's carve-out untouched.
+3. **`compile`** — §B.2.4.1 steps 4.a/4.b now use the spec ToString
+   (`__extern_to_string_spec`): a Symbol pattern or flags throws a TypeError
+   instead of compiling its rendered text (`{pattern,flags}-to-string-err`).
+4. **Not attempted**: `String.prototype.*` step orders and
+   `exec/*-lastindex-access` (below).
+
+#### Measurements
+
+| set | rows | before | after | Δ |
+| --- | ---: | ---: | ---: | --- |
+| manifest `B-regexp-protocol.txt`, standalone | 147 | 102 pass / 44 fail / 1 CE (`.tmp/b7/bm-0{0,1,2}.log`) | **116** / 30 / 1 (`.tmp/b7/fm-0{0,1,2}.log`, frozen source) | **+14, 0 pass→non-pass** (every after non-pass row was non-pass before, same status) |
+
+The 14: `from-regexp-like{,-flag-override,-get-ctor-err,-get-flags-err,-get-source-err,-short-circuit}`,
+`call_with_non_regexp_same_constructor` (target 1, 7); `flags/coercion-{global,ignoreCase,multiline,sticky,unicode}`
+(target 2, 5); `compile/{pattern,flags}-to-string-err` (target 3, 2).
+
+#### Controls — zero pass → non-pass
+
+Control universe (`.tmp/b7/ctrl-all.txt`, 2,581 rows): B5/B6's 599-row set
+(`c599`, re-used from the B6 worktree) ∪ every row under
+`{,annexB/}built-ins/RegExp/**` (1,941) ∪ every row whose source says
+`RegExp(` or `.compile(` (480) ∪ every row with a top-level-statement
+`x.p = undefined|null|void 0` (203, the only shape the widening change can
+reach). Method: compile every row on a `git archive` extract of the base
+(`.tmp/basetree`) and on the frozen after tree, primary + strict rerun, and
+compare wasm sha256; verdicts only where bytes changed. The target split
+follows reachability — the ctor lane and `compile` are standalone-only
+(`hasStandaloneRegExpEngine` / `usesNativeRegExpProvider`), the widening
+reaches both targets:
+
+| lane | rows compiled | bytes changed | verdicts on the changed rows, base → after |
+| --- | ---: | ---: | --- |
+| standalone, every control row that mentions `RegExp`/`compile` + the 203 widening candidates (`.tmp/b7/sha-sa`) | 1,391 | 190 (3 are stray `probe-b4/*` files, dropped) | 187 rows: **125 → 141 pass**, 0 pass→non-pass, every other status identical (`.tmp/b7/v{b,a}-00.log`, 200-row in-process chunk) |
+| standalone, the remaining 1,190 control rows (`.tmp/b7/sha-sr`) | 1,190 | 5 | 4 pass / 1 fail → identical (`.tmp/b7/r{b,a}-00.log`) |
+| host, the 203 widening candidates (`.tmp/b7/sha-wh`) | 203 | 10 (3 `probe-b4`) | 7 `flags/coercion-*`: **0 → 7 pass** (`.tmp/b7/h{b,a}-00.log`) |
+
+The +16 standalone are the manifest's 14 plus `flags/coercion-{dotAll,hasIndices}`
+(post-ES2015, outside the manifest). Bytes changed on RegExp rows that never
+construct from an object because the reified `RegExp.prototype.compile`
+closure body now calls the spec ToString; TypedArray/DataView rows changed
+through the widening. The 5 in the second row (`match-indices/*` ×3,
+`@@replace/poisoned-stdlib`, `String.prototype.replaceAll/replaceAll`) mention
+neither `RegExp(` nor `compile` in their own text — a text-grep control would
+have missed them, which is why every control row was compiled. The host lane's other 2,378 control rows were NOT
+compiled (time-box); nothing host-reachable in this diff can touch a row
+without the widening's statement shape.
+
+- **Byte identity**: `website/playground/examples/**` + 3 benchmarks, both
+  targets, **32/32 identical** (`.tmp/b7/bytes-{base,after}.txt`).
+- `node scripts/equivalence-gate.mjs`: 22 failing = the 22 known, no new.
+  `pnpm run check:ir-fallbacks`: OK.
+- **Pins**: new `tests/issue-6651-b7-regexp-ctor-compile-flags.test.ts` (6
+  test262 rows) and `…-inline.test.ts` (2 programs) — **6/6 and 2/2 red on the
+  base tree** (`.tmp/b7/pin-rows-ONBASE.log`, `pin-inline-ONBASE.log`), green
+  after. B-family pins green: B3 13/13, B4 14/14, B5 7+7+4+5, B6 7+3, exec
+  protocol 13/13, `string-symbol-protocol` 9/9, `issue-3794` 4/4. **Every
+  test262-ROW pin suite (B1, B2, B3, B6, B7) OOMs in a default 512 MB vitest
+  fork on this box** (not checked on the base tree) and passes with
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048` (`.tmp/b7/pin2-*.log`).
+- Gates: loc (grant below), func, coercion-sites, oracle-ratchet, dead-exports,
+  typecheck, biome, compiler-boundaries inventory all exit 0. With
+  `LOC_GATE_BASE=origin/main@3a891033b6` the loc gate passes; the func gate
+  reports `binary-ops-in.ts::compileInOperator +26`, a file this slice does not
+  touch — main's `f76cf31d62` shrank it after this branch's base, so the
+  comparison reads it backwards; it clears on the coordinator's merge.
+
+#### Residuals in the manifest (31)
+
+| rows | first failure after B7 | what it needs |
+| ---: | --- | --- |
+| 8 | `*/cross-realm` (6), `proto-from-ctor-realm`, `@@split/splitter-proto-from-ctor-realm` | `$262.createRealm` |
+| 2 | `@@split/{species-ctor,species-ctor-ctor-non-obj}` | out of scope (#3981; out-of-grammar `"[object Object]"`) |
+| 1 | `@@split/coerce-flags-err` | cluster C/H: `var u = {…}; u = {flags: Symbol.split}` null-derefs in `__module_init` (B6's probe) |
+| 2 | `@@match/g-match-empty-{coerce,set}-lastindex-err` | object-literal accessor with captured locals never runs under `Get` — reproduced independently here: a `get source() { log.push(…) }` on a function-local literal is not invoked by the new ctor lane's `Get(pattern,"source")` while a capture-free getter is (probes `.tmp/b7/p/i1.js` first version vs `i2.js`) |
+| 2 | `exec/{failure,success}-lastindex-access` | re-probed (`.tmp/b7/p/e1.js`): `r.lastIndex === counter` is true, but `var li = r.lastIndex`, a JS helper `same(r.lastIndex, counter)`, and `typeof r.lastIndex` all see a NUMBER — the static read is typed `number`, so an inferred parameter / local is f64 and the pending object is converted. Not one localized cause: it is the lib.d.ts type of `lastIndex` flowing into param/local inference |
+| 4 | `compile/flags-to-string` (the static `.test` lane keeps the `/a/g` literal's compile-time flags after `compile('a','i')`), `compile/pattern-string-invalid{,-u}` (the dynamic compiler accepts `{`/`?`), `compile/pattern-string-u` (no `u`-mode surrogate class in the dynamic compiler) | dynamic-pattern grammar + static-flag invalidation on `compile` |
+| 4 | `RegExp-invalid-control-escape-character-class`, `unicode_restricted_identity_escape{,_alpha,_c}` | dynamic-pattern grammar (`\c`, `u`-mode identity escapes) |
+| 2 | `String.prototype.indexOf/searchstring-tostring-{errors,toprimitive}` | ToPrimitive/Symbol order in `indexOf` |
+| 2 | `String.prototype.{match,search}/cstm-*-is-null` | the `@@x`-is-null skip now works; RegExpCreate then hands `"\\d"` to `__regex_compile_dynamic_simple`, which throws `Unsupported dynamic regular expression pattern` — dynamic grammar again |
+| 3 | `String.prototype.match/invoke-builtin-match`, `search/invoke-builtin-search{,-searcher-undef}` | a reassigned `RegExp.prototype[@@match]`/`[@@search]` is not what `String.prototype.match(string)`'s RegExpCreate route calls |
+| 1 (CE) | `String.prototype.replace/cstm-replace-get-err` | the #1474 one-argument `replace` refusal |
+
+**The single biggest lever left in cluster B is the dynamic pattern compiler's
+grammar** (`__regex_compile_dynamic_simple`): 9 of the 31 rows end there, and
+it also bounds what this slice's ctor lane can do — a regexp-like
+`{source: "a+b"}` constructs, but `.test` on it throws `Unsupported dynamic
+regular expression pattern` (probe `.tmp/b7/p/i4.js`, step 5).
+
+#### Found while probing (not in the manifest)
+
+- **TS narrowing hides the object fact.** After `if (RegExp(obj) !== obj)
+  return …`, the checker narrows `obj` to an intersection and the oracle answers
+  `{kind:"unresolvable"}` for the next `new RegExp(obj)`, so the lane declines
+  and that call takes the old ToString route (probe `.tmp/b7/p/i3.js`). No
+  measured row has the shape; the pin program compares through a helper instead.
+- `annexB/…/compile/this-subclass-instance.js` is a Wasm validation error
+  (`extern.convert_any[0] expected type anyref, found … externref` in
+  `__module_init`) on BOTH trees — pre-existing, not in the manifest.
+- **Known edge, not guarded:** the call spelling's step-2 SameValue reads the
+  reserved `%RegExp%` identity global, which stays `null` until something
+  evaluates `RegExp` as a value. Outside the #2106 undefined-singleton regime a
+  null-prototype regexp-like object with no `constructor` would then compare
+  equal and be returned as-is. Standalone runs under the regime (absent reads
+  are the singleton, not null) and an ordinary object inherits
+  `Object.prototype.constructor`, so no measured row reaches it; a
+  `global.get; ref.is_null` guard would close it.
+- Someone left `probe-b4/*.js` inside the shared `test262/test/` directory; the
+  grep-built control lists picked them up and they were dropped from the
+  verdict runs.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
