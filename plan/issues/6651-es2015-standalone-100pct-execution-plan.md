@@ -169,6 +169,21 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-24 — lane A1 (arguments object created BEFORE parameter defaults,
+  # §10.2.11 step 22). `nested-declarations.ts` +86 and `closures.ts` +54, both
+  # already listed below. The growth is the SEAM, not the mechanism: the
+  # emission had to become callable at two points instead of one, so each file
+  # gains a small begin/end pair (`beginNestedArgumentsObject` /
+  # `endNestedArgumentsObject`; `emitLiftedClosureArgumentsObject`) around code
+  # that already lived there — the extraction SHRANK both host functions
+  # (`compileLiftedClosureBody` −36, `compileNestedFunctionDeclarationInScope`
+  # below its ceiling), so no func-budget grant is needed. It cannot move to a
+  # leaf module: the two call points straddle `emitDefaultParamInit` and the
+  # destructuring loop inside those functions, and the whole fact being encoded
+  # is WHERE in that sequence the object is created. ~60 % of the added lines
+  # are the comments recording that ordering and the two effects it forced
+  # (`__argc` is consumed by the vec body; a body `let arguments` is a separate
+  # binding) — both of which were live bugs found by measurement, not theory.
   # 2026-09-23 — cluster F slice F4 (a proxy is read and written as a proxy,
   # not as its TARGET's static shape). `property-access.ts` +13 — three lines
   # at the dot-property arm in `compilePropertyAccess`, three at its computed
@@ -7925,3 +7940,103 @@ computed-property-names; G = `for-of`, `expressions/assignment`, `for/`,
 generators (runtime), `GeneratorPrototype`, `GeneratorFunction`, `Iterator`,
 `ArrayIteratorPrototype`; H = remaining `built-ins/*`; I = the rest.
 Manifest SHA-256s are in the commit that added them.
+
+## 2026-09-24 — lane A1: arguments object created BEFORE parameter defaults (§10.2.11 step 22)
+
+**Result: +5 rows on BOTH lanes, 0 regressions.** Per-row set diff over a
+168-row manifest (the 164-row `arguments-object` / `rest-parameters` /
+`params-*`-`dflt-*`-`arguments-*` control manifest ∪ the 6 target rows),
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, **zero `error` rows in any of the
+four logs**. Base = `5459b1fe`.
+
+| lane | base pass | fix pass | flipped |
+| --- | --- | --- | --- |
+| host (default) | 154 | 159 | 5 × fail→pass, 0 pass→fail |
+| standalone | 137 | 142 | 5 × fail→pass, 0 pass→fail |
+
+Identical flip set on both lanes:
+`language/{expressions,statements}/function/params-dflt-ref-arguments.js`,
+`language/expressions/function/arguments-with-arguments-fn.js`,
+`language/{expressions,statements}/function/arguments-with-arguments-lex.js`.
+
+### Root cause (reproduced from the emitted WAT before changing anything)
+
+`f = function (x = arguments[2], y = arguments[3], z) {}` compiled the default's
+receiver as a literal `ref.null extern` (`$__closure_0`: `ref.null extern;
+local.tee 9; ref.is_null; (if (then … throw))`), because `allocLocal(fctx,
+"arguments", …)` ran only AFTER the defaults, so `fctx.localMap` had no
+`arguments` entry while the default was compiled. §10.2.11 step 22 creates the
+object BEFORE IteratorBindingInitialization of the formals.
+
+### What changed
+
+The emission is now hoisted above the parameter defaults **only when
+`isSimpleParameterList(parameters)` is false**, in all FOUR lowering paths —
+the brief named two; `closures.ts` (lifted function EXPRESSION) is the path the
+repro actually used, and it had to be fixed for 3 of the 5 rows:
+
+- `src/codegen/function-body.ts` — new `emitDeclarationArgumentsObject`.
+- `src/codegen/statements/nested-declarations.ts` — new
+  `beginNestedArgumentsObject` / `endNestedArgumentsObject` pair, used by both
+  the capture-free and capturing lift sites.
+- `src/codegen/closures.ts` — new module-level
+  `emitLiftedClosureArgumentsObject`.
+- `src/codegen/helpers/body-uses-arguments.ts` — new
+  `bodyLexicallyBindsArguments`.
+
+Two downstream effects the reorder forced, both found by measurement:
+
+1. **`__argc` is CONSUMED by `emitArgumentsVecBody`** (it reads the global and
+   clears it to the -1 "unknown caller" sentinel). Hoisting put that ahead of
+   the default prologue's `cacheParamDefaultArgc`, which would then have cached
+   -1 — making every scalar "was this arg omitted?" check read "unknown
+   caller", so f64 defaults fall back to the sNaN sentinel and i32 defaults
+   never fire. Fixed by caching argc FIRST in the hoisted lane
+   (`precacheParamDefaultArgc`, idempotent, so the later prologue reuses it).
+2. **`let arguments` in the body is a separate binding.** All paths key locals
+   by spelling, so the body's declaration stored its `undefined` initializer
+   into the vec-typed `arguments` local → `RuntimeError: illegal cast`. The
+   name is now dropped from the local map AFTER the defaults have compiled (they
+   legitimately see the object) and BEFORE the body. Deleting it before the
+   defaults instead — the first cut — silently broke the default's read.
+
+### Simple-parameter-list lane: byte-identity
+
+641 test262 `language/**` programs (every 37th, sorted) compiled under base and
+under the fix; 508 compiled successfully on both (133 are compile errors on
+both — 0 compile-success flips, 0 changed error signatures).
+
+- **335 programs whose every function-like has a simple parameter list: 335
+  byte-identical, 0 different.**
+- 173 programs that do contain a non-simple list: also 173 byte-identical —
+  the reorder only moves bytes when the function actually needs an arguments
+  object.
+
+What this does and does not show: it shows the gate keeps the untouched lane
+literally byte-for-byte, which is the strongest available evidence that nothing
+outside the intended shape moved. It does NOT show the hoisted lane is correct —
+that is what the 168-row two-lane row diff and the regression test are for — and
+it is a 641-program sample of `language/**`, not the whole corpus.
+
+### Regression test
+
+`tests/issue-6651-arguments-before-param-defaults.test.ts` — 6 cases. **4 are
+RED on base `5459b1fe`** (expression-form default reads `arguments`;
+declaration-form ditto; `arguments[0]` must be the ARGUMENT not the defaulted
+value; body `let arguments` shadowing) and **2 are controls that are GREEN on
+base** (mapped arguments round-trip, `arguments.length` from the call site) so a
+simple-list regression would show up as a new failure.
+
+### Left out, deliberately
+
+- **`language/rest-parameters/with-new-target.js` is NOT fixed.** It is a
+  different defect: a rest parameter's `arguments.length` reports the declared
+  arity, not the call-site count. Measured on base and on the fix, all three
+  shapes are equally wrong — plain `function (...a) { arguments.length }` called
+  with 3 args, the same in a class constructor via `new`, and via `super(1,2,3)`
+  — so it is not a `super()` ABI gap and not an ordering bug. It needs its own
+  slice against `emitArgumentsVecBody`'s formals-plus-extras concatenation,
+  which counts the rest array as one formal.
+- The `equivalence/` suite OOMs the box when run file-parallel (documented in
+  CLAUDE.md); it was re-run single-threaded instead. CI's `equivalence-gate` is
+  the authority.
