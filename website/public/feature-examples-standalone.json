@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 111,
+      "passCount": 112,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -783,7 +783,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 26,
+          "pass": 27,
           "total": 60
         }
       ]
@@ -796,7 +796,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 146,
+      "passCount": 145,
       "totalCount": 234,
       "editionSpread": [
         {
@@ -806,7 +806,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 89,
+          "pass": 88,
           "total": 106
         },
         {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 868,
+      "passCount": 867,
       "totalCount": 1072
     },
     {

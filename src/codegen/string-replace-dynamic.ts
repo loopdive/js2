@@ -94,7 +94,7 @@ const P_REPLACE = 2;
 const P_ALL = 3;
 
 /** Is the runtime-dispatch replace arm available in this module at all? */
-function dynamicReplaceAvailable(ctx: CodegenContext): boolean {
+export function dynamicReplaceAvailable(ctx: CodegenContext): boolean {
   return ctx.standalone === true && usesNativeRegExpProvider(ctx) && hasStandaloneRegExpEngine(ctx);
 }
 
