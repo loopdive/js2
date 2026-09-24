@@ -58,6 +58,7 @@ import {
 } from "./global-environment.js";
 import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
+import { isStandaloneUnavailableConstructorGlobal } from "./standalone-unavailable-globals.js"; // (#6664)
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
@@ -112,6 +113,7 @@ function ambientIdentifierIsUnavailable(
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) return false;
   if (!sym?.declarations?.length || !sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)) return false;
   if (ident.text === "structuredClone") return true;
+  if (isStandaloneUnavailableConstructorGlobal(ctx, ident.text)) return true; // (#6664)
   if (!HOST_ONLY_AMBIENT_GLOBALS.has(ident.text)) return false;
   return !(ctx.standalone && ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
 }

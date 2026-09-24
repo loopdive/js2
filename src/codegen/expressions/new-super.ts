@@ -9,6 +9,10 @@ import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-lay
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import {
+  emitStandaloneUnavailableGlobalThrow,
+  standaloneUnavailableGlobalReference,
+} from "../standalone-unavailable-globals.js";
+import {
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
   emitFuncRefAsClosure,
@@ -6522,6 +6526,12 @@ function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expres
 }
 
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
+  // (#6664) `new MessageChannel()` in a host-free module: evaluating the
+  // constructor reference throws before any argument is evaluated.
+  {
+    const unavailable = standaloneUnavailableGlobalReference(ctx, fctx, expr.expression);
+    if (unavailable !== undefined) return emitStandaloneUnavailableGlobalThrow(ctx, fctx, unavailable);
+  }
   // (#3927 per-type layouts) Publish the allocation-label hint when this `new`
   // is a recorded label site of a split family. BEFORE the arguments compile —
   // a labelled allocation nested in them consumes and resets the hint, so the

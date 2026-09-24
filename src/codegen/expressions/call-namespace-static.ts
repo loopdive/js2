@@ -11,6 +11,7 @@
 // the callee is not one of these, so the caller in calls.ts continues into the
 // receiver-type method dispatch. Moved verbatim: emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { tryEmitStandalonePerformanceNow } from "../standalone-unavailable-globals.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -3939,6 +3940,12 @@ export function compileNamespaceStaticCall(
         return { kind: "externref" };
       }
     }
+  }
+
+  // (#6664) performance.now() in a host-free standalone module → the time origin.
+  {
+    const r = tryEmitStandalonePerformanceNow(ctx, fctx, propAccess, expr.arguments.length);
+    if (r !== undefined) return r;
   }
 
   // (#1483) performance.now() under --target wasi → clock_time_get

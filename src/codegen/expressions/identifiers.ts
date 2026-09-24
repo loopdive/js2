@@ -6,6 +6,10 @@ import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
+  emitStandaloneUnavailableGlobalThrow,
+  standaloneUnavailableGlobalReference,
+} from "../standalone-unavailable-globals.js";
+import {
   getNullablePrimitiveInfo,
   isBigIntType,
   isBooleanType,
@@ -1784,6 +1788,11 @@ function compileIdentifierCore(
   // "wrong object" to the `ref.null.extern` graceful default.
   // `unresolvedInModuleGoal` disables the funcref arm too (#3505), so the
   // ambient read must stay in that case or nothing serves it.
+  // (#6664) A lib.dom constructor a host-free module does not have.
+  {
+    const unavailable = standaloneUnavailableGlobalReference(ctx, fctx, id);
+    if (unavailable !== undefined) return emitStandaloneUnavailableGlobalThrow(ctx, fctx, unavailable);
+  }
   const shadowedAmbient = !unresolvedInModuleGoal && ambientGlobalReadIsUserFunctionShadowed(ctx, id, name);
   const globalInfo = shadowedAmbient ? undefined : ctx.declaredGlobals.get(name);
   if (globalInfo) {
