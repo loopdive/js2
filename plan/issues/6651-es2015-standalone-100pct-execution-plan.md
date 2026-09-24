@@ -1005,6 +1005,38 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   `quickjs`, standalone). Implementing them would be proposal work in a later
   edition's lane, not an ES2015 gap.
 
+## Front-end feature ownership — claimed 2026-09-24
+
+The standalone-reachable rows in clusters F, H and I are nearly exhausted. What
+remains in cluster I is dominated by four SHARED front-end features, which block
+the standalone and JS-host lanes alike. Measured from the cluster-I manifest
+sweep on the round-6 integrated branch:
+
+| family | rows remaining | owner |
+| --- | ---: | --- |
+| `language/expressions/tagged-template/` | 8 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `language/module-code/namespace/internals/` | 12 | **this thread (`claude/project-thread-yhj9pp`)** |
+| `language/statements/with/` | 11 | **UNCLAIMED — reserved for a JS-host lane** |
+| `eval` capability rows (`language/expressions/call/`, `language/eval-code/`, `language/statementList/`) | ~10 | **UNCLAIMED — reserved for a JS-host lane** |
+
+**If you are an outside lane reading this: do not start tagged templates or
+module namespaces.** They are claimed here, and #6651 now carries a live claim
+on `origin/issue-assignments` for `ttraenkler/project-thread-yhj9pp`. `with` and
+`eval` are deliberately left open; take those, and add your own claim line here
+before you start so this table stays the lock.
+
+Why the table exists: on 2026-09-21 three cluster slices (A2, C3, E2) were
+implemented twice because two sessions worked this issue in parallel without
+knowing about each other. A lane that has started but not yet pushed is
+invisible to both the claim ref and the open-PR scan, so the only thing that
+prevents a repeat is claiming a family *before* starting it.
+
+Method note that applies to whoever takes which: **host-probe every candidate
+row on the DEFAULT target before touching lowering.** A row that fails on host
+cannot be fixed by standalone lowering. That check has now redirected five
+separate lanes away from unreachable buckets, and it is how these four families
+were identified as shared rather than standalone-only in the first place.
+
 ## Cluster status
 
 _(owners append here: date, branch, before → after, log paths, residuals)_
