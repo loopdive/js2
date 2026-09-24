@@ -82,7 +82,7 @@
   "codegen/object-ops.ts": 5,
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 6,
-  "codegen/object-runtime-ordinary-set.ts": 1,
+  "codegen/object-runtime-ordinary-set.ts": 5,
   "codegen/object-runtime-proxy-invariants.ts": 2,
   "codegen/object-runtime-proxy.ts": 11,
   "codegen/object-runtime.ts": 37,
