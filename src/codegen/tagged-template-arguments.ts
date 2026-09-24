@@ -34,7 +34,9 @@
  * ignored the extras from leaking them into an unrelated later call.
  */
 import type { ts } from "../ts-api.js";
+import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { ensureArgcGlobal, ensureExtrasArgvGlobal, emitSetExtrasArgv } from "./statements/nested-declarations.js";
 
 /**
@@ -46,9 +48,9 @@ import { ensureArgcGlobal, ensureExtrasArgvGlobal, emitSetExtrasArgv } from "./s
  * published — the caller must then emit `resetTaggedTemplateArguments` after
  * the call.
  *
- * A zero-parameter tag would need the STRINGS object itself in the extras vec;
- * that shape keeps its previous behaviour (`arguments` stays empty) rather than
- * growing a second extras builder here.
+ * A zero-parameter tag would need the STRINGS object itself in the extras vec,
+ * which this function cannot supply (it sources only AST expressions). That
+ * shape is handled by `publishZeroParamTagArguments` below (#6651).
  */
 export function publishTaggedTemplateArguments(
   ctx: CodegenContext,
@@ -66,6 +68,77 @@ export function publishTaggedTemplateArguments(
   fctx.body.push({ op: "i32.const", value: 1 + positionalCount });
   fctx.body.push({ op: "global.set", index: argcGlobalIdx });
   return true;
+}
+
+/**
+ * (#6651) The ZERO-parameter tag, which the header above records as the one
+ * shape left behind: `` (function () { … })`x` `` is still a call with ONE
+ * argument — the template object — so §13.2.8 demands `arguments.length === 1`.
+ *
+ * A zero-formal callee receives its whole call-site list through
+ * `__extras_argv` (`emitArgumentsVecTail`: `totalLen = argc + extrasLen`, and
+ * with no formals `argc` is 0), so the fix is to put the template object into
+ * that vector and pin `__argc` to 0 — the latter so the callee's "the caller
+ * said nothing, assume my own formal count" default cannot re-enter.
+ *
+ * Stack-neutral like its sibling, so it is emitted after the arguments and
+ * before the call; the caller must still emit `resetTaggedTemplateArguments`.
+ *
+ * SUBSTITUTIONS ARE REFUSED, not silently dropped. `` (function(){})`a${x}b` ``
+ * owes `arguments` the substitutions too, but they arrive as AST expressions
+ * that only `emitSetExtrasArgv` knows how to box — and it OWNS the extras
+ * global, so the template object cannot be prepended to its vec without a
+ * second builder. Refusing keeps that shape exactly as it is today (an empty
+ * `arguments`, wrong in the same way it was before) rather than trading it for
+ * a list that is wrong in a new way — a one-element list missing the values.
+ */
+function publishZeroParamTagArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stringsLocal: number,
+  substitutions: readonly ts.Expression[],
+): boolean {
+  if (substitutions.length > 0) return false;
+  const { globalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return false;
+  // The template object is argument 0; `emitSetExtrasArgv` can only source
+  // AST expressions, and this one lives in a local, so build the vec here.
+  fctx.body.push({ op: "local.get", index: stringsLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "array.new_fixed", typeIdx: arrTypeIdx, length: 1 });
+  const dataLocal = allocLocal(fctx, `__tt_argv0_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.get", index: dataLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "global.set", index: globalIdx });
+  const argcGlobalIdx = ensureArgcGlobal(ctx);
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "global.set", index: argcGlobalIdx });
+  return true;
+}
+
+/**
+ * (#6651) The ONE entry point a tagged-template call arm needs: publish this
+ * call's surplus arguments, whichever of the two shapes applies. A zero-formal
+ * callee takes its whole list through the extras vec, so its template object
+ * is argument 0 there; every other arity keeps the established #5338 split.
+ *
+ * Returns true when anything was published — the caller must then emit
+ * `resetTaggedTemplateArguments` after the call, exactly as before.
+ */
+export function publishTagCallArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  substitutions: readonly ts.Expression[],
+  userParamCount: number,
+  positionalCount: number,
+  stringsLocal: number,
+): boolean {
+  return userParamCount === 0
+    ? publishZeroParamTagArguments(ctx, fctx, stringsLocal, substitutions)
+    : publishTaggedTemplateArguments(ctx, fctx, substitutions, userParamCount, positionalCount);
 }
 
 /**

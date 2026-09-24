@@ -50,7 +50,7 @@ import {
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "./nested-function-name-scope.js"; // (#4456)
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
-import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
@@ -227,6 +227,86 @@ function assertDirectFunctionBodyAllowed(name: string): void {
   if (names.has(name)) {
     throw new Error(`injected direct function-body poison: ${name}`);
   }
+}
+
+/**
+ * Materialize the implicit `arguments` object for a top-level function
+ * DECLARATION, if its body (or a parameter default) references one.
+ *
+ * We create a vec struct (same as Array) populated from all function
+ * parameters. Elements are externref so every parameter type (numbers,
+ * strings, objects) is preserved — matching the closure version in
+ * closures.ts (#771).
+ *
+ * (#6651) Extracted from `compileFunctionBody` so it can run at either of two
+ * points: BEFORE parameter defaults for a non-simple parameter list (spec
+ * order — §10.2.11 step 22), or at the historical post-destructuring point for
+ * a simple list (where nothing intervenes, so the emission is unchanged).
+ */
+function emitDeclarationArgumentsObject(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.FunctionDeclaration,
+  params: { name: string; type: ValType }[],
+  funcName: string,
+): void {
+  if (!decl.body || !needsImplicitArgumentsObject(decl, fctx.directEvalBindingNames !== undefined)) return;
+  // Ensure __box_number and __unbox_number are available for mapped arguments sync
+  const hasNumericParam = params.some((p) => p.type.kind === "f64" || p.type.kind === "i32");
+  if (hasNumericParam) {
+    ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+    flushLateImportShifts(ctx, fctx);
+  }
+
+  const vecTypeIdx = getOrRegisterVecType(ctx, "arguments");
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  const vecRef: ValType = { kind: "ref", typeIdx: vecTypeIdx };
+
+  const argsLocal = allocLocal(fctx, "arguments", vecRef);
+  const arrTmp = allocLocal(fctx, "__args_arr_tmp", { kind: "ref", typeIdx: arrTypeIdx });
+
+  // Mapped arguments only applies to a *simple* parameter list in non-strict
+  // mode. In strict mode the arguments object is *unmapped* (§10.4.4); so is a
+  // non-simple parameter list (rest/default/destructuring — §10.2.11 step
+  // 22.a, #2743): writes to `arguments[i]` must not flow back into the named
+  // parameter, so skip mappedArgsInfo entirely and leave the built vec as an
+  // independent copy (#779e). (`isSimpleParameterList` also rejects defaulted
+  // params, which the prior local `every(isIdentifier && !rest)` check missed.)
+  const allSimpleParams = isSimpleParameterList(decl.parameters);
+  const mappedAllowed = allSimpleParams && !isStrictFunction(decl, ctx.inferModuleStrictArguments);
+
+  // Set up mapped arguments info for param ↔ arguments sync (#849)
+  if (mappedAllowed && params.length > 0) {
+    fctx.mappedArgsInfo = {
+      argsLocalIdx: argsLocal,
+      arrTypeIdx,
+      vecTypeIdx,
+      paramCount: params.length,
+      paramOffset: 0,
+      paramTypes: params.map((p) => p.type),
+    };
+    // (#2676) Record this mapped function's live `mappedArgsInfo` keyed by its
+    // declaration node so a `delete args[i]` in a nested (strict) closure can
+    // resolve an aliased `arguments` (`var args = arguments`) back to this
+    // function's per-index `nonConfigurableIndices`. See the delete site in
+    // typeof-delete.ts (resolveAliasedMappedArgs).
+    ctx.mappedArgsInfoByFunc.set(decl, fctx.mappedArgsInfo);
+  }
+
+  // Build the arguments vec by concatenating formal params with
+  // extras delivered via the __extras_argv global (#1053).
+  emitArgumentsVecBody(
+    ctx,
+    fctx,
+    params.map((p) => p.type),
+    0,
+    { vecTypeIdx, arrTypeIdx, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp },
+    shouldRegisterArgumentsWithHost(ctx, decl.body, fctx.directEvalBindingNames !== undefined),
+  );
+
+  // (#4243) §10.6 step 13.a — a non-strict arguments object carries `callee`.
+  seedDeclarationArgumentsCallee(ctx, fctx, decl, funcName, argsLocal);
 }
 
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
@@ -411,15 +491,28 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     fctx.linearU8ArenaMarkLocalIdx = emitLinearU8ArenaMark(ctx, fctx, "__linu8_fn_mark");
   }
 
+  // (#6651) §10.2.11 step 22 creates the arguments object BEFORE
+  // IteratorBindingInitialization of the formals, so a parameter default may
+  // read it (`function (x = arguments[2]) {}`). Emit it here for a NON-SIMPLE
+  // parameter list — the only list shape that can have a default/destructuring
+  // to order against, and the shape that is already *unmapped* (step 22.a), so
+  // hoisting disturbs no param↔arguments aliasing. A simple list keeps the
+  // original emission point below, where nothing intervenes.
+  // The argc cache is computed FIRST, because the hoisted emission consumes
+  // `__argc` — see precacheParamDefaultArgc's doc. `cacheParamDefaultArgc` is
+  // idempotent, so the simple-list lane is unaffected by the reordering.
+  const needsDefaultArgc = decl.parameters.some(
+    (param, i) => param.initializer !== undefined && paramDefaultNeedsArgc(params[i]?.type),
+  );
+  if (!isSimpleParameterList(decl.parameters)) {
+    if (needsDefaultArgc) cacheParamDefaultArgc(ctx, fctx);
+    emitDeclarationArgumentsObject(ctx, fctx, decl, params, func.name);
+  }
+
   // Emit default-value initialization for parameters with initializers. Known
   // direct callers may inline a constant default, but first-class/dynamic
   // callers cannot; the callee must therefore retain the semantic check.
-  const defaultArgcLocal = decl.parameters.some((param, i) => {
-    if (!param.initializer) return false;
-    return paramDefaultNeedsArgc(params[i]?.type);
-  })
-    ? cacheParamDefaultArgc(ctx, fctx)
-    : undefined;
+  const defaultArgcLocal = needsDefaultArgc ? cacheParamDefaultArgc(ctx, fctx) : undefined;
   for (let i = 0; i < decl.parameters.length; i++) {
     const param = decl.parameters[i]!;
     if (!param.initializer) continue;
@@ -607,67 +700,16 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     }
   }
   if (!paramDestructWasLive) ctx.liveBodies.delete(paramDestructBody);
-  // Set up `arguments` object if the function body references it.
-  // We create a vec struct (same as Array) populated from all function parameters.
-  // Use externref elements so that all parameter types (numbers, strings, objects)
-  // are preserved — matching the closure version in closures.ts (#771).
-  if (decl.body && needsImplicitArgumentsObject(decl, fctx.directEvalBindingNames !== undefined)) {
-    // Ensure __box_number and __unbox_number are available for mapped arguments sync
-    const hasNumericParam = params.some((p) => p.type.kind === "f64" || p.type.kind === "i32");
-    if (hasNumericParam) {
-      ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-      flushLateImportShifts(ctx, fctx);
-    }
-
-    const vecTypeIdx = getOrRegisterVecType(ctx, "arguments");
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    const vecRef: ValType = { kind: "ref", typeIdx: vecTypeIdx };
-
-    const argsLocal = allocLocal(fctx, "arguments", vecRef);
-    const arrTmp = allocLocal(fctx, "__args_arr_tmp", { kind: "ref", typeIdx: arrTypeIdx });
-
-    // Mapped arguments only applies to a *simple* parameter list in non-strict
-    // mode. In strict mode the arguments object is *unmapped* (§10.4.4); so is a
-    // non-simple parameter list (rest/default/destructuring — §10.2.11 step
-    // 22.a, #2743): writes to `arguments[i]` must not flow back into the named
-    // parameter, so skip mappedArgsInfo entirely and leave the built vec as an
-    // independent copy (#779e). (`isSimpleParameterList` also rejects defaulted
-    // params, which the prior local `every(isIdentifier && !rest)` check missed.)
-    const allSimpleParams = isSimpleParameterList(decl.parameters);
-    const mappedAllowed = allSimpleParams && !isStrictFunction(decl, ctx.inferModuleStrictArguments);
-
-    // Set up mapped arguments info for param ↔ arguments sync (#849)
-    if (mappedAllowed && params.length > 0) {
-      fctx.mappedArgsInfo = {
-        argsLocalIdx: argsLocal,
-        arrTypeIdx,
-        vecTypeIdx,
-        paramCount: params.length,
-        paramOffset: 0,
-        paramTypes: params.map((p) => p.type),
-      };
-      // (#2676) Record this mapped function's live `mappedArgsInfo` keyed by its
-      // declaration node so a `delete args[i]` in a nested (strict) closure can
-      // resolve an aliased `arguments` (`var args = arguments`) back to this
-      // function's per-index `nonConfigurableIndices`. See the delete site in
-      // typeof-delete.ts (resolveAliasedMappedArgs).
-      ctx.mappedArgsInfoByFunc.set(decl, fctx.mappedArgsInfo);
-    }
-
-    // Build the arguments vec by concatenating formal params with
-    // extras delivered via the __extras_argv global (#1053).
-    emitArgumentsVecBody(
-      ctx,
-      fctx,
-      params.map((p) => p.type),
-      0,
-      { vecTypeIdx, arrTypeIdx, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp },
-      shouldRegisterArgumentsWithHost(ctx, decl.body, fctx.directEvalBindingNames !== undefined),
-    );
-
-    // (#4243) §10.6 step 13.a — a non-strict arguments object carries `callee`.
-    seedDeclarationArgumentsCallee(ctx, fctx, decl, func.name, argsLocal);
+  // Set up `arguments` object if the function body references it — SIMPLE
+  // parameter lists only; a non-simple list already emitted it above, before
+  // the defaults ran (§10.2.11 step 22, see emitDeclarationArgumentsObject).
+  if (isSimpleParameterList(decl.parameters)) {
+    emitDeclarationArgumentsObject(ctx, fctx, decl, params, func.name);
+  } else if (decl.body && bodyLexicallyBindsArguments(decl.body)) {
+    // The body's `let arguments` is a SEPARATE binding that shadows the object
+    // for the whole body; the defaults above legitimately saw it. Drop the name
+    // here so the body's declaration gets its own slot (helper doc).
+    fctx.localMap.delete("arguments");
   }
 
   if (isGenerator && hasAsyncModifier(decl) && isAsyncGenDriveCandidate(ctx, decl)) {

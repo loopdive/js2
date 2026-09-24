@@ -342,7 +342,21 @@ export function compileTailDispatch(
               );
               const result = compileExpression(ctx, fctx, callee.body);
               fctx.deferredDynamicImportTrap = savedDeferredDynamicImportTrap;
-              return result;
+              // (#6651 lane-I5) `null` here means the concise body COMPILED and
+              // produced no value (a void call such as `_ => super.increment()`
+              // or `_ => o.voidMethod()`) — `compileExpression` erases the
+              // VOID_RESULT sentinel to `null` on its way out. Returning that
+              // `null` to the #1919 speculative wrapper makes it read "inner
+              // produced no usable value", roll the WHOLE inlined IIFE back and
+              // substitute a default constant, so the body's side effects
+              // vanish silently (measured: `(_ => super.increment())()` in a
+              // class method compiled to `i32.const 0; drop`). The failure
+              // paths of `compileExpression` never return `null` — they emit a
+              // default and return its ValType — so `null` is unambiguously the
+              // void case, and VOID_RESULT ("compiled, void, KEEP the emitted
+              // instructions") is the correct signal. Same class of bug as
+              // #1551's nested `super(...)` arm.
+              return result ?? VOID_RESULT;
             }
 
             // Block body (arrow or function expression) — need to handle return
@@ -394,9 +408,12 @@ export function compileTailDispatch(
                     ts.isParenthesizedExpression(retExpr) ||
                     ts.isAsExpression(retExpr) ||
                     ts.isTypeAssertionExpression(retExpr) ||
-                    ts.isNonNullExpression(retExpr)
+                    ts.isNonNullExpression(retExpr) ||
+                    // (#2917) `return sideEffect, { … }` — minified code (the
+                    // Temporal polyfill's nudge IIFE) returns the RIGHT operand.
+                    (ts.isBinaryExpression(retExpr) && retExpr.operatorToken.kind === ts.SyntaxKind.CommaToken)
                   ) {
-                    retExpr = retExpr.expression;
+                    retExpr = ts.isBinaryExpression(retExpr) ? retExpr.right : retExpr.expression;
                   }
                   if (
                     ts.isObjectLiteralExpression(retExpr) &&

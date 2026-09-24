@@ -6,6 +6,7 @@ import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.j
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
+import { isConstructedFnctorName } from "./fnctor-instance-names.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
@@ -431,6 +432,7 @@ import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) 
 import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
+import { fillTaStaticViewMopArms } from "./ta-static-view-mop.js"; // (#6651 E7) static view in a generic slot
 import { fillTaDynViewOwnKeyArms } from "./ta-dyn-own-keys.js"; // (#6651 E2) §10.4.5.6 own-key surface
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import {
@@ -681,6 +683,7 @@ import {
   refineNumericLocalsWithCallReturns,
 } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import type { NumericPropertyAnalysisHost } from "./numeric-property-analysis.js";
+import { dynamicReadCrossesStandaloneLink } from "./dynamic-read-narrowing.js"; // (#5383)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -5312,6 +5315,7 @@ export function generateModule(
       fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
       excludeNames: booleanExclusions.properties,
       excludeFunctionNames: retUnboxNumericFilterEnabled() ? booleanExclusions.functions : undefined,
+      openWorldPropertyReads: dynamicReadCrossesStandaloneLink(ctx), // (#5383)
     };
     applyNumericPropertyAnalysis(ctx, numericAnalysisHost, [ast.sourceFile]);
     priorNumericFunctions = ctx.numericFunctionNames;
@@ -6690,6 +6694,9 @@ export function generateModule(
     // AFTER `fillVecLengthDynamicArms` above, whose vec own-`"length"` arm
     // sits in `__hasOwnProperty`/`__object_hasOwn` and must not win for a view.
     fillTaDynViewOwnKeyArms(ctx);
+    // (#6651 E7) A static `$__ta_view` in an externref slot re-enters the
+    // natives above as a dyn view over the same bytes. After them: it prepends.
+    fillTaStaticViewMopArms(ctx);
     fillDataViewConstructProtoArm(ctx);
     fillReflectIsConstructor(ctx);
 
@@ -10854,6 +10861,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         oracle: ctx.oracle,
         excludeNames: ctx.booleanPropertyNames,
         excludeFunctionNames: retUnboxNumericFilterEnabled() ? ctx.booleanFunctionNames : undefined,
+        openWorldPropertyReads: dynamicReadCrossesStandaloneLink(ctx), // (#5383)
       };
       const localVerdicts = profilePhase("numeric-local-analysis", () =>
         analyzeNumericPropertyNames(linkedNumericHost!, multiAst.sourceFiles),
@@ -12885,7 +12893,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
       const fnDecl = sym?.valueDeclaration;
       const isFnCtorType =
-        (sym?.name !== undefined && ctx.funcConstructorMap.has(sym.name)) ||
+        (sym?.name !== undefined && isConstructedFnctorName(ctx, sym.name)) ||
         (!!fnDecl &&
           (ts.isFunctionDeclaration(fnDecl) ||
             ts.isFunctionExpression(fnDecl) ||

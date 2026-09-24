@@ -39,7 +39,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { findAlternateStructsForField } from "./property-access.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { registerLateReadStringConstant } from "./registry/imports.js";
 import { addFuncType, isVecBaseSubtype } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./type-coercion.js";
@@ -114,7 +114,7 @@ export function reserveMemberSetDispatch(
   );
   if (setIdx === undefined) return undefined;
   // The fallback's string key + the union box/unbox helpers the arm coercions need.
-  addStringConstantGlobal(ctx, propName);
+  registerLateReadStringConstant(ctx, propName);
   addUnionImportsViaRegistry(ctx);
 
   // (#2681) Settle the import shifts staged above BEFORE reserving this

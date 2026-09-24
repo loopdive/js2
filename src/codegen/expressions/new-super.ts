@@ -1274,7 +1274,7 @@ function compileSuperMethodCallCore(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   methodName: string,
-): ValType | null {
+): InnerResult {
   // Degenerate fallback: evaluate args for side effects and leave a
   // return-typed default (0 / 0 / undefined) so a value remains for the
   // enclosing expression.
@@ -1398,14 +1398,28 @@ function compileSuperMethodCallCore(
   fctx.body.push({ op: "call", funcIdx: finalSuperIdx });
 
   // Determine return type.
+  //
+  // (#6651 lane-I5) A void parent method returns VOID_RESULT, **never `null`**.
+  // `null` means "no usable value" to the #1919 speculative wrapper in
+  // `compileExpressionBody`, which then calls `rollbackSpeculative` — it
+  // TRUNCATES the `local.get this; call <Parent>_<m>` we just emitted and
+  // substitutes a default constant. The whole call disappeared: a statement
+  // `super.increment();` compiled to `i32.const 0; drop`, so every side effect
+  // of a void parent method (a `this` field write, an outer-scope mutation)
+  // was silently dropped while the program still compiled and ran. This is the
+  // exact hazard #1551 fixed for nested `super(...)`; the `super.m()` arm still
+  // carried the `null`. VOID_RESULT means "compiled, void result, KEEP the
+  // emitted instructions".
   const sig = ctx.checker.getResolvedSignature(expr);
   if (sig) {
     const retType = ctx.checker.getReturnTypeOfSignature(sig);
-    if (isEffectivelyVoidReturn(ctx, retType, resolvedName)) return null;
-    if (wasmFuncReturnsVoid(ctx, finalSuperIdx)) return null;
+    if (isEffectivelyVoidReturn(ctx, retType, resolvedName)) return VOID_RESULT;
+    if (wasmFuncReturnsVoid(ctx, finalSuperIdx)) return VOID_RESULT;
     return getWasmFuncReturnType(ctx, finalSuperIdx) ?? resolveWasmType(ctx, retType);
   }
-  return null;
+  // No resolved signature: the call IS emitted, so the instructions must be
+  // kept for the same reason. A wasm-void callee leaves nothing on the stack.
+  return wasmFuncReturnsVoid(ctx, finalSuperIdx) ? VOID_RESULT : null;
 }
 
 function compileSuperMethodCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
@@ -2010,7 +2024,7 @@ function compileSuperElementMethodCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   methodName: string,
-): ValType | null {
+): InnerResult {
   return compileSuperMethodCallCore(ctx, fctx, expr, methodName);
 }
 

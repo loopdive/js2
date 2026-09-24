@@ -63,6 +63,7 @@ import {
 } from "../json-standalone.js";
 import { canonicalUndefinedExternInstrs, ensureExternStrictEqHelper } from "../any-helpers.js";
 import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
+import { noteReflectSetReceiverCall } from "../object-runtime-ordinary-set.js"; // (#6651 E6)
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
@@ -1280,6 +1281,7 @@ export function compileNamespaceStaticCall(
             );
             flushLateImportShifts(ctx, fctx);
             if (recvSetIdx !== undefined) {
+              noteReflectSetReceiverCall(ctx);
               fctx.body.push({ op: "call", funcIdx: recvSetIdx });
               releaseReflectArgumentLocals(recvLocals);
               return { kind: "i32" };
