@@ -313,6 +313,30 @@ export function deferrableStringConstantGlobalGet(ctx: CodegenContext, value: st
   return [get];
 }
 
+/**
+ * (#1058) Register a string constant whose every read goes through
+ * `stringConstantExternrefInstrs`. During the body phase the import joins the
+ * end-of-bodies batch instead of rewalking the module now; property-name
+ * constants were half of the TypeScript checker's compile time that way.
+ */
+export function registerLateReadStringConstant(ctx: CodegenContext, value: string): void {
+  const pending = ctx.deferredStringConstants;
+  if (pending && !ctx.nativeStrings && !ctx.strictNoHostImports && !ctx.stringGlobalMap.has(value)) {
+    pending.add(value);
+    return;
+  }
+  addStringConstantGlobal(ctx, value);
+}
+
+/** Read a string constant still waiting in the batch, or undefined if it is not. */
+export function pendingStringConstantGlobalGet(ctx: CodegenContext, value: string): Instr[] | undefined {
+  if (!ctx.deferredStringConstants?.has(value) || ctx.stringGlobalMap.has(value)) return undefined;
+  const deferred = deferrableStringConstantGlobalGet(ctx, value);
+  if (deferred) return deferred;
+  addStringConstantGlobal(ctx, value);
+  return undefined;
+}
+
 /** Start deferring throw-message string constants (see `deferrableStringConstantGlobalGet`). */
 export function beginDeferredStringConstants(ctx: CodegenContext): void {
   ctx.deferredStringConstants ??= new Set();

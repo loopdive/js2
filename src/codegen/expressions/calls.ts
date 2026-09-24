@@ -298,6 +298,7 @@ import {
   VOID_RESULT,
 } from "../shared.js";
 import { compileSuperCall } from "../class-bodies.js"; // (#5153 F) nested `super(...)`
+import { methodBodyUsesSuper } from "../generators-native-ast-scan.js"; // (#6651 I5) lifted-IIFE `super`
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
@@ -10374,6 +10375,48 @@ function missingIIFEArgExternref(
  *
  * Returns undefined if the expression is not an IIFE pattern.
  */
+/**
+ * (#6651 lane-I5) Give a LIFTED arrow IIFE the enclosing class context its
+ * `super.<m>()` needs, by threading the caller's `this` in as an ordinary
+ * synthetic capture. Returns the enclosing class name to put on the lifted
+ * FunctionContext, or `undefined` when nothing is needed.
+ *
+ * The inline IIFE fast path takes only `params.length <= args.length`, so an
+ * under-applied `(_ => super.m())()` is LIFTED into a real function. `super.m(args)`
+ * lowers to a DIRECT call of `<Parent>_m` with the enclosing `this` as the
+ * receiver, and both halves live on the FunctionContext: `enclosingClassName`
+ * names the class whose parent to resolve, and a `this` LOCAL supplies the
+ * receiver. A lifted IIFE had neither, so `compileSuperMethodCallCore` bailed
+ * to its evaluate-args-and-default fallback — the call was never emitted and
+ * the enclosing statement compiled to `i32.const 0; drop`, silently dropping
+ * the parent method's side effects.
+ *
+ * Gated on the body actually mentioning `super`, so no other IIFE's lifted
+ * signature moves: a plain `this` READ already resolves through the
+ * `__current_this` rung of `compileThisKeyword`, which needs no capture.
+ * `methodBodyUsesSuper` stops at nested non-arrow function-likes (they rebind
+ * `super`) and descends through arrows (they do not).
+ */
+function adoptLiftedIifeSuperContext(
+  fctx: FunctionContext,
+  funcExpr: ts.FunctionExpression | ts.ArrowFunction,
+  body: ts.Node,
+  captures: { name: string; type: ValType; localIdx: number; mutable: boolean }[],
+): string | undefined {
+  if (!ts.isArrowFunction(funcExpr) || !methodBodyUsesSuper(body)) return undefined;
+  const enclosingClass = fctx.enclosingClassName ?? resolveEnclosingClassName(fctx);
+  if (enclosingClass === undefined) return undefined;
+  const outerThisIdx = fctx.localMap.get("this");
+  if (outerThisIdx !== undefined && !captures.some((c) => c.name === "this")) {
+    const thisType =
+      outerThisIdx < fctx.params.length
+        ? fctx.params[outerThisIdx]!.type
+        : (fctx.locals[outerThisIdx - fctx.params.length]?.type ?? ({ kind: "externref" } as ValType));
+    captures.push({ name: "this", type: thisType, localIdx: outerThisIdx, mutable: false });
+  }
+  return enclosingClass;
+}
+
 function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult | undefined {
   // Unwrap parenthesized expression to find the function expression
   let callee: ts.Expression = expr.expression;
@@ -10458,6 +10501,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     captures.push({ name, type, localIdx, mutable: isMutable });
   }
 
+  const enclosingClassForSuper = adoptLiftedIifeSuperContext(fctx, funcExpr, body, captures);
   // Generate a unique name for the IIFE
   const iifeName = `__iife_${ctx.closureCounter++}`;
   const results: ValType[] = returnType ? [returnType] : [];
@@ -10502,6 +10546,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     continueStack: [],
     labelMap: new Map(),
     savedBodies: [],
+    enclosingClassName: enclosingClassForSuper,
   };
   // This fallback emits a real Wasm function instead of using the inline-IIFE
   // fast path, so register its source strictness like every other source body.

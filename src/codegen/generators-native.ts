@@ -107,6 +107,14 @@ import {
 } from "./generators-native-ast-scan.js";
 
 import { ensureNativeDelegatedResultHelpers, nativeGeneratorExecutingCheck } from "./generators-delegation-runtime.js";
+import {
+  bodyHasPatternYield,
+  emitLinearOpStatement,
+  emitLinearUnwindClose,
+  type LinearCloseEntry,
+  type LinearizeHost,
+  lowerLinearizedStatement,
+} from "./generator-yield-linearize.js";
 
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
@@ -228,7 +236,11 @@ type StateTerminator =
       bindTo: string;
       bodyState: number;
       exitState: number;
-    };
+    }
+  // (#6651 A4) Non-suspending branch on an i32 frame spill written by a
+  // `generator-yield-linearize.ts` op (a pattern default's IsUndefined test, a
+  // pattern-head for-of's [[Done]]).
+  | { kind: "branch-flag"; flag: string; thenState: number; elseState: number };
 
 /**
  * (#3050) A try-region admitted by the NEW try-region machinery: a `try` whose
@@ -272,7 +284,11 @@ type UnwindEntry =
   // closes and keeps walking), which is why it sits in the chain rather than
   // being folded into the terminator: an inner `catch` still gets its turn
   // only if it is closer in, and the close runs exactly once per live record.
-  | { kind: "iter-close"; siteIndex: number };
+  | { kind: "iter-close"; siteIndex: number }
+  // (#6651 A4) An iterator record held open by a linearised destructuring
+  // pattern (or a pattern-head for-of) across a yield — closed with the
+  // resume's completion (see `emitLinearUnwindClose`).
+  | ({ kind: "dstr-close" } & LinearCloseEntry);
 
 /**
  * (#3050) Runtime-throw route for exceptions raised WHILE EXECUTING a state
@@ -454,6 +470,11 @@ function isStringYieldExpression(ctx: CodegenContext, expr: ts.Expression | unde
  * cases; zero-yield generators are rejected separately by the plan builder.
  */
 function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType {
+  // (#6651 A4) A yield inside a destructuring pattern resumes into a PATTERN
+  // TARGET (`[x = yield]`, `x[yield]`), so the sent value must keep its JS
+  // identity — the boxed-any carrier's `sent` field. Only such generators, which
+  // had no native plan before (see `bodyHasPatternYield`), move carrier.
+  if (decl.body && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body)) return { kind: "externref" };
   let sawNumeric = false;
   let sawString = false;
   let sawOther = false;
@@ -617,6 +638,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // the catch param is. Widened names are marked `undefWidenedLocals` in the
   // resume fctx so a yielded `undefined` stays observable.
   const forOfBindingSpillTypes = new Map<string, ValType>();
+  // (#6651 A4) Temporaries of a linearised pattern (`generator-yield-linearize.ts`):
+  // externref values / iterator records and i32 flags, typed at creation.
+  const linearSpillTypes = new Map<string, ValType>();
+  const linearizeYields = elemIsAny && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body);
 
   // Reserve the state id for the in-progress state.
   let curId = reserveState();
@@ -705,6 +730,30 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     };
     visit(node);
     return found;
+  };
+
+  /** (#6651 A4) The planner's handle on this builder's state cursor. */
+  let linearOrdinal = 0;
+  const linearHost: LinearizeHost<UnwindEntry> = {
+    spill(type, tag) {
+      let name: string;
+      do name = `__gen_lin_${tag}_${linearOrdinal++}`;
+      while (spillSet.has(name) || (decl.body !== undefined && bodyDeclaresBinding(decl.body, name)));
+      addSpill(name);
+      linearSpillTypes.set(name, type);
+      return name;
+    },
+    push: (stmt) => void curStatements.push(stmt),
+    suspend(yieldExpr, unwind) {
+      const sent = linearHost.spill({ kind: "externref" }, "sent");
+      return emitYield(yieldExpr, sent, unwind) ? sent : null;
+    },
+    reserve: () => reserveState(),
+    enter: (id) => resetCursor(id),
+    branch: (flag, thenState, elseState) => finishState(curId, { kind: "branch-flag", flag, thenState, elseState }),
+    jump: (next) => finishState(curId, { kind: "jump", next }),
+    lowerBody: (statements, unwind) => lowerStatements(statements, unwind, false),
+    closeEntry: (entry) => ({ kind: "dstr-close", ...entry }),
   };
 
   /**
@@ -836,6 +885,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         const continuation = lowerDeclarationContinuation(stmt, unwind);
         if (continuation === "lowered") continue;
         if (continuation === "failed") return false;
+      }
+      // 2e) (#6651 A4) A yield inside a destructuring-assignment pattern or a
+      // for-of pattern head — planned as spec-ordered ops over frame spills.
+      if (linearizeYields && stateFinallyDepth === 0) {
+        const linear = lowerLinearizedStatement(linearHost, stmt, unwind, (b) => !loopBodyHasUnsupportedJump(b));
+        if (linear === "lowered") continue;
+        if (linear === "failed") return fail();
       }
 
       // 3) try statements wrapping yields.
@@ -1750,6 +1806,31 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   ): boolean {
     const terms: ts.Expression[] = [];
     flattenCommaExpression(root, terms);
+    return lowerSequencedContinuation(host, terms, unwind);
+  }
+
+  /**
+   * (#6651 A4) A non-short-circuit binary operator evaluates its left operand,
+   * then its right one, then operates (§13.15.3 ApplyStringOrNumericBinaryOperator
+   * and the relational / equality forms) — the same left-to-right sequence the
+   * comma arm lowers, so `(yield 3) + (yield 4)` takes that lowering over its two
+   * operands. Standalone-only like every operand-carrying widening.
+   */
+  function isSequencedBinaryOperator(kind: ts.SyntaxKind): boolean {
+    return kind >= ts.SyntaxKind.FirstBinaryOperator && kind <= ts.SyntaxKind.LastBinaryOperator
+      ? kind !== ts.SyntaxKind.AmpersandAmpersandToken &&
+          kind !== ts.SyntaxKind.BarBarToken &&
+          kind !== ts.SyntaxKind.QuestionQuestionToken &&
+          kind !== ts.SyntaxKind.CommaToken &&
+          !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment)
+      : false;
+  }
+
+  function lowerSequencedContinuation(
+    host: ContinuationHost,
+    terms: readonly ts.Expression[],
+    unwind: readonly UnwindEntry[],
+  ): boolean {
     if (terms.length < 2) return false;
 
     const yields: { index: number; expression: ts.YieldExpression }[] = [];
@@ -1933,7 +2014,24 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const conditionalRoot = ts.isConditionalExpression(root) ? root : undefined;
     const commaRoot =
       ts.isBinaryExpression(root) && root.operatorToken.kind === ts.SyntaxKind.CommaToken ? root : undefined;
-    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot) return "not-applicable";
+    const binaryRoot =
+      continuationYieldsMayCarryOperands &&
+      ts.isBinaryExpression(root) &&
+      isSequencedBinaryOperator(root.operatorToken.kind) &&
+      (continuationYieldOf(root.left) !== null || continuationYieldOf(root.right) !== null)
+        ? root
+        : undefined;
+    // (#6651 A4) A template's substitutions evaluate left to right (§13.2.8.6),
+    // the same sequence again.
+    const templateRoot =
+      continuationYieldsMayCarryOperands &&
+      ts.isTemplateExpression(root) &&
+      root.templateSpans.some((span) => continuationYieldOf(span.expression) !== null)
+        ? root
+        : undefined;
+    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot && !binaryRoot && !templateRoot) {
+      return "not-applicable";
+    }
 
     // Bare-yield sent values are f64 in this checkpoint. String/boxed-any
     // carriers and every try/unwind crossing retain the existing fail-closed
@@ -1990,6 +2088,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     if (commaRoot) {
       return lowerCommaExpressionContinuation(host, commaRoot, unwind) ? "lowered" : "not-applicable";
+    }
+    const sequenced = binaryRoot
+      ? [binaryRoot.left, binaryRoot.right]
+      : templateRoot?.templateSpans.map((span) => span.expression);
+    if (sequenced) {
+      return lowerSequencedContinuation(host, sequenced.map(unwrapContinuationWrapper), unwind)
+        ? "lowered"
+        : "not-applicable";
     }
     return "not-applicable";
   }
@@ -2595,6 +2701,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   const carrierType = genCarrierFieldType(elemValType);
   const spillTypes = new Map<string, ValType>();
   for (const name of spills) {
+    // (#6651 A4) Linearised-pattern temporaries — incl. their resume bindings,
+    // which only ever feed a pattern op (an externref PutValue / IsUndefined),
+    // never a member read, so the any-carrier bail below does not apply.
+    const linearType = linearSpillTypes.get(name);
+    if (linearType !== undefined) {
+      spillTypes.set(name, linearType);
+      continue;
+    }
     // (#2864 R1) A delegation-completion binding (`const x = yield* inner()`)
     // holds the inner's f64 `return` value — always f64 (only f64-elem inners
     // are delegated), independent of the OUTER's carrier.
@@ -2643,6 +2757,15 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     const declNode = spillDecls.get(name);
     const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
+    // (#6651 A4) `var vals = []` is an evolving `any[]`, which the resolver defers
+    // (its decl-driven vec inference differs from the generic one). The
+    // linearised pattern reads such a source only as an externref, and the
+    // post-emit reconcile pins the field to whatever slot the declaration settles
+    // on — so an any-array literal spills at the boundary rep here.
+    if (!resolved && linearizeYields && declNode?.initializer && ts.isArrayLiteralExpression(declNode.initializer)) {
+      spillTypes.set(name, { kind: "externref" });
+      continue;
+    }
     if (!resolved) return null;
     spillTypes.set(name, resolved);
   }
@@ -4811,6 +4934,8 @@ function compileState(
 
   // Prelude statements (straight-line, yield-free).
   for (const stmt of state.statements) {
+    // (#6651 A4) A linearised-pattern op marker compiles to its op, not as source.
+    if (emitLinearOpStatement(ctx, fctx, stmt)) continue;
     withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () => {
       compileStatement(ctx, fctx, stmt);
     });
@@ -4927,6 +5052,18 @@ function compileState(
           ...setStateInstrs(info, selfLocal, term.thenState),
           { op: "br", depth: loopDepth + 1 }, // +1 for the inner branch `if`
         ],
+        else: [...setStateInstrs(info, selfLocal, term.elseState), { op: "br", depth: loopDepth + 1 }],
+      });
+      break;
+    }
+    case "branch-flag": {
+      body.push(...storeSpills(info, fctx, selfLocal));
+      const flag = fctx.localMap.get(term.flag);
+      body.push(flag === undefined ? { op: "i32.const", value: 0 } : { op: "local.get", index: flag });
+      body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...setStateInstrs(info, selfLocal, term.thenState), { op: "br", depth: loopDepth + 1 }],
         else: [...setStateInstrs(info, selfLocal, term.elseState), { op: "br", depth: loopDepth + 1 }],
       });
       break;
@@ -5740,6 +5877,10 @@ function emitUnwindWalk(
           else: [],
         },
       );
+      continue;
+    }
+    if (entry.kind === "dstr-close") {
+      emitLinearUnwindClose(ctx, fctx, entry, srcIsThrow);
       continue;
     }
     if (entry.kind === "catch") {

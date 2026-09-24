@@ -1891,7 +1891,20 @@ function emitSafeStructConversion(
   // Case 3: struct narrowing — destination fields are a subset of source fields
   const narrowInfo = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx);
   if (narrowInfo) {
-    return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
+    const pair = `${fromTypeIdx}>${toTypeIdx}`;
+    let active = narrowingInProgress.get(ctx);
+    if (!active) narrowingInProgress.set(ctx, (active = new Set()));
+    if (active.has(pair)) {
+      fctx.body.push({ op: "call", funcIdx: recursiveStructNarrowHelper(ctx, fromTypeIdx, toTypeIdx, narrowInfo) });
+      if (!toNullable) fctx.body.push({ op: "ref.as_non_null" });
+      return true;
+    }
+    active.add(pair);
+    try {
+      return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
+    } finally {
+      active.delete(pair);
+    }
   }
 
   return false;
@@ -2227,6 +2240,47 @@ function emitVecToVecBody(
   releaseTempLocal(fctx, lenLocal);
   releaseTempLocal(fctx, srcLocal);
   return true;
+}
+
+/**
+ * (#1058) Struct pairs whose narrowing body is being emitted. A field that needs
+ * the same pair again (TypeScript's `MappedType.target: MappedType`) calls an
+ * outlined helper instead of inlining the body into itself without end.
+ */
+const narrowingInProgress = new WeakMap<CodegenContext, Set<string>>();
+
+function recursiveStructNarrowHelper(
+  ctx: CodegenContext,
+  fromTypeIdx: number,
+  toTypeIdx: number,
+  info: NonNullable<ReturnType<typeof getStructNarrowInfo>>,
+): number {
+  const name = `__struct_narrow_${fromTypeIdx}_${toTypeIdx}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const param: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
+  const result: ValType = { kind: "ref_null", typeIdx: toTypeIdx };
+  const typeIdx = addFuncType(ctx, [param], [result]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(name, funcIdx);
+  const helper: FunctionContext = {
+    name,
+    params: [{ name: "src", type: param }],
+    locals: [],
+    localMap: new Map(),
+    returnType: result,
+    body: [{ op: "local.get", index: 0 }],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Published before its body is emitted so a late import added while the
+  // fields are coerced shifts this body's calls too.
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: helper.locals, body: helper.body, exported: false });
+  emitStructNarrowBody(ctx, helper, fromTypeIdx, toTypeIdx, info, true, true);
+  return ctx.funcMap.get(name) ?? funcIdx;
 }
 
 /** Emit struct narrowing: extract a subset of fields from a larger struct */
@@ -5081,6 +5135,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     const plan = coercionPlan(from, to, {
       boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
       unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+      boxBigIntIdx: ctx.funcMap.get("__box_bigint") ?? null,
     });
     if (plan && !plan.lossy) return plan.instrs;
   }

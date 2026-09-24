@@ -259,6 +259,7 @@ function sourceDeletesBuiltinPrototypeMember(
   return (positions.get(key) ?? []).some((deleteStart) => deleteStart < callStart);
 }
 import { resolvePromiseSubclassName } from "./promise-subclass.js";
+import { ensureTaToStringHelper, taToStringApplies } from "../ta-to-string.js"; // (#6651 E7)
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -3885,7 +3886,9 @@ export function compileReceiverMethodCall(
         if (recvType && recvType.kind !== "externref" && recvType.kind !== "ref_extern") {
           coerceType(ctx, fctx, recvType, { kind: "externref" });
         }
-        fctx.body.push({ op: "call", funcIdx: toStrIdx });
+        // (#6651 E7) A detached TypedArray receiver throws (§23.2.3.32 → join).
+        const taIdx = taToStringApplies(ctx) ? ensureTaToStringHelper(ctx, fctx) : undefined;
+        fctx.body.push({ op: "call", funcIdx: taIdx ?? toStrIdx });
         return { kind: "externref" };
       }
     }

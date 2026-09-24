@@ -39,7 +39,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
-import { addHostStringConstantGlobal } from "../registry/imports.js";
+import { addHostStringConstantGlobal, deferrableStringConstantGlobalGet } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
 import {
@@ -240,9 +240,12 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   fctx.body.push({ op: "i32.eqz" });
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    const strIdx = addHostStringConstantGlobal(ctx, msg);
-    if (strIdx !== undefined) {
-      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    // (#1058) One message per captured name: batch its import with the others.
+    const deferred = deferrableStringConstantGlobalGet(ctx, msg);
+    const strIdx = deferred ? undefined : addHostStringConstantGlobal(ctx, msg);
+    if (deferred || strIdx !== undefined) {
+      const get: Instr[] = deferred ?? [{ op: "global.get", index: strIdx! }];
+      then = [...get, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
     } else {
       const tagIdx = ensureExnTag(ctx);
       then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
@@ -775,8 +778,8 @@ function analyzeTdzAccessByPos(ctx: CodegenContext, varName: string, callNode: t
   const sourceFile = callNode.getSourceFile();
   if (!sourceFile) return "check";
 
-  // Find the declaration by looking up the local symbol in scope
-  const sym = ctx.checker.getSymbolsInScope(callNode, ts.SymbolFlags.Variable).find((s) => s.name === varName);
+  // (#1058) resolveName walks the scope chain once, not every symbol in scope.
+  const sym = ctx.checker.resolveName(varName, callNode, ts.SymbolFlags.Variable, false);
   if (!sym) return "check";
   const decl = sym.valueDeclaration;
   if (!decl) return "check";

@@ -26,6 +26,36 @@ export function formalParametersBindArguments(parameters: readonly ts.ParameterD
   return parameters.some((parameter) => bindingNameBindsArguments(parameter.name));
 }
 
+/**
+ * (#6651) Does the function BODY introduce its own top-level LEXICAL binding
+ * named `arguments` (`let arguments` / `const arguments` / `class arguments`)?
+ *
+ * Such a binding is a distinct declarative-environment record that shadows the
+ * implicit arguments object for the whole body, while a parameter default —
+ * evaluated in the *parameter* scope — still sees the object (§10.2.11 steps
+ * 20/22; `arguments-with-arguments-lex.js`). Every lowering path keys locals by
+ * spelling, so the two bindings would otherwise share one slot and the body's
+ * `undefined` initializer would be stored into the vec-typed arguments local —
+ * an `illegal cast` at runtime.
+ *
+ * Only the body's OWN statement list is scanned: a nested block's `let
+ * arguments` shadows just that block, which the ordinary block-scope machinery
+ * already handles.
+ */
+export function bodyLexicallyBindsArguments(body: ts.Node): boolean {
+  if (!ts.isBlock(body)) return false;
+  for (const statement of body.statements) {
+    if (ts.isClassDeclaration(statement) && statement.name?.text === "arguments") return true;
+    if (!ts.isVariableStatement(statement)) continue;
+    const flags = statement.declarationList.flags;
+    if ((flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (bindingNameBindsArguments(declaration.name)) return true;
+    }
+  }
+  return false;
+}
+
 /** Whether this lowering should materialize the function's implicit object. */
 export function needsImplicitArgumentsObject(
   declaration: ts.FunctionLikeDeclarationBase,
