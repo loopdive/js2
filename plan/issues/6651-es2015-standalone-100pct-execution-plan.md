@@ -590,6 +590,18 @@ func-budget-allow:
   # that would satisfy this gate is the `vec-symbol-key-overlay.ts` extraction
   # named in the LOC rationale — a refactor, not part of a behaviour fix.
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  # 2026-09-24 — cluster I slice I5: `compileIIFE` +2 (315 > 313). The whole
+  # mechanism — the `super`-in-body test, the enclosing-class resolution and the
+  # synthetic `this` capture — was extracted VERBATIM into the module-scope
+  # `adoptLiftedIifeSuperContext` (the inline first cut cost +33), and the
+  # extraction is proven byte-neutral: all 50 host-lane binaries of the
+  # `website/playground/examples` + `tests/fixtures` corpus hash identically
+  # pre- and post-extraction (`.tmp/6651/hash-{after,postextract}.json`), and the
+  # six-row standalone measurement is unchanged across it. What cannot move is
+  # the call itself: it must MUTATE `captures` before `captureParamTypes` /
+  # `allParamTypes` / `addFuncType` read that array — one line — and its result
+  # must land on the lifted `FunctionContext` literal — the second line.
+  - src/codegen/expressions/calls.ts::compileIIFE
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -7407,6 +7419,111 @@ partitioned by lane:
 Both lanes `git merge origin/main` before opening a slice and record slices
 under `## Cluster status`. This lane has not opened F, H or I since round 1;
 the partition stands as proposed.
+
+### 2026-09-24 — Cluster I, slice I5: the void-`super` rollback (arrow-lexical family)
+
+- **Branch** `issue-6651-i5-arrow-lexical`, base `claude/project-thread-yhj9pp`
+  (`dda62641`). **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-ab13370bde0a74a4c`.
+- **Host-lane probe FIRST, and it redirected the slice.** All SIX rows of the
+  named arrow-lexical family fail on the DEFAULT (host) target too
+  (`.tmp/6651/I5-six-host-base.log`, 6 fail), so none of them is standalone
+  lowering — the cause is shared front-end. Two of the six turned out to be
+  reachable anyway and are fixed here; the other four are named below with the
+  exact site that blocks them. **Nothing in this slice is `noJsHost`-gated, by
+  design: the defect was target-independent.**
+
+| manifest / lane | | pass | fail | CE |
+| --- | --- | ---: | ---: | ---: |
+| `I-language-misc.txt` (114) standalone | before `.tmp/6651/I-base.log` | 12 | 91 | 11 |
+| | after `.tmp/6651/I-after2.log` | **14** | 89 | 11 |
+| control (564) standalone | before `.tmp/6651/control-standalone-base.log` | 484 | 77 | 3 |
+| | after `.tmp/6651/control-standalone-after.log` | **486** | 75 | 3 |
+| control (564) HOST | before `.tmp/6651/control-host-base.log` | 465 | 95 | 4 |
+| | after `.tmp/6651/control-host-after.log` | **467** | 93 | 4 |
+
+  Per-ROW set diff (`rowdiff.mjs`, three args) on all three: **+2 gained, 0
+  lost, 0 verdict-changed**, the same two rows every time —
+  `arrow-function/lexical-super-property.js` and
+  `…/lexical-super-property-from-within-constructor.js`. Zero `error` rows in
+  any sweep (`JS2WASM_ROW_TIMEOUT_MS=420000 … --isolate` throughout). The
+  control manifest is every `language/expressions/{arrow-function,super,new.target}`,
+  every `language/statements/class/subclass`, and the `class/definition/*super*`
+  rows — 564 paths, `.tmp/6651/I5-control.txt`.
+
+- **Root cause: `null` means two different things, and one of them deletes
+  code.** A void call legitimately produces no value, but `null` returned to
+  the #1919 speculative wrapper in `compileExpressionBody` means "inner
+  produced no usable value" — the wrapper then calls `rollbackSpeculative`,
+  TRUNCATES the instructions already emitted and substitutes a default
+  constant. So a `super.<m>()` whose parent method returns void was *silently
+  deleted*: `super.increment();` compiled to `i32.const 0; drop`, the program
+  compiled and ran, and every side effect of the parent method (a `this` field
+  write, an outer-scope mutation) was gone. This is exactly the hazard #1551
+  documented and fixed for the nested `super(...)` arm; three other arms still
+  carried the `null`:
+
+  1. `compileSuperMethodCallCore` (`src/codegen/expressions/new-super.ts`)
+     returned `null` for a void parent method **after** emitting
+     `local.get this; call <Parent>_<m>` → now `VOID_RESULT`.
+  2. The INLINE concise-arrow IIFE arm (`call-tail-dispatch.ts`) returned
+     `compileExpression`'s `null` straight through, rolling the whole inlined
+     IIFE back. `compileExpression`'s FAILURE paths never return `null` (they
+     push a default and return its `ValType`), so `null` there is
+     unambiguously the void case → `result ?? VOID_RESULT`.
+  3. The LIFTED IIFE path (`compileIIFE`, taken when the call supplies FEWER
+     arguments than the arrow declares — the test262 rows' own
+     `(_ => super.increment())()`) gave the lifted `FunctionContext` neither
+     `enclosingClassName` nor a `this` local, so the super lowering bailed to
+     its evaluate-args-and-default fallback. New module-scope
+     `adoptLiftedIifeSuperContext` threads the caller's `this` in as an
+     ordinary synthetic capture and carries the class name across, gated on the
+     body actually mentioning `super` (a plain `this` read already resolves
+     through the `__current_this` rung, so no other IIFE's lifted signature
+     moves).
+
+  The bug is invisible to a value-returning probe: `super.f()` that returns a
+  number has always worked, which is why `class A { f(): number … }` passes and
+  `class A { f(): void … }` silently does nothing.
+
+- **Byte-identity, host lane.** 50 binaries (`website/playground/examples` +
+  `tests/fixtures`, DEFAULT target) hash **identically** before and after the
+  whole change (`.tmp/6651/hash-{base,after}.json`) — no corpus program
+  contains the pattern, which is why this survived. That is NOT a claim of host
+  neutrality: the change is deliberately ungated and the host control sweep
+  moves 2 rows (above). The `compileIIFE` extraction is separately proven
+  byte-neutral (`hash-postextract.json` = `hash-after.json` = base, 50/50) and
+  the six-row standalone verdict is unchanged across it.
+
+- **Left out, with the exact site.** The other four rows of the family, all
+  still failing on BOTH lanes:
+  - `lexical-new.target.js`, `lexical-new.target-closure-returned.js` —
+    `new.target` is `undefined` for any function that is not a compiled
+    CONSTRUCTOR (`src/codegen/expressions.ts` ~L1614: the non-`isConstructor`
+    arm emits `undefined`), and the machinery behind it is a per-class i32 id
+    (`src/codegen/new-target.ts`), which cannot represent "the function object
+    `new` was applied to". A plain `function F(){}` called as `new F()` reads
+    `undefined` even without any arrow. Needs its own issue; it is not arrow
+    capture.
+  - `lexical-super-call-from-within-constructor.js` — wants a **ReferenceError**
+    from a SECOND `super()` (§8.6.2 `[[ThisBindingStatus]]`); there is no
+    already-initialised check on the `super()` path.
+  - `lexical-supercall-from-immediately-invoked-arrow.js` — `(_ => super())()`
+    with no argument, i.e. the LIFTED IIFE again, but for `super(...)` rather
+    than `super.m()`. The `super(...)` arm (`calls.ts` ~L8078) requires
+    `fctx.isConstructor === true`, which a lifted IIFE is not; making it one
+    would drag constructor-only state (own-field init sequencing, the
+    `super`-initialised flag) into a lifted function, so it is deliberately not
+    attempted here.
+- Pin file `tests/issue-6651-super-void-rollback.test.ts`, 5 cases (statement
+  position, `this`-mutating parent, inline arrow arm, lifted arrow arm, and a
+  value-returning super call as the unchanged control).
+- Gates run bare, never piped: `check-loc-budget` 0 · `check-func-budget` 0
+  (with the `compileIIFE` +2 grant added to this file's frontmatter, after the
+  verbatim extraction cut the inline cost from +33) · `check-coercion-sites` 0 ·
+  `check:oracle-ratchet` 0 · `check:dead-exports` 0 · `lint` 0 · `typecheck` 0 ·
+  `test:equivalence:gate` 0 (22 failing / 1720 passing / 22 known — no new
+  regressions).
 
 ## Manifest generator note
 
