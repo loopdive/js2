@@ -245,6 +245,24 @@ function mint(ctx: CodegenContext, name: string, params: ValType[], body: Instr[
   return funcIdx;
 }
 
+/**
+ * (#6668) The pad for an argument the caller did not pass. An `externref`
+ * formal must receive `undefined`, NOT `ref.null.extern` — in the standalone
+ * value model a null externref is JS `null`, which neither fires the callee's
+ * `__extern_is_undefined` parameter-default check nor reads as `undefined`
+ * (`new PlainYearMonth(2000, 5)` saw `referenceISODay = null` → 0 instead of
+ * the default 1). Only the ALREADY-reserved singleton is used: this runs at
+ * finalize, where reserving a global is unsafe, so a module without one keeps
+ * the zero pad. Typed formals keep their zero; the `__argc` publish below
+ * drives their defaults.
+ */
+function missingArgInstrs(ctx: CodegenContext, want: ValType): Instr[] {
+  if (want.kind === "externref" && ctx.undefinedGlobalIdx !== undefined) {
+    return [{ op: "global.get", index: ctx.undefinedGlobalIdx }, { op: "extern.convert_any" }];
+  }
+  return defaultValueInstrs(want);
+}
+
 function buildTrampolineBody(
   ctx: CodegenContext,
   candidate: ClassConstructCandidate,
@@ -269,7 +287,7 @@ function buildTrampolineBody(
       { op: "i32.const", value: a },
       { op: "local.get", index: 1 },
       { op: "i32.lt_s" },
-      { op: "if", blockType: { kind: "val", type: want }, then: present, else: defaultValueInstrs(want) },
+      { op: "if", blockType: { kind: "val", type: want }, then: present, else: missingArgInstrs(ctx, want) },
     );
   }
   // No-op unless the module uses `new.target` (`ctx.usesNewTarget`).
