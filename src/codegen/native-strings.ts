@@ -30,6 +30,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { pendingStringConstantGlobalGet } from "./registry/imports.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
   addFuncType,
@@ -67,6 +68,8 @@ export function stringConstantExternrefInstrs(ctx: CodegenContext, value: string
     instrs.push({ op: "extern.convert_any" });
     return instrs;
   }
+  const pending = pendingStringConstantGlobalGet(ctx, value);
+  if (pending) return pending;
   const strIdx = ctx.stringGlobalMap.get(value);
   if (strIdx === undefined || strIdx < 0) {
     // Defensive: caller forgot to register, or sentinel. Push undefined.

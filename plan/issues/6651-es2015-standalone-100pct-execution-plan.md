@@ -552,6 +552,16 @@ loc-budget-allow:
   # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
   # gate it relaxes — the candidate gate is the single source of truth three
   # emit sites and the host-import scan consult, so it cannot move).
+  # 2026-09-23 — cluster A slice A4. The pattern planner and every op emitter
+  # live in the NEW leaf `src/codegen/generator-yield-linearize.ts`.
+  # `generators-native.ts` +141 is what has to sit inside the plan builder and
+  # the state emitter: the `LinearizeHost` adapter over the builder's private
+  # state cursor (spill / suspend / reserve / branch / jump — it closes over
+  # `emitYield`, `finishState`, `lowerStatements`), the statement arm that calls
+  # the planner, the `branch-flag` terminator and `dstr-close` unwind arms in
+  # `compileState` / `emitUnwindWalk`, the carrier override in
+  # `generatorElemValType`, and the binary / template roots of the #680
+  # continuation (`lowerSequencedContinuation`, which the comma arm now shares).
 func-budget-allow:
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
@@ -771,6 +781,13 @@ func-budget-allow:
   # closure-lane method's `this` snapshot (see the LOC grant).
   - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures.ts::compileArrowAsClosure
+# 2026-09-23 — cluster A slice A4: `compileState` +14 (the `branch-flag`
+# terminator arm and the one-line op-marker dispatch in the prelude loop) and
+# `buildNativeGeneratorPlan` +102 (the `LinearizeHost` adapter, the statement
+# arm, the linearised-spill typing and the any-array spill fallback, plus the
+# binary / template continuation roots). The adapter must close over the
+# builder's private cursor, so it cannot leave the function; the planner itself
+# is in `generator-yield-linearize.ts`.
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -6861,6 +6878,139 @@ turned out to be a different defect than recorded (see residuals).
 | `toString`/`toLocaleString` `detached-buffer` (2) | no TypeError | the #5961 dispatcher guard works (`sort` throws, probe `j1`); these two spellings take neither the dispatcher nor the native join, so the same `taDynDetachedGuardPrologue` needs splicing at their own call routes (`__call_toString` family) |
 | `subarray/{detached-buffer,byteoffset-with-detached-buffer}` (2), `DataView/custom-proto-access-detaches-buffer` (1) | `observable ToInteger(begin)` / a TypeError where none is due / no TypeError | not investigated this slice |
 | BigInt element kinds | — | ES2020, out of scope |
+
+### 2026-09-23 — Cluster A (native generator lowering, standalone), slice A4: `yield` nested inside an expression the lowering treats as atomic
+
+Claimed 2026-09-23 by the round-3 A4 lane (Opus 5 Max). Scope: the 74-row
+`buildNativeGeneratorPlan` / `lowerStatements` "unmodeled statement" bucket of
+A2-gates — `yield` inside a destructuring-assignment pattern or a `for-of` head
+(~46), computed property names from `yield` (8), `(yield a) op (yield b)` and
+`obj.foo = yield` (4); `for-of` with `try` inside (2) only if it shares a cause.
+
+Base `origin/main` @ `55ab1396c3` (A3 landed). Every before-state was measured
+in a source-clean `git archive` extract (`.tmp/basetree`); the engine was
+`JS2WASM_EVAL_ENGINE=quickjs`; every runner pass was `--standalone --isolate`
+in 24-row chunks, one runner at a time.
+
+| set | before | after | gained | lost |
+| --- | ---: | ---: | ---: | ---: |
+| A manifest, 197 rows (sha256 `5fc1a7c0…2d77`) | 100 pass / 2 fail / 95 CE | **152** / 2 / 43 | **+52** | 0 |
+
+The 52 are the whole of targets 1 and 3 plus the template row. No other
+verdict moved (per-row join, `.tmp/a4/A-join.tsv`).
+
+#### The bucket on this base: 67 rows, not 74
+
+Rebuilt from A2's `A2-bail-attribution.tsv` against the base verdicts: 8 of the
+74 already pass on this base (the four `yield-as-literal-property-name` rows
+A2-gates fixed, and `for-of/yield{,-from-try,-from-catch,-from-finally}.js` —
+target 4, "for-of with try inside", is therefore already done). What is left:
+
+| rows | shape | this slice |
+| ---: | --- | --- |
+| 24 | `result = <pattern with yield> = vals` | **24 pass** |
+| 24 | `for (<pattern with yield> of [...])` | **24 pass** |
+| 3 | `(yield 3) + (yield 4);` | **3 pass** |
+| 1 | `` str = `1${ yield }3${ 4 }5` `` | **1 pass** |
+| 9 | computed class / object keys from `yield` | not attempted |
+| 4 | `yield*` in a for-of body | not attempted (A2's bail 4) |
+| 1 | `obj.foo = yield` inside `try { } finally { return 1 }` | not attempted |
+| 1 | `with` | recorded, not attempted |
+
+#### Design
+
+A pattern cannot ride the #680 continuation (suspend, then recompile the
+statement with the yield read from a spill): its GetIterator / `next()` / `Get`
+/ IteratorClose are observable and must not re-run, and a yield in a default is
+CONDITIONAL. So `src/codegen/generator-yield-linearize.ts` plans the pattern the
+other way round, as G1's spec-ordered drive with its wasm locals promoted to
+generator-frame spills:
+
+1. Every spec step is one **op** (`eval`, `get-iter`, `step`, `rest`,
+   `is-undef`, `default`, `coercible`, `key-const`, `get-prop`, `put-ident`,
+   `put-member`, `close`) over named spills; ops ride the state's statement list
+   as inert marker statements, so their order against source statements and the
+   terminator is the state's own order.
+2. A `yield` is its own suspension between two ops; the resumed value lands in a
+   fresh spill. A yield in a DEFAULT is `f = IsUndefined(v)` + a new
+   `branch-flag` terminator (`f ? S_yield : S_join`); a yield in a member target
+   (`x[yield]`) sits between the base's evaluation and the step (§13.15.5.5
+   step 1 — the Reference precedes IteratorStep).
+3. The iterator record and its [[Done]] are spills, so they survive the resume.
+   A runtime throw from an op closes every open record innermost-first with the
+   close's completion suppressed (each op carries its close stack); a
+   `.return()` / `.throw()` at a pattern yield walks a new `dstr-close` unwind
+   entry — for a RETURN completion the close's throw and its non-Object result
+   are the completion (the `*-rtrn-close-err` / `-null` rows), for a THROW
+   completion they are discarded.
+4. A pattern-head `for-of` is the same planner around a loop header whose
+   iterator is a spill driven by `__iterator_next` — arrays included (A2's
+   `for-of-step` rides `__gen_delegate_*`, which traps on a vec). Its record is
+   the OUTER close entry for the head and the body. `return` / `yield*` /
+   `break` in the body are refused, for A2's reasons.
+5. Gate: only generators whose body holds such a pattern (`bodyHasPatternYield`,
+   standalone/WASI only) are touched, and they move to the boxed-any carrier —
+   the resumed value lands in a pattern TARGET, so it must keep its JS identity
+   (`iter.next('prop')` keys `x[yield]`). Every one of them had no native plan
+   before, so no working generator changes carrier. `var vals = []` (an evolving
+   `any[]` the spill resolver defers) spills at externref under the same gate.
+
+Target 3 is the continuation machinery, not the planner: a non-short-circuit
+binary (§13.15.3) and a template's substitutions evaluate left to right, exactly
+like the comma arm, so both are new roots of the (now shared)
+`lowerSequencedContinuation`, standalone-only like every operand-carrying
+widening.
+
+#### Controls — zero pass → non-pass, host byte-identical
+
+- **Compile-only differential, both targets, primary + strict variants**
+  (A3's `sha.mts`, harness assembled as `runTest262File` does). Corpus 2,016
+  rows: A3's 1,450-row generator set ∪ the A manifest ∪ every row whose source
+  has a `yield` after a `[` / `{` on the same line (359) or `yield` plus a
+  `for (` head (268) ∪ an AST scan for a yield inside an assignment pattern, a
+  for-of pattern head, a binary operand or a template span (69 corpus-wide).
+  - **Host lane: 0 of 2,016 modules changed.**
+  - **Standalone: 52 changed — exactly the 52 rows gained above** (set-equal,
+    `.tmp/a4/changed.txt` vs `.tmp/a4/gained.txt`); their before/after verdicts
+    are the manifest sweep (52 CE → pass). The 17 scan hits that did not change
+    are async generators (`for-await-of/async-gen-*`, not native candidates),
+    two `in`-operator rows whose yield is not a statement-level binary root, and
+    two `staging/sm` rows the runner skips.
+- `website/playground/examples/` + `benchmarks/`: **32/32 byte-identical**.
+- `node scripts/equivalence-gate.mjs`: 22 failing / 1,720 passing, all 22 in
+  the baseline, no new regressions. `pnpm run check:ir-fallbacks`: OK.
+- Generator/yield pin suites (`vitest run generator yield issue-680`, 56
+  files), both trees: the failing sets are identical except for (a) the ten
+  new A4 pins, red on base, and (b) `issue-680 … fails closed for destructuring
+  assignment`, which pinned the refusal this slice removes. That case is
+  deleted with a pointer to its positive twin in the A4 suite (the same
+  treatment A2-gates gave `issue-3952`'s stale control). The other 13 failures
+  (#2173 slice-2b `yield*` over a generic iterable ×9, `generator-method-
+  destructuring` untyped array, `yield-as-expression` #763, two #2864
+  delegation cases) fail identically on base.
+- New pin suite `tests/issue-6651-a4-yield-in-pattern.test.ts`, 11 cases,
+  **10 red on base**; the CONTROL (`[a] = [yield 1]`, a yield on the RIGHT of a
+  pattern, keeps the f64 continuation) is green on both.
+- Gates run bare: `npm run -s typecheck`; `npx biome lint … --diagnostic-level=error`;
+  loc / func budgets local and with `LOC_GATE_BASE=origin/main` (grants above,
+  dated); `check-coercion-sites`; `check:oracle-ratchet` (+0 / +0);
+  `check:dead-exports`; `check-compiler-boundaries --mode inventory` (the new
+  leaf is classified).
+
+#### Residuals (15 of the 67), in rows-per-effort order
+
+| rows | shape | what it needs |
+| ---: | --- | --- |
+| 4 | `yield*` in a for-of body (`for-of/yield-star*.js`) | A2's bail 4: the native-gen / vec delegation terminators rebuild their abrupt context from `replay` entries only and would drop the loop's close entry. Giving them the full unwind chain the `iterable` kind has is the fix; the planner here is not involved. |
+| 9 | computed class / object keys from `yield` (`cpn-*-from-yield-expression` ×5, `accessor-name-*-computed-yield-expr` ×4) | A runtime-computed method / accessor key on a CLASS (standalone class layouts are static) plus a yield inside CALL arguments (`assert.sameValue(o[yield 9], 9)`, `c[yield 9]()`) — i.e. a call root for the continuation. Not attempted: two independent mechanisms, neither a linearisation. |
+| 1 | `obj.foo = yield` inside `try { } finally { return 1 }` | The member target is linearisable with these ops, but `.return(45)` at the yield replays a finally that itself RETURNs — the legacy replay region compiles that `return` raw inside the resume function. Admitting the assignment alone would move the row from a refusal to a wrong value. |
+| 1 | `with ({ x: 2 }) { yield x; }` | `with` — recorded, not attempted. |
+
+Half-done: nothing is half-landed. The `for-of` pattern head refuses a
+`return` / `yield*` / `break` / `continue` in its body (A2's reasons), and a
+runtime throw from a pattern-head for-of BODY statement does not close the loop
+iterator (the same limitation A2's `for-of-step` has — only abrupt resumes and
+throws from the head's own ops close it); neither shape occurs in this bucket.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

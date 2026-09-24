@@ -25,6 +25,10 @@ loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/stack-balance.ts
   - src/codegen/expressions/operator-assignment.ts
+  # 2026-09-24: checker compile cost — native-strings.ts reads a string
+  # constant still waiting in the end-of-bodies batch (3 lines);
+  # registry/imports.ts and identifiers.ts (listed below) add the batching.
+  - src/codegen/native-strings.ts
   # 2026-09-23: checker slice — index.ts and property-access.ts each import
   # the fnctor-name helper so NodeLinks resolves one way for the whole compile.
   - src/codegen/index.ts
@@ -1775,6 +1779,25 @@ enclosing body for every nested function or capture:
 Output is byte-identical (same module sizes). The full checker still runs out
 of its 8 GB heap after 56 minutes in `checker.ts` bodies, so the remaining cost
 is elsewhere; the next profile targets the real compile.
+
+**Real checker compile profile (2026-09-24, 15–20 min samples).** Half of the
+time went to `shiftGlobalIndices`: each new string-constant import renumbers
+every module global in every compiled body. The hot producers were the
+`x is not defined` TDZ messages (one per captured name) and property names
+(`finalizeStructAndDynamicMemberGet`, the member get/set dispatch
+reservations, exact-shape field gets). Those now join the end-of-bodies batch
+the throw messages already used (`registerLateReadStringConstant`;
+`stringConstantExternrefInstrs` reads a pending value through the batch
+placeholder). The next two hotspots were quadratic lookups:
+`ProgramAbiSourceCallableRegistry.unitForFunction` scanned every source unit
+per function-value read (now memoized, invalidated per observed function), and
+`emitEagerNestedCallCaptureBoxes` searched every referenced callee's capture
+list per capture (now one map per call).
+
+With those fixes the compile gets much further per minute: it reached about
+12.5 GB RSS within 20 minutes (the old run reached 8 GB after 56) and was
+OOM-killed there. Memory is now the limit. The measured cause was not the
+capture ABI; see the next section.
 
 ## Checker compile: memory (2026-09-24)
 
