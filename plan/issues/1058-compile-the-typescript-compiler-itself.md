@@ -1776,6 +1776,32 @@ Output is byte-identical (same module sizes). The full checker still runs out
 of its 8 GB heap after 56 minutes in `checker.ts` bodies, so the remaining cost
 is elsewhere; the next profile targets the real compile.
 
+## Checker compile: memory (2026-09-24)
+
+After the compile-speed fixes (#6061, #6066) the full checker compile ran out of
+memory instead of time: it reached about 12.5 GB RSS within 20 minutes and was
+killed. A heap sample at 6 GB put about 4 GB under
+`emitMemoizedNestedFnClosure` / `materializeHoistedFunctionValueBinding`
+(`src/codegen/closures/funcref-as-closure.ts`).
+
+Cause: filling the value of an inner function that captures other inner
+functions filled each captured function inside its own closure-build branch,
+and each of those did the same for its captures. One use site emitted a copy
+per dependency path. A 12-function chain produced a 112 KB module; 16 functions
+ran out of memory.
+
+Fix: the captured values are filled before the build branch, straight-line
+with the use site, and a value already published earlier in the same body
+array is not published again. The checker compile then finishes in about 23
+minutes at about 6 GB peak RSS. Regression test:
+`tests/issue-1058-hoisted-fn-value-chain.test.ts`.
+
+Next blocker, reached for the first time: `nested function checkArrayLiteral
+changed capture noIterationTypes's physical ABI after reservation`. At phase-0
+reservation the capture was a plain externref; when `checkArrayLiteral` is
+compiled the declaring frame has a box registered for `noIterationTypes` while
+its `localMap` slot is still the raw externref local.
+
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
