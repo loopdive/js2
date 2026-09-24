@@ -6194,9 +6194,26 @@ export function emitTaDynCtorConstructFromLocals(
         if (iterablePrelude) objArm.push(...iterablePrelude);
         else objArm.push(...arrayLikeArm);
 
+        // (#6651 E7) §23.2.5.1 step 6.b: EVERY Object argument — a function
+        // included — consults `@@iterator` and is otherwise array-like. A
+        // callable is no `$Object`, so it fell to the count form below
+        // (ToIndex(fn) = 0) and `new TA(fnWithIterator)` never read the
+        // method (`object-arg/iterator-{not-callable-,}throws.js`). Only
+        // with the iterable prelude armed: it owns `__typeof_function`.
+        const typeofFnIdx = iterablePrelude ? ctx.funcMap.get("__typeof_function") : undefined;
+        const isCallable: Instr[] =
+          typeofFnIdx === undefined
+            ? []
+            : [
+                { op: "local.get", index: a0CandidateLocal },
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: typeofFnIdx },
+                { op: "i32.or" },
+              ];
         chain = trackChain([
           { op: "local.get", index: a0CandidateLocal },
           { op: "ref.test", typeIdx: objTypeIdx },
+          ...isCallable,
           { op: "if", blockType: { kind: "empty" }, then: objArm, else: chain },
         ]);
       }

@@ -432,6 +432,7 @@ import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) 
 import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
+import { fillTaStaticViewMopArms } from "./ta-static-view-mop.js"; // (#6651 E7) static view in a generic slot
 import { fillTaDynViewOwnKeyArms } from "./ta-dyn-own-keys.js"; // (#6651 E2) §10.4.5.6 own-key surface
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import {
@@ -6691,6 +6692,9 @@ export function generateModule(
     // AFTER `fillVecLengthDynamicArms` above, whose vec own-`"length"` arm
     // sits in `__hasOwnProperty`/`__object_hasOwn` and must not win for a view.
     fillTaDynViewOwnKeyArms(ctx);
+    // (#6651 E7) A static `$__ta_view` in an externref slot re-enters the
+    // natives above as a dyn view over the same bytes. After them: it prepends.
+    fillTaStaticViewMopArms(ctx);
     fillDataViewConstructProtoArm(ctx);
     fillReflectIsConstructor(ctx);
 

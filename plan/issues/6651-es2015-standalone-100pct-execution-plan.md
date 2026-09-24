@@ -552,6 +552,17 @@ loc-budget-allow:
   # `isAnonymousDefaultExportDeclaration`, each with the measured reason at the
   # gate it relaxes — the candidate gate is the single source of truth three
   # emit sites and the host-import scan consult, so it cannot move).
+  # 2026-09-24 — cluster E, slice E7. The mechanisms live in two NEW leaves
+  # (`ta-static-view-mop.ts`, `ta-to-string.ts`); god-file growth is the
+  # sites that must name them. `index.ts` +4 (import + the one finalize call,
+  # which has to follow `fillTaDynViewMopArms`/`fillTaDynViewOwnKeyArms` because
+  # it prepends in front of their arms), `closures.ts` +2 (the static-view
+  # clause of `closureReturnsExternrefBinding`, the one predicate that decides a
+  # closure keeps its value on the externref carrier), `call-receiver-method.ts`
+  # +3 (the helper call at the `any`-receiver `toString()` site that otherwise
+  # calls `__extern_toString` directly) and
+  # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
+  # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
   # 2026-09-23 — cluster F slice F4: +27 inside `compilePropertyAssignment` —
   # the WRITE arm plus the `__proto__` exclusion and the measurement that
@@ -771,6 +782,12 @@ func-budget-allow:
   # closure-lane method's `this` snapshot (see the LOC grant).
   - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures.ts::compileArrowAsClosure
+  # 2026-09-24 — cluster E slice E7: `emitTaDynCtorConstructFromLocals` +17 —
+  # the callable disjunct of the object-arm guard (see the loc rationale). The
+  # guard is built from locals only this function holds (the peeled candidate
+  # and the iterable prelude that owns `__typeof_function`). `generateModule` +3
+  # and `compileReceiverMethodCall` +4 are listed above.
+  - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -838,6 +855,12 @@ coercion-sites-allow:
 # externref `join`, which has to sit between the separator's evaluation and its
 # coercion) — all five paths/functions already listed above.
   - src/codegen/object-runtime-ordinary-set.ts
+# 2026-09-24 — cluster E, slice E7: `ta-to-string.ts` names `__extern_toString`
+# ×1 (one module constant, +1 net). It is not a new ToString: the helper FALLS
+# BACK to exactly the call the `any`-receiver `x.toString()` site made before,
+# after the detached-buffer check. It is a defined native with its own
+# `FunctionContext`, so the fallback has to name the native it delegates to.
+  - src/codegen/ta-to-string.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -6861,6 +6884,207 @@ turned out to be a different defect than recorded (see residuals).
 | `toString`/`toLocaleString` `detached-buffer` (2) | no TypeError | the #5961 dispatcher guard works (`sort` throws, probe `j1`); these two spellings take neither the dispatcher nor the native join, so the same `taDynDetachedGuardPrologue` needs splicing at their own call routes (`__call_toString` family) |
 | `subarray/{detached-buffer,byteoffset-with-detached-buffer}` (2), `DataView/custom-proto-access-detaches-buffer` (1) | `observable ToInteger(begin)` / a TypeError where none is due / no TypeError | not investigated this slice |
 | BigInt element kinds | — | ES2020, out of scope |
+
+### 2026-09-24 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E7: a static view in a generic slot, `toString` on a detached view, and a callable constructor argument
+
+- **Branch** `e7` (local, not pushed). Written on `origin/main` @ `b6a77738f9`
+  (E6 / #6058 in); a container restart killed the first owner mid-control, and
+  the edits were carried onto `origin/main` @ `9950e34f30` (#6060, #6061,
+  #1058 in — none touches a file this slice edits; the patches applied
+  cleanly) by a second owner, who re-measured everything below on that base.
+  Engine for every verdict: **QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`,
+  adapter `d4799bda84cfed0d`, rebuilt), `--standalone`. Base = `origin/main`
+  copies of the four edited sources swapped in (`.tmp/base/`, file copies),
+  after = the edited tree; no source edit between the first and last chunk of
+  any measurement.
+- Manifest: 24-row `--isolate` chunks, fresh processes, one runner at a time,
+  per-row verdicts. Before = the first owner's two base runs (`b6a77738f9`:
+  E6 PR head and merged main, identical per-row, 56 pass,
+  `.tmp/e7/base2.tsv`), re-confirmed on `9950e34f30` for every row whose bytes
+  changed (see Controls). After = re-run on `9950e34f30`
+  (`.tmp/e7/m-after/`, `m-after.tsv`) — per-row identical to the first
+  owner's after on `b6a77738f9` (`after.tsv`). Those 68 include target 2's
+  `toLocaleString` helper, which the control then showed regressing 4 rows and
+  which was DROPPED (below); the committed tree's figure is 61.
+
+| manifest `E-typedarray-buffers.txt`, 144 rows | pass | non-pass |
+| --- | ---: | ---: |
+| before | 56 | 88 |
+| after, as first written (with the `toLocaleString` helper) | 68 | 76 |
+| after, committed (helper dropped) | **61** | 83 |
+
+**Committed: +5** (`from-{array,typedarray}-mapper-detaches-result`,
+`toString/detached-buffer`, `object-arg/iterator-{not-callable-,}throws`), zero
+pass→non-pass in the manifest (per-row join). The committed figure is the 68-row
+after minus the seven `toLocaleString` rows, each re-run on the committed tree
+(`.tmp/e7/tls-after/`, all seven `fail` again, as on the base); the other 137
+manifest rows' code paths are unchanged by the drop (the dropped hunk touched
+only the `any`-receiver `.toLocaleString()` call site).
+
+#### Bucketing the 88 base failures, and which targets they reach
+
+| target | rows it reached | first failure on the base |
+| --- | ---: | --- |
+| 1 static view in a generic slot | 2 (`from-{array,typedarray}-mapper-detaches-result`) | `SameValue(«10,11,12», «,,»)` |
+| 2 `toLocaleString` / `toString` | 7 of 10 (+ `toString/detached-buffer`) — **only `toString/detached-buffer` kept**, see "Dropped" | `«"42,0"»` for `«"hacks1,hacks2"»`; no throw |
+| 3 callable ctor argument | 2 of 5 (`iterator-{not-callable-,}throws`) | no TypeError / no Test262Error |
+| 4 non-`$Object` prototype | 0 — declined, see residuals | — |
+
+E6's T2 re-diagnosis guessed that the `toString`/`toLocaleString` detached rows
+and `subarray` ×2 also route through the static-view gap. **Measured: they do
+not** — all four build their view through `testWithTypedArrayConstructors`, i.e.
+a DYNAMIC view; the two `toString`/`toLocaleString` rows are target 2's, and the
+two `subarray` rows are unchanged.
+
+#### What landed (three mechanisms + a `toString` detach check, each probed before it was written)
+
+1. **A closure returning a static view keeps the view**
+   (`closures.ts::closureReturnsExternrefBinding` + `isStaticTaViewBinding` in
+   the new `ta-static-view-mop.ts`). `function () { return target; }`, with
+   `target = new Int8Array(ab)`, took the checker's return type `Int8Array` →
+   the packed-vec carrier, and the guarded return cast of a `$__ta_view` to it
+   answered **null** (WAT: `ref.test (ref $vec_i8)` on a `$__ta_view` local).
+   So `from.call(ctor, …)`'s construct driver never saw `target`. A return
+   expression that is a bare identifier bound (by `ctx.oracle
+   .variableDeclarationOf`) to a `new <View>(<ArrayBuffer>)` initializer now
+   keeps the closure result on the externref carrier, the widening Proxy
+   bindings already get (#4707). Host lane untouched (`noJsHost`).
+2. **A static view in an externref slot answers the §10.4.5 MOP**
+   (`fillTaStaticViewMopArms`, new module). The dyn-view arms
+   (`ta-dyn-mop.ts`) test `$__ta_dyn_view` only; a static `$__ta_view` fell to
+   the `$__vec_base` handling — `__extern_length` answered the stored length
+   (no detach, and the `-1` length-tracking sentinel read as `-1`), string-key
+   element reads answered `undefined`, writes were dropped. The two carriers
+   share fields 0–3 exactly (`length, buf, byteOffset, kind`; the dyn view only
+   appends `expando`/`constructProto`) and `kind` indexes `TA_CTOR_KINDS` in
+   both, so each of `__extern_length` / `__extern_get_idx` / `__extern_has_idx`
+   / `__extern_get` / `__extern_has` / `__extern_set` / `__getPrototypeOf` gains
+   a front arm that re-expresses a static view as a dyn view over the SAME
+   buffer and re-enters itself. Every dyn-view rule then applies (detach,
+   canonical numeric keys, `buffer` identity, `constructor`, per-kind proto),
+   writes land in the shared bytes, and the value in the slot is still the
+   original struct, so identity holds (`result === target`). Installed only in
+   a standalone module that registered BOTH carriers; every other module is
+   byte-identical. Probe (`.tmp/e7/p/t3.js`, `Int16Array` + windowed
+   `Uint8Array` behind an `any` param), before → after: `g["1"]`
+   `undefined → -7`, `g["3"] = 5` visible through `target`, `g.buffer === ab`
+   `false → true`, `g.constructor === Int16Array` `false → true`,
+   `getPrototypeOf` `false → true`, length after detach `4/2 → 0/0`.
+3. **`x.toString()` on a detached view throws** (`ta-to-string.ts`, wired at
+   the `any`-receiver `toString()` site in `compileReceiverMethodCall`).
+   §23.2.3.32 is `Array.prototype.toString` → `join` → ValidateTypedArray, but
+   the standalone lowering called `__extern_toString` directly, which renders
+   a detached view as an empty join. `__ta_to_string` runs the #6501 detached
+   prologue and then the unchanged `__extern_toString` call; reached only from
+   a module the pre-scan marks as using dynamic views.
+4. **`new TA(fn)` consults `fn[@@iterator]`** (`dataview-native.ts`,
+   `emitTaDynCtorConstructFromLocals`). §23.2.5.1 step 6.b sends EVERY Object
+   argument through GetMethod(@@iterator) and then array-like; the object arm
+   was gated on `ref.test $Object`, so a callable fell to the count form
+   (ToIndex(fn) = 0) and never read the method. The guard now also admits
+   `__typeof_function(arg)` — only when the iterable prelude is armed (it owns
+   that native).
+
+**Dropped — the `%TypedArray%.prototype.toLocaleString` helper (target 2).**
+`__ta_to_locale_string` ran §23.2.3.31 for a view receiver: the detached
+prologue, the internal length, then `ToString(Invoke(elem, "toLocaleString"))`
+per element, reusing `Array.prototype.toLocaleString`'s element tail
+(`buildExternJoinElementToString`) and fold. It took 7 manifest rows, but the
+control found **4 pass→non-pass**:
+`TypedArray/prototype/toLocaleString/{return-result,get-length-uses-internal-arraylength}.js`
+and their `BigInt/` twins, all `TypeError: Number.prototype.toLocaleString is
+not yet implemented in --target standalone`. Mechanism: for an UNPATCHED
+Number element, `Invoke(elem, "toLocaleString")` resolves through
+`__extern_get` to the standalone value stub for
+`Number.prototype.toLocaleString` (`builtin-value-read.ts`, the #2984
+degrade-to-throw body), and calling it throws; the base never invoked the
+method, it rendered the number with ToString. The prerequisite for re-landing
+the helper is a real standalone `Number.prototype.toLocaleString` value body
+(`ToString(thisNumberValue)`), which changes every module that reads that
+value and needs its own corpus control. The dropped source is kept at
+`.tmp/e7/dropped-ta-to-locale-string.ts` (with the call-site version in
+`dropped-call-receiver-method.ts` and its three pins in
+`dropped-e7-pins.test.ts`) in the E7 worktree.
+
+Target 4 was declined, as the brief allowed: `$Object.$proto` is
+`ref null $Object`, so admitting a TypedArray (or an Array) as a prototype is a
+field-type change on the ordinary-object carrier, not a localized widening.
+
+#### Controls
+
+The first owner's control (`.tmp/e7/ctl-after/`, standalone verdicts on the
+old `b6a77738f9` after tree, chunks 00–05 of 17 written, no before side) was
+**not** used: it had no base to join against and was on the old base. Every
+control figure below was re-run on `9950e34f30`.
+
+- **Control set** (`.tmp/e7/ctl-all.txt`, 3,265 rows): every row under
+  `built-ins/{TypedArray,TypedArrayConstructors,ArrayBuffer,DataView}/`
+  (2,966) plus every other row mentioning `toLocaleString`, `subarray`,
+  `$DETACHBUFFER` or `detachArrayBuffer`.
+- **Compile-all, standalone** (`.tmp/e7/ctl/{base,after}-standalone.sha`, the
+  runner's own `wrapTest` + compile options, sha256 of the binary): 3,265/3,265
+  compile on both sides (no new CE/throw); **1,913 rows changed bytes** — every
+  module that registers both view carriers gets the E7 arms.
+- **Verdicts on the 1,913 changed rows, after — measured WITH the
+  `toLocaleString` helper** (200-row in-process chunks,
+  `.tmp/e7/ctl/v-after/`, joined `v-after.tsv`): 1,338 pass, 514 fail, 60
+  compile_error, 1 error (the join counts runner skips as pass on both sides;
+  harmless for a pass→non-pass check, since skip is decided by metadata). One 200-row chunk (`chunk-06`) died silently on the
+  first attempt and its first half OOMed the runner in-process (8 GB heap) on
+  the second; that half (100 rows, `v-after-06/chunk-00`) was re-run
+  `--isolate`, where the one row that did not finish is
+  `subarray/coerced-begin-end-shrink.js` (ES2024 resizable buffer,
+  `spawnSync ETIMEDOUT`).
+- **Verdicts on the 587 after-non-pass rows (+ the 12 manifest gains), base**
+  (`.tmp/e7/ctl/v-base/`, `v-base-iso/` for the OOM-prone half):
+  587 rows, all measured: 583 non-pass on the base too; **4 pass on the base**
+  — the four `toLocaleString` rows named under "Dropped" — so the helper was
+  removed. `subarray/coerced-begin-end-shrink.js` times out on both sides. The
+  12 manifest gains are all non-pass on the `9950e34f30` base, confirming the
+  inherited before.
+- **After the drop** (committed tree): every changed row under
+  `TypedArray/prototype/{toString,toLocaleString}/` plus every other changed
+  row mentioning either (68 rows, `.tmp/e7/tls-after/`, joined against
+  `v-after.tsv`): the 4 regressed rows pass again; 8 rows went from pass back
+  to fail — the 7 manifest `toLocaleString` gains (fail on the base,
+  `base2.tsv`) and `toLocaleString/BigInt/detached-buffer.js` (re-run on the
+  base: fail). The remaining 1,845 changed rows were not re-run after the drop;
+  the dropped hunk is the `any`-receiver `.toLocaleString()` call site only.
+  E7 pins, gates, byte identity and the boundaries inventory were re-run on the
+  committed tree.
+- **Host (gc) lane**: all four hooks are gated on `ctx.standalone` /
+  `noJsHost`. Compile-all on a 192-row sample of the changed set (every 10th
+  row, `.tmp/e7/ctl/{base,after}-gc-sample.sha`): **192/192 byte-identical**.
+  The full 3,265-row gc compile-all was not run (time box).
+- **Byte identity** (`website/playground/examples/` + three benchmarks, both
+  targets, `.tmp/e7/gates/bytes-{base,after}.txt`): **32/32 identical**.
+- **Gates** on the after tree: loc/func budgets (also with
+  `LOC_GATE_BASE=9950e34f30`), coercion sites, oracle ratchet, dead exports,
+  `typecheck`, biome lint (error level), compiler-boundaries inventory
+  (`errors: []`), `check:ir-fallbacks` OK, equivalence gate 22 failing = 22
+  known, no new. Pins: E-family (`issue-6651-e-typedarray`, `e2`–`e6`) green;
+  the new `tests/issue-6651-e7-typedarray-view-detach.test.ts` 5/5 green, and
+  4/5 **red** with the `origin/main` sources swapped in (the fifth is the
+  attached-`toString` guard, green on both by design).
+
+#### Residuals after E7 (83 rows)
+
+| rows | first failure | what it needs |
+| --- | --- | --- |
+| `toLocaleString/*` (7) | as on the base | the dropped helper (above); prerequisite is a real standalone `Number.prototype.toLocaleString` value body |
+| `toLocaleString/{calls-valueof-from-each-value, return-abrupt-from-{first,next}element-valueof}` (3) | `«"[object Object],…"»` / no throw | NOT a TypedArray gap: `__extern_toString` on an ordinary object whose own `toString` is `undefined` answers `"[object Object]"` instead of falling to `valueOf` (OrdinaryToPrimitive step 5). Probe: `q = {}; q.toString = undefined; q.valueOf = () => "z"; String(q)` answers `[object Object]` with no view involved, while `__to_primitive` itself handles it — the ToString native does not route an `$Object` through it. Cross-cluster (ToString), 3 rows here |
+| `ctors/object-arg/iterator-is-null-as-array-like`, `map/return-new-typedarray-from-empty-length`, `subarray/result-is-new-instance-from-same-ctor` (3) | `instanceof` false | NOT the iterator protocol (the arm now reads `@@iterator` and the array-like values correctly: length 2, `[0] === 1`): `new C(2) instanceof C` is false for a runtime ctor `C`, and `Object.getPrototypeOf(new C(2)) === Float64Array.prototype` is false while `C.prototype === Float64Array.prototype` is true (probe `.tmp/e7/p/t9.js`, base and after alike) — the dyn view's `__getPrototypeOf` glue and the static `<View>.prototype` read no longer name the same object. An identity bucket |
+| `ctors/object-arg/iterating-throws` (1) | Test262Error expected, TypeError got | a GENERATOR OBJECT argument is neither `$Object` nor callable, so it still takes the count form. Widening the guard to "any object" (null excluded) is the general §23.2.5.1 rule; not taken here — every non-primitive carrier reaching that arm would change route |
+| `ctors/object-arg/iterated-array-with-modified-array-iterator` (1) | length 1 for 4 | an Array argument takes the vec copy arm, never `%ArrayIteratorPrototype%.next` (the §23.2.5.1 fast path is only valid while the iterator is unmodified) |
+| `internals/Set/*` (5) | unchanged from E6 | E6's two residual rows: #2358 identity (3), non-`$Object` prototype link (2 — target 4, declined above) |
+| `from-typedarray-into-itself-mapper-detaches-result` (1) | illegal cast in `__module_init_chunk_0` | passing the static view as the SOURCE of `from` casts it on the runner's chunked module-init path; the E7 probe compile (non-chunked) does not trap — not chased |
+| `subarray/{detached-buffer,byteoffset-with-detached-buffer}` (2) | unchanged | dyn views, not the static-view gap (see above) |
+| rest (60) | unchanged | ArrayBuffer/DataView constructor-prototype and `Object.prototype.toString` rows, `%ArrayIteratorPrototype%` results, species/`this`-identity, method-as-value brand checks, `OwnPropertyKeys` on a `new` expression, BigInt kinds |
+
+Half-done: target 2 (dropped, see above). A static-only module (static views, no dyn-view carrier)
+still gets no arms; test262's TypedArray modules always have both, and
+registering the dyn carrier just for the arms would change every static-view
+module's bytes.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
