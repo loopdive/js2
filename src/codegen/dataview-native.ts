@@ -37,7 +37,7 @@
  * i32_byte vec; we `any.convert_extern` + `ref.cast` to recover the struct.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { ts } from "../ts-api.js"; // (#3177 slice 2) literal-`undefined` length detection
@@ -5874,8 +5874,11 @@ function emitToIntegerI32FromArgLocal(
  * (#608/#794). Callers must NOT use this on the JS-host lane.
  *
  * Stack: `[] → [externref]` (the constructed view, or null-extern).
+ *
+ * (#5407) Emitted ONCE per argument arity into a shared helper — see
+ * {@link emitTaDynCtorConstructFromLocals}; this is the helper's body.
  */
-export function emitTaDynCtorConstructFromLocals(
+function emitTaDynCtorConstructInline(
   ctx: CodegenContext,
   fctx: FunctionContext,
   descAnyLocal: number,
@@ -6506,6 +6509,107 @@ export function emitTaDynCtorConstructFromLocals(
     else: int8Arm,
   });
   fctx.body.push({ op: "local.get", index: resultLocal });
+}
+
+/**
+ * The construct above reads at most three arguments (`buffer, byteOffset,
+ * length`) and branches only on how many there are, so one helper per
+ * clamped arity serves every call site.
+ */
+const TA_DYN_CTOR_MAX_READ_ARGS = 3;
+
+/** Whether `index` names a local/param of exactly `kind` in `fctx`. */
+function localIsKind(fctx: FunctionContext, index: number, kind: "externref" | "anyref"): boolean {
+  return getLocalType(fctx, index)?.kind === kind;
+}
+
+/**
+ * (#2872 / #5407) Dynamic TypedArray construction — `new <ctorVal>(…)` over
+ * pre-evaluated locals; semantics are documented on
+ * {@link emitTaDynCtorConstructInline}.
+ *
+ * The construct is ~40 KB of code (every argument-shape arm, the iterator
+ * prelude, the per-kind encode loops). It used to be INLINED at every site, so
+ * a standalone module with typed-array machinery paid that per dynamic `new`
+ * — `new Temporal.PlainDate(…)` in a linked Temporal test262 row cost ~40 KB
+ * per site (PlainDate/limits.js: 7.8 MB, 16 s). It is now emitted once per
+ * clamped arity as `__ta_dyn_ctor_construct_a<k>(desc: anyref, arg0..k-1:
+ * externref) -> externref`, built lazily on first use, and each site passes its
+ * locals to a `call`. The body is the same instruction sequence the site used
+ * to inline, parameterised over the same locals, so the outcome — including
+ * which abrupt completion propagates — is unchanged.
+ *
+ * A site whose locals are not the expected `anyref`/`externref` kinds keeps
+ * the inline form rather than widening them.
+ *
+ * Stack: `[] → [externref]`.
+ */
+export function emitTaDynCtorConstructFromLocals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  descAnyLocal: number,
+  argLocals: readonly number[],
+): void {
+  const arity = Math.min(argLocals.length, TA_DYN_CTOR_MAX_READ_ARGS);
+  const readArgs = argLocals.slice(0, arity);
+  if (!localIsKind(fctx, descAnyLocal, "anyref") || !readArgs.every((a) => localIsKind(fctx, a, "externref"))) {
+    emitTaDynCtorConstructInline(ctx, fctx, descAnyLocal, argLocals);
+    return;
+  }
+  const helperIdx = ensureTaDynCtorConstructHelper(ctx, arity);
+  fctx.body.push({ op: "local.get", index: descAnyLocal });
+  for (const a of readArgs) fctx.body.push({ op: "local.get", index: a });
+  fctx.body.push({ op: "call", funcIdx: helperIdx });
+}
+
+function ensureTaDynCtorConstructHelper(ctx: CodegenContext, arity: number): number {
+  const name = `__ta_dyn_ctor_construct_a${arity}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const params: { name: string; type: ValType }[] = [{ name: "desc", type: { kind: "anyref" } as ValType }];
+  for (let i = 0; i < arity; i++) params.push({ name: `arg${i}`, type: { kind: "externref" } });
+  const typeIdx = addFuncType(
+    ctx,
+    params.map((p) => p.type),
+    [{ kind: "externref" }],
+  );
+  const funcIdx = mintDefinedFunc(ctx);
+  // Registered before the body is built so a nested request resolves here.
+  ctx.funcMap.set(name, funcIdx);
+  const hfctx: FunctionContext = {
+    name,
+    params,
+    locals: [],
+    localMap: new Map(),
+    returnType: { kind: "externref" },
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Not yet in `ctx.mod.functions`: keep the body visible to late-import
+  // index shifts while it is being built.
+  const releaseBody = retainLiveBody(ctx, hfctx.body);
+  try {
+    emitTaDynCtorConstructInline(
+      ctx,
+      hfctx,
+      0,
+      params.slice(1).map((_, i) => i + 1),
+    );
+  } finally {
+    releaseBody();
+  }
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx,
+    locals: hfctx.locals,
+    body: hfctx.body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 /**
