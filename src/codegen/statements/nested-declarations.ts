@@ -1673,9 +1673,12 @@ function compileNestedFunctionDeclarationInScope(
     // primordials `state = { __proto__: null }` + nested `write`). Apply the
     // same literal checks the declaration path applies and capture as
     // externref when the promotion will happen.
+    // The slot may instead already be this binding's capture cell (an earlier
+    // sibling's mutable capture boxed it); that is not a stale literal type.
     if (
       (type.kind === "ref" || type.kind === "ref_null") &&
-      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx)
+      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx) &&
+      fctx.boxedCaptures?.get(name)?.refCellTypeIdx !== (type as { typeIdx: number }).typeIdx
     ) {
       const capturedInit = capturedDecl?.initializer;
       if (
