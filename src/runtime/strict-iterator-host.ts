@@ -37,22 +37,14 @@ export interface StrictIteratorHostOperations {
   ) => Record<string, Function> | undefined;
 }
 
-/** (#1691) Realm-correct TypeError + own-field test for closed struct carriers. */
-export interface YieldStarStepHooks {
-  typeError?: (message: string) => Error;
-  structHasOwn?: (value: any, key: string) => boolean;
-}
-
 export interface StrictIteratorHostRuntime {
   getIterator(value: any, state?: StrictIteratorCallbackState): any;
   iteratorNext(iterator: any, state?: StrictIteratorCallbackState): [number, any];
-  yieldStarStep(
-    iterator: any,
-    mode: number,
-    received: any,
-    state?: StrictIteratorCallbackState,
-    hooks?: YieldStarStepHooks,
-  ): [number, any];
+  /** (#1691) The `__gen_yield_star_step` import; TypeErrors use the module realm's ctor. */
+  yieldStarStepImport(
+    state: StrictIteratorCallbackState | undefined,
+    TypeErrorCtor: new (message: string) => Error,
+  ): (iterator: any, mode: number, received: any) => [number, any];
   resolveArrayIterationImport(name: string, state?: StrictIteratorCallbackState): ((...args: any[]) => any) | undefined;
 }
 
@@ -182,17 +174,24 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
     iterator: any,
     mode: number,
     received: any,
-    state?: StrictIteratorCallbackState,
-    hooks: YieldStarStepHooks = {},
+    state: StrictIteratorCallbackState | undefined,
+    TypeErrorCtor: new (message: string) => Error,
   ): [number, any] {
-    const typeError = hooks.typeError ?? ((message: string) => new TypeError(message));
+    const typeError = (message: string): Error => new TypeErrorCtor(message);
     const exports = state?.getExports();
     const marshalView = marshalExports(state, exports);
     // Closed object-literal carriers expose their fields only through the
-    // `__sget_<key>` exports; accessors/sidecars go through `safeGet` first.
+    // `__sget_<key>` exports (gated on the struct's own field shape);
+    // accessors and sidecar properties go through `safeGet` first.
+    const hasField = (receiver: any, key: string): boolean => {
+      const names = exports?.__struct_field_names?.(receiver);
+      if (typeof names !== "string" || !names.split(",").includes(key)) return false;
+      const presence = exports?.[`__shas_${key}`];
+      return typeof presence !== "function" || presence(receiver) !== 0;
+    };
     const read = (receiver: any, key: string): any => {
       const value = safeGet(receiver, key, state);
-      if (value !== undefined || !isWasmStruct(receiver) || !hooks.structHasOwn?.(receiver, key)) return value;
+      if (value !== undefined || !isWasmStruct(receiver) || !hasField(receiver, key)) return value;
       const getter = exports?.[`__sget_${key}`];
       return typeof getter === "function" ? getter(receiver) : undefined;
     };
@@ -333,5 +332,9 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
     return (obj: any, count: number): any => arrayFromIter(obj, count < 0 ? Infinity : count >>> 0);
   }
 
-  return { getIterator, iteratorNext, yieldStarStep, resolveArrayIterationImport };
+  const yieldStarStepImport: StrictIteratorHostRuntime["yieldStarStepImport"] =
+    (state, TypeErrorCtor) => (iterator, mode, received) =>
+      yieldStarStep(iterator, mode, received, state, TypeErrorCtor);
+
+  return { getIterator, iteratorNext, yieldStarStepImport, resolveArrayIterationImport };
 }

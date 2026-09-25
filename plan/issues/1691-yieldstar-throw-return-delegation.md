@@ -20,12 +20,10 @@ related: [1042, 1665, 2170, 2173, 3711]
 loc-budget-allow:
   - src/codegen/generators-native.ts
   - src/codegen/object-ops.ts
-  - src/runtime.ts
 func-budget-allow:
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/generators-native.ts::ensureNativeGeneratorResumeFunction
   - src/codegen/generators-native.ts::registerNativeGenerator
-  - src/runtime.ts::resolveImport
   - src/codegen/object-ops.ts::compileObjectDefineProperty
 ---
 # #1691 — yield* does not delegate throw()/return() to the inner iterator
@@ -290,6 +288,15 @@ Standalone output is byte-identical: sha256 of all 237 control rows compiled
 `--target standalone` matches base exactly. A string delegate in a numeric
 host generator (`yield* 'abc'`) keeps the eager path — the f64 carrier would
 unbox the strings to NaN (caught as the one loss in the first control run).
+
+Follow-up (same day, PR #6096 CI): (1) generators NESTED inside a function keep
+the eager path when they contain `yield*` — a host for-of over a nested native
+generator already fails on main (`[object Object] is not iterable`, reproduced
+with no `yield*` at all), so admitting them regressed 3 host equivalence tests
+in `generator-yield-delegation.test.ts`. (2) The `__gen_yield_star_step`
+adapter now lives in `runtime/strict-iterator-host.ts` (`yieldStarStepImport`),
+keeping `runtime.ts` / `resolveImport` at net zero lines for the #4401
+host-import-policy budget.
 
 Residual: `star-rhs-iter-thrw-res-done-no-value.js` stays red in host — the
 host step reads IteratorValue eagerly for a not-done result, because the host

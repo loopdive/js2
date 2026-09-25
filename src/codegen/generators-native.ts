@@ -2966,10 +2966,11 @@ function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
     if (found) return;
     if (isFunctionLikeScope(node)) return;
     if (ts.isYieldExpression(node)) {
-      // (#1691) `yield*` is no longer excluded here: the plan builder routes a
-      // generic-iterable delegate through the host protocol arm and bails the
-      // native-gen / numeric-vec delegate shapes back to the eager path itself.
-      if (node.expression && containsYield(node.expression)) {
+      // (#1691) A top-level generator's `yield*` routes through the host
+      // protocol arm (the plan builder bails the other delegate shapes); a
+      // nested one keeps the eager path (host for-of over it is unsupported).
+      if (node.asteriskToken && !ts.isSourceFile(decl.parent)) found = true;
+      if (found || (node.expression && containsYield(node.expression))) {
         found = true; // yield nested in a yield operand
         return;
       }
