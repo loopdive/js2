@@ -2474,6 +2474,25 @@ function resolveInstanceOfRHS(ctx: CodegenContext, rightExpr: ts.Expression): st
 }
 
 /**
+ * (#6651 N2) Is this the type of an `import * as ns from "./m.js"` binding —
+ * a §10.4.6 module namespace exotic object?
+ *
+ * The symbol of such a binding is declared either by the `NamespaceImport`
+ * clause itself or, once the checker resolves the alias, by the target
+ * `SourceFile`. A TypeScript `namespace Foo {}` is declared by a
+ * `ModuleDeclaration` and matches neither, which is the point: it is an
+ * ordinary object.
+ */
+function isModuleNamespaceObjectType(tsType: ts.Type): boolean {
+  const declarations = tsType.getSymbol()?.declarations;
+  if (!declarations) return false;
+  for (const declaration of declarations) {
+    if (ts.isSourceFile(declaration) || ts.isNamespaceImport(declaration)) return true;
+  }
+  return false;
+}
+
+/**
  * Try to statically evaluate `LHS instanceof <ctorName>` using the LHS TypeScript
  * type and the built-in type-tag registry (#1325).
  *
@@ -2546,6 +2565,26 @@ function tryStaticInstanceOf(ctx: CodegenContext, expr: ts.BinaryExpression, cto
   //    unknown so only definite objects qualify. (User-class instances are
   //    handled by the `classTagMap` branch above, which returns before here.)
   if (ctorName === "Object") {
+    // (#6651 N2) …EXCEPT a MODULE NAMESPACE object. §10.4.6.1 pins its
+    // [[GetPrototypeOf]] to `null`, so §7.3.20's chain walk never reaches
+    // `%Object.prototype%` and `ns instanceof Object` is `false` — the one
+    // object value for which the `true` below is a WRONG answer, and the
+    // assertion `namespace/internals/get-prototype-of.js` makes.
+    //
+    // Measured before this change, on BOTH lanes (the N1 handoff records this
+    // as standalone-only; it is not — host fails the same assertion):
+    // `Test262Error: Expected SameValue(«true», «false»)` at
+    // `assert.sameValue(ns instanceof Object, false)`.
+    //
+    // Falling THROUGH (rather than answering `false` here) keeps one decider:
+    // the host lane's `__instanceof` sees a real null-prototype JS object and
+    // the standalone lane's native predicate subtracts `OBJ_FLAG_NULL_PROTO`
+    // (`native-object-family-instanceof.ts`), so both answer `false` from the
+    // VALUE. A TypeScript `namespace Foo {}` projection is deliberately NOT
+    // matched — it is an ordinary object and must keep the `true` — hence the
+    // declaration test rather than a `SymbolFlags.Module` test, which would
+    // catch both.
+    if (isModuleNamespaceObjectType(leftTsType)) return undefined;
     const f = leftTsType.flags;
     const isPrimitiveOrIndeterminate =
       (f &
