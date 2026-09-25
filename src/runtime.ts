@@ -12949,7 +12949,9 @@ assert._isSameValue = isSameValue;
               // any module struct had a `length` field, flipping __upstreamSame
               // into its array arm. `_isWasmStruct` classifies null-proto host
               // objects correctly (extensibility + opaqueness probe).
-              if (!_isWasmStruct(obj) && key in Object(obj)) {
+              // (#6651 W1) A tracked user Proxy reads directly: §10.5.8 [[Get]]
+              // fires ONLY `get`, but the `in` probe adds a spurious `has`.
+              if (!_isWasmStruct(obj) && (_isUserProxy(obj) || key in Object(obj))) {
                 const v = obj[key];
                 // (#3097) Exit-boundary un-marshal: a canonical host
                 // ArrayBuffer (minted at the construct bridge for a compiled
@@ -13652,7 +13654,10 @@ assert._isSameValue = isSameValue;
           let unsc: any;
           try {
             unsc = getProp(obj, Symbol.unscopables);
-          } catch {
+          } catch (e) {
+            // (#6651 W1) §9.1.1.2.1 step 5's `?` propagates; only the OPAQUE
+            // WasmGC receiver (substrate limit) degrades to "no blocklist".
+            if (!_isWasmStruct(obj)) throw e;
             unsc = undefined;
           }
           // (4) If Type(unscopables) is Object: blocked = ToBoolean(Get(unsc, N)).
@@ -13660,7 +13665,9 @@ assert._isSameValue = isSameValue;
             let blocked: any;
             try {
               blocked = getProp(unsc, key);
-            } catch {
+            } catch (e) {
+              // (#6651 W1) Step 5.a's `?` propagates too; same opaque carve-out.
+              if (!_isWasmStruct(unsc)) throw e;
               blocked = undefined;
             }
             if (toBool(blocked)) return 0; // @@unscopables hides the binding.
@@ -19091,8 +19098,9 @@ assert._isSameValue = isSameValue;
           }
           try {
             // (#4616) Same gate as the primary __extern_get: see the comment
-            // there — a null-proto HOST object must take the direct read.
-            if (!_isWasmStruct(obj) && key in Object(obj)) {
+            // there — a null-proto HOST object must take the direct read, and
+            // (#6651 W1) a tracked user Proxy takes it unconditionally.
+            if (!_isWasmStruct(obj) && (_isUserProxy(obj) || key in Object(obj))) {
               const v = obj[key];
               // (#3097) Exit-boundary un-marshal: a canonical host ArrayBuffer
               // (minted at the construct bridge for a compiled buffer struct)
