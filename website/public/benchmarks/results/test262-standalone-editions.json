@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10922,
-    "fail": 690,
+    "pass": 10931,
+    "fail": 681,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 982,
-        "fail": 68,
+        "pass": 983,
+        "fail": 67,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 544,
-        "fail": 63,
+        "pass": 545,
+        "fail": 62,
         "ce": 2,
         "skip": 0,
         "total": 609,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 309,
-        "fail": 119,
+        "pass": 312,
+        "fail": 116,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 229,
-        "fail": 93,
+        "pass": 236,
+        "fail": 86,
         "ce": 8,
         "skip": 0,
         "total": 330,
-        "pct": 69
+        "pct": 72
       },
       {
         "name": "Symbol.species",
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 65,
-        "fail": 11,
+        "pass": 67,
+        "fail": 9,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 86
+        "pct": 88
       },
       {
         "name": "Symbol.match",
@@ -255,12 +255,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 38,
-        "fail": 14,
+        "pass": 39,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 52,
-        "pct": 73
+        "pct": 75
       },
       {
         "name": "WeakMap",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1025,
-    "fail": 499,
+    "pass": 1026,
+    "fail": 498,
     "ce": 493,
     "skip": 18,
     "total": 2035,
@@ -1660,12 +1660,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 30,
-        "fail": 14,
+        "pass": 31,
+        "fail": 13,
         "ce": 5,
         "skip": 0,
         "total": 49,
-        "pct": 61
+        "pct": 63
       },
       {
         "name": "async-iteration",
@@ -1732,12 +1732,12 @@
       },
       {
         "name": "arbitrary-module-namespace-names",
-        "pass": 4,
-        "fail": 8,
+        "pass": 5,
+        "fail": 7,
         "ce": 4,
         "skip": 0,
         "total": 16,
-        "pct": 25
+        "pct": 31
       },
       {
         "name": "String.prototype.matchAll",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4600,
+    "pass": 4601,
     "fail": 207,
-    "ce": 114,
+    "ce": 113,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4493,
+        "pass": 4494,
         "fail": 107,
-        "ce": 11,
+        "ce": 10,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4479,
-    "fail": 890,
+    "pass": 4488,
+    "fail": 881,
     "ce": 76,
     "skip": 0,
     "total": 5445,

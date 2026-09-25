@@ -97,6 +97,11 @@ import { coerceType, compileExpression } from "./shared.js";
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 
+/** `object-runtime.ts` `OBJ_FLAG_NULL_PROTO` — an EXPLICIT null [[Prototype]]. */
+const OBJ_FLAG_NULL_PROTO = 0x80;
+/** `$Object` struct field 4 is the flag word (`object-runtime.ts`). */
+const OBJ_FLAGS_FIELD = 4;
+
 /** The two builtin RHS names this module answers. */
 export type ObjectFamilyCtorName = "Object" | "Function";
 
@@ -204,5 +209,65 @@ function buildPredicate(
     out.push({ op: "ref.test", typeIdx });
     out.push({ op: "i32.or" });
   }
+  if (ctorName === "Object") out.push(...nullProtoSubtraction(ctx, valLocal));
   return out;
+}
+
+/**
+ * (#6651 N2) §7.3.20 OrdinaryHasInstance walks the [[Prototype]] chain, so an
+ * object whose prototype is EXPLICITLY `null` is not `instanceof Object` —
+ * `Object.create(null)`, `o.__proto__ = null`, and every module namespace
+ * object (§10.4.6.1, built by `__object_create(null)`).
+ *
+ * The module header above records this as an accepted divergence, on the
+ * grounds that the correct answer needs "a runtime handle on
+ * `Object.prototype`". It does not: the standalone object runtime already
+ * distinguishes the two `$proto === null` encodings with a FLAG
+ * (`OBJ_FLAG_NULL_PROTO`, `object-runtime-prototype.ts`) — an ordinary object
+ * merely omits its implicit `%Object.prototype%` terminal, while an explicit
+ * null-prototype object carries the bit. `object-proto-proto-accessor.ts`
+ * reads exactly this bit for the same reason, so this is the existing
+ * distinction, not a new one.
+ *
+ * Measured before the change (standalone, `.tmp/n2/probe2.ts`):
+ * `Object.create(null) instanceof Object` answered `true`; the gc/host lane
+ * answered `false`. After: both answer `false`, and a plain `{}` still
+ * answers `true` on both.
+ *
+ * DELIBERATE PARTIALITY — one rung only. This subtracts a value that IS a
+ * null-prototype `$Object`, not one that merely INHERITS from one
+ * (`Object.create(Object.create(null))`), which would need the chain walk.
+ * One rung is what the namespace rows and the `Object.create(null)` idiom
+ * need, and the answer it gives is never a wrong `true` it did not already
+ * give.
+ *
+ * Emits nothing when the object runtime has not been registered at this
+ * lowering point: no `$Object` exists yet for the `ref.test` to match, so the
+ * subtraction would be a no-op anyway, and forcing `ensureObjectRuntime` here
+ * would pull the whole runtime into modules that never build an object.
+ */
+function nullProtoSubtraction(ctx: CodegenContext, valLocal: number): Instr[] {
+  const runtime = ctx.objectRuntimeTypes;
+  if (!runtime) return [];
+  const objectTypeIdx = runtime.objectTypeIdx;
+  return [
+    { op: "local.get", index: valLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: valLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OBJ_FLAGS_FIELD },
+        { op: "i32.const", value: OBJ_FLAG_NULL_PROTO },
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+      ],
+      else: [{ op: "i32.const", value: 1 }],
+    },
+    { op: "i32.and" },
+  ];
 }

@@ -20,7 +20,7 @@ import {
 } from "./closures.js";
 import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
-import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
 import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`; (#6651 F4) helper-returned
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -33,7 +33,7 @@ import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r7) a pre-grow creates holes
-import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import type { InnerResult } from "./shared.js";
@@ -1636,7 +1636,12 @@ export function compileObjectDefineProperty(
   // `emitExternDefinePropertyNoValue` → `__defineProperty_accessor` path). Splitting
   // on this bit fixes the `const o:any` accessor-get bug without regressing the
   // statically struct-typed (class-instance) accessor path.
-  const receiverIsStaticStruct = structName !== undefined;
+  // (#1691) JS host: a checker-struct binding whose physical slot is externref
+  // (an object literal with callable fields lowered to a host object) must take
+  // the runtime accessor path — a compiled `${struct}_get_<p>` is invisible to
+  // host [[Get]] and so to the iterator-protocol helpers.
+  const receiverIsStaticStruct =
+    structName !== undefined && (ctx.standalone || ctx.wasi || !bindingSlotIsExternref(ctx, fctx, objArg));
   // #4504: `C.prototype` is an inherited-descriptor owner, never the
   // instance's physical struct.  The historical static-struct accessor path
   // recorded `${C}_p` in `classAccessorSet`, which later made the closed-field
@@ -5519,4 +5524,13 @@ export function compilePropertyIntrospection(
   }
   fctx.body.push({ op: "i32.const", value: 0 });
   return { kind: "i32", boolean: true };
+}
+
+/** (#1691) True when `expr` names a local / module global whose wasm slot is externref. */
+function bindingSlotIsExternref(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const localIdx = fctx.localMap.get(expr.text);
+  if (localIdx !== undefined) return getLocalType(fctx, localIdx)?.kind === "externref";
+  const globalIdx = ctx.moduleGlobals.get(expr.text);
+  return globalIdx !== undefined && ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
 }
