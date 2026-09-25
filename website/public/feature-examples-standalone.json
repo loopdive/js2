@@ -347,7 +347,7 @@
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 169,
+      "passCount": 173,
       "totalCount": 181,
       "editionSpread": [
         {
@@ -357,7 +357,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 17,
+          "pass": 21,
           "total": 29
         },
         {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1769,
+      "passCount": 1770,
       "totalCount": 1955
     },
     {
@@ -1092,23 +1092,23 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 1037,
+      "passCount": 1038,
       "totalCount": 1106
     },
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 397,
+      "passCount": 412,
       "totalCount": 731,
       "editionSpread": [
         {
           "edition": "ES2015",
-          "pass": 49,
+          "pass": 54,
           "total": 68
         },
         {
           "edition": "ES2020",
-          "pass": 13,
+          "pass": 14,
           "total": 31
         },
         {
@@ -1143,7 +1143,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 139,
+          "pass": 148,
           "total": 225
         }
       ]
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 867,
+      "passCount": 874,
       "totalCount": 1072
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4490,
+      "passCount": 4491,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4490,
+          "pass": 4491,
           "total": 4603
         }
       ]
