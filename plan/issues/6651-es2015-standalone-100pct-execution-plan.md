@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-24
+updated: 2026-09-25
 priority: high
 horizon: xl
 feasibility: hard
@@ -8939,6 +8939,104 @@ yet.**
   standalone changed ⊆ the 13 gained rows + the 2 static-accessor rows + other
   computed-key / for-of-`yield*` rows, each needing a verdict. Then (2)-(5).
   Then `git merge origin/main`, re-run the func gate, and hand the SHA over.
+
+#### Resumed — 2026-09-25, rebuilt from this record (different session)
+
+The WIP commit `a80f49d064` above was **never pushed**, and the container that
+held worktree `agent-ab4ec40c80235671d` is gone — `git fetch origin
+a80f49d064` fails and no branch carries it. Nothing touched
+`src/codegen/generators-native.ts` on `main` in the ~28 h after the wrap-up.
+So this slice is being **re-implemented from the record above** by session
+`session_01FEGi3DmyPRPD5dx4kWU8hs`, on branch
+`claude/es6-test262-standalone-g10c7u`, based on `origin/main` @ `f4bb7dfe12`.
+
+Re-verified on that base before starting: all 13 target rows are still
+`compile_error` in the 2026-09-24 standalone baseline (the 9 computed-key rows
+and the 4 `for-of/yield-star*` rows listed in the target table).
+
+**If you are the lane that suspended A5 and your worktree still exists, stop
+and reconcile before resuming it** — push your SHA and say so on this PR rather
+than finishing a twin. The concurrency lesson at the top of this file is why
+this note exists before any code does.
+
+#### Suspended again — 2026-09-25
+
+Stopped at the coordinator's session wrap-up. **Not mergeable: target 2 is
+half-done and no control has run.** Everything below is what was actually done;
+nothing here is a measurement unless it says so.
+
+What is implemented (WIP commit on `claude/es6-test262-standalone-g10c7u`):
+
+- **Target 1, complete as designed.** New leaf
+  `src/codegen/generator-yield-nested.ts`: `bodyHasComputedKeyYield` (the
+  generator gate) and `lowerNestedYieldStatement` (the per-statement walk into
+  spec-ordered events `yield` / `value` / `fn` / `callee` / `op`; every event
+  before the last yield must be a yield, REPLAYABLE, or CAPTURED via
+  `captureContinuationOperand`; an `op` before the last yield refuses; a
+  yield-keyed class FIELD refuses). Wired in `generators-native.ts`:
+  `generatorElemValType` moves gated generators to the boxed-any carrier;
+  `buildNativeGeneratorPlan` gets `nestedYields` + a `nestedHost`
+  (suspend = A4's `linearHost.suspend`, capture = `captureContinuationOperand`,
+  finish = `attachContinuationReplacements` + push); `lowerStatements` arm
+  `2a` runs it before the f64-only #680 continuation arms, direct body only,
+  empty unwind.
+- **Target 2, HALF-DONE.** Done: `lowerForOf` no longer refuses `yield*` in
+  the body (the now-unused `nodeContainsDelegatedYield` is deleted); the
+  native-gen arm of `emitYield` admits a chain of `replay` / `catch` /
+  `iter-close` entries that contains an `iter-close`, and gives the delegation
+  state `curUnwind` (innermost-first) instead of the replay-only `curAbrupt`.
+  **NOT done:** the D2 delegate-close forwarding in `compileState` still lives
+  only in the legacy `else if (state.abruptResume …)` branch. It must be
+  extracted verbatim into `emitDelegateCloseForward(ctx, fctx, info, state,
+  selfLocal, getCaughtExnIdx): Instr[]` and called from BOTH branches (in the
+  `state.unwind` branch: after `fctx.body = abruptBody`, before
+  `emitUnwindWalk`). Until then a `.return()` / `.throw()` at a delegated yield
+  inside a for-of closes the loop iterator but NOT the inner generator. Also
+  planned, not written: in the `throwRoute` `routeInstrs`, clear a native-gen
+  delegation slot the way the protocol-iterable one is cleared (byte-inert —
+  no native-gen yield-star state had a throw route before this change —
+  and needed so a runtime throw caught by a `catch` in the loop body does not
+  leave a stale inner for the next iteration).
+
+What was measured: **nothing through the runner.** The base A-manifest run was
+killed before it printed its counts (wrap-up), so there is no before/after on
+this base yet. Only single-file standalone probes (compile + instantiate with no
+imports + run), on the branch:
+
+- object literal `get [yield]` / `set [yield]` keyed by `.next('first')` /
+  `.next('second')`: both accessors land and dispatch (`imports []`);
+- a class expression with 4 yield-keyed accessors, a class declaration with 2
+  yield-keyed methods, and `check(c[yield 9], 9)`, `check(c[yield 9] = 9, 9)`,
+  `check(c[String(yield 9)](), 9)` and friends: 17 suspensions, 0 check
+  failures, `imports []`.
+
+Controls NOT run (all of them): the 197-row manifest before/after; the
+compile-only byte differential on both targets; playground/benchmark byte
+identity; `node scripts/equivalence-gate.mjs`; `pnpm run check:ir-fallbacks`;
+the A-family pin suites on both trees; the new pin suite (not written yet);
+typecheck / lint / the loc, func, coercion, oracle-ratchet and dead-exports
+gates (only the commit hook's fast checks ran).
+
+Resume steps (`.tmp/` is not pushed — these are the commands, not file refs):
+
+1. `git worktree add <wt> -b a5 origin/claude/es6-test262-standalone-g10c7u`;
+   symlink `node_modules`, `.test262-cache` and `test262` from the main
+   checkout. Make the source-clean base with `git archive <this WIP's parent,
+   b5e1168594> | tar -x -C <wt>/.tmp/basetree` (symlink the same three into it).
+2. Finish target 2 (the extraction above), then `npm run -s typecheck`.
+3. Base and branch manifest runs, one at a time, under the shared lock
+   (`flock /tmp/claude-0/t262.lock …`), in the tree being measured:
+   `JS2WASM_EVAL_ENGINE=quickjs COMPILER_POOL_SIZE=2 npx tsx
+   scripts/run-test262-paths.mts <chunk> --standalone --isolate > out.log 2>&1`
+   with the manifest `plan/agent-context/6651/A-generators-standalone.txt`
+   split `head -100` / `tail -n +101`. The script prints only non-pass rows
+   after `=== counts ===`; a row absent from that list passed.
+4. Then every control the brief lists (byte differential on both targets over
+   A4's reach set ∩ sources with `yield*` or a `[`…`yield` computed key, with
+   verdicts on each changed standalone row; 32-program byte identity; the
+   equivalence gate; `check:ir-fallbacks`; the A-family pin suites on both
+   trees; the new pin suite `tests/issue-6651-a5-computed-key-yield.test.ts`,
+   red on base, `result.imports` asserted `[]`).
 
 ### 2026-09-24 — Cluster E, slice E8
 
