@@ -9869,3 +9869,228 @@ growth) · `check:dead-exports` 0 · `check-compiler-boundaries --mode inventory
 Logs: `.tmp/6651/T1-{sa,host}-{base,after}.log`,
 `.tmp/6651/corpus-{base,new,new2}.txt`, manifests
 `.tmp/6651/T1-{all,control,target}.txt`.
+
+## 2026-09-24 — cluster B1 slice N2: the six `namespace/internals` residuals N1 left, and which THREE of N1's root causes were wrong
+
+Branch `issue-6651-n2-namespace-residuals`, based on
+`origin/issue-6651-n1-module-namespace-mop` (PR #6092, still open) merged with
+`origin/main`. Worktree
+`/home/claude/js2/.claude/worktrees/agent-ada177738c140aa33`. Base copies of
+both edited files were taken at the FIRST edit (`.tmp/n2/base/`), and every
+before-state below was measured by this lane with those copies installed —
+inherited from no one.
+
+### Correction, up front: the "lane N2 — no fix landed / wedged" section is WRONG
+
+Another section in this file (written by the integrating lane and already in
+the merge queue, so it could not be amended there) records this slice as having
+wedged and produced nothing. **It did not.** The integrating lane inspected the
+worktree at a moment when `src/` was deliberately REVERTED to the base copies —
+the middle of the file-copy A/B cycle this file's own "capture the base copy at
+the FIRST edit" rule prescribes — saw an empty `git status src/`, and read that
+as no work. A reverted A/B tree is indistinguishable from an idle one by `git
+status` alone; the distinguishing evidence is `.tmp/n2/base/` and
+`.tmp/n2/new/`, and the two measurement logs bracketing the swap. The fix below
+landed, is measured on both lanes, and its regression test is proved red on
+base and green after.
+
+**Result: 1 of the 6 rows closed, on BOTH lanes. Three of N1's six root-cause
+attributions are wrong, and correcting them is the larger part of this slice's
+value — each one would have sent the next lane at the wrong file.**
+
+### What landed — `get-prototype-of.js`, and it was never standalone-only
+
+N1's residual item 4 records `ns instanceof Object` as a standalone-only
+defect. It is not. Measured on the base sources through the real runner,
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`:
+
+| lane | base verdict for `namespace/internals/get-prototype-of.js` |
+| --- | --- |
+| host (default) | `fail` — `Test262Error: Expected SameValue(«true», «false»)` at `assert.sameValue(ns instanceof Object, false)` |
+| standalone | `fail` — the SAME assertion, same message |
+
+Two independent defects both answered `true`, and either one alone keeps the
+row red:
+
+1. **The static fold, on both lanes.** `tryStaticInstanceOf`
+   (`src/codegen/expressions/identifiers.ts`) short-circuits
+   `<obj> instanceof Object` to `true` for every LHS carrying the TypeScript
+   `Object` type flag (#1729's arm 4). A module namespace binding carries it —
+   so the fold answered `true` before any runtime lowering was consulted. But
+   §10.4.6.1 pins a namespace object's `[[GetPrototypeOf]]` to `null`, so
+   §7.3.20's chain walk never reaches `%Object.prototype%` and the answer is
+   `false`. This is the one object value for which arm 4 is a WRONG answer.
+   The fix declines the fold for that LHS (`isModuleNamespaceObjectType`) and
+   falls THROUGH to the runtime, keeping one decider rather than hard-coding a
+   second answer. A TypeScript `namespace Foo {}` projection is deliberately
+   NOT matched — it is an ordinary object and must keep `true` — which is why
+   the test is on the DECLARATION (`ts.isSourceFile` / `ts.isNamespaceImport`)
+   and not on `ts.SymbolFlags.Module`, which would catch both.
+2. **The standalone native predicate.**
+   `src/codegen/native-object-family-instanceof.ts` answers `x instanceof
+   Object` as "`x` is not a primitive", which is `true` for a null-prototype
+   object. Its module header records this as an accepted divergence because
+   the correct answer "needs a runtime handle on `Object.prototype` that the
+   standalone object model does not expose". **It does not.** The standalone
+   runtime already distinguishes the two `$proto === null` encodings with a
+   FLAG — an ordinary object merely omits its implicit `%Object.prototype%`
+   terminal, while an EXPLICIT null prototype carries `OBJ_FLAG_NULL_PROTO`
+   (`object-runtime-prototype.ts`) — and `object-proto-proto-accessor.ts`
+   already reads exactly that bit for exactly this reason. The fix subtracts
+   it. Measured, standalone, `.tmp/n2/probe2.ts`: `Object.create(null)
+   instanceof Object` answered `true` before and `false` after, while a plain
+   `{}` answers `true` in both (a predicate that answered `false` for
+   everything would satisfy the first half alone).
+
+   **Deliberately partial — one rung.** It subtracts a value that IS a
+   null-prototype `$Object`, not one that INHERITS from one
+   (`Object.create(Object.create(null))`), which needs the chain walk. One
+   rung is what the namespace rows and the `Object.create(null)` idiom need,
+   and it never produces a wrong `true` the predicate did not already produce.
+
+Regression test: `tests/issue-6651-namespace-instanceof-object.test.ts`, four
+cases (namespace × 2 lanes, `Object.create(null)` × 2 lanes). **Proved RED on
+the reverted base sources** — 3 of the 4 fail (`expected 6 to be 7`,
+`expected 4 to be 7`, `expected 2 to be 3`); the fourth, host
+`Object.create(null)`, passes on base and is kept as the complement so a
+predicate that simply answered `false` everywhere could not pass the file.
+Log: `.tmp/n2/redproof-base.log`.
+
+### THREE corrections to the N1 residual list
+
+- **(item 4) `get-prototype-of` is not standalone-only** — see above; host
+  fails the identical assertion. A lane that fixed only the standalone
+  predicate would have left the row red and not understood why.
+- **(item 6) `own-property-keys-binding-types` is not a
+  `namespaceFunctionExports` alias-resolution defect.** N1 records
+  "`namespaceFunctionExports` resolves the alias to a declaration it then
+  rejects". Measured: the row fails **identically on both lanes** (`Expected
+  SameValue(«7», «10»)`), and a structurally identical `compileMulti` probe —
+  self-import, `export { a_local1 as e_indirect } from './self.js'`,
+  `export * from './fixture.js'`, a fixture that re-exports back indirectly,
+  `export default null`, keys read both at module top level and inside an
+  exported function — yields **all ten keys in the right order** on the host
+  lane (`.tmp/n2/keysprobe.mts`). So the alias resolution is fine; the three
+  missing keys come from how the RUNNER assembles this row, not from the
+  namespace emitter. Next lane should start at
+  `tests/test262-runner.ts::runOriginalHarnessVariant` /
+  `scripts/test262-fixture-graph.mjs`, not at `module-namespace-value.ts`.
+  (Separately, on standalone that same probe's
+  `Object.getOwnPropertyNames(ns).join(",")` returns an OBJECT rather than a
+  string — a second, independent standalone defect in that path, not yet
+  isolated.)
+- **(item 3) `Reflect.defineProperty` is not a `src/runtime.ts` defect.** N1
+  records it as "a RUNTIME defect in the non-extensible arm of
+  `__reflect_defineProperty` (`src/runtime.ts`)". `src/runtime.ts` is the
+  HOST implementation and it is already correct: measured, `gc` lane,
+  `Reflect.defineProperty(Object.preventExtensions({}), 'x', {value:1})`
+  returns `false` and does not throw. The throw is **standalone-only** and
+  comes from codegen: `call-namespace-static.ts` routes the standalone arm to
+  `emitDefinePropertyDescRuntime` (`object-ops.ts`), which calls the native
+  `__obj_define_from_desc`, whose §10.1.6.3-step-2 preflight is
+  `s4Throw("TypeError: Cannot define property, object is not extensible")` in
+  `src/codegen/object-runtime-descriptors.ts` (~L380). That native has **no
+  failure channel** — the limitation is already written down at
+  `call-namespace-static.ts` ~L1699 — so `Reflect` cannot return `false` for
+  any refusal without adding one. **`src/runtime.ts` line delta for this
+  slice: 0.**
+
+### Residuals — exact sites, measured not inherited
+
+- **`define-own-property.js`** — the non-extensible throw above is only the
+  FIRST assertion. On host, which never throws, the row still fails later at
+  `Reflect.defineProperty: indirect Expected SameValue(«false», «true»)`: the
+  §10.4.6.9 "no change requested ⇒ `true`" rule, `Symbol.toStringTag` as an
+  own key, and `writable: true` data descriptors for live bindings. All of
+  that is the §10.4.6 exotic object; fixing the standalone refusal channel
+  alone cannot close this row on either lane.
+- **`get-nested-namespace-dflt-skip.js` / `get-nested-namespace-props-nrml.js`**
+  — **site confirmed by probe, on both lanes** (`.tmp/n2/nestedprobe.mts`:
+  `namedns1` reads null/undefined on gc AND standalone).
+  `namespaceFunctionExports` (`src/codegen/module-namespace-value.ts`) has
+  arms for `const`, `export default <expr>`, a mutable `var`/`let`, a host
+  member and a top-level function declaration — and **no arm for a
+  `ts.NamespaceExport` declaration**, i.e. `export * as ns2 from './x.js'`.
+  Such an export therefore reaches the terminal `return undefined` ("Mutable
+  values require live-binding getters. Decline the entire object"), which
+  declines the WHOLE namespace, which is why the importing test sees
+  `ns`/`namedns1` as *not defined*. The fix is a new `namespace` export kind
+  that materializes the nested module's namespace object recursively —
+  bounded work, entirely inside that one function plus `emitNamespaceObject`.
+  N1's "the namespace of a fixture module is never materialised" is
+  directionally right but names no site; this is the site.
+- **`own-property-keys-binding-types.js`** — see the correction above.
+- **`own-property-keys-sort.js`** — reproduced only through the runner:
+  standalone `RuntimeError: illegal cast in __module_init_chunk_3() at source
+  L76`, where L76 is inside the `var allKeys = Reflect.ownKeys(ns)` index-read
+  block. **NOT reproducible outside the harness-linked assembly**: a
+  `compileMulti` module with the same 16 unicode exports + `export default
+  null` + self-import, reading both `Object.getOwnPropertyNames(ns)` and
+  `Reflect.ownKeys(ns)` by index, and padded with enough top-level statements
+  to force module-init chunking, runs clean and identically on both lanes
+  (`.tmp/n2/sortprobe.mts`, `.tmp/n2/chunkprobe.mts`). So the trigger involves
+  the runner's harness-linked assembly, not the namespace shape — which is
+  also why the row passes on host. Next lane should dump the WAT of the
+  runner-assembled module and look at what `__module_init_chunk_3` casts.
+
+### Measurement scope — say plainly what was and was not run
+
+A 1,091-row two-lane sweep (`language/module-code/**` ∪
+`language/expressions/instanceof/**` ∪ the `Object` prototype/extensibility
+built-ins) was started and **cut short at the coordinator's wrap-up call, with
+the base half still in flight. No numbers from it are reported.** It was
+replaced by a smaller sweep that ran to completion on both lanes in both
+states; that is the table below. One earlier base pair was also discarded
+before use: it had been launched against the working tree and the first source
+edit landed mid-run, so its rows straddled two source states.
+
+| lane | 210-row manifest | target `namespace/internals` (36) | `expressions/instanceof` control (43) |
+| --- | --- | --- | --- |
+| host (default) | 178 -> **179** pass, **+1 / -0**, 0 non-pass verdict changes | 20 -> **21** | 35 -> 35, +0 / -0 |
+| standalone | 193 -> **194** pass, **+1 / -0**, 0 non-pass verdict changes | 21 -> **22** | 42 -> 42, +0 / -0 |
+
+The single gained row is the SAME row on both lanes,
+`namespace/internals/get-prototype-of.js`. **No row changed verdict in any
+direction other than that one**, so this is not a count-neutral swap: the
+per-ROW set diff (`.tmp/n2/rowdiff.mjs`, which scores manifest-minus-non-pass,
+never counts) reports an empty LOST set and an empty CHANGED set on both lanes.
+There are **zero `error` rows** in any of the four logs, so every row in the
+manifest is a measurement rather than a non-answer. The 36-row base figures
+(20 host / 21 standalone) reproduce N1's published base exactly, which is the
+cross-check that these logs describe the tree N1 measured.
+
+Manifest `.tmp/n2/small.txt` = the 36 `language/module-code/namespace/**` rows
+union all 43 `language/expressions/instanceof/**` union the `Object`
+prototype/extensibility built-ins (`getPrototypeOf`, `setPrototypeOf`,
+`isExtensible`, `preventExtensions`) - 210 rows, `_FIXTURE.js` excluded. Logs
+`.tmp/n2/{host,sa}-{base,after}.log`, one run each, `--isolate`,
+`JS2WASM_ROW_TIMEOUT_MS=420000`, QuickJS eval tier confirmed in every log.
+
+### Gates
+
+All run bare, never piped, on the shipped sources:
+`check-loc-budget` **0**, `check-func-budget` **0**, `check-coercion-sites`
+**0**, `check:oracle-ratchet` **0** (no new raw-checker call - the added
+`isModuleNamespaceObjectType` reads the `ts.Type` this function already
+obtained), `check:dead-exports` **0**, `check-host-import-policy` **0**,
+`check-compiler-boundaries --mode inventory --base HEAD^1` **0**
+(`inventoryValid: true`; no new file under `src/`), `biome lint
+--diagnostic-level=error` **0** on all three changed files.
+
+**`src/runtime.ts`: NOT TOUCHED - the diff against `origin/main` for that path
+is empty, line delta 0.** The file sits at 20,206 lines against the
+just-raised 20,214 ceiling, so this branch consumes none of that slack. (The
+`Reflect.defineProperty` refusal is a codegen defect, not a `runtime.ts` one -
+see the correction above.)
+
+`npx tsc -p tsconfig.json --noEmit` reports 646 errors in this worktree, **all
+of them `@types/node` resolution failures** (`Cannot find name 'process'`,
+`Cannot find namespace 'NodeJS'`) caused by this worktree's symlinked
+`node_modules`; **none of them names either edited file**. That is an
+environment artifact of the worktree, not a claim that the tree typechecks - CI
+runs it against a real install.
+
+Regression tests, on the shipped sources:
+`tests/issue-6651-namespace-instanceof-object.test.ts` 4/4 green and N1's
+`tests/issue-6651-module-namespace-live-bindings.test.ts` still green
+(`.tmp/n2/greenproof.log`).
