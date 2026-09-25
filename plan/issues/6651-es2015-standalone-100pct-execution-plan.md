@@ -9057,6 +9057,25 @@ was started and was still running at the stop (`.tmp/e8/ctl/base-standalone.sha`
      helper and the value bodies are separable: the bodies alone change no
      manifest row's route except through Invoke) and record the evidence.
 
+#### Resumed — 2026-09-25, rebuilt from this record (different session)
+
+WIP commit `215c200895` was **never pushed**, and the container holding worktree
+`agent-a0410e6d39e96b1ae` is gone (`git fetch origin 215c200895` fails; no
+branch carries it). Nothing touched the edited files on `main` since the
+wrap-up. Being re-implemented from the record above by session
+`session_01FEGi3DmyPRPD5dx4kWU8hs` on branch `claude/es6-6651-e8-rebuild`,
+based on `origin/main`. Runs alongside the A5 rebuild (PR #6101) with heavy
+corpus controls serialized on one lock, because the box has 4 cores.
+
+Re-checked on the 2026-09-24 standalone baseline before starting: 14 ES2015
+`toLocaleString` rows are non-pass, **13 of them also fail on host** — so this
+is new standalone bodies, not a port, and the row yield (never measured by the
+original) is unknown until the manifest AFTER runs. The 3 `valueOf` rows are
+the recorded cross-cluster ToString residual and are not expected to move.
+
+**If you are the lane that suspended E8 and still have its worktree, stop and
+reconcile on the PR before either of us finishes a twin.**
+
 ## Handoff — 2026-09-24, round 3 closed (this lane: B/C/D/E/G + claimed A)
 
 Round 3 ran 2026-09-23 09:40 → 2026-09-24 06:00 UTC on
