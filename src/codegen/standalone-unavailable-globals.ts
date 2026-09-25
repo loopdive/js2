@@ -6,6 +6,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { emitThrowReferenceError } from "./js-errors.js";
+import { BUILTIN_CLASS_NAMES } from "./expressions/builtin-class-names.js";
 
 /**
  * (#6664) Browser (lib.dom) globals that a host-free `--target standalone`
@@ -27,6 +28,8 @@ const STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS: ReadonlySet<string> = new Set(
   "MessageChannel",
   "MessagePort",
   "ErrorEvent",
+  // (#1472) Node's global — declared ambiently only under `--emulate node`.
+  "Buffer",
 ]);
 
 /**
@@ -57,6 +60,22 @@ export function isStandaloneUnavailableConstructorGlobal(ctx: CodegenContext, na
     ctx.standaloneGlobalThisImport === undefined &&
     STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS.has(name)
   );
+}
+
+/**
+ * (#1472) Whether the generic static-method arm resolves the `X` of `X.m(...)`
+ * through the `__get_builtin("X")` host import rather than as an ordinary
+ * identifier. Node's `Buffer` is in `BUILTIN_CLASS_NAMES` for the JS-host lane
+ * (#1793), but a `--target standalone` module has no `Buffer` — and refuses
+ * that import at compile time. There the receiver is an ordinary reference:
+ * the unresolvable name throws `ReferenceError: Buffer is not defined` before
+ * any argument is evaluated, and a context-linked module reads its owning
+ * realm's global. combined-stream's `!Buffer.isBuffer(stream)` (axios's
+ * form-data) refused the whole axios graph.
+ */
+export function isHostResolvedBuiltinReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  if (!ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
+  return !(ctx.standalone && receiver.text === "Buffer");
 }
 
 function unwrapParens(expr: ts.Expression): ts.Expression {
