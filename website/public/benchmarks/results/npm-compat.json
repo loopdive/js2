@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-25T21:50:09.970Z",
+  "generatedAt": "2026-09-25T22:21:21.615Z",
   "measuredRange": {
     "oldest": "2026-09-08T19:13:41.907Z",
-    "newest": "2026-09-25T21:48:47.754Z"
+    "newest": "2026-09-25T22:20:35.888Z"
   },
   "correctness": {
     "definition": {
@@ -6409,7 +6409,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 1639510,
+        "durationMs": 1748345,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -6448,7 +6448,7 @@
           "implementationInvalidTests": 2,
           "compile": {
             "success": false,
-            "durationMs": 139791,
+            "durationMs": 145633,
             "binaryBytes": 4834473,
             "invalidBatches": 4
           },
@@ -6468,7 +6468,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 216342,
+            "durationMs": 226816,
             "binaryBytes": 3487156,
             "invalidBatches": 8
           },
@@ -6488,7 +6488,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 83371,
+            "durationMs": 83875,
             "binaryBytes": 1358517,
             "invalidBatches": 3
           },
@@ -6508,7 +6508,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 15033,
+            "durationMs": 15694,
             "binaryBytes": 223206,
             "invalidBatches": 0
           },
@@ -6532,7 +6532,7 @@
             "status": "fail",
             "passed": 1,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -6569,7 +6569,7 @@
             "status": "fail",
             "passed": 2,
             "total": 44,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -6879,7 +6879,7 @@
             "status": "fail",
             "passed": 2,
             "total": 12,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -7103,7 +7103,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -7122,7 +7122,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -7284,7 +7284,7 @@
             "status": "fail",
             "passed": 8,
             "total": 74,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -8175,7 +8175,7 @@
             "status": "fail",
             "passed": 0,
             "total": 31,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "skipped"
@@ -9858,7 +9858,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -10247,7 +10247,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -10613,7 +10613,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -10914,7 +10914,7 @@
             "status": "fail",
             "passed": 41,
             "total": 54,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at __closure_267 (wasm://wasm/0072d92e:wasm-function[1483]:0xf8da8)\n    at __call_fn_method_3 (wasm://wasm/0072d92e:wasm-function[2303]:0x10b9dc)\n    at __\u0000js2_call_fn_method_argc_3 (wasm://wasm/0072d92e:wasm-function[2304]:0x10c844)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:15518:23)\n    at fn (/home/runner/work/js2/js2/src/runtime/host-import-call-state.ts:176:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at __closure_267 (wasm://wasm/0072d9d6:wasm-function[1483]:0xf8da8)\n    at __call_fn_method_3 (wasm://wasm/0072d9d6:wasm-function[2303]:0x10b9dc)\n    at __\u0000js2_call_fn_method_argc_3 (wasm://wasm/0072d9d6:wasm-function[2304]:0x10c844)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:15518:23)\n    at fn (/home/runner/work/js2/js2/src/runtime/host-import-call-state.ts:176:20)",
             "tests": [
               {
                 "status": "fail"
@@ -11423,7 +11423,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -11460,7 +11460,7 @@
             "status": "fail",
             "passed": 5,
             "total": 32,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -12057,7 +12057,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -12073,7 +12073,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -12559,7 +12559,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d92e:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d92e:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d92e:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d92e:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d92e:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d92e:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9d6:wasm-function[573]:0xb3281)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9d6:wasm-function[536]:0xa773d)\n    at updateContainerImpl (wasm://wasm/0072d9d6:wasm-function[658]:0xc6858)\n    at __closure_262 (wasm://wasm/0072d9d6:wasm-function[1478]:0xf7f22)\n    at __call_fn_method_1 (wasm://wasm/0072d9d6:wasm-function[2299]:0x10a463)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9d6:wasm-function[2300]:0x10ab6a)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1850:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2205:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2260:13)\n    at applyWithVecMirrorWriteback (/home/runner/work/js2/js2/src/runtime/vec-mirror-writeback.ts:244:12)",
             "tests": [
               {
                 "status": "fail"
@@ -12666,8 +12666,8 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 11175.164067,
-            "moduleCompileDurationMs": 4.995103000001109,
+            "compileDurationMs": 11405.051571,
+            "moduleCompileDurationMs": 5.3976889999994455,
             "binaryBytes": 414353,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12680,7 +12680,7 @@
             "diagnostic": "Native-first semantic-provider policy rejected implicit or unclassified host imports: env::__get_builtin (unknown, owner #4401), env::__get_process_env (unknown, owner #4401), env::__throw_reference_error (unknown, owner #4401), string_constants::__REACT_DEVTOOLS_GLOBAL_HOOK__ is not defined (legacy-semantic, owner #4397). Use the host-assisted compatibility profile for this source until its native provider is implemented.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 902.251871000044,
+            "compileDurationMs": 923.2342759999447,
             "optimizationLevel": 4,
             "semanticProviders": "native-first",
             "environment": "javascript"
@@ -12693,8 +12693,8 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 11310.391786,
-            "moduleCompileDurationMs": 4.767664999999397,
+            "compileDurationMs": 11386.193992,
+            "moduleCompileDurationMs": 7.7967289999996865,
             "binaryBytes": 414307,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12703,7 +12703,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-25T21:48:47.754Z",
+      "measuredAt": "2026-09-25T22:20:35.888Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -30570,7 +30570,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9766,
+        "durationMs": 10060,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -32824,51 +32824,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.5194983226056942,
-            "nodeUs": 0.005293441354381147,
-            "wasmStdUs": 0.0014333972495914743,
-            "nodeStdUs": 0.000015751821574511783,
-            "ratio": 0.010205462584588935,
-            "ratioStd": 0.00003798818639249969,
+            "wasmUs": 0.5354143329557349,
+            "nodeUs": 0.005307271749432181,
+            "wasmStdUs": 0.0024072628198409315,
+            "nodeStdUs": 0.00003951033248027504,
+            "ratio": 0.009887717529280523,
+            "ratioStd": 0.00008253426563948458,
             "ratioSamples": [
-              0.01017929137720221,
-              0.010178212010444282,
-              0.01026405657254186,
-              0.010250812563232915,
-              0.010219328010868663,
-              0.010205462584588935,
-              0.010140388623511848,
-              0.010248167756390867,
-              0.01020395541113657
+              0.009815253898547628,
+              0.009890967995907806,
+              0.009886288385354998,
+              0.009872645797680874,
+              0.009891237033021508,
+              0.009856703609751187,
+              0.009887717529280523,
+              0.010125999228764934,
+              0.009898680164698038
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 443247,
+            "iters": 436965,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.519667551049397,
-              0.518678874307119,
-              0.5194983226056942,
-              0.5159909260525403,
-              0.5195558255329217,
-              0.5186870571035817,
-              0.5217482035975431,
-              0.5188613684920382,
-              0.5199863439571984
+              0.5426908608240976,
+              0.5346678269426627,
+              0.5368431476205148,
+              0.5350817433890662,
+              0.5370407675671729,
+              0.5354143329557349,
+              0.5345697870538966,
+              0.5347043012598204,
+              0.5361595345164969
             ],
             "nodeSamplesUs": [
-              0.005289847421408916,
-              0.005279223548036439,
-              0.005332160172565447,
-              0.005289326267293566,
-              0.005309511401078579,
-              0.005293441354381147,
-              0.00529072954809827,
-              0.005317378346616946,
-              0.005305917468139177
+              0.005326648587409892,
+              0.00528838236473145,
+              0.005307386175078113,
+              0.0052826725252858205,
+              0.005311997528402716,
+              0.0052774203883573165,
+              0.00528567505407657,
+              0.005414415342174234,
+              0.005307271749432181
             ],
-            "compileDurationMs": 750.2716439999931,
+            "compileDurationMs": 765.7073339999915,
             "binaryBytes": 1801,
             "moduleImportCount": 7,
             "functionImportCount": 7,
@@ -32904,53 +32904,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.5194983226056942,
-        "nodeUs": 0.005293441354381147,
-        "wasmStdUs": 0.0014333972495914743,
-        "nodeStdUs": 0.000015751821574511783,
-        "ratio": 0.010205462584588935,
-        "ratioStd": 0.00003798818639249969,
+        "wasmUs": 0.5354143329557349,
+        "nodeUs": 0.005307271749432181,
+        "wasmStdUs": 0.0024072628198409315,
+        "nodeStdUs": 0.00003951033248027504,
+        "ratio": 0.009887717529280523,
+        "ratioStd": 0.00008253426563948458,
         "ratioSamples": [
-          0.01017929137720221,
-          0.010178212010444282,
-          0.01026405657254186,
-          0.010250812563232915,
-          0.010219328010868663,
-          0.010205462584588935,
-          0.010140388623511848,
-          0.010248167756390867,
-          0.01020395541113657
+          0.009815253898547628,
+          0.009890967995907806,
+          0.009886288385354998,
+          0.009872645797680874,
+          0.009891237033021508,
+          0.009856703609751187,
+          0.009887717529280523,
+          0.010125999228764934,
+          0.009898680164698038
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 443247,
+        "iters": 436965,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.519667551049397,
-          0.518678874307119,
-          0.5194983226056942,
-          0.5159909260525403,
-          0.5195558255329217,
-          0.5186870571035817,
-          0.5217482035975431,
-          0.5188613684920382,
-          0.5199863439571984
+          0.5426908608240976,
+          0.5346678269426627,
+          0.5368431476205148,
+          0.5350817433890662,
+          0.5370407675671729,
+          0.5354143329557349,
+          0.5345697870538966,
+          0.5347043012598204,
+          0.5361595345164969
         ],
         "nodeSamplesUs": [
-          0.005289847421408916,
-          0.005279223548036439,
-          0.005332160172565447,
-          0.005289326267293566,
-          0.005309511401078579,
-          0.005293441354381147,
-          0.00529072954809827,
-          0.005317378346616946,
-          0.005305917468139177
+          0.005326648587409892,
+          0.00528838236473145,
+          0.005307386175078113,
+          0.0052826725252858205,
+          0.005311997528402716,
+          0.0052774203883573165,
+          0.00528567505407657,
+          0.005414415342174234,
+          0.005307271749432181
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-25T21:20:40.243Z",
+      "measuredAt": "2026-09-25T21:48:37.196Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
