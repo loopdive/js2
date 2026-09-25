@@ -13,13 +13,43 @@ Companion to
 
    | slice | PR | branch | pushed WIP |
    | --- | --- | --- | --- |
-   | A5 — `yield` in computed keys; `yield*` inside a `for-of` body | #6101 | `claude/es6-test262-standalone-g10c7u` | _see PR head_ |
-   | E8 — standalone `toLocaleString` value bodies + TypedArray helper | #6103 | `claude/es6-6651-e8-rebuild` | _see PR head_ |
+   | A5 — `yield` in computed keys; `yield*` inside a `for-of` body | #6101 | `claude/es6-test262-standalone-g10c7u` | `2a9dd64287` — target 1 written, target 2 half-done |
+   | E8 — standalone `toLocaleString` value bodies + TypedArray helper | #6103 | `claude/es6-6651-e8-rebuild` | `0e8a6fb5bc` — record only, no source edits |
 
    Each lane appended a `#### Suspended again — 2026-09-25` block under its
    slice in the #6651 file **on its own branch**: what is implemented, what was
    measured, which controls were not run, and the resume commands. Read that
    block on the branch, not on `main`.
+
+   Where each lane stopped (both verified with `git ls-remote` against local
+   HEAD; nothing measured on either, no control run):
+
+   - **A5** — new `src/codegen/generator-yield-nested.ts` (+685) plus
+     `generators-native.ts` (+74/−19). Target 1 (`yield` in a computed key)
+     is written and passes single-file standalone probes with
+     `imports: []`. Target 2 (`yield*` in a `for-of` body) is **half-done**:
+     the refusal is lifted and the delegation chain accepts the loop's close
+     step, but the `.return()`/`.throw()` forward to the inner generator
+     still lives only in the legacy branch of `compileState` (extract it as
+     `emitDelegateCloseForward`, call from both), and `throwRoute` does not
+     yet clear the inner-generator slot on a caught throw. **Not mergeable
+     until both land.** The base manifest run was killed before it printed
+     counts, so there is no before-state on this base. Incidental, not
+     investigated: in a native generator, `D[k]()` on a class expression
+     called the instance method instead of the static one.
+   - **E8** — no source edited. The record maps where the three
+     `toLocaleString` bodies plug into `makeGlue`
+     (`src/codegen/array-object-proto.ts`), the existing Number receiver
+     check to reuse (`emitWrapperThisValueBody`), the `undefined`-singleton
+     trap in Object's nullish check, and why the byte-identity gate is
+     needed (the prototype seeder materialises every listed member). The
+     only base figure is still the original lane's 61 pass / 83 fail on
+     `986a45359d`, not on this base.
+
+   Box quirks the lanes hit: the worktree guard rejects compound shell
+   commands with subshells or `$VAR` arguments (put multi-step runs in a
+   `.tmp/*.sh` script), and the commit hook looks for the ✓ in the command
+   text itself, so `git commit -F` can be refused — use `-m`.
 
 2. **The plan lane that originally suspended A5 and E8 is dead** (confirmed by
    the user on 2026-09-25). Its unpushed commits `a80f49d064` / `215c200895`
