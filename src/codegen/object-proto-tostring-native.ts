@@ -76,6 +76,7 @@ import {
   ITER_FAMILY_STRING,
   ITER_REC_FAMILY_FIELD,
 } from "./iterator-native.js";
+import { fillObjectProtoToStringCarrierArms } from "./object-proto-tostring-carriers.js"; // (#6674)
 
 /** `ctx.funcMap` key for the minted classifier. */
 export const OBJECT_PROTO_TOSTRING_CLASSIFY_FN = "__opts_classify";
@@ -209,6 +210,13 @@ export function fillStandaloneObjectProtoToStringFnctorArms(ctx: CodegenContext)
  * type is skipped) and fresh `Instr` objects per consumer (#2169b).
  */
 export function fillIterRecObjectProtoToStringArms(ctx: CodegenContext): void {
+  spliceIterRecArms(ctx);
+  // (#6674) The nominal-carrier arms and their `[object Object]` default MUST
+  // follow the record ladder, so they are spliced here, after it.
+  fillObjectProtoToStringCarrierArms(ctx);
+}
+
+function spliceIterRecArms(ctx: CodegenContext): void {
   if (!ctx.nativeStrings) return;
   // No registration here: a module that never built an iterator record cannot
   // receive one, and minting the struct purely to emit dead arms would churn the

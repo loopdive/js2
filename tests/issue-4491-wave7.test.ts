@@ -348,7 +348,8 @@ describe("#4491 wave-7 — measured residuals (it.fails)", () => {
   // fallback. Owner: whoever adds instance-carrier arms to
   // object-proto-tostring.ts. `Date` reached statically is covered by the
   // control above, which is why this only bites through an `any`.
-  it.fails("a Date INSTANCE through a dynamic receiver still answers [object Object]", async () => {
+  // (#6674) fixed: the carrier arm / the step-15 consult now answers it.
+  it("a Date INSTANCE through a dynamic receiver answers its own tag", async () => {
     expect(
       await runStandalone(
         withTagOf(`
@@ -364,7 +365,8 @@ describe("#4491 wave-7 — measured residuals (it.fails)", () => {
   // §21.3.1.9 / §25.5.3 give Math and JSON an own @@toStringTag. The FOLD knows
   // both (#4491 wave-5 T1's `symName` arms) but the classifier does not, so a
   // dynamic receiver falls back. Owner: the @@toStringTag step-15 arm.
-  it.fails("Math through a dynamic receiver still answers [object Object]", async () => {
+  // (#6674) fixed: the carrier arm / the step-15 consult now answers it.
+  it("Math through a dynamic receiver answers its own tag", async () => {
     expect(
       await runStandalone(
         withTagOf(`
