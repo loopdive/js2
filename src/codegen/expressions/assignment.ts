@@ -902,7 +902,7 @@ export function emitDynamicWithIdentifierWrite(
       }
       return;
     }
-    emitDynamicWithSet(ctx, fctx, res.scope, id.text, rhsLocalIdx, hasLocal, () => {
+    emitDynamicWithSet(ctx, fctx, res.scope, id.text, id, rhsLocalIdx, hasLocal, () => {
       const saved = fctx.withScopes;
       fctx.withScopes = scopes.slice(0, matchedIdx);
       try {
