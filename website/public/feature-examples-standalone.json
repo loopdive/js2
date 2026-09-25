@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1802,
+      "passCount": 1803,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -932,7 +932,7 @@
         },
         {
           "edition": "ES2024",
-          "pass": 180,
+          "pass": 181,
           "total": 182
         },
         {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 379,
+      "passCount": 381,
       "totalCount": 461
     },
     {
@@ -1346,7 +1346,7 @@
     {
       "name": "RegExp v flag",
       "testCategories": ["built-ins/RegExp/unicodeSets"],
-      "passCount": 184,
+      "passCount": 185,
       "totalCount": 187
     },
     {
@@ -1372,7 +1372,7 @@
     {
       "name": "RegExp duplicate named groups",
       "testCategories": ["built-ins/RegExp/named-groups"],
-      "passCount": 0,
+      "passCount": 1,
       "totalCount": 16
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4492,
+      "passCount": 4490,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4492,
+          "pass": 4490,
           "total": 4603
         }
       ]

@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10918,
-    "fail": 694,
+    "pass": 10922,
+    "fail": 690,
     "ce": 92,
     "skip": 0,
     "total": 11704,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 342,
-        "fail": 47,
+        "pass": 344,
+        "fail": 45,
         "ce": 21,
         "skip": 0,
         "total": 410,
-        "pct": 83
+        "pct": 84
       },
       {
         "name": "Reflect",
@@ -2856,12 +2856,12 @@
   },
   {
     "edition": "ES2024",
-    "pass": 380,
-    "fail": 67,
+    "pass": 381,
+    "fail": 66,
     "ce": 109,
     "skip": 0,
     "total": 556,
-    "pct": 68,
+    "pct": 69,
     "features": [
       {
         "name": "TypedArray",
@@ -2874,12 +2874,12 @@
       },
       {
         "name": "regexp-v-flag",
-        "pass": 184,
-        "fail": 3,
+        "pass": 185,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 187,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
@@ -2919,12 +2919,12 @@
       },
       {
         "name": "regexp-unicode-property-escapes",
-        "pass": 94,
-        "fail": 2,
+        "pass": 95,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 96,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "SharedArrayBuffer",
@@ -3263,8 +3263,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 570,
-    "fail": 325,
+    "pass": 571,
+    "fail": 324,
     "ce": 106,
     "skip": 0,
     "total": 1001,
@@ -3344,12 +3344,12 @@
       },
       {
         "name": "regexp-duplicate-named-groups",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 15,
         "skip": 0,
         "total": 16,
-        "pct": 0
+        "pct": 6
       },
       {
         "name": "Symbol",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4602,
+    "pass": 4600,
     "fail": 207,
-    "ce": 112,
+    "ce": 114,
     "skip": 0,
     "total": 4921,
-    "pct": 94,
+    "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4495,
+        "pass": 4493,
         "fail": 107,
-        "ce": 9,
+        "ce": 11,
         "skip": 0,
         "total": 4611,
         "pct": 97
