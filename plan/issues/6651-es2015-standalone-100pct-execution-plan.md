@@ -10148,3 +10148,74 @@ pre-existing — attributed to this work by proximity, not caused by it.
 - Never `pkill -f run-test262-paths` — it kills other lanes' runs. And
   `pgrep -fc 'run-test262-paths'` matches its own command line, so a poll loop
   written that way never terminates.
+
+## 2026-09-25 — lane N2 (namespace MOP residuals): THREE N1 attributions corrected, no fix landed
+
+Lane N2 was dispatched on the six standalone-reachable residuals the N1 slice
+left. **It wedged after producing its analysis and never committed a source
+change**; it ran for over 24 hours and handed back nothing but a regression
+test, which is **deliberately not committed**: it is 3-of-4 red against current
+`main`, and a red test must not land. Its four cases are worth rewriting from
+the sites named below — `ns instanceof Object` on each lane, plus
+`Object.create(null) instanceof Object` and `({}) instanceof Object` as the
+standalone controls that separate the two defects.
+
+Its analysis was verified by probe on both lanes before it stalled, and it
+**corrects three attributions written in the N1 section above**. Those
+corrections are the valuable output and are why this section exists.
+
+### 1. `get-prototype-of.js` is NOT standalone-only — and it is TWO defects
+
+N1 recorded this as a standalone-only `__object_create(null)` gap. Measured on
+base, `ns instanceof Object` fails the same assertion **on HOST too**. Two
+independent causes, both needing a fix:
+
+1. **`tryStaticInstanceOf` (`src/codegen/expressions/identifiers.ts`)** folds
+   `<obj> instanceof Object` to a constant `true` for any LHS carrying the
+   TypeScript `Object` type flag — and a module-namespace binding carries it.
+   This fires on **both** lanes and is the host half.
+2. **`src/codegen/native-object-family-instanceof.ts`** answers the question as
+   "is this not a primitive?", which is true of a null-proto object. Its own
+   header calls this an accepted divergence that would need a handle on
+   `Object.prototype` to fix. **That is not so**: the runtime already marks an
+   explicit null prototype with `OBJ_FLAG_NULL_PROTO`, and
+   `src/codegen/object-proto-proto-accessor.ts` already reads that flag for
+   exactly this reason. The fix is to consult it here too.
+
+Neither fix was written. Both sites are named above; a lane can start from them
+directly.
+
+### 2. `own-property-keys-binding-types.js` — N1's cause is WRONG
+
+N1 attributed the 7-keys-vs-10 shortfall to `namespaceFunctionExports`
+resolving the indirect alias to a declaration it then rejects. It fails
+**identically on both lanes**, and a structurally identical `compileMulti`
+probe yields **all 10 keys on host**. So the indirect-re-export path is not
+what drops them. Cause unknown; the N1 attribution should not be trusted as a
+starting point.
+
+### 3. `get-nested-namespace-*` — exact site found
+
+Both rows (`-dflt-skip`, `-props-nrml`) read `ns` as *not defined*, confirmed by
+probe on both lanes. The site is the terminal `return undefined` decline in
+`namespaceFunctionExports`: there is **no arm for an
+`export * as ns2 from './x.js'` (`ts.NamespaceExport`) declaration**, so the
+whole namespace object declines and the binding is undefined. This is the most
+actionable of the six and the one to take first.
+
+### Unchanged, and still as N1 described them
+
+`define-own-property.js` (the `Reflect.defineProperty` non-extensible arm must
+return false, not throw — and N2 established this is **not** in `src/runtime.ts`:
+standalone routes through `emitDefinePropertyDescRuntime` → the native
+`__obj_define_from_desc`), and `own-property-keys-sort.js` (standalone-only
+`illegal cast`).
+
+### The process point
+
+This is the second time on #6651 that a lane's most valuable output was a
+**correction to a root-cause note already in this file**, and the second time a
+note here would have sent the next lane at the wrong code. Treat every recorded
+cause in this document as a point-in-time hypothesis: re-probe it before you
+build on it. The handoff section above says to check `git log` on any file a
+note names; add to that — check the note's *claim*, not just its freshness.
