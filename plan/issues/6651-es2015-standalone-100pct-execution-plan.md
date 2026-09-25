@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-24
+updated: 2026-09-25
 priority: high
 horizon: xl
 feasibility: hard
@@ -8939,6 +8939,25 @@ yet.**
   standalone changed ⊆ the 13 gained rows + the 2 static-accessor rows + other
   computed-key / for-of-`yield*` rows, each needing a verdict. Then (2)-(5).
   Then `git merge origin/main`, re-run the func gate, and hand the SHA over.
+
+#### Resumed — 2026-09-25, rebuilt from this record (different session)
+
+The WIP commit `a80f49d064` above was **never pushed**, and the container that
+held worktree `agent-ab4ec40c80235671d` is gone — `git fetch origin
+a80f49d064` fails and no branch carries it. Nothing touched
+`src/codegen/generators-native.ts` on `main` in the ~28 h after the wrap-up.
+So this slice is being **re-implemented from the record above** by session
+`session_01FEGi3DmyPRPD5dx4kWU8hs`, on branch
+`claude/es6-test262-standalone-g10c7u`, based on `origin/main` @ `f4bb7dfe12`.
+
+Re-verified on that base before starting: all 13 target rows are still
+`compile_error` in the 2026-09-24 standalone baseline (the 9 computed-key rows
+and the 4 `for-of/yield-star*` rows listed in the target table).
+
+**If you are the lane that suspended A5 and your worktree still exists, stop
+and reconcile before resuming it** — push your SHA and say so on this PR rather
+than finishing a twin. The concurrency lesson at the top of this file is why
+this note exists before any code does.
 
 ### 2026-09-24 — Cluster E, slice E8
 
