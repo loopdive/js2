@@ -10603,3 +10603,136 @@ note here would have sent the next lane at the wrong code. Treat every recorded
 cause in this document as a point-in-time hypothesis: re-probe it before you
 build on it. The handoff section above says to check `git log` on any file a
 note names; add to that — check the note's *claim*, not just its freshness.
+
+## Lane N3 receipt — nested module namespaces (`export * as ns from …`)
+
+Branch `issue-6651-n3-nested-namespace`, based on
+`origin/claude/project-thread-yhj9pp` (the N1 live-bindings work is **not** on
+`main` — verified 2026-09-25: commit `151541b1` "module namespace — live
+bindings, default export, null proto, non-extensible" exists only on that
+branch).
+
+### What landed
+
+One new export kind in `src/codegen/module-namespace-value.ts`: a
+`ts.NamespaceExport` (`export * as ns2 from './x.js'`) now materializes the
+re-exported module's namespace object recursively instead of declining the
+whole enclosing namespace. Supporting changes, all in the same file:
+
+- `namespaceFunctionExports` split into a thin resolver plus
+  `moduleSymbolNamespaceExports(ctx, moduleSymbol, visiting)`, so the export
+  walk can recurse. `visiting` is a fresh per-level set, which makes a
+  re-export cycle decline rather than recurse forever.
+- `emitNamespaceObject` split into `ensureNamespaceObjectGetter` (builds/reuses
+  the getter, returns its NAME) plus a thin emit wrapper. The name, not the
+  index, is the stable handle — `flushLateImportShifts` keeps `ctx.funcMap` in
+  lockstep, so a caller resolving the index after its own flush always gets the
+  current one.
+- Nested getters are built **before** the enclosing object reserves any of its
+  own late imports (`ensureNestedNamespaceGetters`), so each inner import batch
+  completes before the outer body is laid out. Interleaving would flush
+  mid-layout and strand already-baked indices.
+
+### N2's root-cause note: CONFIRMED, and incomplete in one way that matters
+
+N2's site was exactly right — no arm for `ts.NamespaceExport`, terminal decline,
+whole namespace rejected. Re-probed on this tree before building on it.
+
+But **the two target rows do not hit that decline first.** Measured:
+
+- `get-nested-namespace-dflt-skip.js` — **FIXED** on both lanes, but only on the
+  lane that can measure it (below).
+- `get-nested-namespace-props-nrml.js` — **still fails, both lanes**, and the
+  namespace arm is not the blocker. It declines on
+  `export class starAsClassDecl {}`: a class binding has **no module-global
+  cell** (`ctx.moduleGlobals` does not contain it; the constructor object lives
+  in `ctx.classObjectGlobals` and is materialized by `emitLazyClassObjectGet`
+  in `src/codegen/expressions/extern.ts`). Proof that this is the ONLY
+  remaining blocker for that row: with the single `export class` line removed
+  from the fixture, the same probe returns 1 on both lanes — generator
+  declaration, `export {x as y} from`, and two-level nesting all work.
+  Deliberately not fixed: `emitLazyClassObjectGet` interns string-constant
+  globals mid-build, which is exactly what the namespace emitter's
+  single-batch index discipline forbids. It would need the same
+  "mint a separate getter during the reservation phase" treatment the nested
+  arm uses. That is the next slice.
+
+### Measurement lane caveat — read this before trusting any sweep of these rows
+
+`scripts/run-test262-paths.mts` (via `runTest262File`) **single-file compiles**
+(`compile(wrappedSource, {fileName: "test.ts"})`). It has no `_FIXTURE` link.
+The CI/sharded lane (`tests/test262-vitest.test.ts`) *does*: it calls
+`discoverFixtureGraph` and links through `compileMulti`.
+
+Consequence: **every row that imports a separate `_FIXTURE.js` is unmeasurable
+in the `run-test262-paths` lane** — `ctx.oracle.valueDeclarationOf` answers
+`none`, the binding never materializes, and the row reports
+`ReferenceError: ns is not defined` whatever the compiler does. In
+`namespace/internals` that is exactly three rows:
+`get-nested-namespace-dflt-skip.js`, `get-nested-namespace-props-nrml.js`,
+`own-property-keys-binding-types.js`. Verified by instrumenting
+`tryEmitCompiledModuleNamespaceObject` and running the row: 4 calls, all
+`decl=none`.
+
+So the whole-directory sweeps below correctly show **no change** on those rows;
+that is a runner artifact, not evidence the fix is inert.
+
+### Sweeps that RAN TO COMPLETION
+
+`language/module-code/**` — 599 rows (fixtures excluded), per-ROW set diff,
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, both lanes, base vs after.
+Base = this branch with `src/codegen/module-namespace-value.ts` reverted.
+
+| lane | base non-pass | after non-pass | fixed | regressed | status-changed | `error` rows (NOT MEASURED) |
+| --- | --- | --- | --- | --- | --- | --- |
+| host (gc) | 215 | 215 | 0 | 0 | 0 | 2 base / 2 after (`top-level-await/dynamic-import-of-waiting-module.js` and one sibling) |
+| standalone | 238 | 238 | 0 | 0 | 0 | 0 base / 0 after |
+
+Net zero on both lanes: **no regressions**, and no fixes visible in this lane
+for the reason above.
+
+### The measurement that DOES see the fix
+
+CI-lane-equivalent probe (`discoverFixtureGraph` + `wrapTest` + `compileMulti`
++ instantiate + run), base vs after, both lanes:
+
+| row | host base → after | standalone base → after |
+| --- | --- | --- |
+| `get-nested-namespace-dflt-skip.js` | THROW → **PASS** | THROW → **PASS** |
+| `get-nested-namespace-props-nrml.js` | THROW → THROW | THROW → THROW |
+| `own-property-keys-binding-types.js` | CE → CE (probe artifact, see below) | CE → CE |
+
+`own-property-keys-binding-types.js` came back `CE Type annotations can only be
+used in TypeScript files` in that probe — a probe artifact, not a verdict. Its
+real state, measured by running the row through the single-file runner with the
+namespace emitter instrumented, is: the namespace object IS built, with **7**
+keys (`live:a_local1, live:b_renamed, live:c_localUninit1, live:d_renamedUninit,
+default:default, live:e_indirect, live:f_indirectUninit`) against the 10 the row
+asserts. That is consistent with N2's finding that the N1 attribution for this
+row is wrong, and narrows it: three exported names are missing from the export
+walk, not mis-lowered.
+
+### Regression test
+
+`tests/issue-6651-n3-nested-namespace.test.ts` — 4 cases (2 shapes × 2 lanes).
+Proven red on the reverted base: **4 failed / 4**. Green with the fix:
+**4 passed / 4**.
+
+### Gates (all run bare, chained, exit code read directly)
+
+`check-loc-budget` 0 (net +145 LOC, no allowance needed) · `check-func-budget` 0
+· `check-coercion-sites` 0 · `check:oracle-ratchet` 0 · `check:dead-exports` 0 ·
+`check-host-import-policy` 0 (`runtimeTsLines` 20214 — unchanged, `src/runtime.ts`
+not touched) · `check-compiler-boundaries --mode inventory` 0
+(`inventoryValid: true`; no new file under `src/`).
+
+`check-func-budget` failed on the first cut — the renamed
+`ensureNamespaceObjectGetter` crossed 300 LOC at 316. Resolved by splitting out
+two cohesive helpers (`rebaseNamespaceGlobalReads`,
+`ensureNestedNamespaceGetters`), not by an allowance.
+
+### Not done
+
+- `own-property-keys-sort.js` (the secondary investigation) — not started. The
+  primary consumed the window.
+- `props-nrml`'s `export class` arm — sited precisely above, not attempted.
