@@ -115,6 +115,7 @@ import {
   type LinearizeHost,
   lowerLinearizedStatement,
 } from "./generator-yield-linearize.js";
+import { bodyHasComputedKeyYield, lowerNestedYieldStatement, type NestedYieldHost } from "./generator-yield-nested.js";
 
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
@@ -474,7 +475,11 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
   // TARGET (`[x = yield]`, `x[yield]`), so the sent value must keep its JS
   // identity — the boxed-any carrier's `sent` field. Only such generators, which
   // had no native plan before (see `bodyHasPatternYield`), move carrier.
-  if (decl.body && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body)) return { kind: "externref" };
+  // (#6651 A5) Likewise a yield inside a computed property NAME: the resumed
+  // value becomes a KEY (`iter.next('first')` names an accessor).
+  if (decl.body && noJsHostTarget(ctx) && (bodyHasPatternYield(decl.body) || bodyHasComputedKeyYield(decl.body))) {
+    return { kind: "externref" };
+  }
   let sawNumeric = false;
   let sawString = false;
   let sawOther = false;
@@ -642,6 +647,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // externref values / iterator records and i32 flags, typed at creation.
   const linearSpillTypes = new Map<string, ValType>();
   const linearizeYields = elemIsAny && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body);
+  // (#6651 A5) Statements holding a yield nested in a computed key / call
+  // argument / member target (`generator-yield-nested.ts`). Same gate shape as A4.
+  const nestedYields = elemIsAny && noJsHostTarget(ctx) && bodyHasComputedKeyYield(decl.body);
 
   // Reserve the state id for the in-progress state.
   let curId = reserveState();
@@ -717,21 +725,6 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     return found;
   };
 
-  /** (#6651 A2) A `yield*` in THIS function's scope. */
-  const nodeContainsDelegatedYield = (node: ts.Node): boolean => {
-    let found = false;
-    const visit = (n: ts.Node): void => {
-      if (found || (n !== node && isFunctionLikeScope(n))) return;
-      if (ts.isYieldExpression(n) && n.asteriskToken) {
-        found = true;
-        return;
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(node);
-    return found;
-  };
-
   /** (#6651 A4) The planner's handle on this builder's state cursor. */
   let linearOrdinal = 0;
   const linearHost: LinearizeHost<UnwindEntry> = {
@@ -754,6 +747,19 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     jump: (next) => finishState(curId, { kind: "jump", next }),
     lowerBody: (statements, unwind) => lowerStatements(statements, unwind, false),
     closeEntry: (entry) => ({ kind: "dstr-close", ...entry }),
+  };
+
+  /** (#6651 A5) The nested-yield planner's handle: A4's externref suspension + #680's capture / replacement map. */
+  const nestedHost: NestedYieldHost<UnwindEntry> = {
+    suspend: (yieldExpr, unwind) => linearHost.suspend(yieldExpr, unwind),
+    canCapture: (expr) => isSafeContinuationOperand(expr) && continuationCaptureType(expr) !== null,
+    capture: (expr) => captureContinuationOperand(expr)?.spillName ?? null,
+    finish(stmt, replacements) {
+      if (!attachContinuationReplacements(curId, [...replacements])) return false;
+      collectSpillsIn(stmt);
+      curStatements.push(stmt);
+      return true;
+    },
   };
 
   /**
@@ -866,6 +872,15 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         continue;
       }
 
+      // 2a) (#6651 A5) In a generator gated by a computed-key yield (boxed-any
+      // carrier, which the f64-only continuation arms below refuse), defer the
+      // statement past its last suspension on a spec-ordered walk. Direct body
+      // only, no enclosing try — the #680 continuation's own scope.
+      if (nestedYields && allowExpressionContinuations && unwind.length === 0) {
+        const nested = lowerNestedYieldStatement(ctx, decl, nestedHost, stmt, unwind);
+        if (nested === "lowered") continue;
+        if (nested === "failed") return fail();
+      }
       // 2b) #680 continuation expressions are only admitted in the direct
       // generator body. Every recursive structural list passes false. A
       // state-lowered-finally context rejects this path even if a future caller
@@ -1229,7 +1244,27 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         return fail();
       }
       if (!subject || innerName === undefined) return fail();
-      if (unwind.some((entry) => entry.kind !== "replay")) return fail();
+      // (#6651 A5) Inside a native-lowered `for-of` body (A2's bail 4) the chain
+      // carries the loop's `iter-close`, possibly with a `catch` of a try inside
+      // the body. The delegation state then walks that chain innermost-first
+      // instead of replaying finalizers, after forwarding the abrupt completion
+      // to the inner generator (`emitDelegateCloseForward`): `.return()` at the
+      // delegated yield closes the inner, then the loop iterator. A state-lowered
+      // `finally` entry (pending-completion routing) is still refused.
+      const delegationUnwind = unwind.some((entry) => entry.kind !== "replay");
+      if (
+        delegationUnwind &&
+        !(
+          unwind.some((entry) => entry.kind === "iter-close") &&
+          unwind.every((entry) => entry.kind === "replay" || entry.kind === "catch" || entry.kind === "iter-close")
+        )
+      ) {
+        return fail();
+      }
+      if (delegationUnwind) {
+        curAbrupt = undefined;
+        curUnwind = [...unwind].reverse();
+      }
       // (#2864 R1) Carrier-mismatch gate: the delegation yield-arm re-yields the
       // inner's f64 `value` through the OUTER result struct. For an f64 outer
       // that is exact; for the boxed-any outer the f64→externref mismatch is
@@ -2352,7 +2387,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const bindingName = declarator.name.text;
     const body = thenBody(stmt.statement);
     if (body.some((s) => statementContainsReturn(s))) return fail();
-    if (body.some((s) => nodeContainsDelegatedYield(s))) return fail();
+    // (#6651 A5) A `yield*` in the body is no longer refused here: each
+    // delegation kind decides whether it can carry this loop's `iter-close`
+    // entry (`emitYield` — the vec kind still refuses a non-replay chain; the
+    // native-gen and protocol-iterable kinds walk it).
 
     collectSpillsIn(stmt.expression);
     addSpill(bindingName);
