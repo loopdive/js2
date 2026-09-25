@@ -31,7 +31,12 @@ const observationFactsByContext = new WeakMap<CodegenContext, FunctionObservatio
 interface FunctionBindingUseFacts {
   /** Names read outside a direct call position, with nested lexical shadows applied. */
   observedNames: ReadonlySet<string>;
-  /** Names called/constructed directly by this declaration, excluding nested scopes. */
+  /**
+   * Names called/constructed by this declaration or by a nested closure lexically
+   * inside it (nested lexical shadows applied). (#6673) Nested scopes count: a
+   * closure's direct call/construct of a capturing declaration forwards that
+   * declaration's captures, which the closure can only take from this frame.
+   */
   invokedNames: ReadonlySet<string>;
 }
 
@@ -82,27 +87,14 @@ function functionBindingUseFacts(stmt: ts.FunctionDeclaration): FunctionBindingU
     }
     if (ts.isIdentifier(node) && node !== stmt.name && !shadowed.has(node.text)) {
       const parent = node.parent;
-      if (!(ts.isCallExpression(parent) && parent.expression === node)) observedNames.add(node.text);
+      const isCallee = ts.isCallExpression(parent) && parent.expression === node;
+      if (!isCallee) observedNames.add(node.text);
+      if (isCallee || (ts.isNewExpression(parent) && parent.expression === node)) invokedNames.add(node.text);
     }
     ts.forEachChild(node, (child) => collectObserved(child, shadowed));
   };
-  collectObserved(stmt, new Set());
-
   const invokedNames = new Set<string>();
-  const collectInvoked = (node: ts.Node): void => {
-    if (node !== stmt && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
-    if (ts.isIdentifier(node) && node !== stmt.name) {
-      const parent = node.parent;
-      if (
-        (ts.isCallExpression(parent) && parent.expression === node) ||
-        (ts.isNewExpression(parent) && parent.expression === node)
-      ) {
-        invokedNames.add(node.text);
-      }
-    }
-    ts.forEachChild(node, collectInvoked);
-  };
-  collectInvoked(stmt);
+  collectObserved(stmt, new Set());
 
   const facts = { observedNames, invokedNames } satisfies FunctionBindingUseFacts;
   functionBindingUseFactsCache.set(stmt, facts);
