@@ -17820,13 +17820,13 @@ assert._isSameValue = isSameValue;
           }
           return done ? 1 : 0;
         };
-      // (#5131) Strict spread iterator provider. Keep it separate from the
-      // compatibility bridge below: internal GetIteratorFlattenable users
-      // intentionally retain their permissive bare-next/degrade behavior.
+      // (#5131/#1691) Strict iterator provider + yield* step, separate from the permissive
+      // compatibility bridge below (internal GetIteratorFlattenable users keep bare-next/degrade).
       if (name === "__iterator_strict") return (obj: any) => _strictIteratorHostRuntime.getIterator(obj, callbackState);
       if (name === "__iterator_next_strict")
         return (iter: any): [number, any] => _strictIteratorHostRuntime.iteratorNext(iter, callbackState);
-      // Iterator protocol: host-delegated iteration for non-array types
+      if (name === "__gen_yield_star_step")
+        return _strictIteratorHostRuntime.yieldStarStepImport(callbackState, builtin("TypeError", TypeError));
       if (name === "__iterator")
         return (obj: any) => {
           // Check direct Symbol.iterator first, then sidecar (both JS Symbol and Wasm "@@iterator")
