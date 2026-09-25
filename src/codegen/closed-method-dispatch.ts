@@ -1727,18 +1727,22 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // Dispatch `.test(subject)` by the runtime `$NativeRegExp` brand, not by
     // the first ambient extern class named `test`. User closed-struct methods
     // are wrapped outside this arm below and therefore retain precedence.
+    // (#6672) `.exec(subject)` takes the same brand arm into
+    // `__regexp_exec_carrier` (regexp-exec-carrier.ts), whose result is already
+    // the externref match array / null — so no boxing call follows it.
     let wrapNativeRegExpTest: ((fallback: Instr[]) => Instr[]) | undefined;
     {
       const regexpTypeIdx = ctx.structMap.get("__StandaloneRegExp");
-      const regexpTestIdx = ctx.funcMap.get("__regexp_test_carrier");
+      const isExec = methodName === "exec";
+      const regexpTestIdx = ctx.funcMap.get(isExec ? "__regexp_exec_carrier" : "__regexp_test_carrier");
       const boxBoolIdx = ctx.funcMap.get("__box_boolean");
       if (
         ctx.standalone &&
-        methodName === "test" &&
+        (methodName === "test" || isExec) &&
         arity === 1 &&
         regexpTypeIdx !== undefined &&
         regexpTestIdx !== undefined &&
-        boxBoolIdx !== undefined
+        (isExec || boxBoolIdx !== undefined)
       ) {
         wrapNativeRegExpTest = (fallback: Instr[]): Instr[] => [
           { op: "local.get", index: anyLocalIdx },
@@ -1750,7 +1754,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
               { op: "local.get", index: 0 },
               { op: "local.get", index: 1 },
               { op: "call", funcIdx: regexpTestIdx },
-              { op: "call", funcIdx: boxBoolIdx },
+              ...(isExec ? [] : [{ op: "call", funcIdx: boxBoolIdx! } as Instr]),
             ],
             else: fallback,
           },
