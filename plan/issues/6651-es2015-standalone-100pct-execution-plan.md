@@ -11734,3 +11734,25 @@ The eight `*-target-is-proxy.js` rows across B/E/F are a **filename family with
 six different error texts** — exactly the shape lane P1 warned about when 24
 Proxy rows grouped by that name produced a cause that did not exist. They are
 listed apart on purpose.
+
+### Neighbourhood unit suites — and 17 failures that are NOT this lane's
+
+All 44 `tests/*` files matching proxy / reflect / newtarget / the touched issue
+numbers were run (batched, `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048` — the full set
+in one vitest invocation OOMs on this box). Result: **17 failures, all 17
+reproduce IDENTICALLY with the three edited source files reverted to `HEAD~1`
+and the new module moved aside**, so none is this change's:
+
+- `deno-primordials-reflection-phases.test.ts` — 1
+- `issue-1712-reflection-identity.test.ts` — 5
+- `issue-3371.test.ts` — 1 (`preserves the TypedArray carrier through a
+  harness-style callback`; in this lane's own neighbourhood, hence checked first)
+- `issue-3638-reflective-instance-method-call.test.ts` — 1 (self-described
+  KNOWN GAP)
+- `issue-4397-native-semantic-js-host.test.ts` — 1
+- `issue-4754-module-global-proxy-escape.test.ts` — 6
+- `issue-5122-es2015-proxy-symbol-targets.test.ts` — 2
+
+Stated rather than skipped: they were measured file-by-file here, not through
+whatever suite-level setup CI uses, so "red on `origin/main`" is the honest
+claim, not necessarily "red in CI". The 27 other files (357 tests) are green.
