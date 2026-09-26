@@ -12692,3 +12692,495 @@ whose `[[Prototype]]` is `S.prototype`), and `speciesctor-…-returns-another-in
 (4 — `TypedArrayCreate`'s validation is `ref.test $__ta_dyn_view`, so a species
 that returns a STATICALLY-typed `new Int8Array([…])` is rejected as "non-TypedArray";
 architectural, the static value carries no TA brand).
+## Implementation Plan — standalone `$__IterRec.next()` substrate (2026-09-26)
+
+Written as a spec only; no `src/` change is proposed here as done. Every number
+below is from a run I executed, named with its artifact.
+
+### TL;DR for the implementer
+
+1. **`__iterator` is ALREADY idempotent on an `$__IterRec`, and every consumer
+   already handles a record.** Two arms do it (`iterRecIdentityArm`, built into
+   `buildIteratorBody`; plus the belt-and-braces `prependIterRecIdentityArm`),
+   and I measured for-of / spread / `Array.from` / array-destructuring / rest-spread
+   all correct on a record TODAY. That half of lane TA2's sketch is not work.
+2. **The `next` BODY is not missing either.** `emitIteratorFamilyNextBody` +
+   `__iter_next_result` + `__any_iter_next` all exist and work:
+   `[10,20][Symbol.iterator]()` steps `10` then `20` in standalone right now.
+3. The ONE defect on the array path is the **producer's carrier**:
+   `compileNativeArrayIterator` hands back a raw canonical `$Vec`, which has no
+   cursor, so `__any_iter_next` misses and falls through to `__gen_next` → `null`.
+4. **The 12-row figure does not survive.** 12 candidate rows exist and all 12 are
+   real failures, but they sit behind **three different causes**, and only **6**
+   are ES2015 at all — and those 6 are behind the cause this slice does NOT fix.
+   See the accounting below before scoping anything.
+
+### The seam today, with `file:line` and the contract each implements
+
+| Site | Contract as written |
+| --- | --- |
+| `src/codegen/array-methods.ts:3206` `compileNativeArrayIterator` (tail at **:3369**) | "the producer hands back the canonical vec and the *consumer* (`__iterator`…) wraps it into the `$IterRec`. So `arr.values()`/`.keys()` as a value **is a canonical externref vec** … Single wrap point." |
+| `src/codegen/array-methods.ts:3149` `compileArrayIteratorMethod` | standalone/wasi → delegate to the above; JS-host → `__array_values` import |
+| `src/codegen/iterator-native.ts:3847` `buildIteratorBody` (ladder doc at **:3580**) | arm 1 adopts a canonical `$Vec` **by reference** → `$IterRec{VEC, vec, 0, null, family}`; arm 2 normalizes every *other* vec-family carrier by **boxing into a fresh** canonical vec (a snapshot); `familyLocal` is seeded `ITER_FAMILY_ARRAY` at **:4390** |
+| `src/codegen/iterator-native.ts:3804` `iterRecIdentityArm`, spliced at **:4396** | "A record IS the answer GetIterator must return, so adopt it by identity" — **this is the idempotency TA2 asked for, already shipped (#5267 B-2)** |
+| `src/codegen/iterator-native.ts:1846` `prependIterRecIdentityArm` (#5147) | same, prepended from `fillAnyIterNext` |
+| `src/codegen/iterator-native.ts:1801` / `:1945` `reserveAnyIterNext` / `fillAnyIterNext` | source-level `.next()`; recognizes **`$IterRec` ∨ `$LazyIterHelper` only** — a raw `$Vec` is NOT recognized and falls to `__gen_next` |
+| `src/codegen/iterator-proto-next.ts:93` `ensureIterRecPrototypeHelper` (#6484 S1) | `__iter_rec_proto(rec)` — family-keyed prototype; non-record → `ref.null.extern` |
+| `src/codegen/iterator-proto-next.ts:169` `emitIteratorFamilyNextBody` (#6484 S2) | the real `%XIteratorPrototype%.next` body: brand-check `family`, then `__iter_next_result`; wrong receiver → catchable TypeError |
+| `src/codegen/iterator-proto-next.ts:~247` `resolveIteratorFamilyNextClosure` | resolves `next` **off the FAMILY, not the carrier** — which is exactly why `typeof it.next === "function"` is already true while the call still answers `null` |
+| `src/codegen/statements/loops.ts:1521` `arrayIteratorReceiverForForOf` (#681) | `for (x of arr.values())` is recognized **syntactically** and lowered as an index loop over the inner receiver — it never reaches the producer, so it cannot be broken by changing it |
+| `src/codegen/map-runtime.ts:2183` `emitLiveCollectionIterRec` (#5267 B-2) | **the precedent**: the identical snapshot-vec→live-record producer migration, already done for Map/Set, with `emitCollectionIteratorVec` kept for the array-shaped consumers |
+| `src/codegen/expressions/call-tail-dispatch.ts:~807` (#6484 S2) | **the other precedent**: `arr[Symbol.iterator]()` was migrated off the snapshot vec onto `__iterator(recv)` and it works |
+
+### Measured current behaviour (probe `.tmp/iterrec-probe*.ts`, target standalone, in-process compile+instantiate)
+
+| probe | result |
+| --- | --- |
+| `[10,20].values().next()` | `null` |
+| `[10,20][Symbol.iterator]()` `.next()` ×2 | **`10`,`20` — correct, live cursor** |
+| `typeof [10,20].values().next` | `"function"` |
+| `Object.getPrototypeOf([1].values())` vs `…[Symbol.iterator]()` | both non-null and the **same object** (already correct for a statically-typed receiver) |
+| `new Float64Array(3).values().next()` | `null` |
+| `map.entries().next()` | `{value:[1,2],done:false}` — **collections already correct** |
+| dyn-TA (`function f(TA){new TA([…]).values()}`) | `null`; `typeof ta.values` is `"undefined"`; `ta[Symbol.iterator]` `undefined`; `for (x of ta)` throws `TypeError: value is not iterable`; `[...ta]` likewise; `Array.from(ta)` and `ta.forEach` **work** (index pass-through) |
+| `var a=[]; var it=a[Symbol.iterator](); a.push(5); it.next()` | `{value:5}` — **arm 1 adoption is genuinely LIVE** |
+| same with a statically numeric `[1,2]` then `push(3)` | 2 steps only — arm 2 snapshots. Both behaviours are correct-by-design; know which arm your carrier takes |
+
+### Root cause, in one sentence
+
+`compileNativeArrayIterator` returns the iterator's *backing store* instead of an
+*iterator*, so the cursor that `__iterator_next` needs does not exist in the
+value; `__any_iter_next`'s `ref.test $IterRec` therefore misses and the call
+degrades to `__gen_next`, which answers `null`.
+
+### Blast radius — measured, not argued
+
+The change is "the producer returns what `arr[Symbol.iterator]()` already
+returns". So the blast radius can be measured **without writing the fix**: feed
+every consumer both producers today. `V` = `.values()` (snapshot vec), `R` =
+`[Symbol.iterator]()` (record, i.e. the post-change shape), receiver `[1,2,3]`:
+
+| consumer | V | R | spec |
+| --- | --- | --- | --- |
+| `for (x of it)` | 6 | 6 | 6 |
+| `[...it]` | 3/last=3 | 3/last=3 | same |
+| `Array.from(it)` | 3/[1]=2 | 3/[1]=2 | same |
+| `[a,b] = it` | 1,2 | 1,2 | same |
+| `f(...it)` arity | 3 | 3 | same |
+| `new Set(it).size` | 3 | 3 | 3 |
+| `typeof it` | object | object | object |
+| `it.length` | **3** | **undefined** | undefined ✔ |
+| `it[1]` | **2** | **undefined** | undefined ✔ |
+| `Array.isArray(it)` | **true** | **false** | false ✔ |
+| two passes of `for-of` over the same `it` | **6 then 6** | **6 then 0** | 6 then 0 ✔ |
+
+**Four rows change and all four move toward the spec; nothing regresses.** That
+is the strongest single argument for the slice, and it cost one probe file.
+
+### Row accounting — the "12 rows" claim, re-measured
+
+Artifact: `.test262-cache/test262-standalone-current.jsonl`, fetched **fresh
+2026-09-26** via `ensureStandaloneBaselineJsonl({force:true})` (48,735 entries).
+Scope: the 95 rows under `test/built-ins/{Array,TypedArray}/prototype/{values,keys,entries}/` — **48 pass / 47 fail**.
+Edition per `scripts/generate-editions.ts::classifyEdition` (read, not assumed).
+
+| # | rows | error today | cause | edition |
+| --- | --- | --- | --- | --- |
+| 1 | 6 — `Array/prototype/{values,keys,entries}/iteration.js` + `…/iteration-mutable.js` | `TypeError: Cannot access property on null or undefined` | **the producer carrier (this spec, slice 1)** | **Unclassified (untagged)** — `esid:` only, no `es6id:`, no `features:` ⇒ `UNCLASSIFIED_UNTAGGED`, **0 rows to ES2015** |
+| 2 | 3 — `TypedArray/prototype/{values,keys,entries}/return-itor.js` | `Cannot read properties of undefined (reading 'next')` | **no dyn-view producer at all** (slice 3) — `typeof ta.values === "undefined"` | **ES2015** (`features:[TypedArray]`) |
+| 2b | 3 — the `BigInt/` twins of those | same | same | ES2020 (`features:[BigInt,…]`) — out of the ES2015 slice |
+| 3 | 3 — `TypedArray/prototype/{values,keys,entries}/iter-prototype.js` | `SameValue(«null», «[object Array Iterator]»)` | slice 3 + family stamp | **ES2015** (`features:[Symbol.iterator,TypedArray]`) |
+| 3b | 3 — their `BigInt/` twins | same | same | ES2020 |
+| — | 3 — `…/returns-iterator-from-object.js` | `Array.prototype.values is not yet callable as a value` | builtin-as-value glue (the Map/Set analogue exists at `array-object-proto.ts:2093`) — **separate issue** | Unclassified |
+| — | 12 — `resizable-buffer*` | `illegal cast [in __module_init]` | resizable ArrayBuffer — separate | post-ES2015 |
+| — | 6 — `return-abrupt-from-this-out-of-bounds` | wrong error type | §23.2.4.4 out-of-bounds validation — separate | post-ES2015 |
+| — | 2 — `values/make-{in,out-of}-bounds-after-exhausted` | null deref | slice 3 + resizable | post-ES2015 |
+
+**Verdict on the figure:** the 12 rows TA2 named are real and non-passing, but
+they are **three causes, not one**, and **six of the twelve are ES2015** — the
+three `return-itor` and three `iter-prototype` rows, which the cursor migration
+does **not** touch. The six rows the cursor story describes best contribute
+**zero** to the ES2015 numerator. Refuted as an ES2015 figure; confirmed as a
+candidate-set size.
+
+### Changes
+
+#### Slice 1 — the array/TypedArray producer hands back a record (small, strictly spec-improving, 0 ES2015 rows)
+
+**File: `src/codegen/array-methods.ts`**
+
+- `compileNativeArrayIterator` (**:3206**), tail at **:3369–3382**.
+- `methodName === "values"`: do **not** build the boxed `out` copy at all. Compile
+  the receiver, `extern.convert_any` it, `call __iterator`, return
+  `{kind:"externref"}`. `__iterator` arm 1 adopts a canonical externref vec **by
+  reference** (live — probe-confirmed), arm 2 boxes any other carrier (snapshot).
+  This is byte-for-byte the shape `call-tail-dispatch.ts`'s #6484 S2 arm already
+  emits for `arr[Symbol.iterator]()`.
+- `methodName === "keys" | "entries"`: keep the existing projection loop that
+  builds the canonical externref out-vec, then **append** `call __iterator` before
+  returning. Result: a live cursor over a projected snapshot.
+- **Ordering, load-bearing:** `ensureNativeIteratorRuntime` + `getOrRegisterVecType`
+  + `ensureObjVecBuilders` must run **before** the receiver is compiled (the
+  function already documents this; `__iterator` may add late imports and shift
+  funcIdx — #2043). Resolve `ctx.funcMap.get("__iterator")` and
+  `flushLateImportShifts(ctx, fctx)` **before** `compileExpression(receiver)`,
+  exactly as `call-tail-dispatch.ts:~825` does.
+- **Decline path:** if `ctx.funcMap.get("__iterator")` is `undefined`, return the
+  vec as today. Absent-not-wrong; the module is then byte-identical.
+
+Wasm shape (values):
+
+```wasm
+;; arr.values()  — standalone
+local.get $recv            ;; ref $__vec_*
+extern.convert_any
+call $__iterator           ;; → externref carrying $__IterRec{VEC, vec, 0, null, ARRAY}
+```
+
+No new struct, no new kind tag, no `__iterator_next` arm, no `$__IterRec` field.
+
+**Rows moved by slice 1** (all Unclassified): `values/iteration.js`,
+`keys/iteration.js`, `entries/iteration.js`, `values/iteration-mutable.js` → pass.
+`keys/iteration-mutable.js` and `entries/iteration-mutable.js` stay failing —
+they push after the iterator is created and a *projected* vec is a snapshot. Say
+so in the PR rather than claiming 6.
+
+#### Slice 2 — lazy `keys`/`entries` projection (recommend DECLINING)
+
+To make the two `-mutable` twins pass, the projection must be computed per step.
+That needs the Map/Set shape: a new carrier struct (`$VecProjIter{vec, idx, kind}`),
+a new `ITER_KIND_VECPROJ` tag, the carrier in `$__IterRec.userIter` (field 3, as
+`ITER_KIND_MAPSET` does — `map-runtime.ts:2213`), and a new arm in
+`__iterator_next` + `__iterator_return`. That is a new kind tag on the hottest
+switch in the runtime **for two Unclassified rows**. Decline unless something
+else wants the carrier. Do **not** solve it by adding a 6th field to
+`$__IterRec`: every `struct.new $__IterRec` site (a dozen-plus across
+`iterator-native.ts`, `map-runtime.ts`, `array-object-proto.ts`) is
+field-arity-coupled, and the file says so explicitly at **:3945**.
+
+#### Slice 3 — the dyn TypedArray view as an iterator producer (**this is the ES2015 payload**)
+
+Facts established: a `$__ta_dyn_view` (`src/codegen/registry/types.ts:595`,
+fields `length,buf,byteOffset,kind,expando,constructProto`) is **not** in
+`collectVecFamilyCarriers` (`iterator-native.ts:4474`, which reads
+`ctx.vecTypeMap`), so `__iterator` cannot see it — hence `for (x of ta)` and
+`[...ta]` throw `value is not iterable`. And no `__ta_dyn_values` /
+`__ta_dyn_keys` / `__ta_dyn_entries` helper exists anywhere in `src/`, while
+`TA_DYN_METHOD_CALL_NAMES` (`ta-dyn-method-call.ts:60`) already **lists all
+three** — so the dispatcher ladder silently drops them.
+
+Two independent ways in; do **3a**, and treat 3b as its own issue.
+
+**3a (narrow, no ladder change) — three `__ta_dyn_*` helpers.**
+- New leaf module (e.g. `src/codegen/ta-dyn-iterator.ts`) reserving
+  `__ta_dyn_values` / `__ta_dyn_keys` / `__ta_dyn_entries` with the ladder's
+  uniform ABI — `(recv externref, a0, a1, a2 externref, argc i32) -> externref`
+  (`ta-dyn-method-call.ts:466–472` shows the call shape; the extra args are
+  evaluated and ignored, as every 0-arg entry does).
+- Body: `len = __extern_length(recv)`; loop `i`, `slot = __extern_get_idx(recv, i)`
+  (**both already read a dyn view — probe: `ta[1] + ta.length === 5`**), project
+  per method (`values` → slot, `keys` → `__box_number(f64 i)`, `entries` → a
+  2-element `$ObjVec` via `ensureObjVecBuilders`, mirroring
+  `array-methods.ts:3330–3349`), `struct.new` the canonical externref `$Vec`,
+  then `call __iterator` → record stamped `ITER_FAMILY_ARRAY`.
+- §23.2.4.4 step 5: prepend `taDynDetachedGuardPrologue`
+  (`ta-dyn-method-call.ts:305`) — all three names are already in
+  `TA_DYN_VALIDATE_METHOD_NAMES` (**:118**), so the guard applies by name with no
+  list edit.
+- **Reserve/fill discipline:** the helper bodies read `__extern_length` /
+  `__extern_get_idx` / the `$ObjVec` builders, which are only final after
+  `ensureObjectRuntime` flushes — so reserve eagerly and **fill at finalize**
+  (`reserveArrayToPrimitiveString` / `fillNativeIteratorLateArms` precedent), and
+  register before `unshiftExternMethodCallTaDynViewArm` runs, or the ladder will
+  not see the names (it reads `funcMap` at unshift time, **:343**).
+- **VERIFY FIRST, one throw probe (30 s):** I confirmed the compiled module
+  *defines* `__call_m_values_0`, so the reaching dispatcher for `ta.values()` may
+  be **`closed-method-dispatch.ts`**, not `__extern_method_call`. That site's
+  ta-dyn arm is gated `VEC_SEARCH_METHODS.has(methodName)` (**:1331**) and would
+  need those three names admitted. Determine which surface actually fires by
+  putting an unconditional `throw` in one arm and watching whether
+  `ta.values()`'s answer changes — TA2's technique, and the only honest way to
+  pick. Do not widen both "to be safe": each widening is a behaviour change on
+  every dyn-view module.
+
+**3b (broader, own issue) — make `$__ta_dyn_view` an `__iterator` carrier.** Add
+it to `collectVecFamilyCarriers` with a view-aware element read (kind +
+byteOffset, not `array.get` on field 1 — the raw byte store is deliberately
+excluded as `i32_byte` at **:4485**). This fixes `for (x of ta)`, `[...ta]` and
+`ta[Symbol.iterator]` reachability across the whole dyn-view surface, which is
+almost certainly worth more than 6 rows — and needs its own control run. **Do not
+fold it into 3a**: 3a cannot regress a module that has no dyn-view iterator call,
+whereas 3b changes the `__iterator` ladder for every module that has a dyn view.
+
+**Explicitly scoped OUT, per the brief:** `ta[Symbol.iterator]` reading
+`undefined` is a **separate missing install** (a property read on the dyn view's
+prototype glue, not a producer), and the 3 `returns-iterator-from-object.js` rows
+are a **separate builtin-as-value glue gap**. Neither is in slice 1 or 3a.
+
+### Order of work — the one thing an implementer must get right
+
+**Slices 1 and 3 are independent and may ship in either order; inside slice 1 the
+producer's carrier change and the pre-receiver import-ordering must be ONE
+commit.** A record produced in a module whose `__iterator` was registered *after*
+the receiver was compiled gives a shifted-funcIdx miscompile (#2043) — it fails
+loudly but far from the cause. The usual "producer change without a matching
+consumer change breaks passing rows" fear does **not** apply here, and that is
+measured, not assumed: the consumer side was already migrated (#5267 B-2 identity
+arm, #6484 S2), and the A/B table above shows all five array-shaped consumers
+already answering identically on a record. Do not stage slice 1 as "producer now,
+consumer later" — there is no consumer half to stage.
+
+### Acceptance criteria (concrete assertions for `tests/issue-6651-iterrec-next.test.ts`)
+
+Standalone target, in-process compile + instantiate (pattern:
+`tests/es5-array-new-filter-holes.test.ts`). Positive:
+
+1. `[10,20].values()` → `.next()` gives `{value:10,done:false}`, then
+   `{value:20,done:false}`, then `{value:undefined,done:true}`, then stays done.
+2. `['a','b','c'].keys()` → `.next().value === 0`; `.entries()` → first
+   `.value[0] === 0`, `.value[1] === 'a'`, `.value.length === 2`.
+3. `var a=[]; var it=a.values(); a.push('a'); it.next()` → `{value:'a',done:false}`;
+   the next call → `{value:undefined,done:true}`; a further `push('b')` does not
+   revive it (that is `values/iteration-mutable.js` verbatim).
+4. `Object.getPrototypeOf([1].values()) === Object.getPrototypeOf([1][Symbol.iterator]())`
+   and neither is `null`.
+5. (slice 3a) `function f(TA){var ta=new TA([0,42,64]); var it=ta.values(); …}`
+   called with `Float64Array` steps `0,42,64` then done; and
+   `Object.getPrototypeOf(ta.values())` equals the `[][Symbol.iterator]()` prototype.
+
+Negative controls — these must hold **before and after**, and a test that only
+asserts the positives is not evidence:
+
+6. `for (const x of [1,2,3].values())` still sums 6 (the #681 syntactic bypass is
+   untouched); `[...[1,2,3].values()]`, `Array.from(…)`, `[a,b] = …`,
+   `f(...[1,2,3].values())` and `new Set(…).size` all unchanged.
+7. `map.entries().next()` and `"ab"[Symbol.iterator]().next()` unchanged
+   (MAPSET / STRING families must not be dragged onto the ARRAY family).
+8. **Deliberate, spec-directed changes — assert the NEW value, and state it in the
+   PR body so review sees them as intended:** `[1,2,3].values().length` becomes
+   `undefined` (was 3), `…values()[1]` becomes `undefined` (was 2),
+   `Array.isArray([1,2,3].values())` becomes `false` (was `true`), and two
+   successive `for-of` passes over one `values()` sum `6` then `0` (was `6`,`6`).
+9. A JS-host (`gc`) compile of every case above is **byte-identical** — the whole
+   change sits under `ctx.standalone || ctx.wasi`.
+
+### The control run needed to claim it
+
+Per-row **set diff**, never a count comparison.
+
+- **Targeted:** the 95 rows under
+  `test/built-ins/{Array,TypedArray}/prototype/{values,keys,entries}/`
+  (baseline 48 pass / 47 fail).
+- **Control:** the iteration neighbourhood — paths matching
+  `/prototype/(values|keys|entries)/`, `Symbol.iterator`,
+  `language/statements/for-of/`,
+  `language/expressions/(spread|array-literal|assignment/dstr|destructuring)`,
+  `language/statements/(variable|for|let|const)/dstr/`,
+  `built-ins/Array/(from|of)/`, `built-ins/(Map|Set|WeakMap|WeakSet)/`,
+  `built-ins/String/prototype/(matchAll|Symbol.iterator)`, `built-ins/Iterator/`.
+  I sized it against the fresh baseline: **3,365 rows, 2,677 pass / 688 fail.**
+- **Both targets.** Standalone is where the change lives; a `gc` sweep is the
+  proof of criterion 9.
+- **Re-run the differing rows on the BASE tree.** A local honest-lane run carries
+  its own artifacts (TA1 found 49 of 55 "flips" were local-tree noise, e.g.
+  `Temporal is not defined`); only a base-tree run of exactly the differing paths
+  separates a real flip from tree noise.
+- Rebuild order after **every** `src/` edit, including a reverted probe:
+  `npm run build:compiler-bundle` → `npm run build:runtime-bundle` →
+  `node scripts/build-quickjs-eval-provider.mjs`. Skipping the third makes every
+  row report `quickjs provider is not built` — an error state that reads as
+  `0 pass`, not a verdict.
+
+### What would make this NOT worth doing (stated plainly)
+
+- **As an ES2015 play, slice 1 is worth zero and should not be scheduled under
+  #6651's headline.** Its six rows are `UNCLASSIFIED_UNTAGGED` by
+  `classifyEdition`. It is still worth doing — ~30 lines, no new runtime
+  entities, four measured moves toward the spec, and it removes a whole class of
+  "iterator is not an iterator" surprises — but bill it as correctness, not as
+  ES2015 conformance.
+- **Slice 2 is not worth doing.** A new kind tag on the runtime's hottest switch
+  for two untagged rows.
+- **Slice 3a is the ES2015 work and is larger than the brief implies** — a new
+  leaf module plus a reserve/fill helper trio, not a `next` body. Budget it as
+  that, and run the throw-probe dispatcher check *before* writing any of it; if
+  the reaching surface turns out to be `closed-method-dispatch`, widening
+  `VEC_SEARCH_METHODS` is the risky edit, not the helpers.
+- **If anyone is tempted to "just fix `__any_iter_next` to accept a raw `$Vec`":
+  don't.** Adopting the vec inside the *step* function mints a fresh cursor per
+  call, so `it.next()` would answer `10` forever. The cursor has to live in the
+  value, which is why this is a producer change.
+
+## Lane SY1 receipt — the ES2015 `Symbol` feature-tag bucket, triaged end to end;
+## the bucket has NO cause worth more than one row (2026-09-26)
+
+Scope: the ES2015 × `Symbol` feature slice on `--target standalone`. The published
+row is **609 total / 549 pass / 58 fail / 2 CE (90 %)**, reproduced exactly (see
+below). The dispatch brief said "64 failing"; the artifact says **60 not-pass**.
+
+### The bucket IS mostly Symbol work — unlike `Reflect`, but it is spread thin
+
+Reproducing the slice showed the `Symbol` row is scored on the **bare `Symbol`
+frontmatter tag only**, not the union of the twelve `Symbol*` tags in
+`scripts/feature-t262-features.json` (that union is 1,955 rows / 164 fail / 5 CE).
+Directory spread of the 60 not-pass rows:
+
+| rows | bucket |
+|---|---|
+| 16 | `language/**` |
+| 12 | `built-ins/Object` |
+| 7 | `built-ins/Symbol` |
+| 6 | `built-ins/NativeErrors` (all `proto-from-ctor-realm` — lane R1) |
+| 5 | `built-ins/Proxy` (lane P1) |
+| 3 | TypedArray family (lane TA2) |
+| 2 each | `Date`, `JSON`, `String`, `Reflect` |
+| 1 each | `Array`, `Promise`, `Map` |
+
+So ~11 of the 60 belong to another lane's bucket by construction
+(`proto-from-ctor-realm` ×6, Proxy ×5), and 3 more are TypedArray rows I left
+alone per the lane split. The rest carry the tag because they *exercise* a symbol
+(a symbol key, a symbol value, a symbol coercion), which is genuinely this
+bucket's material — the `Reflect` bucket's "the name is misleading" finding does
+**not** repeat here.
+
+### Measurement lane — and a stale-artifact correction that changes the headline
+
+- Row set: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`
+  (48,735 rows, fetched fresh 2026-09-26) ∩ `scripts/generate-editions.ts`'s own
+  `parseFrontmatter` + `classifyEdition`, host-free status. Independently
+  reproduces the published **609 / 549 / 58 / 2**.
+- Verdicts: `tests/test262-shared.ts::runTest262Chunk` from a gitignored
+  `tests/probe-sy1.test.ts`, `TEST262_PATH_FILTER_FILE`, `--isolate`,
+  `TEST262_IT_TIMEOUT_MS=420000`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, pool 2.
+  Shard-completion manifest checked on **every** sweep quoted here
+  (`registered=recorded=canonical`, `allCallbacksSettled: true`, 0 `error` rows).
+- All three artifacts rebuilt after every `src/` edit *and* after every A/B flip
+  (`build:compiler-bundle` → `build:runtime-bundle` →
+  `scripts/build-quickjs-eval-provider.mjs`).
+- **Base standalone sweep reproduced the artifact exactly**: 60 registered, 60
+  recorded, 60 canonical, **0 pass / 58 fail / 2 CE**.
+
+**CORRECTION, and it is the load-bearing one.** Scoring the host axis from the
+committed host baseline (`.test262-cache/test262-current.jsonl`, fetched fresh by
+`scripts/fetch-baseline-jsonl.mjs`) said **60 of 60 fail on host too** — i.e. "this
+whole bucket is shared front-end work, nothing for a standalone lane". A live host
+sweep of the same 60 rows says **27 pass / 33 fail**. The committed host JSONL's own
+rows are timestamped **21.5.2026** — four months stale — so its verdicts are not
+comparable to a standalone baseline promoted this week. Anyone splitting a bucket
+by joining the two committed baselines will get a wrong answer in the direction of
+"not mine"; the host axis has to be *run*.
+
+### Axis 1 — host vs standalone (both sweeps mine, same 60 rows, same day)
+
+| | rows |
+|---|---|
+| host **pass**, standalone not-pass → standalone-only gap | **27** |
+| host fail too → shared front-end, a different slice | **33** |
+
+### Axis 2 — grouping the 27 standalone-only rows by cause, not by path
+
+Every candidate was reproduced with a **verbatim-test262-shaped** program
+(top-level, untyped, `skipSemanticDiagnostics: true`, `deferTopLevelInit: true`)
+and bisected assertion-by-assertion with a bitmask. That shape is not optional:
+an annotated probe (`const s: any = Symbol("66")`) reported `String(sym)` BROKEN
+where the real row's same assertion passes, and reported
+`Symbol.prototype.toString.call(sym)` WORKING where the real row fails on exactly
+that line — the #6651 "two disjoint lowerings, picked by the receiver's static
+shape" hazard, twice, in one sitting.
+
+The result is the headline finding: **there is no big rock here.** Each cause is
+worth **one** row. Measured, per cause:
+
+| rows | cause | verified how |
+|---|---|---|
+| 1 | `Object.assign`'s ToObject gate lists four of Table 13's five primitive tags — `symbol` is missing | **LANDED**, below |
+| 1 | a primitive wrapper's `[[Prototype]]` is `Object.prototype` — for **every** wrapper, not just Symbol (`Object(1)`, `Object('s')` too) | `Symbol/constructor.js` |
+| 1 | ToPrimitive on a Symbol wrapper does not unbox to its `[[SymbolData]]`, so `"".indexOf(Object(Symbol()))` does not throw | `indexOf/searchstring-tostring-errors.js` assertion 2 |
+| 1 | TS types `Object(sym)` as `symbol`, so `Symbol.keyFor`'s static-tag guard (`call-namespace-static.ts`) coerces the wrapper externref into the i32-id lane instead of throwing | `keyFor/arg-non-symbol.js` assertion 1 |
+| 1 | `Object.entries` loses a symbol VALUE's identity **and description** once the carrier is descriptor-backed | `Object/entries/symbols-omitted.js` assertion 5 |
+| 1 | `sym()` and `new symObj()` do not throw TypeError (the other two of the four do) | `Symbol/not-callable.js` assertions 1 + 4 |
+| 1 | ToInteger via a `valueOf` that RETURNS a symbol does not throw (the direct-symbol and `@@toPrimitive` spellings already do) | `indexOf/position-tointeger-errors.js` assertion 4 |
+| 11 | another lane's bucket by construction (`proto-from-ctor-realm` ×6 lane R1, Proxy ×5 lane P1) | — |
+| 3 | TypedArray rows — out of lane per the TA2 split, untouched | — |
+
+Two sub-findings worth carrying forward:
+
+- **The wrapper-prototype gap is NOT Symbol work.** `Object.getPrototypeOf(Object(x))`
+  answers `Object.prototype` for String and Number wrappers too. Fixing it inside
+  a Symbol slice would be mis-scoped; it belongs with the #2175 proto-index store,
+  whose H5 receipt already records the "proto-member dirty" arming condition.
+- **The `Object.entries` symbol-value defect is triggered by `Object.defineProperty`,
+  and the KEY does not have to be a symbol.** A string-keyed `defineProperty` on
+  the carrier breaks it identically. Before the `defineProperty` the identity
+  holds; after it, `obj.key`, `Object.values(obj)[0]` and
+  `Object.getOwnPropertyDescriptor(obj,'key').value` **all still compare equal to
+  the original symbol** while `Object.entries(obj)[0][1]` does not, and its
+  `String(...)` reads `Symbol()` — the description is gone. `__object_entries`
+  (`object-runtime-enumeration.ts`) pushes `$PropEntry.value` unmodified, so the
+  mis-boxing is downstream of it. Isolating that needs more than this slice's
+  budget; the reproducer is pinned as a negative control in
+  `tests/issue-6651-sy1-symbol.test.ts` so the next lane starts from the
+  three-line repro rather than the 30-line test262 row.
+
+### What landed
+
+`src/codegen/expressions/call-builtin-static.ts`, the `Object.assign` arm:
+`targetIsPrimitive` tested `number | string | boolean | bigint`. §20.1.2.1 step 1
+is `to = ToObject(target)` and the RESULT of the whole call is that wrapper;
+`emitObjectCoercion` (`calls-guards.ts`) already grew its Symbol arm in slice I4,
+but this gate never did — so a statically-`symbol` target skipped ToObject and
+`__object_assign` (which only rejects a NULLISH target) handed the raw symbol
+straight back. One missing tag, not a missing mechanism. The list is now the five
+Table 13 rows, spelled as a one-line `.includes` so the file lands at **net +0
+LOC** (no growth grant needed — see Gates).
+
+### Row deltas — per-row set diff, measured by me, both targets
+
+| sweep | base | after | delta |
+|---|---|---|---|
+| ES2015 × `Symbol` bucket, 60 not-pass rows, **standalone** | 0 pass / 58 fail / 2 CE | 1 pass / 57 fail / 2 CE | **+1 gained, 0 lost, 0 status-changed** |
+| control, 177 rows (every `built-ins/Object/{assign,entries,values}` + every `built-ins/Symbol`), **standalone** | 124 pass / 53 fail | 125 pass / 52 fail | **+1 gained, 0 lost** |
+| the same 177-row control, **host** | 138 pass / 39 fail | 138 pass / 39 fail | **+0, −0** |
+
+The gate is `ctx.standalone`-guarded, so host is untouched by construction — the
+host control run above is the *measurement* of that, not an assumption. Both base
+runs were executed on a reverted tree (file-copy A/B, all three artifacts rebuilt
+for each side), not inherited from an artifact.
+
+### Regression test
+
+`tests/issue-6651-sy1-symbol.test.ts`, 6 cases:
+**1 failed / 5 passed on reverted sources** (`expected 2 to be 3`) →
+**6 passed with the fix**. One case is the fix; one is the four already-working
+Table 13 tags (the guard that widening the gate perturbs nothing); the remaining
+**four are negative controls** that assert today's spec-WRONG answers for the
+wrapper-prototype, ToPrimitive/`keyFor`, `Object.entries` and not-callable causes,
+so a future lane closing one of them gets a failing assertion here instead of
+silently moving a boundary nobody recorded.
+
+### Gates
+
+`check-loc-budget` (net **+0**), `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check-host-import-policy`,
+`check-compiler-boundaries --mode inventory`, `typecheck` — all run **bare**, all
+exit 0. CI-base simulation (`LOC_GATE_BASE=$(git rev-parse origin/main)`) for both
+budget gates: 0. No new file under `src/`, so `scripts/compiler-boundaries.json` is
+untouched; no growth grant added; `scripts/*-baseline.json` untouched. No raw
+`checker.getTypeAtLocation` — the change reads the existing
+`ctx.oracle.staticJsTypeOf` result.
+
+### Not done, and why
+
+- **26 of the 27 standalone-only rows are left open.** Not a budget excuse: each
+  is an independent one-row cause (table above), so there is no grouping that buys
+  more than one row, and three of the seven touch mechanisms owned elsewhere
+  (proto-index store, Proxy, TypedArray). The four that are genuinely Symbol work
+  are pinned as negative controls with minimal reproducers.
+- **No sweep outside the 60-row bucket and its 177-row control.** Nothing here may
+  be read as corpus-wide evidence.
+- A note on a stale recorded claim: this file's earlier line "`Object.assign(Symbol(), …)`
+  does not box: `typeof` stays `"symbol"` and `Object(sym) === sym`" was **half
+  right**. The `Object.assign` half was real and is now fixed; the
+  `Object(sym) === sym` / "ToObject has no Symbol-wrapper carrier" half was
+  already closed by slice I4 — `typeof Object(Symbol('d'))` reads `"object"` and
+  `Object(sym).valueOf() === sym` holds on current main.
