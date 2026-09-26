@@ -44,6 +44,8 @@ import {
   Locals,
   add,
   and,
+  block,
+  br,
   c,
   call,
   drop,
@@ -225,7 +227,6 @@ function defineDriver(E: RxEnv, fnIdx: number, opts: FullCompilerOptions): void 
   const FLAT = L.add("flat", { kind: "ref", typeIdx: ctx.nativeStrTypeIdx });
   const STATE = L.add("state", { kind: "ref", typeIdx: E.st });
   const ROOT = L.add("root");
-  const FAILED = L.add("failed");
   const PROG = L.add("prog", { kind: "ref", typeIdx: E.arr });
   const CTAB = L.add("ctab", { kind: "ref", typeIdx: E.arr });
   const field = (index: number): X => [...get(STATE), { op: "struct.get", typeIdx: E.st, fieldIdx: index }];
@@ -294,9 +295,18 @@ function defineDriver(E: RxEnv, fnIdx: number, opts: FullCompilerOptions): void 
     { op: "struct.new", typeIdx: E.st },
     { op: "local.set", index: STATE },
     // Every bail throws out of the helper stack; nothing else can throw here
-    // (no user code runs), so a catch-all is exactly "compile failed".
-    { op: "try", blockType: { kind: "empty" }, body: compile, catches: [], catchAll: set(FAILED, c(1)) },
-    ...if_(get(FAILED), [...if_(eq(field(F_ERR), c(ERR_SYNTAX)), opts.throwSyntax), ...ret(nullResult)]),
+    // (no user code runs), so a catch-all is exactly "compile failed". Standard
+    // `try_table` (not legacy `try`): the rest of the module uses exnref EH and
+    // V8 must not see the two mixed (Node 25 aborts compiling such a module).
+    ...block("compiled", [
+      ...block("failed", [
+        // catch_all depth 0 = the enclosing `failed` block.
+        { op: "try_table", blockType: { kind: "empty" }, body: compile, catches: [{ kind: "catch_all", depth: 0 }] },
+        ...br("compiled"),
+      ]),
+      ...if_(eq(field(F_ERR), c(ERR_SYNTAX)), opts.throwSyntax),
+      ...ret(nullResult),
+    ]),
     ...trimmed(PROG, F_PROG, mul(field(F_PC), c(3))),
     ...trimmed(CTAB, F_CTAB, field(F_CLEN)),
     // $NativeRegExp { flags, nGroups, prog, classTable, source, nScratch,
