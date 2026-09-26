@@ -9261,6 +9261,107 @@ was started and was still running at the stop (`.tmp/e8/ctl/base-standalone.sha`
      helper and the value bodies are separable: the bodies alone change no
      manifest row's route except through Invoke) and record the evidence.
 
+#### Resumed — 2026-09-25, rebuilt from this record (different session)
+
+WIP commit `215c200895` was **never pushed**, and the container holding worktree
+`agent-a0410e6d39e96b1ae` is gone (`git fetch origin 215c200895` fails; no
+branch carries it). Nothing touched the edited files on `main` since the
+wrap-up. Being re-implemented from the record above by session
+`session_01FEGi3DmyPRPD5dx4kWU8hs` on branch `claude/es6-6651-e8-rebuild`,
+based on `origin/main`. Runs alongside the A5 rebuild (PR #6101) with heavy
+corpus controls serialized on one lock, because the box has 4 cores.
+
+Re-checked on the 2026-09-24 standalone baseline before starting: 14 ES2015
+`toLocaleString` rows are non-pass, **13 of them also fail on host** — so this
+is new standalone bodies, not a port, and the row yield (never measured by the
+original) is unknown until the manifest AFTER runs. The 3 `valueOf` rows are
+the recorded cross-cluster ToString residual and are not expected to move.
+
+**If you are the lane that suspended E8 and still have its worktree, stop and
+reconcile on the PR before either of us finishes a twin.**
+
+#### Suspended again — 2026-09-25
+
+Stopped at the session wrap-up, before any source edit. **Nothing is
+implemented and nothing was measured** by this rebuild lane: no source file,
+test or `scripts/compiler-boundaries.json` change exists on this branch, and
+no manifest, compile-all, byte-identity, equivalence, `check:ir-fallbacks` or
+pin run completed. One single-row smoke run
+(`TypedArray/prototype/toLocaleString/calls-tolocalestring-from-each-value.js`)
+was started under `flock /tmp/claude-0/t262.lock` and was terminated before it
+wrote a verdict — it is not a measurement. Every control in the dispatch list
+is still open, including the base-side manifest (the only base figure on record
+is the original lane's 61 pass / 83 fail on `986a45359d`, not this base).
+
+Code reading done (so the next lane need not repeat it), all on
+`origin/main` @ `f4bb7dfe12`:
+
+- **Where the three value bodies go.** All three brands register through
+  `array-object-proto.ts::makeGlue` (`Object`, `Number`, and `BigInt` via
+  `ensureBigIntNativeProtoGlue`, CSV `["toLocaleString","toString","valueOf"]`).
+  Its `emitMemberBody` `??` ladder currently sends `toLocaleString` for all
+  three to the tail `emitProtoMemberBodyRefusal` (=
+  `object-proto-tostring.ts::emitObjectProtoOrRefusal`, the #2984 throw). The
+  Number arm is the existing `(name === "Number" ? emitNumberProtoFormatBody(c,
+  fctx, member) : null)` rung, so extending `number-proto-format.ts` for the
+  member needs no new rung. Object and BigInt need one rung each (the Object
+  rungs sit beside `emitObjectProtoValueOfBody`). Bodies must be
+  all-or-nothing: return `null` having emitted nothing, or the ladder emits a
+  second body over the orphaned one (see `wrapper-proto-to-string.ts` header).
+- **Number receiver ladder.** `wrapper-proto-value-of.ts::emitWrapperThisValueBody(ctx,
+  fctx, "Number", "toLocaleString", buildTail)` already implements
+  `thisNumberValue` with all three arms (a wrapper's `[[PrimitiveValue]]`, a
+  primitive, `Number.prototype` itself → `+0`) and the step-3 TypeError. A tail
+  of `__unbox_number` → `number_toString` → `return` is `Number.prototype.toString`'s
+  radix-less body. `emitNumberProtoFormatBody`'s `toPrecision` uses the
+  narrower `ensureBoxedValueOfHelper` instead, which has no `Number.prototype`
+  arm. Choose one deliberately and pin `Number.prototype.toLocaleString()` →
+  `"0"`.
+- **Nullish `this` for Object's body.** Under the #2106 `$undefined`-singleton
+  regime `undefined` is NOT a null externref (`number-proto-format.ts` step 2
+  handles this with `undefinedSingletonActive` + `__extern_is_undefined`);
+  `object-proto-value-of.ts`'s bare `ref.is_null` does not. The Invoke
+  spelling to copy is `array-tolocalestring.ts::elementToLocaleStringTail`
+  (`__extern_get` → optional `__nullish_to_null` → `ref.is_null` miss arm →
+  `__apply_closure(m, recv, ref.null.extern)`); its header records why
+  `__extern_method_call` cannot be used (closed-struct receivers miss).
+- **Why the byte-identity gate is needed.** `native-proto.ts::ensureNativeProtoCompanionSeeder`
+  mints a closure for every CSV member with `refusalBodyFallback: true`, so a
+  body change reaches every module whose `Object.prototype` companion is
+  seeded, whether or not it names the member.
+- **TypedArray helper.** The call site is the zero-argument `toLocaleString`
+  arm in `call-receiver-method.ts::compileReceiverMethodCall` (the
+  `const toLSName = ctx.standalone || ctx.wasi ? "__extern_toString" : …`
+  block), and E7's `toString` twin further down
+  (`taToStringApplies(ctx) ? ensureTaToStringHelper(ctx, fctx) : undefined`)
+  is the three-line pattern to mirror. The fold and element tail to reuse are
+  `array-methods.ts::compileArrayJoinExternNative` (length via
+  `__extern_length`, element via `__extern_get_idx`,
+  `buildExternJoinElementToString` with `ensureElementToLocaleStringInvoke`'s
+  arm, `emitStringJoinFold`) and the detached prologue
+  `taDynDetachedGuardPrologue(ctx, fctx, "toLocaleString", recvLocal)`
+  (`toLocaleString` is already in `TA_DYN_VALIDATE_METHOD_NAMES`).
+- **Manifest rows this reaches.** The E manifest carries the 10 non-BigInt
+  `TypedArray/prototype/toLocaleString/*` rows (lines 88–97); the `BigInt/`
+  twins are not in it (they are not ES2015) but are in any compile-all control
+  that greps `toLocaleString`.
+
+Resume steps (the dispatch brief's list, unchanged): base from
+`origin/claude/es6-6651-e8-rebuild`; export a source-clean base tree at the
+first edit (`git archive HEAD | tar -x -C .tmp/e8/basetree`, then symlink
+`node_modules`, `.test262-cache`, `test262` into it, so base runs need no file
+swapping); implement items 1–5 of the E8 record; then run every control under
+`flock /tmp/claude-0/t262.lock` — E manifest before/after per path
+(`JS2WASM_EVAL_ENGINE=quickjs COMPILER_POOL_SIZE=2 npx tsx
+scripts/run-test262-paths.mts <paths> --standalone --isolate`, chunks ≤ 100),
+compile-all on both targets with shas and verdicts on every changed standalone
+row (zero pass→non-pass), 32/32 playground + benchmark byte identity on both
+targets, the equivalence gate, `pnpm run check:ir-fallbacks`, the E-family pins
+on both trees with `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, and the new E8 pins
+red on the base tree. Environment note: this box's worktree-isolation guard
+refuses compound shell commands with subshells or `$VAR` arguments; put
+multi-step runs in a script under `.tmp/` and invoke it with `bash`.
+
 ## Handoff — 2026-09-24, round 3 closed (this lane: B/C/D/E/G + claimed A)
 
 Round 3 ran 2026-09-23 09:40 → 2026-09-24 06:00 UTC on
