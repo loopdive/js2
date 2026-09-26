@@ -47,6 +47,7 @@ import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
 import {
+  ensureBoundaryCallableKind,
   ensureObjVecBuilders,
   ensureObjectGroupBy,
   ensureObjectRuntime,
@@ -223,6 +224,7 @@ function emitDynamicCallDispatch(
   return isBareCall ? emitBareCallReceiverReset(ctx, fctx, dispatch, { kind: "externref" }) : dispatch;
 }
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { jsValueBoundary } from "../context/types.js";
 import {
   addFuncType,
   addImport,
@@ -471,7 +473,12 @@ import {
 import { reshapeSloppyPrimitiveThisArg } from "./sloppy-this-toobject.js"; // (#4246)
 import { planInlinedReceiver, releaseInlinedReceiver } from "./inlined-call-receiver.js"; // (#4246)
 import { seedBoundFunctionMetaOnStack } from "../bound-fn-meta.js"; // (#4562/#4563) §20.2.3.2 steps 5-11
-import { buildHostCallFallbackArm, ensureHostCallFallbackImports, planHostCallFallback } from "./host-call-fallback.js";
+import {
+  buildHostCallFallbackArm,
+  composeHostCallFallback,
+  ensureHostCallFallbackImports,
+  planHostCallFallback,
+} from "./host-call-fallback.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
   emitUndefined,
@@ -4725,6 +4732,7 @@ export function tryEmitInlineDynamicCall(
   // evaluated, matching EvaluateCall's observable order.
   const wantIsCallableGuard = noJsHost(ctx);
   if (wantIsCallableGuard) {
+    ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
     ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
   }
   if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
@@ -4808,10 +4816,10 @@ export function tryEmitInlineDynamicCall(
   // the exact Wasm-closure arm still needs to deliver the f64 undefined
   // sentinel / typed-null default marker. Native-first targets route this name
   // to the in-Wasm object runtime, so the check does not create a host import.
-  if (needsProvidedUndefinedCheck || (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback)) {
+  if (needsProvidedUndefinedCheck || (jsValueBoundary(ctx) && allowHostBoundaryFallback)) {
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   }
-  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+  if (jsValueBoundary(ctx) && allowHostBoundaryFallback) {
     ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
   const needsHostFacadeUnwrap =
@@ -4838,10 +4846,7 @@ export function tryEmitInlineDynamicCall(
   const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
   const needsUndefinedPad = maxFormals > arity;
   const needsUndefined =
-    needsUndefinedPad ||
-    wantProxyArm ||
-    wantApplyFallback ||
-    (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback);
+    needsUndefinedPad || wantProxyArm || wantApplyFallback || (jsValueBoundary(ctx) && allowHostBoundaryFallback);
   const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
   const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
@@ -5119,13 +5124,14 @@ function buildInlineDynamicDispatch(
   // so the failure mode is deterministic and catchable. Standalone/WASI have
   // no host: they keep the legacy null default (their callable shapes are the
   // dedicated proxy/bound/ta-ctor arms above).
-  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+  if (jsValueBoundary(ctx) && allowHostBoundaryFallback) {
     // Imports were ensured (and flushed) before box/unbox indices were captured.
     // (#4313) A bare call's `thisArg` is `undefined`, not a null externref, so it
     // is materialized here and handed to the helper rather than hardcoded there.
     const bareCallThisArg: Instr[] = [];
     pushDynamicUndefinedExternref(bareCallThisArg, undefinedIdx, undefinedSingletonPad);
-    dispatch = buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals, bareCallThisArg) ?? dispatch;
+    const hostArm = buildHostCallFallbackArm(ctx, fctx, hostCallPlan, anyLocal, argLocals, bareCallThisArg);
+    dispatch = composeHostCallFallback(applyFallback && dispatch, hostArm, anyLocal) ?? dispatch;
   }
 
   // (#2933) Variadic builtin value-closure arm — INNERMOST (just above the

@@ -4909,3 +4909,12 @@ export type { SourcePos };
 export function hostFreeEnvironment(ctx: CodegenContext): boolean {
   return ctx.targetProfile.environment !== "javascript";
 }
+
+/**
+ * (#5385 S2, #6686) Does the module keep the JS VALUE bridge (string marshal,
+ * admitted-object MOP, callbacks)? `"required"` = JS embedder + bridge on; the
+ * host-free `hostBridge: "always"` projection (`"enabled"`) may not import it.
+ */
+export function jsValueBoundary(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.hostValueInterop === "required";
+}

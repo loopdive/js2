@@ -65,6 +65,7 @@ import {
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   buildArgumentsToPrimitiveArm,
@@ -6928,16 +6929,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
  * function as its target. The target itself stays the same externref identity.
  */
 export function ensureNativeProxyRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off" &&
-    !ctx.strictNoHostImports
-  ) {
+  ensureBoundaryCallableKind(ctx);
+  return ensureObjectRuntime(ctx);
+}
+
+/** (#6686) Admitted-object callable classifier for `__is_callable`/`typeof` (adds an import). */
+export function ensureBoundaryCallableKind(ctx: CodegenContext): void {
+  if (ctx.targetProfile.semanticProviders === "native-first" && jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
     ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, null);
   }
-  return ensureObjectRuntime(ctx);
 }
 
 /**
