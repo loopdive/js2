@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10954,
-    "fail": 661,
+    "pass": 10957,
+    "fail": 658,
     "ce": 89,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 546,
-        "fail": 61,
+        "pass": 549,
+        "fail": 58,
         "ce": 2,
         "skip": 0,
         "total": 609,
@@ -147,8 +147,8 @@
       },
       {
         "name": "Reflect",
-        "pass": 236,
-        "fail": 86,
+        "pass": 239,
+        "fail": 83,
         "ce": 8,
         "skip": 0,
         "total": 330,
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 50,
-        "fail": 78,
+        "pass": 53,
+        "fail": 75,
         "ce": 0,
         "skip": 0,
         "total": 128,
-        "pct": 39
+        "pct": 41
       },
       {
         "name": "Symbol.toPrimitive",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3865,
-    "fail": 509,
+    "pass": 3866,
+    "fail": 508,
     "ce": 449,
     "skip": 0,
     "total": 4823,
@@ -1152,12 +1152,12 @@
       },
       {
         "name": "regexp-named-groups",
-        "pass": 81,
-        "fail": 9,
+        "pass": 82,
+        "fail": 8,
         "ce": 3,
         "skip": 0,
         "total": 93,
-        "pct": 87
+        "pct": 88
       },
       {
         "name": "arrow-function",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4594,
+    "pass": 4592,
     "fail": 192,
-    "ce": 135,
+    "ce": 137,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4495,
+        "pass": 4493,
         "fail": 107,
-        "ce": 9,
+        "ce": 11,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4491,
-    "fail": 878,
+    "pass": 4492,
+    "fail": 877,
     "ce": 76,
     "skip": 0,
     "total": 5445,
