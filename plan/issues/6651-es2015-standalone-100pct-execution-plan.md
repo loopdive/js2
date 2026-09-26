@@ -10880,3 +10880,30 @@ not 100 %.
   this window could not pay for.
 - The WASI lane is on the same `ctx.standalone || ctx.wasi` gate as the seed and
   was **not** swept; residual risk, stated rather than measured.
+
+### Regression sweep — 1,680 rows, standalone, `--isolate`
+
+The seed runs in **every** standalone/WASI module, so the neighbourhood is the
+whole surface the four names can touch: `built-ins/{Symbol,ArrayBuffer,DataView,
+Promise,global}/**` + `language/global-code/**` = 1,680 rows.
+`/tmp/claude-0/neigh-after.jsonl`, **1,204 pass / 286 fail / 190 CE / 0 error**.
+
+Compared **per PATH** against CI's published standalone baseline
+(`test262-standalone-current.jsonl`, fetched 2026-09-26 02:46Z — CI's number,
+not mine; every one of the 1,680 rows was present in it):
+
+- **+20 gained**, and the five outside the cross-realm family are the same
+  defect seen from the other side — `Symbol/symbol.js`, `DataView/dataview.js`,
+  `ArrayBuffer/prop-desc.js`, `Promise/promise.js`,
+  `Promise/prototype/catch/S25.4.5.1_A2.1_T1.js` all run
+  `verifyProperty(this, '<Name>')` against the realm object. Four further
+  cross-realm Symbol rows outside ES2015 also flip (`matchAll`, `asyncIterator`,
+  `dispose`, `asyncDispose`).
+- **3 apparent losses, all `fail -> compile_error`, and all three are LOCAL
+  DRIFT, not this change.** `Promise/any/invoke-{resolve,then,then-get}-error-
+  close.js` report `worker terminated unexpectedly after retry (SIGABRT)`. Re-run
+  in isolation on the branch: 3 CE. Re-run in isolation with
+  `src/codegen/standalone-global-object-carriers.ts` reverted to `HEAD`, bundles
+  and QuickJS adapter rebuilt: **3 CE, identical**. They crash the compiler
+  worker on base too, so the branch neither causes nor fixes them.
+- **0 pass rows lost.**
