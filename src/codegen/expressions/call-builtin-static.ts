@@ -3952,8 +3952,8 @@ export function compileBuiltinStaticCall(
     // ToObject THROWS for it, while `Object()` answers a fresh plain object, so
     // that case stays with the native's own guard.
     const targetTag = ctx.standalone ? ctx.oracle.staticJsTypeOf(targetArg) : "mixed";
-    const targetIsPrimitive =
-      targetTag === "number" || targetTag === "string" || targetTag === "boolean" || targetTag === "bigint";
+    // (#6651 SY1) `symbol` is Table 13's FIFTH wrapper row — `emitObjectCoercion` grew its Symbol arm in slice I4, this gate did not.
+    const targetIsPrimitive = ["number", "string", "boolean", "bigint", "symbol"].includes(targetTag);
     if (targetIsPrimitive) {
       emitObjectCoercion(ctx, fctx, [targetArg]);
     } else {

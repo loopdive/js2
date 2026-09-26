@@ -261,6 +261,7 @@ function sourceDeletesBuiltinPrototypeMember(
 }
 import { resolvePromiseSubclassName } from "./promise-subclass.js";
 import { ensureTaToStringHelper, taToStringApplies } from "../ta-to-string.js"; // (#6651 E7)
+import { reserveTaToLocaleString, taToLocaleStringApplies } from "../to-locale-string-element.js"; // (#6651 TA1)
 import { isHostResolvedBuiltinReceiver } from "../standalone-unavailable-globals.js"; // (#1472)
 import {
   BUILTIN_CLASS_NAMES,
@@ -3793,7 +3794,18 @@ export function compileReceiverMethodCall(
       } else if (recvType.kind !== "externref") {
         fctx.body.push({ op: "extern.convert_any" });
       }
-      fctx.body.push({ op: "call", funcIdx: toLSIdx });
+      // (#6651 TA1) §23.2.3.29 is NOT `toString`: ValidateTypedArray runs first
+      // (a detached view throws) and the element step is
+      // `ToString(? Invoke(elem, "toLocaleString"))`. This is the spelling
+      // test262's `testWithTypedArrayConstructors` produces — a dynamically
+      // typed receiver, which never reaches the join lowering. `toLSIdx` is
+      // re-resolved BY NAME because the reserve can register natives this module
+      // had not, and an import registration shifts every defined-function index
+      // (the #2043 late-shift class).
+      const taLocaleIdx = taToLocaleStringApplies(ctx, propAccess)
+        ? reserveTaToLocaleString(ctx, fctx, propAccess)
+        : undefined;
+      fctx.body.push({ op: "call", funcIdx: taLocaleIdx ?? ctx.funcMap.get(toLSName) ?? toLSIdx });
       return { kind: "externref" };
     }
   }
