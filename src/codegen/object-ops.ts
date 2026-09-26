@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { classConstructorIsOwnKey } from "./class-ctor-own-key.js"; // (#6651 C1) §15.7 own `constructor`
 import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { ts } from "../ts-api.js";
@@ -5259,6 +5260,17 @@ export function compilePropertyIntrospection(
     }
 
     tsProps.add(prop.name);
+  }
+
+  // (#6651 C1) §15.7 puts an own `constructor` on `C.prototype`
+  // (MakeConstructor) and on the class OBJECT when the body declares
+  // `static constructor(){}`. Neither is a declared class element, so the walk
+  // above cannot yield either and this fold answered a constant `false` — while
+  // standalone's prototype `$Object` (#3976) genuinely carried the property.
+  // Rule and evidence live in class-ctor-own-key.ts.
+  if (classConstructorIsOwnKey(ctx, receiverType, isPrototypeReceiver, isConstructorReceiver)) {
+    tsProps.add("constructor");
+    nonEnumerableTsProps.add("constructor");
   }
 
   // Add synthetic own properties for callable types (functions/constructors).
