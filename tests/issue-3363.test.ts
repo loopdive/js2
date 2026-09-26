@@ -91,11 +91,12 @@ describe("#3363 — Array.prototype.flat() (standalone, depth-1 homogeneous)", (
     expect((instance.exports as { test(): number }).test()).toBe(5);
   });
 
-  it("an explicit depth argument still refuses loudly (out of scope)", async () => {
+  it("an explicit depth argument runs through the native recursive flatten (#2717)", async () => {
     const r = await compile(`export function test(): number { return [[1,2],[3]].flat(1).length; }`, {
       target: "standalone",
     });
-    expect(r.success).toBe(false);
-    expect(JSON.stringify(r.errors)).toContain("flat()");
+    expect(r.success, r.success ? "" : JSON.stringify(r.errors)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, (r.importObject ?? {}) as WebAssembly.Imports);
+    expect((instance.exports as { test(): number }).test()).toBe(3);
   });
 });

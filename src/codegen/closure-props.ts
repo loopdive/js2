@@ -71,6 +71,8 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
+import { ensureNativeProtoCompanionSeeder } from "./native-proto.js"; // (#6651 F1) populate the Function companion
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js"; // (#6651 F1) %Function.prototype% glue
 import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
 // (#4491 T9) one spelling of the #4008 builtin-instance carrier set, shared with
 // the fold-routing predicates so the two cannot drift apart.
@@ -509,6 +511,61 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
   reserve(CLOSURE_METHOD_CALL, [externref, externref, externref], [externref]);
 
   ctx.closurePropHelpersReserved = true;
+
+  // (#6651 F1) A module with these helpers can classify a receiver as the
+  // Function brand at runtime, so demand that brand's companion HERE — there is
+  // no syntactic site that will.
+  ensureDynamicFunctionProtoCompanion(ctx);
+}
+
+/**
+ * (#6651 F1) Register the `%Function.prototype%` glue + its companion seeder so
+ * a FUNCTION VALUE's inherited members are readable off the dynamic path this
+ * module's `__closure_prop_get` terminal feeds.
+ *
+ * WHY. `__protoidx_brand_off` classifies a closure-prop carrier as the Function
+ * brand (`FUN_OFF`), and `__closure_prop_get`'s terminal
+ * `protoIndexRecvGetMissInstrs` — like `__extern_get` and the `has`/`set` twins
+ * — consults that brand's companion. The companion is only POPULATED by a
+ * registered seeder, and the seeder is registered as a side effect of
+ * materializing the brand's `$NativeProto` singleton, which only ever happened
+ * from a SYNTACTIC `Function.prototype` read. So a module that never names
+ * `Function.prototype` consulted a companion with nothing in it, and every
+ * `f.apply` / `f.call` / `f.bind` / `f.toString` read off a function VALUE
+ * answered `undefined` while `typeof f === "function"`. Measured standalone
+ * 2026-09-26: adding a bare `var fp = Function.prototype;` to the same module
+ * made all four read as callables. CALLING them was never affected — those fold
+ * at the call site, which is why the gap was invisible from every ordinary
+ * spelling and only surfaced where the member is handed on as a value
+ * (`assertNativeFunction(new Proxy(fn, { apply() {} }).apply)`, the shape of the
+ * ten `built-ins/Function/prototype/toString/proxy-*` rows).
+ *
+ * Registering the seeder is the whole of it. `__protoidx_companion`'s
+ * `buildSeededOffsetForceCreateArms` already force-creates and seeds a companion
+ * on a `create = 0` read for exactly the seeded offsets, and does so AFTER the
+ * slot store, so re-entry through the seeder's own `__defineProperty_value`
+ * calls is safe. Nothing is materialized eagerly and no new runtime arm appears.
+ *
+ * This deliberately does NOT add a static fold for `<fn>.apply` in
+ * `property-access.ts`, which would move the same rows: the read has to stay on
+ * the dynamic path so a `Proxy`'s `get` trap still intercepts it.
+ *
+ * Gated on `protoMemberDirty` — the SAME condition
+ * `ensureNativeProtoCompanionSeeder` applies, checked here so a module that
+ * would be refused does not pay for the glue's five member closures first. That
+ * flag is also what makes `reserveProtoIndexStore` reserve the store at all, so
+ * the two cannot disagree about whether a consult exists to serve.
+ *
+ * Ordering is the documented one: `__defineProperty_value` does not exist yet at
+ * this point in `ensureObjectRuntime`, so `ensureNativeProtoCompanionSeeder`
+ * parks the brand and `flushPendingNativeProtoSeeders` builds it at the end of
+ * the same function — still ordinary body-compilation time, never finalize.
+ */
+function ensureDynamicFunctionProtoCompanion(ctx: CodegenContext): void {
+  if (!ctx.standalone || ctx.protoMemberDirty !== true) return;
+  const brand = ensureFunctionNativeProtoGlue(ctx);
+  if (brand === undefined) return;
+  ensureNativeProtoCompanionSeeder(ctx, brand);
 }
 
 /**

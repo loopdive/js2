@@ -9,6 +9,10 @@ import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-lay
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import {
+  emitStandaloneUnavailableGlobalThrow,
+  standaloneUnavailableGlobalReference,
+} from "../standalone-unavailable-globals.js";
+import {
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
   emitFuncRefAsClosure,
@@ -57,7 +61,8 @@ import {
   getOrRegisterDvWindowType,
   nativeBufferBuiltinOf,
 } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper; (#3054 B1/B2) shared-backing TA views + windowing; (#3054 D) dynamic ctor construct
-import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { compileArrayMethodCall, emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "../array-subclass-receiver.js"; // (#2917)
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
 import { COLLECTION_KIND } from "../collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
 import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
@@ -99,9 +104,9 @@ import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; /
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
-import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
+import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0); (#6651 F4)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
-import type { InnerResult } from "../shared.js";
+import { VOID_RESULT, type InnerResult } from "../shared.js";
 import {
   emitDynamicNewFunctionHostEval,
   emitStandaloneDynamicFunctionStub,
@@ -1269,7 +1274,7 @@ function compileSuperMethodCallCore(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   methodName: string,
-): ValType | null {
+): InnerResult {
   // Degenerate fallback: evaluate args for side effects and leave a
   // return-typed default (0 / 0 / undefined) so a value remains for the
   // enclosing expression.
@@ -1316,6 +1321,27 @@ function compileSuperMethodCallCore(
   }
 
   if (funcIdx === undefined) {
+    // (#2917) Standalone `class X extends Array`: `super.m(…)` is the builtin
+    // Array method on `this` (a real vec) — array-subclass-receiver.ts.
+    const selfLocal = fctx.localMap.get("this");
+    const propAccess = expr.expression;
+    if (
+      selfLocal !== undefined &&
+      ts.isPropertyAccessExpression(propAccess) &&
+      isStandaloneArraySubclass(ctx, currentClassName)
+    ) {
+      const arrayResult = withArraySubclassReceiverAsVec(
+        ctx,
+        fctx,
+        propAccess.expression,
+        () => {
+          fctx.body.push({ op: "local.get", index: selfLocal });
+          return getLocalType(fctx, selfLocal) ?? null;
+        },
+        () => compileArrayMethodCall(ctx, fctx, propAccess, expr, undefined, methodName),
+      );
+      if (arrayResult !== undefined) return arrayResult === VOID_RESULT ? null : arrayResult;
+    }
     // (#1614) The parent may be a builtin extern class (Set/Map/Array/...)
     // whose methods are host-backed, not compiled into funcMap. Dispatch
     // `super.method(args)` dynamically via __extern_method_call(this, name, args).
@@ -1372,14 +1398,28 @@ function compileSuperMethodCallCore(
   fctx.body.push({ op: "call", funcIdx: finalSuperIdx });
 
   // Determine return type.
+  //
+  // (#6651 lane-I5) A void parent method returns VOID_RESULT, **never `null`**.
+  // `null` means "no usable value" to the #1919 speculative wrapper in
+  // `compileExpressionBody`, which then calls `rollbackSpeculative` — it
+  // TRUNCATES the `local.get this; call <Parent>_<m>` we just emitted and
+  // substitutes a default constant. The whole call disappeared: a statement
+  // `super.increment();` compiled to `i32.const 0; drop`, so every side effect
+  // of a void parent method (a `this` field write, an outer-scope mutation)
+  // was silently dropped while the program still compiled and ran. This is the
+  // exact hazard #1551 fixed for nested `super(...)`; the `super.m()` arm still
+  // carried the `null`. VOID_RESULT means "compiled, void result, KEEP the
+  // emitted instructions".
   const sig = ctx.checker.getResolvedSignature(expr);
   if (sig) {
     const retType = ctx.checker.getReturnTypeOfSignature(sig);
-    if (isEffectivelyVoidReturn(ctx, retType, resolvedName)) return null;
-    if (wasmFuncReturnsVoid(ctx, finalSuperIdx)) return null;
+    if (isEffectivelyVoidReturn(ctx, retType, resolvedName)) return VOID_RESULT;
+    if (wasmFuncReturnsVoid(ctx, finalSuperIdx)) return VOID_RESULT;
     return getWasmFuncReturnType(ctx, finalSuperIdx) ?? resolveWasmType(ctx, retType);
   }
-  return null;
+  // No resolved signature: the call IS emitted, so the instructions must be
+  // kept for the same reason. A wasm-void callee leaves nothing on the stack.
+  return wasmFuncReturnsVoid(ctx, finalSuperIdx) ? VOID_RESULT : null;
 }
 
 function compileSuperMethodCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
@@ -1984,7 +2024,7 @@ function compileSuperElementMethodCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   methodName: string,
-): ValType | null {
+): InnerResult {
   return compileSuperMethodCallCore(ctx, fctx, expr, methodName);
 }
 
@@ -3882,7 +3922,27 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
   };
   const isProxyFactory = (value: ts.Expression): boolean => {
     const current = unwrap(value);
-    if (ts.isNewExpression(current) && ts.isIdentifier(current.expression) && current.expression.text === "Proxy") {
+    // (#6651 F4) `var mc = mkc(); new mc()` where `mkc`'s whole body is
+    // `return new Proxy(function(){}, h);`. F3 measured this as invisible to
+    // BOTH admissions: re-measured on this branch's base, the construct trap
+    // ran ZERO times for the helper-returned proxy while the direct spelling
+    // ran it. The hop and its single-assignment proof live in
+    // `proxy-value-provenance.ts` so the read, write and construct sites all
+    // ask the same question. Still NOT covered, deliberately: `new (mkc())()`
+    // with the call written in callee position — `tryCompileNativeConstructFromValue`
+    // gates on `ts.isIdentifier(calleeExpr)` before reaching here, and widening
+    // that gate is a much larger blast radius than this slice.
+    const returnedFromHelper = singleReturnExpressionOfCall(ctx, current);
+    if (returnedFromHelper !== undefined) return isProxyFactory(returnedFromHelper);
+    // (#6651 F3) `new <Proxy-constructor value>(t, h)` — not just the spelling
+    // `new Proxy(t, h)`. `var P = new OProxy(f, h); new P()` reached NO proxy
+    // arm at all: this admission declined, so `tryCompileNativeConstructFromValue`
+    // returned `undefined` and the §10.5.14 dispatch (which the driver already
+    // carries, and which answers correctly when the SAME proxy arrives through a
+    // parameter) was never reached. Probed on base: `new P()` direct ran zero
+    // trap calls and threw nothing, while `function nn(x){return new x();}
+    // nn(P)` ran the trap and threw the step-11 TypeError.
+    if (ts.isNewExpression(current) && tracesToProxyConstructorValue(ctx, current.expression)) {
       return true;
     }
     if (
@@ -4503,7 +4563,10 @@ function emitDynamicNewFallback(
   // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
   // meaningful even with ZERO candidate classes. A typed #1058 driver owns the
   // same no-candidate shape when the declared construct result is a Wasm struct.
-  const useConstructClosureBase = typedConstructDriver === undefined && usesHostConstructClosureBase(ctx, calleeExpr);
+  const useConstructClosureBase =
+    typedConstructDriver === undefined &&
+    (usesHostConstructClosureBase(ctx, calleeExpr) ||
+      (!noJsHost(ctx) && lateAssignedResultWasmType?.kind === "externref"));
   if (candidates.length === 0 && !useConstructClosureBase && typedConstructDriver === undefined) return false;
 
   // (#53) The runtime-argv path needs the `$ObjVecArr` `(array (mut externref))`
@@ -5352,14 +5415,18 @@ function emitCollectionAdderGuard(
   } else {
     thenArm.push({ op: "local.get", index: adderLocal });
   }
+  // (#6682/#2182) Real body rides savedBodies; both detached arms stay live until attached.
   const throwArm: Instr[] = [];
   const savedBody = fctx.body;
+  fctx.savedBodies.push(savedBody);
+  for (const arm of [thenArm, throwArm]) ctx.liveBodies.add(arm);
   fctx.body = throwArm;
-  ctx.liveBodies.add(throwArm);
   try {
     emitThrowTypeError(ctx, fctx, `${adderName} is not a function`);
   } finally {
+    fctx.savedBodies.pop();
     fctx.body = savedBody;
+    for (const arm of [thenArm, throwArm]) ctx.liveBodies.delete(arm);
   }
   thenArm.push({ op: "ref.is_null" }, { op: "if", blockType: { kind: "empty" }, then: throwArm });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm });
@@ -6480,6 +6547,12 @@ function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expres
 }
 
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
+  // (#6664) `new MessageChannel()` in a host-free module: evaluating the
+  // constructor reference throws before any argument is evaluated.
+  {
+    const unavailable = standaloneUnavailableGlobalReference(ctx, fctx, expr.expression);
+    if (unavailable !== undefined) return emitStandaloneUnavailableGlobalThrow(ctx, fctx, unavailable);
+  }
   // (#3927 per-type layouts) Publish the allocation-label hint when this `new`
   // is a recorded label site of a split family. BEFORE the arguments compile —
   // a labelled allocation nested in them consumes and resets the hint, so the

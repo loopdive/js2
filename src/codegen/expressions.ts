@@ -52,6 +52,7 @@ import {
 import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
 import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { tryCompileWideBigIntExpression } from "./bigint-wide.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import {
   canStructurallyProjectRef,
@@ -84,6 +85,7 @@ import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
 import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
+import { boxNullRefAsUndefined } from "./null-ref-undefined-box.js"; // (#1058)
 
 import { compileConditionalExpression, compileYieldExpression } from "./expressions/misc.js";
 
@@ -928,6 +930,7 @@ function compileExpressionBody(
         }
       }
       coerceType(ctx, fctx, result, expectedType);
+      if (expectedType.kind === "externref") boxNullRefAsUndefined(ctx, fctx, expr, result);
       return expectedType;
     }
     if (
@@ -1122,6 +1125,10 @@ function compileExpressionInner(
     fctx.body.push({ op: "f64.const", value });
     return { kind: "f64" };
   }
+
+  // (#6656) A bigint expression whose i64 lowering would lose the value.
+  const wideBigInt = tryCompileWideBigIntExpression(ctx, fctx, expr, expectedType);
+  if (wideBigInt !== undefined) return wideBigInt;
 
   if (ts.isBigIntLiteral(expr)) {
     return compileBigIntLiteral(ctx, fctx, expr, expectedType);

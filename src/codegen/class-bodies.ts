@@ -78,6 +78,7 @@ import {
   hoistVarDeclarations, // (#2641)
   resolveWasmType,
 } from "./index.js";
+import { replayMissingSuperBody } from "./missing-super-replay.js";
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
@@ -85,6 +86,7 @@ import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitStandaloneSubclassMethodInstall } from "./standalone-subclass-method-install.js";
+import { emitVecProtoLinkInstall } from "./vec-proto-link.js"; // (#2917)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
@@ -633,6 +635,8 @@ function emitSetSubclassProto(
   // nothing for every other shape. Runs BEFORE the host path below so the two
   // lanes stay independent (the helper is standalone/WASI-gated).
   emitStandaloneSubclassMethodInstall(ctx, fctx, selfLocal, subName);
+  // (#2917) …and link the instance to `Sub.prototype` (standalone, Array-rooted).
+  emitVecProtoLinkInstall(ctx, fctx, selfLocal, subName);
   const setProtoIdx = ensureLateImport(
     ctx,
     "__set_subclass_proto",
@@ -2961,6 +2965,7 @@ function compileClassBodiesInner(
     const ctorMissingSuper = isDerivedClass && ctor?.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
 
     if (ctorMissingSuper) {
+      replayMissingSuperBody(ctx, fctx, ctor); // (#5350) body effects precede the fallthrough throw
       // A derived constructor that returns a primitive before calling
       // `super()` still reaches [[Construct]]'s return-value check.  The
       // missing-`super` ReferenceError is correct when the body falls through
@@ -4306,7 +4311,16 @@ export function compileSuperCall(
     }
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     const importName = getParentConstructorImportName(ctx, builtinParent);
-    const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
+    // (#2917) The native standalone Array ctor is registered per arity and
+    // honours every argument (§23.1.1.1 `Array(...values)`), so forward them
+    // all: at the declared arity 1, `super(42, "foo")` built `Array(42)`.
+    const forwardArity =
+      (ctx.standalone || ctx.wasi) && builtinParent === "Array"
+        ? Math.max(
+            getBuiltinConstructorForwardArity(ctx, builtinParent),
+            (hasSpread ? flattenStaticallyKnownArgs(args) : args)?.length ?? 0,
+          )
+        : getBuiltinConstructorForwardArity(ctx, builtinParent);
     const forceCollectionArrayVec = builtinParent === "Map" || builtinParent === "Set";
     const forwardParams = externrefParams(forwardArity);
     // Standalone / WASI: explicit `super(...)` routes through the same shared

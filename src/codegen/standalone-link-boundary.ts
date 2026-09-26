@@ -657,10 +657,73 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
  */
 export function standaloneLinkBoundaryPeerIndex(
   ctx: CodegenContext,
-  key: "apply" | "callableKind" | "construct" | "isClassObject",
+  key: "apply" | "callableKind" | "construct" | "isClassObject" | "methodCall" | "getPrototypeOf",
 ): number | undefined {
   if (peerNamespaces(ctx).length === 0) return undefined;
   return ctx.funcMap.get(LINK_BOUNDARY_EXPORTS[key]);
+}
+
+/**
+ * (#5383) The CONSUMER's `__extern_method_call` arm for a method-call terminal
+ * answer of `null`, spliced right after the forward peer arm.
+ *
+ * The terminal answers `ref.null.extern` both for "not my receiver" and for a
+ * method that RETURNED `null`. So `zdt.getTimeZoneTransition("next")`, which
+ * returns `null` for UTC, fell through to this module's own miss path and
+ * threw "called value is not a function".
+ *
+ * The existing terminals settle which case it is, and all three checks are
+ * needed:
+ * - `getPrototypeOf(recv)` is non-null only for an instance of one of the
+ *   provider's own compiled classes.
+ * - `memberGet(recv, name)` resolves the method on the provider's side.
+ * - `callableKind` bit 0 says the provider can dispatch that method.
+ * When all three hold, the null is the method's answer and is returned.
+ * Otherwise the arm falls through as before.
+ *
+ * The class-instance check is what keeps this safe. Without it, a
+ * provider-owned FUNCTION receiver (`Temporal.PlainMonthDay.from.apply(…)`)
+ * resolves the builtin `apply`, which the provider's `__apply_closure`
+ * declines, also with null. That null was then returned as the answer, and 3
+ * `subclassing-ignored` rows that the consumer's own arm handles regressed.
+ *
+ * The cost is a second provider-side `[[Get]]` of the method on this null
+ * path only. It is observable only for a method installed as an accessor.
+ */
+export function peerNullMethodResultInstrs(
+  ctx: CodegenContext,
+  memberGetIdx: number | undefined,
+  getPrototypeOfIdx: number | undefined,
+  resultLocal: number,
+): Instr[] {
+  const callableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  if (memberGetIdx === undefined || getPrototypeOfIdx === undefined || callableKindIdx === undefined) return [];
+  const methodArm: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: memberGetIdx },
+    { op: "local.tee", index: resultLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: resultLocal },
+        { op: "call", funcIdx: callableKindIdx },
+        { op: "i32.const", value: 1 },
+        { op: "i32.and" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+      ],
+    },
+  ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: getPrototypeOfIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: methodArm },
+  ];
 }
 
 /**

@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { setupPinnedPackage } from "./setup-pinned-package.mjs";
@@ -52,9 +52,58 @@ export function npmCompatCatalogEntry(name) {
   return entry;
 }
 
+/**
+ * Give the extracted packages pnpm's hoisted-dependency fallback.
+ *
+ * `setupPinnedPackage` links `.npm-compat/<name>/node_modules` to the
+ * package's pnpm importer directory (`.pnpm/<pkg>@<v>/node_modules`), which
+ * holds only its DECLARED dependencies. The installed copy resolves one level
+ * further: Node walks from the importer directory up to `.pnpm/node_modules`,
+ * pnpm's hidden hoist directory, where transitive packages live. Packages that
+ * `require` an undeclared (transitive) dependency depend on that fallback —
+ * jest 30's `build/index.js` requires `jest-config`, which is not in its
+ * `dependencies` — so the extracted copy failed to import natively in CI
+ * ("Cannot find module 'jest-config'") while the installed copy works.
+ *
+ * `.npm-compat/node_modules` is exactly the next directory Node probes after
+ * `.npm-compat/<name>/node_modules`, so linking it to the hoist directory
+ * restores the installed package's resolution order without touching the
+ * package contents. A flat (npm) tree has no `.pnpm` store and is left as is.
+ */
+function wirePnpmHoistFallback(importerNodeModules) {
+  if (!importerNodeModules) return null;
+  let store;
+  try {
+    store = dirname(dirname(realpathSync(importerNodeModules)));
+  } catch {
+    return null;
+  }
+  const hoisted = join(store, "node_modules");
+  if (basename(store) !== ".pnpm" || !existsSync(hoisted)) return null;
+  const link = join(HERE, ".npm-compat", "node_modules");
+  let stat = null;
+  try {
+    stat = lstatSync(link);
+  } catch {
+    // No link yet; create it below.
+  }
+  if (stat) {
+    // Never replace a real directory — only a link this helper created.
+    if (!stat.isSymbolicLink()) return null;
+    try {
+      if (realpathSync(link) === realpathSync(hoisted)) return link;
+    } catch {
+      // Dangling link from an older install; replaced below.
+    }
+    rmSync(link, { force: true });
+  }
+  symlinkSync(hoisted, link, "dir");
+  return link;
+}
+
 export function setupNpmCompatCatalogPackage(name, options = {}) {
   const pin = npmCompatCatalogEntry(name);
-  return setupPinnedPackage({
+  const setup = setupPinnedPackage({
     here: HERE,
     name,
     pin,
@@ -62,4 +111,5 @@ export function setupNpmCompatCatalogPackage(name, options = {}) {
     force: options.force,
     allowMissingEntry: pin.expectedEntryMissing === true,
   });
+  return { ...setup, hoistedNodeModulesPath: wirePnpmHoistFallback(setup.dependencyNodeModulesPath) };
 }

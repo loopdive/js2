@@ -66,9 +66,9 @@ on:
   workflow_dispatch:
     inputs:
       standalone_temporal:
-        description: "(#5383 S3) Build the STANDALONE Temporal provider and let standalone shards link it. OFF by default: linking multiplies a standalone row's compile time ~2.5-3.5x (measured 2026-09-12), which pushes large-harness rows past the 30 s fork kill. The wiring is always present; this only decides whether the artifact exists."
+        description: "(#5383 S3, #5407) Build the STANDALONE Temporal provider and let standalone shards link it. ON by default since 2026-09-24 (owner decision): #5407 halved the linked compile cost. Uncheck on a dispatch run to measure the unlinked lane. The wiring is always present; this only decides whether the artifact exists."
         required: false
-        default: false
+        default: true
         type: boolean
       native_first:
         description: "Also measure native-first semantics in the JS environment (separate artifacts, never promotes host baselines)"
@@ -867,8 +867,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=3072
         run: node scripts/prewarm-temporal-provider.mjs --target host
 
-      # (#5383 S3) OPT-IN, and SOFT when it does run. Two different decisions,
-      # each measured rather than assumed:
+      # (#5383 S3) ON BY DEFAULT since 2026-09-24 (owner decision), SOFT when it
+      # runs. Push, merge_group and schedule runs have no `inputs`, so the step
+      # runs unless a workflow_dispatch run unchecks `standalone_temporal`.
+      # #5407 shared the dynamic-`new` TypedArray construct, which halved the
+      # linked compile of the slowest rows (PlainDate/limits.js 16.1 s -> 8.3 s,
+      # measured 2026-09-24); a few large-harness rows may still hit the 30 s
+      # fork kill. History of the original OPT-IN decision below:
       #
       #  OPT-IN, because linking is not free on this lane. Compiling an ASSEMBLED
       #  standalone row costs ~2.5-3.5x more linked than unlinked (measured
@@ -891,7 +896,7 @@ jobs:
       #  baseline IS measured linked, so a missing host artifact makes the shards
       #  lie.) Build cost when it runs: ~60 s, 3.31 MB (measured 2026-09-12).
       - name: Build and stamp the provider (standalone)
-        if: needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal
+        if: needs.changes.outputs.run_standalone != 'false' && (github.event_name != 'workflow_dispatch' || inputs.standalone_temporal)
         continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=3072
@@ -1018,6 +1023,18 @@ jobs:
       TEST262_TARGET: gc
       TEST262_RESULT_PREFIX: test262-native-first
       TEST262_SEMANTIC_PROVIDERS: native-first
+      # (#5385) Measure the native semantic REGIME in the JS environment —
+      # the standalone provider arms plus the JS value bridge. Opt-in until
+      # the environment-shaped codegen gates are re-keyed; this lane never
+      # promotes host baselines, so it is the safe place to measure it.
+      JS2WASM_NATIVE_REGIME_JS: "1"
+      # (#5385) Under the native regime every assembled row carries the
+      # `js2wasm:runtime-eval` import (the `$262.evalScript` shim mentions
+      # `eval`), exactly like the standalone lane. This measurement lane links
+      # the cheap REFUSAL interpreter tier built in-job rather than depending
+      # on the standalone provider job, which does not run on `schedule`.
+      # Eval-dependent rows therefore fail honestly; everything else runs.
+      JS2WASM_EVAL_ENGINE: interpreter
 
     steps:
       - name: Checkout
@@ -1037,6 +1054,9 @@ jobs:
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Build runtime-eval REFUSAL provider (#5385 / #2928 E7)
+        run: node scripts/build-runtime-eval-provider.mjs --refusal-only
 
       - name: Run shard
         run: |

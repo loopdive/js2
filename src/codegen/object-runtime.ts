@@ -66,6 +66,7 @@ import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-k
 import { buildTupleIndexReadArms } from "./tuple-index-read.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   buildArgumentsToPrimitiveArm,
@@ -130,7 +131,7 @@ import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispat
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
-import { buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
+import { buildVecNumericKeyGetArm, buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
 // splices the declared-field write-through prologue onto `__extern_set`.
 import {
@@ -261,6 +262,7 @@ import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enu
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   emitStandaloneLinkBoundaryTerminals,
+  peerNullMethodResultInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
 } from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
@@ -3067,6 +3069,22 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ name: "o", type: objRef }],
       body,
     );
+    // (#6651 I4) `Object(sym)` — §7.1.18 ToObject, Table 13 Symbol row. The
+    // Symbol wrapper is the same `[[PrimitiveValue]]` `$Object` as every other
+    // wrapper, and the call site (emitObjectCoercion, calls-guards.ts) hands it
+    // an ALREADY-boxed value: the `$Symbol` carrier externref minted by
+    // `__box_symbol` (#2866). So the builder body is instruction-for-
+    // instruction `__new_String`'s — `emitWrapperBuildTail(0, 1)` and nothing
+    // else; neither builder inspects the value it wraps.
+    //
+    // Registered as an ALIAS onto that funcIdx rather than as a second copy.
+    // `ensureObjectRuntime` is an all-or-nothing block, so a duplicate function
+    // would grow EVERY standalone module (the #4034 unconditional-pull-in
+    // lesson) to serve the rare `Object(sym)`. The distinct name still keeps
+    // the call site readable and lets a future Symbol-specific wrapper (an own
+    // `@@toStringTag`, say) become a real function without touching callers.
+    const newStringIdx = ctx.funcMap.get("__new_String");
+    if (newStringIdx !== undefined) ctx.funcMap.set("__new_Symbol", newStringIdx);
   }
 
   // __new_Boolean(f64) -> externref : ToBoolean(arg) — the call sites coerce the
@@ -6758,6 +6776,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   blockType: { kind: "empty" },
                   then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
                 },
+                // (#5383) …or a peer method that returned `null` (see helper).
+                ...(boundaryObjectCallIdx === undefined
+                  ? peerNullMethodResultInstrs(ctx, peerMemberGetIdx, peerGetPrototypeOfIdx, boundaryCallResultLocal)
+                  : []),
               ] satisfies Instr[])
             : []),
           ...(reverseMethodCallIdx !== undefined && boundaryCallResultLocal !== undefined
@@ -6908,16 +6930,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
  * function as its target. The target itself stays the same externref identity.
  */
 export function ensureNativeProxyRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off" &&
-    !ctx.strictNoHostImports
-  ) {
+  ensureBoundaryCallableKind(ctx);
+  return ensureObjectRuntime(ctx);
+}
+
+/** (#6686) Admitted-object callable classifier for `__is_callable`/`typeof` (adds an import). */
+export function ensureBoundaryCallableKind(ctx: CodegenContext): void {
+  if (ctx.targetProfile.semanticProviders === "native-first" && jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
     ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, null);
   }
-  return ensureObjectRuntime(ctx);
 }
 
 /**
@@ -8653,6 +8675,12 @@ export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType)
   // behaviour to those paths.
   if (elemType.kind === "ref" || elemType.kind === "ref_null") {
     const ti = (elemType as { typeIdx: number }).typeIdx;
+    // (#6651 G3) A tagged `$AnyValue` element is a BOX, not the JS value: project
+    // it by tag (`__any_to_extern`) so a vec reader hands on the value the
+    // element read (`any-value-element-read.ts`) does. `extern.convert_any` of
+    // the box leaked it — `ToNumber` and the `===` identity arm do not know it.
+    const anyToExtern = ti >= 0 && ti === ctx.anyValueTypeIdx ? ctx.funcMap.get("__any_to_extern") : undefined;
+    if (anyToExtern !== undefined) return [{ op: "call", funcIdx: anyToExtern }];
     // (#3244) GENERALISED from the string-only arm this replaces. A homogeneous
     // reference-element array — `[{ x: 777 }]` (element = object STRUCT ref) or a
     // nested `[[10, 20, 30]]` (element = inner `__vec_<k>` STRUCT ref) — compiles
@@ -10168,6 +10196,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  const boxBigIntIdx = ctx.funcMap.get("__box_bigint"); // (#5383) a bigint-branded i64 slot boxes as a BigInt
   const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
   const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
@@ -10225,6 +10254,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
         field.type.kind === "ref" ||
         field.type.kind === "ref_null" ||
         (field.type.kind === "f64" && boxNumberIdx !== undefined) ||
+        (field.type.kind === "i64" && (field.type.bigint ? boxBigIntIdx : boxNumberIdx) !== undefined) ||
         (field.type.kind === "i32" &&
           (field.jsBoolean || field.type.boolean
             ? boxBooleanIdx !== undefined
@@ -10430,6 +10460,9 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       if (entry.jsBoolean) read.push({ op: "call", funcIdx: boxBooleanIdx! });
       else if (entry.fieldType.symbol === true) read.push({ op: "call", funcIdx: boxSymbolIdx! });
       else read.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx! });
+    } else if (entry.fieldType.kind === "i64") {
+      if (entry.fieldType.bigint) read.push({ op: "call", funcIdx: boxBigIntIdx! });
+      else read.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx! });
     } else if (entry.fieldType.kind !== "externref" && entry.fieldType.kind !== "ref_extern") {
       read.push({ op: "extern.convert_any" });
     }
@@ -11640,6 +11673,17 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: [...lenBody, ...ctorBody, ...captureOrGenericNumericArm],
           },
+          // (#6651 H3) …and the NUMERIC-key half, the GET twin of the #6485
+          // arm `__extern_has` got above. A read site whose key type is
+          // statically non-numeric (`string|symbol`) keeps `__extern_get` and
+          // boxes the key, so a runtime Number never reached any of the index
+          // delegations behind the `$AnyString` test. vec-numeric-key-presence.ts.
+          ...buildVecNumericKeyGetArm(ctx, {
+            objParam: 0,
+            keyParam: 1,
+            numLocal: gN,
+            getIdxIdx: externGetIdxIdx,
+          }),
           // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
           // body — its non-$Object miss arm consults the #3537 expando side
           // table (`__vec_prop_get`), which itself answers the undefined-miss
@@ -13141,4 +13185,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__new_Boolean",
   // (#4631) BigInt wrapper — same [[PrimitiveValue]] slot pattern.
   "__new_BigInt",
+  // (#6651 I4) Symbol wrapper — same slot pattern, aliased onto __new_String's
+  // builder (the value arrives already boxed as a `$Symbol` carrier).
+  "__new_Symbol",
 ]);

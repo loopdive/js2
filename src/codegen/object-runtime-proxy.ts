@@ -8,6 +8,7 @@
  * and imports `ensureProxyRuntime` back (still called from `ensureObjectRuntime`).
  */
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { registerProxyConstructChainNatives } from "./object-runtime-proxy-construct-chain.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ObjectRuntimeTypes } from "./object-runtime.js";
@@ -1461,7 +1462,7 @@ export function ensureProxyRuntime(
             { op: "i32.and" },
           ] satisfies Instr[])),
     ];
-    registerNative(
+    const constructDispatchIdx = registerNative(
       "__proxy_construct_dispatch",
       [externref, externref, externref],
       [externref],
@@ -1532,6 +1533,8 @@ export function ensureProxyRuntime(
         { op: "local.get", index: 5 },
       ],
     );
+
+    registerProxyConstructChainNatives(registerNative, proxyTypeIdx, F_PTARGET, constructDispatchIdx);
   }
 
   // ── __proxy_create(target, handler) -> externref ──────────────────────────

@@ -43,6 +43,9 @@ import { noJsHost } from "./expressions/helpers.js";
 import { addUnionImports, nativeStringType } from "./index.js";
 import { ensureAnyToStringHelper, ensureStrTruthyHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { addFuncType } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { getBoolToStringEmitter, getNativeStringRefFromExternrefEmitter } from "./string-emitter-registry.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js";
 import {
@@ -622,6 +625,69 @@ export function getToPrimitiveProvider(ctx: CodegenContext): number | undefined 
 /** Look up the canonical runtime ToString provider after its owner is ready. */
 export function getExternrefToStringProvider(ctx: CodegenContext): number | undefined {
   return ctx.funcMap.get("__extern_toString");
+}
+
+/**
+ * (#6651 B6) §7.1.17 ToString over an externref INCLUDING its Symbol rule —
+ * `__extern_to_string_spec(v)`. `__extern_toString` renders a Symbol (it also
+ * backs `String(sym)`, which §22.1.1.1 step 1.a answers with
+ * SymbolDescriptiveString), so a spec-internal ToString that must reject one —
+ * the RegExp `@@` protocol's `ToString(string)` / `ToString(flags)` — asks for
+ * this wrapper instead: a Symbol input, or a Symbol produced by ToPrimitive,
+ * throws a TypeError; every other value takes `__extern_toString` unchanged
+ * (ToPrimitive runs ONCE — `__extern_toString` of the primitive result does not
+ * re-enter user code). Falls back to `__extern_toString` outside
+ * standalone/wasi or in a module with no `$Symbol` carrier.
+ */
+export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+  const NAME = "__extern_to_string_spec";
+  const existing = ctx.funcMap.get(NAME);
+  if (existing !== undefined) return existing;
+  const plain = getExternrefToStringProvider(ctx);
+  if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0 || plain === undefined) return plain;
+  if (getToPrimitiveProvider(ctx) === undefined) return plain;
+  addStringConstantGlobal(ctx, "string");
+  const throwSym = (): Instr[] =>
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", { flush: fctx });
+  const inputThrow = throwSym();
+  const primitiveThrow = throwSym();
+  flushLateImportShifts(ctx, fctx);
+  const toStr = getExternrefToStringProvider(ctx)!;
+  const toPrim = getToPrimitiveProvider(ctx)!;
+  const sym = ctx.symbolTypeIdx;
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: toStr }, { op: "return" }],
+    },
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: sym },
+    { op: "if", blockType: { kind: "empty" }, then: inputThrow },
+    { op: "local.get", index: 0 },
+    ...stringConstantExternrefInstrs(ctx, "string"),
+    { op: "call", funcIdx: toPrim },
+    { op: "local.tee", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: sym },
+    { op: "if", blockType: { kind: "empty" }, then: primitiveThrow },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: toStr },
+  ];
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(NAME, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: NAME,
+    typeIdx,
+    locals: [{ name: "prim", type: { kind: "externref" } }],
+    body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 /** Look up the canonical StringToNumber provider after its owner is ready. */

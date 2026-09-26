@@ -39,9 +39,13 @@
  * shared contract between them.
  */
 import type { Instr } from "../ir/types.js";
+import { ts } from "../ts-api.js";
+import { TYPED_ARRAY_NAMES } from "./index.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { ensureStandaloneNativeMethodClosure, getBuiltinBrand } from "./native-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 
 /**
  * Module-global name of the `%TypedArray%` intrinsic constructor carrier.
@@ -150,4 +154,73 @@ export function buildTaFromMapfnCallableGate(ctx: CodegenContext, mapfnLocal: nu
       else: [],
     },
   ];
+}
+
+/**
+ * (#6651 E4) The `%TypedArray%.from` / `%TypedArray%.of` VALUE, as the
+ * identity-stable singleton — `[…, extern.convert_any]`, leaving one externref
+ * on the stack — or `undefined` when this module never materialized the
+ * intrinsic carrier.
+ *
+ * ## Why this exists
+ * §23.2.2 puts `from`/`of` on `%TypedArray%` ONLY; every concrete constructor
+ * INHERITS them through §23.2.6's `[[Prototype]]` link. test262 asserts both
+ * halves of that in one row (`TypedArrayConstructors/{from,of}/inherited.js`):
+ * `TA.of === TypedArray.of` AND `TA.hasOwnProperty("of") === false`. Standalone
+ * had neither — a dynamic read of `of` off a `$__ta_ctor` answered `undefined`,
+ * because `__extern_get`'s receiver ladder has no arm for the key.
+ *
+ * The answer has to be the SAME value the intrinsic carrier stores, so this
+ * resolves the identical `ensureStandaloneNativeMethodClosure` handle that
+ * `emitTypedArrayIntrinsicCtorObject` seeds and pushes it through the identical
+ * `pushBuiltinFnSingletonValueInstrs` global. Two reads of a per-read
+ * `struct.new` can never be `===`; one lazily-initialised module global always
+ * is.
+ *
+ * ## Why it never MINTS
+ * The consumer is `fillTaDynViewMopArms`, which runs at FINALIZE. Minting a
+ * closure there would add a function, a wrapper func type and (through the
+ * refusal body) a late IMPORT after the index space is supposed to be settled —
+ * the funcIdx-shift hazard every fill in this codebase is written to avoid. So
+ * the funcMap probe comes FIRST and a miss DECLINES: a module that never
+ * evaluates `Object.getPrototypeOf(<TA ctor>)` keeps today's `undefined`, and
+ * its bytes are unchanged. With the probe satisfied every call inside
+ * `ensureStandaloneNativeMethodClosure` is a cache hit.
+ */
+export function taStaticFromOfSingletonInstrs(ctx: CodegenContext, member: string): Instr[] | undefined {
+  if (!ctx.standalone) return undefined;
+  if (member !== "from" && member !== "of") return undefined;
+  const brand = getBuiltinBrand(ctx, "%TypedArray%");
+  if (brand === undefined) return undefined;
+  if (ctx.funcMap.get(`__proto_method_${brand}_${member}`) === undefined) return undefined;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, "method", { refusalBodyFallback: true });
+  if (!closure) return undefined;
+  return [...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" }];
+}
+
+/**
+ * (#6651 E5) `<ConcreteTA>.from.call(C, …)` / `.of.apply(C, …)` — the result is
+ * whatever `Construct(C, «len»)` answered (§23.2.4.6), not necessarily a
+ * `<ConcreteTA>`. TypeScript still types it as the receiver's instance type, so
+ * an unannotated binding would get that TypedArray's vec slot and the
+ * declaration store would MATERIALIZE a copy: `result === target` went false and
+ * a Float64Array result was truncated to Int32 elements. The binding keeps the
+ * externref the call returned instead.
+ */
+export function taStaticFromOfReflectiveCallNeedsExternref(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): boolean {
+  if (!ctx.standalone || !initializer || !ts.isCallExpression(initializer)) return false;
+  const callee = initializer.expression;
+  if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) {
+    return false;
+  }
+  const member = callee.expression;
+  return (
+    ts.isPropertyAccessExpression(member) &&
+    (member.name.text === "from" || member.name.text === "of") &&
+    ts.isIdentifier(member.expression) &&
+    TYPED_ARRAY_NAMES.has(member.expression.text)
+  );
 }

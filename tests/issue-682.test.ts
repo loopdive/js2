@@ -218,14 +218,18 @@ describe("#682 standalone RegExp literal-substring backend", () => {
     expect(str).toBeDefined();
   });
 
-  it("refuses string-pattern search instead of compiling a silent wrong result", async () => {
+  // (#6665) A string pattern is `RegExpCreate`d at runtime by the pure-Wasm
+  // pattern compiler, so this no longer refuses — it answers correctly, with no
+  // host RegExp import.
+  it("runs string-pattern search through the runtime pattern compiler", async () => {
     const r = await compile(`export function test(): number { return "banana".search("a"); }`, {
       fileName: "issue-682.ts",
       target: "standalone",
     });
 
-    expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /String\.prototype\.search/.test(e.message) && /#1474/.test(e.message))).toBe(true);
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => HOST_REGEXP_IMPORT_RE.test(`${i.module}::${i.name}`))).toBe(false);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(1);
   });
 });

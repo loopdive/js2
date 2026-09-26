@@ -25,7 +25,7 @@ async function forInKeys(body: string): Promise<string> {
   expect(result.success, result.errors?.[0]?.message).toBe(true);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
+  importObject.__setInstance?.(instance);
   const ex = wrapExports(instance.exports, { signatures: result.exportSignatures });
   return ex.test() as string;
 }
@@ -81,10 +81,10 @@ async function runHost(src: string): Promise<unknown> {
   const r = (await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as never)) as any;
   if (!r.success) throw new Error("compile error: " + (r.errors?.[0]?.message ?? "unknown"));
   const imp = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
-    setExports?: (e: unknown) => void;
+    setInstance?: (i: WebAssembly.Instance) => void;
   };
   const { instance } = await WebAssembly.instantiate(r.binary, imp);
-  if (typeof imp.setExports === "function") imp.setExports(instance.exports);
+  if (typeof imp.setInstance === "function") imp.setInstance(instance);
   return (instance.exports as { test(): unknown }).test();
 }
 

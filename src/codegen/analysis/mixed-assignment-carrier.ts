@@ -224,6 +224,29 @@ function isInsideWithBody(node: ts.Node): boolean {
   return false;
 }
 
+/** The unannotated function declaration `expr` directly calls, if any. */
+function untypedCallTarget(ctx: CodegenContext, expr: ts.Expression): ts.FunctionDeclaration | undefined {
+  const call = stripParens(expr);
+  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return undefined;
+  const target = ctx.oracle.valueDeclarationOf(call.expression);
+  return target && ts.isFunctionDeclaration(target) && target.body && !target.type ? target : undefined;
+}
+
+/**
+ * (#2917) Same JS domain ("object"), different Wasm representation. Two
+ * unannotated functions that each return an object literal have distinct
+ * anonymous types, lowered to distinct structs; the slot keeps the
+ * initializer's struct and the later assignment's guarded cast answers null.
+ * The Temporal polyfill's `Duration#round`: `let m = qr(this); … m = Jr(…)`
+ * then read `m.date` → "Cannot access property on null or undefined".
+ */
+function crossesUntypedObjectReturns(ctx: CodegenContext, initializer: ts.Expression, value: ts.Expression): boolean {
+  const initialTarget = untypedCallTarget(ctx, initializer);
+  if (!initialTarget) return false;
+  const assignedTarget = untypedCallTarget(ctx, value);
+  return assignedTarget !== undefined && assignedTarget !== initialTarget;
+}
+
 /**
  * Decide whether the initialized binding must use a carrier that can represent
  * assignments from more than one JavaScript domain. The scope index preserves
@@ -289,6 +312,10 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
     const assignedTag = ctx.oracle.staticJsTypeOf(fact.value);
     const unresolvable = assignedTag === "mixed";
     if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {
+      mixed = true;
+      break;
+    }
+    if (initialDomain === "object" && crossesUntypedObjectReturns(ctx, decl.initializer, fact.value)) {
       mixed = true;
       break;
     }

@@ -36,7 +36,7 @@ import {
 } from "../checker/type-mapper.js";
 import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
-import { isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
+import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
@@ -84,7 +84,7 @@ import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-metho
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
 import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
-import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
+import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import {
@@ -96,6 +96,7 @@ import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constr
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitRegExpOwnConstructorRead } from "./regexp-split-protocol.js";
 import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
@@ -105,8 +106,10 @@ import {
 import {
   emitNativeGlobalThisObject,
   emitTypedArrayIntrinsicCtorObject,
+  ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
 } from "./array-object-proto.js";
+import { emitTaStaticFromOfInheritedValue, isTaStaticFromOfMember } from "./ta-static-from-of-body.js";
 import {
   buildInt8ArrayCarrierMatch,
   dvDetachedThrowInstrs,
@@ -546,6 +549,9 @@ export function tryConstructorPrototypeIdentity(
       (isBuiltinConstructorIdentityName(builtinName) || isWasiErrorName(builtinName)) &&
       isExternalDeclaredClass(objType, ctx.checker)
     ) {
+      // (#6651 B5) An own `constructor` on a RegExp instance wins over the fold.
+      const ownCtor = tryEmitRegExpOwnConstructorRead(ctx, fctx, expr, builtinName);
+      if (ownCtor !== undefined) return ownCtor;
       // Evaluate the receiver for spec side effects before returning its identity.
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {
@@ -1832,7 +1838,7 @@ export function tryGlobalThisAndProcessRead(
     } else {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx! });
     }
-    addStringConstantGlobal(ctx, propName);
+    registerLateReadStringConstant(ctx, propName);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
     fctx.body.push({ op: "call", funcIdx: getIdx });
     if (ctx.runtimeEvalGlobalFunctionBindings === true) {
@@ -1971,6 +1977,12 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
         if (protoBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, protoBrand)) {
           return { kind: "externref" };
         }
+      }
+      // (#6651 E5) `Int32Array.from` / `.of` — the INHERITED `%TypedArray%` singleton.
+      if (TYPED_ARRAY_NAMES.has(builtinName) && isTaStaticFromOfMember(propName)) {
+        const brand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+        const inherited = emitTaStaticFromOfInheritedValue(ctx, fctx, brand, propName);
+        if (inherited !== undefined) return inherited;
       }
       const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
       if (closure) {
@@ -4198,7 +4210,7 @@ export function finalizeStructAndDynamicMemberGet(
         const receiver = compileExpression(ctx, fctx, expr.expression);
         if (!receiver) return null;
         if (receiver.kind !== "externref") coerceType(ctx, fctx, receiver, { kind: "externref" });
-        addStringConstantGlobal(ctx, propName);
+        registerLateReadStringConstant(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx });
         const expected = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(expr));
@@ -4552,7 +4564,7 @@ export function finalizeStructAndDynamicMemberGet(
           });
 
           // If proto is non-null, call __extern_get(proto, propName)
-          addStringConstantGlobal(ctx, propName);
+          registerLateReadStringConstant(ctx, propName);
 
           fctx.body.push({ op: "local.get", index: protoLocal });
           fctx.body.push({ op: "ref.is_null" });
@@ -4599,7 +4611,7 @@ export function finalizeStructAndDynamicMemberGet(
           if (recvType && recvType.kind !== "externref") {
             coerceType(ctx, fctx, recvType, { kind: "externref" });
           }
-          addStringConstantGlobal(ctx, propName);
+          registerLateReadStringConstant(ctx, propName);
           fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
           fctx.body.push({ op: "call", funcIdx: getIdx });
           if (ctx.runtimeEvalGlobalFunctionBindings === true) {
@@ -4876,7 +4888,10 @@ export function finalizeStructAndDynamicMemberGet(
         openObjectReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
-        foreignReturnReceiver;
+        foreignReturnReceiver ||
+        // (#5383) …and for any read in a module on a standalone link, whose
+        // receiver may be the peer's object (see the predicate).
+        dynamicReadCrossesStandaloneLink(ctx);
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",
@@ -5112,7 +5127,7 @@ export function finalizeStructAndDynamicMemberGet(
 
           // Build the __extern_get fallback instructions
           const externGetFallback: Instr[] = [{ op: "local.get", index: objTmp }];
-          addStringConstantGlobal(ctx, propName);
+          registerLateReadStringConstant(ctx, propName);
           externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
           externGetFallback.push({ op: "call", funcIdx: getIdx });
           if (ctx.runtimeEvalGlobalFunctionBindings === true) {
@@ -5379,7 +5394,7 @@ export function finalizeStructAndDynamicMemberGet(
         if (structExprType && (structExprType.kind === "ref" || structExprType.kind === "ref_null")) {
           fctx.body.push({ op: "extern.convert_any" });
         }
-        addStringConstantGlobal(ctx, propName);
+        registerLateReadStringConstant(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
         if (ctx.runtimeEvalGlobalFunctionBindings === true) {

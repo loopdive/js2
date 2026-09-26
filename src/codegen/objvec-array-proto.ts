@@ -9,6 +9,7 @@ import { fillCarrierBagDelete } from "./carrier-bag-delete.js";
 import { fillCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { fillVecPropsKeySource } from "./vec-props-key-source.js";
 import { fillGopnVecArm, fillVecOverlayPushKeys } from "./vec-overlay-keys.js";
+import { fillGopsVecArm } from "./vec-symbol-own-keys.js";
 import { fillVecIndexEnumerable } from "./vec-index-enumerable.js";
 
 /** Finalize the generic vec overlay before installing the exact `$ObjVec` prototype arm. */
@@ -41,6 +42,10 @@ export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
   // placeholder, i.e. the pre-#4491 answer.
   fillVecIndexEnumerable(ctx);
   fillGopnVecArm(ctx);
+  // (#6651 H4) The SYMBOL twin of the arm above, placed here for the same
+  // reason: it bakes the `__vec_overlay_push_keys` index reserved earlier and
+  // filled by `fillVecOverlayPushKeys` two lines up.
+  fillGopsVecArm(ctx);
   fillObjVecArrayPrototypeArm(ctx);
 }
 

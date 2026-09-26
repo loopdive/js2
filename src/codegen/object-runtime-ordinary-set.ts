@@ -66,7 +66,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 
@@ -485,4 +485,226 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
   ];
   func.body = body;
   return funcIdx;
+}
+
+const receiverSetCallers = new WeakSet<CodegenContext>();
+
+/** (#6651 E6) A source `Reflect.set(t, k, v, receiver)` reached the walk — the
+ *  only caller {@link fillOrdinarySetTypedArrayArm} serves, so a module whose walk
+ *  is merely reserved (every object-runtime module) keeps its bytes. */
+export function noteReflectSetReceiverCall(ctx: CodegenContext): void {
+  receiverSetCallers.add(ctx);
+}
+
+/**
+ * (#6651 E6) §10.4.5.5 — the integer-indexed exotic `[[Set]]` step the walk
+ * above lacks, for a TypedArray in the `O` position (the direct target, or one
+ * reached up a prototype chain). A canonical numeric key never reaches
+ * OrdinarySet's prototype hop there:
+ *  - `SameValue(O, Receiver)` ⇒ TypedArraySetElement (ToNumber first, an
+ *    invalid index is a silent no-op) and `true`;
+ *  - otherwise an INVALID index ⇒ `true`, with nothing written or coerced;
+ *  - otherwise a valid index falls through to OrdinarySet, whose own data
+ *    descriptor the walk already reads through `__getOwnPropertyDescriptor`.
+ * Without this, an out-of-range key hopped to `TA.prototype` and ran whatever
+ * accessor the test had installed there, and a receiver got a property the
+ * spec never creates. Two carriers: the `$__ta_dyn_view` (element helpers from
+ * `ta-dyn-mop.ts`), and the packed static vecs no ordinary array shares
+ * (`i8_byte`/`i16_byte`/`i32_elem`; a Float view's `$__vec_f64` IS `number[]`,
+ * so it is left alone). Finalize-time: the view type and its helpers exist only
+ * then. Prepended to the LOOP body, so both positions see it.
+ */
+export function fillOrdinarySetTypedArrayArm(
+  ctx: CodegenContext,
+  dyn?: { typeIdx: number; setElemIdx: number; hasIdxIdx: number },
+): void {
+  const funcIdx = ctx.funcMap.get(REFLECT_SET_RECEIVER);
+  const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+  const loop = func?.body.find((ins) => ins.op === "loop") as { body: Instr[] } | undefined;
+  const vecBase = ctx.vecBaseTypeIdx;
+  const statics = ["i8_byte", "i16_byte", "i32_elem"]
+    .map((k) => ctx.vecTypeMap.get(k))
+    .filter((idx): idx is number => idx !== undefined);
+  const tpkIdx = ctx.funcMap.get("__to_property_key");
+  const strToNumIdx = ctx.funcMap.get("__str_to_number");
+  const numToStrIdx = ctx.funcMap.get("number_toString");
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  const anyStr = ctx.anyStrTypeIdx;
+  if (
+    !receiverSetCallers.has(ctx) ||
+    !func ||
+    !loop ||
+    vecBase === undefined ||
+    vecBase < 0 ||
+    (!dyn && statics.length === 0)
+  )
+    return;
+  if (tpkIdx === undefined || strToNumIdx === undefined || numToStrIdx === undefined) return;
+  if (flattenIdx === undefined || equalsIdx === undefined || anyStr < 0) return;
+  const O = 4;
+  const KEY = 4 + func.locals.length;
+  const N = KEY + 1;
+  const VF = KEY + 2;
+  func.locals.push(
+    { name: "ta_key", type: EXTERNREF },
+    { name: "ta_n", type: { kind: "f64" } },
+    { name: "ta_v", type: { kind: "f64" } },
+  );
+  const test = (l: number, typeIdx: number): Instr[] => [
+    { op: "local.get", index: l },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+  ];
+  const asBase = (l: number): Instr[] => [
+    { op: "local.get", index: l },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: vecBase },
+  ];
+  const ret1 = (): Instr[] => [{ op: "i32.const", value: 1 }, { op: "return" }];
+  const flatKey = (): Instr[] => [
+    { op: "local.get", index: KEY },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: anyStr },
+    { op: "call", funcIdx: flattenIdx },
+  ];
+  /** §7.1.21 CanonicalNumericIndexString: a string P with ToString(ToNumber(P))
+   *  === P, or "-0". Writes the number to N. Symbols are never canonical. */
+  const keyIsCanonical = (): Instr[] => [
+    ...test(KEY, anyStr),
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [
+        { op: "local.get", index: KEY },
+        { op: "call", funcIdx: strToNumIdx },
+        { op: "local.set", index: N },
+        { op: "local.get", index: N },
+        { op: "call", funcIdx: numToStrIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "call", funcIdx: flattenIdx },
+        ...flatKey(),
+        { op: "call", funcIdx: equalsIdx },
+        ...flatKey(),
+        ...nativeStringLiteralInstrs(ctx, "-0"),
+        { op: "call", funcIdx: equalsIdx },
+        { op: "i32.or" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+  /** One carrier class: `if (isO) { canonical? { same? onSame : invalid? ret1 } }`. */
+  const arm = (isO: Instr[], onSame: Instr[], invalid: Instr[]): Instr[] => [
+    ...isO,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: tpkIdx },
+        { op: "local.set", index: KEY },
+        ...keyIsCanonical(),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...test(3, vecBase),
+            {
+              op: "if",
+              blockType: { kind: "val", type: I32 },
+              then: [...asBase(O), ...asBase(3), { op: "ref.eq" }],
+              else: [{ op: "i32.const", value: 0 }],
+            },
+            { op: "if", blockType: { kind: "empty" }, then: onSame },
+            ...invalid,
+            { op: "if", blockType: { kind: "empty" }, then: ret1() },
+          ],
+        },
+      ],
+    },
+  ];
+  const out: Instr[] = [];
+  if (dyn) {
+    out.push(
+      ...arm(
+        test(O, dyn.typeIdx),
+        [
+          { op: "local.get", index: O },
+          { op: "local.get", index: N },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: dyn.setElemIdx },
+          { op: "return" },
+        ],
+        [
+          { op: "local.get", index: O },
+          { op: "local.get", index: N },
+          { op: "call", funcIdx: dyn.hasIdxIdx },
+          { op: "i32.eqz" },
+        ],
+      ),
+    );
+  }
+  const toPrimIdx = ctx.funcMap.get("__to_primitive");
+  const unboxIdx = ctx.funcMap.get("__unbox_number");
+  const boxIdx = ctx.funcMap.get("__box_number");
+  const externSetIdx = ctx.funcMap.get("__extern_set");
+  if (
+    statics.length > 0 &&
+    toPrimIdx !== undefined &&
+    unboxIdx !== undefined &&
+    boxIdx !== undefined &&
+    externSetIdx !== undefined
+  ) {
+    const isStatic: Instr[] = statics.flatMap((idx, i) => [
+      ...test(O, idx),
+      ...(i > 0 ? [{ op: "i32.or" } as Instr] : []),
+    ]);
+    // IsValidIntegerIndex over a static vec: integral, not -0, 0 <= n < length.
+    const valid = (): Instr[] => [
+      { op: "local.get", index: N },
+      { op: "local.get", index: N },
+      { op: "f64.trunc" },
+      { op: "f64.eq" },
+      { op: "local.get", index: N },
+      { op: "i64.reinterpret_f64" },
+      { op: "i64.const", value: -9223372036854775808n },
+      { op: "i64.ne" },
+      { op: "i32.and" },
+      { op: "local.get", index: N },
+      { op: "f64.const", value: 0 },
+      { op: "f64.ge" },
+      { op: "i32.and" },
+      { op: "local.get", index: N },
+      ...asBase(O),
+      { op: "struct.get", typeIdx: vecBase, fieldIdx: 0 },
+      { op: "f64.convert_i32_u" },
+      { op: "f64.lt" },
+      { op: "i32.and" },
+    ];
+    const onSame: Instr[] = [
+      // §10.4.5.16 step 2: ToNumber(value) BEFORE the validity test.
+      { op: "local.get", index: 2 },
+      ...nativeStringLiteralInstrs(ctx, "number"),
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: toPrimIdx },
+      { op: "call", funcIdx: unboxIdx },
+      { op: "local.set", index: VF },
+      ...valid(),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: O },
+          { op: "local.get", index: KEY },
+          { op: "local.get", index: VF },
+          { op: "call", funcIdx: boxIdx },
+          { op: "call", funcIdx: externSetIdx },
+        ],
+      },
+      ...ret1(),
+    ];
+    out.push(...arm(isStatic, onSame, [...valid(), { op: "i32.eqz" }]));
+  }
+  loop.body.unshift(...out);
 }

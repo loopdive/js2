@@ -92,6 +92,7 @@ import {
   tryEmitPromiseSubclassClassExpressionValue,
 } from "../expressions/promise-subclass.js";
 import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
+import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
 import { inferStandaloneRegExpMatchResultType } from "../regexp-standalone.js";
 
 /**
@@ -165,6 +166,7 @@ export function transferredArrayLikeResultNeedsExternref(
   initializer: ts.Expression | undefined,
 ): boolean {
   if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
+  if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
   if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;

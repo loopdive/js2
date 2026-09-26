@@ -971,7 +971,8 @@ function compileSpreadCallArgs(
           kind: "ref" as const,
           typeIdx: restInfo.vecTypeIdx,
         };
-        compileExpression(ctx, fctx, restArg.expression, restType);
+        const spreadType = compileExpression(ctx, fctx, restArg.expression, restType);
+        if (spreadType && !valTypesMatch(spreadType, restType)) coerceType(ctx, fctx, spreadType, restType);
       } else {
         // Single non-spread arg as rest — wrap in vec struct { 1, [val] }
         fctx.body.push({ op: "i32.const", value: 1 });

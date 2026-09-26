@@ -13,8 +13,8 @@ async function run(src: string): Promise<any> {
   if (!result.success) throw new Error(result.errors[0]?.message ?? "compile error");
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  // Set exports so runtime can use __struct_field_names and other helpers
-  imports.setExports?.(instance.exports as any);
+  // Set instance so runtime can use __struct_field_names and other helpers
+  imports.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 

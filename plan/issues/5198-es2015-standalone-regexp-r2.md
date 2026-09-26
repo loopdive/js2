@@ -1932,3 +1932,17 @@ repository-hook evidence remains required before publication.
 ## References
 
 - #5142 (wave-1 plan), PRs #5179, #5213; #5200 (strict-rerun isolation).
+
+## 2026-09-24 — Annex B `compile` literal syntax check re-landed from draft PR #6014
+
+The narrow static syntax check from draft PR #6014 (Codex) was ported onto
+current main unchanged: when both `RegExp.prototype.compile` arguments are
+side-effect-free primitive literals (or `void 0`), an invalid pattern/flags
+pair throws SyntaxError after receiver and argument evaluation and before any
+receiver mutation. Standalone rows gained (measured by the triage run on
+2026-09-24, fail on main, pass with the change): `annexB/built-ins/RegExp/prototype/compile/pattern-string-invalid.js`,
+`pattern-string-invalid-u.js`, `duplicate-named-capturing-groups-syntax.js`.
+Its two unfixed cases stay open here rather than pinned as failing tests: a
+shadowed `undefined` parameter passed as flags, and an abrupt receiver before
+an invalid literal.
+

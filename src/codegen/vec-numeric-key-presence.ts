@@ -60,10 +60,61 @@ export interface VecNumericKeyHasArmParams {
  * tail, unchanged. Either helper missing ⇒ no arm at all, likewise unchanged.
  */
 export function buildVecNumericKeyHasArm(ctx: CodegenContext, params: VecNumericKeyHasArmParams): Instr[] {
+  const { objParam, keyParam, numLocal, hasIdxIdx } = params;
+  return buildVecNumericKeyArm(ctx, keyParam, numLocal, [
+    { op: "local.get", index: objParam },
+    { op: "local.get", index: numLocal },
+    { op: "call", funcIdx: hasIdxIdx },
+    { op: "return" },
+  ]);
+}
+
+/**
+ * (#6651 H3) The GET twin of {@link buildVecNumericKeyHasArm}.
+ *
+ * `__extern_has` grew the numeric-key arm in #6485; `__extern_get` never did,
+ * and the two must agree or `in` reports a property the read cannot fetch.
+ *
+ * The read site that hands this helper a boxed **Number** is the one where
+ * neither the receiver nor the key is statically an array/number — e.g. a
+ * `@ts-check`'d `obj[name]` whose `name` param is declared `string|symbol`
+ * (test262's `propertyHelper.js` `verifyProperty`, which is why four
+ * `target-array-with-non-writable-property.js` rows failed on a value the
+ * descriptor itself reported correctly). `isNumericIndexExpression` declines a
+ * non-numeric key type, so the call site keeps `__extern_get`, and every index
+ * delegation inside it sat behind `ref.test $AnyString`. Measured standalone on
+ * the base tree: `readIt([10,20], 0)` answered `undefined` through such a
+ * param while `readIt([10,20], "0")` answered `10`.
+ *
+ * Delegating a canonical non-negative integral key to `__extern_get_idx` makes
+ * the Number spelling byte-for-byte the String spelling — that helper is
+ * exactly what the existing `__str_to_number` string arm calls, so overlays,
+ * deletes, accessors, holes and the OOB→`undefined` miss all keep their single
+ * reader. A non-index Number still falls through to the named-property tail.
+ */
+export function buildVecNumericKeyGetArm(
+  ctx: CodegenContext,
+  params: { objParam: number; keyParam: number; numLocal: number; getIdxIdx: number },
+): Instr[] {
+  const { objParam, keyParam, numLocal, getIdxIdx } = params;
+  return buildVecNumericKeyArm(ctx, keyParam, numLocal, [
+    { op: "local.get", index: objParam },
+    { op: "local.get", index: numLocal },
+    { op: "call", funcIdx: getIdxIdx },
+    { op: "return" },
+  ]);
+}
+
+/**
+ * The shared classifier both arms sit behind: "the key is a Number whose
+ * ToPropertyKey result is a canonical array index". See the two-guards note
+ * above for why `__typeof_number` (not a bare ToNumber) and the integral /
+ * non-negative test are each load-bearing.
+ */
+function buildVecNumericKeyArm(ctx: CodegenContext, keyParam: number, numLocal: number, hit: Instr[]): Instr[] {
   const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
   const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
   if (typeofNumberIdx === undefined || unboxNumberIdx === undefined) return [];
-  const { objParam, keyParam, numLocal, hasIdxIdx } = params;
   return [
     { op: "local.get", index: keyParam },
     { op: "call", funcIdx: typeofNumberIdx },
@@ -84,12 +135,7 @@ export function buildVecNumericKeyHasArm(ctx: CodegenContext, params: VecNumeric
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: objParam },
-            { op: "local.get", index: numLocal },
-            { op: "call", funcIdx: hasIdxIdx },
-            { op: "return" },
-          ],
+          then: hit,
         },
       ],
     },

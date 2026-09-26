@@ -23,7 +23,7 @@ async function run(src: string, fn: string): Promise<string> {
   const { instance } = await WebAssembly.instantiate(r.binary, io);
   // Wire the exports hook so the host runtime can read struct field names
   // (the for-in key enumeration + liveness check depend on it).
-  (io as { __setExports?: (e: WebAssembly.Exports) => void }).__setExports?.(instance.exports);
+  (io as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
   return (instance.exports as Record<string, () => string>)[fn]!();
 }
 

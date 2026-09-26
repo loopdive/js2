@@ -46,6 +46,7 @@ import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js"; // (#4492 wave-5)
+import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#2917)
 
 export const CLASS_TO_PRIMITIVE = "__class_to_primitive";
 
@@ -409,6 +410,17 @@ function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction)
   const L_PR = L_PM + 1; // externref: probe result slot
   fn.locals.push({ name: "pm", type: { kind: "externref" } }, { name: "pr", type: { kind: "externref" } });
 
+  // (#2917) A linked consumer hands a PROVIDER-owned instance's steps to the
+  // provider (see `OrdinaryToPrimitiveProbeOpts.ownerCall`). Undefined — the
+  // walk is byte-identical — in every module that consumes no provider.
+  const ownsIdx = standaloneLinkBoundaryPeerIndex(ctx, "getPrototypeOf");
+  const methodCallIdx = standaloneLinkBoundaryPeerIndex(ctx, "methodCall");
+  const argsNewIdx = ctx.funcMap.get("__objvec_new");
+  const ownerCall =
+    ownsIdx !== undefined && methodCallIdx !== undefined && argsNewIdx !== undefined
+      ? { ownsIdx, methodCallIdx, argsNewIdx }
+      : undefined;
+
   const walk = (order: readonly ("toString" | "valueOf")[]): Instr[] =>
     buildOrdinaryToPrimitiveProbe(ctx, probeDeps, {
       recv: () => [{ op: "local.get", index: L_OBJ }],
@@ -421,6 +433,7 @@ function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction)
       // a primitive, so `valueOf` is unreachable. `built-ins/String/S9.8_A5_T1`
       // check #13 measures exactly that.
       stopWhenFirstAbsent: order[0] === "toString",
+      ownerCall,
     });
 
   // The same object/function guard `emitAddOrdinaryToPrimitiveResidue` uses:

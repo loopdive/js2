@@ -34,6 +34,7 @@ import {
 import { ts } from "../ts-api.js";
 import { emitVecDelegationAbrupt } from "./generator-vec-abrupt.js";
 import { getVecInfo } from "./type-coercion.js";
+import { resolveComputedKeyExpression } from "./literals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import {
   isBooleanType,
@@ -73,7 +74,7 @@ import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
-import { ensureExnTag } from "./registry/imports.js";
+import { addIteratorImports, ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 // (#2895 PR1) The frame ABI (state-struct field offsets + resume modes) and the
 // field-I/O / spill-store emit helpers now live in the shared resumable-frame
@@ -113,6 +114,14 @@ import {
 } from "./generators-native-ast-scan.js";
 
 import { ensureNativeDelegatedResultHelpers, nativeGeneratorExecutingCheck } from "./generators-delegation-runtime.js";
+import {
+  bodyHasPatternYield,
+  emitLinearOpStatement,
+  emitLinearUnwindClose,
+  type LinearCloseEntry,
+  type LinearizeHost,
+  lowerLinearizedStatement,
+} from "./generator-yield-linearize.js";
 
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
@@ -235,7 +244,11 @@ type StateTerminator =
       bindTo: string;
       bodyState: number;
       exitState: number;
-    };
+    }
+  // (#6651 A4) Non-suspending branch on an i32 frame spill written by a
+  // `generator-yield-linearize.ts` op (a pattern default's IsUndefined test, a
+  // pattern-head for-of's [[Done]]).
+  | { kind: "branch-flag"; flag: string; thenState: number; elseState: number };
 
 /**
  * (#3050) A try-region admitted by the NEW try-region machinery: a `try` whose
@@ -279,7 +292,11 @@ type UnwindEntry =
   // closes and keeps walking), which is why it sits in the chain rather than
   // being folded into the terminator: an inner `catch` still gets its turn
   // only if it is closer in, and the close runs exactly once per live record.
-  | { kind: "iter-close"; siteIndex: number };
+  | { kind: "iter-close"; siteIndex: number }
+  // (#6651 A4) An iterator record held open by a linearised destructuring
+  // pattern (or a pattern-head for-of) across a yield — closed with the
+  // resume's completion (see `emitLinearUnwindClose`).
+  | ({ kind: "dstr-close" } & LinearCloseEntry);
 
 /**
  * (#3050) Runtime-throw route for exceptions raised WHILE EXECUTING a state
@@ -469,6 +486,11 @@ function arrayDelegationLayout(ctx: CodegenContext, subject: ts.Expression) {
 }
 
 function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType {
+  // (#6651 A4) A yield inside a destructuring pattern resumes into a PATTERN
+  // TARGET (`[x = yield]`, `x[yield]`), so the sent value must keep its JS
+  // identity — the boxed-any carrier's `sent` field. Only such generators, which
+  // had no native plan before (see `bodyHasPatternYield`), move carrier.
+  if (decl.body && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body)) return { kind: "externref" };
   let sawNumeric = false;
   let sawString = false;
   let sawOther = false;
@@ -549,6 +571,16 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   const elemIsAny = carrierIsAny(elemValType);
   const yieldValueOk = (expr: ts.Expression | undefined): boolean =>
     elemIsAny ? true : elemIsString ? isStringYieldExpression(ctx, expr) : isNumericExpression(ctx, expr);
+  // (#1691) JS-host lane: a `yield*` delegate that is neither a native-gen call
+  // nor a numeric vec rides the host protocol arm (`__iterator_strict` +
+  // `__gen_yield_star_step`); the other two shapes keep the eager host path.
+  const hostLane = !noJsHostTarget(ctx);
+  // A string delegate yields strings, which a numeric carrier cannot hold.
+  const isHostProtocolDelegate = (subject: ts.Expression): boolean =>
+    hostLane &&
+    nativeGeneratorDelegationName(subject) === undefined &&
+    !isNumericIterableDelegate(ctx, subject) &&
+    (elemIsAny || ctx.oracle.typeFactOf(subject).kind !== "string");
 
   const states: NativeGeneratorState[] = [];
   const spills: string[] = [];
@@ -634,6 +666,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // the catch param is. Widened names are marked `undefWidenedLocals` in the
   // resume fctx so a yielded `undefined` stays observable.
   const forOfBindingSpillTypes = new Map<string, ValType>();
+  // (#6651 A4) Temporaries of a linearised pattern (`generator-yield-linearize.ts`):
+  // externref values / iterator records and i32 flags, typed at creation.
+  const linearSpillTypes = new Map<string, ValType>();
+  const linearizeYields = elemIsAny && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body);
 
   // Reserve the state id for the in-progress state.
   let curId = reserveState();
@@ -722,6 +758,30 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     };
     visit(node);
     return found;
+  };
+
+  /** (#6651 A4) The planner's handle on this builder's state cursor. */
+  let linearOrdinal = 0;
+  const linearHost: LinearizeHost<UnwindEntry> = {
+    spill(type, tag) {
+      let name: string;
+      do name = `__gen_lin_${tag}_${linearOrdinal++}`;
+      while (spillSet.has(name) || (decl.body !== undefined && bodyDeclaresBinding(decl.body, name)));
+      addSpill(name);
+      linearSpillTypes.set(name, type);
+      return name;
+    },
+    push: (stmt) => void curStatements.push(stmt),
+    suspend(yieldExpr, unwind) {
+      const sent = linearHost.spill({ kind: "externref" }, "sent");
+      return emitYield(yieldExpr, sent, unwind) ? sent : null;
+    },
+    reserve: () => reserveState(),
+    enter: (id) => resetCursor(id),
+    branch: (flag, thenState, elseState) => finishState(curId, { kind: "branch-flag", flag, thenState, elseState }),
+    jump: (next) => finishState(curId, { kind: "jump", next }),
+    lowerBody: (statements, unwind) => lowerStatements(statements, unwind, false),
+    closeEntry: (entry) => ({ kind: "dstr-close", ...entry }),
   };
 
   /**
@@ -854,6 +914,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (continuation === "lowered") continue;
         if (continuation === "failed") return false;
       }
+      // 2e) (#6651 A4) A yield inside a destructuring-assignment pattern or a
+      // for-of pattern head — planned as spec-ordered ops over frame spills.
+      if (linearizeYields && stateFinallyDepth === 0) {
+        const linear = lowerLinearizedStatement(linearHost, stmt, unwind, (b) => !loopBodyHasUnsupportedJump(b));
+        if (linear === "lowered") continue;
+        if (linear === "failed") return fail();
+      }
 
       // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
@@ -871,7 +938,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
                 !isArrayDelegate(ctx, subject) &&
                 !isStringYieldExpression(ctx, subject),
             )
-          )
+          ) &&
+          !containsDelegatedYield(stmt.tryBlock, isHostProtocolDelegate)
         ) {
           // Legacy kind-L region: finally-only, yield-free finally — the
           // historical replay lowering, byte-identical to pre-#3050.
@@ -1071,7 +1139,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (yieldExpr.asteriskToken) {
       const structuredUnwind = unwind.some((e) => e.kind !== "replay");
       const arrayDelegate = !!yieldExpr.expression && isArrayDelegate(ctx, yieldExpr.expression);
-      if (structuredUnwind && !arrayDelegate && !(ctx.standalone || ctx.wasi)) return fail();
+      if (
+        structuredUnwind &&
+        !arrayDelegate &&
+        !noJsHostTarget(ctx) &&
+        !(yieldExpr.expression && isHostProtocolDelegate(yieldExpr.expression))
+      )
+        return fail();
       // (#2864 D2) A yield-star terminator SELF-SUSPENDS (its yield arm re-enters
       // the SAME state on the next resume), so it must live in a DEDICATED state:
       //  (a) empty prelude / no resume bindings — otherwise the prelude statements
@@ -1101,7 +1175,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       const subject = yieldExpr.expression;
       const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
       if (subject && innerName === undefined) {
-        if (arrayDelegate) {
+        if (arrayDelegate && !isHostProtocolDelegate(subject)) {
+          // Main keeps numeric arrays on the eager host path. Before this
+          // integration the branch's host candidate gate rejected all yield*,
+          // so the expanded vec support is a host-free capability only.
+          if (hostLane) return fail();
           if (structuredUnwind) {
             curAbrupt = undefined;
             curUnwind = [...unwind].reverse();
@@ -1142,7 +1220,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // outer passes it through. A direct string operand is the one concrete
         // ref case supported here: the iterator runtime returns native-string
         // refs, and the emitter casts the externref back to that ref below.
-        const protocol = (ctx.standalone || ctx.wasi) && !isStringYieldExpression(ctx, subject);
+        // (#1691) The JS-host lane takes the protocol arm too (host imports).
+        const protocol = !isStringYieldExpression(ctx, subject);
+        if (hostLane && !isHostProtocolDelegate(subject)) return fail();
         if (
           (!elemIsString || isStringYieldExpression(ctx, subject)) &&
           (protocol || isGenericIterableDelegate(ctx, subject))
@@ -1182,7 +1262,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         }
         return fail();
       }
-      if (!subject || innerName === undefined) return fail();
+      if (!subject || innerName === undefined || hostLane) return fail();
       if (unwind.some((entry) => entry.kind !== "replay")) return fail();
       // (#2864 R1) Carrier-mismatch gate: the delegation yield-arm re-yields the
       // inner's f64 `value` through the OUTER result struct. For an f64 outer
@@ -1268,6 +1348,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function isArrayDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
     const fact = ctx.oracle.typeFactOf(subject);
     return fact.kind === "array";
+  }
+
+  // The host protocol admission keeps main's numeric-array exclusion. The
+  // broader vec lowering remains available for host-free array delegates.
+  function isNumericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
+    const fact = ctx.oracle.typeFactOf(subject);
+    return fact.kind === "array" && fact.element.kind === "number";
   }
 
   // (#2173 slice-2b) True when `subject`'s static type is a GENERIC iterable that
@@ -1746,6 +1833,31 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   ): boolean {
     const terms: ts.Expression[] = [];
     flattenCommaExpression(root, terms);
+    return lowerSequencedContinuation(host, terms, unwind);
+  }
+
+  /**
+   * (#6651 A4) A non-short-circuit binary operator evaluates its left operand,
+   * then its right one, then operates (§13.15.3 ApplyStringOrNumericBinaryOperator
+   * and the relational / equality forms) — the same left-to-right sequence the
+   * comma arm lowers, so `(yield 3) + (yield 4)` takes that lowering over its two
+   * operands. Standalone-only like every operand-carrying widening.
+   */
+  function isSequencedBinaryOperator(kind: ts.SyntaxKind): boolean {
+    return kind >= ts.SyntaxKind.FirstBinaryOperator && kind <= ts.SyntaxKind.LastBinaryOperator
+      ? kind !== ts.SyntaxKind.AmpersandAmpersandToken &&
+          kind !== ts.SyntaxKind.BarBarToken &&
+          kind !== ts.SyntaxKind.QuestionQuestionToken &&
+          kind !== ts.SyntaxKind.CommaToken &&
+          !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment)
+      : false;
+  }
+
+  function lowerSequencedContinuation(
+    host: ContinuationHost,
+    terms: readonly ts.Expression[],
+    unwind: readonly UnwindEntry[],
+  ): boolean {
     if (terms.length < 2) return false;
 
     const yields: { index: number; expression: ts.YieldExpression }[] = [];
@@ -1929,7 +2041,24 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const conditionalRoot = ts.isConditionalExpression(root) ? root : undefined;
     const commaRoot =
       ts.isBinaryExpression(root) && root.operatorToken.kind === ts.SyntaxKind.CommaToken ? root : undefined;
-    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot) return "not-applicable";
+    const binaryRoot =
+      continuationYieldsMayCarryOperands &&
+      ts.isBinaryExpression(root) &&
+      isSequencedBinaryOperator(root.operatorToken.kind) &&
+      (continuationYieldOf(root.left) !== null || continuationYieldOf(root.right) !== null)
+        ? root
+        : undefined;
+    // (#6651 A4) A template's substitutions evaluate left to right (§13.2.8.6),
+    // the same sequence again.
+    const templateRoot =
+      continuationYieldsMayCarryOperands &&
+      ts.isTemplateExpression(root) &&
+      root.templateSpans.some((span) => continuationYieldOf(span.expression) !== null)
+        ? root
+        : undefined;
+    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot && !binaryRoot && !templateRoot) {
+      return "not-applicable";
+    }
 
     // Bare-yield sent values are f64 in this checkpoint. String/boxed-any
     // carriers and every try/unwind crossing retain the existing fail-closed
@@ -1986,6 +2115,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     if (commaRoot) {
       return lowerCommaExpressionContinuation(host, commaRoot, unwind) ? "lowered" : "not-applicable";
+    }
+    const sequenced = binaryRoot
+      ? [binaryRoot.left, binaryRoot.right]
+      : templateRoot?.templateSpans.map((span) => span.expression);
+    if (sequenced) {
+      return lowerSequencedContinuation(host, sequenced.map(unwrapContinuationWrapper), unwind)
+        ? "lowered"
+        : "not-applicable";
     }
     return "not-applicable";
   }
@@ -2649,6 +2786,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   const carrierType = genCarrierFieldType(elemValType);
   const spillTypes = new Map<string, ValType>();
   for (const name of spills) {
+    // (#6651 A4) Linearised-pattern temporaries — incl. their resume bindings,
+    // which only ever feed a pattern op (an externref PutValue / IsUndefined),
+    // never a member read, so the any-carrier bail below does not apply.
+    const linearType = linearSpillTypes.get(name);
+    if (linearType !== undefined) {
+      spillTypes.set(name, linearType);
+      continue;
+    }
     // (#2864 R1) A delegation-completion binding (`const x = yield* inner()`)
     // holds the inner's f64 `return` value — always f64 (only f64-elem inners
     // are delegated), independent of the OUTER's carrier.
@@ -2697,6 +2842,15 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     const declNode = spillDecls.get(name);
     const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
+    // (#6651 A4) `var vals = []` is an evolving `any[]`, which the resolver defers
+    // (its decl-driven vec inference differs from the generic one). The
+    // linearised pattern reads such a source only as an externref, and the
+    // post-emit reconcile pins the field to whatever slot the declaration settles
+    // on — so an any-array literal spills at the boundary rep here.
+    if (!resolved && linearizeYields && declNode?.initializer && ts.isArrayLiteralExpression(declNode.initializer)) {
+      spillTypes.set(name, { kind: "externref" });
+      continue;
+    }
     if (!resolved) return null;
     spillTypes.set(name, resolved);
   }
@@ -2879,11 +3033,11 @@ function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
     if (found) return;
     if (isFunctionLikeScope(node)) return;
     if (ts.isYieldExpression(node)) {
-      if (node.asteriskToken) {
-        found = true; // yield* delegation
-        return;
-      }
-      if (node.expression && containsYield(node.expression)) {
+      // (#1691) A top-level generator's `yield*` routes through the host
+      // protocol arm (the plan builder bails the other delegate shapes); a
+      // nested one keeps the eager path (host for-of over it is unsupported).
+      if (node.asteriskToken && !ts.isSourceFile(decl.parent)) found = true;
+      if (found || (node.expression && containsYield(node.expression))) {
         found = true; // yield nested in a yield operand
         return;
       }
@@ -3414,8 +3568,11 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // rehydrates it into the detached resume context, including mapped metadata.
   // (#3164) A FunctionExpression may be anonymous — its native registration
   // rides a synthetic lifted-closure name supplied by the emit site
-  // (closures.ts). Everything else still requires a name (funcMap key).
-  if (!decl.name && !ts.isFunctionExpression(decl)) return false;
+  // (closures.ts). Everything else still requires a name (funcMap key) —
+  // except (#6651 A3) the anonymous `export default function* () {}`, which the
+  // declaration collector already registers under the synthetic name "default"
+  // (declarations.ts), so its funcMap key is as stable as a named one's.
+  if (!decl.name && !ts.isFunctionExpression(decl) && !isAnonymousDefaultExportDeclaration(decl)) return false;
   // (#3164) Fn-expr-specific shape gate (identifier-only params, frame-carried
   // `arguments`, no `this`/self-name reference, no outer capture). Applied
   // here — the SINGLE candidate gate — so `sourceNeedsGeneratorHostImports`,
@@ -3426,7 +3583,20 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // (`{ [k]*(){} }`, `{ "m"*(){} }`) is out of scope — only an identifier-named
   // method threads cleanly through the funcMap key. (#3896) PRIVATE names are
   // admitted: already `__priv_`-mangled, and class-only, so never this shape.
-  if (ts.isMethodDeclaration(decl) && !ts.isIdentifier(decl.name) && !ts.isPrivateIdentifier(decl.name)) return false;
+  //
+  // (#6651 A3) A string / numeric / COMPUTED name whose key folds at compile
+  // time (`*['a']()`, `*[1]()`, `*[Symbol.iterator]()`) is admitted: both emit
+  // sites already key the method by the FOLDED name (`resolveClassMemberName` /
+  // `resolveAccessorPropName` -> `${owner}_${key}`), so the funcMap key threads
+  // exactly like an identifier's. An unfoldable computed key still bails.
+  if (
+    ts.isMethodDeclaration(decl) &&
+    !ts.isIdentifier(decl.name) &&
+    !ts.isPrivateIdentifier(decl.name) &&
+    foldedMethodKey(ctx, decl.name) === undefined
+  ) {
+    return false;
+  }
   // (#2571/#2581) A method generator is native-routable only when its emit site
   // is wired to the native factory: CLASS bodies (class-bodies.ts, #2571) and
   // OBJECT-LITERAL methods (literals.ts, #2581). Both compile the method body as
@@ -3512,19 +3682,17 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // AND `sourceNeedsGeneratorHostImports` all agree (host imports stay
   // registered; behavior matches the pre-#2938 eager-buffer path).
   if (ts.isMethodDeclaration(decl)) {
-    if (ts.isComputedPropertyName(decl.name)) return false;
+    // (#6651 A3) Uniqueness is decided on the FOLDED key — the one the emit
+    // sites key by — so `*['a']()` and `*a()` in one body collide, as they do
+    // at the funcMap. An unfoldable computed name bailed above.
+    const ownName = foldedMethodKey(ctx, decl.name);
+    if (ownName === undefined) return false;
     const parent = decl.parent;
     if (ts.isClassLike(parent) || ts.isObjectLiteralExpression(parent)) {
-      const ownName = decl.name.getText();
       const members: readonly ts.Node[] = ts.isObjectLiteralExpression(parent) ? parent.properties : parent.members;
       let sameName = 0;
       for (const m of members) {
-        if (
-          ts.isMethodDeclaration(m) &&
-          m.asteriskToken &&
-          !ts.isComputedPropertyName(m.name) &&
-          m.name.getText() === ownName
-        ) {
+        if (ts.isMethodDeclaration(m) && m.asteriskToken && foldedMethodKey(ctx, m.name) === ownName) {
           sameName++;
         }
       }
@@ -3559,6 +3727,42 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // native candidates now that #2936 fixed the late-import funcIdx-shift class.
   // Relaxed in LOCKSTEP with buildNativeGeneratorPlan's suspendCount bail.
   return plan !== null;
+}
+
+/**
+ * (#6651 A3) `export default function* () {}` — a declaration with no name.
+ *
+ * Not admitted from a source TypeScript could not parse cleanly. The compiler
+ * tolerates TS1109 ("Expression expected") globally, so
+ * `export default function* () {}();` — an early SyntaxError, test262
+ * `module-code/parse-err-invoke-anon-gen-decl.js` — reaches codegen, and the
+ * #680 refusal is the only thing that rejects it today. Admitting it turned
+ * that row pass → fail (measured); the row needs a real early error, not this
+ * gate, and until it has one the gate must not remove the refusal.
+ */
+function isAnonymousDefaultExportDeclaration(decl: GeneratorDecl): boolean {
+  if (!ts.isFunctionDeclaration(decl) || decl.name !== undefined) return false;
+  const parseDiagnostics = (decl.getSourceFile() as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics;
+  if (parseDiagnostics !== undefined && parseDiagnostics.length > 0) return false;
+  const mods = ts.getModifiers(decl);
+  return (
+    mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true &&
+    mods.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+  );
+}
+
+/**
+ * (#6651 A3) The compile-time key a generator METHOD is emitted under, or
+ * `undefined` when the name does not fold. Mirrors `resolveClassMemberName` /
+ * `resolveAccessorPropName` (the two emit sites' key derivations).
+ */
+function foldedMethodKey(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return "__priv_" + name.text.slice(1);
+  if (ts.isStringLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return String(Number(name.text));
+  if (ts.isComputedPropertyName(name)) return resolveComputedKeyExpression(ctx, name.expression);
+  return undefined;
 }
 
 /**
@@ -3827,6 +4031,10 @@ export function registerNativeGenerator(
   // snapshot the body would observe whatever receiver the *resuming* caller
   // happened to have. This unblocks the `Array.prototype[Symbol.iterator] =
   // function*(){ … this.length … }` fixture family.
+  // (#6651 A3) An object-literal generator METHOD registered WITHOUT a
+  // synthesized receiver param is the closure-lane method: its `this` arrives exactly like a function
+  // expression's, through `__current_this`, so it needs the same snapshot. The
+  // struct-lane method (literals.ts) always passes `synthesizedThis`.
   const capturesDynamicThis =
     !synthesizedThis &&
     (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl) || ts.isMethodDeclaration(decl)) &&
@@ -4011,13 +4219,16 @@ export function registerNativeGenerator(
   // (`__gen_delegate_start`/`_step`) from the same frame-slot family, so it has
   // to flip this flag too — it is what reserves those helpers
   // (`ensureNativeDelegatedResultHelpers`) and the `executing` re-entrancy field.
-  const nativeDelegates = plan.states.some(
-    (state) =>
-      state.terminator.kind === "for-of-step" ||
-      (state.terminator.kind === "yield-star" &&
-        state.terminator.delegationKind === "iterable" &&
-        state.terminator.protocol),
-  );
+  // (#1691) The JS-host protocol arm drives host imports, not these helpers.
+  const nativeDelegates =
+    noJsHostTarget(ctx) &&
+    plan.states.some(
+      (state) =>
+        state.terminator.kind === "for-of-step" ||
+        (state.terminator.kind === "yield-star" &&
+          state.terminator.delegationKind === "iterable" &&
+          state.terminator.protocol),
+    );
   const executingFieldIdx = nativeDelegates ? stateFields.length : undefined;
   if (nativeDelegates) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
 
@@ -4654,6 +4865,11 @@ function compileState(
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
+    // Replay-only finally regions need the same array-iterator protocol as
+    // structured unwind: a missing throw method replaces the supplied error.
+    if (state.terminator.kind === "yield-star" && state.terminator.delegationKind === "vec") {
+      emitVecDelegationAbrupt(ctx, fctx, info, state.terminator.vecSiteIndex, selfLocal);
+    }
     // (#2864 D2) Delegation abrupt forwarding — iterator close through `yield*`
     // (§27.5.3.7 steps 7.b/7.c). A `.return(v)` / `.throw(e)` on the OUTER while
     // suspended in a native-gen yield-star state must forward the abrupt to the
@@ -4808,6 +5024,8 @@ function compileState(
 
   // Prelude statements (straight-line, yield-free).
   for (const stmt of state.statements) {
+    // (#6651 A4) A linearised-pattern op marker compiles to its op, not as source.
+    if (emitLinearOpStatement(ctx, fctx, stmt)) continue;
     withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () => {
       compileStatement(ctx, fctx, stmt);
     });
@@ -4933,6 +5151,18 @@ function compileState(
       });
       break;
     }
+    case "branch-flag": {
+      body.push(...storeSpills(info, fctx, selfLocal));
+      const flag = fctx.localMap.get(term.flag);
+      body.push(flag === undefined ? { op: "i32.const", value: 0 } : { op: "local.get", index: flag });
+      body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...setStateInstrs(info, selfLocal, term.thenState), { op: "br", depth: loopDepth + 1 }],
+        else: [...setStateInstrs(info, selfLocal, term.elseState), { op: "br", depth: loopDepth + 1 }],
+      });
+      break;
+    }
     // (#6651 A2) for-of loop header — see emitForOfStepState.
     case "for-of-step": {
       emitForOfStepState(ctx, fctx, info, term, selfLocal, resultLocal, loopDepth);
@@ -5012,19 +5242,21 @@ function compileState(
         body.push({ op: "local.set", index: cursorLocal });
 
         // (#2864 R1) `const x = yield* [..]` — deliver the completion value
-        // (§27.5.3.7). An array's completion value is `undefined`; carry the f64
-        // undefined-as-NaN sentinel into the binding's local AND its spill.
-        // (#2106 residual: `x === x` diverges from Node — do not pin in tests.)
+        // (§27.5.3.7). Store canonical undefined using the binding's carrier,
+        // then spill that local. The final frame pass may widen the slot;
+        // a second hard-coded f64 constant would no longer match its field.
         const bindInstrs: Instr[] = [];
         if (term.bindResultTo !== undefined) {
           const bindLocal = fctx.localMap.get(term.bindResultTo);
           const bindSpillIdx = info.spillNames.indexOf(term.bindResultTo);
           if (bindLocal !== undefined && bindSpillIdx >= 0) {
+            const bindType = getLocalType(fctx, bindLocal);
+            if (bindType === undefined) throw new Error("Missing vector delegation completion local type");
             bindInstrs.push(
-              { op: "f64.const", value: NaN },
+              ...defaultElemValueInstrs(ctx, bindType),
               { op: "local.set", index: bindLocal },
               { op: "local.get", index: selfLocal },
-              { op: "f64.const", value: NaN },
+              { op: "local.get", index: bindLocal },
               {
                 op: "struct.set",
                 typeIdx: info.stateTypeIdx,
@@ -5436,6 +5668,20 @@ function emitGenericDelegationState(
   const status = allocLocal(fctx, "__delegate_status", { kind: "i32" });
   const value = allocLocal(fctx, "__delegate_value", { kind: "externref" });
   const body = fctx.body;
+  // (#1691) JS-host lane: the same state machine over host imports. The step
+  // reads IteratorValue itself, so a yielded value is a plain carrier value.
+  const host = !noJsHostTarget(ctx);
+  const carrier = genCarrierFieldType(info.elemValType);
+  const convert = (instrs: Instr[], from: ValType, to: ValType): Instr[] => {
+    if (!host || valTypesMatch(from, to)) return instrs;
+    const previous = fctx.body;
+    fctx.body = instrs;
+    coerceType(ctx, fctx, from, to);
+    fctx.body = previous;
+    return instrs;
+  };
+  const startName = host ? "__iterator_strict" : "__gen_delegate_start";
+  const stepName = host ? "__gen_yield_star_step" : "__gen_delegate_step";
   const get = (fieldIdx: number): Instr[] => [
     { op: "local.get", index: selfLocal },
     { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx },
@@ -5474,7 +5720,7 @@ function emitGenericDelegationState(
   const type = compileExpression(ctx, fctx, term.subject, { kind: "externref" });
   if (!type) throw new Error("Unable to compile generic delegation operand");
   if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
-  materialize.push({ op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_start")! });
+  materialize.push({ op: "call", funcIdx: ctx.funcMap.get(startName)! });
   fctx.body = body;
   body.push(
     ...get(slot.fieldIdx),
@@ -5500,20 +5746,20 @@ function emitGenericDelegationState(
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },
-          then: get(info.abruptFieldIdx),
-          else: get(info.sentFieldIdx),
+          then: convert(get(info.abruptFieldIdx), carrier, { kind: "externref" }),
+          else: convert(get(info.sentFieldIdx), carrier, { kind: "externref" }),
         },
       ],
     },
-    { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_step")! },
+    { op: "call", funcIdx: ctx.funcMap.get(stepName)! },
     { op: "local.set", index: value },
     { op: "local.set", index: status },
   );
   const suspended: Instr[] = [
     ...setStateInstrs(info, selfLocal, stateId),
     ...setModeInstrs(info, selfLocal, MODE_NEXT),
-    { op: "local.get", index: value },
-    { op: "i32.const", value: -1 },
+    ...convert([{ op: "local.get", index: value }], { kind: "externref" }, info.elemValType),
+    { op: "i32.const", value: host ? 0 : -1 },
     { op: "struct.new", typeIdx: info.resultTypeIdx },
     { op: "local.set", index: resultLocal },
     { op: "br", depth: exitDepth + 1 },
@@ -5532,7 +5778,10 @@ function emitGenericDelegationState(
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        ...frameStore(info.abruptFieldIdx, [{ op: "local.get", index: value }]),
+        ...frameStore(
+          info.abruptFieldIdx,
+          convert([{ op: "local.get", index: value }], { kind: "externref" }, carrier),
+        ),
         ...setModeInstrs(info, selfLocal, 1),
         ...unwind(1),
       ],
@@ -5751,6 +6000,10 @@ function emitUnwindWalk(
       );
       continue;
     }
+    if (entry.kind === "dstr-close") {
+      emitLinearUnwindClose(ctx, fctx, entry, srcIsThrow);
+      continue;
+    }
     if (entry.kind === "catch") {
       // Throw completions enter the catch; return completions pass through.
       const thenInstrs: Instr[] = [];
@@ -5814,6 +6067,29 @@ function emitUnwindWalk(
   body.push({ op: "if", blockType: { kind: "empty" }, then: throwBody, else: returnBody });
 }
 
+/** Reserve resume dependencies before any body bakes function indices. */
+function ensureNativeGeneratorResumeDependencies(ctx: CodegenContext, info: NativeGeneratorInfo): void {
+  // Host externref generators must return actual undefined on exhaustion,
+  // not null. Reserve it before emitting bodies; the value helper is read-only.
+  if (!(ctx.standalone || ctx.nativeStrings) && info.elemValType.kind === "externref") {
+    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, ctx.currentFunc);
+  }
+  if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
+  // (#1691) The JS-host protocol arm's imports, acquired before the body bakes.
+  else if (!noJsHostTarget(ctx) && info.iterableDelegationSlots?.length) {
+    addIteratorImports(ctx); // demand for the host-side struct dispatch exports
+    ensureLateImport(ctx, "__iterator_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      "__gen_yield_star_step",
+      [{ kind: "externref" }, { kind: "i32" }, { kind: "externref" }],
+      [{ kind: "i32" }, { kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, ctx.currentFunc);
+  }
+}
+
 export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: NativeGeneratorInfo): number {
   const fnName = `__gen_resume_${sanitizeTypeName(info.functionName)}`;
   // (#2941) SINGLE SOURCE OF TRUTH = `ctx.funcMap`, which every late-import
@@ -5842,7 +6118,7 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     return existing;
   }
 
-  if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
+  ensureNativeGeneratorResumeDependencies(ctx, info);
   const selfType: ValType = { kind: "ref", typeIdx: info.stateTypeIdx };
   const resultType: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
   const typeIdx = addFuncType(ctx, [selfType], [resultType], `${fnName}_type`);

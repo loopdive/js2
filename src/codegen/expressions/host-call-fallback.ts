@@ -82,3 +82,22 @@ export function buildHostCallFallbackArm(
   arm.push(...invokePrefix, { op: "local.get", index: hostArgsLocal }, { op: "call", funcIdx: callFn });
   return arm;
 }
+
+/**
+ * (#6686) Under the native regime a dynamic call already has an in-Wasm
+ * default (the apply fallback). The JS boundary callback must only take the
+ * callees Wasm does NOT own — an admitted JS function is a non-eq host ref —
+ * so a native closure that matched no inline arm keeps its native dispatch.
+ */
+export function composeHostCallFallback(
+  nativeDefault: Instr[] | undefined,
+  hostArm: Instr[] | undefined,
+  calleeAnyLocal: number,
+): Instr[] | undefined {
+  if (hostArm === undefined || nativeDefault === undefined) return hostArm;
+  return [
+    { op: "local.get", index: calleeAnyLocal },
+    { op: "ref.test", typeIdx: -19 /* eq */ },
+    { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: nativeDefault, else: hostArm },
+  ];
+}

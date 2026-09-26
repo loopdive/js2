@@ -6,6 +6,10 @@ import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
+  emitStandaloneUnavailableGlobalThrow,
+  standaloneUnavailableGlobalReference,
+} from "../standalone-unavailable-globals.js";
+import {
   getNullablePrimitiveInfo,
   isBigIntType,
   isBooleanType,
@@ -39,7 +43,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
-import { addHostStringConstantGlobal } from "../registry/imports.js";
+import { addHostStringConstantGlobal, deferrableStringConstantGlobalGet } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
 import {
@@ -67,6 +71,7 @@ import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCance
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
   identifierIsWrittenTo,
+  moduleInstallsCallableHasInstance,
   resolveBuiltinCtorAliasName,
   tryEmitNonCallableRhsThrow,
 } from "../native-ordinary-instanceof.js";
@@ -114,9 +119,11 @@ import {
   type StandaloneWrapperConstructorName,
 } from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
+import { tryEmitStandaloneConsoleValue } from "../standalone-console-object.js";
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import { tryEmitVecLinkedInstanceOf } from "../vec-proto-link.js"; // (#2917)
 import {
   tryEmitCompiledModuleNamespaceObject,
   tryEmitCompiledRuntimeNamespaceFunctionObject,
@@ -238,9 +245,12 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   fctx.body.push({ op: "i32.eqz" });
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    const strIdx = addHostStringConstantGlobal(ctx, msg);
-    if (strIdx !== undefined) {
-      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    // (#1058) One message per captured name: batch its import with the others.
+    const deferred = deferrableStringConstantGlobalGet(ctx, msg);
+    const strIdx = deferred ? undefined : addHostStringConstantGlobal(ctx, msg);
+    if (deferred || strIdx !== undefined) {
+      const get: Instr[] = deferred ?? [{ op: "global.get", index: strIdx! }];
+      then = [...get, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
     } else {
       const tagIdx = ensureExnTag(ctx);
       then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
@@ -773,8 +783,8 @@ function analyzeTdzAccessByPos(ctx: CodegenContext, varName: string, callNode: t
   const sourceFile = callNode.getSourceFile();
   if (!sourceFile) return "check";
 
-  // Find the declaration by looking up the local symbol in scope
-  const sym = ctx.checker.getSymbolsInScope(callNode, ts.SymbolFlags.Variable).find((s) => s.name === varName);
+  // (#1058) resolveName walks the scope chain once, not every symbol in scope.
+  const sym = ctx.checker.resolveName(varName, callNode, ts.SymbolFlags.Variable, false);
   if (!sym) return "check";
   const decl = sym.valueDeclaration;
   if (!decl) return "check";
@@ -838,7 +848,7 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     // else arm, then restore the stack.
     const scopes = fctx.withScopes!;
     const matchedIdx = scopes.lastIndexOf(withRes.scope);
-    return emitDynamicWithGet(ctx, fctx, withRes.scope, name, () => {
+    return emitDynamicWithGet(ctx, fctx, withRes.scope, name, id, () => {
       const saved = fctx.withScopes;
       fctx.withScopes = scopes.slice(0, matchedIdx);
       try {
@@ -1782,6 +1792,13 @@ function compileIdentifierCore(
   // "wrong object" to the `ref.null.extern` graceful default.
   // `unresolvedInModuleGoal` disables the funcref arm too (#3505), so the
   // ambient read must stay in that case or nothing serves it.
+  // (#6664) A lib.dom constructor a host-free module does not have.
+  {
+    const unavailable = standaloneUnavailableGlobalReference(ctx, fctx, id);
+    if (unavailable !== undefined) return emitStandaloneUnavailableGlobalThrow(ctx, fctx, unavailable);
+    const consoleValue = tryEmitStandaloneConsoleValue(ctx, fctx, id); // (#6671)
+    if (consoleValue) return consoleValue;
+  }
   const shadowedAmbient = !unresolvedInModuleGoal && ambientGlobalReadIsUserFunctionShadowed(ctx, id, name);
   const globalInfo = shadowedAmbient ? undefined : ctx.declaredGlobals.get(name);
   if (globalInfo) {
@@ -2463,6 +2480,25 @@ function resolveInstanceOfRHS(ctx: CodegenContext, rightExpr: ts.Expression): st
 }
 
 /**
+ * (#6651 N2) Is this the type of an `import * as ns from "./m.js"` binding —
+ * a §10.4.6 module namespace exotic object?
+ *
+ * The symbol of such a binding is declared either by the `NamespaceImport`
+ * clause itself or, once the checker resolves the alias, by the target
+ * `SourceFile`. A TypeScript `namespace Foo {}` is declared by a
+ * `ModuleDeclaration` and matches neither, which is the point: it is an
+ * ordinary object.
+ */
+function isModuleNamespaceObjectType(tsType: ts.Type): boolean {
+  const declarations = tsType.getSymbol()?.declarations;
+  if (!declarations) return false;
+  for (const declaration of declarations) {
+    if (ts.isSourceFile(declaration) || ts.isNamespaceImport(declaration)) return true;
+  }
+  return false;
+}
+
+/**
  * Try to statically evaluate `LHS instanceof <ctorName>` using the LHS TypeScript
  * type and the built-in type-tag registry (#1325).
  *
@@ -2535,6 +2571,26 @@ function tryStaticInstanceOf(ctx: CodegenContext, expr: ts.BinaryExpression, cto
   //    unknown so only definite objects qualify. (User-class instances are
   //    handled by the `classTagMap` branch above, which returns before here.)
   if (ctorName === "Object") {
+    // (#6651 N2) …EXCEPT a MODULE NAMESPACE object. §10.4.6.1 pins its
+    // [[GetPrototypeOf]] to `null`, so §7.3.20's chain walk never reaches
+    // `%Object.prototype%` and `ns instanceof Object` is `false` — the one
+    // object value for which the `true` below is a WRONG answer, and the
+    // assertion `namespace/internals/get-prototype-of.js` makes.
+    //
+    // Measured before this change, on BOTH lanes (the N1 handoff records this
+    // as standalone-only; it is not — host fails the same assertion):
+    // `Test262Error: Expected SameValue(«true», «false»)` at
+    // `assert.sameValue(ns instanceof Object, false)`.
+    //
+    // Falling THROUGH (rather than answering `false` here) keeps one decider:
+    // the host lane's `__instanceof` sees a real null-prototype JS object and
+    // the standalone lane's native predicate subtracts `OBJ_FLAG_NULL_PROTO`
+    // (`native-object-family-instanceof.ts`), so both answer `false` from the
+    // VALUE. A TypeScript `namespace Foo {}` projection is deliberately NOT
+    // matched — it is an ordinary object and must keep the `true` — hence the
+    // declaration test rather than a `SymbolFlags.Module` test, which would
+    // catch both.
+    if (isModuleNamespaceObjectType(leftTsType)) return undefined;
     const f = leftTsType.flags;
     const isPrimitiveOrIndeterminate =
       (f &
@@ -2680,7 +2736,18 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
   if (nonCallableThrow) return nonCallableThrow;
 
-  if (noJsHost(ctx) && isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))) {
+  // (#6651 I2) …and the fold is ALSO not the spec order when the module can
+  // install `@@hasInstance`: §13.10.2 step 2 reads the handler and step 4 calls
+  // it, both before OrdinaryHasInstance step 3 ever asks whether V is an
+  // object. `0 instanceof F` with `F[Symbol.hasInstance] = fn` measured
+  // `callCount === 0` on this branch's base because this fold answered first.
+  // Declining routes the site to the native operator wrapper, which answers the
+  // primitive-LHS `false` itself when no handler is installed.
+  if (
+    noJsHost(ctx) &&
+    !moduleInstallsCallableHasInstance(expr.getSourceFile()) &&
+    isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))
+  ) {
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });
     const rt = compileExpression(ctx, fctx, expr.right);
@@ -3208,6 +3275,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // modeled (#1325, distinct $__Date / $__StandaloneRegExp structs). NEVER emit
   // the host import here.
   if (noJsHost(ctx)) {
+    const vecLinked = tryEmitVecLinkedInstanceOf(ctx, fctx, expr, ctorName); // (#2917) `extends Array` link
+    if (vecLinked) return vecLinked;
     if (ctx.standalone && isStandaloneWrapperConstructorName(ctorName)) {
       return emitNativeWrapperInstanceOf(ctx, fctx, expr, ctorName);
     }

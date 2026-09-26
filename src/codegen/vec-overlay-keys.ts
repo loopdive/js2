@@ -80,7 +80,8 @@ import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
-import { buildBagPushKeys } from "./carrier-bag-visibility.js";
+import { buildBagKeyDedupeSkip, buildBagPushKeys, KEY_MODE_SYMBOLS_ONLY } from "./carrier-bag-visibility.js";
+import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 
 /** `(externref obj, externref vec, i32 includeNonEnum) -> i32` — 1 iff an overlay existed. */
@@ -135,14 +136,14 @@ export function reserveVecOverlayPushKeys(ctx: CodegenContext): number | undefin
  */
 export function buildOverlayPushKeys(
   ctx: CodegenContext,
-  args: { vecLocal: number; includeNonEnum: boolean; objLocal?: number },
+  args: { vecLocal: number; includeNonEnum: boolean; objLocal?: number; symbolsOnly?: boolean },
 ): Instr[] {
   const idx = ctx.funcMap.get(VEC_OVERLAY_PUSH_KEYS);
   if (idx === undefined) return [];
   return [
     { op: "local.get", index: args.objLocal ?? 0 },
     { op: "local.get", index: args.vecLocal },
-    { op: "i32.const", value: args.includeNonEnum ? 1 : 0 },
+    { op: "i32.const", value: (args.includeNonEnum ? 1 : 0) | (args.symbolsOnly ? KEY_MODE_SYMBOLS_ONLY : 0) },
     { op: "call", funcIdx: idx },
     { op: "drop" },
   ];
@@ -164,6 +165,15 @@ export function fillVecOverlayPushKeys(ctx: CodegenContext): void {
   const overlayLookupIdx = ctx.funcMap.get(VEC_OVERLAY_LOOKUP);
   const objOrderedIdx = ctx.funcMap.get("__obj_ordered");
   const objOrderedAllIdx = ctx.funcMap.get("__obj_ordered_all");
+  // Optional: a module with no `$Symbol` in its type space never registers it,
+  // and in that module the symbols-only mode has nothing to find anyway.
+  const objOrderedSymbolsIdx = ctx.funcMap.get("__obj_ordered_symbols");
+  // (#6651 H4) De-dup dependencies. All three optional: without them the
+  // symbols-only lane keeps its (duplicating) shape rather than half a guard —
+  // the same degradation rule the bag walk states for the identical helper.
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const strictEqIdx = ensureExternStrictEqHelper(ctx);
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const numToStringIdx = ctx.funcMap.get("number_toString");
   const strToNumIdx = ctx.funcMap.get("__str_to_number");
@@ -195,6 +205,9 @@ export function fillVecOverlayPushKeys(ctx: CodegenContext): void {
   const L_LEN = 8;
   const L_KEY = 9;
   const L_N = 10;
+  // (#6651 H4) de-dup cursor + bound, only read in the symbols-only lane.
+  const L_SEEN_I = 11;
+  const L_SEEN_N = 12;
 
   /** `i32`: 1 iff the flattened key in `L_KEY` equals the literal. */
   const keyIs = (literal: string): Instr[] => [
@@ -282,113 +295,27 @@ export function fillVecOverlayPushKeys(ctx: CodegenContext): void {
     { name: "len", type: I32 },
     { name: "key", type: EXT },
     { name: "n", type: { kind: "f64" } },
+    { name: "seenI", type: I32 },
+    { name: "seenN", type: I32 },
   ];
-  fn.body = [
-    // Not a vec ⇒ nothing to add. `ref.test` never traps on a null/foreign ref.
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: vecBaseIdx },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: vecBaseIdx },
-    { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
-    { op: "local.set", index: L_LEN },
-    // LOOKUP, never ENSURE: a query must not mint an overlay for a receiver that
-    // had none (the `carrier-bag-hasown.ts` rule).
-    { op: "local.get", index: 0 },
-    { op: "call", funcIdx: overlayLookupIdx },
-    { op: "local.tee", index: L_OV },
-    { op: "ref.is_null" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    { op: "local.get", index: 2 },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: orderedCall(objOrderedAllIdx),
-      else: orderedCall(objOrderedIdx),
-    },
-    { op: "local.get", index: L_ARR },
-    { op: "ref.as_non_null" },
-    { op: "array.len" },
-    { op: "local.set", index: L_CAP },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: L_I },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L_I },
-            { op: "local.get", index: L_CAP },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: L_ARR },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: L_I },
-            { op: "array.get", typeIdx: propMapTypeIdx },
-            { op: "local.tee", index: L_E },
-            { op: "ref.is_null" },
-            { op: "br_if", depth: 1 },
-            // Runtime bookkeeping is not an own property: INTERNAL records and
-            // `delete arr[i]` gravestones both stay invisible.
-            { op: "local.get", index: L_E },
-            { op: "ref.as_non_null" },
-            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-            { op: "i32.const", value: FLAG_INTERNAL | FLAG_DELETED_INDEX },
-            { op: "i32.and" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: L_E },
-                { op: "ref.as_non_null" },
-                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                { op: "extern.convert_any" },
-                { op: "local.set", index: L_KEY },
-                // A non-STRING key (a symbol) is not an own *name*, and the two
-                // filters below would `ref.cast $AnyStr` it — a TRAP inside a
-                // helper that must never throw. Screen structurally, once.
-                { op: "local.get", index: L_KEY },
-                { op: "any.convert_extern" },
-                { op: "ref.test", typeIdx: anyStrTypeIdx },
-                { op: "i32.eqz" },
-                // depth 0 is this `if` — leaving it lands on the increment
-                // below, i.e. `continue`.
-                { op: "br_if", depth: 0 },
-                // Skip what the vec arm already emitted: `length`, and any
-                // seeded canonical index below `length`.
-                ...keyIs("length"),
-                ...isSeededIndexKey,
-                { op: "i32.or" },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: 1 },
-                    { op: "local.get", index: L_KEY },
-                    { op: "call", funcIdx: objVecPushIdx },
-                  ],
-                },
-              ],
-            },
-            { op: "local.get", index: L_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L_I },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    { op: "i32.const", value: 1 },
-  ];
+  fn.body = buildOverlayPushKeysBody({
+    ctx,
+    keyIs,
+    isSeededIndexKey,
+    orderedCall,
+    vecBaseIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    anyStrTypeIdx,
+    overlayLookupIdx,
+    objOrderedIdx,
+    objOrderedAllIdx,
+    objOrderedSymbolsIdx,
+    objVecPushIdx,
+    externLengthIdx,
+    externGetIdxIdx,
+    strictEqIdx,
+  });
 }
 
 /**
@@ -582,4 +509,272 @@ export function fillGopnVecArm(ctx: CodegenContext): void {
   ];
   fn.body.splice(initIdx + 2, 0, ...arm);
   state.gopnVecArmFilled = true;
+}
+
+/**
+ * (#6651 H4) `__vec_overlay_push_keys`' body, lifted out of
+ * {@link fillVecOverlayPushKeys} VERBATIM.
+ *
+ * Mechanical, and verified as such rather than asserted: the 34-module
+ * byte-identity corpus is sha-identical on BOTH lanes across the extraction,
+ * so the 1,732-row neighbourhood sweep measured on the pre-extraction tree
+ * still applies to this one.
+ *
+ * Why it moved: the symbols-only lane took the host function from 237 to 351
+ * lines, past the #3400 / R-FUNC 300-line budget. The three key filters
+ * (`keyIs`, `isSeededIndexKey`, `orderedCall`) stay in the caller and arrive
+ * as parameters — they close over locals of the fill and splitting them out
+ * too would have meant threading the same values twice.
+ */
+function buildOverlayPushKeysBody(d: {
+  ctx: CodegenContext;
+  keyIs: (literal: string) => Instr[];
+  isSeededIndexKey: Instr[];
+  orderedCall: (idx: number) => Instr[];
+  vecBaseIdx: number;
+  propMapTypeIdx: number;
+  propEntryTypeIdx: number;
+  anyStrTypeIdx: number;
+  overlayLookupIdx: number;
+  objOrderedIdx: number;
+  objOrderedAllIdx: number;
+  objOrderedSymbolsIdx: number | undefined;
+  objVecPushIdx: number;
+  externLengthIdx: number | undefined;
+  externGetIdxIdx: number | undefined;
+  strictEqIdx: number | undefined;
+}): Instr[] {
+  const {
+    keyIs,
+    isSeededIndexKey,
+    orderedCall,
+    vecBaseIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    anyStrTypeIdx,
+    overlayLookupIdx,
+    objOrderedIdx,
+    objOrderedAllIdx,
+    objOrderedSymbolsIdx,
+    objVecPushIdx,
+    externLengthIdx,
+    externGetIdxIdx,
+    strictEqIdx,
+  } = d;
+  // The L_* cursor names mirror the caller's local layout exactly.
+  const L_OV = 3;
+  const L_ARR = 4;
+  const L_CAP = 5;
+  const L_I = 6;
+  const L_E = 7;
+  const L_LEN = 8;
+  const L_KEY = 9;
+  const L_SEEN_I = 11;
+  const L_SEEN_N = 12;
+  return [
+    // Not a vec ⇒ nothing to add. `ref.test` never traps on a null/foreign ref.
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: vecBaseIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: vecBaseIdx },
+    { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
+    { op: "local.set", index: L_LEN },
+    // LOOKUP, never ENSURE: a query must not mint an overlay for a receiver that
+    // had none (the `carrier-bag-hasown.ts` rule).
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: overlayLookupIdx },
+    { op: "local.tee", index: L_OV },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    // (#6651 H4) Pick the ordered walker by key KIND first, enumerability
+    // second. `__obj_ordered` / `__obj_ordered_all` are STRING-key walkers —
+    // that is the fact this slice was built on a wrong guess about. Measured:
+    // with the symbols-only screen in place but still walking
+    // `__obj_ordered_all`, a symbol-keyed `defineProperty` on an array pushed
+    // NOTHING, and a sentinel proved the arm itself was running. Symbol entries
+    // simply are not in that sequence; `__obj_ordered_symbols` (#2866 slice 3)
+    // is their walker, and it is already non-enumerable-inclusive — which is
+    // what §20.1.2.10 wants anyway, so bit 0 is irrelevant in this mode.
+    { op: "local.get", index: 2 },
+    { op: "i32.const", value: KEY_MODE_SYMBOLS_ONLY },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: orderedCall(objOrderedSymbolsIdx ?? objOrderedAllIdx),
+      else: [
+        { op: "local.get", index: 2 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: orderedCall(objOrderedAllIdx),
+          else: orderedCall(objOrderedIdx),
+        },
+      ],
+    },
+    { op: "local.get", index: L_ARR },
+    { op: "ref.as_non_null" },
+    { op: "array.len" },
+    { op: "local.set", index: L_CAP },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: L_I },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: L_I },
+            { op: "local.get", index: L_CAP },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: L_ARR },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: L_I },
+            { op: "array.get", typeIdx: propMapTypeIdx },
+            { op: "local.tee", index: L_E },
+            { op: "ref.is_null" },
+            { op: "br_if", depth: 1 },
+            // Runtime bookkeeping is not an own property: INTERNAL records and
+            // `delete arr[i]` gravestones both stay invisible.
+            { op: "local.get", index: L_E },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+            { op: "i32.const", value: FLAG_INTERNAL | FLAG_DELETED_INDEX },
+            { op: "i32.and" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: L_E },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                { op: "extern.convert_any" },
+                { op: "local.set", index: L_KEY },
+                // (#6651 H4) The key-kind screen, now mode-aware. In the DEFAULT
+                // (string-key) mode this is exactly the original test: a symbol
+                // key is not an own *name*, and the two `keyIs`/`isSeededIndexKey`
+                // filters below would `ref.cast $AnyStr` it — a TRAP inside a
+                // helper that must never throw. In SYMBOLS-ONLY mode the screen
+                // inverts, and the same cast hazard is what makes the early
+                // `br_if` (rather than a later filter) the right shape for both:
+                // the string-only filters are never reached with a symbol key,
+                // and never reached at all in symbols-only mode.
+                // `skip = isString XOR (NOT symbolsOnly)` — branch-free on
+                // purpose. The obvious `if (result i32)` spelling is NOT
+                // available: an i32 is already on the operand stack here, and a
+                // `val`-typed block cannot take it as a parameter, so the
+                // "keep the value, choose a negation" shape would have to
+                // duplicate the test in both arms. The XOR says the same thing
+                // once: default mode skips non-strings, symbols-only skips
+                // strings, and the constant folds away in each mode.
+                { op: "local.get", index: L_KEY },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: anyStrTypeIdx },
+                { op: "local.get", index: 2 },
+                { op: "i32.const", value: 1 },
+                { op: "i32.shr_u" },
+                { op: "i32.const", value: 1 },
+                { op: "i32.and" }, // symbolsOnly as 0/1
+                { op: "i32.const", value: 1 },
+                { op: "i32.xor" }, // NOT symbolsOnly
+                { op: "i32.xor" },
+                // depth 0 is this `if` — leaving it lands on the increment
+                // below, i.e. `continue`.
+                { op: "br_if", depth: 0 },
+                {
+                  op: "block",
+                  blockType: { kind: "empty" },
+                  body: [
+                    // The symbols-only lane. It skips `keyIs("length")` and
+                    // `isSeededIndexKey` below — not as an optimisation: both
+                    // `ref.cast $AnyStr` the key, which TRAPS on a symbol, and
+                    // neither can match one anyway (index keys and `length` are
+                    // strings).
+                    //
+                    // It does NOT skip de-duplication, which the first draft
+                    // assumed it could. Measured: `order-after-define-property.js`
+                    // answered `[Symbol(a), Symbol(b), Symbol(a)]` against an
+                    // expected `[Symbol(a), Symbol(b)]`. A symbol written by
+                    // ASSIGNMENT lands in the #3537 bag and a later
+                    // `defineProperty` of the SAME key also records it in the
+                    // #3251 overlay companion (the #4010 two-table seam), so the
+                    // two stores overlap and the caller has already pushed the
+                    // bag's copy. §10.1.11 OrdinaryOwnPropertyKeys is a key LIST,
+                    // and the earlier (creation-order) entry is the one that
+                    // keeps its position — which is exactly what "skip a key the
+                    // vec already holds" does.
+                    { op: "local.get", index: 2 },
+                    { op: "i32.const", value: KEY_MODE_SYMBOLS_ONLY },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        ...buildBagKeyDedupeSkip({
+                          externLengthIdx,
+                          externGetIdxIdx,
+                          strictEqIdx,
+                          vecParam: 1,
+                          keyLocal: L_KEY,
+                          seenILocal: L_SEEN_I,
+                          seenNLocal: L_SEEN_N,
+                          outerIndexLocal: L_I,
+                          // From the helper's innermost `if`: 0 = it, 1 = its scan
+                          // loop, 2 = its scan block, 3 = this mode `if`, 4 = the
+                          // wrapper `block`, 5 = the enclosing flags `if`. Leaving
+                          // 5 lands on the key loop's own increment, so the cursor
+                          // must NOT be stepped by hand here (unlike the bag walk,
+                          // whose target is the `loop` label itself).
+                          continueDepth: 5,
+                          stepIndex: false,
+                        }),
+                        { op: "local.get", index: 1 },
+                        { op: "local.get", index: L_KEY },
+                        { op: "call", funcIdx: objVecPushIdx },
+                        // 0 = this `if`, 1 = the wrapper `block`. Nothing follows
+                        // the block inside the enclosing arm, so leaving it lands
+                        // on the loop's increment — i.e. `continue`.
+                        { op: "br", depth: 1 },
+                      ],
+                    },
+                    // Skip what the vec arm already emitted: `length`, and any
+                    // seeded canonical index below `length`.
+                    ...keyIs("length"),
+                    ...isSeededIndexKey,
+                    { op: "i32.or" },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: 1 },
+                        { op: "local.get", index: L_KEY },
+                        { op: "call", funcIdx: objVecPushIdx },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            { op: "local.get", index: L_I },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: L_I },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+    { op: "i32.const", value: 1 },
+  ];
 }

@@ -19,7 +19,7 @@ import {
 } from "./uninitialised-field-undefined.js"; // (#5312)
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
-import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { allocLocal, allocTempLocal, externrefCompatibleLocal, releaseTempLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
@@ -58,12 +58,14 @@ import {
 } from "./global-environment.js";
 import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
+import { isStandaloneUnavailableConstructorGlobal } from "./standalone-unavailable-globals.js"; // (#6664)
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
 import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
+import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -112,6 +114,8 @@ function ambientIdentifierIsUnavailable(
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) return false;
   if (!sym?.declarations?.length || !sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)) return false;
   if (ident.text === "structuredClone") return true;
+  if (isStandaloneUnavailableConstructorGlobal(ctx, ident.text)) return true; // (#6664)
+  if (isStandaloneUnavailableTimerGlobal(ctx, ident.text)) return true; // (#6675)
   if (!HOST_ONLY_AMBIENT_GLOBALS.has(ident.text)) return false;
   return !(ctx.standalone && ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
 }
@@ -2117,7 +2121,7 @@ export function compileTypeofExpression(
   } else if (operandType.kind === "i32") {
     const boxIdx = ctx.funcMap.get(operandType.symbol === true ? "__box_symbol" : "__box_boolean");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-  } else if (operandType.kind === "ref" || operandType.kind === "ref_null") {
+  } else if (operandType.kind === "ref" || operandType.kind === "ref_null" || operandType.kind === "i64") {
     // (#6632) A nullable `$AnyString` slot (the wasm carrier for a
     // `string | undefined` field/local — `resolveWasmType`'s single-kind
     // nullable-union collapse) uses `ref.null` to mean "absent" (the value is
@@ -2524,7 +2528,7 @@ export function compileTypeofComparison(
       fctx.boxedCaptures?.has(operand.text) ||
       runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
         ? undefined
-        : fctx.localMap.get(operand.text);
+        : externrefCompatibleLocal(fctx, operand.text);
     if (localIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: localIdx });
     } else {

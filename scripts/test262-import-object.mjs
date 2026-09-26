@@ -189,7 +189,7 @@ let inProcessLinkedRuntime;
  *
  * @param {BufferSource} binary
  * @param {Record<string, unknown>} importObj
- * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[],
+ * @param {{ target?: string, semanticProviders?: string, providerLabel?: string, linkedModules?: readonly unknown[],
  *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function },
  *          linkedHost?: { deps?: Record<string, unknown>, options?: Record<string, unknown> },
  *          runDeferredInit?: boolean }} [options]
@@ -286,7 +286,10 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     }
     return instance;
   }
-  if (options.target !== "standalone") {
+  // (#5385) native-first in the JS environment compiles with the same native
+  // semantic regime as standalone, so it carries the same conditional
+  // `js2wasm:runtime-eval` namespace — inspect the import list for it too.
+  if (options.target !== "standalone" && options.semanticProviders !== "native-first") {
     const { instance } = await WebAssembly.instantiate(binary, importObj);
     return instance;
   }

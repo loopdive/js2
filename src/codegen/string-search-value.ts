@@ -385,9 +385,25 @@ export function tryCompileStandaloneSplitSeparator(
   if (splitIdx === undefined || nstrVecTypeIdx === undefined) return undefined;
 
   emitReceiver();
-  // Emit from the same node the gate proved on — see `searchValueOperand`.
-  emitArgAsNativeString(ctx, fctx, searchValueOperand(sepExpr));
-  emitLimit();
+  // (#6651 B6) §22.1.3.23 runs `ToUint32(limit)` (step 5) BEFORE
+  // `ToString(separator)` (step 6) — `split/limit-touint32-error` poisons both
+  // and requires the LIMIT's throw. Argument EVALUATION still precedes both
+  // conversions, so the swap is only unobservable when reading the separator
+  // operand has no effect of its own: a bare identifier or a literal.
+  const sepOperand = searchValueOperand(sepExpr);
+  const sepReadIsPure =
+    ts.isIdentifier(sepOperand) || ts.isLiteralExpression(sepOperand) || sepOperand.kind === ts.SyntaxKind.NullKeyword;
+  if (limitExpr !== undefined && !isStaticallyUndefinedExpr(limitExpr) && sepReadIsPure) {
+    const limLocal = allocLocal(fctx, `__split_lim_${fctx.locals.length}`, { kind: "i32" });
+    emitLimit();
+    fctx.body.push({ op: "local.set", index: limLocal });
+    emitArgAsNativeString(ctx, fctx, sepOperand);
+    fctx.body.push({ op: "local.get", index: limLocal });
+  } else {
+    // Emit from the same node the gate proved on — see `searchValueOperand`.
+    emitArgAsNativeString(ctx, fctx, sepOperand);
+    emitLimit();
+  }
   fctx.body.push({ op: "call", funcIdx: splitIdx });
   return { kind: "ref", typeIdx: nstrVecTypeIdx };
 }
