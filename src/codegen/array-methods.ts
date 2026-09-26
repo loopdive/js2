@@ -89,7 +89,8 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
-import { flatMapSpeciesResult } from "./array-flatmap.js";
+import { flatMapReturnIsDynamic, flatMapSpeciesResult } from "./array-flatmap.js";
+import { compileArrayFlatNativeCall, emitFlattenDepth1Extern } from "./array-flat-native.js"; // (#2717)
 // (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
 import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
 import { nullableElemParamOverrideFor } from "./array-hof-nullable-elem-param.js"; // (#6602)
@@ -10614,12 +10615,17 @@ function tryCompileFlatMapNative(
   elemType: ValType,
 ): ValType | null {
   if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
+  if (flatMapReturnIsDynamic(ctx, callExpr.arguments[0]!)) {
+    // (#2717) scalar-or-array returns: the recursive helper's per-element IsArray.
+    return compileArrayFlatNativeCall(ctx, fctx, "flatMap", propAccess.expression, callExpr.arguments) ?? null;
+  }
 
   const mapType = compileArrayMap(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
   const speciesResult = flatMapSpeciesResult(ctx, mapType, callExpr.arguments[0]!);
   if (speciesResult) return speciesResult;
   if (!mapType || (mapType.kind !== "ref" && mapType.kind !== "ref_null")) {
-    // map couldn't type its result; the caller's unreachable keeps the body valid.
+    // map couldn't type its result (or a custom species widened it and the
+    // callback may return arrays); the caller's unreachable keeps the body valid.
     return null;
   }
   const mapVecTypeIdx = (mapType as { typeIdx?: number }).typeIdx;
@@ -10647,10 +10653,11 @@ function tryCompileFlatMapNative(
     );
   }
 
-  // Dynamic element (externref/anyref) — could be an array at runtime; a native
-  // depth-1 flatten would need per-element runtime IsArray. Out of scope → drop
-  // the map result and refuse loudly.
+  // Dynamic element (externref/anyref) — could be an array at runtime, so the
+  // (#2717) native FlattenIntoArray decides per element on a runtime IsArray.
   if (mapElemType && (mapElemType.kind === "externref" || mapElemType.kind === "anyref")) {
+    fctx.body.push({ op: "extern.convert_any" });
+    if (emitFlattenDepth1Extern(ctx, fctx)) return { kind: "externref" };
     fctx.body.push({ op: "drop" });
     return null;
   }
@@ -10683,6 +10690,9 @@ function compileArrayFlat(
     // receivers (the larger recursive/heterogeneous arm stays a #2717 follow-up).
     const native = tryCompileArrayFlatNativeDepth1(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
     if (native) return native;
+    // (#2717) Any depth / element kind: the native recursive FlattenIntoArray.
+    const generic = compileArrayFlatNativeCall(ctx, fctx, "flat", propAccess.expression, callExpr.arguments);
+    if (generic) return generic;
     reportError(
       ctx,
       callExpr,
