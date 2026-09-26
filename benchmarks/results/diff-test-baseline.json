@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-20T02:25:37.796Z",
+  "generatedAt": "2026-09-25T22:42:36.796Z",
   "total": 120,
-  "match": 115,
+  "match": 116,
   "mismatch": 2,
   "results": [
     {
@@ -290,7 +290,7 @@
     },
     {
       "file": "generators/05-yield-star.js",
-      "outcome": "runtime_error"
+      "outcome": "match"
     },
     {
       "file": "generators/06-closure-state.js",

@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-09-07
+updated: 2026-09-24
 priority: high
 horizon: xl
 feasibility: hard
@@ -325,6 +325,69 @@ Next: run the complete native-first CI lane, commit its measured baseline,
 join fresh host/native-first rows by `file|strict`, rank real gaps and route
 them to existing family owners. Phases 2–4 remain unstarted; all acceptance
 checkboxes below stay open until their full evidence exists.
+
+### 2026-09-24 checkpoint — the regime lever (fable, merged upstream/main @ 9b1ba0d19f)
+
+**Measured:** the nightly native-first CI lane (run 35833863334, artifact
+`test262-native-first-baseline-…`) reports **4,411 pass / 43,800 compile
+errors** of 48,232 — 91 % of rows never compile. The top rejected imports are
+all in the assembled harness (`structuredClone`, `__new_Test262Error_ctor`,
+`__js_array_new/push`, `__proto_method_call`, `__instanceof_check`,
+`__call_function`): those codegen sites are gated on `ctx.standalone`, not on
+the semantic-provider policy, so a native-first JS build still takes the host
+path and the publication gate then rejects it. Standalone passes 34,978 of the
+same rows host-free — **the standalone codegen regime IS the native semantic
+core; `native-first` only re-routes ~15 families on top of the host regime.**
+
+**Experiment (local, 321-row sample: `built-ins/Object/keys`,
+`built-ins/Array/prototype/map`, `language/expressions/class/accessor`):**
+
+| lane | pass / 321 |
+| --- | ---: |
+| host baseline | 228 |
+| standalone baseline | 253 |
+| native-first, as on main | 0 (harness rejected) |
+| native-first + `ctx.standalone` regime, eval provider unlinked | 0 (318 × unresolved `js2wasm:runtime-eval` import) |
+| native-first + regime + eval provider linked | **218** |
+
+Of the 103 residual sample failures: 41 fail in all three lanes (shared
+gaps), 33 pass in BOTH host and standalone but fail here (regime-in-JS-env
+defects: `__extern_set` illegal cast in `__set_member_nonstrict_length`,
+callback `this` binding, `__call_1_f64` leak), 10 host-only, 10
+standalone-only, 4 V8 SIGABRT.
+
+**Cost of the blunt flip:** setting `ctx.standalone` for native-first JS
+builds breaks 10 of 16 boundary-interop tests in
+`tests/issue-4397-native-semantic-js-host.test.ts` (console capability,
+JS-owned object admission, callbacks, error translation, `__str_*` marshal,
+DataView/bind admission) and OOMs V8 in one. Those are the environment-shaped
+`ctx.standalone` arms; they must read `targetProfile.environment` /
+`hostValueInterop` instead. That enumerated list is the next slice.
+
+**Landed in this checkpoint (PR from `issue-5385-merge-host-semantics-native-core`):**
+
+- `CompileTargetProfile.nativeRegime` — the explicit "which ECMAScript
+  implementation lowers this" axis; `ctx.standalone` now reads it. The JS
+  arm is opt-in via `JS2WASM_NATIVE_REGIME_JS=1` until the boundary gates
+  are re-keyed, so default output is byte-identical.
+- `projectIrBackendTargetProfile` projects a native-regime JS build as the
+  standalone regime with `allowHostImports: false` (pinned in
+  `tests/issue-4396-target-profile.test.ts`).
+- The native-first test262 lane links the `js2wasm:runtime-eval` provider
+  like standalone (`scripts/test262-import-object.mjs`, worker, in-process
+  lane, `run-test262-vitest.sh`), and the CI lane builds the refusal
+  interpreter tier in-job and sets the regime opt-in, so the next nightly
+  measures the regime on the full corpus.
+- Side effect: the `string_constants` property-name leak (gap item 1) is
+  gone under the regime — every class-shape probe compiles with zero imports.
+
+Two pre-existing failures on main are unchanged (`#4401 preserves
+target-derived standalone compatibility fallbacks`, `#4397 parse/URI string
+globals`), as codex-5385 recorded on 2026-09-07.
+
+**Next slice (Phase 2, concrete):** re-key the 10 boundary arms above, then
+turn `JS2WASM_NATIVE_REGIME_JS` on by default for `semanticProviders:
+"native-first"`, then re-run the census on the full nightly lane.
 
 ### Program acceptance
 

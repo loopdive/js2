@@ -1943,6 +1943,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
     // actual validation error.
     await instantiateTest262Module(result.binary, imports, {
       target,
+      semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
     });
   } catch (err) {
@@ -2350,6 +2351,7 @@ process.on("message", async (msg) => {
       // instantiate — classification is unchanged.
       instance = await instantiateTest262Module(result.binary, importObj, {
         target,
+        semanticProviders,
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
         // (#5353) Empty on every non-Temporal row, so the shared finaliser
         // takes its existing path byte-for-byte. `linkedRuntime` pins the

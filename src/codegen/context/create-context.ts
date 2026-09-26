@@ -416,9 +416,10 @@ export function createCodegenContext(
     linkNodeShims: targetProfile.target === "wasi" && linkedNamespaces.has("node:fs"),
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
-    standalone: targetProfile.target === "standalone",
+    standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     directEvalMode: options?.directEval ?? "legacy",
+    runtimeEvalProviderAbsent: targetProfile.target === "standalone" && options?.runtimeEvalProvider === false,
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.
     honestAnyBoxing: options?.honestAnyBoxing ?? false,

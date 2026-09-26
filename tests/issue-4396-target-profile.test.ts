@@ -17,6 +17,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "host-assisted",
       hostValueInterop: "required",
       strictEnvImportGate: false,
+      nativeRegime: false,
       nativeStringsRequiredByPolicy: false,
     },
   ],
@@ -31,6 +32,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "required",
       strictEnvImportGate: true,
+      nativeRegime: false,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -45,6 +47,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "off",
       strictEnvImportGate: false,
+      nativeRegime: true,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -59,6 +62,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "off",
       strictEnvImportGate: true,
+      nativeRegime: false,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -73,6 +77,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "host-assisted",
       hostValueInterop: "off",
       strictEnvImportGate: false,
+      nativeRegime: false,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -87,6 +92,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "required",
       strictEnvImportGate: false,
+      nativeRegime: false,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -101,6 +107,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "backend-defined",
       hostValueInterop: "off",
       strictEnvImportGate: false,
+      nativeRegime: false,
       nativeStringsRequiredByPolicy: false,
     },
   ],
@@ -165,6 +172,27 @@ describe("#4396 target policy normalization", () => {
 
     const permissiveWasi = resolveCompileTargetProfile({ target: "wasi", strictNoHostImports: false });
     expect(projectIrBackendTargetProfile(permissiveWasi).allowHostImports).toBe(false);
+
+    // (#5385) native-first in a JS environment lowers with the standalone
+    // semantic regime: the IR sees the same provider facts as a standalone
+    // build, while the profile itself keeps its JS environment and value bridge.
+    const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
+    process.env.JS2WASM_NATIVE_REGIME_JS = "1";
+    try {
+      const nativeFirstJs = resolveCompileTargetProfile({ semanticProviders: "native-first" });
+      expect(nativeFirstJs.environment).toBe("javascript");
+      expect(nativeFirstJs.hostValueInterop).toBe("required");
+      expect(nativeFirstJs.nativeRegime).toBe(true);
+      expect(projectIrBackendTargetProfile(nativeFirstJs)).toEqual({
+        backend: "wasmgc",
+        target: "standalone",
+        allowHostImports: false,
+        fast: undefined,
+      });
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
+      else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
+    }
   });
 
   it("preserves legacy default projections byte-for-byte", async () => {
