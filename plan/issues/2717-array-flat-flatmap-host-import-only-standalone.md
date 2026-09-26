@@ -5,8 +5,8 @@ status: done
 sprint: 75
 assignee: ttraenkler/dev-serve
 created: 2026-06-26
-updated: 2026-07-22
-completed: 2026-07-22
+updated: 2026-09-25
+completed: 2026-09-25
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -17,6 +17,20 @@ goal: standalone-everything
 parent: 2711
 loc-budget-allow:
   - src/codegen/array-methods.ts
+  # 2026-09-25 (#2717 native recursive flatten): +8 — the `flat`/`flatMap`
+  # first-class member-body dispatch arm + their variadic-ABI entry.
+  - src/codegen/array-object-proto.ts
+  # 2026-09-25 (#2717): +3 — `$AnyValue` element materialization hook.
+  - src/codegen/type-coercion.ts
+func-budget-allow:
+  # 2026-09-25 (#2717): +2 — boxed primitives bound for an `$AnyValue` vec slot
+  # are classified via `anyvalue-elem-materialize.ts` instead of a trapping cast.
+  - src/codegen/type-coercion.ts::buildVecFromExternref
+coercion-sites-allow:
+  # 2026-09-25 (#2717): one `__unbox_number` for flat's ToNumber(depth) — the
+  # same helper the #6447 concat producer uses; an object depth skipping
+  # ToPrimitive is a recorded under-approximation.
+  - src/codegen/array-flat-native.ts
 ---
 # #2717 — Array.prototype.flat / flatMap have no standalone arm
 
@@ -144,3 +158,68 @@ vec-type bug is tracked as **#3532**.
   closure (removes the a-priori guard once fixed).
 - Variable-depth recursive `flat(depth)` / `flatMap` with dynamic
   scalar-or-array (heterogeneous) returns — needs a runtime-IsArray flatten.
+
+## Implementation Plan (executed 2026-09-25)
+
+Close the remaining standalone gap — hono's first `standalone-dynamic` blocker
+(`[path].flat()` over an `any` element) — with one Wasm-native recursive
+FlattenIntoArray instead of more static-shape arms.
+
+1. New module `src/codegen/array-flat-native.ts`:
+   - `__arr_flatten_into(target, source, depth: f64)` — ECMA-262 §23.1.3.13.1,
+     reading through `__extern_length` / `__extern_has_idx` / `__extern_get_idx`
+     / `__extern_is_array` (serves typed `__vec_<k>`, `$ObjVec` and array-like
+     `$Object`s), pushing into a `$ObjVec` with `__objvec_push`; holes skipped;
+     `+Infinity - 1` stays infinite.
+   - `__arrprod_flat(recv, args)` / `__arrprod_flatMap(recv, args)` — §23.1.3.13
+     / .14 entry points (RequireObjectCoercible, ToIntegerOrInfinity(depth),
+     IsCallable, `__apply_closure(cb, thisArg, [el, i, O])`).
+   - Three call surfaces: `compileArrayFlatNativeCall` (typed call sites),
+     `emitArrayFlatProtoMemberBody` (first-class `Array.prototype.flat.call`),
+     and the dyn-array-producer dispatcher arm (`any` receivers, via
+     `DYN_ARRAY_PRODUCER_METHODS`).
+2. `array-methods.ts`: `compileArrayFlat` falls back to the generic helper after
+   the #3363 depth-1 arm; `tryCompileFlatMapNative` routes a statically dynamic
+   callback return (`union`/`any`/`unknown`, `flatMapReturnIsDynamic` in
+   `array-flatmap.ts`) to `__arrprod_flatMap`, and flattens a map result with
+   `externref` elements per element. The custom-species (`externref` map result)
+   path stays fail-loud.
+3. `anyvalue-elem-materialize.ts` + `buildVecFromExternref`: materializing a
+   dynamic `$ObjVec` into a `(string | number)[]` (`$AnyValue`) vec used to
+   `ref.cast` boxed primitives and trap ("illegal cast"); non-`$AnyValue`
+   elements now go through the module's `__any_from_extern` classifier.
+4. JS-host lanes byte-identical (every new arm is gated on `ctx.standalone`).
+
+## Resolution 2026-09-25 — native recursive flat/flatMap (sendev-standalone)
+
+**Mechanism.** One recursive Wasm-native `__arr_flatten_into` over the dynamic
+array-like substrate, with `__arrprod_flat` / `__arrprod_flatMap` entry points
+wired into typed call sites, the `any`-receiver dispatcher and the first-class
+`Array.prototype.flat/flatMap` values. Zero host imports.
+
+**Evidence.**
+- Regression test `tests/issue-2717-native-flatten.test.ts`: 14/14 pass;
+  13/13 of the then-present cases FAIL on the parent (compile error or wrong
+  value — e.g. `id([1,[2,3],[4]]).flat().length` was a silent `0`).
+- Scoped standalone test262 `built-ins/Array/prototype/{flat,flatMap}` (43
+  rows, `--isolate`): parent **14 pass / 10 fail / 19 CE** → fix **28 pass /
+  14 fail / 1 CE**; +14, zero losses.
+- Wider standalone slice (`Array/prototype/{concat,map,slice,filter}`,
+  `Array/{from,of}`, 661 rows): 530 pass both sides, identical non-pass set.
+- JS-host byte-identical on 7 flat/flatMap/concat samples; hono JS-host
+  dogfood 271/324 (unchanged).
+- hono `standalone-dynamic` lane: before `compile-error` —
+  "Codegen error: Array.prototype.flat() is not yet supported in --target
+  standalone/wasi (#2717) …"; after `host-import-error` — "standalone binary
+  retained 8 host import(s)" (`env.addEventListener`, `env.Headers_new`,
+  `env.URL_new`, `env.URL_set_pathname`, `env.URL_get_pathname`,
+  `env.Request_new`, `env.Response_new`, `env.Request_get_method`).
+
+**Recorded under-approximations.** ArraySpeciesCreate is a plain `$ObjVec`
+(same as the #6447 `concat` producer); ToNumber(depth) does not run
+ToPrimitive on an object; the 2^53-1 TypeError is unreachable. A custom-species
+receiver with an array-returning flatMap callback stays fail-loud.
+
+**Tests updated.** `tests/issue-3363.test.ts` and `tests/issue-2717.test.ts`
+asserted `flat(depth)` / a dynamic scalar-or-array flatMap callback refuse
+loudly; both now assert the correct runtime value.

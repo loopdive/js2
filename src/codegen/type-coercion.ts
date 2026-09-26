@@ -15,6 +15,7 @@ import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } 
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
 import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1 / #6631)
+import { anyValueElemFromExternInstrs } from "./anyvalue-elem-materialize.js"; // (#2717)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
@@ -1146,8 +1147,10 @@ export function buildVecFromExternref(
         instrs.push({ op: "struct.new", typeIdx: elemTypeIdx });
         return instrs;
       }
-      // Default: try anyref cast (works for WasmGC structs passed through externref)
-      return [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: elemTypeIdx }];
+      // Default: try anyref cast (works for WasmGC structs passed through externref);
+      // (#2717) a boxed primitive bound for an `$AnyValue` slot is classified instead.
+      const anyValueElem = anyValueElemFromExternInstrs(ctx, fctx, elemTypeIdx);
+      return anyValueElem ?? [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: elemTypeIdx }];
     }
     return [];
   };
