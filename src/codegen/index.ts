@@ -7120,7 +7120,8 @@ export function generateModule(
 function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
   const severity: "error" | "warning" | null = ctx.strictNoHostImports
     ? "error"
-    : ctx.standalone && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+    : // (#6686) audits the standalone deliverable, not the regime in a JS env
+      ctx.targetProfile.target === "standalone" && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
       ? "warning"
       : null;
   if (severity === null) return;

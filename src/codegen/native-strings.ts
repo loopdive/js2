@@ -26,6 +26,7 @@ import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-cor
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
@@ -1895,7 +1896,8 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
  * string values while object and array results remain live views.
  */
 export function ensureNativeStringBoundaryBridge(ctx: CodegenContext): void {
-  if (!hostStringBridgeUsable(ctx) || ctx.targetProfile.hostValueInterop === "off") return;
+  // (#6686) boundary question, not provider: the regime in a JS env marshals too
+  if (!jsValueBoundary(ctx) || ctx.strictNoHostImports) return;
   ensureNativeStringExternBridge(ctx);
   if (!ctx.funcMap.has("__str_is_native")) {
     const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);

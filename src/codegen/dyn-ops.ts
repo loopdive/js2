@@ -5,6 +5,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import {
   ensureNativeStringHelpers,
@@ -293,6 +294,27 @@ function ensureDynamicCallBoundaryExtern(ctx: CodegenContext): number {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          // (#6686) With a JS value boundary a JS-owned object reaches tag 6
+          // as a non-eq host ref parked in the externval slot (refval null);
+          // hand that externref back instead of a null receiver.
+          ...(jsValueBoundary(ctx)
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 3 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 4 },
+                    { op: "return" },
+                  ],
+                },
+              ] satisfies Instr[])
+            : []),
           { op: "local.get", index: 0 },
           { op: "ref.as_non_null" },
           { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 3 },

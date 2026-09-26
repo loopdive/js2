@@ -11,6 +11,7 @@ import { ts } from "../ts-api.js";
 import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
 import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
@@ -770,8 +771,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // results (for example a reducer state read back from a combined object).
   // Host-free targets have no facade and must not acquire a host import.
   const needsHostFacadeUnwrap =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does
     entries.some((entry) => {
       const funcTypeDef = mod.types[entry.funcTypeIdx];
       return (
@@ -1513,8 +1513,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   // TypeScript's `isNodeArray` predicate can observe them. Keep this in exact
   // parity with emitClosureCallExportN's argument bridge above.
   const needsHostFacadeUnwrap =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does
     entries.some((entry) => {
       const funcTypeDef = mod.types[entry.funcTypeIdx];
       return (
