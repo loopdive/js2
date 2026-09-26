@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1394,
-    "fail": 612,
+    "pass": 1395,
+    "fail": 611,
     "ce": 11,
     "skip": 18,
     "total": 2035,
@@ -1723,12 +1723,12 @@
       },
       {
         "name": "export-star-as-namespace-from-module",
-        "pass": 10,
-        "fail": 9,
+        "pass": 11,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 53
+        "pct": 58
       },
       {
         "name": "arbitrary-module-namespace-names",
