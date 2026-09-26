@@ -5412,14 +5412,18 @@ function emitCollectionAdderGuard(
   } else {
     thenArm.push({ op: "local.get", index: adderLocal });
   }
+  // (#6682/#2182) Real body rides savedBodies; both detached arms stay live until attached.
   const throwArm: Instr[] = [];
   const savedBody = fctx.body;
+  fctx.savedBodies.push(savedBody);
+  for (const arm of [thenArm, throwArm]) ctx.liveBodies.add(arm);
   fctx.body = throwArm;
-  ctx.liveBodies.add(throwArm);
   try {
     emitThrowTypeError(ctx, fctx, `${adderName} is not a function`);
   } finally {
+    fctx.savedBodies.pop();
     fctx.body = savedBody;
+    for (const arm of [thenArm, throwArm]) ctx.liveBodies.delete(arm);
   }
   thenArm.push({ op: "ref.is_null" }, { op: "if", blockType: { kind: "empty" }, then: throwArm });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm });
