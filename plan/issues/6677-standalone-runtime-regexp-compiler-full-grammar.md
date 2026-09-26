@@ -122,7 +122,7 @@ bytecode `__regex_run` already interprets — no VM change.
    only when a source file spells `\p{`/`\P{`. Any GC value (leaf or group,
    short/long names, `gc=`/`General_Category=`) plus `Any`/`ASCII`/`Assigned`.
 7. `compiler.ts` — the driver `__regex_compile_dynamic_full(pattern, flags)`:
-   `try` / catch-all around parse+emit; SyntaxError for definite errors, `null`
+   `try_table` / `catch_all` around parse+emit; SyntaxError for definite errors, `null`
    (→ the existing #4439 poison) for what it cannot model; otherwise a normal
    `$NativeRegExp`. Wired into `__regex_compile_dynamic_simple`'s
    out-of-subset branch, standalone only; the simple compiler additionally
@@ -156,9 +156,15 @@ bytecode `__regex_run` already interprets — no VM change.
   still refused (non-ASCII `i` folding): `tests/issue-4065.test.ts` (the eight
   "LOUD refusals" now compile and agree with Node, plus one refusal row),
   `tests/issue-4439.test.ts`, `tests/issue-4516-regexp.test.ts`,
-  `tests/issue-4654.test.ts` (construction-time contract kept). The 2 failing
-  #4654 residual rows, and the failures in issue-1474 / 2161-b1 / 2161-tostring
-  / 2161-undefined-sentinel / 3791, fail identically on the parent.
+  `tests/issue-4654.test.ts` (construction-time contract kept). Touching
+  #4654's file ran its two stale `it.fails` residuals (`.global` / `.exec`
+  through a dynamic receiver), which already PASS on main (parent measured the
+  same) — flipped to `it`. The failures in issue-1474 / 2161-b1 /
+  2161-tostring / 2161-undefined-sentinel / 3791 fail identically on the parent.
+- The driver catches its internal bail with a standard `try_table`
+  (`catch_all`), not legacy `try`: the rest of the module uses exnref EH, and
+  Node 25 (CI) aborts compiling a module that mixes the two
+  (`Check failed: !job->compile_imports_.empty()`); Node 22 accepted it.
 - marked standalone-dynamic lane: parent
   `TypeError: Unsupported dynamic regular expression pattern` (checksum) → now
   past it; binary 877,563 → 921,521 bytes (compiler helpers + category table).

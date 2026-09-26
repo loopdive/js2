@@ -452,9 +452,9 @@ describe("#4654 residuals — RegExp reflection through a dynamic receiver", () 
     ).toBe(2);
   });
 
-  it.fails("`.global` through a dynamic receiver answers true", async () => {
-    // Measured: `undefined` (the getter member is not reachable from the
-    // companion), so this reads -1.
+  // Was `it.fails` (measured `undefined`); answers correctly on main as of
+  // 2026-09-26 — surfaced when #6677 touched this file.
+  it("`.global` through a dynamic receiver answers true", async () => {
     expect(
       await runExport(
         `${DYN_RE_PRELUDE}
@@ -464,10 +464,9 @@ describe("#4654 residuals — RegExp reflection through a dynamic receiver", () 
     ).toBe(1);
   });
 
-  it.fails("`.exec` through a dynamic receiver returns a match array", async () => {
-    // Measured: `null` — `emitRegExpProtoMemberBody` emits a spec-shaped
-    // placeholder for `exec`/`toString`/`compile` "until their engine body
-    // lands" (regexp-standalone.ts). OWNER: the same #2175 S1 follow-up.
+  // Was `it.fails` (measured `null`); the #6672 exec carrier answers it —
+  // surfaced when #6677 touched this file.
+  it("`.exec` through a dynamic receiver returns a match array", async () => {
     expect(
       await runExport(
         `${DYN_RE_PRELUDE}
