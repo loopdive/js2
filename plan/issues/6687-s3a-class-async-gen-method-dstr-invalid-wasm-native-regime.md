@@ -17,6 +17,10 @@ sprint: current
 parent: 5385
 depends_on: [6685]
 related: [2039, 2043, 2868, 6686]
+# 2026-09-26 (#6687): +4 lines in registerNative — native `__box_number` is minted as a
+# stable (#1916 S3) handle; the stable mint/push must live where the helper is registered.
+loc-budget-allow:
+  - src/codegen/registry/imports.ts
 ---
 
 # #6687 — S3-a: `C_method` invalid Wasm under the native regime (JS env)
