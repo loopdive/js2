@@ -183,6 +183,25 @@ loc-budget-allow:
   # message. Measured: +11 rows on each lane across
   # `language/module-code/namespace/internals/**`, 0 regressions across
   # `language/module-code/**` (597 rows, both lanes).
+  # 2026-09-26 — cluster B1 slice N4 (`export class C {}` inside a module whose
+  # namespace is taken). `src/codegen/module-namespace-value.ts` +229/−7 on top
+  # of N3. Three parts, none of which can leave the emitter: the `class` export
+  # kind and its by-IDENTITY resolution through `ctx.classDeclarationMap` (the
+  # codegen key is not always the source name); `ensureClassObjectGetters`,
+  # which must run in the same pre-reservation slot as N3's nested-namespace
+  # getters because `emitLazyClassObjectGet` interns string constants and
+  # flushes late imports MID-BUILD, which the single-batch index discipline
+  # forbids; and the split of the (then 301-LOC) `ensureNamespaceObjectGetter`
+  # into `reserveNamespaceObjectHelpers` + `buildNamespaceObjectGetterBody`,
+  # taken instead of a `func-budget-allow` grant. That split is most of the
+  # line count — the reservation phase's resolved indices now travel as a named
+  # record rather than as locals in one scope. Comment-dominated otherwise: the
+  # two new doc blocks record the measured before-state (one `export class`
+  # line declined the WHOLE namespace) and the index-discipline reason the
+  # getter is minted rather than inlined. Measured: +1 row in the
+  # CI-equivalent lane (`get-nested-namespace-props-nrml.js` fail → pass), 0
+  # regressions across `language/module-code/**` (599 rows, both lanes,
+  # per-ROW set diff).
   - src/codegen/module-namespace-value.ts
   # 2026-09-24 — lane W1 (`with` / Object Environment Record, §9.1.1.2).
   # `src/runtime.ts` +24, and ~19 of those are comment. Three edits, all inside
@@ -10736,3 +10755,171 @@ two cohesive helpers (`rebaseNamespaceGlobalReads`,
 - `own-property-keys-sort.js` (the secondary investigation) — not started. The
   primary consumed the window.
 - `props-nrml`'s `export class` arm — sited precisely above, not attempted.
+
+## Lane N4 receipt — `export class` in a namespaced module; and why the
+## `own-property-keys-binding-types` 7-vs-10 gap was never a compiler defect
+## (2026-09-26)
+
+Base: `origin/issue-6651-n3-nested-namespace` (PR #6119, **not** merged to
+`main` at branch time — `git log origin/main` did not contain N3's commit
+`9380458`, and `main`'s `module-namespace-value.ts` had no `namespace` export
+kind). Branch `issue-6651-n4-namespace-class-exports`.
+
+### Row 1 — `get-nested-namespace-props-nrml.js`: FIXED
+
+N3's siting was exact and is what this slice implemented. `export class
+starAsClassDecl {}` has no module-global cell, so it matched no arm of
+`moduleSymbolNamespaceExports` and fell through to the terminal
+"mutable values require live-binding getters" decline — which rejects the
+WHOLE namespace object, so `ns.exportns` read back undefined.
+
+The class's constructor object lives behind the `__class_<Name>` singleton and
+is materialized by `emitLazyClassObjectGet`. That helper interns string-constant
+globals (each an IMPORTED global, which shifts the global index space) and runs
+its own `flushLateImportShifts`, so it cannot be called while the namespace body
+is being laid out. `ensureClassObjectGetters` therefore mints one zero-argument
+getter per exported class in the SAME pre-reservation slot N3 uses for nested
+namespaces, and the slot is filled by CALLING it — the name, not the index, is
+the handle, because `flushLateImportShifts` keeps `ctx.funcMap` in lockstep.
+
+The class key is resolved by IDENTITY through `ctx.classDeclarationMap`, not by
+reading `node.name.text`: the codegen key is not always the source name (class
+expressions are dual-registered, a multi-module graph may disambiguate), and a
+key that merely looks right would publish a DIFFERENT class's constructor.
+
+`ensureNamespaceObjectGetter` hit 301 LOC with the new arm. Split into
+`reserveNamespaceObjectHelpers` (reserve one batch, flush once, read back final
+indices) + `buildNamespaceObjectGetterBody`, rather than taking a
+`func-budget-allow` grant.
+
+### Row 2 — `own-property-keys-binding-types.js`: NEGATIVE RESULT, no compiler
+### change. The 7-vs-10 gap is an artifact of the measurement lane.
+
+The three missing names are **`g_star`, `h_starRenamed`, `i_starIndirect`** —
+exactly and only the exports of
+`own-property-keys-binding-types_FIXTURE.js`, reached through
+`export * from './own-property-keys-binding-types_FIXTURE.js'`.
+
+They are missing because the FIXTURE is **not in the compilation**.
+`runTest262File` (and therefore `scripts/run-test262-paths.mts`) compiles this
+row's entry ALONE — its `selfModuleImport` branch calls
+`compileMulti({ [entryFile]: source }, …)` with no fixture files — so the star
+re-export has no module to resolve against and the checker never sees those
+three names. Measured directly, same checker, same options, differing only in
+whether the fixture file is in the map:
+
+| graph | `checker.getExportsOfModule(entry)` |
+| --- | --- |
+| entry only (`run-test262-paths` lane) | 7 — `a_local1, b_renamed, c_localUninit1, d_renamedUninit, default, e_indirect, f_indirectUninit` |
+| entry + FIXTURE (CI lane) | 10 — the above plus `g_star, h_starRenamed, i_starIndirect` |
+
+The 7 are byte-identical to the 7 recorded in the dispatch brief, so that
+instrumentation was taken in the un-linked lane. The export walk itself is
+correct; nothing is mis-lowered and nothing is dropped.
+
+**The row already passes in the authoritative lane.** On this branch's base,
+the CI-faithful sweep scores it `pass`; so does the published baseline
+(`test262-current.jsonl`, entry stamped `oracle_lane: linked-harness`,
+`"status": "pass"`). Both earlier attributions for this row — a
+`namespaceFunctionExports` alias-resolution defect, and a test-runner blocker —
+are superseded: there is no defect to fix.
+
+Corollary for anyone measuring this tree: a row whose assertions depend on a
+separate `_FIXTURE.js` is **not measurable** with `run-test262-paths`, and its
+verdict there is not evidence about the compiler.
+
+### Sweeps that RAN TO COMPLETION
+
+**1. CI-faithful lane** (`tests/test262-shared.ts::runTest262Chunk` — the
+original-harness + fixture-linked path the sharded CI run uses), filtered to
+`language/module-code/namespace/`, 38 rows, base vs after, HOST target:
+
+| | base | after |
+| --- | --- | --- |
+| pass | 25 | **26** |
+| fail | 13 | 12 |
+
+Per-ROW set diff: exactly **one** flip, `get-nested-namespace-props-nrml.js`
+fail → pass. 0 regressions. 0 `error` rows. (Re-run after the function split,
+with both bundles rebuilt from the final source; same result.)
+
+**2. Control neighbourhood** `language/module-code/**` — 599 rows (fixtures
+excluded), `scripts/run-test262-paths.mts --isolate`,
+`JS2WASM_ROW_TIMEOUT_MS=420000`, per-ROW set diff, base vs after, both lanes.
+Base = this branch with `src/codegen/module-namespace-value.ts` reverted to its
+committed content (file-copy A/B, no `git stash`).
+
+| lane | base | after | flips |
+| --- | --- | --- | --- |
+| host (gc) | pass 381 · fail 185 · compile_error 27 · skip 4 · **error 2** | pass 381 · fail 185 · compile_error 27 · skip 4 · **error 2** | **0** |
+| standalone | pass 357 · fail 178 · compile_error 60 · skip 4 · **error 0** | pass 357 · fail 178 · compile_error 60 · skip 4 · **error 0** | **0** |
+
+**`error` rows are NOT MEASURED, not verdicts.** Host: 2 in base and 2 in after,
+the same two rows both times —
+`top-level-await/dynamic-import-of-waiting-module.js` (child process died) and
+`top-level-await/while-dynamic-evaluation.js` (`spawnSync … ETIMEDOUT`).
+Standalone: 0 in base, 0 in after. No fix is visible in this lane, by
+construction — both target rows import fixtures.
+
+### Sweeps that did NOT yield (stated, not hidden)
+
+- **CI-faithful lane, STANDALONE target: 0 of 38 rows measured.** Every row
+  fails before reaching the compiler — with `JS2WASM_EVAL_ENGINE=quickjs`,
+  34/38 report "the quickjs provider is not built"; with
+  `=interpreter`, all 38 report `WebAssembly.instantiate(): Import #0
+  module="js2wasm:runtime-eval": module is not an object or func`. This
+  container has no built runtime-eval provider. The standalone evidence for
+  this slice is therefore the regression test's standalone lane plus the
+  599-row standalone control sweep above, **not** a CI-lane row diff.
+- **First control sweep attempt discarded.** It was launched before the
+  function split and observed a transient broken edit (esbuild
+  `Expected identifier`); killed and re-run from scratch. Numbers above are
+  from the clean re-run.
+- **A first CI-faithful attempt over all of `language/module-code/`** (599
+  rows) OOM'd in the vitest fork at ~510 MB inside the `top-level-await`
+  bucket. Scoped to `namespace/` and raised `VITEST_FORK_MAX_OLD_SPACE_SIZE`.
+
+### Regression test
+
+`tests/issue-6651-n4-namespace-class-export.test.ts` — 3 shapes × 2 lanes
+(host, standalone).
+
+Proven red on the reverted base, per test:
+
+| case | host base | standalone base | after (both) |
+| --- | --- | --- | --- |
+| exported class is a namespace property | PASS | PASS | PASS |
+| namespace slot and direct import are one class object | **FAIL** | **FAIL** | PASS |
+| re-exported namespace containing a class | **FAIL** | **FAIL** | PASS |
+
+Base: **4 failed / 2 passed (6)**. After: **6 passed (6)**.
+
+The first case passes on the base too — stated rather than dressed up as a
+regression test. A single-module `import * as ns` whose module declares a class
+already produced an object with the right keys on the declining path; what the
+base cannot do is give that slot the SAME class object as a direct import
+(case 2) or materialize the namespace at all once it is re-exported (case 3).
+
+### Gates (all run bare, chained, exit code read directly — never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 ·
+`check-host-import-policy` 0 (`runtimeTsLines` 20214 — unchanged;
+`src/runtime.ts` not touched) ·
+`check-compiler-boundaries --mode inventory --base HEAD^1` 0
+(`inventoryValid: true`; no new file under `src/`, so no
+`scripts/compiler-boundaries.json` entry) · `npm run -s typecheck` 0.
+
+`check-func-budget` failed on the first cut at
+`ensureNamespaceObjectGetter: 301 (> 300, +1)`. Resolved by the split described
+above, not by an allowance. No `scripts/*-baseline.json` was edited.
+
+### Not done
+
+- `get-nested-namespace-dflt-skip.js` and the remaining 12 `namespace/**`
+  failures are untouched — they are TDZ / `[[DefineOwnProperty]]` / `__proto__`
+  behaviours, unrelated to this arm.
+- The `own-property-keys-binding-types` row needed no change; the residual
+  there is in the MEASUREMENT tooling (`run-test262-paths` does not link
+  fixtures), not in the compiler. Worth a follow-up only if someone wants that
+  lane to be usable on fixture rows.
