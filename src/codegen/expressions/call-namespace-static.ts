@@ -77,9 +77,11 @@ import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "
 import { tryEmitLinkedStaticCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import {
   emitStandalonePromiseCombinator,
+  emitStandalonePromiseCombinatorRuntime,
+} from "../promise-combinator-observable-protocol.js";
+import {
   emitStandalonePromiseCustomCapabilityCheck,
   emitStandalonePromiseCustomSettle,
-  emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
@@ -2917,11 +2919,9 @@ export function compileNamespaceStaticCall(
         // emitStandalonePromiseCombinator) compile: a late import landing
         // mid-compile walks fctx.body + fctx.savedBodies to shift baked
         // `call`/`ref.func` indices — a bare local swap orphans them.
-        // NOTE the buffers are popped only AFTER emitStandalonePromiseCombinator
-        // returns; its ensure* registration (the only possible import trigger
-        // inside it) runs BEFORE it copies the buffers into fctx.body, so no
-        // instruction is ever reachable via two walked arrays at shift time
-        // (the shared-Instr double-remap hazard).
+        // Pop buffers after the emitter returns: helper registration precedes
+        // copying buffers into fctx.body, so late-import shifting never walks
+        // the same instructions through both arrays.
         const savedBody = fctx.body;
         fctx.savedBodies.push(savedBody);
         let pushedBufs = 0;

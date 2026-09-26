@@ -7889,6 +7889,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promise-combinator-observable-protocol.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
+    },
+    {
       "path": "src/codegen/promise-custom-combinator.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -44,7 +44,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import type { Instr, ValType } from "../ir/types.js";
+import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
@@ -63,11 +63,8 @@ import { stringConstantExternrefInstrs, ensureNativeStringHelpers } from "./nati
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import {
-  buildCustomCapabilityExecutorInstrs,
-  customCapabilityTypeError,
   ensureCombinatorFunctions,
   ensureCombinatorToVec,
-  ensureCustomCapabilityRuntime,
   resolveExternrefVecArg,
   type NativeCombinator,
 } from "./promise-combinators.js";
@@ -77,6 +74,191 @@ import { buildTargetTaggedTry } from "../ir/try-table.js";
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 const F64: ValType = { kind: "f64" };
+
+// D1 needs these private capability operations independently of the frozen
+// adapter's original declarations. Both live consumers share the same cache
+// and resource names, so whichever registers first supplies the other.
+interface CustomCapabilityRuntime {
+  stateTypeIdx: number;
+  executorTypeIdx: number;
+  executorFuncIdx: number;
+  /** (#5197 R3-9) The builtin-fn metadata supertype the executor subtypes. */
+  capMetaTypeIdx: number;
+  /** Index of the `$capability` capture, AFTER the metadata carrier's fields. */
+  capabilityFieldIdx: number;
+}
+
+/**
+ * (#5197 R3-9) The ONE place that knows the capability executor's operand
+ * order. §27.2.1.5.1 GetCapabilitiesExecutor Functions are anonymous built-in
+ * function objects with `length` 2, so the struct subtypes the repository's
+ * builtin-fn metadata carrier exactly as `$__promise_settle_cap` does, and the
+ * capture is appended AFTER the carrier's fields — never at a hard-coded index.
+ */
+function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {
+  return [
+    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
+    { op: "i32.const", value: 2 }, // (#3673) $arity — the executor takes (resolve, reject)
+    closureBagInitInstr(), // (#4241) $bag
+    { op: "i32.const", value: 0 }, // `bfnstate` delete-bits
+    { op: "i32.const", value: runtime.capMetaTypeIdx }, // `bfnid` metadata anchor
+    { op: "local.get", index: stateLocal },
+    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
+  ];
+}
+
+type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };
+
+function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
+  // NewPromiseCapability's executor protocol throws a TypeError before the
+  // combinator touches an empty iterable when either captured slot is not
+  // callable.  Reuse the in-module standalone Error constructor and native
+  // exception tag so this arm never introduces an env import.
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  if (ctorIdx === undefined) return [{ op: "unreachable" }];
+  return [{ op: "ref.null.extern" }, { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx: ensureExnTag(ctx) }];
+}
+
+/** Register the two-argument capability executor and its mutable slots once. */
+function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
+  const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;
+  if (cached) return cached;
+
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF, EXTERNREF], []);
+  if (!wrapper) return null;
+
+  // The capability record stores the two values supplied by C's constructor.
+  // `undefined` is represented by a null externref on this native path. The
+  // selected Test262 cohort intentionally uses undefined for the first call;
+  // a later slice can add a presence bit for explicit null.
+  const stateTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_custom_capability",
+    fields: [
+      { name: "$resolve", type: EXTERNREF, mutable: true },
+      { name: "$reject", type: EXTERNREF, mutable: true },
+    ],
+  });
+  ctx.structMap.set("$__promise_custom_capability", stateTypeIdx);
+  ctx.typeIdxToStructName.set(stateTypeIdx, "$__promise_custom_capability");
+  ctx.structFields.set("$__promise_custom_capability", [
+    { name: "$resolve", type: EXTERNREF, mutable: true },
+    { name: "$reject", type: EXTERNREF, mutable: true },
+  ]);
+
+  // (#5197 R3-9) §27.2.1.5.1 — a GetCapabilitiesExecutor function is an
+  // anonymous BUILT-IN function object (`name` "", `length` 2, own `length`
+  // before own `name`, `%Function.prototype%` as [[Prototype]], extensible, no
+  // own `prototype`). Slice B moved the settle closures onto the repository's
+  // builtin-fn metadata carrier for exactly that reason; this struct now
+  // subtypes the SAME carrier rather than the bare `(externref, externref)->()`
+  // wrapper, so there is one function-object representation, not two. The
+  // inherited closure header still makes it callable by the ordinary
+  // `executor(...)` lowering in a compiled C body.
+  const capMetaTypeIdx = ensureBuiltinFnMetaType(
+    ctx,
+    wrapper.structTypeIdx,
+    wrapper.closureInfo,
+    "promise:capexec",
+    "",
+    2,
+  );
+  const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
+  const capabilityFieldIdx = capMetaFields.length;
+  const executorFields = [
+    // The metadata supertype's fields MUST be redeclared verbatim (closure
+    // header + `bfnstate` + `bfnid`); the capture is appended after them.
+    ...capMetaFields.map((f) => ({ ...f })),
+    { name: "$capability", type: { kind: "ref" as const, typeIdx: stateTypeIdx }, mutable: false },
+  ];
+  const executorTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_custom_capability_executor",
+    fields: executorFields,
+    superTypeIdx: capMetaTypeIdx,
+  });
+  ctx.structMap.set("$__promise_custom_capability_executor", executorTypeIdx);
+  ctx.typeIdxToStructName.set(executorTypeIdx, "$__promise_custom_capability_executor");
+  ctx.structFields.set(
+    "$__promise_custom_capability_executor",
+    executorFields.map((f) => ({ ...f })),
+  );
+
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const typeErrorIdx = ctx.funcMap.get("__new_TypeError");
+  const exnTag = ensureExnTag(ctx);
+  const executorFuncIdx = mintDefinedFunc(ctx);
+  const stateLocal = 3;
+  // "this slot already holds a stored value" — i.e. it is neither null nor
+  // undefined. Leaves the incoming externref consumed and an i32 on the stack.
+  const nullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  const slotIsStoredTail: Instr[] =
+    nullishIdx === undefined
+      ? [{ op: "ref.is_null" }, { op: "i32.eqz" }]
+      : [{ op: "call", funcIdx: nullishIdx }, { op: "i32.eqz" }];
+  const body: Instr[] = [
+    // state = self.$capability
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: executorTypeIdx },
+    { op: "struct.get", typeIdx: executorTypeIdx, fieldIdx: capabilityFieldIdx },
+    { op: "local.set", index: stateLocal },
+    // A second call is only an error once a non-undefined slot was stored.
+    // (#5197 R3-1) `undefined` is NOT `ref.null.extern` under the #2864
+    // singleton regime: `executor(undefined, undefined)` and the zero-argument
+    // `executor()` (padded by `__apply_closure`) store the canonical
+    // `$AnyValue` undefined singleton, a NON-null externref. Guarding with a
+    // bare `ref.is_null` therefore treated that spec-legal state as "already
+    // stored" and made the following `executor(f, g)` throw. Consult the
+    // object runtime's own nullish predicate when it is registered; when it is
+    // not (legacy regime, where undefined IS the null bit pattern) keep the
+    // original `ref.is_null` body byte-for-byte.
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    ...slotIsStoredTail,
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
+    ...slotIsStoredTail,
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then:
+        typeErrorIdx === undefined
+          ? [{ op: "unreachable" }]
+          : [{ op: "ref.null.extern" }, { op: "call", funcIdx: typeErrorIdx }, { op: "throw", tagIdx: exnTag }],
+    },
+    // Capture resolve and reject even when either is undefined. This mirrors
+    // GetCapabilitiesExecutor's sentinel semantics for the selected cohort.
+    { op: "local.get", index: stateLocal },
+    { op: "local.get", index: 1 },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "local.get", index: stateLocal },
+    { op: "local.get", index: 2 },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 1 },
+  ];
+  const funcTypeIdx = wrapper.liftedFuncTypeIdx;
+  pushDefinedFunc(ctx, executorFuncIdx, {
+    name: "__promise_custom_capability_executor",
+    typeIdx: funcTypeIdx,
+    locals: [{ name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx } }],
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set("__promise_custom_capability_executor", executorFuncIdx);
+
+  const result: CustomCapabilityRuntime = {
+    stateTypeIdx,
+    executorTypeIdx,
+    executorFuncIdx,
+    capMetaTypeIdx,
+    capabilityFieldIdx,
+  };
+  (ctx as CtxWithCustomCapability).__promiseCustomCapability = result;
+  return result;
+}
 
 /**
  * How the combinator's iterable argument reached us: either already a

@@ -77,17 +77,16 @@ import { ensureNativeIteratorRuntime } from "./iterator-native.js";
 import { compileExpression } from "./shared.js";
 import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
 import {
-  combinatorReactionFns,
+  observableCombinatorReactionFns,
   emitObservableCombinatorElement,
   emitObservableCombinatorPreparation,
-  ensureCombinatorFunctions,
   ensureObservableCombinatorRuntime,
   type CombinatorRuntime,
   type ObservableCombinatorPreparation,
   type ObservableCombinatorRuntime,
-  type NativeCombinator,
   type ObservableElementCarrier,
-} from "./promise-combinators.js";
+} from "./promise-combinator-observable-protocol.js";
+import { ensureCombinatorFunctions, type NativeCombinator } from "./promise-combinators.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -308,7 +307,7 @@ export function emitStandalonePromiseCombinatorDrive(
   if (observableProtocol && !observable) return undefined;
   const drive = method === "all" ? ensureDriveAllRuntime(ctx, ids, observable) : undefined;
   if (method === "all" && !drive) return undefined;
-  const reaction = combinatorReactionFns(ctx, ids, method);
+  const reaction = observableCombinatorReactionFns(ids, method);
   const tagIdx = ensureExnTag(ctx);
   if (
     ctx.funcMap.get("__iterator") === undefined ||
