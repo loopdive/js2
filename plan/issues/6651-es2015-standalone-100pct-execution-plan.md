@@ -12721,6 +12721,14 @@ entries,Symbol.iterator}**`, `built-ins/ArrayIteratorPrototype/**`,
 | standalone | 780 pass / 89 fail / 6 CE | 795 pass / 74 fail / 6 CE | **15** | **0** |
 | host (`gc`) | 705 pass / 168 fail / 2 CE | identical | 0 | 0 |
 
+A SECOND, independent control — the whole `built-ins/TypedArray` +
+`built-ins/TypedArrayConstructors` tree, **2,184 rows**, base and new, standalone
+(the ladder this slice widens only ever fires for a `$__ta_dyn_view` receiver, so
+this is its full reach): base 1,594 pass / 590 fail → new 1,609 pass / 575 fail,
+**the same +15 rows, and again 0 lost**. Both sides built from their own three
+artifacts; the base rebuild reproduced the original QuickJS adapter cache key
+(`a921c64add3f2e7e`), which is independent confirmation the revert was exact.
+
 Host is byte-identical because the helper is `noJsHost`-gated. Editions of the
 15, via `scripts/generate-editions.ts::classifyEdition` on each file's own
 frontmatter — **not** inherited from any baseline:
