@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10931,
-    "fail": 681,
-    "ce": 92,
+    "pass": 10933,
+    "fail": 682,
+    "ce": 89,
     "skip": 0,
     "total": 11704,
     "pct": 93,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 312,
-        "fail": 116,
+        "pass": 313,
+        "fail": 115,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 72
+        "pct": 73
       },
       {
         "name": "Reflect.construct",
@@ -156,12 +156,12 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 150,
-        "fail": 31,
-        "ce": 4,
+        "pass": 151,
+        "fail": 33,
+        "ce": 1,
         "skip": 0,
         "total": 185,
-        "pct": 81
+        "pct": 82
       },
       {
         "name": "destructuring-assignment",
@@ -1316,12 +1316,12 @@
   },
   {
     "edition": "ES2019",
-    "pass": 83,
-    "fail": 37,
-    "ce": 16,
+    "pass": 94,
+    "fail": 41,
+    "ce": 1,
     "skip": 0,
     "total": 136,
-    "pct": 61,
+    "pct": 69,
     "features": [
       {
         "name": "string-trimming",
@@ -1370,21 +1370,21 @@
       },
       {
         "name": "Array.prototype.flatMap",
-        "pass": 8,
-        "fail": 5,
-        "ce": 8,
+        "pass": 12,
+        "fail": 9,
+        "ce": 0,
         "skip": 0,
         "total": 21,
-        "pct": 38
+        "pct": 57
       },
       {
         "name": "Array.prototype.flat",
-        "pass": 3,
+        "pass": 10,
         "fail": 5,
-        "ce": 7,
+        "ce": 0,
         "skip": 0,
         "total": 15,
-        "pct": 20
+        "pct": 67
       },
       {
         "name": "Symbol.iterator",
@@ -1398,8 +1398,8 @@
       {
         "name": "Symbol",
         "pass": 3,
-        "fail": 2,
-        "ce": 4,
+        "fail": 6,
+        "ce": 0,
         "skip": 0,
         "total": 9,
         "pct": 33
@@ -1425,8 +1425,8 @@
       {
         "name": "Symbol.species",
         "pass": 0,
-        "fail": 1,
-        "ce": 4,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 5,
         "pct": 0
@@ -1469,12 +1469,12 @@
       },
       {
         "name": "Int32Array",
-        "pass": 0,
-        "fail": 0,
-        "ce": 2,
+        "pass": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
-        "pct": 0
+        "pct": 50
       },
       {
         "name": "Array.prototype.includes",
@@ -1507,17 +1507,17 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1026,
-    "fail": 498,
+    "pass": 1028,
+    "fail": 496,
     "ce": 493,
     "skip": 18,
     "total": 2035,
-    "pct": 50,
+    "pct": 51,
     "features": [
       {
         "name": "BigInt",
-        "pass": 617,
-        "fail": 353,
+        "pass": 618,
+        "fail": 352,
         "ce": 78,
         "skip": 0,
         "total": 1048,
@@ -1723,12 +1723,12 @@
       },
       {
         "name": "export-star-as-namespace-from-module",
-        "pass": 9,
-        "fail": 4,
+        "pass": 10,
+        "fail": 3,
         "ce": 6,
         "skip": 0,
         "total": 19,
-        "pct": 47
+        "pct": 53
       },
       {
         "name": "arbitrary-module-namespace-names",
@@ -3571,17 +3571,17 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4601,
-    "fail": 207,
+    "pass": 4602,
+    "fail": 206,
     "ce": 113,
     "skip": 0,
     "total": 4921,
-    "pct": 93,
+    "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4494,
-        "fail": 107,
+        "pass": 4495,
+        "fail": 106,
         "ce": 10,
         "skip": 0,
         "total": 4611,
@@ -3733,12 +3733,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 2,
-        "fail": 2,
+        "pass": 3,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 50
+        "pct": 75
       },
       {
         "name": "Map",
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4488,
-    "fail": 881,
+    "pass": 4494,
+    "fail": 875,
     "ce": 76,
     "skip": 0,
     "total": 5445,
-    "pct": 82
+    "pct": 83
   }
 ]
