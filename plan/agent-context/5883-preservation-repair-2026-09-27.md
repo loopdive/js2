@@ -1,5 +1,20 @@
 # PR5883 preservation repair — September 27
 
+## Current checkpoint and next bounded work
+
+Source-preservation repair is published as `61d206221baa9e007d1da44233bce925952ebb03`.
+Its CI run `36276574230` completed successfully, but the semantic HOLD remains:
+the separate observable vector path retains saved-length iteration and raw
+backing reads. CI success is not acceptance of mutation/hole behavior.
+
+The twelve exact historical inputs recovered below unblock a paired rerun.
+First rerun them unchanged on exact61d; then repair only the demonstrated
+observable-vector defects. Live-length checks alone are insufficient: semantic
+element reads, growable aggregate state, stable callback indices and both
+synchronous/deferred completion must agree. Main's `promise-combinator-drive.ts`
+is an implementation precedent, not evidence that this separate route is fixed.
+Preserve original source receipts, all controls and the hold until measured.
+
 ## Parent pre-publication checks
 
 After the agent returned code ownership and the test slot, the parent ran the
@@ -168,3 +183,34 @@ No timeout, fixture, ledger, allowance or retirement condition was changed.
 The repair keeps the original adapter byte-identical to 3316 while moving live
 observable consumers outside its frozen source boundary. It does not certify
 full IR equivalence, retire either implementation, or remove the PR hold.
+
+## Historical observable-vector review records recovered September 27
+
+`5883-observable-vector-review-20260915.jsonl` preserves the exact twelve
+JSONL records from the September 15 review: twelve unique complete sources,
+eight divergences and four matching controls. These are **HISTORICAL results,
+not new candidate evidence**. No compiler or tests were run for this recovery.
+
+Provenance: line 1644, `payload.item.stdout`, of
+`/Users/thomas/.codex/sessions/2026/09/15/rollout-2026-09-15T00-37-07-01a0a211-24dc-79f1-ba52-d7d13454152c.jsonl`.
+That captured command output contains the original
+`/private/tmp/js2-5883-hole-length-review-20260915.log`; the temporary log itself
+is now missing. Recovery selects only lines beginning `{"method"`, retaining
+their order, exact source strings, reference/actual results and evidence flags.
+No sources or expectations were reconstructed or normalized.
+
+The twelve-record file (including final newline) has SHA-256
+`d9d792883c09853383845195ca9868ed97e506c6526b2434384c49a7f2d5f806`.
+Each record reports successful compilation, zero imports and observable-body
+presence. Six variants run under each of `all` and `race`: `none`, `grow-holes`,
+`shrink-regrow-same`, `shrink-regrow-next`, `literal-hole`, `undefined-nan`.
+Only `none` and `undefined-nan` match in both methods. The earlier shrink/push
+probe batch is separate and is not included in these twelve records.
+
+The September 15 HOLD comment attributes this historical review to clean
+`df94fdac`, with relevant files verified byte-identical to published `647343cc`:
+https://github.com/loopdive/js2/pull/5883#issuecomment-5673008243.
+These records preserve the original acceptance inputs for a later paired run;
+they neither establish results on `61d206221b` nor authorize HOLD removal.
+Parent owns publication and the reserved serialized test slot. No source edits,
+test execution, commit or push were performed for this recovery.
