@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 9025,
-    "fail": 4,
+    "pass": 9024,
+    "fail": 5,
     "ce": 0,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10949,
-    "fail": 666,
+    "pass": 10954,
+    "fail": 661,
     "ce": 89,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2360,
-        "fail": 86,
+        "pass": 2361,
+        "fail": 85,
         "ce": 40,
         "skip": 0,
         "total": 2486,
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 431,
-        "fail": 7,
+        "pass": 432,
+        "fail": 6,
         "ce": 2,
         "skip": 0,
         "total": 440,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 313,
-        "fail": 115,
+        "pass": 318,
+        "fail": 110,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 73
+        "pct": 74
       },
       {
         "name": "Reflect.construct",
@@ -808,8 +808,8 @@
   },
   {
     "edition": "ES2017",
-    "pass": 379,
-    "fail": 70,
+    "pass": 381,
+    "fail": 68,
     "ce": 241,
     "skip": 0,
     "total": 690,
@@ -817,12 +817,12 @@
     "features": [
       {
         "name": "async-functions",
-        "pass": 314,
-        "fail": 32,
+        "pass": 316,
+        "fail": 30,
         "ce": 2,
         "skip": 0,
         "total": 348,
-        "pct": 90
+        "pct": 91
       },
       {
         "name": "SharedArrayBuffer",
@@ -961,12 +961,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 2,
-        "fail": 4,
+        "pass": 4,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 6,
-        "pct": 33
+        "pct": 67
       },
       {
         "name": "Symbol.toStringTag",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3864,
-    "fail": 510,
+    "pass": 3865,
+    "fail": 509,
     "ce": 449,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2948,
-        "fail": 418,
+        "pass": 2949,
+        "fail": 417,
         "ce": 444,
         "skip": 0,
         "total": 3810,
@@ -1233,12 +1233,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 4,
-        "fail": 4,
+        "pass": 5,
+        "fail": 3,
         "ce": 1,
         "skip": 0,
         "total": 9,
-        "pct": 44
+        "pct": 56
       },
       {
         "name": "Symbol.replace",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4596,
-    "fail": 191,
-    "ce": 134,
+    "pass": 4594,
+    "fail": 192,
+    "ce": 135,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
-        "fail": 106,
-        "ce": 8,
+        "pass": 4495,
+        "fail": 107,
+        "ce": 9,
         "skip": 0,
         "total": 4611,
-        "pct": 98
+        "pct": 97
       },
       {
         "name": "Symbol",
@@ -3733,12 +3733,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 3,
-        "fail": 1,
+        "pass": 2,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 75
+        "pct": 50
       },
       {
         "name": "Map",
