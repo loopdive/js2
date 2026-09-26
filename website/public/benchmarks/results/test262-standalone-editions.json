@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10978,
-    "fail": 637,
+    "pass": 10986,
+    "fail": 629,
     "ce": 89,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2363,
-        "fail": 83,
+        "pass": 2364,
+        "fail": 82,
         "ce": 40,
         "skip": 0,
         "total": 2486,
@@ -210,12 +210,12 @@
       },
       {
         "name": "Symbol.match",
-        "pass": 71,
-        "fail": 5,
+        "pass": 72,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 93
+        "pct": 95
       },
       {
         "name": "Symbol.replace",
@@ -237,12 +237,12 @@
       },
       {
         "name": "Symbol.split",
-        "pass": 53,
-        "fail": 4,
+        "pass": 54,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 57,
-        "pct": 93
+        "pct": 95
       },
       {
         "name": "iterator-chunking",
@@ -309,12 +309,12 @@
       },
       {
         "name": "Symbol.search",
-        "pass": 31,
-        "fail": 3,
+        "pass": 32,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 34,
-        "pct": 91
+        "pct": 94
       },
       {
         "name": "Set",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4592,
+    "pass": 4594,
     "fail": 192,
-    "ce": 137,
+    "ce": 135,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4493,
+        "pass": 4495,
         "fail": 107,
-        "ce": 11,
+        "ce": 9,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4492,
+    "pass": 4493,
     "fail": 877,
-    "ce": 76,
+    "ce": 75,
     "skip": 0,
     "total": 5445,
-    "pct": 82
+    "pct": 83
   }
 ]
