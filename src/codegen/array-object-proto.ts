@@ -76,6 +76,7 @@ import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; //
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
 import { emitArrayFlatProtoMemberBody } from "./array-flat-native.js"; // (#2717)
+import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.js"; // (#6651 RS1)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
@@ -965,6 +966,10 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       return { kind: "externref" };
     }
   }
+  // (#6651 RS1) `values`/`keys`/`entries` over an arbitrary array-LIKE; declines
+  // (undefined) outside standalone or on a missing dep, keeping the refusal below.
+  const rs1IterBody = emitArrayProtoIteratorMemberBody(ctx, fctx, member);
+  if (rs1IterBody !== undefined) return rs1IterBody;
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
     // then, a reflective call degrades to a catchable TypeError, not a compile error.

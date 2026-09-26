@@ -13605,3 +13605,278 @@ change was +56.
   standalone lowering gap is worth 0 until the shared front-end semantics move.
 - **No sweep outside the 123-row bucket and its 1,842-row control.** Nothing
   here may be read as corpus-wide evidence.
+
+
+## Lane RS1 receipt — cross-bucket residuals, batched (2026-09-26)
+
+Branch `issue-6651-rs1-cross-bucket-residuals`, base `807812e182`. One PR, three
+independent fixes, one wide control run. **+12 rows on `--target standalone`, 0
+lost. 9 of the 12 are ES2015-tagged; the other 3 are the ES2020 BigInt twins.**
+Four more targets were re-probed and **dropped with a diagnosis** rather than
+patched, and two of them are dropped *because the recorded root cause did not
+survive re-probing*.
+
+Of the six recorded causes this lane built on, **three did not survive**: one was
+mislocated, one was wrong about what the failing row even did, and one was wrong
+about the rows' ES edition. They are called out per row below, because each one
+would have sent the next lane at the wrong file.
+
+### Fix 1 — §7.1.1.1 step 5: a shadowed-to-nullish `toString` is not an ABSENT one
+
+**+3 rows, all ES2015.**
+`built-ins/TypedArray/prototype/toLocaleString/{calls-valueof-from-each-value,
+return-abrupt-from-firstelement-valueof, return-abrupt-from-nextelement-valueof}.js`
+
+*Recorded cause:* "`__extern_toString` skips OrdinaryToPrimitive step 5 on
+`{toString: undefined, valueOf(){…}}`". **Survives in substance, but it is
+mislocated** — following it to `__extern_toString` finds the distinction already
+drawn. The `$Object` arm of `__to_primitive` guards `tryOrdinaryMethod` with
+`__extern_has`, so it gets this right. The defect is on the *closed-STRUCT* path:
+`__class_to_primitive`'s runtime method walk, built by
+`buildOrdinaryToPrimitiveProbe` (`src/codegen/ordinary-to-primitive-probe.ts`),
+whose `stopWhenFirstAbsent` regime stops the whole walk the moment a member
+resolves nullish.
+
+*Actual cause, one line:* `stopWhenFirstAbsent` conflates "the receiver does not
+have `toString`" — where the inherited `Object.prototype.toString` answers a
+primitive and `valueOf` is legitimately unreachable — with "the receiver OWNS
+`toString` and its value is `undefined`", where §7.1.1.1 step 5's IsCallable
+check skips it and `valueOf` IS reached.
+
+*Fix:* an `else` arm on the method-resolved-non-null branch of `probe(i)` that,
+when the walk is nested and the receiver has the key as an OWN property,
+continues to `i + 1` instead of stopping. +22 lines, all inside the probe builder.
+
+*Host:* these three fail on host too, for a **different** reason — host never
+calls the patched `Number.prototype.toLocaleString` at all and answers `"42,0"`.
+So the fix is real and standalone-only; the host rows stay failing and are not
+this lane's.
+
+*Blast radius:* all three `stopWhenFirstAbsent` callers
+(`class-to-primitive.ts:435`, `callable-any-to-string.ts:208` and `:284`) are
+`ctx.standalone`-gated, so host is untouched **by construction** — and measured
+so, see the host-identity control below. The arm the change must not widen
+(`built-ins/String/S9.8_A5_T1` check #13: an object with no own `toString` still
+renders `"[object Object]"`, never its `valueOf`) is a negative control in the
+test file.
+
+### Fix 2 — `subarray` on the dyn-view receiver shapes the call-site two-arm declines
+
+**+6 rows (3 ES2015, 3 the ES2020 BigInt twins).**
+`built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/{integer-indexes,
+integer-indexes-and-string-keys, integer-indexes-and-string-and-symbol-keys-}.js`
+and their `BigInt/` twins.
+
+*Recorded cause:* group C of the RF1 receipt — "`Reflect.ownKeys` on a TypedArray,
+3 rows, **two** separate fixes: a Reflect target-guard gap plus missing
+integer-index enumeration". **Disproved, and it is not Reflect work at all.**
+`Reflect.ownKeys` already enumerates a dyn view's integer indices and its string
+expandos in creation order; probed directly it answers correctly. The rows' error
+`Reflect.ownKeys called on non-object` is truthful about its receiver: the
+receiver *was* `null`, returned by the `new TA(4).subarray(2)` two lines earlier.
+**One fix, in `subarray`, not two in Reflect.**
+
+*Actual cause, one line:* the call-site dyn-view species two-arm
+(`array-methods.ts::shouldWrapDynViewSpeciesTwoArm`) requires an **identifier**
+receiver — three of its four members rebind that identifier and recompile the
+call AST — so a NewExpression receiver (`new TA(4).subarray(2)`,
+`(new TA(4)).subarray(1,3)`) falls through to the generic externref path, which
+had no `subarray`, and answered `null`.
+
+*Fix:* `ensureTaDynSubarrayHelper` in `src/codegen/ta-dyn-proto-methods.ts`
+(+188) serving those shapes from the `__extern_method_call` ladder, plus
+`"subarray"` on `TA_DYN_METHOD_CALL_NAMES` and one `export` on
+`pushTaDynRelativeIndex` (`dataview-native.ts`) so the §23.2.3.30 relative-index
+resolve (NaN→0, negative→len+i, clamp to [0,len]) is reused rather than respelled.
+
+*Two deliberate residuals, recorded at the helper:* it does **not** run
+SpeciesConstructor and does **not** emit the §7.1.4 Symbol-index throw. Both stay
+with the identifier-receiver two-arm, which is unchanged; the ladder serves only
+the shapes that previously answered `null`.
+
+*Host:* all 6 already pass on host. The gain is standalone-only.
+
+### Fix 3 — `Array.prototype.{values,keys,entries}` as a first-class value
+
+**+3 rows, all ES2015.**
+`built-ins/Array/prototype/{values,keys,entries}/returns-iterator-from-object.js`
+
+*Recorded classification:* the IT3 receipt's table lists these three as
+`Unclassified (untagged)`, i.e. **worth nothing toward ES2015**. **Disproved.**
+All three carry `features: [Symbol.iterator]`, and `classifyEdition` reads the
+`features:` line, so all three classify **ES2015**. This is the whole reason they
+were worth taking in this lane rather than left to the standalone-headline queue.
+
+*Actual cause, one line:* `emitArrayProtoMemberBody` has a real reflective body
+for the mutators, the higher-order members and `slice`, and degrades everything
+else — including the three iterator factories — to a catchable
+`Array.prototype.<m> is not yet callable as a value in --target standalone`,
+which is the verbatim error on the rows.
+
+*Fix:* new leaf module `src/codegen/array-proto-iterator-value.ts` builds the
+`ITER_KIND_VEC` / `ITER_FAMILY_ARRAY` record directly over the array-like
+substrate (`__extern_length` / `__extern_get_idx`). The family stamp is what makes
+the row pass: `__iter_rec_proto` keys `%ArrayIteratorPrototype%` off `family`, so
+identity against `[][Symbol.iterator]()` holds by construction rather than by a
+second spelling of the prototype. The god-file keeps 5 lines — the import and the
+call that names it.
+
+*Documented residual:* the vec is a **snapshot**, so a receiver mutated
+mid-iteration is not observed — the same residual IT3 recorded for the dyn-view
+factories, and unavoidable for an ordinary array-like, which cannot take the
+`$Vec` adoption arm. Nothing regresses: these members previously threw for every
+receiver.
+
+*Second residual, PINNED and pre-existing:* reading `.length` on the yielded
+`entries` pair is **order-dependent** in standalone — read after other property
+traffic it answers 2, read as the first access it does not, so
+`pair.length === 2 && pair[0] === 0 && …` is false while every conjunct alone is
+true. Measured control: the **pre-existing** `$Vec` path (a real array's
+`[...].entries()`, which does not touch this module) does not merely mis-answer
+the same read, it **traps**. So this is a standalone weak spot in the #2358
+value-representation area that the new factory *inherits* from the shared
+`ensureObjVecBuilders` pair carrier, not one it introduces. None of the three rows
+reads `pair.length`. Pinned in the test file at its current wrong answer.
+
+*Host:* these fail on host too (host has two distinct `[object Array Iterator]`
+objects). Standalone-only gain.
+
+### Dropped, with diagnoses
+
+**Species-constructor `this` — 7 standalone rows (4 ES2015). Built, measured,
+REVERTED.** `TypedArray/prototype/{filter,map,slice,subarray}/speciesctor-get-
+species-custom-ctor-invocation.js` + BigInt twins. The recorded cause is
+confirmed but it is **two** causes, not one:
+
+1. An anonymous function EXPRESSION has no runtime edge to a `prototype` object
+   (`__closure_proto_of` covers only top-level `function F(){}` and classes), so
+   §10.2.5's own `prototype` is missing. A vivify arm into the #3468 closure bag
+   (`__closure_bag_ensure` → `__new_plain_object` → `__defineProperty_value(…,
+   0xb9)`, gated on `ctx.constructibleClosureTypeIdxs`) was written and **measured
+   to fix** `Get(S,"prototype")`, `hasOwnProperty`, `getOwnPropertyDescriptor`
+   *and* the constructed instance's `[[Prototype]]`.
+2. `instanceof` **still** answers `false` with all four of those right, because
+   the closure arrives through a dyn-view expando round-trip and
+   `__typeof_function` no longer classifies it as callable. That is #2358
+   value-representation, out of this lane.
+
+So the vivify moves **0 rows** on its own while editing `__closure_prop_get`, a
+hot shared path — reverted rather than landed. The code is preserved in the lane's
+scratch; the measurement above is the reason to pick it up *with* the
+`__typeof_function` half, not before it. Pinned in the test file at today's wrong
+answer (`typeof S === "function"` yes, `ctorThis instanceof S` no).
+
+**`internals/Set` receiver rows — 3 rows. Not started.** The plan's re-root-cause
+(#2358 materialization identity loss / a non-`$Object` prototype link) stands on
+re-reading; it is a value-representation decision, not a leaf fix, and taking it
+here would have been the architectural choice the brief says not to make.
+
+**`Symbol/constructor.js` — 1 row. Diagnosed, not fixed, and it is NOT Symbol
+work.** `Object.getPrototypeOf(Object(x))` answers `Object.prototype` for **every**
+primitive wrapper: `Object(1)`, `Object("s")` and `Object(true)` all do it, not
+just `Object(sym)`. Confirms SY1's routing to the #2175 proto-index store and
+rules out a Symbol-specific fix. Pinned in the test file as a negative control, so
+whoever lands the proto-index store gets a failing assertion naming all three
+wrappers.
+
+**`Object/entries/symbols-omitted.js` — 1 row. Not started, time-box spent
+elsewhere.** SY1's siting (mis-boxing downstream of `__object_entries` in
+`object-runtime-enumeration.ts`) is untested by this lane.
+
+### The wide control run — per-ROW diff, both sides measured here
+
+One run over the **union** of every path these changes can reach — the
+`getPrototypeOf` / ToPrimitive / ToString / property-enumeration neighbourhood
+plus `for-of`, addition and template literals: **2,088 rows**
+(`TypedArray/prototype/{subarray,slice,toLocaleString,toString,join,values,keys,
+entries}`, `TypedArrayConstructors/internals`, `Array/prototype/{values,keys,
+entries,join,toString,toLocaleString}`, `ArrayIteratorPrototype`,
+`Object/{entries,keys,values}`, `Object/prototype/toString`,
+`String/prototype/{concat,indexOf,split,replace,slice}`, `Number/prototype`,
+`language/statements/for-of`, `language/expressions/{addition,template-literal}`).
+
+Both sides run through `tests/test262-shared.ts::runTest262Chunk` under
+`TEST262_PATH_FILTER_FILE`, `TEST262_TARGET=standalone`, pool 2, at this commit —
+**not** joined from any committed baseline. All three artifacts rebuilt on each
+side. The revert was exact at artifact level: the base side reproduced adapter key
+**`b11ae67b59e4dcf1`** (bundle `028969b32b131a40`) and the new side
+**`5060da9e072d29b0`** (bundle `38f673661f20a453`), and `git status` showed zero
+modified files under `src/` on the base side.
+
+| | rows | pass | fail | compile_error | compile_timeout |
+|---|---|---|---|---|---|
+| base (`rs1-ctl-base-sa`) | 2,088 | 1,783 | 289 | 14 | 2 |
+| new (`rs1-ctl-new-sa`) | 2,088 | 1,796 | 277 | 15 | 0 |
+
+Shard-completion manifest on **both** sides: `registeredTests 2088 / recordedRows
+2088 / canonicalVerdicts 2088 / callbacksStarted 2088 / callbacksSettled 2088`,
+`allCallbacksSettled: true`.
+
+**GAINED: 13 rows. LOST: 0. Only 12 of the 13 are claimed** — the 13th,
+`TypedArray/prototype/slice/results-with-empty-length.js`, moved
+`compile_timeout → pass`, and a re-run of it **on the base sources**, single-fork,
+answers **pass**. Its base `compile_timeout (10s)` was load flake on a 4-core box
+with a second lane running, not a state this change fixed. Counting it would have
+been a free +1 the measurement does not support.
+
+The one non-pass→non-pass move, `TypedArray/prototype/subarray/
+coerced-begin-end-shrink.js` (`compile_timeout → compile_error`), is **also**
+infra and **also** pre-existing: single-fork on the **base** sources with a 120 s
+compile budget it reports the identical `worker terminated unexpectedly after
+retry (exit null (SIGABRT))`. It is a `subarray` row, so it was worth ruling out
+specifically rather than filing under flake; it is not caused by the new helper.
+
+**Host lane: measured byte-identical, not asserted.** All four edits are
+`ctx.standalone` / `noJsHost(ctx)`-gated by reading; the claim is measured by
+compiling a 10-program corpus that exercises every touched path in the DEFAULT
+(host) target on both sides and hashing each module. Host aggregate
+**`31350bf1a83267303aa3f769d203aeb5` on both sides**, all ten hashes equal. The
+same corpus in `--target standalone` differs on 5 of 10 programs
+(`ad802f17…` → `4026f8fa…`), so the probe is demonstrably sensitive to these
+changes and the host equality is a real result rather than an insensitive test.
+A full host test262 sweep was therefore not spent; the 12 gained rows' host
+verdicts were measured separately and are stated per fix above.
+
+### Regression test
+
+`tests/issue-6651-rs1-cross-bucket-residuals.test.ts`, 12 cases, each compiled
+`target: "standalone"` and instantiated with **no** import object (asserting
+`result.imports` is empty). Measured on file copies of the pre-change sources with
+all three artifacts rebuilt on that side: **7 fail / 5 pass on base, 12 pass with
+the fixes.** The 5 base-green cases are exactly the ones that should be: the
+`S9.8_A5_T1`-#13 negative control, the identifier-receiver `subarray` control
+(including `a.subarray(-1)`), the §23.1.3 nullish-receiver TypeError (base's
+refusal also throws, so it discriminates nothing — it is there for the spec, not
+the diff), and the two pinned residuals, which this PR deliberately does not move.
+
+### Gates — each run bare, exit code read directly, never piped
+
+`check-loc-budget` **0** · `check-func-budget` **0** · `check-coercion-sites` **0**
+· `check:oracle-ratchet` **0** · `check:dead-exports` **0** ·
+`check-host-import-policy` **0** · `check-compiler-boundaries --mode inventory
+--base HEAD^1` **0** · `typecheck` **0**.
+
+`src/codegen/array-proto-iterator-value.ts` is registered in
+`scripts/compiler-boundaries.json` (inserted in place as text, nothing
+re-serialised). No `scripts/*-baseline.json` touched. `src/runtime.ts` untouched,
+so neither the runtime line ratchet nor the host-import ratchet is approached.
+
+**God-file growth: `src/codegen/array-object-proto.ts` +5**, covered by this
+file's existing `loc-budget-allow` entry for that path — restated here because a
+grant is only honoured when the PR modifies the file carrying it, and this receipt
+is that modification. The first cut was +9; compressing it to 5 (the import, two
+comment lines and the two-line call) was verified **output-neutral** by the
+identity probe above — both host and standalone aggregates unchanged — so the
+control run's verdicts stand for the committed code.
+
+**One base-drift finding for the dispatcher, not caused by this branch.** Re-run
+with `LOC_GATE_BASE=$(git rev-parse origin/main)` (`f08b0752`), both budget gates
+exit **1** on five files this branch never touches:
+`closure-exports.ts` +1, `registry/imports.ts::addUnionImportsAsNativeFuncs` +8,
+`expressions/calls.ts::tryEmitInlineDynamicCall` +2,
+`closure-exports.ts::emitClosureCallExportN` +1 and `::emitClosureMethodCallExportN`
++1. Cause: `main` has advanced past this branch's base `807812e182` and *shrank*
+`closure-exports.ts` from 2509 to 2508 while `scripts/loc-budget-baseline.json`
+still records 2509 — so the diff-against-`origin/main` reads this branch's
+inherited copy as growth. Both gates exit **0** against this branch's own base.
+The dispatcher's catch-up merge of `origin/main` resolves it; nothing to fix here.
