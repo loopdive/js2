@@ -1,10 +1,11 @@
 ---
 id: 6681
 title: "standalone: lodash-es module-init calls Date.now() (via _shortOut) and throws — no standalone clock"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-09-26
 updated: 2026-09-26
+completed: 2026-09-26
 priority: high
 horizon: m
 feasibility: medium
@@ -14,7 +15,7 @@ area: compiler
 language_feature: Date
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [2164, 6675, 6676]
+related: [2164, 6675, 6676, 6678, 6684]
 ---
 
 # standalone: lodash-es module-init calls `Date.now()` and throws
@@ -66,3 +67,33 @@ No new host imports in standalone (host-import policy, #6659/#6664 precedent).
 - lodash-es `standaloneDynamic` lane gets past module-init with 0 imports, or
   the issue is closed wont-fix with the decision recorded.
 - Standalone Date test262 buckets do not regress.
+
+## Implementation Plan (executed)
+
+Decision: none of the three options needed a new policy. The DIRECT call
+`Date.now()` already has a decided standalone lowering (#2164 slice 1 — the
+certified clock@1 embedder capability when the module demanded one, else the
+Unix epoch `0`; `new Date()` and `performance.now()` follow the same rule).
+Only the VALUE read `Date.now` threw: the builtin static-method value closure
+fell to the generic "not yet implemented" refusal body. So:
+
+- `ensureStandaloneBuiltinStaticMethodClosure` (builtin-value-read.ts) gets a
+  `Date.now` case: signature `() -> f64` (the checker's `() => number`, the ABI
+  a typed call through the binding uses), body = `emitStandaloneDateNowValue`,
+  the direct call's own emitter. Value and call cannot disagree, and no import
+  is added.
+
+lodash's `_shortOut` with a clock that never advances treats every call as
+hot and, after 800 consecutive calls, returns its first argument without
+calling through — `setToString`/`setData` then skip decoration. That is the
+same observable behaviour it has under a coarse real clock.
+
+## Resolution
+
+- lodash-es `standalone-dynamic`: `TypeError: Date.now is not yet implemented
+  in --target standalone` → module-init now reaches `TypeError: Unsupported
+  dynamic regular expression pattern` (0 imports) — filed as #6684.
+- `tests/issue-6678-6681-standalone-date.test.ts` (#6681 block): parent throws
+  at module-init, fix 0/6 rows fail.
+- Scoped standalone test262 `built-ins/Date` (includes `Date/now`): parent
+  538/594, fix 538/594, identical non-pass set.
