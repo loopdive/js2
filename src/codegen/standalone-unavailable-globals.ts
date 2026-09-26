@@ -33,6 +33,28 @@ const STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS: ReadonlySet<string> = new Set(
 ]);
 
 /**
+ * (#6691) WHATWG Fetch / URL platform classes. None is an ECMAScript global
+ * (host-less engines — d8, QuickJS — lack them too) and a standalone module
+ * has no network stack to hand a `Request` to. hono's `mount`,
+ * `Context#newResponse` and `HonoRequest` merely CONTAIN them; the sample
+ * route registration never evaluates one. Gated on the host-free ENVIRONMENT
+ * as well, so the opt-in JS-environment native regime keeps its host's
+ * constructors.
+ */
+const STANDALONE_UNAVAILABLE_FETCH_GLOBALS: ReadonlySet<string> = new Set([
+  "Request",
+  "Response",
+  "Headers",
+  "URL",
+  "URLSearchParams",
+]);
+
+function isUnavailableName(ctx: CodegenContext, name: string): boolean {
+  if (STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS.has(name)) return true;
+  return ctx.targetProfile.environment === "none" && STANDALONE_UNAVAILABLE_FETCH_GLOBALS.has(name);
+}
+
+/**
  * lib.dom interfaces that must never be registered as extern classes in a
  * standalone module: every member of an extern class lowers to an `env::`
  * import. `Performance` is here although the `performance` global is not
@@ -46,7 +68,7 @@ const STANDALONE_UNPROVIDED_EXTERN_CLASSES: ReadonlySet<string> = new Set([
 
 /** Skip registering `className` as an `env::`-backed extern class. */
 export function isStandaloneUnprovidedExternClass(ctx: CodegenContext, className: string): boolean {
-  return ctx.standalone && STANDALONE_UNPROVIDED_EXTERN_CLASSES.has(className);
+  return ctx.standalone && (STANDALONE_UNPROVIDED_EXTERN_CLASSES.has(className) || isUnavailableName(ctx, className));
 }
 
 /**
@@ -55,11 +77,7 @@ export function isStandaloneUnprovidedExternClass(ctx: CodegenContext, className
  * Name-level only: the caller proves the reference is the ambient binding.
  */
 export function isStandaloneUnavailableConstructorGlobal(ctx: CodegenContext, name: string): boolean {
-  return (
-    ctx.standalone &&
-    ctx.standaloneGlobalThisImport === undefined &&
-    STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS.has(name)
-  );
+  return ctx.standalone && ctx.standaloneGlobalThisImport === undefined && isUnavailableName(ctx, name);
 }
 
 /**

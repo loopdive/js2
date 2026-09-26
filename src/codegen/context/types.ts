@@ -4899,3 +4899,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
 }
 
 export type { SourcePos };
+
+/**
+ * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
+ * question only (`targetProfile.environment !== "javascript"`); which
+ * ECMAScript implementation lowers the module is `ctx.standalone`. Console
+ * sinks and other environment-shaped arms key on this, never on the regime.
+ */
+export function hostFreeEnvironment(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.environment !== "javascript";
+}

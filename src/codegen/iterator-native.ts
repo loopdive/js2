@@ -98,8 +98,8 @@ import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 import { ABRUPT_FIELD, MODE_FIELD } from "./frame-core.js";
 import { walkChildren } from "./walk-instructions.js";
 
-/** Slice-1 IterRec kind tag for a canonical externref `$Vec`. */
-const ITER_KIND_VEC = 3;
+/** Slice-1 IterRec kind tag for a canonical externref `$Vec`. (#6651 IT3 exports it: `ta-dyn-proto-methods.ts` `struct.new`s a record, and a bare `3` there would desync on a renumber.) */
+export const ITER_KIND_VEC = 3;
 
 /**
  * (#2038) IterRec kind tag for a USER iterator: a general `{next()}`-protocol
