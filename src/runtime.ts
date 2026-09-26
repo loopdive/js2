@@ -127,7 +127,7 @@ import {
   sameAssociationToken,
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
-import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
+import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -11504,7 +11504,7 @@ function resolveImport(
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
-  if (capability) return capability;
+  if (capability) return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS);
   const compatibilitySemantic = resolveCompatibilitySemanticImport(intent, {
     strictEqual: _hostStrictEqual,
     isWasmStruct: _isWasmStruct,

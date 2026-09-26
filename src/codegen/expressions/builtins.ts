@@ -13,7 +13,11 @@ import { buildSpreadArgList } from "../spread-arg-list.js"; // (#5361)
 import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { addFuncType, ensureWasiWriteAnyStringHelper } from "../index.js";
-import { emitStandaloneStdoutAppendValue, ensureNativeStringExternBridge } from "../native-strings.js";
+import {
+  emitStandaloneStdoutAppendValue,
+  ensureNativeStringBoundaryBridge,
+  ensureNativeStringExternBridge,
+} from "../native-strings.js";
 import {
   planProgramAbiEntrySourceSupportCallable,
   PROGRAM_ABI_CALLABLE_ROLE,
@@ -144,6 +148,12 @@ function compileConsoleCall(
         if (k === "f64" || k === "i32" || k === "i64") {
           coerceType(ctx, fctx, res as ValType, { kind: "externref" });
         }
+      }
+      // (#6685) Native regime: a dynamic arg may be a Wasm-owned string; export
+      // the bridge so the console capability hands the host a JS string.
+      if (ctx.standalone) {
+        ensureNativeStringBoundaryBridge(ctx);
+        flushLateImportShifts(ctx, fctx);
       }
       const funcIdx = ctx.funcMap.get(`console_${method}_externref`);
       if (funcIdx !== undefined) {

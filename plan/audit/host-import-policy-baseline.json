@@ -14,7 +14,7 @@
     "maximumRuntimeTsLines": 20214,
     "maximumResolveImportLines": 7909,
     "maximumResolveImportCases": 15,
-    "maximumOwnedAdapterLines": 917,
+    "maximumOwnedAdapterLines": 952,
     "maximumExplicitCapabilityLines": 1194
   }
 }

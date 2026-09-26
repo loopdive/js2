@@ -26,7 +26,7 @@ import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-cor
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { jsValueBoundary } from "./context/types.js";
+import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
@@ -1680,7 +1680,7 @@ export function ensureStrToCharVecHelper(ctx: CodegenContext): { funcIdx: number
  * exists so that decision has a name to hang on.
  */
 export function hostStringBridgeUsable(ctx: CodegenContext): boolean {
-  return !ctx.wasi && !ctx.standalone && !ctx.strictNoHostImports;
+  return !hostFreeEnvironment(ctx) && !ctx.strictNoHostImports; // (#6685) environment, not regime
 }
 
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {

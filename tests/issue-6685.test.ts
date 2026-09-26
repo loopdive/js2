@@ -95,6 +95,42 @@ describe("#6685 console capability under the native regime", () => {
     expect(lines).toContain("Test262:AsyncTestComplete");
   });
 
+  it("hands a Wasm-owned string passed through `print(any)` to the console as a JS string", async () => {
+    // The real test262 harness shape: `print` is untyped JS, so `console.log(x)`
+    // lowers to `console_log_externref` and its argument is a native string.
+    process.env.JS2WASM_NATIVE_REGIME_JS = "1";
+    const result = await compile(
+      `
+        function print(x) { console.log(x); }
+        function $DONE(error) {
+          if (error) print("Test262:AsyncTestFailure:" + error);
+          else print("Test262:AsyncTestComplete");
+        }
+        async function f() { await 1; return 42; }
+        f().then(function () { $DONE(); }, $DONE);
+      `,
+      { fileName: "issue-6685.js", allowJs: true, skipSemanticDiagnostics: true, semanticProviders: "native-first" },
+    );
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(importNames(result)).toContain("env.console_log_externref");
+    expect(exportNames(result)).toEqual(expect.arrayContaining(["__str_to_extern", "__str_is_native"]));
+
+    const seen: unknown[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      seen.push(...args);
+    });
+    const imports = buildCompiledImports(result);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    const exp = instance.exports as Record<string, any>;
+    if (typeof exp.__drain_microtasks === "function") exp.__drain_microtasks();
+    for (let turn = 0; turn < 20 && seen.length === 0; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(seen).toEqual(["Test262:AsyncTestComplete"]);
+    expect(typeof seen[0]).toBe("string");
+  });
+
   it("keeps the host-free sink on --target standalone, with or without the opt-in", async () => {
     // hostBridge "always" matches the test262 runner's standalone lane, which is
     // what keeps the `__stdout_*` inspection exports alive (as in #3469's test).
