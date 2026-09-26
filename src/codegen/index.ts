@@ -442,6 +442,7 @@ import {
   fillReflectIsConstructor,
 } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
+import { fillNumberToLocaleString, fillTaToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1)
 import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
 import { fillClassToPrimitive } from "./class-to-primitive.js";
 import {
@@ -6847,6 +6848,12 @@ export function generateModule(
     // (#6651 E3) …and the own-method prefix in front of it, which needs the
     // same late helpers plus `__hasOwnProperty` / the #3537 vec bag.
     fillVecOwnToPrimitive(ctx);
+    // (#6651 TA1) …and the numeric ELEMENT of a `toLocaleString` join. Filled
+    // here, not at the join call site, because a `Number.prototype` companion
+    // hit is only known to be a USER value once the native-proto seeder registry
+    // is final — see num-to-locale-string.ts.
+    fillNumberToLocaleString(ctx);
+    fillTaToLocaleString(ctx);
 
     // #1504: emit __is_closure(externref) -> i32 so the JS-side wrapExports
     // can discriminate a closure struct return from a vec/struct return
@@ -11668,6 +11675,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-array-to-primitive", () => fillArrayToPrimitive(ctx));
     profilePhase("fill-vec-own-to-primitive", () => fillVecOwnToPrimitive(ctx));
     profilePhase("fill-class-to-primitive", () => fillClassToPrimitive(ctx));
+    // (#6651 TA1) Same reserve/fill reason as the three above.
+    profilePhase("fill-num-to-locale-string", () => fillNumberToLocaleString(ctx));
+    profilePhase("fill-ta-to-locale-string", () => fillTaToLocaleString(ctx));
 
     // (#3981) Same class of multi-file gap as the two fills immediately above.
     // This path emits only `__call_fn_0`/`__call_fn_1`, never the
