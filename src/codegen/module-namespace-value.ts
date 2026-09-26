@@ -4,6 +4,7 @@
 import type { GlobalDef, ValType, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { emitCachedFuncClosureAccess, ensureFuncClosureSingleton } from "./closures.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -123,12 +124,43 @@ interface NamespaceNestedExport {
   readonly exports: readonly NamespaceExport[];
 }
 
+/**
+ * (#6651 N4) `export class C {}` — a top-level class DECLARATION of the
+ * imported module.
+ *
+ * A class binding has no module-global cell at all: `ctx.moduleGlobals` does
+ * not hold it, so neither the snapshot arm nor the live-getter arm can see it.
+ * The constructor object lives in `ctx.classObjectGlobals` behind the
+ * `__class_<Name>` singleton and is materialized by `emitLazyClassObjectGet`.
+ * That singleton is the class's one identity for the lifetime of the module, so
+ * the namespace slot may hold the value rather than a live getter — the same
+ * carve-out {@link NamespaceNestedExport} takes.
+ *
+ * The slot is filled by CALLING a dedicated zero-argument getter minted during
+ * the reservation phase, never by inlining `emitLazyClassObjectGet` into the
+ * namespace body: that helper interns string-constant globals and flushes late
+ * imports MID-BUILD, which is exactly what the single-batch index discipline
+ * below forbids. See {@link ensureClassObjectGetters}.
+ *
+ * Without this arm `export class starAsClassDecl {}` — one line of
+ * `get-nested-namespace-props-nrml-2_FIXTURE.js` — fell through to the terminal
+ * "mutable values require live-binding getters" decline and rejected the WHOLE
+ * re-exported namespace, so `ns.exportns` read back undefined and every
+ * assertion in the row trapped.
+ */
+interface NamespaceClassExport {
+  readonly kind: "class";
+  readonly key: string;
+  readonly className: string;
+}
+
 type NamespaceExport =
   | NamespaceFunctionExport
   | NamespaceGlobalExport
   | NamespaceHostMemberExport
   | NamespaceLiveExport
   | NamespaceNestedExport
+  | NamespaceClassExport
   | NamespaceDefaultExport;
 
 /** `{ moduleName, propertyName }` when `specifier` names a Node builtin. */
@@ -217,6 +249,26 @@ function mutableTopLevelBindingName(ctx: CodegenContext, node: ts.Declaration): 
   const statement = list.parent;
   if (!ts.isVariableStatement(statement) || statement.parent !== statement.getSourceFile()) return undefined;
   return ctx.moduleGlobals.has(node.name.text) ? node.name.text : undefined;
+}
+
+/**
+ * (#6651 N4) The codegen key of a top-level `class` declaration that owns a
+ * `__class_<Name>` singleton, or undefined.
+ *
+ * Resolved by IDENTITY through `ctx.classDeclarationMap` rather than by reading
+ * `node.name.text`: the codegen key is not always the source name (class
+ * expressions are dual-registered, and a multi-module graph may disambiguate a
+ * repeated name), and a key that merely looks right would publish a DIFFERENT
+ * class's constructor into the namespace slot.
+ */
+function topLevelClassObjectName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
+  if (!ts.isClassDeclaration(node) || node.name === undefined) return undefined;
+  if (node.parent !== node.getSourceFile()) return undefined;
+  for (const [candidate, declaration] of ctx.classDeclarationMap) {
+    if (declaration !== node) continue;
+    if (ctx.classObjectGlobals.get(candidate) !== undefined) return candidate;
+  }
+  return undefined;
 }
 
 interface NamespaceObjectCache {
@@ -384,6 +436,13 @@ function moduleSymbolNamespaceExports(
           key: exportedSymbol.getName(),
           globalName: liveName,
         });
+        continue;
+      }
+      // (#6651 N4) `export class C {}` — the slot holds the `__class_<Name>`
+      // constructor singleton, reached through a getter minted below.
+      const className = topLevelClassObjectName(ctx, declarationNode);
+      if (className !== undefined) {
+        exports.push({ kind: "class", key: exportedSymbol.getName(), className });
         continue;
       }
     }
@@ -779,6 +838,66 @@ function ensureNestedNamespaceGetters(
 }
 
 /**
+ * (#6651 N4) Mint one zero-argument getter per exported class, BEFORE the
+ * enclosing namespace object reserves any of its own helpers, keyed by export
+ * name.
+ *
+ * Order is the whole point, exactly as for {@link ensureNestedNamespaceGetters}.
+ * `emitLazyClassObjectGet` interns string-constant globals (each an IMPORTED
+ * global, which shifts the global index space) and runs its own
+ * `flushLateImportShifts`; doing that while the outer object is mid-layout
+ * would strand indices already baked into its body. Confined to its own
+ * function, every one of those shifts completes before the outer reservation
+ * phase starts, and the finished getter is an ordinary defined function that
+ * later shifts move through `ctx.funcMap` like any other.
+ *
+ * The body is the helper's usual lazy singleton: `global.get __class_<Name>`,
+ * initialize on null, then read it back — so the namespace slot and a direct
+ * `C` reference in the exporting module answer the SAME constructor object.
+ */
+function ensureClassObjectGetters(
+  ctx: CodegenContext,
+  exports: readonly NamespaceExport[],
+): Map<string, string> | undefined {
+  const getters = new Map<string, string>();
+  for (const entry of exports) {
+    if (entry.kind !== "class") continue;
+    const name = `__module_namespace_class_${ctx.mod.functions.length}`;
+    const fctx: FunctionContext = {
+      name,
+      params: [],
+      locals: [],
+      localMap: new Map(),
+      returnType: { kind: "externref" },
+      body: [],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+    // Tracked for the duration of the build: `emitLazyClassObjectGet` adds
+    // imported globals, and the shift repair only reaches bodies it can see.
+    ctx.liveBodies.add(fctx.body);
+    const built = emitLazyClassObjectGet(ctx, fctx, entry.className);
+    ctx.liveBodies.delete(fctx.body);
+    if (!built) return undefined;
+    const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name,
+      typeIdx,
+      locals: fctx.locals,
+      body: fctx.body,
+      exported: false,
+    });
+    ctx.funcMap.set(name, funcIdx);
+    getters.set(entry.key, name);
+  }
+  return getters;
+}
+
+/**
  * Build (or reuse) the lazily-initializing getter that answers this module's
  * namespace object, and return its name. The name — not the index — is the
  * stable handle: `flushLateImportShifts` keeps `ctx.funcMap` in lockstep with
@@ -798,7 +917,69 @@ function ensureNamespaceObjectGetter(
 
   const nestedGetters = ensureNestedNamespaceGetters(ctx, fctx, exports);
   if (nestedGetters === undefined) return undefined;
+  const classGetters = ensureClassObjectGetters(ctx, exports);
+  if (classGetters === undefined) return undefined;
 
+  const helpers = reserveNamespaceObjectHelpers(ctx, fctx, exports, moduleNamespaceTag);
+  if (helpers === undefined) return undefined;
+  const {
+    objectCreateIdx: finalObjectCreateIdx,
+    preventExtensionsIdx: finalPreventExtensionsIdx,
+    newObjectIdx: finalNewObjectIdx,
+    setIdx: finalSetIdx,
+    defineAccessorIdx: finalDefineAccessorIdx,
+    boxSymbolIdx: finalBoxSymbolIdx,
+    definePropertyValueIdx: finalDefinePropertyValueIdx,
+  } = helpers;
+
+  const cacheGlobal: GlobalDef = {
+    name: `__module_namespace_${ctx.mod.globals.length}`,
+    type: { kind: "externref" },
+    mutable: true,
+    init: [{ op: "ref.null.extern" }],
+  };
+  ctx.mod.globals.push(cacheGlobal);
+  const cacheGlobalIdx = absoluteGlobalIndex(ctx, cacheGlobal);
+  if (cacheGlobalIdx === undefined) return undefined;
+  return buildNamespaceObjectGetterBody(ctx, {
+    cacheKey,
+    exports,
+    moduleNamespaceTag,
+    nestedGetters,
+    classGetters,
+    helpers,
+    cacheGlobal,
+  });
+}
+
+/** Resolved indices of every helper the namespace initializer calls. */
+interface NamespaceObjectHelpers {
+  readonly objectCreateIdx: number | undefined;
+  readonly preventExtensionsIdx: number | undefined;
+  readonly newObjectIdx: number;
+  readonly setIdx: number;
+  readonly defineAccessorIdx: number | undefined;
+  readonly boxSymbolIdx: number | undefined;
+  readonly definePropertyValueIdx: number | undefined;
+}
+
+/**
+ * Reserve every import and string constant the namespace initializer needs in
+ * ONE late-import batch, flush once, and read back the final indices.
+ *
+ * Single-batch is the invariant, not an optimization: each `ensureLateImport`
+ * shifts the defined-function index space and each interned string constant
+ * adds an IMPORTED global, so a reservation that happens after the body has
+ * started baking leaves already-emitted indices off by one. Everything the
+ * initializer can possibly call is therefore reserved here, before a single
+ * instruction of that body exists, and no index is read until after the flush.
+ */
+function reserveNamespaceObjectHelpers(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  exports: readonly NamespaceExport[],
+  moduleNamespaceTag: boolean,
+): NamespaceObjectHelpers | undefined {
   // The namespace is an ordinary `$Object` carrier with a deliberately narrow
   // own-property surface. Only an actual ESM namespace import owns the Module
   // tag; this emitter also serves TypeScript runtime namespace projections.
@@ -869,14 +1050,45 @@ function ensureNamespaceObjectGetter(
   const finalDefinePropertyValueIdx = moduleNamespaceTag ? ctx.funcMap.get("__defineProperty_value") : undefined;
   if (moduleNamespaceTag && (finalBoxSymbolIdx === undefined || finalDefinePropertyValueIdx === undefined))
     return undefined;
-
-  const cacheGlobal: GlobalDef = {
-    name: `__module_namespace_${ctx.mod.globals.length}`,
-    type: { kind: "externref" },
-    mutable: true,
-    init: [{ op: "ref.null.extern" }],
+  return {
+    objectCreateIdx: finalObjectCreateIdx,
+    preventExtensionsIdx: finalPreventExtensionsIdx,
+    newObjectIdx: finalNewObjectIdx,
+    setIdx: finalSetIdx,
+    defineAccessorIdx: finalDefineAccessorIdx,
+    boxSymbolIdx: finalBoxSymbolIdx,
+    definePropertyValueIdx: finalDefinePropertyValueIdx,
   };
-  ctx.mod.globals.push(cacheGlobal);
+}
+
+/** Everything {@link buildNamespaceObjectGetterBody} needs, already reserved. */
+interface NamespaceObjectGetterPlan {
+  readonly cacheKey: object;
+  readonly exports: readonly NamespaceExport[];
+  readonly moduleNamespaceTag: boolean;
+  readonly nestedGetters: ReadonlyMap<string, string>;
+  readonly classGetters: ReadonlyMap<string, string>;
+  readonly helpers: NamespaceObjectHelpers;
+  readonly cacheGlobal: GlobalDef;
+}
+
+/**
+ * Emit the lazily-initializing getter itself: `Object.create(null)`, one slot
+ * per export, seal, cache, and return the singleton. Reached only after
+ * {@link reserveNamespaceObjectHelpers} has flushed, so every index this body
+ * bakes is final except the global reads, which are rebased at the end.
+ */
+function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObjectGetterPlan): string | undefined {
+  const { cacheKey, exports, moduleNamespaceTag, nestedGetters, classGetters, cacheGlobal } = plan;
+  const {
+    objectCreateIdx: finalObjectCreateIdx,
+    preventExtensionsIdx: finalPreventExtensionsIdx,
+    newObjectIdx: finalNewObjectIdx,
+    setIdx: finalSetIdx,
+    defineAccessorIdx: finalDefineAccessorIdx,
+    boxSymbolIdx: finalBoxSymbolIdx,
+    definePropertyValueIdx: finalDefinePropertyValueIdx,
+  } = plan.helpers;
   const cacheGlobalIdx = absoluteGlobalIndex(ctx, cacheGlobal);
   if (cacheGlobalIdx === undefined) return undefined;
 
@@ -968,6 +1180,16 @@ function ensureNamespaceObjectGetter(
         return undefined;
       }
       getterFctx.body.push({ op: "call", funcIdx: nestedIdx });
+      valueType = { kind: "externref" };
+    } else if (entry.kind === "class") {
+      // (#6651 N4) The class getter is the same lazy singleton the exporting
+      // module's own `C` reference reads, so the slot publishes one identity.
+      const classIdx = ctx.funcMap.get(classGetters.get(entry.key) ?? "");
+      if (classIdx === undefined) {
+        popBody(getterFctx, savedBody);
+        return undefined;
+      }
+      getterFctx.body.push({ op: "call", funcIdx: classIdx });
       valueType = { kind: "externref" };
     } else if (entry.kind === "global") {
       const globalIdx = ctx.moduleGlobals.get(entry.globalName);
