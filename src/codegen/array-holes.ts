@@ -121,6 +121,15 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
     }
+    // (#6651 F1) …and the instance-side spelling of the same thing: `fn.apply`
+    // read as a VALUE never names a prototype, so the predicate above cannot
+    // see it. Armed by the SAME pre-pass for the reason in this file's header —
+    // function compilation order is not source order, and `ensureObjectRuntime`
+    // has already decided whether to reserve the store by the time the read is
+    // compiled.
+    if (!ctx.protoMemberDirty && isFunctionProtoMemberValueUse(node)) {
+      ctx.protoMemberDirty = true;
+    }
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
@@ -1189,6 +1198,56 @@ function isProtoMemberValueUse(node: ts.Node): boolean {
     ) {
       return false;
     }
+  }
+  return true;
+}
+
+/**
+ * (#6651 F1) The four `%Function.prototype%` members, read off a function
+ * INSTANCE as a VALUE rather than called.
+ *
+ * `isProtoMemberValueUse` above only sees the PROTOTYPE OBJECT flowing
+ * (`var p = Function.prototype`). `assertNativeFunction(proxyOfFn.apply)` never
+ * names a prototype, so it armed nothing — and with `protoMemberDirty` clear,
+ * `reserveProtoIndexStore` reserves NO store, every consult site emits its
+ * pre-existing miss, and the read answers `undefined`. Measured standalone on
+ * `built-ins/Function/prototype/toString/proxy-function-expression.js`
+ * (2026-09-26): `storeReserved=undefined memberDirty=false` at the end of
+ * `ensureObjectRuntime`, and the row fails with `"undefined"` on line 2 while
+ * line 1 passes.
+ *
+ * Deliberately narrow, because arming `protoMemberDirty` also seeds member
+ * closures for every materialized brand:
+ *
+ *  - CALLEE position is excluded — `f.call(x)` / `f.apply(x, a)` / `f.bind(o)`
+ *    are compiled by the call path and were never broken.
+ *  - A `<Builtin>.prototype.<m>` receiver is excluded — that is
+ *    `isProtoMemberValueUse`'s territory, and including it would arm the flag on
+ *    the extremely common harness idiom `Object.prototype.toString.call(x)`,
+ *    widening the blast radius for a shape that already works.
+ *  - An assignment TARGET is excluded — a write is `isProtoNamedWrite`'s job.
+ */
+const FUNCTION_PROTO_VALUE_MEMBERS = new Set(["apply", "bind", "call", "toString"]);
+
+function isFunctionProtoMemberValueUse(node: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return false;
+  const member = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  if (member === undefined || !FUNCTION_PROTO_VALUE_MEMBERS.has(member)) return false;
+  if (isBrandedBuiltinPrototypeExpr(node.expression)) return false;
+  const parent: ts.Node | undefined = node.parent;
+  if (parent === undefined) return true;
+  if (ts.isCallExpression(parent) && unwrapExpr(parent.expression) === node) return false;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.left === node &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return false;
   }
   return true;
 }

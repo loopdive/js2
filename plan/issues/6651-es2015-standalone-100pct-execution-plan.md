@@ -10923,3 +10923,164 @@ above, not by an allowance. No `scripts/*-baseline.json` was edited.
   there is in the MEASUREMENT tooling (`run-test262-paths` does not link
   fixtures), not in the compiler. Worth a follow-up only if someone wants that
   lane to be usable on fixture rows.
+
+---
+
+## Receipt — lane F1: `%Function.prototype%` members unreadable as VALUES in standalone (2026-09-26)
+
+**Result: +8 rows** in `built-ins/Function/prototype/toString/proxy-*`, 0 regressions
+across a 588-row targeted sweep. Branch `issue-6651-f1-function-proto-values`.
+
+### The defect, as measured
+
+In `--target standalone`, `f.apply` / `f.call` / `f.bind` / `f.toString` all evaluated
+to `undefined` while `typeof f === "function"` — including the computed-key spelling
+(`f["apply"]`), a receiver laundered through an untyped parameter, and a
+`new Proxy(<function>, h)` wrapper. **Calling** them was never affected; those fold at
+the call site, which is why the gap was invisible from every ordinary spelling. It
+only surfaced where the member is handed on as a value, e.g. test262's
+`assertNativeFunction(new Proxy(fn, { apply() {} }).apply)`.
+
+### Root cause — prior lane P1's site: CONFIRMED in substance, CORRECTED in two details
+
+P1 named `src/codegen/closure-props.ts`, the `__closure_prop_get` terminal miss
+(`protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()`), and said the Function brand
+companion is "minted empty". That is the right subsystem and the right mechanism. Two
+corrections, both measured:
+
+1. **P1 said naming `Function.prototype` in source does NOT fix the closure read. It
+   does.** Compiling `var fp: any = Function.prototype;` ahead of the same reads flips
+   `g.apply` / `g["call"]` / `g.toString` and the proxy-wrapped `p.apply` from
+   `undefined` to callables in one step. That single fact is what localises the cause
+   to *demand*, not to the consult's shape — and it is why the fix is ~6 lines rather
+   than a new runtime arm.
+2. **There are TWO gates, not one, and in the real test262 rows the FIRST one is what
+   fires.** Instrumenting `built-ins/Function/prototype/toString/proxy-function-expression.js`
+   at the end of `ensureObjectRuntime` printed
+   `standalone=true storeReserved=undefined carrier=true memberDirty=false`. So in those
+   modules the proto-index store is **never reserved at all** and the consult P1 pointed
+   at is not even emitted; `getMiss()` answers. The empty-companion gate is real but only
+   becomes reachable once the store exists.
+
+   - Gate A — `reserveProtoIndexStore` self-gates on
+     `protoIndexDirty || protoNamedDirty || protoMemberDirty || moduleUsesDynTaView`.
+     Every one of those is a pre-scan for a **prototype OBJECT** being named. A bare
+     `fn.apply` read names no prototype, so nothing armed.
+   - Gate B — with the store reserved but the Function glue unregistered, the reads are
+     still `undefined` (isolated by compiling `var ap: any = Array.prototype;` — which
+     arms the store but not the Function brand — alongside the same reads: `2 0 0 0 0`).
+     The brand's companion is populated by a *seeder*, and the seeder is registered as a
+     side effect of materializing the brand's `$NativeProto` singleton, which only a
+     syntactic `Function.prototype` read ever did.
+
+### The fix
+
+Two edits, ~60 lines including commentary, no new runtime arm and no new file:
+
+- `src/codegen/array-holes.ts` — new pre-scan predicate
+  `isFunctionProtoMemberValueUse`: a `.apply` / `.bind` / `.call` / `.toString` read
+  (property or string-literal computed key) that is **not** in callee position, **not**
+  an assignment target, and whose receiver is **not** already a `<Builtin>.prototype`
+  expression. It sets the existing `protoMemberDirty`, which is what reserves the store.
+  Armed in the SAME pre-pass as its siblings for the reason in that file's header —
+  function compilation order is not source order, so a lazy per-site flag desyncs.
+- `src/codegen/closure-props.ts` — `ensureDynamicFunctionProtoCompanion`, called at the
+  end of `reserveClosurePropHelpers`: registers the `%Function.prototype%` glue and its
+  companion seeder, gated on `standalone && protoMemberDirty` (the same condition
+  `ensureNativeProtoCompanionSeeder` applies, checked first so a module that would be
+  refused does not pay for the glue's five member closures).
+
+Registering the seeder is the whole of the second half: `__protoidx_companion`'s
+`buildSeededOffsetForceCreateArms` already force-creates and seeds a companion on a
+`create = 0` read for exactly the seeded offsets, and does so **after** the slot store,
+so re-entry through the seeder's own `__defineProperty_value` calls is safe. Nothing is
+materialized eagerly.
+
+**The tempting shortcut was deliberately NOT taken.** A static fold in
+`property-access.ts` mirroring `tryCompileStandaloneFunctionHasInstanceRead` would move
+the same rows — `new Proxy(f, h)` carries `f`'s TS type, so `fact.kind === "function"`
+holds — and would bypass a handler's `get` trap. The fix goes through the dynamic path
+instead; `tests/issue-6651-f1-function-proto-values.test.ts` asserts the trap still sees
+`apply`/`call`/`bind`.
+
+**Placement note (LOC budget).** The demand call sat in `ensureObjectRuntime` in the
+first cut. `object-runtime.ts`, `array-object-proto.ts` and `proto-index-store.ts` are
+all god-files whose caps equal their current size, so *any* line added to them fails the
+gate. `closure-props.ts` and `array-holes.ts` are uncapped, and `closure-props.ts` is
+also where the consult this serves already lives — so the hook moved there and **no
+allowance was needed**. No `scripts/*-baseline.json` was edited.
+
+### Measurement
+
+Authoritative lane throughout: `tests/test262-shared.ts::runTest262Chunk`, driven from
+gitignored `tests/probe-f1s{1..6}.test.ts` under `TEST262_PATH_FILTER_FILE`,
+`TEST262_TARGET=standalone`, `JS2WASM_EVAL_ENGINE=quickjs`,
+`TEST262_IT_TIMEOUT_MS=420000`, `COMPILER_POOL_SIZE=2`. All three build products
+(`build:compiler-bundle`, `build:runtime-bundle`, `build-quickjs-eval-provider.mjs`)
+rebuilt after every `src/` edit, on both sides of the A/B.
+
+Target bucket, `built-ins/Function/prototype/toString/proxy-*` (11 rows), per row:
+
+| row | base | fix |
+| --- | --- | --- |
+| `proxy-arrow-function.js` | fail | **pass** |
+| `proxy-async-function.js` | fail | **pass** |
+| `proxy-async-generator-function.js` | fail | **pass** |
+| `proxy-async-method-definition.js` | fail | **pass** |
+| `proxy-bound-function.js` | fail | **pass** |
+| `proxy-function-expression.js` | fail | **pass** |
+| `proxy-generator-function.js` | fail | **pass** |
+| `proxy-method-definition.js` | fail | **pass** |
+| `proxy-class.js` | fail | fail (unchanged — see below) |
+| `proxy-non-callable-throws.js` | fail | fail (unchanged — different defect) |
+| `proxy-async-generator-method-definition.js` | compile_error | compile_error (unchanged) |
+
+No-regression sweep, 588 rows — every test file in the corpus whose text can trip the
+new pre-scan predicate, plus every row including `deepEqual.js` or `proxyTrapsHelper.js`
+(the only two harness files that can), plus the 11 target rows. `built-ins/Temporal`,
+`intl402` and `staging` excluded to bound wall time; those rows fail on
+`Temporal is not defined` / missing Intl in standalone regardless, so a flip there is
+not measurable.
+
+```
+base  588 rows  pass 414  fail 115  compile_error 44  skip 15
+fix   588 rows  pass 422  fail 107  compile_error 44  skip 15
+IMPROVED 8 · REGRESSED 0 · OTHER FLIPS 0 · error rows 0 (both sides) · unmeasured 0
+```
+
+Per-row set diff, not a count comparison; both sides recorded all 588 rows and neither
+produced an `error`, `compile_timeout` or missing row. Re-run end-to-end on the final
+code shape after the LOC-driven relocation — byte-for-byte the same verdict set.
+
+`tests/issue-6651-f1-function-proto-values.test.ts` (9 cases): **6 failed / 3 passed** on
+reverted base sources, **9 passed** with the fix. Both logs kept.
+
+Gates, all run bare: `check-loc-budget` 0 (`net +116 LOC`, no unallowed growth) ·
+`check-func-budget` 0 · `check-coercion-sites` 0 · `check:oracle-ratchet` 0 ·
+`check:dead-exports` 0 · `check-host-import-policy` 0 (`runtimeTsLines` 20214,
+unchanged — `src/runtime.ts` not touched) · `typecheck` 0.
+
+### Deliberately NOT done
+
+- **`proxy-class.js`** — `new Proxy(class {}, {}).apply` is still `undefined`, and so is
+  a bare class constructor's `K.apply`. Measured: `Object.getPrototypeOf(K) ===
+  Function.prototype` is **true** and `typeof K === "function"` is **true**, while
+  `proxyOfPlainFunction.apply` now resolves — so `__getPrototypeOf` agrees and the
+  remaining gap is specifically that **`__protoidx_brand_off` does not classify a class
+  constructor's carrier as `FUN_OFF`**. Most likely the `$Object` arm (the boxed-
+  primitive wrapper test) returns `OBJ_OFF` for it before the closure-carrier test is
+  reached. Fixing that means reordering or widening that ladder, which is on the read
+  path of every standalone property access — one row is not worth that risk in this
+  lane. Worth its own slice.
+- **`proxy-non-callable-throws.js`** — `Function.prototype.toString.call(new Proxy({}, {}))`
+  returns `undefined` instead of throwing a TypeError. Independent defect: the
+  syntactic `Function.prototype.toString` value resolves fine (measured: it is a
+  callable), but its brand check against a non-callable `this` does not refuse. Not a
+  value-read gap.
+- **`proxy-async-generator-method-definition.js`** — compile_error, `standalone target
+  emitted host imports: env::__create_async_generator, env::__gen_create_buffer`. A
+  standalone async-generator gap, unrelated.
+- **Object.prototype members off a function value** — `f.hasOwnProperty` is still
+  `undefined` in standalone. Same shape of gap one brand further up (the Object brand's
+  companion has no registered glue either), unchanged by this fix and measured both
+  before and after. The regression test states this explicitly rather than asserting it.
