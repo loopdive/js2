@@ -10756,6 +10756,179 @@ two cohesive helpers (`rebaseNamespaceGlobalReads`,
   primary consumed the window.
 - `props-nrml`'s `export class` arm — sited precisely above, not attempted.
 
+---
+
+## Lane P1 receipt — `Proxy` bucket triage (2026-09-26)
+
+Scope: the 118 not-pass rows in the ES2015 × `Proxy` feature bucket on
+`--target standalone` (431 rows total, 115 fail + 3 compile_error, 73%).
+Reproduced the artifact exactly from the per-row JSONL, so the partition below
+is over the same row set the landing page counts.
+
+### Measurement lanes used
+
+- **Row set**: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`
+  (48,735 rows, fetched fresh) ∩ `scripts/generate-editions.ts`'s own
+  `parseFrontmatter` + `classifyEdition` + the `--host-free` pass definition.
+  Independently reproduces `431 / 115 fail / 3 CE`.
+- **Authoritative verdicts**: `tests/test262-shared.ts::runTest262Chunk` under
+  `TEST262_TARGET=standalone`, driven from a gitignored `tests/probe-*.test.ts`
+  with `TEST262_PATH_FILTER`, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`.
+- **Standalone IS measurable in the CI-faithful lane in this container.**
+  The previously recorded "no built runtime-eval provider" blocker did not
+  apply: the only missing pieces were `scripts/compiler-bundle.mjs` and
+  `scripts/runtime-bundle.mjs`, which are gitignored build products
+  (`npx esbuild scripts/{compiler,runtime}-bundle-entry.ts …`, ~750 ms each).
+  **The test262 worker compiles through those bundles, so they MUST be rebuilt
+  after every `src/` edit or the lane measures the previous tree.**
+- Ad-hoc snippet lane (`compile(src, {target:"standalone"})` + `WebAssembly.
+  instantiate`) used only for bisection. It disagreed with the harness on this
+  bucket **four separate times** (see "snippet-lane hazard" below); every
+  conclusion recorded here is anchored to an authoritative-lane verdict or to a
+  snippet run with the REAL test262 harness prepended.
+
+### Host-vs-standalone split of the 118
+
+| | rows |
+|---|---|
+| host **pass**, standalone not-pass → standalone-only gap | **59** |
+| host **fail** too → shared front-end, different slice | **59** |
+
+### Partition by ROOT CAUSE (not by directory)
+
+| group | rows | SA-only | status |
+|---|---|---|---|
+| `Function.prototype` members unreadable as VALUES | 7 (+3 later editions, +1 CE) | 7 | **root-caused, sited, unfixed** |
+| proxy in a PROTOTYPE chain is invisible | 15 | 6 | architectural, confirmed |
+| cross-realm | 10 | 5 | belongs to the cross-realm slice |
+| revoked-proxy reachability | 8 | 6 | not root-caused |
+| ownKeys / gOPN invariants | 7 | 6 | not root-caused |
+| ArraySpeciesCreate through a proxy (`*/create-proxy.js`) | 5 | 0 | shared front-end |
+| residual, individually sited | ~66 | 29 | mixed |
+
+### Three RECORDED causes corrected by re-probe
+
+1. **"nested proxy forwarding (`target-is-proxy`) is broken" — WRONG.**
+   Nested trap-absent forwarding works: `new Proxy(new Proxy({x:1},
+   {get(){…}}), {})` runs the inner trap and returns its value; the `has`
+   twin likewise (probe `.tmp/p1/g4.js`, 4/4 bits correct). The 24
+   `*-target-is-proxy.js` rows are **composites** — each also does
+   `Object.create(proxy)` and/or reads builtin-prototype members
+   (`name`, `length`, `ignoreCase`) through the proxy. Grouping them by
+   filename produced a 24-row "cause" that does not exist.
+
+2. **"trap `this` is not the handler" (row 7 in the F1/F2 tables) — WRONG.**
+   The trap `this` IS the handler on every path where the trap runs
+   (`.tmp/p1/r3.js` bits 12/15: direct `has`/`get`/`set` traps all fire with
+   `this === handler`). The `_handler === undefined` assertions fail because
+   **the trap never runs at all** — the proxy sits in the prototype chain.
+   Same underlying cause as (3), not a calling-convention defect.
+
+3. **`Proxy/has/trap-is-undefined.js` is not a Proxy row at all.**
+   It fails on `"length" in Object.create(Array.prototype)`, which answers
+   `false` **with no proxy anywhere in the picture** (`.tmp/p1/r2.js` bit 1;
+   `"push" in` the same object answers `true`, so the chain walk is fine —
+   `Array.prototype`'s own `length` is what `in` cannot see).
+
+The prototype-chain note (`$Object.$proto` is `ref null $Object`, `$Proxy` is
+not a subtype) **re-probed as CORRECT**, and the cited #2009 canonicalisation
+failure is documented in `object-runtime.ts` at the `$Object` declaration.
+Measured shape: a proxy reached through the prototype chain is completely
+invisible — `has`, `get` and `set` all skip it and operate on the proxy's
+target (`.tmp/p1/r3.js`: bits 1–10 all fail, bits 11–15 — the direct-receiver
+controls — all pass). One non-architectural route the earlier notes did not
+consider: `$Object` has only **4** `struct.new` sites, so APPENDING a 7th
+`protoExtern: externref` field is mechanically tractable and is *not* the
+non-final/subtype change that triggered #2009. Not attempted here — it rewrites
+every proto-walk loop in `__extern_get`/`__extern_has`/ordinary-set plus
+`Object.create` / `setPrototypeOf` / `instanceof` / `isPrototypeOf`, which is an
+architect spec, not a lane slice.
+
+### Root cause found and precisely sited (the intended fix, not landed)
+
+**No `Function.prototype` member is reachable as a VALUE off a function object
+in `--target standalone`.** `f.apply`, `f.call`, `f.bind`, `f.toString` — and
+the computed-key and fully-laundered-receiver spellings of each — all evaluate
+to `undefined` (`.tmp/p1/g2v.js`: 7/7 undefined). Calls (`f.apply(…)`) are
+unaffected; only the value read is.
+
+This is the whole of the `built-ins/Function/prototype/toString/proxy-*`
+bucket — **10 fail + 1 CE measured authoritatively**, of which 7 are in ES2015
+and all 7 are host-pass (standalone-only). Evidence chain:
+
+1. Authoritative lane, all 10: `Test262Error: Conforms to NativeFunction
+   Syntax: "undefined"` (the CE is `proxy-async-generator-method-definition.js`,
+   an unrelated host-import leak: `env::__create_async_generator`).
+2. `harness/nativeFunctionMatcher.js`'s `assertNativeFunction` computes
+   `"" + fn` — **not** `Function.prototype.toString.call(fn)`.
+3. Every one of those rows has the same two-line shape:
+   `assertNativeFunction(new Proxy(<callable>, {}))` then
+   `assertNativeFunction(new Proxy(<callable>, { apply() {} }).apply)`.
+4. With the REAL harness prepended and the assertions at module top level
+   (`.tmp/p1/g2l.js`), **line 1 passes and line 2 fails with `"undefined"`** —
+   line 1 is already served by #5269 C-1's `buildProxyCallableToStringArm`.
+5. Line 2's operand is `proxy.apply`, and `.apply` read off *any* function —
+   proxy or not — is `undefined` (step above).
+
+**Fix site**: `src/codegen/closure-props.ts`, the `__closure_prop_get` terminal
+miss — `...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss())` (~L978). That
+consult is receiver-aware and does route a closure receiver to the Function
+brand's companion (`__protoidx_get_r`), but the companion is **minted empty for
+the Function brand** — `native-proto.ts`'s seeder comment says so explicitly
+("The companion is simply minted EMPTY — nothing ever put the builtin's own
+members in it"), and `ensureFunctionNativeProtoGlue` (array-object-proto.ts
+L3054) is reached only from syntactic sites. Naming `Function.prototype` in the
+source does **not** fix the closure read (`.tmp/p1/g2u.js`) — the direct
+`Function.prototype.apply` read is a separate syntactic fold, which is why the
+gap is invisible from that spelling.
+
+Two candidate shapes, in increasing blast radius:
+- a narrow arm at the miss that maps the fixed set `{apply, call, bind,
+  toString}` to `ensureStandaloneNativeMethodClosure(ctx, functionBrand, m,
+  "method")` — converts `undefined` into the correct value and touches nothing
+  else (not enumeration, not `hasOwnProperty`);
+- seeding the Function brand companion wholesale — principled, but makes every
+  closure inherit every `Function.prototype` member dynamically in one step,
+  which changes `for…in` / `hasOwnProperty` / gOPD at the same time.
+
+A static fold in `property-access.ts` (mirroring
+`tryCompileStandaloneFunctionHasInstanceRead`) would ALSO move these rows and is
+tempting because `new Proxy(f, h)` carries `f`'s TS type, so `fact.kind ===
+"function"` holds — **do not take it**: it would bypass a `get` trap on the
+handler, trading 10 rows for a silent MOP violation.
+
+### Snippet-lane hazard (worth recording — it cost this lane most of its window)
+
+An ad-hoc `compile()` + `instantiate()` probe disagreed with the harness four
+times on this bucket, each time in the "everything looks fine" direction:
+`"" + proxyOfFunction` answered correctly when the operand had a static type
+(the `callableToStringLiteral` arm fires) and only reproduced the defect once
+the value arrived through an untyped parameter **and** the assertions ran at
+module top level. `String(x)` on a boolean traps in that harness, and
+`out.join(" | ")` throws "Cannot convert object to primitive value" — both
+unrelated to the subject. Anchor every claim to `runTest262Chunk`, or to a
+snippet with the real harness text prepended.
+
+### Sweeps: complete vs. cut short
+
+- **Complete**: the 118-row partition (offline, over the full per-row JSONL);
+  the `built-ins/Function/prototype/toString/proxy-` authoritative sweep
+  (11 rows, 0 pass / 10 fail / 1 CE, **0 `error` rows**); the 2-row
+  `Proxy/has` authoritative control (2 fail, **0 `error` rows**, both
+  reproducing the baseline error text verbatim).
+- **Not run**: any before/after sweep — no source change was made, so there is
+  no delta to report and no regression test to prove red. Nothing in this
+  receipt is a performance or conformance *change* claim.
+
+### Not done
+
+- No code change. The `Function.prototype`-member-value fix is sited above but
+  was not implemented: the window went to triage, and the three corrected
+  root-cause notes were worth more than a half-proven change in the dynamic
+  property-read path.
+- `revoked-proxy` (8 rows) and `ownKeys/gOPN invariants` (7 rows) are grouped
+  but NOT root-caused — treat their labels as directory-shaped until re-probed,
+  exactly like the three corrected above.
 ## Lane N4 receipt — `export class` in a namespaced module; and why the
 ## `own-property-keys-binding-types` 7-vs-10 gap was never a compiler defect
 ## (2026-09-26)
