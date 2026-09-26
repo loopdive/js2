@@ -15,6 +15,10 @@ area: codegen
 language_feature: standalone
 goal: standalone-everything
 parent: 2711
+# 2026-09-25: the 19 baseline citations are the standalone flat/flatMap
+# refusals this PR removes (measured 19 CE -> 1 CE on the 43-row slice); the one
+# remaining is the intentional custom-species flatMap refusal.
+done_cited_ok: true
 loc-budget-allow:
   - src/codegen/array-methods.ts
   # 2026-09-25 (#2717 native recursive flatten): +8 — the `flat`/`flatMap`
