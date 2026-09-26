@@ -169,6 +169,15 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). +2 lines in
+  # `src/codegen/index.ts`: ONE `fillArrayProtoSingleton(ctx)` call in each of
+  # the two finalize paths (`generateModule`, `generateMultiModule`), placed
+  # beside the `fillObjectProtoSingleton(ctx)` call it twins. That call cannot
+  # move: the reserve-then-fill discipline REQUIRES the fill to run at finalize,
+  # after the brand's lazy `$NativeProto` global exists, and finalize ordering
+  # lives in the driver. Every line of mechanism (the reservation, the arm, the
+  # fill body) is in `src/codegen/object-runtime-prototype.ts`.
+  - src/codegen/index.ts
   # 2026-09-24 — cluster B1 slice N1 (module namespace: live bindings, null
   # prototype, non-extensible). `src/codegen/module-namespace-value.ts`
   # 769 → 1008 (+239). The growth is in ONE emitter and cannot move out of it:
@@ -683,6 +692,21 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). Three functions, +4
+  # lines total, all of them call sites of mechanism that lives elsewhere:
+  #   - `buildObjectPrototypeHelpers` +2: one line reserving the
+  #     `%Array.prototype%` singleton (`reserveArrayProtoSingleton`) and one
+  #     `...arrayGetPrototypeArm(...)` spread inside `__getPrototypeOf`'s
+  #     non-`$Object` else-arm. Both helpers are module-level functions in the
+  #     same file; the first cut inlined them and cost +9. What cannot move is
+  #     the spread itself — the arm has to be ordered relative to the fnctor arm
+  #     and the boundary fallback, and that ordering IS the body being built.
+  #   - `generateModule` +1 / `generateMultiModule` +1: the finalize-time
+  #     `fillArrayProtoSingleton(ctx)` call, one line each, beside its
+  #     `fillObjectProtoSingleton` twin (see the loc grant above).
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
   # 2026-09-24 — lane W1: +24 inside `src/runtime.ts::resolveImport`, which is
   # the same 24 lines as the `loc-budget-allow` grant above (the three edited
   # host-import bodies are all closures built inside `resolveImport`'s by-name
@@ -11425,3 +11449,240 @@ unchanged — `src/runtime.ts` not touched) · `typecheck` 0.
   `undefined` in standalone. Same shape of gap one brand further up (the Object brand's
   companion has no registered glue either), unchanged by this fix and measured both
   before and after. The regression test states this explicitly rather than asserting it.
+
+---
+
+## Lane R1 receipt — the ES2015 cross-realm `proto-from-ctor-realm` rows are
+## NOT a GetPrototypeFromConstructor defect. `Object.getPrototypeOf` over a
+## DYNAMICALLY-typed array answered `null`. (2026-09-26)
+
+Branch `issue-6651-r1-proto-from-ctor-realm`, base `origin/main` @ `be445f616e`.
+
+### The recorded diagnosis was wrong — corrected by re-probe
+
+The dispatch brief (from X1's mechanical scan) recorded:
+
+> §9.1.14 GetPrototypeFromConstructor must fall back to the *intrinsic* default
+> prototype when `newTarget.prototype` is not an object. It currently does not.
+> … ~45 rows in the ES2015 cross-realm bucket.
+
+**That fallback already works on base.** Measured through the authoritative
+lane (`tests/test262-shared.ts::runTest262Chunk`, original harness,
+`--target standalone`, QuickJS eval engine) with a hand-written row:
+
+```js
+function NT() {}
+NT.prototype = null;
+var arr = Reflect.construct(Array, [1], NT);
+assert.sameValue(Object.getPrototypeOf(arr), Array.prototype);   // PASSES on base
+```
+
+`call-namespace-static.ts`'s `Reflect.construct` arm resolves the static
+`NT.prototype = …` assignment, `isDefinitelyPrimitivePrototype` recognises
+`null`/`undefined`/a primitive, and the arm **returns early without writing** —
+which is exactly §10.1.14 step 4, because the ordinary construction already
+installed the intrinsic default. Instrumenting that arm (temporary
+`JS2WASM_R1_DEBUG` print, removed) showed the failing and passing programs take
+the **identical** branch (`staticProto: "null", primitive: true`), and a
+normalised WAT diff of the two compiled functions is **byte-identical**.
+
+### What the defect actually is
+
+```js
+function id(x) { return x; }
+Object.getPrototypeOf(id([1]))     // null on base; node answers Array.prototype
+```
+
+No realm, no `Reflect`, no `$262` anywhere. A compiled array is a
+`__vec_<elem>` struct, not an `$Object`, so it has no `$proto` field;
+`__getPrototypeOf`'s `ref.test $Object` fails and the helper falls through to
+its boundary/`null` answer. The gap is invisible for a **statically**
+array-typed receiver because `expressions/object-get-prototype-of.ts` folds
+that case to `%Array.prototype%` before the helper is ever called — so it only
+shows through an `any` binding. `Reflect.construct(...)` has static type `any`,
+which is the whole reason the three witnesses are filed under *cross-realm*.
+
+Bisected to that minimal form over eleven probe rounds; the intermediate states
+are worth recording because each looked like a different bug:
+
+| program | base verdict |
+| --- | --- |
+| `Object.getPrototypeOf(new Array(1))`, no realm | pass |
+| same + `$262.createRealm()` | pass |
+| `Reflect.construct(Array,[1])` (no NewTarget) + realm | pass |
+| `Reflect.construct(Array,[1],NT)`, `NT.prototype=null`, **no** realm | pass |
+| same **with** `$262.createRealm()` | **null** |
+| `Object.getPrototypeOf(id([1]))`, no realm at all | **null** |
+
+The `$262.createRealm()` line is a red herring twice over: it does not change
+the emitted code at the call site, it changes which *binding shape* the
+surrounding program gives `arr` — and the last row shows the defect with no
+realm in the program.
+
+### Fix
+
+`src/codegen/object-runtime-prototype.ts` — a third non-`$Object` arm in
+`__getPrototypeOf`, beside the existing fnctor-instance (#4643) and boundary
+arms:
+
+- `reserveArrayProtoSingleton` reserves `__array_proto_singleton` with the
+  pre-fix `ref.null.extern` body (standalone/WASI only);
+- `fillArrayProtoSingleton` fills it at finalize from
+  `buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Array)` — the SAME
+  brand global a program's own `Array.prototype` read resolves to, so
+  `Object.getPrototypeOf(a) === Array.prototype` is an `===` on one carrier;
+- `arrayGetPrototypeArm` tests `__extern_is_array` — the same §7.2.2 predicate
+  `Array.isArray` uses, so the static and dynamic arms cannot disagree about
+  what an Array is, and the packed byte carriers behind
+  ArrayBuffer/DataView/TypedArrays are excluded there and therefore here.
+
+It **widens a missing answer, never replaces a present one**: the `$Object`
+then-arm still wins for anything with a real `$proto`, the fnctor arm still
+runs first, and when the singleton is still the reserved null (a module whose
+`Array` brand global was never materialised) the arm falls through to the
+pre-existing boundary answer instead of publishing a null prototype of its own.
+In gc/host nothing is reserved, the arm emits zero instructions, and
+`__getPrototypeOf` stays byte-identical.
+
+`src/codegen/index.ts` carries only the two one-line finalize calls (single-
+and multi-source), beside their `fillObjectProtoSingleton` twins.
+
+### Measurement — per-row set diffs, both lanes, `error` counts stated
+
+Authoritative lane throughout: a gitignored `tests/probe-*.test.ts` calling
+`runTest262Chunk(0,1)` under `TEST262_PATH_FILTER_FILE`, with
+`TEST262_TARGET=standalone` and `JS2WASM_EVAL_ENGINE=quickjs`. All three
+artifacts (`build:compiler-bundle`, `build:runtime-bundle`,
+`build-quickjs-eval-provider.mjs`) were rebuilt after every source flip; the
+base runs were taken on sources `cp`-reverted to `HEAD` (verified: `git diff
+src/` empty, and the QuickJS adapter cache returned to its original key
+`425b82e317bcab8d`).
+
+**ES2015 cross-realm bucket — 128 rows** (the runner's own set; 138 rows carry
+`cross-realm` and classify ES2015, of which the 10 `intl402/` ones are outside
+`TEST_CATEGORIES`). The base run reproduces CI's published bucket numbers
+exactly, which is what makes the delta a delta:
+
+| | pass | fail | compile_error | error |
+| --- | --- | --- | --- | --- |
+| base | 39 | 89 | 0 | **0** |
+| after | 42 | 86 | 0 | **0** |
+
+```
+GAINED 3   built-ins/Array/proto-from-ctor-realm-{one,two,zero}.js
+LOST   0
+OTHER  0
+```
+
+Re-confirmed on the FINAL tree after the budget-driven refactor of the patch.
+
+**Wider no-regression sweep — 577 rows**: every test under `built-ins/Array`,
+`built-ins/Object`, `built-ins/Reflect` and `language/expressions/instanceof`
+whose source mentions `getPrototypeOf` / `isPrototypeOf` / `setPrototypeOf` /
+`__proto__` / `instanceof`. That is the reachable blast radius: the arm fires
+only when `__extern_is_array` says the `[[GetPrototypeOf]]` receiver IS a
+native array carrier.
+
+| | pass | fail | compile_error | error |
+| --- | --- | --- | --- | --- |
+| base | 454 | 118 | 5 | **0** |
+| after | 457 | 115 | 5 | **0** |
+
+```
+GAINED 3   (the same three rows)
+LOST   0
+OTHER  0
+```
+
+A first attempt at a 6,689-row sweep (all of those four directories, unfiltered)
+was abandoned: at the measured throughput it was ~90 min per side, and a pool-4
+retry was OOM-killed (exit 137) at 358/577 rows. The 577-row run was re-done at
+pool 3 with a 2 GB fork heap and completed with a valid shard-completion
+manifest. Two things follow for the next lane: an incomplete JSONL here looks
+exactly like a finished one unless you check the manifest, and `vitest exit=137`
+is the tell.
+
+### Honest count — 3 rows, not ~45
+
+X1's ~45 was a path-name scan (48 non-`intl402` `*proto-from-ctor-realm*` rows
+in the ES2015 bucket). Only **3** are gated on this cause. The other 45 are
+blocked by something this lane deliberately does not touch, and would not move
+even with a perfect §9.1.14:
+
+- **~30** assert against a foreign intrinsic the `$262` shim does not forward —
+  `other.Object`, `other.Number`, `other.Boolean`, `other.String`,
+  `other.RegExp`, `other.Map`/`Set`/`WeakMap`/`WeakSet`, `other.Promise`,
+  `other.DataView`, `other[TA.name]` for the 12 TypedArray rows. Measured on
+  base, those rows die one line EARLIER than the prototype check, on
+  `TypeError: Cannot access property on null or undefined at N:44` — column 44
+  is the `other.X` read itself. Out of scope by the brief
+  (`scripts/test262-fyi-runtime.js` compiles into every module in every lane).
+- **7** (`Error` plus the six `NativeErrors`) assert against the shim's
+  *distinct-identity* error constructors, whose `.prototype` reads `undefined`
+  in standalone — the `Function.prototype` member-read lane (F1), not this one.
+- **10** `Array/prototype/*/create-proto-from-ctor-realm-*` are
+  ArraySpeciesCreate rows, a different operation; 5 already pass and the 5
+  `-non-array` ones fail on the species path.
+
+The addressable-in-principle set was 8 rows (the ones whose asserted intrinsic
+IS identity-forwarded by the shim: 3 × Array, 3 × Date, ArrayBuffer, Function);
+of those, Date/ArrayBuffer/Function are blocked by the `other.X` read above,
+leaving 3. Stated plainly per the brief: the lever is real and general, but it
+is **not** a 45-row lever in this bucket.
+
+### Value outside the bucket (not measured here)
+
+The fix is not cross-realm-specific — it corrects `[[GetPrototypeOf]]` for every
+dynamically-typed array receiver in standalone, including through
+`Reflect.getPrototypeOf`. The 577-row sweep found no other row that flips, but
+that sweep is scoped to four directories; a full-corpus standalone run is where
+any further gain would show, and it was not run here.
+
+### Gates (all run bare, exit code read directly — never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 · `check-host-import-policy`
+0 · `check-compiler-boundaries --mode inventory` 0 (`inventoryValid: true`).
+
+The loc/func gates required grants (recorded in this file's frontmatter with
+the rationale): +2 lines in `src/codegen/index.ts` (the two finalize calls) and
++2/+1/+1 lines in `buildObjectPrototypeHelpers` / `generateModule` /
+`generateMultiModule`. The first cut of the patch cost +9/+3/+2; extracting
+`reserveArrayProtoSingleton` and moving the prose into the helpers' docstrings
+brought it down. Splitting those three functions is out of scope — they are
+pre-existing god functions at 696/1884/1281 lines.
+
+### Regression test
+
+`tests/issue-6651-r1-proto-from-ctor-realm.test.ts`, 7 cases, compiled through
+`compile(src, { target: "standalone" })` and executed — no test262 dependency,
+so it runs in a bare checkout.
+
+- **RED on reverted base sources**: 3 failed / 4 passed. The three witnesses are
+  the `any`-typed array literal, the array read out of an `any` container, and
+  `Reflect.getPrototypeOf`.
+- **GREEN on this branch**: 7 passed.
+
+The other 4 cases are deliberate hold-the-line guards that pass on base too: the
+statically-typed answer, the already-folded `id(new Array(1))`, and two
+must-NOT-claim-`%Array.prototype%` cases (an ordinary object, a string).
+
+### Not done / known residual
+
+- `Object.getPrototypeOf(id({ a: 1 }))` — an `any`-typed ORDINARY object — still
+  answers `null` in standalone. A separate `__getPrototypeOf` gap in the
+  `$Object` implicit-terminal path (#5270's arm is not reached through that
+  binding shape). Pinned only negatively in the regression test
+  (`not.toBe(%Array.prototype%)`); not investigated further.
+- An array whose prototype was legitimately changed still cannot report it:
+  `__object_setPrototypeOf` is a silent no-op on a vec carrier (no `$proto`
+  field), as `reflect-construct-newtarget.ts` documents. Before this change such
+  an array read `null`; now it reads `%Array.prototype%`. Both are wrong against
+  a custom prototype and no row in either sweep distinguishes them — but a
+  program doing `Object.setPrototypeOf(arr, null)` moves from an
+  accidentally-right `null` to a wrong `%Array.prototype%`. Closing that needs a
+  `$proto` slot on the array carrier, i.e. a value-representation change.
+- `class X extends Array` instances are in the same position: unchanged-wrong.
+- The `$262` shim's missing intrinsic forwards (the ~30 rows above) were NOT
+  attempted, per the brief's scope boundary.
+- No PR opened; handed back to the dispatching session.
