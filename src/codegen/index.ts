@@ -299,6 +299,7 @@ import { fillVecProtoLinkArms } from "./vec-proto-link.js"; // (#2917)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
+import { noteRegexPropertySource } from "./regex-runtime/unicode.js"; // (#6677)
 import {
   hoistedVarRetypesToConcreteRef,
   inferArrayVecType,
@@ -5731,6 +5732,7 @@ export function generateModule(
     // vec reads / joins emit the `$Hole → undefined` read-boundary guard.
     // Off by default — programs without holes are byte-identical.
     scanForArrayHoles(ctx, ast.sourceFile);
+    noteRegexPropertySource(ctx, ast.sourceFile); // (#6677) link the \p{…} table only if spellable
 
     if (
       options?.experimentalIR &&
@@ -10923,6 +10925,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("array-hole-scan", () => {
       for (const sf of multiAst.sourceFiles) {
         scanForArrayHoles(ctx, sf);
+        noteRegexPropertySource(ctx, sf); // (#6677)
       }
     });
 

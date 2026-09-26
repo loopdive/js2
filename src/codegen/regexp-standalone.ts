@@ -71,6 +71,7 @@ import {
 } from "./regex/bytecode.js";
 import { compilePattern, RepeatTooLargeError } from "./regex/compile.js";
 import { pushRegexI32Array } from "./regex/wasm-array-literal.js";
+import { fullDynamicRegExpAttempt, simpleSubsetFlagGate } from "./regex-runtime/compiler.js";
 import {
   emitNativeProtoIdentityReturnUndefined,
   getBuiltinBrand,
@@ -1354,6 +1355,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   const GROUP_ID = 37;
   const GROUP_SEEN = 38;
   const GROUP_TOTAL = 39;
+  const FULL = 40;
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: offLocal },
@@ -1591,6 +1593,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     },
     { op: "local.get", index: INVALID_FLAGS },
     { op: "i32.eqz" },
+    ...simpleSubsetFlagGate(ctx, FBITS), // #6677 — `i`/`u` patterns go to the full compiler
     { op: "local.set", index: SIMPLE },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: PIPES },
@@ -1935,6 +1938,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
           else: !noJsHost(ctx)
             ? throwConstructed(ctx.funcMap.get("__new_TypeError")!, REGEX_UNSUPPORTED_DYNAMIC_PATTERN)
             : [
+                // #6677 — the full-grammar runtime compiler first; only what it
+                // cannot model (null) keeps the poison below.
+                ...fullDynamicRegExpAttempt(
+                  ctx,
+                  structTypeIdx,
+                  flattenIdx,
+                  [PATTERN, FBITS, FULL],
+                  [...throwConstructed(syntaxCtorIdx, invalidMessage)],
+                ),
                 { op: "local.get", index: FBITS },
                 { op: "i32.const", value: 0 }, // nGroups = 0 → POISON
                 { op: "i32.const", value: 0 },
@@ -2496,6 +2508,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "groupId", type: { kind: "i32" } },
       { name: "groupSeen", type: { kind: "i32" } },
       { name: "groupTotal", type: { kind: "i32" } },
+      // #6677 — result slot of the full-grammar runtime compiler (standalone only).
+      ...(noJsHost(ctx) ? [{ name: "full", type: { kind: "ref_null", typeIdx: structTypeIdx } as ValType }] : []),
     ],
     body,
     exported: false,

@@ -120,9 +120,10 @@ const CONSTRUCTION_SOURCE = `
 
   // In the runtime grammar: literal units.
   var simple: any = new RegExp(joinParts(["a", "b"]), joinParts(["g", "i"]));
-  // OUTSIDE it: a character class + a quantifier. Construction must still
-  // succeed and still report the source verbatim.
-  var hard: any = new RegExp(joinParts(["[a-z]", "+"]), joinParts([""]));
+  // OUTSIDE it: a non-ASCII class under \`i\` + a quantifier (since #6677 the
+  // runtime compiles \`[a-z]+\`; non-ASCII case folding is what it still
+  // refuses). Construction must still succeed and report the source verbatim.
+  var hard: any = new RegExp(joinParts(["[\u00e0-\u00ff]", "+"]), joinParts(["i"]));
   // A NUL code unit inside a runtime pattern must survive as one unit — the
   // C-string truncation the issue suspected would drop it here if it existed.
   var nul: any = new RegExp(joinParts(["a", String.fromCharCode(0), "b"]), joinParts([""]));
@@ -178,7 +179,7 @@ describe("#4654 — construction-time contract the adapter's RegExp arm rests on
   });
 
   it("a runtime pattern OUTSIDE the grammar still constructs and still reports its source", () => {
-    // `[a-z]+` — six code units, first is `[`. If construction ever started
+    // `[à-ÿ]+` — six code units, first is `[`. If construction ever started
     // refusing, the adapter's reconstruction arm would lose every pattern that
     // is not in the runtime grammar and #4654's rows would come back.
     expect(ex.hardSourceLen!()).toBe(6);
