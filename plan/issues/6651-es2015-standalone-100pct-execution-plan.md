@@ -12356,3 +12356,177 @@ all four changed/added files **0**. No new raw-checker call (the predicate reads
 `ctx.classStaticMethodNames` / `ctx.classExprNameMap` and `ts.SymbolFlags`, both
 already in hand). Growth grants are dated C1 entries at the head of this file's
 `loc-budget-allow` and `func-budget-allow`; `scripts/*-baseline.json` untouched.
+
+## Lane SY1 receipt — the ES2015 `Symbol` feature-tag bucket, triaged end to end;
+## the bucket has NO cause worth more than one row (2026-09-26)
+
+Scope: the ES2015 × `Symbol` feature slice on `--target standalone`. The published
+row is **609 total / 549 pass / 58 fail / 2 CE (90 %)**, reproduced exactly (see
+below). The dispatch brief said "64 failing"; the artifact says **60 not-pass**.
+
+### The bucket IS mostly Symbol work — unlike `Reflect`, but it is spread thin
+
+Reproducing the slice showed the `Symbol` row is scored on the **bare `Symbol`
+frontmatter tag only**, not the union of the twelve `Symbol*` tags in
+`scripts/feature-t262-features.json` (that union is 1,955 rows / 164 fail / 5 CE).
+Directory spread of the 60 not-pass rows:
+
+| rows | bucket |
+|---|---|
+| 16 | `language/**` |
+| 12 | `built-ins/Object` |
+| 7 | `built-ins/Symbol` |
+| 6 | `built-ins/NativeErrors` (all `proto-from-ctor-realm` — lane R1) |
+| 5 | `built-ins/Proxy` (lane P1) |
+| 3 | TypedArray family (lane TA2) |
+| 2 each | `Date`, `JSON`, `String`, `Reflect` |
+| 1 each | `Array`, `Promise`, `Map` |
+
+So ~11 of the 60 belong to another lane's bucket by construction
+(`proto-from-ctor-realm` ×6, Proxy ×5), and 3 more are TypedArray rows I left
+alone per the lane split. The rest carry the tag because they *exercise* a symbol
+(a symbol key, a symbol value, a symbol coercion), which is genuinely this
+bucket's material — the `Reflect` bucket's "the name is misleading" finding does
+**not** repeat here.
+
+### Measurement lane — and a stale-artifact correction that changes the headline
+
+- Row set: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`
+  (48,735 rows, fetched fresh 2026-09-26) ∩ `scripts/generate-editions.ts`'s own
+  `parseFrontmatter` + `classifyEdition`, host-free status. Independently
+  reproduces the published **609 / 549 / 58 / 2**.
+- Verdicts: `tests/test262-shared.ts::runTest262Chunk` from a gitignored
+  `tests/probe-sy1.test.ts`, `TEST262_PATH_FILTER_FILE`, `--isolate`,
+  `TEST262_IT_TIMEOUT_MS=420000`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, pool 2.
+  Shard-completion manifest checked on **every** sweep quoted here
+  (`registered=recorded=canonical`, `allCallbacksSettled: true`, 0 `error` rows).
+- All three artifacts rebuilt after every `src/` edit *and* after every A/B flip
+  (`build:compiler-bundle` → `build:runtime-bundle` →
+  `scripts/build-quickjs-eval-provider.mjs`).
+- **Base standalone sweep reproduced the artifact exactly**: 60 registered, 60
+  recorded, 60 canonical, **0 pass / 58 fail / 2 CE**.
+
+**CORRECTION, and it is the load-bearing one.** Scoring the host axis from the
+committed host baseline (`.test262-cache/test262-current.jsonl`, fetched fresh by
+`scripts/fetch-baseline-jsonl.mjs`) said **60 of 60 fail on host too** — i.e. "this
+whole bucket is shared front-end work, nothing for a standalone lane". A live host
+sweep of the same 60 rows says **27 pass / 33 fail**. The committed host JSONL's own
+rows are timestamped **21.5.2026** — four months stale — so its verdicts are not
+comparable to a standalone baseline promoted this week. Anyone splitting a bucket
+by joining the two committed baselines will get a wrong answer in the direction of
+"not mine"; the host axis has to be *run*.
+
+### Axis 1 — host vs standalone (both sweeps mine, same 60 rows, same day)
+
+| | rows |
+|---|---|
+| host **pass**, standalone not-pass → standalone-only gap | **27** |
+| host fail too → shared front-end, a different slice | **33** |
+
+### Axis 2 — grouping the 27 standalone-only rows by cause, not by path
+
+Every candidate was reproduced with a **verbatim-test262-shaped** program
+(top-level, untyped, `skipSemanticDiagnostics: true`, `deferTopLevelInit: true`)
+and bisected assertion-by-assertion with a bitmask. That shape is not optional:
+an annotated probe (`const s: any = Symbol("66")`) reported `String(sym)` BROKEN
+where the real row's same assertion passes, and reported
+`Symbol.prototype.toString.call(sym)` WORKING where the real row fails on exactly
+that line — the #6651 "two disjoint lowerings, picked by the receiver's static
+shape" hazard, twice, in one sitting.
+
+The result is the headline finding: **there is no big rock here.** Each cause is
+worth **one** row. Measured, per cause:
+
+| rows | cause | verified how |
+|---|---|---|
+| 1 | `Object.assign`'s ToObject gate lists four of Table 13's five primitive tags — `symbol` is missing | **LANDED**, below |
+| 1 | a primitive wrapper's `[[Prototype]]` is `Object.prototype` — for **every** wrapper, not just Symbol (`Object(1)`, `Object('s')` too) | `Symbol/constructor.js` |
+| 1 | ToPrimitive on a Symbol wrapper does not unbox to its `[[SymbolData]]`, so `"".indexOf(Object(Symbol()))` does not throw | `indexOf/searchstring-tostring-errors.js` assertion 2 |
+| 1 | TS types `Object(sym)` as `symbol`, so `Symbol.keyFor`'s static-tag guard (`call-namespace-static.ts`) coerces the wrapper externref into the i32-id lane instead of throwing | `keyFor/arg-non-symbol.js` assertion 1 |
+| 1 | `Object.entries` loses a symbol VALUE's identity **and description** once the carrier is descriptor-backed | `Object/entries/symbols-omitted.js` assertion 5 |
+| 1 | `sym()` and `new symObj()` do not throw TypeError (the other two of the four do) | `Symbol/not-callable.js` assertions 1 + 4 |
+| 1 | ToInteger via a `valueOf` that RETURNS a symbol does not throw (the direct-symbol and `@@toPrimitive` spellings already do) | `indexOf/position-tointeger-errors.js` assertion 4 |
+| 11 | another lane's bucket by construction (`proto-from-ctor-realm` ×6 lane R1, Proxy ×5 lane P1) | — |
+| 3 | TypedArray rows — out of lane per the TA2 split, untouched | — |
+
+Two sub-findings worth carrying forward:
+
+- **The wrapper-prototype gap is NOT Symbol work.** `Object.getPrototypeOf(Object(x))`
+  answers `Object.prototype` for String and Number wrappers too. Fixing it inside
+  a Symbol slice would be mis-scoped; it belongs with the #2175 proto-index store,
+  whose H5 receipt already records the "proto-member dirty" arming condition.
+- **The `Object.entries` symbol-value defect is triggered by `Object.defineProperty`,
+  and the KEY does not have to be a symbol.** A string-keyed `defineProperty` on
+  the carrier breaks it identically. Before the `defineProperty` the identity
+  holds; after it, `obj.key`, `Object.values(obj)[0]` and
+  `Object.getOwnPropertyDescriptor(obj,'key').value` **all still compare equal to
+  the original symbol** while `Object.entries(obj)[0][1]` does not, and its
+  `String(...)` reads `Symbol()` — the description is gone. `__object_entries`
+  (`object-runtime-enumeration.ts`) pushes `$PropEntry.value` unmodified, so the
+  mis-boxing is downstream of it. Isolating that needs more than this slice's
+  budget; the reproducer is pinned as a negative control in
+  `tests/issue-6651-sy1-symbol.test.ts` so the next lane starts from the
+  three-line repro rather than the 30-line test262 row.
+
+### What landed
+
+`src/codegen/expressions/call-builtin-static.ts`, the `Object.assign` arm:
+`targetIsPrimitive` tested `number | string | boolean | bigint`. §20.1.2.1 step 1
+is `to = ToObject(target)` and the RESULT of the whole call is that wrapper;
+`emitObjectCoercion` (`calls-guards.ts`) already grew its Symbol arm in slice I4,
+but this gate never did — so a statically-`symbol` target skipped ToObject and
+`__object_assign` (which only rejects a NULLISH target) handed the raw symbol
+straight back. One missing tag, not a missing mechanism. The list is now the five
+Table 13 rows, spelled as a one-line `.includes` so the file lands at **net +0
+LOC** (no growth grant needed — see Gates).
+
+### Row deltas — per-row set diff, measured by me, both targets
+
+| sweep | base | after | delta |
+|---|---|---|---|
+| ES2015 × `Symbol` bucket, 60 not-pass rows, **standalone** | 0 pass / 58 fail / 2 CE | 1 pass / 57 fail / 2 CE | **+1 gained, 0 lost, 0 status-changed** |
+| control, 177 rows (every `built-ins/Object/{assign,entries,values}` + every `built-ins/Symbol`), **standalone** | 124 pass / 53 fail | 125 pass / 52 fail | **+1 gained, 0 lost** |
+| the same 177-row control, **host** | 138 pass / 39 fail | 138 pass / 39 fail | **+0, −0** |
+
+The gate is `ctx.standalone`-guarded, so host is untouched by construction — the
+host control run above is the *measurement* of that, not an assumption. Both base
+runs were executed on a reverted tree (file-copy A/B, all three artifacts rebuilt
+for each side), not inherited from an artifact.
+
+### Regression test
+
+`tests/issue-6651-sy1-symbol.test.ts`, 6 cases:
+**1 failed / 5 passed on reverted sources** (`expected 2 to be 3`) →
+**6 passed with the fix**. One case is the fix; one is the four already-working
+Table 13 tags (the guard that widening the gate perturbs nothing); the remaining
+**four are negative controls** that assert today's spec-WRONG answers for the
+wrapper-prototype, ToPrimitive/`keyFor`, `Object.entries` and not-callable causes,
+so a future lane closing one of them gets a failing assertion here instead of
+silently moving a boundary nobody recorded.
+
+### Gates
+
+`check-loc-budget` (net **+0**), `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check-host-import-policy`,
+`check-compiler-boundaries --mode inventory`, `typecheck` — all run **bare**, all
+exit 0. CI-base simulation (`LOC_GATE_BASE=$(git rev-parse origin/main)`) for both
+budget gates: 0. No new file under `src/`, so `scripts/compiler-boundaries.json` is
+untouched; no growth grant added; `scripts/*-baseline.json` untouched. No raw
+`checker.getTypeAtLocation` — the change reads the existing
+`ctx.oracle.staticJsTypeOf` result.
+
+### Not done, and why
+
+- **26 of the 27 standalone-only rows are left open.** Not a budget excuse: each
+  is an independent one-row cause (table above), so there is no grouping that buys
+  more than one row, and three of the seven touch mechanisms owned elsewhere
+  (proto-index store, Proxy, TypedArray). The four that are genuinely Symbol work
+  are pinned as negative controls with minimal reproducers.
+- **No sweep outside the 60-row bucket and its 177-row control.** Nothing here may
+  be read as corpus-wide evidence.
+- A note on a stale recorded claim: this file's earlier line "`Object.assign(Symbol(), …)`
+  does not box: `typeof` stays `"symbol"` and `Object(sym) === sym`" was **half
+  right**. The `Object.assign` half was real and is now fixed; the
+  `Object(sym) === sym` / "ToObject has no Symbol-wrapper carrier" half was
+  already closed by slice I4 — `typeof Object(Symbol('d'))` reads `"object"` and
+  `Object(sym).valueOf() === sym` holds on current main.
