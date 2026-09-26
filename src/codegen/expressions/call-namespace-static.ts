@@ -119,6 +119,7 @@ import {
   emitRuntimeNewTargetPrototype,
   prepareRuntimeNewTargetProto,
   tryEmitOrdinaryConstructWithNewTarget,
+  tryEmitProxyConstructWithNewTarget,
 } from "./reflect-construct-newtarget.js"; // (#3371 r4)
 import { objectPrototypeIsImmutableInstrs } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import {
@@ -2400,6 +2401,15 @@ export function compileNamespaceStaticCall(
             fctx.body.push({ op: "call", funcIdx: createIdx });
             return { kind: "externref" };
           }
+        }
+
+        // (#6651 RF1) A PROXY target's [[Construct]] OBSERVES the NewTarget
+        // identity (the `construct` trap's third argument), which the
+        // construct-then-patch-prototype shape below cannot carry. Declines
+        // unless the callee provably denotes a proxy.
+        const ntForProxy = distinctNewTarget ? ntValueLocal : undefined;
+        if (tryEmitProxyConstructWithNewTarget(ctx, fctx, targetArg, unwrappedList.elements, ntForProxy)) {
+          return { kind: "externref" };
         }
 
         // (#3371 r4) An ordinary user function is the one target whose ordinary

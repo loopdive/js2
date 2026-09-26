@@ -169,6 +169,23 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-26 — lane RF1 (Reflect bucket): `Reflect.construct(proxy, args,
+  # NewTarget)` must deliver the caller's NewTarget to the `construct` trap.
+  # The two new runtime natives (~130 LOC) live in the NEW subsystem module
+  # `src/codegen/object-runtime-proxy-construct-chain.ts`, exactly as the gate
+  # advises — the god-files keep only the wiring that cannot move:
+  #   - object-runtime-proxy.ts +3: the import, capturing
+  #     `__proxy_construct_dispatch`'s funcIdx (the chain walker needs it and it
+  #     is only knowable at that registration), and the one call.
+  #   - call-namespace-static.ts +10: the dispatch arm itself. The decision
+  #     "this Reflect.construct target is a proxy, so construct-then-patch
+  #     cannot serve it" has to be readable where the ordinary lowering starts,
+  #     and it must run BEFORE `compileNewExpression` evaluates the callee.
+  #     The whole emitter (~190 LOC) is in
+  #     `src/codegen/expressions/reflect-construct-newtarget.ts`, which is not a
+  #     god-file. Inlined at the call site the same change was +20.
+  - src/codegen/object-runtime-proxy.ts
+  - src/codegen/expressions/call-namespace-static.ts
   # 2026-09-24 — cluster B1 slice N1 (module namespace: live bindings, null
   # prototype, non-extensible). `src/codegen/module-namespace-value.ts`
   # 769 → 1008 (+239). The growth is in ONE emitter and cannot move out of it:
@@ -683,6 +700,16 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-26 — lane RF1: the same two wiring sites as the `loc-budget-allow`
+  # grant above, and the same reason. `ensureProxyRuntime` +2 (one call, one
+  # blank line) and `compileNamespaceStaticCall` +9 (the proxy dispatch arm).
+  # Both host functions are ALREADY far past the 300-line rule (2588 and 3740)
+  # — splitting them is a pre-existing consolidation task (#3399), not
+  # something a 4-row conformance slice can carry. The extraction that WAS
+  # available was taken: the 130-LOC native body moved to a new module, cutting
+  # `ensureProxyRuntime`'s growth from +114 to +2.
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   # 2026-09-24 — lane W1: +24 inside `src/runtime.ts::resolveImport`, which is
   # the same 24 lines as the `loc-budget-allow` grant above (the three edited
   # host-import bodies are all closures built inside `resolveImport`'s by-name
@@ -11425,3 +11452,285 @@ unchanged — `src/runtime.ts` not touched) · `typecheck` 0.
   `undefined` in standalone. Same shape of gap one brand further up (the Object brand's
   companion has no registered glue either), unchanged by this fix and measured both
   before and after. The regression test states this explicitly rather than asserting it.
+
+## Lane RF1 receipt — the ES2015 `Reflect` bucket, triaged end to end; and why
+## it is not a `Reflect` bucket (2026-09-26)
+
+Scope: the 94 not-pass rows in the ES2015 × `Reflect` feature slice on
+`--target standalone` (330 rows, 86 fail + 8 CE, 71 %).
+
+### The bucket's name is misleading, and that is load-bearing
+
+`Reflect` here is a **frontmatter `features:` tag**, not a directory. Of the 94
+not-pass rows only **9** live under `built-ins/Reflect/`; the tag is carried
+mostly by **Proxy** tests (they drive traps through `Reflect.*`), by
+`*/proto-from-ctor-realm*.js`, and by TypedArray internals. Of the 32
+standalone-only rows, **15 are Proxy rows** — i.e. this bucket and lane P1's
+`Proxy` bucket overlap by roughly half. Anyone sizing "Reflect: 94 failing" as
+Reflect work will size it wrong.
+
+### Measurement lane — reproduced, not assumed
+
+- Row set: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`
+  (48,735 rows, fetched fresh 2026-09-26) ∩ `scripts/generate-editions.ts`'s own
+  `parseFrontmatter` + `classifyEdition`, host-free status. Independently
+  reproduces the published **330 / 236 pass / 86 fail / 8 CE**.
+- Verdicts: `tests/test262-shared.ts::runTest262Chunk` under
+  `TEST262_TARGET=standalone`, from a gitignored `tests/probe-rf1.test.ts`,
+  `TEST262_PATH_FILTER_FILE`, `--isolate`, `TEST262_IT_TIMEOUT_MS=420000`,
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`.
+- **Base sweep reproduced the artifact exactly**: 94 rows registered, 94
+  recorded, 94 canonical verdicts, `allCallbacksSettled: true`, **0 pass /
+  86 fail / 8 CE / 0 `error`**. Shard-completion manifest checked on every
+  sweep quoted here.
+- Bundles + QuickJS adapter rebuilt after every `src/` edit
+  (`build:compiler-bundle`, `build:runtime-bundle`,
+  `scripts/build-quickjs-eval-provider.mjs`).
+
+### Axis 1 — host vs standalone: the bucket HALVES, and then some
+
+| | rows |
+|---|---|
+| host **pass**, standalone not-pass → standalone-only gap | **32** |
+| host **fail/CE** too → shared front-end, a different slice | **62** |
+
+(`sa=fail host=fail` 55 · `sa=fail host=pass` 31 · `sa=CE host=fail` 7 ·
+`sa=CE host=pass` 1.) Two thirds of the "Reflect bucket" is not standalone
+lowering at all. Host verdicts from the published host baseline for the same
+48,735 rows.
+
+### Axis 2 — the 32 standalone-only rows, by ACTUAL error, not by directory
+
+| # | cause | rows | status |
+|---|---|---|---|
+| A | **Proxy `[[Construct]]` does not thread NewTarget** | 4 | **root-caused, FIXED** |
+| B | `TypeError: Cannot access property on null or undefined` | 5 | **directory/text-shaped label — NOT one cause** |
+| C | `Reflect.ownKeys called on non-object` (TypedArray) | 3 | root-caused, sited, not taken |
+| D | `RuntimeError: illegal cast` (module-namespace ownKeys) | 2 | belongs to the N2/N4 namespace slice |
+| E | ownKeys completeness / order | 3 | **three DISTINCT causes, not one** |
+| F | individually sited singletons | 15 | mixed |
+
+**A — FIXED (the only group large enough and coherent enough to take).**
+All four rows fail the same assertion, and `call-parameters-new-target.js`
+isolates it with no nesting: every other assertion in its trap (`this ===
+handler`, `target === Target`, `args`) passes; only `newTarget === NewTarget`
+fails. Root cause read in source, then confirmed by the fix moving exactly
+those rows:
+
+- `src/codegen/expressions/call-namespace-static.ts` lowers
+  `Reflect.construct(t, args, NT)` as the **ordinary `new t(...)` followed by a
+  prototype patch** to `NT.prototype`. That shape carries a prototype, never a
+  NewTarget **identity** — and a proxy's `construct` trap takes NewTarget as its
+  third argument (§10.5.13 step 9), so it is observable.
+- `src/codegen/native-construct.ts`'s driver proxy arm therefore passed the
+  proxy itself: `// Ordinary `new proxy(...)` uses the proxy itself as
+  NewTarget` — correct for `new P()`, wrong here.
+- With the trap absent it forwarded to `[[ProxyTarget]]` by re-entering the
+  driver, which **re-derived** NewTarget from the INNER proxy — so a nested
+  proxy lost it a second time. That is why all three `trap-is-*` rows report
+  two indistinguishable `function () { [native code] }` values.
+
+**B — the trap the brief warns about, and it is real here.** Five rows share
+one error STRING and nothing else: `Date/proto-from-ctor-realm-two.js`,
+`Function/prototype/bind/get-fn-realm.js`,
+`Object/{freeze,seal}/proxy-with-defineProperty-handler.js`,
+`Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js`. The
+reported positions differ (347:44, 367:22, 358:18, 349:18, 363:44) and three of
+them are `$262`/realm rows that belong to the cross-realm and shim lanes. Do
+not size this as a 5-row cause; it is at most a 2-row candidate
+(`Object/freeze` + `Object/seal`, same filename, same position shape) plus
+three unrelated rows.
+
+**C — sited, deliberately not taken.** All three are
+`TypedArrayConstructors/internals/OwnPropertyKeys/*` under
+`testWithTypedArrayConstructors`, so the receiver arrives through a dynamic
+`TA` parameter. The refusal is `emitNativeReflectTargetGuard`
+(`src/codegen/reflect-target-guard.ts`): its Type(V)-is-Object union
+(`__typeof_object` ∪ `__typeof_function`, minus null/undefined/Symbol) does not
+brand a dynamically-typed typed-array view. **Fixing the guard alone would not
+move the rows** — `Reflect.ownKeys` would then have to actually enumerate the
+integer indices, which is a second, separate capability. Two fixes for three
+rows; a poor trade against A.
+
+**E — NOT one cause, despite the shared word "ownKeys".** This corrects lane
+P1's grouped residual ("ownKeys / gOPN invariants, 7 rows, not root-caused"):
+- `Reflect/ownKeys/order-after-define-property.js` — `[a, b, length]` where the
+  spec wants `[length, a, b]`: an array's `length` is **appended** by our
+  ownKeys rather than being an own property in creation order.
+- `Object/getOwnPropertyDescriptors/order-after-define-property.js` — `[a]`
+  where the spec wants `[lastIndex, a]`: a RegExp's `lastIndex` own property is
+  **absent entirely**, not merely misordered. Different defect.
+- `Proxy/ownKeys/trap-is-missing-target-is-proxy.js` — `[0,1,2,length]` where
+  the spec wants a trailing `Symbol()`: **symbol keys** are not reported.
+
+### What landed — one seam, +4 rows, 0 lost
+
+Three sites, all standalone-gated (`ctx.standalone`), plus one new module:
+
+1. `src/codegen/object-runtime-proxy-construct-chain.ts` (new) —
+   `__proxy_construct_chain(v, argumentsList, newTarget)` walks the
+   `[[ProxyTarget]]` chain invoking each link's construct trap with the caller's
+   newTarget held **invariant**, returning the first trap result, or null when
+   nothing in the chain trapped; and `__proxy_ultimate_target(v)`, the first
+   non-proxy in that chain. Loops, not self-recursion: the dispatch's own
+   funcIdx is not available inside its own body (reserve-then-fill, #1719), and
+   a loop cannot blow the stack on a long chain.
+2. `src/codegen/object-runtime-proxy.ts` (+3) — capture
+   `__proxy_construct_dispatch`'s funcIdx and register the two natives.
+3. `src/codegen/expressions/reflect-construct-newtarget.ts` (+190) —
+   `tryEmitProxyConstructWithNewTarget`: calls the chain with the real
+   NewTarget, and falls back to the ordinary `[[Construct]]` driver on
+   `__proxy_ultimate_target` (with `? Get(NewTarget, "prototype")`, read ONLY on
+   that arm so a `prototype` getter does not run when a trap answered).
+4. `src/codegen/expressions/call-namespace-static.ts` (+10) — the dispatch arm,
+   ahead of the ordinary-function arm.
+
+**The gate is deliberately narrow**: `isUnreassignedProxyValue` admits only a
+literal `new Proxy(…)` or a single-declaration binding initialised with one and
+never written afterwards (and `Proxy` itself not shadowed). Everything else
+keeps the pre-existing construct-then-patch lowering with all its
+carrier-specific arms — which is what lets the new arm skip that fallback
+entirely.
+
+One correction worth recording: the obvious reuse, `isRebound`, is **wrong for
+a variable binding** — it counts the binding's own `VariableDeclaration` as a
+rebind (right for its function-declaration callers, where a same-named variable
+shadows the function). The first cut used it and the arm silently never fired;
+the four rows were unchanged and the sweep read as a no-op fix.
+`isWrittenAfterDeclaration` scans writes only.
+
+### Measurement
+
+| sweep | rows | before | after |
+|---|---|---|---|
+| the 94 not-pass Reflect-bucket rows | 94 | 0 pass / 86 fail / 8 CE / **0 error** | 4 pass / 82 fail / 8 CE / **0 error** |
+
+Per-ROW set diff, not counts: **GAINED 4, LOST 0, other status change 0, rows
+only in before 0, rows only in after 0.**
+
+```
++ built-ins/Proxy/construct/call-parameters-new-target.js
++ built-ins/Proxy/construct/trap-is-undefined.js
++ built-ins/Proxy/construct/trap-is-null.js
++ built-ins/Proxy/construct/trap-is-undefined-no-property.js
+```
+
+**Wider no-regression sweep — 843 rows, standalone, `--isolate`** (all of
+`built-ins/Proxy`, `built-ins/Reflect`, `language/expressions/new.target`,
+`built-ins/Object/{assign,freeze,seal,getOwnPropertyDescriptors}`,
+`built-ins/Array/length`, `language/module-code/namespace/internals`, ∪ the
+whole 330-row Reflect bucket). Manifest: 843 registered / 843 recorded / 843
+canonical verdicts / `allCallbacksSettled: true`, **0 `error` rows**.
+
+| | pass | fail | CE | error |
+|---|---|---|---|---|
+| published standalone baseline, same 843 rows | 679 | 154 | 10 | — |
+| this branch | **683** | 150 | 10 | **0** |
+
+Per-ROW diff: **GAINED 4 (the same four), LOST 0.**
+
+Caveat stated rather than hidden: the wider sweep's "before" is the published
+`test262-standalone-current.jsonl`, not a second local run. That artifact is
+`origin/main`'s own baseline and my locally-executed base run over the 94-row
+subset agreed with it on **94/94 rows**, which is why it is trusted here. The
+843-row sweep ran against the pre-module-split build; the 94-row bucket was
+re-run after the split and reproduced 4 pass / 82 fail / 8 CE / 0 error
+identically (manifest 94/94/94, settled).
+
+### Regression test
+
+`tests/issue-6651-rf1-reflect.test.ts`, 5 cases, `--target standalone`,
+instantiated with **no import object** (the host-free assertion).
+
+- Proven **RED on the reverted base sources** (file copies of all three edited
+  files, `.tmp/base-*.ts`): `3 failed | 2 passed` — `expected 33 to be 73`,
+  `expected 1007 to be 1107`, `expected +0 to be 11`.
+- **GREEN** with the fix: `5 passed`. Re-run green after the module split.
+- The 2 that pass on base are CONTROLS and are there on purpose: `new P()` must
+  keep using the proxy itself as NewTarget, and a non-proxy target must keep the
+  pre-existing construct-then-patch answer.
+
+### Gates (all run bare, exit code read directly — never piped)
+
+| gate | exit |
+|---|---|
+| `scripts/check-loc-budget.mjs` | 0 |
+| `scripts/check-func-budget.mjs` | 0 |
+| `scripts/check-coercion-sites.mjs` | 0 |
+| `check:oracle-ratchet` | 0 |
+| `check:dead-exports` | 0 |
+| `scripts/check-host-import-policy.ts` | 0 |
+| `check-compiler-boundaries.mjs --mode inventory --base HEAD^1` | 0 |
+
+The budget gates were RED first, at +114 / +19. The available extraction was
+taken — the 130-LOC native body moved to its own module, cutting
+`ensureProxyRuntime` from +114 to +2 — and only the irreducible wiring (+3 and
++10 file lines, +2 and +9 function lines) is granted, in this file's
+frontmatter, dated, with the reason each line cannot move. The new module is
+registered in `scripts/compiler-boundaries.json` as text in place.
+
+### Not done, and why
+
+- **No host-lane work.** 62 of the 94 fail on the default target too; by
+  definition no standalone lowering can move them.
+- **Group C (3 rows)** — sited above; needs two fixes, not one.
+- **Group E (3 rows)** — three separate ownKeys defects, each a singleton.
+  Recorded so the next lane does not re-group them as one.
+- **#2917** (`Array.prototype`'s two unequal internal representations) was not
+  touched; it is still unowned.
+- **The driver's own nested-proxy path** (`new NestedProxy()`, no
+  `Reflect.construct`) still derives newTarget from the inner proxy rather than
+  the outer one. `__proxy_construct_chain` is the mechanism that fixes it —
+  routing `native-construct.ts`'s proxy arm through it is a small follow-up —
+  but no ES2015 row in this bucket demanded it, so it was left out rather than
+  shipped untested.
+
+#### The 32 standalone-only rows, verbatim (so the next lane need not re-derive them)
+
+```
+A  NewTarget not threaded through proxy [[Construct]]        (4, FIXED)
+     built-ins/Proxy/construct/call-parameters-new-target.js
+     built-ins/Proxy/construct/trap-is-null.js
+     built-ins/Proxy/construct/trap-is-undefined.js
+     built-ins/Proxy/construct/trap-is-undefined-no-property.js
+B  "Cannot access property on null or undefined"  (5, LABEL not cause)
+     built-ins/Date/proto-from-ctor-realm-two.js                      347:44
+     built-ins/Function/prototype/bind/get-fn-realm.js                367:22
+     built-ins/Object/freeze/proxy-with-defineProperty-handler.js     358:18
+     built-ins/Object/seal/proxy-with-defineProperty-handler.js       349:18
+     built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js  363:44
+C  "Reflect.ownKeys called on non-object"                     (3, sited)
+     built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes.js
+     built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-keys.js
+     built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-and-symbol-keys-.js
+D  "RuntimeError: illegal cast"                    (2, N2/N4 namespace slice)
+     language/module-code/namespace/internals/own-property-keys-sort.js
+     language/module-code/namespace/internals/own-property-keys-binding-types.js
+E  ownKeys completeness / order              (3, THREE distinct defects)
+     built-ins/Reflect/ownKeys/order-after-define-property.js          [a,b,length] vs [length,a,b]
+     built-ins/Object/getOwnPropertyDescriptors/order-after-define-property.js  [a] vs [lastIndex,a]
+     built-ins/Proxy/ownKeys/trap-is-missing-target-is-proxy.js        missing Symbol() key
+F  singletons                                                            (15)
+     built-ins/Array/length/define-own-prop-length-no-value-order.js
+         TypeError: Cannot redefine property: enumerable attribute of a non-configurable property
+     built-ins/ArrayBuffer/proto-from-ctor-realm.js       SameValue(«null», «[object ArrayBuffer]»)
+     built-ins/Function/proto-from-ctor-realm.js          SameValue(«[object Function]», «undefined»)
+     built-ins/Proxy/apply/trap-is-missing-target-is-proxy.js
+         Object.prototype.hasOwnProperty is not yet implemented in --target standalone
+     built-ins/Proxy/defineProperty/trap-is-null-target-is-proxy.js     SameValue(«undefined», «2»)
+     built-ins/Proxy/defineProperty/trap-is-undefined-target-is-proxy.js  expected a TypeError
+     built-ins/Proxy/deleteProperty/trap-is-null-target-is-proxy.js       expected a TypeError
+     built-ins/Proxy/deleteProperty/trap-is-undefined-strict.js    SameValue(«[object Object]», «undefined»)
+     built-ins/Proxy/get-fn-realm.js       TypeError: Reflect.construct newTarget is not a constructor
+     built-ins/Proxy/has/trap-is-missing-target-is-proxy.js               expected true but got false
+     built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js  ReferenceError: ns is not defined
+     built-ins/Proxy/set/trap-is-missing-target-is-proxy.js               expected a TypeError
+     built-ins/Reflect/enumerate/undefined.js   CE: Reflect.hasOwnProperty not supported in standalone (#1472 Phase C)
+     built-ins/Reflect/ownKeys/return-on-corresponding-order-large-index.js  «"12345678900"» vs «"4294967294"»
+     built-ins/Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js  «true» vs «false»
+```
+
+The eight `*-target-is-proxy.js` rows across B/E/F are a **filename family with
+six different error texts** — exactly the shape lane P1 warned about when 24
+Proxy rows grouped by that name produced a cause that did not exist. They are
+listed apart on purpose.
