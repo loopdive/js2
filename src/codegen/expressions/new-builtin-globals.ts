@@ -52,6 +52,7 @@ import { coerceType as coerceTypeImpl } from "../type-coercion.js";
 import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
+import { mintDateCarrierDynamicMembers } from "../date-carrier-dynamic-member.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
   emitDynamicNewFunctionHostEval,
@@ -1661,6 +1662,7 @@ export function tryCompileBuiltinGlobalNew(
   // Handle `new Date()`, `new Date(ms)`, `new Date(y, m, d, ...)` — native Date struct
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Date") {
     const dateTypeIdx = ensureDateStruct(ctx);
+    mintDateCarrierDynamicMembers(ctx, fctx, expr); // (#6678) Date members off an untyped slot
     const args = expr.arguments ?? [];
 
     if (args.length === 0) {
