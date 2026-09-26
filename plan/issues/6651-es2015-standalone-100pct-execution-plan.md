@@ -169,6 +169,24 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-26 — lane C1 (§15.7 own `constructor`). Two god-files, +12 and +10.
+  #   - `src/codegen/object-ops.ts` +12: 6 comment lines and one 4-line `if` that
+  #     adds `"constructor"` to the two own-key sets. The RULE and all of its
+  #     evidence live in the NEW leaf module `src/codegen/class-ctor-own-key.ts`;
+  #     what cannot move is the call site, because the fold it corrects builds
+  #     `tsProps` / `nonEnumerableTsProps` as locals inside
+  #     `compilePropertyIntrospection` and answers from them a few lines later.
+  #     Inlined, the same change was +51 in the file and +51 in the function.
+  #   - `src/compiler/early-errors/node-checks.ts` +10: 6 comment lines and 2
+  #     code lines exempting a `static` ConstructorDeclaration from the
+  #     async-constructor refusal. There is no seam here at all — the check is
+  #     one `on([ClassDeclaration, ClassExpression])` rule body, and the
+  #     exemption has to be readable at the refusal it narrows. The comment
+  #     records WHY the `isStaticMember` exemption six lines above cannot cover
+  #     this spelling (`getMemberName` reports no name for a
+  #     ConstructorDeclaration), which is the trap that made the rule wrong.
+  - src/codegen/object-ops.ts
+  - src/compiler/early-errors/node-checks.ts
   # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). +2 lines in
   # `src/codegen/index.ts`: ONE `fillArrayProtoSingleton(ctx)` call in each of
   # the two finalize paths (`generateModule`, `generateMultiModule`), placed
@@ -692,6 +710,16 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-26 — lane C1 (§15.7 own `constructor`). One function, +12 lines, of
+  # which 6 are comment: `compilePropertyIntrospection` gains the single `if`
+  # that admits `"constructor"` into its own-key sets. The predicate itself is a
+  # new leaf module (`class-ctor-own-key.ts`, ~75 lines, mostly the spec citation
+  # and the measurement that overturned the old answer), so what is left here is
+  # the call. It cannot move further out: `tsProps` and `nonEnumerableTsProps`
+  # are function-local, built by the walk immediately above and read by the fold
+  # immediately below, so the decision "this receiver also owns `constructor`"
+  # has to sit between them. The first cut inlined the rule and cost +51.
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
   # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). Three functions, +4
   # lines total, all of them call sites of mechanism that lives elsewhere:
   #   - `buildObjectPrototypeHelpers` +2: one line reserving the
@@ -11802,3 +11830,199 @@ module records and namespace objects`), in base and after.
 - No regression test: no code defect was isolated that a test could pin. The two
   defects found (`Function` still gated; `GetPrototypeFromConstructor` realm fallback)
   belong to other lanes' files.
+
+---
+
+## 2026-09-26 — lane C1 receipt: the `class` feature-tag bucket (66 rows)
+
+Section is append-only; everything below was measured on this branch
+(`issue-6651-c1-class-bucket`, base `origin/main` = `483269a200`), with the three
+bundles rebuilt (`build:compiler-bundle`, `build:runtime-bundle`,
+`build-quickjs-eval-provider`) after every source edit and the QuickJS adapter
+key re-derived each time.
+
+### Phase 1 — the partition, and why "class 66" is not a size
+
+Baseline artifact: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`,
+fetched 2026-09-26 08:00 UTC, internal timestamp `26.9.2026, 08:47:19`,
+`oracle_version: 14`, `oracle_lane: honest`. Edition index
+`website/public/benchmarks/results/test262-file-editions.json`. It reproduces the
+dispatch brief's tag census exactly: ES2015 standalone **10,957 / 11,704**
+(gap 747), and `class`-tagged rows **66 non-pass of 410** (45 `fail`,
+21 `compile_error`).
+
+**Measured host/standalone split (not baseline-derived).** Both targets, same
+66-row manifest, `tests/test262-shared.ts::runTest262Chunk` under
+`TEST262_PATH_FILTER_FILE`, 66/66 rows recorded on each side, **0 `error` rows**:
+
+| | rows |
+| --- | ---: |
+| fails on BOTH targets (shared front-end) | **46** |
+| standalone-ONLY (host passes) | **20** |
+| host-only | 0 |
+| `error` (not measured) | 0 |
+
+**Correction to a baseline-derived figure.** Diffing the two published baselines
+instead gives 40 / 26. The 6-row difference is the whole
+`decorator-*-identifier-reference-yield` family: CI's host lane is
+`oracle_lane: linked-harness`, which passes them, while the honest lane fails
+them on both targets. So those 6 are **not** standalone-only lowering gaps —
+they are a shared parse gap (`'yield' is a reserved word …` on
+`var yield = decorator; @yield() class C {}`) that the linked host oracle hides.
+Anyone splitting a bucket from the two baselines will inherit this error.
+
+**Tag overlap — 41 of the 66 belong to buckets other lanes already own:**
+
+| overlapping tag | rows |
+| --- | ---: |
+| `iterator-chunking` (`Iterator.prototype.{chunks,windows}`) | 17 |
+| `decorators` | 6 |
+| `Reflect` / `Reflect.construct` | 5 |
+| `Proxy` | 4 |
+| `generators` | 3 |
+| `cross-realm` | 3 |
+| `new.target` | 2 |
+| (others, 1 each) | TypedArray, DataView, Symbol.species, error-stack-accessor |
+
+### By ACTUAL cause, with counts (66 rows)
+
+Grouped by error text **and** by what a probe showed actually fails — not by
+directory. Groups marked *label* are a shared string over different positions.
+
+| rows | cause | verified? | whose |
+| ---: | --- | --- | --- |
+| 17 | `Iterator.prototype.{chunks,windows}` — iterator-chunking proposal; tagged `class` only because the fixtures subclass | *label* (9 sa-only + 8 both, ≥3 distinct errors) | G2 out-of-scope |
+| 11 | Promise: `env::__promise_subclass_ctor` host-import CE (5), `extern.convert_any expected anyref` invalid Wasm (2), `then` capability fails (4) | verified distinct | cluster D |
+| **10** | **§15.7 own `constructor`** — `grammar-static-ctor-*-valid`; 6 here, 4 more outside ES2015 | **verified, single cause, FIXED below** | this lane |
+| 6 | decorator `@yield()` parse refusal | verified (one message, one construct) | parser / proposals |
+| 5 | `standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget` | verified (identical CE) | cluster F / lane p1 |
+| 4 | `language/statementList/eval-class-*` — `getPrototypeOf(evalCompletionValue)` | **two** causes, not one: array → wrong `Array.prototype` representation (#2917), regexp → `null` (`$Object` implicit-terminal gap). Both targets. | value-rep |
+| 3 | cross-realm `Cannot access property on null or undefined` | verified | lane x1 |
+| 8 | `language/expressions/super/*` | *label*: 4 rows share `«"undefined"» vs «"object"»` but the other 4 differ; corpus-wide the directory is 23 non-pass of 94 with ≥6 distinct errors | not a single cause |
+| 2 | `ident-name-method-def-new-escaped` — `local.tee[0] expected type (ref null N), found block` invalid Wasm, both targets. Sibling family is 129 rows, only these 2 fail. | verified, uniform | unowned, real bug |
+| 2 | `ArrayBuffer.isView` on a TypedArray/DataView **subclass** instance | verified | cluster E |
+| 1 each | `Error.prototype.stack` getter-subclass · `Function.prototype.toString` proxy-class · `new.target/value-via-super-call` · `Function/internals/Construct/derived-return-val` (TypeError vs ReferenceError) | singletons | — |
+
+So: of 66 rows, **the largest genuinely single, verified, unowned cause is 10**
+(and it is 6 inside ES2015). There is no 20+ row lever in this bucket. That is
+the honest shape of the `class` tag.
+
+### Phase 2 — what landed: §15.7 own `constructor`
+
+Three defects, one shape. Root cause is a single mechanism:
+`object-ops.ts::compilePropertyIntrospection` folds
+`hasOwnProperty` / `propertyIsEnumerable` on a class receiver from
+the receiver type's **declared** properties, and §15.7 puts own `constructor`
+keys in two places that are not declared elements.
+
+1. **`C.prototype.hasOwnProperty('constructor')` answered `false` — for every
+   class, including `class C {}`.** §15.7.14 step 8 (`MakeConstructor`) installs
+   it as `{writable: true, enumerable: false, configurable: true}`. The probe
+   that pins it: on **standalone**, the same object answers
+   `gOPD(C.prototype,'constructor') !== undefined` → **true** and
+   `getOwnPropertyNames(C.prototype)[0] === 'constructor'` → **true** (the #3976
+   prototype `$Object` really carries it), while `hasOwnProperty` said `false`.
+   An internal disagreement between three mechanisms on one key, not a missing
+   feature. On **host** all three said absent (`__register_prototype`'s CSV is
+   `classMethodNames`, which excludes `constructor`) — the fold intercepts
+   before either runtime, so fixing the fold fixes both.
+2. **`static constructor(){}` was not an own key of the class object.**
+   TypeScript parses that spelling as a `ConstructorDeclaration` carrying
+   `static`, so it is not a member of `typeof C`. `ctx.classStaticMethodNames`
+   already resolves the rule (#5195 r3-4); the fold just never consulted it.
+   The class-**expression** spelling additionally needs
+   `ctx.classExprNameMap` — without that bridge only 3 of the 4 reachable rows
+   flipped (measured, then corrected).
+3. **`static async constructor(){}` was refused as an early error.** The
+   `isStaticMember` exemption in `node-checks.ts` sits under
+   `memberName === "constructor"`, and `getMemberName` reports **no name** for a
+   `ConstructorDeclaration` — so that branch never runs for this spelling and
+   the unconditional async refusal below it fired. Two rows were
+   `compile_error` for this reason alone.
+
+All three are **unconditional, not `ctx.standalone`-gated**: §15.7 says nothing
+about a host, and the host lane was wrong in the same direction (it gains 10).
+
+Files: new leaf module `src/codegen/class-ctor-own-key.ts` (the rule + its
+evidence), `src/codegen/object-ops.ts` +12 (the call site), and
+`src/compiler/early-errors/node-checks.ts` +8. Inlining the rule instead cost
++51/+51; extracting it left +12 in the file and +11 in the function.
+
+### Per-row diffs
+
+`grammar-static-ctor-*-valid`, the complete 10-row family, corpus-wide:
+
+| target | before | after | fixed | regressed |
+| --- | --- | --- | ---: | ---: |
+| standalone | 8 `fail` + 2 `compile_error` | **8 pass**, 2 `fail` | **+8** | 0 |
+| host | 8 `fail` + 2 `compile_error` | **10 pass** | **+10** | 0 |
+
+The 66-row `class` bucket itself: standalone `45 fail / 21 CE` → `41 / 21 / 4 pass`
+(**+4**, the other 4 family rows are tagged ES2017/ES2018, not ES2015); host
+`20 pass` → `26 pass` (**+6**). 0 regressions, 0 `error` rows on either side.
+
+Wider no-regression sweep — 1,301 rows (`Object.prototype.hasOwnProperty`,
+`propertyIsEnumerable`, `Object.hasOwn`, `getOwnPropertyNames`,
+`getOwnPropertyDescriptor`, `keys`; `language/{statements,expressions}/class/`
+`elements/syntax` + `definition`; `class/{method,static,accessor}-*`;
+`Function.prototype.toString`), all 1,301 rows recorded on every run, no partial
+JSONL, `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`:
+
+| target | before | after | fixed | regressed | `error` |
+| --- | --- | --- | ---: | ---: | ---: |
+| standalone | 1,225 pass / 66 fail / 10 CE | 1,233 / 60 / 8 | +8 | **0** | 0 |
+| host | 1,184 pass / 112 fail / 5 CE | 1,194 / 104 / 3 | +10 | **0** | 0 |
+
+### Regression test
+
+`tests/issue-6651-c1-class.test.ts`, 17 assertions across both targets.
+Proven **RED on reverted base sources** (exact `git show HEAD:` copies restored,
+`git diff` empty, all three bundles rebuilt, adapter key back to the base
+`d104f05ae1d55386`): **15 failed / 2 passed**. The 2 that pass in both states are
+deliberate over-reach guards — a class with no `static constructor` must still
+report **no** own `constructor` on the class object. GREEN with the fix: 17/17.
+
+### Deliberately NOT taken, with the reason
+
+- **The 2 `grammar-static-ctor-accessor-meth-valid` rows (standalone only).**
+  They need `C.prototype.constructor !== C.constructor`, and the blocker is a
+  **comparison fold**, not a presence one. Probed on standalone with
+  `static get constructor(){}`: `gOPD(C.prototype,'constructor').value === C` is
+  **true** (the value is right) while `C.prototype.constructor === C` folds to
+  **false**; on host `C.prototype.constructor === undefined` and
+  `typeof C.prototype.constructor === 'function'` are **both true**, which is a
+  contradiction no runtime value can produce. So a static member named
+  `constructor` makes the compiler mis-fold identity comparisons against
+  `C.prototype.constructor`. These two rows pass on host already. Separate
+  mechanism, separate lane.
+- **`class X extends Array` custom prototype** — confirmed out of reach here;
+  value-representation change, as recorded.
+- **`__protoidx_brand_off` ladder reorder** — no row in this bucket needed it.
+- **The 4 `eval-class-*` rows** — two causes, both value-representation
+  (#2917's two unequal `Array.prototype` representations; `__getPrototypeOf`'s
+  `$Object` implicit-terminal `null`), both failing on host too.
+- **No full-corpus sweep.** Every number above is one of the named manifests.
+  Nothing here is corpus-wide evidence.
+
+### Findings for other lanes
+
+- `language/{statements,expressions}/class/ident-name-method-def-new-escaped.js`
+  (2 rows, both targets) emit **invalid Wasm**:
+  `local.tee[0] expected type (ref null N), found block`. Its 129-row sibling
+  family is otherwise green, so an escaped `new` as a method name
+  (`class C { new(){} }`) is a narrow, uniform codegen bug — unowned.
+- The 6 decorator-`yield` rows are a **shared parse gap**, not standalone-only;
+  the CI host baseline hides them because that lane is `linked-harness`.
+
+### Gates (all run bare, exit status read directly)
+
+`check-loc-budget` **0** · `check-func-budget` **0** (both also with
+`LOC_GATE_BASE=origin/main`: **0** / **0**) · `check-coercion-sites` **0** ·
+`check:oracle-ratchet` **0** · `check:dead-exports` **0** ·
+`check-host-import-policy` **0** · `check-compiler-boundaries --mode inventory`
+**0** (`inventoryValid: true`; `src/codegen/class-ctor-own-key.ts` registered in
+`scripts/compiler-boundaries.json`) · `biome lint --diagnostic-level=error` on
+all four changed/added files **0**. No new raw-checker call (the predicate reads
+`ctx.classStaticMethodNames` / `ctx.classExprNameMap` and `ts.SymbolFlags`, both
+already in hand). Growth grants are dated C1 entries at the head of this file's
+`loc-budget-allow` and `func-budget-allow`; `scripts/*-baseline.json` untouched.

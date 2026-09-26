@@ -1344,8 +1344,16 @@ on([ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.ClassExpression], (ctx, node) 
       // TS parses `async constructor()` as a ConstructorDeclaration with
       // AsyncKeyword modifier (not as a MethodDeclaration named "constructor").
       // Catch this case separately.
+      // (#6651 C1) `static async constructor(){}` is LEGAL though (§15.7: a
+      // static member named "constructor" is an ordinary static method), and the
+      // `isStaticMember` exemption above cannot reach it — `getMemberName`
+      // reports no name for a ConstructorDeclaration, so that branch never runs
+      // for this spelling and both `grammar-static-ctor-async-meth-valid.js`
+      // rows were a compile_error on every target.
       if (ts.isConstructorDeclaration(member)) {
-        if (member.modifiers?.some((m: any) => m.kind === ts.SyntaxKind.AsyncKeyword)) {
+        const mods = member.modifiers;
+        const isStatic = mods?.some((m: any) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+        if (!isStatic && mods?.some((m: any) => m.kind === ts.SyntaxKind.AsyncKeyword)) {
           ctx.addError(member, "Class constructor may not be an async method");
         }
       }
