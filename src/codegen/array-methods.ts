@@ -132,6 +132,7 @@ import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; //
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
 import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
 import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js"; // (#6651 E6) join/toLocaleString
+import { reserveNumberToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1) numeric element Invoke
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -5866,8 +5867,18 @@ function compileArrayJoinNative(
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
   } else if (isNumeric && numToStrIdx !== undefined) {
     if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" });
+    // (#6651 TA1) §23.1.3.32 step 6.c.i on a NUMBER element — the arm #4655
+    // deliberately left out, which is the one `%TypedArray%.prototype
+    // .toLocaleString` (§23.2.3.29) lands in (a dyn view arrives here with
+    // `elemType.kind === "i8"`). Same `(f64) -> externref` ABI as
+    // `number_toString`, so the tail below is reused verbatim; `undefined`
+    // (no `Number.prototype.toLocaleString` override in this module) keeps
+    // these bytes unchanged. See num-to-locale-string.ts.
+    const localizedNumIdx = isLocalizedJoin(propAccess)
+      ? reserveNumberToLocaleString(ctx, fctx, propAccess)
+      : undefined;
     const numToStrChain: Instr[] = [
-      { op: "call", funcIdx: numToStrIdx },
+      { op: "call", funcIdx: localizedNumIdx ?? numToStrIdx },
       // number_toString returns the native string boxed as externref.
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
