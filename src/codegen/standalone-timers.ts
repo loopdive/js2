@@ -23,7 +23,16 @@ import { emitThrowReferenceError } from "./js-errors.js";
  * import, so a module that merely CONTAINED a timer call (lodash's
  * `debounce` / `throttle` / `delay`) could not be instantiated host-free.
  */
-const STANDALONE_UNAVAILABLE_TIMER_GLOBALS = new Set(["setTimeout", "setInterval", "clearTimeout", "clearInterval"]);
+const STANDALONE_UNAVAILABLE_TIMER_GLOBALS = new Set([
+  "setTimeout",
+  "setInterval",
+  "clearTimeout",
+  "clearInterval",
+  // (#6691) The global EventTarget registration (`addEventListener("fetch", …)`,
+  // hono's service-worker `fire()`) needs the same event loop to ever call back.
+  "addEventListener",
+  "removeEventListener",
+]);
 
 export function isStandaloneUnavailableTimerGlobal(ctx: CodegenContext, name: string): boolean {
   return ctx.targetProfile.environment === "none" && STANDALONE_UNAVAILABLE_TIMER_GLOBALS.has(name);

@@ -27,14 +27,29 @@ import {
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { getArrTypeIdxFromVec } from "./index.js";
+import {
+  ensureNativeIteratorRuntime,
+  getOrRegisterIterRecType,
+  ITER_FAMILY_ARRAY,
+  ITER_KIND_VEC,
+} from "./iterator-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
-import { addFuncType, getOrRegisterTaDynViewType } from "./registry/types.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { addFuncType, getOrRegisterTaDynViewType, getOrRegisterVecType } from "./registry/types.js";
+import { ensureTaDynMopElemHelpers } from "./ta-dyn-mop.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 
 /** The three §23.2.3 search methods this module serves. */
 const SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+
+/**
+ * (#6651 IT3) The three §23.2.3 iterator factories: `values` / `keys` /
+ * `entries`. Kept separate from {@link SEARCH_METHODS} because they share no
+ * body shape at all — a search returns a boxed scalar, these return an
+ * `$__IterRec`.
+ */
+const ITERATOR_METHODS = new Set(["values", "keys", "entries"]);
 
 /**
  * Mint (or reuse) the native helper for `method` on a dynamic view receiver.
@@ -44,12 +59,13 @@ const SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 export function ensureTaDynProtoMethodHelper(ctx: CodegenContext, method: string): number | undefined {
   if (!noJsHost(ctx)) return undefined;
   if (SEARCH_METHODS.has(method)) return ensureTaDynSearchHelper(ctx, method);
+  if (ITERATOR_METHODS.has(method)) return ensureTaDynIteratorHelper(ctx, method);
   return undefined;
 }
 
 /** Does a native dyn-view helper exist (or can it be minted) for `method`? */
 export function hasTaDynProtoMethodHelper(method: string): boolean {
-  return SEARCH_METHODS.has(method);
+  return SEARCH_METHODS.has(method) || ITERATOR_METHODS.has(method);
 }
 
 /**
@@ -363,6 +379,195 @@ function ensureTaDynSearchHelper(ctx: CodegenContext, method: string): number | 
     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
   });
   fctx.body.push(...missResult());
+
+  pushDefinedFunc(ctx, funcIdx, {
+    name: helperName,
+    typeIdx,
+    locals: fctx.locals,
+    body: fctx.body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * (#6651 IT3) `%TypedArray%.prototype.{values,keys,entries}` (§23.2.3.31 /
+ * .17 / .7) over a `$__ta_dyn_view` receiver.
+ *
+ * ## Why this had no helper before, and what the plan file got wrong
+ *
+ * The recorded premise was "`TA_DYN_METHOD_CALL_NAMES` already lists
+ * values/keys/entries but no `__ta_dyn_*` helper exists" — true, but it
+ * implied the missing piece was only this mint. Measured on `cb2e265852`, a
+ * second defect sat behind it: the STATIC `arr.values()` lowering
+ * (`compileNativeArrayIterator`, array-methods.ts) returns the bare canonical
+ * externref `$Vec` and drops the `$__IterRec` on the floor — the dangling
+ * `void iterRecTypeIdx` at the end of that function. So in standalone
+ * `[7,8,9].values()` answers an object with `.length === 3` for which
+ * `Array.isArray` is true, and `.next()` on it reads `null`. Routing this
+ * helper through that shape would have produced exactly the same unusable
+ * value, i.e. a measured no-op. It therefore builds the record itself.
+ *
+ * Probed on the same commit: a `$__IterRec` reached through a DYNAMIC receiver
+ * already answers correctly — `x.next()` steps the record, and
+ * `Object.getPrototypeOf(x)` is `===` the object
+ * `Object.getPrototypeOf([][Symbol.iterator]())` yields. Both are #6484 S1/S2
+ * machinery (`emitIteratorFamilyNextBody` + `__iter_rec_proto`), and both are
+ * keyed on `family`, which is why the record is stamped `ITER_FAMILY_ARRAY`
+ * rather than left `UNKNOWN`: an `UNKNOWN` record answers `ref.null.extern`
+ * for its prototype, which is what the `iter-prototype.js` rows read.
+ *
+ * ## Shape
+ *
+ * ValidateTypedArray first (§23.2.4.4 — a detached or out-of-bounds view
+ * throws a catchable TypeError before anything else is observable), then one
+ * pass that materialises the yielded values into a canonical externref `$Vec`,
+ * then `struct.new $__IterRec(ITER_KIND_VEC, vec, 0, null, ITER_FAMILY_ARRAY)`.
+ *
+ * `keys` boxes the index; `values` reads each element through the existing
+ * `__ta_dyn_get_elem` (so element decode, including the per-kind dispatch,
+ * lives in exactly one place); `entries` builds a two-slot `$ObjVec` pair per
+ * index, the same carrier the static `.entries()` path uses, so the consumer's
+ * `pair[0]` / `pair[1]` / `.length` reads keep routing through the native
+ * `__extern_get_idx` / `__extern_length` `$ObjVec` arms.
+ *
+ * ## Known residual: the snapshot
+ *
+ * The vec is a SNAPSHOT taken at call time, so a buffer resized mid-iteration
+ * is not observed. That is wrong for the `resizable-buffer*.js` /
+ * `make-{in,out}-of-bounds-after-exhausted.js` rows — all of which already
+ * fail (several on BOTH targets) and none of which are ES2015. Modelling a
+ * live cursor needs the record to carry the view rather than a vec, which is a
+ * `$__IterRec` substrate change (#6484), not a helper change.
+ */
+function ensureTaDynIteratorHelper(ctx: CodegenContext, method: string): number | undefined {
+  const helperName = `__ta_dyn_${method}`;
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  if (dynIdx < 0) return undefined;
+
+  const fctx = makeTaDynHelperFctx(helperName, [
+    { name: "recv", type: { kind: "externref" } },
+    { name: "unused0", type: { kind: "externref" } },
+    { name: "unused1", type: { kind: "externref" } },
+    { name: "unused2", type: { kind: "externref" } },
+    { name: "argc", type: { kind: "i32" } },
+  ]);
+
+  // Dependencies FIRST, while a late import can still shift indices: the
+  // record type, the iteration-protocol consumer natives (a module whose only
+  // iterator comes from this helper registers none otherwise), the boxer, and
+  // — for `entries` — the `$ObjVec` pair builders.
+  ensureObjectRuntime(ctx);
+  ensureNativeIteratorRuntime(ctx);
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
+  if (boxNumberIdx === undefined) return undefined;
+  const elemHelpers = ensureTaDynMopElemHelpers(ctx);
+  if (elemHelpers === undefined) return undefined;
+  const iterRecTypeIdx = getOrRegisterIterRecType(ctx);
+  const canonVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  const canonArrTypeIdx = getArrTypeIdxFromVec(ctx, canonVecTypeIdx);
+  if (canonArrTypeIdx < 0) return undefined;
+  let objVecNewIdx = 0;
+  let objVecPushIdx = 0;
+  if (method === "entries") {
+    const builders = ensureObjVecBuilders(ctx);
+    objVecNewIdx = builders.newIdx;
+    objVecPushIdx = builders.pushIdx;
+  }
+  flushLateImportShifts(ctx, fctx);
+
+  const params: ValType[] = [
+    { kind: "externref" },
+    { kind: "externref" },
+    { kind: "externref" },
+    { kind: "externref" },
+    { kind: "i32" },
+  ];
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `$ta_dyn_${method}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(helperName, funcIdx);
+
+  const dvLocal = allocLocal(fctx, "dv", { kind: "ref", typeIdx: dynIdx });
+  const kindLocal = allocLocal(fctx, "kind", { kind: "i32" });
+  const esLocal = allocLocal(fctx, "es", { kind: "i32" });
+  const lenLocal = allocLocal(fctx, "len", { kind: "i32" });
+  const outLocal = allocLocal(fctx, "out", { kind: "ref", typeIdx: canonArrTypeIdx });
+  const iLocal = allocLocal(fctx, "i", { kind: "i32" });
+  const pairLocal = method === "entries" ? allocLocal(fctx, "pair", { kind: "externref" }) : -1;
+
+  pushTaDynMethodPreamble(ctx, fctx, dynIdx, dvLocal, kindLocal, esLocal, lenLocal);
+  // §23.2.4.4 ValidateTypedArray — step 1, before any element is read.
+  emitTaDynViewValidate(ctx, fctx, dvLocal);
+
+  // out = array.new_default(len)
+  fctx.body.push({ op: "local.get", index: lenLocal });
+  fctx.body.push({ op: "array.new_default", typeIdx: canonArrTypeIdx });
+  fctx.body.push({ op: "local.set", index: outLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iLocal });
+
+  /** `f64(i)` — the index in the shape `__box_number` / `__ta_dyn_get_elem` take. */
+  const idxAsF64: Instr[] = [{ op: "local.get", index: iLocal }, { op: "f64.convert_i32_s" }];
+  /** The value yielded at slot `i`, as an externref, left on the stack. */
+  const yieldedValue = (): Instr[] => {
+    if (method === "keys") return [...idxAsF64, { op: "call", funcIdx: boxNumberIdx }];
+    if (method === "values") {
+      return [{ op: "local.get", index: 0 }, ...idxAsF64, { op: "call", funcIdx: elemHelpers.getElem }];
+    }
+    // entries — a fresh two-slot `$ObjVec` holding [box(i), element].
+    return [
+      { op: "call", funcIdx: objVecNewIdx },
+      { op: "local.set", index: pairLocal },
+      { op: "local.get", index: pairLocal },
+      ...idxAsF64,
+      { op: "call", funcIdx: boxNumberIdx },
+      { op: "call", funcIdx: objVecPushIdx },
+      { op: "local.get", index: pairLocal },
+      { op: "local.get", index: 0 },
+      ...idxAsF64,
+      { op: "call", funcIdx: elemHelpers.getElem },
+      { op: "call", funcIdx: objVecPushIdx },
+      { op: "local.get", index: pairLocal },
+    ];
+  };
+
+  const loopBody: Instr[] = [
+    { op: "local.get", index: iLocal },
+    { op: "local.get", index: lenLocal },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+    { op: "local.get", index: outLocal },
+    { op: "local.get", index: iLocal },
+    ...yieldedValue(),
+    { op: "array.set", typeIdx: canonArrTypeIdx },
+    { op: "local.get", index: iLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: iLocal },
+    { op: "br", depth: 0 },
+  ];
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+
+  // struct.new $__IterRec(kind, vec, idx, userIter, family) — field order is
+  // load-bearing (see getOrRegisterIterRecType).
+  fctx.body.push({ op: "i32.const", value: ITER_KIND_VEC });
+  fctx.body.push({ op: "local.get", index: lenLocal });
+  fctx.body.push({ op: "local.get", index: outLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: canonVecTypeIdx });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "i32.const", value: ITER_FAMILY_ARRAY });
+  fctx.body.push({ op: "struct.new", typeIdx: iterRecTypeIdx });
+  fctx.body.push({ op: "extern.convert_any" });
 
   pushDefinedFunc(ctx, funcIdx, {
     name: helperName,

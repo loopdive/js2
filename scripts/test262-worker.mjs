@@ -2468,11 +2468,11 @@ process.on("message", async (msg) => {
         // the ring so they run, then mirror the native stdout sink into
         // `harnessOutput` so the marker poll below observes the completion marker.
         // No-op on the js-host lane (no such intrinsics; `consoleProxy` feeds
-        // `harnessOutput` directly).
-        let standaloneDrainError = null;
-        if (target === "standalone") {
-          standaloneDrainError = drainAndCaptureNativeStdout(instance, appendHarnessOutput);
-        }
+        // `harnessOutput` directly). (#6685) Keyed on the module's exports, never
+        // on the target name: a native-regime module in a JS environment drains
+        // its in-module microtask ring here but prints through the console
+        // capability (no `__stdout_*` exports), which `consoleProxy` observes.
+        const standaloneDrainError = drainAndCaptureNativeStdout(instance, appendHarnessOutput);
         const deadline = Date.now() + 1_000;
         const findMarker = (prefix) => {
           for (let i = 0; i < harnessOutput.length; i++) {

@@ -13184,3 +13184,184 @@ untouched; no growth grant added; `scripts/*-baseline.json` untouched. No raw
   `Object(sym) === sym` / "ToObject has no Symbol-wrapper carrier" half was
   already closed by slice I4 — `typeof Object(Symbol('d'))` reads `"object"` and
   `Object(sym).valueOf() === sym` holds on current main.
+
+---
+
+## 2026-09-26 — iterator substrate, slices 3a + 3b (lane IT3)
+
+- **Branch** `issue-6651-it3-ta-dyn-iterator`, base `cb2e265852`.
+- **Worktree** `/home/claude/js2/.claude/worktrees/agent-a9f8d8ef83cccdffd`
+  (arrived with `node_modules` missing and `test262/` an empty directory —
+  repointed both at `/home/claude/js2/{node_modules,test262}`; untracked only,
+  the `test262` gitlink shows as a type change and is NOT committed).
+- **Measurement lane** `tests/test262-shared.ts::runTest262Chunk` via a
+  gitignored `tests/probe-it3.test.ts`, `TEST262_PATH_FILTER_FILE`,
+  `TEST262_IT_TIMEOUT_MS=120000`, pool 2–3 on 4 cores. Every sweep's
+  shard-completion manifest checked; all three artifacts
+  (`build:compiler-bundle` → `build:runtime-bundle` →
+  `build-quickjs-eval-provider.mjs`) rebuilt on both sides of the A/B.
+
+### Result: +15 standalone rows, 0 lost — 6 of them ES2015
+
+Control neighbourhood = 875 rows (`built-ins/TypedArray/prototype/{values,keys,
+entries,Symbol.iterator}**`, `built-ins/ArrayIteratorPrototype/**`,
+`built-ins/Array/prototype/{values,keys,entries}/**`,
+`language/statements/for-of/**`), base and new, BOTH targets, per-row set diff:
+
+| lane | base | new | gained | lost |
+| --- | --- | --- | --- | --- |
+| standalone | 780 pass / 89 fail / 6 CE | 795 pass / 74 fail / 6 CE | **15** | **0** |
+| host (`gc`) | 705 pass / 168 fail / 2 CE | identical | 0 | 0 |
+
+A SECOND, independent control — the whole `built-ins/TypedArray` +
+`built-ins/TypedArrayConstructors` tree, **2,184 rows**, base and new, standalone
+(the ladder this slice widens only ever fires for a `$__ta_dyn_view` receiver, so
+this is its full reach): base 1,594 pass / 590 fail → new 1,609 pass / 575 fail,
+**the same +15 rows, and again 0 lost**. Both sides built from their own three
+artifacts; the base rebuild reproduced the original QuickJS adapter cache key
+(`a921c64add3f2e7e`), which is independent confirmation the revert was exact.
+
+Host is byte-identical because the helper is `noJsHost`-gated. Editions of the
+15, via `scripts/generate-editions.ts::classifyEdition` on each file's own
+frontmatter — **not** inherited from any baseline:
+
+- **ES2015 × 6** — `TypedArray/prototype/{values,keys,entries}/return-itor.js`
+  and `.../iter-prototype.js`. This is slice 3a's stated target, in full.
+- ES2020 × 3 — the `BigInt/iter-prototype.js` twins.
+- ES2022 × 6 — `{values,keys,entries}/return-abrupt-from-this-out-of-bounds.js`
+  and their BigInt twins, flipped by the §23.2.4.4 ValidateTypedArray step the
+  new helper runs first.
+
+Not flipped, and correctly so: the three `BigInt/return-itor.js` rows still
+fail. `__ta_dyn_get_elem` boxes a NUMBER, which is the wrong value type for a
+`BigInt64Array` element; they failed before and fail now.
+
+### The dispatcher question, settled by probe before any code was written
+
+The brief flagged that `__call_m_values_0` exists in the module, so the
+reaching dispatcher might be `closed-method-dispatch.ts` (ta-dyn arm gated on
+`VEC_SEARCH_METHODS`) rather than `__extern_method_call`. It is
+**`__extern_method_call`**:
+
+1. WAT of `__call_m_values_0` on a dyn-view `ta.values()` (standalone): a
+   `ref.test $__ta_dyn_view` detached-guard prologue, then a tail of
+   `local.get 0; global.get <interned "values">; extern.convert_any;
+   call $__objvec_new; call $__extern_method_call`. The closed-method arm emits
+   no ta-dyn call for `values` at all — `VEC_SEARCH_METHODS` excludes it, so
+   `taDynIdx` is `undefined` and the arm is never generated.
+2. **Unconditional-throw probe.** Prepending `{ op: "unreachable" }` to
+   `__extern_method_call`'s registered body (object-runtime.ts) turned
+   `new TA([1,2,3]).values()` from `RESULT: 2` (i.e. `null`) into
+   `RUNTIME_ERROR: unreachable`. Reverted; `RESULT: 2` restored. So the value
+   demonstrably flows through that function.
+
+Only that one surface was widened.
+
+### Root cause — the recorded premise was right about the gap, wrong about the fix
+
+The plan's slice-3a premise ("`TA_DYN_METHOD_CALL_NAMES` lists
+values/keys/entries but no `__ta_dyn_*` helper exists") is true, and its
+"Recommended next target" section above correctly identified `$__IterRec.next()`
+as the deeper cause. But the prescription there — make the PRODUCER
+(`compileNativeArrayIterator`) hand back a real `$IterRec` — is not what this
+took, and the "12 standalone-only rows, one cause" figure turns out to be **two
+independently fixable halves**.
+
+Measured on `cb2e265852`:
+
+- `[7,8,9].values()` in standalone answers an object with `.length === 3` for
+  which `Array.isArray` is **true**, and `.next()` on it reads `null`. That is
+  `compileNativeArrayIterator` (array-methods.ts) returning the bare canonical
+  externref `$Vec` and dropping the record — the dangling `void iterRecTypeIdx`
+  at the end of that function.
+- But `[7,8,9][Symbol.iterator]()` builds a genuine `$__IterRec`, and a record
+  reached through a **dynamic** receiver already behaves: `x.next()` steps it
+  (value 7, `done` false), a full drain sums to 24, and
+  `Object.getPrototypeOf(x) === Object.getPrototypeOf([][Symbol.iterator]())`
+  is **true**. Both are #6484 S1/S2 machinery (`emitIteratorFamilyNextBody`,
+  `__iter_rec_proto`), keyed on the record's `family` field.
+
+So the fix is to have the new helpers `struct.new` the record themselves
+(`ITER_KIND_VEC`, `family = ITER_FAMILY_ARRAY`) instead of routing through the
+broken producer. Had they reused `compileNativeArrayIterator`'s shape they would
+have returned the same unusable value — a measured no-op. The prototype-identity
+half is why the three `iter-prototype.js` rows flip too, even though those rows
+**fail on host** (two distinct `[object Array Iterator]` objects there); the
+standalone singleton is correct where the host one is not.
+
+### Change
+
+`src/codegen/ta-dyn-proto-methods.ts` (+205): `ensureTaDynIteratorHelper`, plus
+`ITERATOR_METHODS` in the two registry functions the existing mint hook reads
+(`hasTaDynProtoMethodHelper` / `ensureTaDynProtoMethodHelper`). No new module,
+no boundaries entry, no dispatcher edit: the `#5194 r3-1.3` mint-only hook in
+`call-receiver-method.ts` and the finalize ladder in `ta-dyn-method-call.ts`
+already carry `values`/`keys`/`entries` — the ladder was simply skipping them
+because nothing had ever put `__ta_dyn_values` in `funcMap`.
+`src/codegen/iterator-native.ts` (+0 net): `ITER_KIND_VEC` becomes `export`.
+
+Body: ValidateTypedArray (§23.2.4.4) first, then one pass materialising the
+yielded values into a canonical externref `$Vec` — `keys` boxes the index,
+`values` reads through the existing `__ta_dyn_get_elem` so element decode stays
+in one place, `entries` builds a two-slot `$ObjVec` pair per index (the same
+carrier the static path uses, so `pair[0]`/`.length` keep routing through the
+native `$ObjVec` arms) — then `struct.new $__IterRec`.
+
+`tests/issue-6651-it3-ta-dyn-iterator.test.ts` — 7 cases, all passing: ordered
+step + exhaustion for each of the three; `%ArrayIteratorPrototype%` identity;
+`for-of` drain; §7.3.2 own-expando shadowing (`ta.values = f` still wins); and a
+fresh-cursor-per-call check.
+
+### Known residual (deliberate)
+
+The vec is a SNAPSHOT at call time, so a buffer resized mid-iteration is not
+observed. That is wrong for `resizable-buffer*.js` and
+`values/make-{in,out}-of-bounds-after-exhausted.js` — all of which already fail,
+several on both targets, and none of which are ES2015. A live cursor needs the
+record to carry the VIEW rather than a vec, i.e. the #6484 substrate change.
+
+### Slice 3b — measured 0 rows. Declined.
+
+The mechanism is real: on a dyn view `typeof ta[Symbol.iterator]` is
+`"undefined"` and both `for (v of ta)` and `[...ta]` throw. The plan guessed
+this was worth *more* than 6 rows. **It is worth 0.**
+
+Candidate set built by intersecting every corpus file that constructs a typed
+array (`testWithTypedArrayConstructors` or `new (Int|Uint|Float)N…`, 1,327
+files) with every file containing iteration syntax (`for … of`, `[...`,
+`Symbol.iterator`, 16,185 files) → 104 files, 76 of them inside
+`TEST_CATEGORIES`. Swept on standalone: **59 pass, 12 fail, 5 CE**, and the
+*only* iterator-flavoured failures in the whole set are the three
+`iter-prototype.js` rows slice 3a already covers. Zero rows report "value is not
+iterable". Every `Symbol.iterator` and `ArrayIteratorPrototype` row in the set
+already passes, including all nine `ArrayIteratorPrototype/next/<TA>.js` — those
+use a statically typed view, not the dynamic one. No test262 row does
+`for (x of <dynamically-typed typed array>)`.
+
+Building it would be a correctness improvement with no conformance payoff. Left
+undone.
+
+### Also measured, for whoever takes the other half
+
+The same `.values()`-returns-a-vec defect costs **6 more standalone-only rows**:
+`built-ins/Array/prototype/{values,keys,entries}/{iteration,iteration-mutable}.js`
+(standalone fail / host pass, error `TypeError: Cannot access property on null or
+undefined` — `iterator.next()` answering `null`). Those need the producer fix in
+`compileNativeArrayIterator`, which is a blast-radius change across every for-of
+and spread over a `.values()` result, so it was left to the #6484 lane rather
+than done here.
+
+**Its ES2015 value is zero.** All six carry `esid:` with no `es6id:` and no
+`features:`, and `built-ins/Array` has no path heuristic, so
+`classifyEdition` returns `UNCLASSIFIED_UNTAGGED` — they count toward no
+edition at all. Worth doing for the standalone headline and for correctness;
+worth nothing toward ES2015 100 %.
+
+### Gates (each run bare, exit code read directly)
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 · `check-host-import-policy` 0 ·
+`check-compiler-boundaries --mode inventory` 0 · `typecheck` 0. Both budget
+gates also re-run with `LOC_GATE_BASE=$(git rev-parse origin/main)`. No
+`scripts/*-baseline.json` touched; no growth allowance needed (the only god-file
+edit is net +0 lines).
