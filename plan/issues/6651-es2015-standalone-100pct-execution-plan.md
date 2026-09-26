@@ -10736,3 +10736,147 @@ two cohesive helpers (`rebaseNamespaceGlobalReads`,
 - `own-property-keys-sort.js` (the secondary investigation) — not started. The
   primary consumed the window.
 - `props-nrml`'s `export class` arm — sited precisely above, not attempted.
+
+---
+
+## 2026-09-26 — lane X1: the ES2015 `cross-realm` bucket, triaged end to end
+
+- **Branch** `x1-6651-crossrealm-globalthis-symbol`, based on `origin/main`
+  @ `0d119cbcfb`. **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a9ec88129cf08ceb1`.
+- **Manifest** `/tmp/claude-0/xr128.txt`, the 128 rows the dashboard counts,
+  sha256 `abb9905b0a56748eb3be2100d80d7cd408747bc5453ecce61f9885ac1f1d2aff`.
+  Derived by running `scripts/generate-editions.ts`'s own `parseFrontmatter` +
+  `classifyEdition` over every `cross-realm`-tagged file and keeping
+  `edition === 2015` — it reproduces the published `39 / 89 / 0` exactly.
+
+### The recorded cause was wrong, and it is the load-bearing correction here
+
+The 2026-09-2x triage recorded bucket **B4 `cross-realm` as a wont-fix (b)**:
+*"every row calls `$262.createRealm()`. A standalone binary is one realm by
+construction; there is no host to make a second one."*
+
+**That is not what happens.** `$262` is not a host object in this lane — it is
+ordinary JavaScript **compiled into the module**, from
+`scripts/test262-fyi-runtime.js`. Its `createRealm()` returns a plain object
+whose `global` **forwards ten real intrinsics off `globalThis`**
+(`Array ArrayBuffer Date Function Iterator Math Proxy Symbol eval parseInt`) and
+mints seven **distinct** error constructors (#4634). So the "foreign realm" is
+present, and **39 of the 128 rows already pass standalone**. The bucket is
+ordinary compiler and harness work, not an architectural impossibility.
+
+What IS impossible under a forwarding shim is only the subset that asserts a
+realm *difference* — see the third partition axis below.
+
+### Partition of the 89 standalone failures
+
+Cross-tabulated against the host baseline (`test262-current.jsonl`, fetched
+2026-09-26 02:46Z) — this is the "is it standalone or is it shared" axis:
+
+| | host pass | host fail |
+| --- | ---: | ---: |
+| **standalone pass** | 26 | 13 |
+| **standalone fail** | **30** | **59** |
+
+So only **30** of the 89 are standalone-lowering gaps. **59 fail on host too**
+and are shared front-end work.
+
+By what the row reads off the realm global (mechanical scan of every row's
+`$262.createRealm().global` expression):
+
+| group | rows | what it is |
+| ---: | ---: | --- |
+| **A** | 40 | the row reads a name the shim **does not forward** — `Object` 17, `RegExp` 7, `String` 6, `Boolean` 5, `Number` 4, and one each of `Promise` `Map` `Set` `WeakMap` `WeakSet` `DataView`. **All 40 fail on host too.** The read answers `undefined` and the row dies before its assertion. |
+| **B** | 49 | the row reads only forwarded names, so it reaches its assertion and fails on semantics. |
+
+And orthogonally, by whether the assertion can hold when `other === current`:
+
+| | rows | |
+| ---: | ---: | --- |
+| satisfiable with a forwarding shim | 73 | the `proto-from-ctor-realm*` family (~45), the well-known-symbol family, most Proxy rows |
+| **needs a genuinely DISTINCT realm** | **16** | `assert.notSameValue(…)` or `assert.throws(other.TypeError, …)` where the throw must *originate* in the foreign realm: all 7 `RegExp/prototype/<flag>/cross-realm`, both `Error/prototype/stack/*-cross-realm`, `ThrowTypeError/distinct-cross-realm`, `Symbol/for` + `Symbol/keyFor` (they assert `Symbol.for !== OSymbol.for`), both `String/prototype/*/non-generic-realm`, both `Function/prototype/apply/*-realm`, `tagged-template/cache-realm` |
+
+### Measurement lane — validated, not assumed
+
+Standalone **is** measurable in this container, contrary to two earlier entries
+here; the #6651 F2 entry was right and F1 was wrong. Two artifacts have to be
+built first or every row reports the same non-verdict:
+
+```bash
+npm run -s build:compiler-bundle && npm run -s build:runtime-bundle
+node scripts/build-quickjs-eval-provider.mjs
+```
+
+**The QuickJS adapter key is derived from the compiler bundle**, so *any* source
+change invalidates it and the next run reports
+`quickjs provider is not built (missing …-<newkey>.wasm)` on **every** row. That
+is an `error` state, not a verdict — it cost one full 128-row sweep here
+(reported `0 pass / 128 fail`) before it was recognised. Rebuild the provider
+after every bundle rebuild.
+
+Evidence the lane is faithful: the base sweep reproduced CI's published
+standalone numbers for this bucket **exactly** — 39 pass / 89 fail / 0 CE /
+0 error on 128 rows.
+
+### What landed — one seam, +11 rows, 0 lost
+
+**Root cause, probed not inferred.** One standalone module reading
+`{ X: globalThis.X }` for 21 builtin names on base: 17 answered a real carrier;
+exactly **`Symbol` `ArrayBuffer` `DataView` `Promise` answered null**. Meanwhile
+`Symbol`, `{ S: Symbol }.S`, and `{ S: Symbol }.S.iterator === Symbol.iterator`
+all already worked. So the carrier was never missing — the realm **object's
+property** was. The shim builds its foreign realm global by MEMBER reads off
+`globalThis` (deliberately, per its own comment), so
+`$262.createRealm().global.Symbol` was `undefined` and every well-known-symbol
+row died on the property read.
+
+`src/codegen/standalone-global-object-carriers.ts` —
+`appendStandaloneGlobalConstructorSeeds` now seeds those four names. All four are
+already in `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES`, so the seeded value is the SAME
+`__builtin_ctor_<Name>` singleton the bare read produces: this closes a split
+between two spellings of one intrinsic, it does not mint a second.
+
+**The second half of the fix is the one that actually mattered, and the first
+cut missed it.** Adding the names to the existing list changed **nothing**
+(re-measured: 39/89, a per-row diff with zero changes). That function early-
+returns for any module with a runtime-eval boundary site — and **every** test262
+module carrying the `$262` shim also carries its `evalScript`, so the early
+return always fires in this corpus. The four names are now a separate list
+seeded on **both** sides of that gate. The gate's stated hazard is `%Function%`
+parity re-entry; these four are not built by the eval boundary and are not
+reachable from `%Function%`'s carrier.
+
+| standalone, `--isolate`, 128 rows | pass | fail | CE | error |
+| --- | ---: | ---: | ---: | ---: |
+| before (`/tmp/claude-0/base128.jsonl`) | 39 | 89 | 0 | 0 |
+| after (`/tmp/claude-0/after128c.jsonl`) | **50** | 78 | 0 | 0 |
+
+Per-PATH join, not a count comparison: **+11, −0, no other verdict changed.**
+The 11 are `built-ins/Symbol/{iterator,species,match,replace,search,split,
+hasInstance,isConcatSpreadable,toPrimitive,toStringTag,unscopables}/cross-realm.js`.
+The two Symbol rows that did **not** flip are `for` and `keyFor` — both assert
+`notSameValue(Symbol.for, OSymbol.for)`, i.e. they are in the distinct-realm 16.
+
+Regression test `tests/issue-6651-x1-realm-global-ctor-seeds.test.ts`, proven
+**3/3 red** with `src/codegen/standalone-global-object-carriers.ts` reverted to
+`HEAD` and **3/3 green** restored (file-copy A/B, no stash).
+
+### Feasibility verdict on the remaining 78
+
+| slice | rows in reach | size | what it touches |
+| --- | ---: | --- | --- |
+| **`proto-from-ctor-realm` semantics** — the single biggest lever | ~45 | **L** | §9.1.14 GetPrototypeFromConstructor must fall back to the *intrinsic* default prototype when `newTarget.prototype` is not an object. Measured symptom: `Object.getPrototypeOf(Reflect.construct(Array, [], newTarget))` answers **`null`**, so the row's own assertion message reads `SameValue(«null», «[object Array]»)`. One mechanism, many rows; it spans both groups A and B. |
+| **shim forwards** for `RegExp String Boolean Number Map Set WeakMap WeakSet DataView Promise` | up to 23 (unblocks them to *reach* their assertion) | **M–L** | a 10-line diff in `scripts/test262-fyi-runtime.js` — but that file compiles into **every test262 module in every lane**, so the validation is a full host + standalone sweep, not a neighbourhood. Necessary, not sufficient: each unblocked row then still needs the slice above, or a non-generic brand check. |
+| **`Object` forward** | 17 | **L** | same shape, but carries a recorded 2026-08-23 landmine: any compiled read of `globalThis.Object` in that prelude degraded `error.constructor` TypeError→Error and regressed `language/expressions/dynamic-import/assignment-expression/import-meta.js`. Needs the compiler-side fix first, then the forward. Largest single sub-bucket in the whole gap. |
+| **real realm isolation** | 16 | **XL — recommend wont-fix-with-reason** | would need per-realm intrinsic tables (every `__builtin_ctor_*` / native-prototype singleton becomes realm-indexed), a realm field on every function object so `GetFunctionRealm` can answer, realm-aware error construction, and a harness that mints a genuine second global instead of forwarding. Five subsystems for 16 rows. |
+
+Net: of the 89, **73 are ordinary defects** and **16 are architectural**. The
+honest ceiling for this bucket without realm isolation is **112 / 128 (88 %)**,
+not 100 %.
+
+### Not done
+
+- Slices 2–4 above — sized, not attempted; slice 2/3 need a corpus-wide sweep
+  this window could not pay for.
+- The WASI lane is on the same `ctx.standalone || ctx.wasi` gate as the seed and
+  was **not** swept; residual risk, stated rather than measured.
