@@ -561,6 +561,9 @@ export interface CompileOptions {
    * the WasmGC cell carrier.
    */
   directEval?: "legacy" | "reified-host";
+  /** Standalone only (#6676). `false`: no `js2wasm:runtime-eval` provider will be linked, so a
+   *  non-constant `Function(src)` throws EvalError in-module instead of importing the interpreter. */
+  runtimeEvalProvider?: boolean;
   /**
    * (#743) Declaration source text for the entry module's shipped sibling
    * `.d.ts` (e.g. acorn's `dist/acorn.d.ts` when compiling `dist/acorn.mjs`).
