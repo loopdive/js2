@@ -10,6 +10,43 @@ import { coerceArrayRestType, coerceType, getVecInfo } from "./type-coercion.js"
 import { compileExpression, emitNestedBindingDefault, valTypesMatch } from "./shared.js";
 
 /**
+ * (#6651 GEN1) Does this binding pattern bind a REST element anywhere inside it
+ * (at any nesting depth)?
+ *
+ * Why the tuple lane needs this. `destructureParamArray`'s externref lane emits
+ * several MUTUALLY EXCLUSIVE arms for one pattern — a native-generator arm, one
+ * arm per candidate tuple struct (#862), then the generic `__vec_externref` arm
+ * — and each arm recursively re-emits the SAME pattern with its own element
+ * type. A rest binding is the one binding whose slot is RE-ALLOCATED when those
+ * types disagree (the #971 re-type in the rest-vec build), and `allocLocal`
+ * remaps the NAME, so the arm emitted LAST owns the binding while every earlier
+ * arm keeps writing an orphaned slot. When an earlier arm wins at run time the
+ * body then reads a local nothing ever wrote.
+ *
+ * WAT-verified on the pre-fix tree: `function f([[...x] = values]) {}` emitted
+ * TWO `(local $x …)` slots of different vec types — `(ref null 4)` written by
+ * the tuple arm, `(ref null 2)` read by the body — and the tuple arm also set
+ * the `__dparam_done` sentinel, so the generic arm never ran and `x` read back
+ * `undefined`. Handing a rest-bearing sub-pattern to the recursion as
+ * `externref` (the representation the generic arm also produces) keeps the arms
+ * in agreement, so exactly one slot is minted. Measured: +23 standalone / +6
+ * host rows across the 1,842-row `ary-ptrn*rest` corpus, 0 lost on either lane.
+ *
+ * The question is "anywhere inside", not `patternIteratorStepCount(…) < 0`,
+ * because the rest that diverges may sit one level further down (`[[[...x]]]`).
+ */
+export function patternBindsRestAtAnyDepth(pattern: ts.BindingPattern): boolean {
+  for (const element of pattern.elements) {
+    if (!ts.isBindingElement(element)) continue;
+    if (element.dotDotDotToken) return true;
+    if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
+      if (patternBindsRestAtAnyDepth(element.name)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * (#6651 C4) A non-rest element PAST the end of a tuple struct. The tuple's
  * width is the checker's view of one value (a `{ w: [7, 8] }` parameter default
  * types `w` as `[number, number]`), not a bound on the pattern: §8.6.3
