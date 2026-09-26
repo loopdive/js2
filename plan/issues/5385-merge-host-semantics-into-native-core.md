@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-09-24
+updated: 2026-09-26
 priority: high
 horizon: xl
 feasibility: hard
@@ -388,6 +388,206 @@ globals`), as codex-5385 recorded on 2026-09-07.
 **Next slice (Phase 2, concrete):** re-key the 10 boundary arms above, then
 turn `JS2WASM_NATIVE_REGIME_JS` on by default for `semanticProviders:
 "native-first"`, then re-run the census on the full nightly lane.
+
+### Implementation Plan v2 (Fable, 2026-09-26) — merge the host lane INTO the native regime, then retire it
+
+> Supersedes the Phase 1–4 ordering above for the *codegen* half. Phase 1 is
+> done; this is the careful, slice-by-slice path from "regime measured behind
+> an opt-in" to "one path". Every slice is one PR, byte-identical for the
+> default `gc` build until slice S5, and each carries its own regression
+> guard. Opus implements from this spec; measurements below are the
+> before-state to compare against.
+
+#### Where the numbers stand (nightly run 36228065594, main @ `ddbbea229c`, 48,735 rows incl. proposals)
+
+| lane                                                  |   pass |
+| ----------------------------------------------------- | -----: |
+| host (`gc`, host-assisted)                            | 34,099 |
+| standalone (host-free)                                | 35,237 |
+| **native regime in JS env** (`JS2WASM_NATIVE_REGIME_JS=1`, refusal eval tier, no Temporal link) | **31,840** |
+
+Lane agreement (regime, host, standalone) → rows: all three pass 27,399 ·
+none 9,627 · host+standalone pass but regime fails **3,426** · regime+standalone
+pass, host fails 3,253 · host only 2,683 · standalone only 1,159 · regime only
+597 · regime+host 591. The regime already passes **3,844 rows the host lane
+does not**; the 6,109 rows the host passes and the regime does not decompose
+as:
+
+| rows | signature                                                                    | root cause class                        | slice |
+| ---: | ---------------------------------------------------------------------------- | --------------------------------------- | ----- |
+| 2,121 | `async completion marker not observed`                                      | console/print sink is environment-shaped | S1    |
+|  473 | `dynamic code evaluation is not supported … refusal`                         | measurement lane links the refusal tier | S4    |
+|  507 | native-first policy rejected `__gen_*`/`__create_async_generator`/`SharedArrayBuffer_new`/`Promise_allSettled`… | standalone gaps (#3178 carriers, SAB deferred) | #3178 |
+|  ~600 | invalid Wasm `C_method`/`C___priv_method` "not enough arguments" / stack-balance (all `language/statements/class/dstr/async-gen-meth-*`) | regime-in-JS codegen defect (class async-gen method ABI vs hostBridge trampolines) | S3-a  |
+|  192 | `m should be an own property`                                                | #3468 function-object own-property residual | #3468 |
+|  ~243 | `Array.prototype.reduce/reduceRight/values is not yet callable as a value in --target standalone` | standalone refusal; host lane satisfies via `__array_proto_method` | S3-b  |
+|   73 | `illegal cast [in __extern_set_decide() ← __set_member_nonstrict_length]` (`reduce/reduceRight/15.4.4.2x-*`) | regime-in-JS defect: dynamic `length` write picks extern path | S3-c  |
+|  116 | `called value is not a function`                                             | mixed; triage in S3                     | S3    |
+|  rest | Temporal (`until`/`since`, 1,507 total incl. shared) — lane does not link the provider | S4 |
+
+**Reading:** the regime is ~2.3k rows behind host today and ~2.1k of that is
+one runner/console gate. After S1+S4 the regime is expected to sit at or above
+the host lane; S3 is the genuine parity work; S5–S7 are the flip and the
+retirement.
+
+#### Design rule for every slice (how "not break anything" is enforced)
+
+Three predicates, no new compound checks (the #4396 rule):
+
+- `ctx.standalone` ≡ `targetProfile.nativeRegime` — *which ECMAScript
+  implementation lowers this*. Already wired (PR #6083).
+- `hostFreeEnvironment(ctx)` ≡ `targetProfile.environment !== "javascript"`
+  — *is there a JS embedder*. NEW helper in `src/codegen/context/types.ts`
+  (next to the other ctx predicates). Only environment-shaped arms move to it.
+- `jsValueBoundary(ctx)` ≡ `targetProfile.hostValueInterop !== "off"` — *does
+  the module keep the JS value bridge* (wrappers, `__str_*`, boundary MOP,
+  callbacks, error translation). NEW helper, same file. The pattern already
+  exists at `src/codegen/object-runtime.ts` (`boundaryObjectInterop` ≈ L937)
+  and `src/codegen/export-throw-boundary.ts:76`; generalize it, do not copy it.
+
+Per-slice guard, run before every commit and asserted in CI:
+
+1. `tests/issue-4396-target-profile.test.ts` "preserves legacy default
+   projections byte-for-byte" — default `gc`, `standalone`, `wasi` binaries
+   unchanged (the regime only changes output when the opt-in is set).
+2. `JS2WASM_NATIVE_REGIME_JS=1 npx vitest run tests/issue-4397-native-semantic-js-host.test.ts tests/issue-4399*.test.ts tests/issue-4401-host-import-policy.test.ts` — the boundary/interop contract; the two pre-existing failures (URI globals; standalone generator fallback) stay the only red until their owners land.
+3. `JS2WASM_NATIVE_REGIME_JS=1 pnpm run check:host-import-policy` — zero legacy/unknown imports in the 33 probes (S2 adds the env var to the script itself).
+4. The 321-row sample (`TEST262_PATH_FILTER="built-ins/Object/keys/|built-ins/Array/prototype/map/|language/expressions/class/accessor"`, `JS2WASM_EVAL_ENGINE=interpreter TEST262_SEMANTIC_PROVIDERS=native-first`) — before-state **218 / 321**; a slice may not lower it. Record the number in the PR.
+5. `merge_group`: standalone high-water floor + host regression diff are unchanged by construction (byte identity); the nightly native-first lane number is recorded in this issue after each slice lands.
+
+#### S1 — console/print is a capability in a JS environment (fixes 4397 "selects native strings…" + ~2.1k async rows)
+
+Under the regime a JS-environment build currently mints the host-free
+`__stdout_acc` sink (#3469) and the runner only drains it for
+`target === "standalone"` (`scripts/test262-worker.mjs:2473`), so `$DONE` never
+reaches `harnessOutput`. In a JS environment `console.*` must lower to the
+`console_log_*` platform-capability import (already `platform-capability`
+class in `src/host-import-policy.ts`) and the `__stdout_*` inspection exports
+must not be minted.
+
+- `src/codegen/declarations/import-collector.ts` ≈ L1565 (sets
+  `ctx.usesStandaloneConsoleSink`): gate on `hostFreeEnvironment(ctx)` instead of
+  `ctx.standalone || ctx.wasi`.
+- `src/codegen/index.ts` ≈ L5636 (mint sink), ≈ L6267 / ≈ L11699 (emit
+  `__stdout_prepare`/`__stdout_char`): same predicate.
+- `src/codegen/standalone-console-object.ts` (`console` as a VALUE, #6671):
+  keep for `hostFreeEnvironment`; in a JS environment the bare `console` value
+  routes to the declared-global capability (`declared_global` intent), which
+  is how the host lane already handles it.
+- `scripts/test262-worker.mjs:2473` and the in-process twin in
+  `tests/test262-shared.ts` (≈ L1050): drain `__stdout_*` when the exports
+  carry it (`typeof exp.__stdout_prepare === "function"`), not by target name;
+  after the codegen change a JS-env regime module carries none, so the host
+  console proxy path is taken.
+- Acceptance: 4397 console test green; sample ≥ 218; nightly async rows
+  drop from 3,399 toward the standalone lane's count (standalone passes these
+  via the drain).
+
+#### S2 — the JS value boundary under the regime (fixes the other 9 4397 tests)
+
+Assertions and their gate sites (each is a `!ctx.standalone`/`ctx.wasi ||
+ctx.standalone` arm that must read `jsValueBoundary(ctx)` instead):
+
+| 4397 test                                        | observed under regime                       | gate to re-key                                                                                              |
+| ------------------------------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Wasm-owned objects live & identity-stable; native JSON provider | `type incompatibility when transforming from/to JS` | string params/results cross raw as i16-array refs: `src/codegen/closure-exports.ts` ≈ L773 / L1319 / L1516 (export wrapper string marshal), `src/codegen/native-strings.ts` ≈ L1711 (`__str_from_mem`/`__str_to_mem` bridge) |
+| matches host-assisted string values              | `expected {} to be 'ALPHA'`                 | same string-marshal sites (result side)                                                                    |
+| object-rest with JS-owned source (`any`)         | `illegal cast`                              | `any`-receiver reads cast externref→`$Object` instead of consulting the admitted-object MOP: `src/codegen/property-access.ts` / `property-access-dispatch.ts` `any` arms gated `ctx.standalone`; the MOP itself is already gated correctly (`object-runtime.ts` ≈ L937) |
+| DataView admitted view; scopes admitted objects  | `expected null to be 9`; `expected undefined to be 42` | same admitted-object read path (`__boundary_object_get`)                                                    |
+| compiled bind / JS function at the boundary      | `[object Object] is not a function`         | `src/codegen/expressions/calls.ts` ≈ L4711–L4960 (`allowHostBoundaryFallback` arms gated `!ctx.standalone && !ctx.wasi`) → `jsValueBoundary`; `planHostCallFallback(arity, nativeBoundary)` in `host-call-fallback.ts` already selects `__boundary_callback_call_N` |
+| translates Wasm-owned errors at the boundary     | `expected Error to be an instance of TypeError` | error-kind translation when a native error struct crosses out: `src/runtime.ts` `_wrapForHost` error arm consults the native `$Error` kind tag only when… (find via `__exn_render_*` consumers); codegen side `src/codegen/js-errors.ts` `noJsHost()` consumers that skip minting the kind tag under `ctx.standalone` |
+| struct-field exports with Symbol fields          | (guard)                                     | `src/codegen/struct-field-exports.ts` L219 / L482 / L572 / L783 — `ctx.standalone || ctx.wasi` there means "no host Symbol"; under the regime with a JS bridge use the boundary Symbol map (#4397 Symbol slice) |
+
+Method: take the tests one at a time in the order of the table; for each,
+write the failing expectation as the acceptance line, find the arm with the
+grep `grep -rn "ctx\.standalone" src/codegen | grep -iE "boundary|export|marshal|str_|callback|wrapForHost"`,
+re-key, re-run guard 2. Do NOT widen `hostValueInterop` semantics; do not
+touch arms whose question is "which provider" (those stay on
+`ctx.standalone`). Also add `JS2WASM_NATIVE_REGIME_JS=1` to
+`scripts/check-host-import-policy.ts` so the ratchet measures the regime, and
+raise `plan/audit/host-import-policy-baseline.json` maxima only with a
+measured reason.
+
+- Acceptance: 4397 15/16 (URI pre-existing), 4399 suites green, ratchet
+  zero legacy/unknown under the regime, sample ≥ 218, `wrapCompiledExports`
+  live-view/copy/opaque policies unchanged.
+
+#### S3 — regime-in-JS codegen defects (parity work with named repros)
+
+- **S3-a** class async-generator methods emit invalid Wasm (`C_method` /
+  `C___priv_method`, "not enough arguments" / stack-balance, ~600 rows). Repro:
+  `test/language/statements/class/dstr/async-gen-meth-static-dflt-ary-ptrn-rest-ary-elem.js`
+  under the regime. Hypothesis to verify first: the hostBridge
+  `__call_fn_method_*` trampolines (JS-env only) are minted against the host
+  method ABI while the body is lowered with the native async-generator
+  carrier; standalone never mints the trampolines so never hits it. Fix at
+  the trampoline emitter (`src/codegen/init-class-dispatch-helpers.ts` /
+  `class-method-host-bridge` consumers), not in the carrier.
+- **S3-b** `Array.prototype.reduce/reduceRight/values … not yet callable as a
+  value` (~243): the standalone refusal; add the native method-as-value
+  carrier (same shape as #3170's indexOf/includes work) — this also lifts the
+  standalone lane.
+- **S3-c** `__set_member_nonstrict_length` → `__extern_set` illegal cast (73):
+  the dynamic `length` write on a non-array object picks the extern arm; the
+  arm at `src/codegen/member-set-dispatch.ts` ≈ L162/L263 is `ctx.standalone`
+  gated but the *receiver classification* upstream is not — repro
+  `test/built-ins/Array/prototype/reduceRight/15.4.4.22-5-6.js`.
+- **S3-d** `called value is not a function` (116) and `Expected a TypeError
+  … no exception` (130): triage from the nightly JSONL after S1/S2 land;
+  file child issues with `parent: 5385` only if they are regime-specific
+  (fail here, pass in both other lanes).
+
+Each S3 item: byte-identical default gc, standalone floor unchanged, the
+named repro flips, sample non-decreasing.
+
+#### S4 — measurement lane parity with the standalone lane
+
+`.github/workflows/test262-sharded.yml` `test262-native-first` job: (a) link
+the selected eval provider like the standalone shard (download step +
+`Verify shared runtime-eval provider cache`, ≈ L1672–L1690) — requires the
+`runtime-eval-provider` job (≈ L665) to run on `schedule`; add the arm the
+`temporal-provider` job already has (≈ L789); (b) link the Temporal provider
+for the regime (`prewarm-temporal-provider.mjs --target host` produces a
+host-semantics binary — the regime needs one built with
+`semanticProviders: "native-first"`; extend `scripts/test262-temporal.mjs`
+`temporalProviderCompileOptions`). Expected: −473 eval rows, −1,507 Temporal
+rows. Only after this does the lane number become comparable to host.
+
+#### S5 — turn the regime on by default for `semanticProviders: "native-first"`
+
+Remove the `JS2WASM_NATIVE_REGIME_JS` condition from
+`resolveCompileTargetProfile` (`src/target-profile.ts`); keep the env var as a
+kill switch that *disables* it for one release. Default `gc` output stays
+byte-identical (host-assisted is still the default policy). Gate: S1–S3
+acceptance green without the env var, the nightly lane number ≥ host lane
+minus the deferred set (Temporal/SAB/eval-code), npm-compat js-host-native lane
+no `measured → error` regressions.
+
+#### S6 — flip the default policy (Phase 3 above, unchanged)
+
+`semanticProviders` default → `native-first` in every environment; per-family
+opt-ins for `wasm:js-string`, host RegExp/Date/Intl as `host-accelerator`;
+whole-profile `"host-assisted"` rollback alias with a deprecation warning for
+one release; host test262 lane becomes the regime lane; README/CLAUDE.md
+wording. Evidence bar: S5 numbers held for two consecutive nightlies; the
+edition ratchet (`scripts/test262-edition-ratchet.ts`) shows no edition below
+its floor on the regime lane.
+
+#### S7 — retire the host implementation (Phase 4 above, unchanged)
+
+Delete `compatibility-*-adapter.ts`, the legacy `resolveImport` arms, the
+semantic helper modules and the host-only codegen helper files listed in the
+size table; `legacy-semantic` becomes a compile error in every profile;
+collapse `ctx.standalone` arms to unconditional native where the question was
+"which provider" (by then every remaining `ctx.standalone` site *is* a
+provider question, because S1/S2 moved the environment/boundary ones).
+`ctx.standalone` is then renamed `ctx.nativeRegime` and finally removed.
+
+#### Out of scope for this plan
+
+- Making host-assisted output faster or smaller; the small-binary property is
+  #2514's shared-runtime packaging.
+- Any change to the standalone/WASI targets' semantics.
 
 ### Program acceptance
 
