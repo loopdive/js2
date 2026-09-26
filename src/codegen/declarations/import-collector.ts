@@ -58,7 +58,7 @@ import { addImport, addStringConstantGlobal } from "../registry/imports.js";
 import { addFuncType, getOrRegisterTemplateVecType } from "../registry/types.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "../uri-encoding-native.js";
 import type { ValType } from "../../ir/types.js";
-import type { CodegenContext } from "../context/types.js";
+import { type CodegenContext, hostFreeEnvironment } from "../context/types.js";
 import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { isConsoleValueIdentifier } from "../standalone-console-object.js";
@@ -1570,12 +1570,12 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // mints the in-module GC string sink (`__stdout_acc` + `__stdout_append`) and
   // finalize emits the `__stdout_prepare`/`__stdout_char` readout exports. The
   // sink stays 100% host-free (WasmGC in-module), so the #2961 import-leak gate
-  // still rejects genuine host imports.
-  if (ctx.standalone && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
+  // still rejects genuine host imports. (#6685) Keyed on the environment: a JS one keeps `console_*` below.
+  if (ctx.standalone && hostFreeEnvironment(ctx) && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
     ctx.usesStandaloneConsoleSink = true;
   }
 
-  if (!ctx.wasi && !ctx.standalone) {
+  if (!hostFreeEnvironment(ctx)) {
     const CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
     for (const method of CONSOLE_METHODS) {
       const needed = state.consoleNeededByMethod.get(method);
