@@ -1,10 +1,11 @@
 ---
 id: 6682
 title: "standalone: axios `redactConfig` trips codegen invariant #2182 (liveBodies unbalanced, entry=1 exit=2)"
-status: ready
+status: done
 sprint: current
 created: 2026-09-26
 updated: 2026-09-26
+completed: 2026-09-26
 priority: medium
 horizon: m
 feasibility: medium
@@ -15,6 +16,11 @@ language_feature: closures
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
 related: [1472, 2182, 5301, 6660]
+# 2026-09-26: +4 lines in emitCollectionAdderGuard restore the #2182 swap
+# discipline (savedBodies push/pop + paired liveBodies add/delete); the fix
+# belongs at the leaking site, not in a new module.
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
 ---
 
 # #6682 — axios `redactConfig`: liveBodies unbalanced under `--target standalone`
@@ -55,3 +61,43 @@ bindings (`utils` from `../utils.js`, `AxiosHeaders` from
   matching `.delete()` on some early-return path.
 - #5301 fixed the JS-host trap in the same function (self-recursive arrow
   conditional box).
+
+## Implementation Plan
+
+1. Reduce: instrument `ctx.liveBodies` to record the stack of every `.add()`
+   not matched by a `.delete()`, compile the axios standalone-dynamic driver.
+   Both leaked adds came from `emitCollectionAdderGuard`
+   (`src/codegen/expressions/new-super.ts`), reached from
+   `new Set(redactKeys.map(...))` (direct and via the iterable drive).
+2. Why only in the two-module graph: the guard is emitted only when
+   `ctx.protoNamedDirty` is set (a named write onto a builtin prototype —
+   axios's `utils.js` has one). A one-file reduction therefore needs such a
+   write: `(Array.prototype as any).__extra = 1` + `new Set(iterable)` inside a
+   function reproduces `entry=0, exit=1` under `--target standalone`. The
+   js-host lane never registers `__protoidx_has_r`, so the guard is a no-op
+   there (unaffected, byte-identical).
+3. Fix the swap discipline in `emitCollectionAdderGuard`: push the real body on
+   `fctx.savedBodies`, register the detached `thenArm` and `throwArm` in
+   `liveBodies` for the duration of `emitThrowTypeError`, and release all three
+   in `finally` (the `then-thenable-miss.ts` pattern). The old code added
+   `throwArm` and never deleted it, and left the real body and `thenArm` off the
+   late-import shifter's walk.
+4. Regression test `tests/issue-6682-collection-adder-guard-livebodies.test.ts`
+   (standalone + gc).
+
+## Resolution
+
+Fixed in `emitCollectionAdderGuard`. Measured 2026-09-26:
+
+- Regression test: parent 3 fail / 2 pass (all standalone cases fail to
+  compile; gc control passes), fix 5 / 5.
+- Scoped standalone test262 (`built-ins/{Set,Map,WeakMap,WeakSet}/**`, 813
+  rows, `scripts/run-test262-paths.mts --standalone`, interpreter eval engine):
+  parent and fix both `pass 741 / fail 59 / compile_error 13`, identical
+  non-pass sets — no losses.
+- JS-host: binaries byte-identical parent vs fix; axios dogfood suite
+  208/231 (unchanged).
+- axios standalone-dynamic lane: `compile-error` "codegen invariant (#2182):
+  liveBodies unbalanced after compiling 'redactConfig'" → next blocker
+  `Codegen error: Maximum call stack size exceeded (at src/codegen/fixups.ts:207:17)`
+  (already listed in #6660; not a consequence of the unbalanced body).
