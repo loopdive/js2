@@ -23,12 +23,12 @@ related: [3469, 4397, 4398, 6671]
 # context/types.ts; +10 lines (one exported function + its doc comment).
 # 2026-09-26 (#6685 S1b): the console capability must marshal a Wasm-owned
 # string to a JS string. builtins.ts +10 (bridge export at the externref console
-# call + import), runtime.ts +9 (`_consoleToHost` wrapper applied to the resolved
-# console capability). Both are the console call site / adapter wiring themselves.
+# call + import). The runtime marshal lives in the new
+# src/runtime/console-host-marshal.ts with an injected converter; runtime.ts is
+# net 0 lines (host-import-policy runtimeTsLines ceiling unchanged).
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/expressions/builtins.ts
-  - src/runtime.ts
 ---
 
 # #6685 — S1: console is a capability in a JS environment (native regime)
@@ -123,8 +123,10 @@ value" — reported by the #6687 lane). Three changes:
    (`!hostFreeEnvironment(ctx) && !ctx.strictNoHostImports`), not the regime.
 2. `compileConsoleCall`'s externref arm exports the native-string boundary
    bridge under the regime (`ensureNativeStringBoundaryBridge`).
-3. runtime wraps the resolved console capability (`_consoleToHost`) so a
-   Wasm-owned primitive arrives as its JS value (bool variants untouched).
+3. the resolved console capability is wrapped by `wrapConsoleForHost`
+   (new `src/runtime/console-host-marshal.ts`, converter injected by runtime.ts,
+   no import back into runtime.ts) so a Wasm-owned primitive arrives as its JS
+   value (bool variants untouched). runtime.ts is net 0 lines.
 
 Guards (base = upstream/main @ fcb3ed03e7, which already contains S1):
 

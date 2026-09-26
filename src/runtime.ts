@@ -127,7 +127,7 @@ import {
   sameAssociationToken,
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
-import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
+import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -8047,15 +8047,6 @@ function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): 
   return raw;
 }
 
-/** (#6685) Console capability: Wasm-owned primitives (native strings, boxed numbers) arrive as JS values. */
-function _consoleToHost(capability: Function, intent: { variant: string }, state?: { getExports(): any }): Function {
-  if (intent.variant.endsWith("bool")) return capability;
-  return function consoleWithHostPrimitives(value: unknown) {
-    const primitive = _nativePrimitiveToHost(value, state?.getExports());
-    return capability(primitive === _MISS ? value : primitive);
-  };
-}
-
 /** Convert one native boundary carrier into its JS-side value/view. */
 function _nativeBoundaryToHost(value: any, exports: Record<string, Function>): any {
   const primitive = _nativePrimitiveToHost(value, exports);
@@ -11513,7 +11504,7 @@ function resolveImport(
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
-  if (capability) return intent.type === "console_log" ? _consoleToHost(capability, intent, callbackState) : capability;
+  if (capability) return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS);
   const compatibilitySemantic = resolveCompatibilitySemanticImport(intent, {
     strictEqual: _hostStrictEqual,
     isWasmStruct: _isWasmStruct,
