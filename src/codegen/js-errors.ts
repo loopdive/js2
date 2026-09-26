@@ -36,7 +36,7 @@ export function usesNativeJsErrors(ctx: CodegenContext): boolean {
 }
 
 /** The real-instance JS error kinds that have an `__new_<Kind>` constructor. */
-export type JsErrorKind = "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "Error";
+export type JsErrorKind = "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "EvalError" | "Error";
 
 /**
  * (#3175) Build the real-instance `<Kind>`-throw lowering as a terminal

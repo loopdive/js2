@@ -28,6 +28,7 @@ import { ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerAmbientParseImport } from "./ambient-parse-import.js";
+import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import {
   heritageBaseName,
   isExternDeclaredLibName,
@@ -910,6 +911,7 @@ function collectExternDeclarationsImpl(
       // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
       // microtask queue (standalone-queue-microtask.ts), never on the host.
       if (ctx.standalone && name === "queueMicrotask") continue;
+      if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
       if (!ctx.funcMap.has(name)) {
         // (#4238) Under `externNativeTypes` an explicit native annotation
         // (`type i32 = number` & friends) wins over the default mapping, so

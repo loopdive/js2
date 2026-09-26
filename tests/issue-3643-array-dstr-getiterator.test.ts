@@ -38,7 +38,7 @@ async function run(src: string): Promise<Record<string, any>> {
   ).toBe(true);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
+  importObject.__setInstance?.(instance);
   return wrapExports(instance.exports, { signatures: result.exportSignatures });
 }
 

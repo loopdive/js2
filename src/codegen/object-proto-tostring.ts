@@ -91,6 +91,7 @@ import { getOrRegisterDvWindowType } from "./dataview-native.js";
 import { addFuncType, getOrRegisterTaDynViewType, getOrRegisterTaViewType, TA_CTOR_KINDS } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js"; // (#5406) boundary-carrier arm
+import { emitObjectProtoToStringSymbolTagConsult } from "./object-proto-tostring-carriers.js"; // (#6674)
 
 /** §20.1.3.6 result string for a builtin tag. */
 const tagString = (tag: string): string => `[object ${tag}]`;
@@ -694,6 +695,7 @@ export function ensureObjectProtoToStringRuntimeHelper(ctx: CodegenContext): num
     labelMap: new Map(),
     savedBodies: [],
   };
+  emitObjectProtoToStringSymbolTagConsult(ctx, helper, 1); // (#6674) §20.1.3.6 step 15 first
   if (!emitObjectProtoToStringClassifier(ctx, helper)) return undefined;
   emitThrowTypeError(ctx, helper, "Object.prototype.toString is not yet implemented in --target standalone");
   const typeIdx = addFuncType(ctx, [externref, externref], [externref]);
@@ -736,6 +738,9 @@ export function emitObjectProtoOrRefusal(
   member: string,
 ): ValType | null {
   const refusalMessage = `${brandName}.prototype.${member} is not yet implemented in --target standalone`;
+  if (brandName === "Object" && member === "toString" && ctx.nativeStrings) {
+    emitObjectProtoToStringSymbolTagConsult(ctx, fctx, 1); // (#6674) §20.1.3.6 step 15 first
+  }
   if (brandName !== "Object" || member !== "toString" || !emitObjectProtoToStringClassifier(ctx, fctx)) {
     emitThrowTypeError(ctx, fctx, refusalMessage);
     return null;
@@ -1126,6 +1131,9 @@ export function resolveObjectToStringTag(
   if (isStringType(nn)) return deferOrStandalone("String");
   if (isNumberType(nn)) return deferOrStandalone("Number");
   if (isBooleanType(nn)) return deferOrStandalone("Boolean");
+  // (#6674) §21.2.3.7 `BigInt.prototype[@@toStringTag]` is "BigInt"; the
+  // caller's step-15 consult still runs first, so an override is observed.
+  if ((nn.flags & ts.TypeFlags.BigIntLike) !== 0) return deferOrStandalone("BigInt");
 
   // Everything else (plain objects, class instances, @@toStringTag objects,
   // unresolved shapes). Host → defer so it computes the spec-correct tag

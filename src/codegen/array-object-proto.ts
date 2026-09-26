@@ -75,6 +75,7 @@ import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared 
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
+import { emitArrayFlatProtoMemberBody } from "./array-flat-native.js"; // (#2717)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
@@ -910,6 +911,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   if (member === "concat") {
     return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
   }
+  if (member === "flat" || member === "flatMap") return emitArrayFlatProtoMemberBody(ctx, fctx, member) ?? null; // (#2717)
 
   // ES2015 §23.1.3.23/.25/.30 — these three methods are intentionally
   // generic.  Their first-class values are transferred onto ordinary objects
@@ -2605,7 +2607,13 @@ function makeGlue(
       return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
     },
     memberIsVariadic: (member) =>
-      name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
+      name === "Array" &&
+      (member === "join" ||
+        member === "push" ||
+        member === "unshift" ||
+        member === "concat" ||
+        member === "flat" ||
+        member === "flatMap")
         ? true
         : name === "String" && member === "concat"
           ? true

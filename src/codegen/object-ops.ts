@@ -3224,7 +3224,9 @@ function emitExternDefinePropertyNoValue(
   // a known struct field: the sidecar is the only store that compiled reads can
   // consult for `get: identifierRef` / `set: identifierRef` descriptors.
   const structProperty = resolveKnownStructProperty(ctx, objArg, propArg);
-  const isKnownStructField = structProperty.isKnown;
+  // (#6472) A TS-struct receiver that COMPILED to externref (host plain object)
+  // must reach `__defineProperty_value`; the compile-time-only path drops flags.
+  const isKnownStructField = structProperty.isKnown && objType.kind !== "externref";
   if ((forceRuntime || !isKnownStructField || isAccessorDesc) && propLocal !== undefined) {
     markRuntimeDefinedProperty(ctx, objArg, propArg);
     const propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
@@ -3235,7 +3237,12 @@ function emitExternDefinePropertyNoValue(
       const varName = ts.isIdentifier(objArg) ? integrityVarKey(ctx, objArg) : undefined; // (#3403) per-declaration key
       if (varName) {
         const key = `${varName}:${propName}`;
-        const existingFlags = ctx.definedPropertyFlags.get(key);
+        // (#6472) an existing literal field starts as a default data property
+        const existingFlags =
+          ctx.definedPropertyFlags.get(key) ??
+          (objType.kind === "externref" && structProperty.isKnown && !ctx.widenedDefinePropertyKeys.has(key)
+            ? PROP_FLAGS_DEFAULT_DATA
+            : undefined);
         const newFlags = applyDescriptorFlags(
           existingFlags,
           descWritable,
