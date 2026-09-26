@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-26",
   "threshold": 1500,
-  "totalCeiling": 936282,
+  "totalCeiling": 936294,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -18,7 +18,7 @@
     "src/codegen/closed-method-dispatch.ts": 2095,
     "src/codegen/closure-exports.ts": 2509,
     "src/codegen/closures.ts": 4876,
-    "src/codegen/context/types.ts": 4901,
+    "src/codegen/context/types.ts": 4911,
     "src/codegen/dataview-native.ts": 9731,
     "src/codegen/declarations.ts": 6712,
     "src/codegen/declarations/import-collector.ts": 2309,
