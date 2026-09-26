@@ -1,7 +1,7 @@
 ---
 id: 6685
 title: "S1: console/print lowers to the platform capability in a JS environment under the native regime"
-status: ready
+status: in-progress
 created: 2026-09-26
 updated: 2026-09-26
 priority: high
