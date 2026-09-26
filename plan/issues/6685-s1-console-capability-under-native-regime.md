@@ -1,7 +1,9 @@
 ---
 id: 6685
 title: "S1: console/print lowers to the platform capability in a JS environment under the native regime"
-status: in-progress
+status: done
+completed: 2026-09-26
+assignee: ttraenkler/opus-6685
 created: 2026-09-26
 updated: 2026-09-26
 priority: high
@@ -16,6 +18,11 @@ sprint: current
 parent: 5385
 depends_on: [5385]
 related: [3469, 4397, 4398, 6671]
+# 2026-09-26 (#6685): the plan (#5385 v2, "Design rule for every slice") places
+# the new `hostFreeEnvironment(ctx)` predicate next to the ctx types in
+# context/types.ts; +10 lines (one exported function + its doc comment).
+loc-budget-allow:
+  - src/codegen/context/types.ts
 ---
 
 # #6685 — S1: console is a capability in a JS environment (native regime)
@@ -60,18 +67,41 @@ format, errors, collections); they stay on `ctx.standalone`.
 
 ## Acceptance
 
-- [ ] `tests/issue-4396-target-profile.test.ts` byte-identity test green: default
+- [x] `tests/issue-4396-target-profile.test.ts` byte-identity test green: default
       `gc`, `standalone`, `wasi` output unchanged.
-- [ ] `JS2WASM_NATIVE_REGIME_JS=1 npx vitest run tests/issue-4397-native-semantic-js-host.test.ts`
+- [x] `JS2WASM_NATIVE_REGIME_JS=1 npx vitest run tests/issue-4397-native-semantic-js-host.test.ts`
       — the "selects native strings…" test passes; the other failures do not
       grow (before: 10 red, of which "parse and URI string globals" is
       pre-existing on main).
-- [ ] `JS2WASM_NATIVE_REGIME_JS=1 pnpm run check:host-import-policy` green.
-- [ ] 321-row sample (`JS2WASM_EVAL_ENGINE=interpreter TEST262_SEMANTIC_PROVIDERS=native-first TEST262_PATH_FILTER="built-ins/Object/keys/|built-ins/Array/prototype/map/|language/expressions/class/accessor" TEST262_WORKERS=2 pnpm run test:262`)
+- [ ] `JS2WASM_NATIVE_REGIME_JS=1 pnpm run check:host-import-policy` green. (Pre-existing red on main, unchanged — S2's callback boundary; see Test Results.)
+- [x] 321-row sample (`JS2WASM_EVAL_ENGINE=interpreter TEST262_SEMANTIC_PROVIDERS=native-first TEST262_PATH_FILTER="built-ins/Object/keys/|built-ins/Array/prototype/map/|language/expressions/class/accessor" TEST262_WORKERS=2 pnpm run test:262`)
       ≥ 218 / 321; record the number in the PR.
-- [ ] A focused test proves a regime JS build of an async test262-shaped
+- [x] A focused test proves a regime JS build of an async test262-shaped
       program (`$DONE` via `console.log("Test262:AsyncTestComplete")`) reports
       the marker through the console capability, and a standalone build still
       reports it through `__stdout_*`.
-- [ ] Standalone/WASI targets: no import or export change (assert in the
+- [x] Standalone/WASI targets: no import or export change (assert in the
       focused test).
+
+## Test Results (2026-09-26, base = upstream/main @ cb2e265852)
+
+- `tests/issue-4396-target-profile.test.ts` (byte identity: default `gc`,
+  `standalone`, `wasi`): green.
+- `JS2WASM_NATIVE_REGIME_JS=1 … tests/issue-4397-native-semantic-js-host.test.ts`:
+  before 19 red / 11 green (the file has grown to 30 tests since the plan's
+  "10 red" count); after 18 red / 12 green. The only flip is "selects native
+  strings without disabling JS capabilities or their boundary marshal" → green.
+- `JS2WASM_NATIVE_REGIME_JS=1 pnpm run check:host-import-policy`: RED on both
+  base and this branch with the identical pre-existing error
+  (`__boundary_callback_call_1 must remain an explicit value adapter, got
+  missing` — the functionBind probe's callback boundary, an S2 item). Without
+  the env var: green.
+- 321-row native-first sample: base 219 / 321, after 219 / 321 (base
+  re-measured on this main; the plan's 218 predates it).
+- New `tests/issue-6685.test.ts` (3 tests) + #3469 and #6671 sink tests: green.
+
+The in-module `__stdout_*` gates in the runner twins (`scripts/test262-worker.mjs`,
+`tests/test262-shared.ts`) now feature-detect the exports instead of testing
+`target === "standalone"`; `drainAndCaptureNativeStdout` was already
+feature-detecting, so this also drains a regime module's native microtask ring.
+

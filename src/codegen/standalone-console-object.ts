@@ -35,7 +35,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "./context/types.js";
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -64,7 +64,9 @@ const OBJECT_FN = "__standalone_console_object";
  * from its owning realm; WASI keeps its `fd_write` path.
  */
 function isStandaloneAmbientConsoleRead(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
-  if (!ctx.standalone || ctx.wasi || ctx.standaloneGlobalThisImport !== undefined) return false;
+  // (#6685) A JS environment (native regime included) reads the declared-global
+  // `console` capability instead; WASI is excluded by `!ctx.standalone`.
+  if (!ctx.standalone || !hostFreeEnvironment(ctx) || ctx.standaloneGlobalThisImport !== undefined) return false;
   if (id.text !== "console") return false;
   if (fctx.localMap.has("console") || (fctx.boxedCaptures?.has("console") ?? false)) return false;
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, "console")) return false;

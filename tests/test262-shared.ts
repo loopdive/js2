@@ -1008,8 +1008,11 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     // compiler writes console output to its native sink, not
                     // `consoleProxy`, so drain the Wasm queue and copy that
                     // sink into the same marker buffer before polling.
+                    // (#6685) Feature-detected from the exports, never by target
+                    // name — the native regime in a JS environment has the
+                    // microtask ring but prints through the console capability.
                     let standaloneDrainError: unknown = null;
-                    if (TEST262_TARGET === "standalone") {
+                    {
                       const exp = instance.exports as Record<string, any>;
                       if (typeof exp.__drain_microtasks === "function") {
                         try {

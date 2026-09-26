@@ -10,7 +10,7 @@ import { resolveArrayInfo } from "../array-methods.js";
 import { definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { buildSpreadArgList } from "../spread-arg-list.js"; // (#5361)
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { addFuncType, ensureWasiWriteAnyStringHelper } from "../index.js";
 import { emitStandaloneStdoutAppendValue, ensureNativeStringExternBridge } from "../native-strings.js";
@@ -42,7 +42,7 @@ function compileConsoleCall(
     return compileConsoleCallWasi(ctx, fctx, expr, method);
   }
 
-  // (#3436/#3469) Standalone mode: no JS host to receive console output, and the
+  // (#3436/#3469/#6685) Host-free ENVIRONMENT (not the regime): no JS host for output; the
   // `env.console_*` imports are deliberately NOT registered (keeps #2961's
   // import-leak gate green); there is also no `fd_write` sink (unlike WASI).
   // Instead of the original pure no-op (#3436), render each argument to a native
@@ -50,7 +50,7 @@ function compileConsoleCall(
   // trailing newline). The runner reads that back host-free via
   // `__stdout_prepare`/`__stdout_char`, so the test262 async completion marker
   // (`$DONE → print → console.log("Test262:AsyncTestComplete")`) is observable.
-  if (ctx.standalone) {
+  if (hostFreeEnvironment(ctx)) {
     const appendName = "__stdout_append";
     // Append a native-string literal (arg separator / trailing newline) to the
     // sink. `__stdout_append` is re-read by name because the per-arg render
