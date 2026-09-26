@@ -119,7 +119,7 @@ import {
 
 const EXTERNREF: ValType = { kind: "externref" };
 
-type AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;
+export type AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;
 
 /** The combinators this module lowers natively (#2867 Gap 4 `all`/`race`; #3137 `allSettled`/`any`). */
 export type NativeCombinator = "all" | "race" | "allSettled" | "any";
@@ -512,7 +512,7 @@ export function emitStandalonePromiseCustomSettle(
   return true;
 }
 
-interface CombinatorRuntime {
+export interface CombinatorRuntime {
   /** `$CombinatorState { resultPromise: ref $Promise, resultsArr: ref $arr_ext, length: i32, remaining (mut) i32 }`. */
   stateTypeIdx: number;
   /** `$CombinatorElemCaps { state: ref $CombinatorState, index: i32 }`. */
@@ -557,7 +557,7 @@ type CtxWithCombinators = CodegenContext & { __promiseCombinators?: CombinatorRu
  * subscribe/runtime bodies so sources that do not observe `resolve`/`then`
  * remain byte-identical.
  */
-interface ObservableCombinatorRuntime {
+export interface ObservableCombinatorRuntime {
   /** `$__combinator_all_resolve_cap` subtype containing element caps + called bit. */
   allResolveCapTypeIdx: number;
   /** First capture after the inherited builtin-function metadata fields. */
@@ -582,7 +582,7 @@ type CtxWithObservableCombinators = CodegenContext & {
 };
 
 /** State shared by the literal and direct-vector observable paths. */
-interface ObservableCombinatorPreparation {
+export interface ObservableCombinatorPreparation {
   resultLocal: number;
   ctorLocal: number;
   resolveLocal: number;
@@ -599,7 +599,7 @@ interface ObservableCombinatorPreparation {
  * helper deliberately remains untouched: the source-wide observable gate is
  * the sole admission point for this additional machinery.
  */
-function ensureObservableCombinatorRuntime(
+export function ensureObservableCombinatorRuntime(
   ctx: CodegenContext,
   ids: CombinatorRuntime,
 ): ObservableCombinatorRuntime | null {
@@ -951,7 +951,7 @@ const ANY_REJECT_MESSAGE = "All promises were rejected";
  * functions, and the emitters' ordering contract requires every registration
  * to precede the copy (see the #2919 liveBodies note at the literal call site).
  */
-function combinatorReactionFns(
+export function combinatorReactionFns(
   ctx: CodegenContext,
   ids: CombinatorRuntime,
   method: NativeCombinator,
@@ -1303,7 +1303,7 @@ function buildObservableTypeErrorRejectInstrs(
  * later iterator/pipeline work.  The resolve value is intentionally held in a
  * local so later source writes cannot replace the captured method.
  */
-function emitObservableCombinatorPreparation(
+export function emitObservableCombinatorPreparation(
   ctx: CodegenContext,
   fctx: FunctionContext,
   ids: CombinatorRuntime,
@@ -1526,12 +1526,25 @@ function buildObservableAllResolveClosureInstrs(
 }
 
 /**
+ * (#6651 D2b) The aggregate-state types an observable element pipeline writes.
+ * The literal/direct-VEC callers pass none and get `$CombinatorState`; the
+ * driven dynamic-iterable `Promise.all` (`promise-combinator-drive.ts`) passes
+ * its growable `$CombinatorDriveState` twin, which has the same field order.
+ */
+export interface ObservableElementCarrier {
+  stateTypeIdx: number;
+  elemCapsTypeIdx: number;
+  subscribeFuncIdx: number;
+  buildAllResolveClosure: (elemCapsLocal: number) => Instr[];
+}
+
+/**
  * Append one `Call(resolve, C, [value])` then `Invoke(next, "then", …)`
  * pipeline.  This is intentionally emitted at the call site: the captured
  * resolve method and constructor are per-combinator invocation, while the
  * legacy `__combinator_subscribe` helper is source-agnostic.
  */
-function emitObservableCombinatorElement(
+export function emitObservableCombinatorElement(
   ctx: CodegenContext,
   fctx: FunctionContext,
   ids: CombinatorRuntime,
@@ -1543,6 +1556,12 @@ function emitObservableCombinatorElement(
   stateLocal: number,
   indexInstrs: readonly Instr[],
   inputInstrs: readonly Instr[],
+  carrier: ObservableElementCarrier = {
+    stateTypeIdx: ids.stateTypeIdx,
+    elemCapsTypeIdx: ids.elemCapsTypeIdx,
+    subscribeFuncIdx: ids.subscribeFuncIdx,
+    buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),
+  },
 ): void {
   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
@@ -1557,7 +1576,7 @@ function emitObservableCombinatorElement(
     method === "all"
       ? allocLocal(fctx, `__comb_observable_elem_caps_${fctx.locals.length}`, {
           kind: "ref",
-          typeIdx: ids.elemCapsTypeIdx,
+          typeIdx: carrier.elemCapsTypeIdx,
         })
       : -1;
 
@@ -1575,9 +1594,9 @@ function emitObservableCombinatorElement(
       return [
         { op: "local.get", index: stateLocal },
         ...indexInstrs,
-        { op: "struct.new", typeIdx: ids.elemCapsTypeIdx },
+        { op: "struct.new", typeIdx: carrier.elemCapsTypeIdx },
         { op: "local.set", index: elemCapsLocal },
-        ...buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),
+        ...carrier.buildAllResolveClosure(elemCapsLocal),
       ];
     }
     return [{ op: "local.get", index: preparation.raceFulfillLocal }];
@@ -1600,7 +1619,7 @@ function emitObservableCombinatorElement(
     ...indexInstrs,
     { op: "ref.func", funcIdx: reaction.fulfillIdx },
     { op: "ref.func", funcIdx: reaction.rejectIdx },
-    { op: "call", funcIdx: ids.subscribeFuncIdx },
+    { op: "call", funcIdx: carrier.subscribeFuncIdx },
   ];
   const buildNativeInvoke = (): Instr[] => {
     const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
@@ -1691,10 +1710,10 @@ function emitObservableCombinatorElement(
       ? [
           { op: "local.get", index: stateLocal },
           { op: "local.get", index: stateLocal },
-          { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },
+          { op: "struct.get", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },
           { op: "i32.const", value: 1 },
           { op: "i32.add" },
-          { op: "struct.set", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },
+          { op: "struct.set", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },
         ]
       : [];
 

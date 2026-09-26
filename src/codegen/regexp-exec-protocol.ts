@@ -70,6 +70,7 @@ import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./nati
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { prepareStandaloneExternrefToNumberProviders } from "./tonumber-fast-paths.js";
+import { ensureSpecExternrefToStringProvider } from "./coercion-engine.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -79,7 +80,7 @@ const F64: ValType = { kind: "f64" };
 const PROTOCOL_KEYS = ["exec", "lastIndex", "index"] as const;
 
 /** Resolved indices of every native the protocol emits. All by NAME, late. */
-interface RegExpExecProtocolDeps {
+export interface RegExpExecProtocolDeps {
   readonly externGet: number;
   readonly externSet: number;
   readonly externToString: number;
@@ -102,7 +103,10 @@ interface RegExpExecProtocolDeps {
  * Returns `undefined` when any native is unavailable, in which case the caller
  * keeps its existing lowering unchanged.
  */
-function prepareRegExpExecProtocol(ctx: CodegenContext, fctx: FunctionContext): RegExpExecProtocolDeps | undefined {
+export function prepareRegExpExecProtocol(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): RegExpExecProtocolDeps | undefined {
   ensureObjectRuntime(ctx);
   // `__str_indexOf` (the `flags`-contains-`g` test) lives in the native-string
   // helper set, which is registered lazily; ask for it before any index is read.
@@ -110,6 +114,9 @@ function prepareRegExpExecProtocol(ctx: CodegenContext, fctx: FunctionContext): 
   const applyClosure = reserveApplyClosure(ctx);
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
+  // (#6651 B6) Every `Set` in §22.2.6/§22.2.7 is `Set(R, "lastIndex", v, true)`:
+  // a refused write (non-writable `lastIndex`, getter-only accessor) THROWS.
+  ensureLateImport(ctx, "__extern_set_strict", [EXTERNREF, EXTERNREF, EXTERNREF], []);
   ensureLateImport(ctx, "__extern_toString", [EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__is_callable", [EXTERNREF], [I32]);
   ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [I32]);
@@ -118,11 +125,16 @@ function prepareRegExpExecProtocol(ctx: CodegenContext, fctx: FunctionContext): 
   ensureLateImport(ctx, "__box_number", [F64], [EXTERNREF]);
   for (const key of PROTOCOL_KEYS) addStringConstantGlobal(ctx, key);
   flushLateImportShifts(ctx, fctx);
+  // (#6651 B6) Every ToString in §22.2.6 is the spec's, which REJECTS a Symbol
+  // (§7.1.17) — `@@split/coerce-{flags,string}-err`, `@@search/coerce-string-err`.
+  // Provisioned before the index batch below: it may mint/flush.
+  const specToString = ensureSpecExternrefToStringProvider(ctx, fctx);
 
   const get = (name: string): number | undefined => ctx.funcMap.get(name);
   const externGet = get("__extern_get");
-  const externSet = get("__extern_set");
-  const externToString = get("__extern_toString");
+  const externSet = get("__extern_set_strict") ?? get("__extern_set");
+  const externToString =
+    (specToString !== undefined ? get("__extern_to_string_spec") : undefined) ?? get("__extern_toString");
   const isCallable = get("__is_callable");
   const typeofObject = get("__typeof_object");
   const sameValueZero = get("__same_value_zero");
@@ -173,12 +185,17 @@ function keyInstrs(ctx: CodegenContext, key: string): Instr[] {
 }
 
 /** `[] → [externref]` — `? Get(objLocal, key)`. The accessor RUNS; an abrupt getter propagates. */
-function buildGetInstrs(ctx: CodegenContext, deps: RegExpExecProtocolDeps, objLocal: number, key: string): Instr[] {
+export function buildGetInstrs(
+  ctx: CodegenContext,
+  deps: RegExpExecProtocolDeps,
+  objLocal: number,
+  key: string,
+): Instr[] {
   return [{ op: "local.get", index: objLocal }, ...keyInstrs(ctx, key), { op: "call", funcIdx: deps.externGet }];
 }
 
 /** `[externref value] → []` — `? Set(objLocal, key, value, true)`. The setter RUNS. */
-function buildSetInstrs(
+export function buildSetInstrs(
   ctx: CodegenContext,
   deps: RegExpExecProtocolDeps,
   objLocal: number,
@@ -257,7 +274,7 @@ function buildSameValue(deps: RegExpExecProtocolDeps, aLocal: number, bLocal: nu
  * `$NativeRegExp` operation and this module deliberately knows nothing about
  * that struct — keeping the substrate usable from any receiver shape.
  */
-function buildRegExpExecInstrs(
+export function buildRegExpExecInstrs(
   ctx: CodegenContext,
   fctx: FunctionContext,
   deps: RegExpExecProtocolDeps,
@@ -354,7 +371,7 @@ function buildIsObjectInstrs(deps: RegExpExecProtocolDeps, local: number): Instr
  * rows that exercise it (`this-val-non-obj`, `this-val-non-regexp`) assert only
  * the error TYPE.
  */
-function buildRequireObjectReceiver(
+export function buildRequireObjectReceiver(
   ctx: CodegenContext,
   fctx: FunctionContext,
   deps: RegExpExecProtocolDeps,
@@ -380,14 +397,14 @@ function buildRequireObjectReceiver(
  * built in a detached buffer — it has to be emitted where those registrations
  * land and then moved into the branch.
  */
-function captureInto(fctx: FunctionContext, emit: () => void): Instr[] {
+export function captureInto(fctx: FunctionContext, emit: () => void): Instr[] {
   const start = fctx.body.length;
   emit();
   return fctx.body.splice(start);
 }
 
 /** How a `@@` method body reaches `RegExpBuiltinExec` for a genuine RegExp receiver. */
-type BuiltinExecEmitter = (
+export type BuiltinExecEmitter = (
   /** Local holding the externref `this`, still un-branded. */
   rxLocal: number,
   /** Local holding the already-`ToString`ed subject, as an externref. */
@@ -513,7 +530,7 @@ export function emitRegExpSymbolSearchBody(
  * caller can decline before it has emitted anything — this builder is only
  * reached once the answer is known to be yes.
  */
-function flagsContainAvailable(ctx: CodegenContext): boolean {
+export function flagsContainAvailable(ctx: CodegenContext): boolean {
   return ctx.nativeStrHelpers.get("__str_indexOf") !== undefined && ctx.anyStrTypeIdx >= 0;
 }
 
@@ -527,7 +544,7 @@ function flagsContainAvailable(ctx: CodegenContext): boolean {
  * declines half-emitted leaves the operand stack unbalanced and the whole
  * module fails to validate (B2's late correctness fix, same hazard).
  */
-interface MatchLoopDeps {
+export interface MatchLoopDeps {
   readonly flatten: number;
   readonly anyStr: number;
   readonly nativeStr: number;
@@ -535,7 +552,7 @@ interface MatchLoopDeps {
   readonly toPrimitive?: number;
 }
 
-function prepareMatchLoopDeps(ctx: CodegenContext, fctx: FunctionContext): MatchLoopDeps | undefined {
+export function prepareMatchLoopDeps(ctx: CodegenContext, fctx: FunctionContext): MatchLoopDeps | undefined {
   const flatten = ctx.nativeStrHelpers.get("__str_flatten");
   if (flatten === undefined || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0) {
     return undefined;
@@ -557,7 +574,7 @@ function prepareMatchLoopDeps(ctx: CodegenContext, fctx: FunctionContext): Match
 }
 
 /** `[externref] → [ref $NativeString]` — narrow a string externref and flatten it. */
-function flattenExternStringInstrs(loop: MatchLoopDeps): Instr[] {
+export function flattenExternStringInstrs(loop: MatchLoopDeps): Instr[] {
   return [
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: loop.anyStr },
@@ -573,7 +590,7 @@ function flattenExternStringInstrs(loop: MatchLoopDeps): Instr[] {
  * code units are read straight out of the flattened subject's backing array
  * (`data[off + i]`), the same reader the matcher itself uses.
  */
-function buildAdvanceStringIndexInstrs(
+export function buildAdvanceStringIndexInstrs(
   loop: MatchLoopDeps,
   flatLocal: number,
   idxLocal: number,
@@ -637,7 +654,7 @@ function buildAdvanceStringIndexInstrs(
   ];
 }
 
-function buildFlagsContainInstrs(ctx: CodegenContext, flagsLocal: number, flag: string): Instr[] {
+export function buildFlagsContainInstrs(ctx: CodegenContext, flagsLocal: number, flag: string): Instr[] {
   const indexOf = ctx.nativeStrHelpers.get("__str_indexOf") ?? 0;
   addStringConstantGlobal(ctx, flag);
   return [

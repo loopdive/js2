@@ -26,8 +26,11 @@ related: [4688, 5195, 3594, 3522, 2046, 5316, 4444]
 # [[Prototype]] instead of storing an own property, which is what makes
 # `super.m()` over such a literal answer node instead of throwing an escaping
 # TypeError. Both additions sit in the module that owns the mechanism.
+# 2026-09-24: class-bodies.ts grows by the one-line replayMissingSuperBody call
+# plus its import; the mechanism lives in the leaf missing-super-replay.ts.
 loc-budget-allow:
   - src/codegen/expressions/new-super.ts
+  - src/codegen/class-bodies.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
   # 2026-09-06 (r3): +1 line — the nested-`super(...)` arm's flag store. The
@@ -988,4 +991,18 @@ valid, r4 threw), it only misses one on a program node rejects. Pinned as the
 shipped answer (f11 → 5). Byte-identical to r4 on wasi and host for all 316
 probes; standalone differs only on e12/e15/e16/f3/f10/f11; the 53-row control
 is identical to r4.
+
+## 2026-09-24 — missing-`super()` body replay re-landed from draft PR #5839
+
+Draft PR #5839 (Codex) was rebased by content onto current main. Its
+top-level `C.prototype.x = v` keep is superseded by #6651 C2-a
+(`class-proto-toplevel-write.ts`), which already makes the five
+`super/prop-*-cls-val*` rows pass. What was still missing on main is the
+missing-`super()` body replay: a derived constructor without `super()` must run
+its body before the fallthrough ReferenceError, which is what
+`super/prop-{dot,expr}-cls-this-uninit.js` observe. That now lives in
+`src/codegen/missing-super-replay.ts` (standalone only, bounded shapes), with
+pins in `tests/issue-5350-super-property-r1.test.ts`. The #5839 pin for
+compound `C["prototype"]["x"] += v` writes was dropped: main's C2-a keep covers
+only the `C.prototype.name = v` form, and no test262 row needs the wider form.
 

@@ -84,8 +84,10 @@ import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383) host-free any op bigint
 import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
+import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -1082,8 +1084,14 @@ export function compileBinaryExpression(
         // write. Fields whose annotation admits `null` are excluded inside the
         // predicate — there `ref.null` is ambiguous.
         if (isStrictEqOp || isStrictNeqOp) {
+          // (#1058) A `let` declared without an initializer, or reset with
+          // `undefined!`, holds `undefined` in its null ref too. `=== null`
+          // keeps its test, so both strict arms stay runtime `ref.is_null`.
           const nullRepresentsUndefined =
-            nonNullUnionHasUndefined || isNullableNativeString || isUninitialisedFieldSlot;
+            nonNullUnionHasUndefined ||
+            isNullableNativeString ||
+            isUninitialisedFieldSlot ||
+            (nullSideIsUndefinedId && readsUndefinedHoldingVariable(ctx, nonNullExpr));
           const nullRepresentsNull =
             nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString && !isUninitialisedFieldSlot);
           const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
@@ -2074,6 +2082,13 @@ export function compileBinaryExpression(
       if (!noJsHost3481 && ctx.anyValueTypeIdx < 0 && nonBigIntIsObjectish && hostBinopCode !== undefined) {
         return emitHostBigIntOperation(ctx, fctx, expr, hostBinopCode);
       }
+      // (#5383) …and its host-free twin for an `any`/`unknown` operand.
+      const native = noJsHost3481
+        ? emitStandaloneAnyBigIntBinary(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType, hostBinopCode, () =>
+            compileI64BinaryOp(ctx, fctx, op, expr),
+          )
+        : undefined;
+      if (native !== undefined) return native;
       // Compile both sides for side effects, drop their values, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);
       if (lt) fctx.body.push({ op: "drop" });

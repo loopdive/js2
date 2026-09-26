@@ -49,7 +49,7 @@ interface ObservableCombinatorRuntime {
 }
 
 type CtxWithObservableCombinators = CodegenContext & {
-  __promiseObservableCombinators?: ObservableCombinatorRuntime;
+  __promiseObservableCombinators?: ObservableCombinatorRuntime | null;
 };
 
 interface ObservableCombinatorPreparation {
@@ -64,6 +64,11 @@ interface ObservableCombinatorPreparation {
 /** Register observable-only plumbing before any detached argument buffer is spliced. */
 function ensureObservableCombinatorRuntime(ctx: CodegenContext, ids: CombinatorRuntime): ObservableCombinatorRuntime {
   const cache = ctx as CtxWithObservableCombinators;
+  if (cache.__promiseObservableCombinators === null) {
+    throw new Error(
+      "observable Promise combinator pipeline requires closure invocation, property reads, and TypeError runtime support",
+    );
+  }
   if (cache.__promiseObservableCombinators !== undefined) return cache.__promiseObservableCombinators;
 
   ensureObjectRuntime(ctx);

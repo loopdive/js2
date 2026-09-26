@@ -3,13 +3,19 @@ id: 797
 title: "- Property descriptor subsystem (~5,000 tests)"
 status: done
 created: 2026-03-26
-updated: 2026-04-14
+updated: 2026-09-25
 completed: 2026-04-14
 priority: critical
 feasibility: hard
 goal: ci-hardening
 sprint: 37
 test262_fail: ~5000
+# 2026-09-25: flag-only defineProperty on an externref-compiled literal now
+# reaches the runtime descriptor store (#6472 follow-up, see end of file).
+loc-budget-allow:
+  - src/codegen/object-ops.ts
+func-budget-allow:
+  - src/codegen/object-ops.ts::emitExternDefinePropertyNoValue
 note: "All phases done. 797a flags table, 797b getOwnPropertyDescriptor, 797c defineProperty/defineProperties runtime, 797d freeze/seal."
 ---
 # #797 -- Property descriptor subsystem (~5,000 tests)
@@ -99,3 +105,18 @@ test262 batch (with setExports):
 - `built-ins/Reflect/ownKeys`: 3/13 PASS
 
 Branch: `issue-797-property-desc-batch2`, commit: `67daad01`.
+
+## Follow-up (2026-09-25): flag-only defineProperty on a host-object literal
+
+`Object.defineProperty(obj, "b", { enumerable: false })` (no `value`) picked the
+compile-time struct branch in `emitExternDefinePropertyNoValue`
+(`src/codegen/object-ops.ts`) from the TS type alone, even when the literal was
+compiled to a host plain object (externref). The descriptor was evaluated and
+dropped, so `Object.keys`/`values`/`entries`/`propertyIsEnumerable` kept listing
+`b` (tracked as #6472, filed by PR #6044). Externref objects now go to
+`__defineProperty_value`, and an existing literal field starts from a normal data
+property so a later redefine is not rejected. `tests/issue-797-batch1.test.ts`
+(with the `setInstance` harness) goes 6/11 → 11/11.
+
+Still open: when the object stays a real struct, a flag-only define remains
+compile-time only, so `for-in` over it still lists the field.

@@ -61,6 +61,15 @@ export interface CompileTargetProfile {
   readonly hostValueInterop: HostValueInteropPolicy;
   readonly strictEnvImportGate: boolean;
   readonly nativeStringsRequiredByPolicy: boolean;
+  /**
+   * (#5385) Whether codegen lowers with the native semantic REGIME — the
+   * `ctx.standalone` provider arms — rather than the host-assisted one. True
+   * for the standalone target and for an explicitly selected native-first
+   * policy in a JavaScript environment. This answers "which ECMAScript
+   * implementation runs?"; `environment` / `hostValueInterop` still answer
+   * "who instantiates it and does it keep the JS value bridge?".
+   */
+  readonly nativeRegime: boolean;
   readonly ambientPlatform?: AmbientPlatform;
 }
 
@@ -113,6 +122,20 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           ? "required"
           : "off";
 
+  // The JS-environment arm is OPT-IN (JS2WASM_NATIVE_REGIME_JS=1) until the
+  // environment-shaped `ctx.standalone` gates (console capability, boundary
+  // object/callback adapters, error translation, string marshal) are re-keyed
+  // to `environment` / `hostValueInterop`; measured 2026-09-24 it takes a
+  // 321-test test262 sample from 0 to 218 passes but breaks 10/16 boundary
+  // interop tests in tests/issue-4397-native-semantic-js-host.test.ts.
+  const nativeRegime =
+    target === "standalone" ||
+    (target === "gc" &&
+      environment === "javascript" &&
+      capabilityPolicy === "ambient-js" &&
+      semanticProviderSelection === "native-first" &&
+      process.env.JS2WASM_NATIVE_REGIME_JS === "1");
+
   return Object.freeze({
     target,
     backend,
@@ -121,6 +144,7 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     semanticProviders,
     hostValueInterop,
     strictEnvImportGate,
+    nativeRegime,
     nativeStringsRequiredByPolicy:
       target === "standalone" || target === "wasi" || strictEnvImportGate || semanticProviders === "native-first",
     ambientPlatform: input.ambientPlatform ?? ambientPlatformOf(input),

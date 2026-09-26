@@ -75,6 +75,7 @@ import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared 
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
+import { emitArrayFlatProtoMemberBody } from "./array-flat-native.js"; // (#2717)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
@@ -147,6 +148,13 @@ import {
 // `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+// (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
+import {
+  emitTaStaticFromOfBody,
+  isTaStaticFromOfMember,
+  taStaticFromOfIsVariadic,
+  taStaticFromOfSpecLength,
+} from "./ta-static-from-of-body.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -903,6 +911,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   if (member === "concat") {
     return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
   }
+  if (member === "flat" || member === "flatMap") return emitArrayFlatProtoMemberBody(ctx, fctx, member) ?? null; // (#2717)
 
   // ES2015 §23.1.3.23/.25/.30 — these three methods are intentionally
   // generic.  Their first-class values are transferred onto ordinary objects
@@ -1084,6 +1093,10 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // to `emitProtoMemberBodyRefusal`, so a borrowed `slice` threw
   // "not yet implemented in --target standalone".
   if (member === "slice") return emitStringSubstringMemberBody(ctx, fctx, "slice");
+  // (#6651 I3) `substr` (Annex B B.2.2.1) — third member of the same family;
+  // see string-proto-substring.ts for why the absent-bound sentinel carries
+  // over unchanged to a LENGTH second bound.
+  if (member === "substr") return emitStringSubstringMemberBody(ctx, fctx, "substr");
   // (#4220) `split` (§22.1.3.23) returns an ARRAY, not a string/index/boolean,
   // so it owns a body rather than joining a family above; a null refusal keeps
   // the pre-#4220 behaviour via the shared refusal.
@@ -2594,7 +2607,13 @@ function makeGlue(
       return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
     },
     memberIsVariadic: (member) =>
-      name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
+      name === "Array" &&
+      (member === "join" ||
+        member === "push" ||
+        member === "unshift" ||
+        member === "concat" ||
+        member === "flat" ||
+        member === "flatMap")
         ? true
         : name === "String" && member === "concat"
           ? true
@@ -2743,7 +2762,16 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): 
     dataProps: isIntrinsic || bytesPerElement === undefined ? undefined : [["BYTES_PER_ELEMENT", bytesPerElement]],
     memberKind: (member) =>
       TYPED_ARRAY_PROTO_GETTERS.has(member) || member === TYPED_ARRAY_PROTO_TO_STRING_TAG_MEMBER ? "getter" : "method",
-    memberLength: (member) => TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // (#6651 E4) `from`/`of` are §23.2.2 STATICS of the intrinsic, not prototype
+    // members — they are deliberately absent from `memberCsv`, and reach the
+    // factory only through the explicit seeding below in
+    // `emitTypedArrayIntrinsicCtorObject`. Their §17 `length` (1 and 0) is not
+    // in the prototype table, so it is answered here.
+    memberLength: (member) =>
+      (isIntrinsic ? taStaticFromOfSpecLength(member) : undefined) ?? TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // Both take the packed variadic ABI: `from` must see whether `mapfn` was
+    // SUPPLIED (§23.2.2.1 step 3), which fixed slots cannot express.
+    memberIsVariadic: (member) => isIntrinsic && taStaticFromOfIsVariadic(member),
     // §23.2.3.36: the `@@iterator` value IS the `values` function object.
     memberAliasOf: (member) => (member === "@@1" ? "values" : undefined),
     // §23.2.3.32: `%TypedArray%.prototype.toString` IS `Array.prototype.toString`
@@ -2752,7 +2780,12 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): 
     // (#2893 PR-1) The `length`/`byteLength`/`byteOffset` accessor getters now
     // emit real reflective bodies (brand-recover the view → read/compute the
     // field → throw on non-view); `buffer` + all methods stay a catchable refusal.
-    emitMemberBody: (c, fctx, member) => emitTypedArrayProtoMemberBody(c, fctx, member, name),
+    emitMemberBody: (c, fctx, member) =>
+      // (#6651 E4) The two §23.2.2 statics get their REAL bodies. A decline
+      // (non-standalone, or a missing runtime dependency) falls through to the
+      // prototype-member emitter, whose refusal is the pre-E4 answer.
+      (isIntrinsic && isTaStaticFromOfMember(member) ? emitTaStaticFromOfBody(c, fctx, member) : null) ??
+      emitTypedArrayProtoMemberBody(c, fctx, member, name),
   };
 }
 
@@ -3748,84 +3781,9 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
   return { kind: "externref" };
 }
 
-/**
- * (#3236 S1) Native standalone `%Generator%` (= `%GeneratorFunction.prototype%`,
- * §27.3.3) value — the object `getPrototypeOf(genFn)` must return. A lazily-cached
- * `$Object` singleton whose:
- *   - `[[Prototype]]` (`$proto`) is `%Function.prototype%` (so
- *     `getPrototypeOf(getPrototypeOf(genFn)) === getPrototypeOf(ordinaryFn)`,
- *     §27.3.3.2 — the `prototype-relation-to-function.js` identity), built via
- *     `__object_create(%Function.prototype%)`, and
- *   - own `prototype` data property is `%GeneratorPrototype%` (§27.3.3.3), so
- *     `getPrototypeOf(genFn).prototype` reaches GP for the GeneratorPrototype
- *     descriptor / this-val tests.
- * Modelled on `emitTypedArrayIntrinsicCtorObject` (the `$Object`-with-a-native-
- * proto-`prototype` shape). Standalone/WASI only. Leaves the `%Generator%`
- * externref on the stack; returns its ValType or `null` on unavailable runtime.
- */
-export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  const brand = ensureGeneratorPrototypeNativeProtoGlue(ctx);
-  if (brand === undefined) return null;
-
-  ensureObjectRuntime(ctx);
-  const createIdx = ctx.funcMap.get("__object_create");
-  const setIdx = ctx.funcMap.get("__extern_set");
-  if (createIdx === undefined || setIdx === undefined) return null;
-
-  const globalName = "__native_generator_function_prototype";
-  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
-  if (globalIdx === undefined) {
-    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: globalName,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.builtinObjectGlobals.set(globalName, globalIdx);
-  }
-
-  const objLocal = allocLocal(fctx, `__genfn_proto_obj_${fctx.locals.length}`, { kind: "externref" });
-  const initBody: Instr[] = [];
-
-  // (#2182 pattern) `savedBody` is detached during the swap; register it in
-  // `liveBodies` so any late-import funcidx shift still walks it.
-  const savedBody = fctx.body;
-  fctx.body = initBody;
-  ctx.liveBodies.add(savedBody);
-  let ok = true;
-  try {
-    // G = __object_create(%Function.prototype%)  — sets $proto for the relation
-    // identity. FP materialization (its own lazy-global guard) nests here.
-    if (emitFunctionPrototypeObjectSingleton(ctx, fctx) === null) {
-      ok = false;
-    } else {
-      fctx.body.push({ op: "call", funcIdx: createIdx });
-      fctx.body.push({ op: "local.set", index: objLocal });
-      // G.prototype = %GeneratorPrototype%
-      fctx.body.push({ op: "local.get", index: objLocal });
-      addStringConstantGlobal(ctx, "prototype");
-      for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
-      if (emitGeneratorPrototypeSingleton(ctx, fctx) !== null) {
-        fctx.body.push({ op: "call", funcIdx: setIdx });
-        fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "global.set", index: globalIdx });
-      } else {
-        ok = false;
-      }
-    }
-  } finally {
-    fctx.body = savedBody;
-    ctx.liveBodies.delete(savedBody);
-  }
-  if (!ok) return null;
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
-}
+// (#6651 A3) `emitGeneratorFunctionPrototypeSingleton` — the standalone
+// `%GeneratorFunction.prototype%` / `%GeneratorFunction%` pair — lives in
+// `generator-function-intrinsic.ts`.
 
 /**
  * Native standalone `%AsyncGenerator%` (= `%AsyncGeneratorFunction.prototype%`)

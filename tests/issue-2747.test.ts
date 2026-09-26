@@ -26,7 +26,7 @@ async function forInKeys(body: string): Promise<string> {
   expect(result.success, result.errors?.[0]?.message).toBe(true);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
+  importObject.__setInstance?.(instance);
   const ex = wrapExports(instance.exports, { signatures: result.exportSignatures });
   return ex.test() as string;
 }

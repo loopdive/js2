@@ -156,6 +156,20 @@ export interface OrdinaryToPrimitiveProbeOpts {
    * ambient resolution exactly where it must not.
    */
   readonly userInstalledOnly?: boolean;
+  /**
+   * (#2917) A linked standalone CONSUMER's hand-off for a receiver its PROVIDER
+   * owns. `ownsIdx(recv)` is non-null for a provider class instance (the #6617
+   * `__js2wasm_link_get_prototype_of` terminal); such a step runs as
+   * `methodCallIdx(recv, "<name>", argsNewIdx())` — resolve AND invoke on the
+   * owner's side — instead of the local `__extern_get` + `__call_accessor_get`.
+   *
+   * The local call is wrong for that receiver, not just slow: the resolved
+   * method is the provider's closure, whose trampoline reads `this` from the
+   * PROVIDER's `__current_this`, while the consumer's arity bridge writes its
+   * own copy. The method ran with a stale receiver — `Temporal.Duration`'s
+   * brand check threw "invalid receiver" (the S2h reason `methodCall` exists).
+   */
+  readonly ownerCall?: { readonly ownsIdx: number; readonly methodCallIdx: number; readonly argsNewIdx: number };
 }
 
 export function buildOrdinaryToPrimitiveProbe(
@@ -164,7 +178,8 @@ export function buildOrdinaryToPrimitiveProbe(
   opts: OrdinaryToPrimitiveProbeOpts,
 ): Instr[] {
   const { typeofFunctionIdx, typeofObjectIdx, externGetIdx, callMethod0Idx, nullishToNullIdx, hasOwnIdx } = deps;
-  const { recv, methodLocal, resultLocal, order, onPrimitive, stopWhenFirstAbsent, userInstalledOnly } = opts;
+  const { recv, methodLocal, resultLocal, order, onPrimitive, stopWhenFirstAbsent, userInstalledOnly, ownerCall } =
+    opts;
   const gateInstalled = userInstalledOnly === true && hasOwnIdx !== undefined;
 
   // When the first step is ABSENT, `stopWhenFirstAbsent` means the inherited
@@ -177,8 +192,9 @@ export function buildOrdinaryToPrimitiveProbe(
     if (i >= order.length) return [];
     const name = order[i]!;
     addStringConstantGlobal(ctx, name);
-    const rest = probe(i + 1);
-    const afterCall: Instr[] = [
+    // A FACTORY for the same reason `onPrimitive` is one: the #2917 owner arm
+    // emits it a second time, and an aliased subtree double-shifts funcIdx.
+    const afterCall = (): Instr[] => [
       { op: "local.get", index: resultLocal },
       { op: "call", funcIdx: typeofObjectIdx },
       { op: "local.get", index: resultLocal },
@@ -188,7 +204,7 @@ export function buildOrdinaryToPrimitiveProbe(
       { op: "if", blockType: { kind: "empty" }, then: onPrimitive() },
       // Not a primitive → the next method (only in the nested regime; the flat
       // regime emits `rest` as a sibling after this whole block).
-      ...(nested ? rest : []),
+      ...(nested ? probe(i + 1) : []),
     ];
     const body: Instr[] = [
       ...recv(),
@@ -218,12 +234,37 @@ export function buildOrdinaryToPrimitiveProbe(
               { op: "local.get", index: resultLocal },
               { op: "ref.is_null" },
               { op: "i32.eqz" },
-              { op: "if", blockType: { kind: "empty" }, then: afterCall },
+              { op: "if", blockType: { kind: "empty" }, then: afterCall() },
             ],
           },
         ],
       },
     ];
+    // (#2917) Provider-owned receiver → the owner resolves and invokes. Its
+    // `null` ("unresolved" or a nullish result) is the local walk's declined
+    // outcome, so the local call is never ALSO made for that receiver.
+    const routed: Instr[] = ownerCall
+      ? [
+          ...recv(),
+          { op: "call", funcIdx: ownerCall.ownsIdx },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: body,
+            else: [
+              ...recv(),
+              ...stringConstantExternrefInstrs(ctx, name),
+              { op: "call", funcIdx: ownerCall.argsNewIdx },
+              { op: "call", funcIdx: ownerCall.methodCallIdx },
+              { op: "local.tee", index: resultLocal },
+              { op: "ref.is_null" },
+              { op: "i32.eqz" },
+              { op: "if", blockType: { kind: "empty" }, then: afterCall() },
+            ],
+          },
+        ]
+      : body;
     // The installed-by-the-program gate wraps STEP i only. In the flat
     // (number-hint) regime the later steps stay siblings, so a receiver with no
     // own `valueOf` still gets its `toString` step.
@@ -232,10 +273,10 @@ export function buildOrdinaryToPrimitiveProbe(
           ...recv(),
           ...stringConstantExternrefInstrs(ctx, name),
           { op: "call", funcIdx: hasOwnIdx },
-          { op: "if", blockType: { kind: "empty" }, then: body },
+          { op: "if", blockType: { kind: "empty" }, then: routed },
         ]
-      : body;
-    return nested ? step : [...step, ...rest];
+      : routed;
+    return nested ? step : [...step, ...probe(i + 1)];
   };
 
   return probe(0);

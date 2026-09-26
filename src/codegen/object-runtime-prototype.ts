@@ -58,6 +58,34 @@ export function fillObjectProtoSingleton(ctx: CodegenContext): void {
   fn.body = [...instrs];
 }
 
+/**
+ * (#6651 lane R1) Name of the reserve-then-fill twin of
+ * {@link OBJECT_PROTO_SINGLETON} that answers the canonical `%Array.prototype%`
+ * carrier.
+ */
+export const ARRAY_PROTO_SINGLETON = "__array_proto_singleton";
+
+/**
+ * (#6651 lane R1) Fill the `%Array.prototype%` singleton. Identical
+ * reserve-then-fill discipline as {@link fillObjectProtoSingleton}: the `Array`
+ * brand's lazy `$NativeProto` global does not exist while `ensureObjectRuntime`
+ * registers the natives, so the helper is reserved with a `ref.null.extern`
+ * body and filled here, at finalize.
+ *
+ * Identity matters and is the reason this reuses `buildLazyNativeProtoGetInstrs`
+ * rather than minting anything new: a program's own `Array.prototype` read
+ * resolves to the SAME brand global (`emitEs5IntrinsicPrototype`), so
+ * `Object.getPrototypeOf(a) === Array.prototype` is an `===` on one carrier.
+ */
+export function fillArrayProtoSingleton(ctx: CodegenContext): void {
+  if (!ctx.standalone && !ctx.wasi) return;
+  const fn = ctx.mod.functions.find((f) => f.name === ARRAY_PROTO_SINGLETON);
+  if (!fn) return;
+  const instrs = buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Array);
+  if (!instrs) return;
+  fn.body = [...instrs];
+}
+
 /** Everything the prototype-chain block reads from the `ensureObjectRuntime` scope. */
 export interface ObjectPrototypeHelperState {
   registerNative: (
@@ -189,6 +217,85 @@ function fnctorIsPrototypeOfSeed(
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: seedFromLadder },
   ];
+}
+
+/**
+ * (#6651 lane R1) `__getPrototypeOf`'s non-`$Object` arm for a native ARRAY
+ * carrier — the gap that made `Object.getPrototypeOf(<any-typed array>)` answer
+ * `null` in `--target standalone`.
+ *
+ * A compiled array is a `__vec_<elem>` struct, not an `$Object`, so it has no
+ * `$proto` field and the walk above never started. Every STATICALLY
+ * array-typed receiver is folded to `%Array.prototype%` by
+ * `expressions/object-get-prototype-of.ts` before it ever reaches this helper,
+ * which is why the gap only shows through an `any` binding — and why it looked
+ * like a cross-realm defect: the rows that expose it
+ * (`built-ins/Array/proto-from-ctor-realm-{one,two,zero}.js`) read the
+ * prototype of a `Reflect.construct` result, whose static type is `any`.
+ * Measured on base, with no realm and no `Reflect` in the program at all:
+ *
+ *   function id(x) { return x; }
+ *   Object.getPrototypeOf(id([1]))   // null; node answers Array.prototype
+ *
+ * `__extern_is_array` is the SAME §7.2.2 predicate `Array.isArray` uses
+ * (`fillExternIsArray`, filled at finalize over every module-local carrier
+ * type), so the static and dynamic arms cannot disagree about what an Array is;
+ * in particular the packed byte carriers behind `ArrayBuffer`/`DataView`/
+ * TypedArrays are excluded there and so are excluded here.
+ *
+ * Widens a MISSING answer, never replaces a present one: when the singleton is
+ * still the reserved `ref.null.extern` (a module whose `Array` brand global was
+ * never materialised) the arm falls through to the pre-existing boundary/null
+ * answer rather than publishing a null prototype of its own.
+ *
+ * `protoSlot` is a scratch externref local appended to the helper's list.
+ */
+function arrayGetPrototypeArm(ctx: CodegenContext, protoSlot: number, singletonIdx: number | undefined): Instr[] {
+  const isArrayIdx = ctx.funcMap.get("__extern_is_array");
+  if (isArrayIdx === undefined || singletonIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: isArrayIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "call", funcIdx: singletonIdx },
+        { op: "local.tee", index: protoSlot },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: protoSlot }, { op: "return" }],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#6651 R1) Reserve the `%Array.prototype%` singleton with the pre-fix
+ * `ref.null.extern` body. Standalone/WASI only — in gc/host this answers
+ * `undefined`, {@link arrayGetPrototypeArm} emits nothing, and `__getPrototypeOf`
+ * stays byte-identical.
+ */
+function reserveArrayProtoSingleton(
+  ctx: CodegenContext,
+  registerNative: ObjectPrototypeHelperState["registerNative"],
+): number | undefined {
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+  return registerNative(ARRAY_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }]);
+}
+
+/**
+ * The scratch local {@link arrayGetPrototypeArm} uses, appended AFTER the fnctor
+ * one so that arm's index 2 is untouched.
+ */
+function arrayProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[] {
+  return ctx.funcMap.get("__extern_is_array") === undefined
+    ? []
+    : [{ name: "__arrayProto", type: { kind: "externref" } }];
 }
 
 /** The scratch local both arms above use, appended so existing indices are untouched. */
@@ -462,6 +569,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     ctx.standalone || ctx.wasi
       ? registerNative(OBJECT_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }])
       : undefined;
+  const arrayProtoSingletonIdx = reserveArrayProtoSingleton(ctx, registerNative); // (#6651 R1)
 
   // __getPrototypeOf(externref) -> externref (ES §20.1.2.12):
   //   $Object → extern.convert_any($proto); a null `$proto` means
@@ -529,6 +637,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         then: protoFieldAnswer(),
         else: [
           ...fnctorGetPrototypeArm(ctx, 2, devirtualizeProtoResult()), // (#4643) scratch local 2
+          ...arrayGetPrototypeArm(ctx, 2 + fnctorProtoLocal(ctx).length, arrayProtoSingletonIdx), // (#6651 R1)
           ...boundaryGetPrototypeArm(boundaryObjectGetPrototypeIdx),
         ],
       },
@@ -537,7 +646,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       "__getPrototypeOf",
       [{ kind: "externref" }],
       [{ kind: "externref" }],
-      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx)],
+      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx), ...arrayProtoLocal(ctx)],
       body,
     );
   }

@@ -51,6 +51,7 @@ import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-bounda
 import { emitRuntimeEvalFunctionPrototypeSeed } from "../runtime-eval-construct.js"; // (#4438) §20.2.1.1
 import { currentDirectEvalLexicalBindingNames, reifyCurrentDirectEvalBindings } from "../direct-eval-environment.js";
 import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
+import { emitRefusedDynamicFunction, isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -2177,6 +2178,7 @@ export function emitStandaloneDynamicFunctionRuntime(
   args: readonly ts.Expression[],
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
+  if (isRuntimeEvalProviderAbsent(ctx)) return emitRefusedDynamicFunction(ctx, fctx, args);
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;

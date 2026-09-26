@@ -22,11 +22,12 @@
  *     pins the fold itself so a regression there is attributed correctly rather
  *     than silently covering for a broken runtime path.
  *  2. **Loud must stay loud.** The classifier is deliberately partial. The
- *     shapes it cannot prove (Date / Error / RegExp / nominal class instances)
- *     must keep THROWING, not fall back to `[object Object]`. A test that only
+ *     shapes it cannot prove must keep THROWING, not fall back to
+ *     `[object Object]` (Date / Error / RegExp / nominal class instances were
+ *     such shapes until #6674 gave each its own arm). A test that only
  *     checked the happy path would let a future "simplification" widen the last
  *     arm into a silent mis-tag, which the acceptance bar counts as negative
- *     value. Those refusals are asserted explicitly below.
+ *     value. The former refusals now assert their own tags below.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -87,19 +88,19 @@ describe("#4119 arm 1 — reflective Object.prototype.toString (standalone)", ()
     }
   });
 
-  describe("loud stays loud — unprovable receivers keep THROWING, never mis-tag", () => {
-    // Each of these must return -1 (threw). A return of 0 would mean the
-    // classifier answered with a wrong tag, and 1 would mean it grew an arm
-    // without this test being updated — both are failures worth catching.
-    const refusals: ReadonlyArray<readonly [string, string]> = [
-      ["Date instance", `var r: any = new Date(0);`],
-      ["Error instance", `var r: any = new Error("x");`],
-      ["RegExp instance", `var r: any = /a/;`],
-      ["nominal class instance", `class K { x = 1; } var r: any = new K();`],
+  describe("former refusals — each now answers its OWN tag, never a defaulted [object Object]", () => {
+    // These were pinned as loud refusals (-1). #6674 gave the classifier the
+    // Date / RegExp / nominal-class arms (Error had grown one earlier), so the
+    // pin now asserts the spec tag: 1 = right tag, 0 = a mis-tag, -1 = threw.
+    const grown: ReadonlyArray<readonly [string, string, string]> = [
+      ["Date instance", `var r: any = new Date(0);`, "[object Date]"],
+      ["Error instance", `var r: any = new Error("x");`, "[object Error]"],
+      ["RegExp instance", `var r: any = /a/;`, "[object RegExp]"],
+      ["nominal class instance", `class K { x = 1; } var r: any = new K();`, "[object Object]"],
     ];
-    for (const [name, setup] of refusals) {
-      it(`${name} refuses loudly rather than answering [object Object]`, async () => {
-        expect(await runStandalone(reflective(setup, "[object Object]"))).toBe(-1);
+    for (const [name, setup, tag] of grown) {
+      it(`${name} answers ${tag}`, async () => {
+        expect(await runStandalone(reflective(setup, tag))).toBe(1);
       });
     }
   });

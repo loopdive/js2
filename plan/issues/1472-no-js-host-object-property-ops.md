@@ -4,7 +4,7 @@ title: "host-independence: eliminate JS host object/property ops for standalone 
 status: ready
 pr: 1047
 created: 2026-05-20
-updated: 2026-06-03
+updated: 2026-09-26
 completed: 2026-06-04
 priority: high
 feasibility: medium
@@ -1315,3 +1315,65 @@ honest refusals (protects the conformance number) before the real generic arm.
 ## Reopened 2026-07-20 (harvest cross-reference)
 
 Marked `status: done` but the test262 harvest shows **942 live failures still citing #1472** in the error field. Premature close — reopened as `ready`. See the sprint-73 harvest note.
+
+## Phase B Slice — standalone `Buffer.m(...)` receiver (axios lane, 2026-09-26)
+
+Narrow arm only; the rest of Phase B (a Wasm-native dynamic-key table for
+builtin receivers in general) is unchanged and still open.
+
+### Implementation Plan (executed)
+
+- **Site.** axios's standalone-dynamic lane refused at
+  `combined-stream/lib/combined_stream.js:37:10`, `!Buffer.isBuffer(stream)`
+  in `CombinedStream.isStreamLike` (reached from form-data). `Buffer` is in
+  `BUILTIN_CLASS_NAMES` for the JS-host lane (#1793), so the generic
+  `(#799 WI3)` static-method arm of `compileReceiverMethodCall` resolved the
+  receiver through `__get_builtin("Buffer")`, which standalone refuses at
+  compile time — for the whole graph.
+- **Semantics.** A standalone module has no `Buffer` (the builtin is
+  JS-host-only by design). The receiver is therefore an ordinary reference to
+  an unresolvable name: `ReferenceError: Buffer is not defined`, thrown before
+  any argument is evaluated (§13.3.6.1). A bare `Buffer` read already lowered
+  that way; only the call arm bypassed it.
+- `src/codegen/standalone-unavailable-globals.ts`:
+  `isHostResolvedBuiltinReceiver(ctx, receiver)` — the `BUILTIN_CLASS_NAMES`
+  test, minus `Buffer` under `ctx.standalone`. `call-receiver-method.ts` uses it
+  in place of the inline test (net 0 lines there), so the receiver compiles via
+  `compileExpression` (ReferenceError, or the owning realm's global in a
+  context-linked module).
+- `"Buffer"` joins `STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS` (#6664), so the
+  ambient `--emulate node` declaration also folds `typeof Buffer` to
+  `"undefined"` and throws ReferenceError on read / `new` (parent: `typeof`
+  answered non-`"undefined"`, `new Buffer(3)` threw a non-ReferenceError,
+  `Buffer.from("x")` CE'd).
+
+### Resolution
+
+- Regression test `tests/issue-1472-standalone-buffer-receiver.test.ts`:
+  parent **2 failed / 1 passed**, fix **3 / 3** (the user-declared
+  `var Buffer = {...}` row passes both ways — anti-vacuity control).
+- npm-compat axios, `--only axios --no-write --perf-only --lane standalone-dynamic`,
+  same checkout, parent vs fix:
+  - parent: `compile-error` — `Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). …`
+  - fix: `compile-error` — `Internal error compiling function 'redactConfig': codegen invariant (#2182): liveBodies unbalanced after compiling 'redactConfig' (entry=1, exit=2) — a detached-body liveBodies.add() is missing its matching .delete(), risking funcIdx over-shift.`
+    Filed as [#6682](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6682-standalone-axios-redactconfig-livebodies-unbalanced).
+- Scoped STANDALONE test262 (`scripts/run-test262-paths.mts --standalone`, 205
+  rows: `language/expressions/typeof`, `language/expressions/call`,
+  `language/identifier-resolution`, `language/global-code`,
+  `built-ins/Array/isArray`, `built-ins/ArrayBuffer/isView`): parent
+  **161 pass / 44 fail**, fix **161 / 44**, identical per-row verdicts (26 of
+  the fails are the local box's missing quickjs eval provider, both sides).
+- JS-host and WASI output byte-identical (sha256 of `gc`/`wasi` compiles of
+  `combined_stream.js` and a `Buffer.isBuffer`/`typeof Buffer`/`Buffer.from`
+  fixture, with and without `emulateNode`). Everything is gated on
+  `ctx.standalone`.
+- JS-host dogfood control: `tests/dogfood/axios-upstream-suite.mjs` 208/231.
+
+### Residuals
+
+- Only `Buffer` is excluded. Every other `BUILTIN_CLASS_NAMES` receiver with a
+  method no native arm recognises (`Math.unknownFn(x)`) still reaches
+  `__get_builtin` and refuses — that is the general Phase B table.
+- A linked standalone module (`standaloneGlobalThisImport`) with an ambient
+  `--emulate node` `Buffer` keeps the pre-existing declared-global read.
+

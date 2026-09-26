@@ -116,6 +116,7 @@ describe("#1058 function-declaration observation facts", () => {
           nestedCall();
         }
         function shadowOwner(shadowOnly: unknown) { shadowOnly; }
+        function shadowCaller(shadowCalled: unknown) { (shadowCalled as () => void)(); }
         class inherited { method() { inherited; } }
         class classOnly { method() { classOnly; } }
       }
@@ -129,7 +130,11 @@ describe("#1058 function-declaration observation facts", () => {
     expect(functionDeclarationObservesBindingValue(owner, "classOnly")).toBe(false);
     expect(functionDeclarationObservesBindingValue(owner, "nestedCall")).toBe(false);
     expect(functionDeclarationInvokesBinding(owner, "calledOnly")).toBe(true);
-    expect(functionDeclarationInvokesBinding(owner, "nestedCall")).toBe(false);
+    // #6673: a nested closure's direct call forwards the callee's captures,
+    // which the closure can only take from this frame, so it counts as an
+    // invocation by `owner` -- unless a nested binding shadows the name.
+    expect(functionDeclarationInvokesBinding(owner, "nestedCall")).toBe(true);
+    expect(functionDeclarationInvokesBinding(owner, "shadowCalled")).toBe(false);
   });
 });
 

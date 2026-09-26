@@ -35,7 +35,7 @@ async function runTest(src: string): Promise<unknown> {
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 

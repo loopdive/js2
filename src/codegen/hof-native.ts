@@ -11,7 +11,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#5194 step 4) IsCallable gate
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addFuncType } from "./registry/types.js";
@@ -561,6 +561,81 @@ export function ensureNativeArrayHof(
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#6651 E6) §23.2.3 `%TypedArray%.prototype` HOFs never consult HasProperty:
+ * `forEach`/`every`/`some`/`reduce`… visit every `k < len` with `Get(O, k)`, so
+ * a buffer detached by the callback yields `undefined` elements, not skipped
+ * ones (`<m>/callbackfn-detachbuffer.js`: two calls, not one). The #4160 gate
+ * above is ARRAY semantics — and stays so for `Array.prototype.<m>.call(ta)`,
+ * whose §23.1.3 algorithm does ask HasProperty. So the `%TypedArray%` spelling
+ * gets its own copy: `__hof_ta_<m>` is `__hof_<m>` with a `ref.test
+ * $__ta_dyn_view` OR'd into every gate (a no-op for any other receiver), and
+ * only the method-call dispatchers `__call_m_<m>_*` — where a dyn-view receiver
+ * resolves `<m>` to the `%TypedArray%.prototype` member — are re-pointed at it.
+ * Finalize-time (the view type is registered late) and only when the module
+ * has a dyn view and a gated helper, so every other module keeps its bytes.
+ */
+export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
+  const dynIdx = ctx.taDynViewTypeIdx;
+  const hasIdx = ctx.funcMap.get("__extern_has_idx");
+  if (!ctx.standalone || dynIdx < 0 || hasIdx === undefined) return;
+  type Nested = Instr & { then?: Instr[]; else?: Instr[]; body?: Instr[] };
+  const walk = (arr: Instr[], visit: (arr: Instr[], j: number) => number): void => {
+    for (let j = 0; j < arr.length; j++) {
+      const ins = arr[j] as Nested;
+      for (const nested of [ins.then, ins.else, ins.body]) if (nested) walk(nested, visit);
+      j = visit(arr, j);
+    }
+  };
+  const bypass = (arr: Instr[], j: number): number => {
+    const ins = arr[j] as { op: string; funcIdx?: number };
+    const recv = arr[j - 2] as { op: string; index?: number } | undefined;
+    if (ins.op !== "call" || ins.funcIdx !== hasIdx || recv?.op !== "local.get" || recv.index !== 0) return j;
+    const or: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: dynIdx },
+      { op: "i32.or" },
+    ];
+    arr.splice(j + 1, 0, ...or);
+    return j + or.length;
+  };
+  const reroute = new Map<number, number>();
+  for (const name of NATIVE_HOF_METHODS) {
+    const funcIdx = ctx.funcMap.get(`__hof_${name}`);
+    const fn = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+    if (funcIdx === undefined || !fn) continue;
+    const body = structuredClone(fn.body) as Instr[];
+    let sites = 0;
+    walk(body, (arr, j) => {
+      const next = bypass(arr, j);
+      if (next !== j) sites++;
+      return next;
+    });
+    if (sites === 0) continue; // ungated helper: already visits every index
+    const cloneIdx = mintDefinedFunc(ctx);
+    ctx.funcMap.set(`__hof_ta_${name}`, cloneIdx);
+    pushDefinedFunc(ctx, cloneIdx, {
+      name: `__hof_ta_${name}`,
+      typeIdx: fn.typeIdx,
+      locals: fn.locals.map((l) => ({ ...l })),
+      body,
+      exported: false,
+    });
+    reroute.set(funcIdx, cloneIdx);
+  }
+  if (reroute.size === 0) return;
+  for (const fn of ctx.mod.functions) {
+    if (!fn.name?.startsWith("__call_m_")) continue;
+    walk(fn.body, (arr, j) => {
+      const ins = arr[j] as { op: string; funcIdx?: number };
+      const to = ins.op === "call" && ins.funcIdx !== undefined ? reroute.get(ins.funcIdx) : undefined;
+      if (to !== undefined) (ins as { funcIdx: number }).funcIdx = to;
+      return j;
+    });
+  }
 }
 
 /**

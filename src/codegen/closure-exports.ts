@@ -11,6 +11,7 @@ import { ts } from "../ts-api.js";
 import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
 import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
@@ -770,8 +771,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // results (for example a reducer state read back from a combined object).
   // Host-free targets have no facade and must not acquire a host import.
   const needsHostFacadeUnwrap =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does
     entries.some((entry) => {
       const funcTypeDef = mod.types[entry.funcTypeIdx];
       return (
@@ -1032,14 +1032,12 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // thrown TypeError into an uncatchable `illegal cast` that way. Such an arm
     // simply does not match an under-applied call: fall through to the next arm
     // / the fallback, which is exactly what happened before the host learned to
-    // widen.
-    const padSafe = (padParamType: ValType | undefined): boolean =>
-      padParamType === undefined || padParamType.kind === "externref" || padParamType.kind === "ref_null";
+    // widen. See `closurePadSafe`.
     let requiredArgs = 0;
     for (let i = 0; i < entry.closureArity; i++) {
       const padParamType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      if (!padSafe(padParamType)) requiredArgs = i + 1;
+      if (!closurePadSafe(padParamType)) requiredArgs = i + 1;
     }
     const argcAdmits: Instr[] =
       requiredArgs === 0
@@ -1095,6 +1093,19 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     directClosureHostBridgeOrdinal(arity),
   );
   emitClosureCallArgcWrapper(ctx, arity, callFnFuncIdx, hostArgcGlobalIdx);
+}
+
+/**
+ * (#6491) Can a closure formal of this Wasm type receive the `undefined` pad of
+ * a widened under-applied call without trapping? A non-nullable ref cannot; an
+ * externref, a nullable ref (converted to `ref.null`), or an unconverted param
+ * can. (#1058) So can numeric formals: an f64 pad becomes the missing-argument
+ * sentinel (a default initializer then runs) and an i32 pad truncates to 0.
+ */
+function closurePadSafe(padParamType: ValType | undefined): boolean {
+  if (padParamType === undefined) return true;
+  const kind = padParamType.kind;
+  return kind === "externref" || kind === "ref_null" || kind === "f64" || kind === "i32";
 }
 
 /**
@@ -1502,8 +1513,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   // TypeScript's `isNodeArray` predicate can observe them. Keep this in exact
   // parity with emitClosureCallExportN's argument bridge above.
   const needsHostFacadeUnwrap =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does
     entries.some((entry) => {
       const funcTypeDef = mod.types[entry.funcTypeIdx];
       return (
@@ -1762,9 +1772,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     for (let i = 0; i < entry.closureArity; i++) {
       const padParamType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      const padIsSafe =
-        padParamType === undefined || padParamType.kind === "externref" || padParamType.kind === "ref_null";
-      if (!padIsSafe) methodRequiredArgs = i + 1;
+      if (!closurePadSafe(padParamType)) methodRequiredArgs = i + 1;
       // Mirror the conversion EXACTLY, or the gate declines an arm the cast
       // would have accepted: the ref path runs only under
       // `needsExternToAnyForClosureParam`, and the vec-materializer route

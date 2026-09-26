@@ -72,6 +72,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { emitNativeBigIntFormat } from "./bigint-format-native.js";
+import { wideToStringArm } from "./bigint-wide.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ANY_TO_STRING_HELPER, nativeStringLiteralInstrs } from "./native-strings.js";
 import { runtimeToNumberInstrs } from "./coercion-engine.js";
@@ -126,6 +127,13 @@ export function unshiftAnyToStringBigIntArm(ctx: CodegenContext): void {
       { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
       { op: "i32.eqz" },
       { op: "br_if", depth: 0 },
+      // (#6656) a value past i64 is a `$BigIntWide`; field 0 is only its low bits.
+      ...wideToStringArm(
+        ctx,
+        0,
+        [{ op: "i32.const", value: DEFAULT_RADIX }],
+        [{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }, { op: "return" }],
+      ),
       { op: "local.get", index: 0 },
       { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
       { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
@@ -279,7 +287,13 @@ export function unshiftExternMethodCallBigIntPrimitiveArm(ctx: CodegenContext): 
     { op: "ref.is_null" },
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: presentArm },
-    // 4. format the i64 exactly.
+    // 4. format exactly: the wide form (#6656), else the i64.
+    ...wideToStringArm(
+      ctx,
+      RECV_ANY,
+      [{ op: "local.get", index: RADIX_F64 }, { op: "i32.trunc_sat_f64_s" }],
+      [{ op: "return" }],
+    ),
     { op: "local.get", index: RECV_ANY },
     { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
     { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },

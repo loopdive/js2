@@ -57,6 +57,10 @@ import { nativeStringLiteralInstrs } from "./native-strings.js";
 // glue singleton a static `<View>.prototype` value read yields.
 import { ensureDataViewNativeProtoGlue, ensureTypedArrayViewNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
+// (#6651 E4) the ONE `%TypedArray%.{from,of}` singleton the intrinsic carrier seeds
+import { buildTaCtorInheritedFromOfGetArm } from "./ta-static-from-of-body.js";
+import { fillHofTaDynViewPresenceBypass } from "./hof-native.js"; // (#6651 E6)
+import { fillOrdinarySetTypedArrayArm } from "./object-runtime-ordinary-set.js"; // (#6651 E6)
 
 /** Fresh synthetic FunctionContext for a native helper (the #2872 pattern). */
 function makeFctx(name: string, params: { name: string; type: ValType }[], returnType: ValType): FunctionContext {
@@ -357,7 +361,11 @@ const NAMED_PROPS: readonly NamedProp[] = [
 export function fillTaDynViewMopArms(ctx: CodegenContext): void {
   if (!ctx.standalone) return; // host imports own the dynamic path
   const dynIdx = ctx.taDynViewTypeIdx;
-  if (dynIdx < 0) return;
+  if (dynIdx < 0) {
+    fillOrdinarySetTypedArrayArm(ctx); // (#6651 E6) static TA carriers only
+    return;
+  }
+  fillHofTaDynViewPresenceBypass(ctx); // (#6651 E6) §23.2.3 HOFs: no HasProperty
   const helpers = ensureTaDynMopElemHelpers(ctx);
   if (!helpers) return;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
@@ -537,6 +545,8 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     ];
     fn.body.unshift(...arm);
   }
+  // (#6651 E6) §10.4.5.5 in `Reflect.set`'s receiver-threaded walk.
+  fillOrdinarySetTypedArrayArm(ctx, { typeIdx: dynIdx, setElemIdx: helpers.setElem, hasIdxIdx: helpers.hasIdx });
 
   // ── Shared string-key arm builder for get/has/set-like natives. ──
   // Layout: params 0=obj 1=key [2=value]; appends locals; the arm:
@@ -1333,6 +1343,12 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: cAny }]),
       { op: "if", blockType: { kind: "empty" }, then: inner },
     );
+
+    // (#6651 E4) §23.2.2 `from` / `of`, INHERITED from `%TypedArray%`. Built in
+    // `ta-static-from-of-body.ts` beside the bodies those values run, not here:
+    // the arm is the CONSUMING half of the same mechanism, and this function is
+    // already at its size budget.
+    getFn.body.unshift(...buildTaCtorInheritedFromOfGetArm(ctx, getFn, tpkIdx, anyStrTypeIdx, keyIs));
   }
 
   // ── (#3177 slice 4) Descriptor MOP arms — §10.4.5.3 [[DefineOwnProperty]] /

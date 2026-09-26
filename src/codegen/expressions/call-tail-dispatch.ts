@@ -105,6 +105,7 @@ import {
   emitSetArgc,
   functionExprBodyReferencesOwnName,
   tryEmitInlineDynamicCall,
+  usesNativeFunctionBindProvider,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
 import { compileInlineIifeArguments } from "./inline-iife-arguments.js"; // (#5207)
@@ -341,7 +342,21 @@ export function compileTailDispatch(
               );
               const result = compileExpression(ctx, fctx, callee.body);
               fctx.deferredDynamicImportTrap = savedDeferredDynamicImportTrap;
-              return result;
+              // (#6651 lane-I5) `null` here means the concise body COMPILED and
+              // produced no value (a void call such as `_ => super.increment()`
+              // or `_ => o.voidMethod()`) — `compileExpression` erases the
+              // VOID_RESULT sentinel to `null` on its way out. Returning that
+              // `null` to the #1919 speculative wrapper makes it read "inner
+              // produced no usable value", roll the WHOLE inlined IIFE back and
+              // substitute a default constant, so the body's side effects
+              // vanish silently (measured: `(_ => super.increment())()` in a
+              // class method compiled to `i32.const 0; drop`). The failure
+              // paths of `compileExpression` never return `null` — they emit a
+              // default and return its ValType — so `null` is unambiguously the
+              // void case, and VOID_RESULT ("compiled, void, KEEP the emitted
+              // instructions") is the correct signal. Same class of bug as
+              // #1551's nested `super(...)` arm.
+              return result ?? VOID_RESULT;
             }
 
             // Block body (arrow or function expression) — need to handle return
@@ -393,9 +408,12 @@ export function compileTailDispatch(
                     ts.isParenthesizedExpression(retExpr) ||
                     ts.isAsExpression(retExpr) ||
                     ts.isTypeAssertionExpression(retExpr) ||
-                    ts.isNonNullExpression(retExpr)
+                    ts.isNonNullExpression(retExpr) ||
+                    // (#2917) `return sideEffect, { … }` — minified code (the
+                    // Temporal polyfill's nudge IIFE) returns the RIGHT operand.
+                    (ts.isBinaryExpression(retExpr) && retExpr.operatorToken.kind === ts.SyntaxKind.CommaToken)
                   ) {
-                    retExpr = retExpr.expression;
+                    retExpr = ts.isBinaryExpression(retExpr) ? retExpr.right : retExpr.expression;
                   }
                   if (
                     ts.isObjectLiteralExpression(retExpr) &&
@@ -1885,6 +1903,34 @@ export function compileTailDispatch(
           const called = emitBoundFunctionCall(ctx, fctx, expr, true);
           if (called !== null) return called;
         }
+      }
+
+      // (#6651 I4) The host-free twin of the arm directly above. Under a native
+      // `Function.prototype.bind` provider (`--target standalone`/`wasi`,
+      // native-first) `<expr>.bind(…)` mints a `$__bound_fn` CARRIER, not a
+      // closure struct — see #3140. The generic call-of-call path below matches
+      // the bind result's TS call signature against the registered closure
+      // shapes, `ref.cast`s the carrier to the winning `$Closure` (guarded, so
+      // it yields null) and then `emitNullCheckThrow`s it: "dereferencing a
+      // null pointer in __module_init". `tryEmitInlineDynamicCall` is the path
+      // that KNOWS about the carrier — its `boundArm` unwraps it through
+      // `__apply_closure`, which applies [[BoundThis]]/[[BoundArguments]] and
+      // composes for bound-of-bound. Routing here rather than after the
+      // closure-match is required: the match succeeds and traps, so it never
+      // reaches the existing `tryEmitInlineDynamicCall` fallback at the tail.
+      //
+      // Scope is deliberately the same as the host arm — a PropertyAccess bind
+      // TARGET (`f.af.bind(u)()`), i.e. a callable read out of an object field,
+      // which has no statically registered body. Identifier and
+      // `Class_method` targets are handled by the two static arms above and
+      // keep their bytes.
+      if (
+        usesNativeFunctionBindProvider(ctx) &&
+        ts.isPropertyAccessExpression(bindCall.expression) &&
+        ts.isPropertyAccessExpression(bindCall.expression.expression)
+      ) {
+        const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+        if (dyn !== null) return dyn;
       }
     }
   }

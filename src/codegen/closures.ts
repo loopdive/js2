@@ -170,7 +170,7 @@ import {
 export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument };
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
@@ -225,6 +225,7 @@ import {
   widenClosureReturnForDirectEval as widenEvalReturn,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
+import { isStaticTaViewBinding } from "./ta-static-view-mop.js"; // (#6651 E7)
 import {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -346,7 +347,10 @@ function closureReturnsExternrefBinding(
     ) {
       current = current.expression;
     }
-    return ts.isIdentifier(current) && ctx.externrefAccessorVars.has(current.text);
+    // (#6651 E7) …or a static `$__ta_view` binding, which no vec return type holds.
+    return (
+      ts.isIdentifier(current) && (ctx.externrefAccessorVars.has(current.text) || isStaticTaViewBinding(ctx, current))
+    );
   };
 
   const body = fn.body;
@@ -1835,7 +1839,7 @@ export function closureProvablyAfterLetDecl(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   name: string,
 ): boolean {
-  const sym = ctx.checker.getSymbolsInScope(arrow, ts.SymbolFlags.Variable).find((s) => s.name === name);
+  const sym = ctx.checker.resolveName(name, arrow, ts.SymbolFlags.Variable, false);
   if (!sym) return false;
   const decl = sym.valueDeclaration;
   if (!decl) return false;
@@ -2013,7 +2017,8 @@ export function computeClosureWrapperSig(
   arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
 ): { params: ValType[]; returnType: ValType | null; hasRestParam: boolean } {
   const isGenerator =
-    (ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined;
+    ((ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined) ||
+    isNativeGeneratorMethodClosure(ctx, arrow);
   const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
 
   // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
@@ -2631,6 +2636,87 @@ export interface LiftedClosureBodyResult {
  * register closure binding info — those stay with the caller (they must happen
  * exactly ONCE per arrow even when two bodies are emitted).
  */
+/**
+ * Set up the `arguments` object for a lifted FUNCTION EXPRESSION (arrow
+ * functions have no `arguments` binding of their own).
+ *
+ * (#6651) Extracted from `compileLiftedClosureBody` so it can run at either of
+ * two points: BEFORE the parameter defaults for a non-simple parameter list
+ * (§10.2.11 step 22 order, so a default can read `arguments`), or at the
+ * historical post-destructuring point for a simple list, where nothing
+ * intervenes and the emission is byte-for-byte unchanged.
+ */
+function emitLiftedClosureArgumentsObject(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+  body: ts.Node,
+  arrowParams: ValType[],
+  reachesDirectEval: boolean,
+): void {
+  if (!ts.isFunctionExpression(arrow) || !ts.isBlock(body) || !needsImplicitArgumentsObject(arrow, reachesDirectEval)) {
+    return;
+  }
+  // Ensure __box_number is available for boxing numeric params
+  const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
+  if (hasNumericParam) {
+    ensureLateImportShared(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    flushLateImportShiftsShared(ctx, liftedFctx);
+  }
+
+  const vti = getOrRegisterVecType(ctx, "arguments");
+  const ati = getArrTypeIdxFromVec(ctx, vti);
+  const vecRef: ValType = { kind: "ref", typeIdx: vti };
+  const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
+  const arrTmp = allocLocal(liftedFctx, "__args_arr_tmp", { kind: "ref", typeIdx: ati });
+
+  // (#4491) §10.2.11 step 22.a — a non-strict function expression with a simple
+  // parameter list gets a MAPPED arguments object, exactly like the declaration
+  // form. The reverse sync unboxes into an f64/i32 param, so `__unbox_number`
+  // must exist before the mapped emitters look it up.
+  if (hasNumericParam) {
+    ensureLateImportShared(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+    flushLateImportShiftsShared(ctx, liftedFctx);
+  }
+  // `compileFunctionBody` has installed this for DECLARATIONS since #849; the
+  // lifted expression form built the identical vec and never did, so
+  // `(function (a) { arguments[0] = 1; })(0)` left `a` untouched while
+  // `function f(a) { … }` updated it. Every mapped emitter keys off
+  // `mappedArgsInfo`, so this is what turns them on for the expression form.
+  const argsParams = runtimeParameters(arrow);
+  if (
+    arrowParams.length > 0 &&
+    isSimpleParameterList(argsParams) &&
+    !isStrictFunction(arrow, ctx.inferModuleStrictArguments)
+  ) {
+    liftedFctx.mappedArgsInfo = {
+      argsLocalIdx: argsLocal,
+      arrTypeIdx: ati,
+      vecTypeIdx: vti,
+      paramCount: arrowParams.length,
+      paramOffset: 1, // lifted closures carry __self at local 0
+      paramTypes: arrowParams.slice(),
+    };
+    // (#2676) Keyed by the declaration so a `delete args[i]` in a nested
+    // strict closure can resolve an aliased `arguments` back to here.
+    ctx.mappedArgsInfoByFunc.set(arrow, liftedFctx.mappedArgsInfo);
+  }
+
+  // (#779e) Build the arguments vec via the shared extras-aware helper so the
+  // closure sees the TRUE call-site argument count (from __argc/__extras_argv
+  // set by the closure call site, #1511) — not just its declared arity.
+  // paramOffset is 1 because lifted closures carry __self at local index 0.
+  emitArgumentsVecBody(ctx, liftedFctx, arrowParams, 1, {
+    vecTypeIdx: vti,
+    arrTypeIdx: ati,
+    argsLocalIdx: argsLocal,
+    arrTmpIdx: arrTmp,
+  });
+
+  // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
+  seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
+}
+
 export function compileLiftedClosureBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2966,73 +3052,46 @@ export function compileLiftedClosureBody(
     });
   }
 
+  // (#6651) §10.2.11 step 22 creates the arguments object BEFORE
+  // IteratorBindingInitialization of the formals, so a parameter default may
+  // read it (`(function (x = arguments[2]) {})(…)`). Emit it here for a
+  // NON-SIMPLE parameter list — the only shape with a default/destructuring to
+  // order against, and the shape that is already *unmapped* (step 22.a), so no
+  // param↔arguments aliasing is disturbed. A simple list keeps the original
+  // emission point below, where nothing intervenes.
+  const hoistArgsClosure = !isSimpleParameterList(runtimeParameters(arrow));
+  if (hoistArgsClosure) {
+    // The hoisted emission consumes `__argc`; cache it first so the default
+    // prologue below does not cache the cleared -1 sentinel (idempotent — see
+    // precacheParamDefaultArgc's doc in statements/nested-declarations.ts).
+    if (
+      runtimeParameters(arrow).some(
+        (param, i) => param.initializer !== undefined && paramDefaultNeedsArgc(liftedFctx.params[1 + i]?.type),
+      )
+    ) {
+      cacheParamDefaultArgc(ctx, liftedFctx);
+    }
+    emitLiftedClosureArgumentsObject(ctx, liftedFctx, arrow, body, arrowParams, reachesDirectEval);
+  }
+
   // Emit default-value initialization for simple params with defaults
   emitArrowParamDefaults(ctx, liftedFctx, arrow, 1 /* skip __self */);
 
   // Destructuring initialization for binding-pattern params — see emitClosureParamDestructuring.
   emitClosureParamDestructuring(ctx, liftedFctx, arrow, arrowParams);
 
-  // Set up `arguments` object for function expressions (not arrow functions).
+  // Set up `arguments` object for function expressions (not arrow functions) —
+  // SIMPLE parameter lists only; a non-simple list already emitted it above,
+  // before the defaults ran (#6651, §10.2.11 step 22).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && needsImplicitArgumentsObject(arrow, reachesDirectEval)) {
-    // Ensure __box_number is available for boxing numeric params
-    const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
-    if (hasNumericParam) {
-      ensureLateImportShared(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      flushLateImportShiftsShared(ctx, liftedFctx);
-    }
-
-    const vti = getOrRegisterVecType(ctx, "arguments");
-    const ati = getArrTypeIdxFromVec(ctx, vti);
-    const vecRef: ValType = { kind: "ref", typeIdx: vti };
-    const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
-    const arrTmp = allocLocal(liftedFctx, "__args_arr_tmp", { kind: "ref", typeIdx: ati });
-
-    // (#4491) §10.2.11 step 22.a — a non-strict function expression with a simple
-    // parameter list gets a MAPPED arguments object, exactly like the declaration
-    // form. The reverse sync unboxes into an f64/i32 param, so `__unbox_number`
-    // must exist before the mapped emitters look it up.
-    if (hasNumericParam) {
-      ensureLateImportShared(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-      flushLateImportShiftsShared(ctx, liftedFctx);
-    }
-    // `compileFunctionBody` has installed this for DECLARATIONS since #849; the
-    // lifted expression form built the identical vec and never did, so
-    // `(function (a) { arguments[0] = 1; })(0)` left `a` untouched while
-    // `function f(a) { … }` updated it. Every mapped emitter keys off
-    // `mappedArgsInfo`, so this is what turns them on for the expression form.
-    const argsParams = runtimeParameters(arrow);
-    if (
-      arrowParams.length > 0 &&
-      isSimpleParameterList(argsParams) &&
-      !isStrictFunction(arrow, ctx.inferModuleStrictArguments)
-    ) {
-      liftedFctx.mappedArgsInfo = {
-        argsLocalIdx: argsLocal,
-        arrTypeIdx: ati,
-        vecTypeIdx: vti,
-        paramCount: arrowParams.length,
-        paramOffset: 1, // lifted closures carry __self at local 0
-        paramTypes: arrowParams.slice(),
-      };
-      // (#2676) Keyed by the declaration so a `delete args[i]` in a nested
-      // strict closure can resolve an aliased `arguments` back to here.
-      ctx.mappedArgsInfoByFunc.set(arrow, liftedFctx.mappedArgsInfo);
-    }
-
-    // (#779e) Build the arguments vec via the shared extras-aware helper so the
-    // closure sees the TRUE call-site argument count (from __argc/__extras_argv
-    // set by the closure call site, #1511) — not just its declared arity.
-    // paramOffset is 1 because lifted closures carry __self at local index 0.
-    emitArgumentsVecBody(ctx, liftedFctx, arrowParams, 1, {
-      vecTypeIdx: vti,
-      arrTypeIdx: ati,
-      argsLocalIdx: argsLocal,
-      arrTmpIdx: arrTmp,
-    });
-
-    // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
-    seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
+  if (!hoistArgsClosure) {
+    emitLiftedClosureArgumentsObject(ctx, liftedFctx, arrow, body, arrowParams, reachesDirectEval);
+  } else if (bodyLexicallyBindsArguments(body)) {
+    // The body's own `let arguments` is a SEPARATE binding that shadows the
+    // object for the whole body, while the parameter defaults just compiled
+    // above legitimately saw it. Drop the name HERE — after the defaults, before
+    // the body — so the body's declaration allocates its own slot (helper doc).
+    liftedFctx.localMap.delete("arguments");
   }
 
   let conciseBodyHasValue = false;
@@ -3089,7 +3148,7 @@ export function compileLiftedClosureBody(
     isGenerator &&
     !isAsync &&
     (ctx.standalone || ctx.wasi) &&
-    ts.isFunctionExpression(arrow) &&
+    (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow)) &&
     ts.isBlock(body) &&
     isNativeGeneratorCandidate(ctx, arrow)
   ) {
@@ -3155,7 +3214,12 @@ export function compileLiftedClosureBody(
     // free from the aliased-condition `const isGenerator =
     // ts.isFunctionExpression(arrow) && …`, which no longer reaches this scope
     // now that `isGenerator` arrives via `opts`.
-  } else if (isGenerator && ts.isBlock(body) && nativeGenExprInfo && ts.isFunctionExpression(arrow)) {
+  } else if (
+    isGenerator &&
+    ts.isBlock(body) &&
+    nativeGenExprInfo &&
+    (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow))
+  ) {
     // (#3164) Emit the native state-struct factory (mirrors the class-method /
     // object-literal wiring, #2571/#2581): construct `$GenState_<closure>` from
     // the lifted wasm params (param 0 = `__self`, threaded as a leading
@@ -3498,6 +3562,34 @@ function captureOwningDirectEvalState(
   });
 }
 
+/**
+ * (#6651 A3) An object-literal generator METHOD that reaches the closure lane —
+ * `emitObjectLiteralMethodFn` passes the MethodDeclaration in as if it were a
+ * function expression when the literal lowers to an open `$Object` (e.g. its
+ * `var` binding was first declared `{}`, so the checker types it from that
+ * declaration). Every generator test here used to be spelled
+ * `ts.isFunctionExpression(arrow)`, so such a method compiled as a PLAIN
+ * closure: calling it ran the body at once and returned `undefined`.
+ *
+ * Admitted only when the native lowering will take it (standalone/WASI, not
+ * async, and the one candidate gate `isNativeGeneratorCandidate` agrees).
+ * Anything else keeps the historical plain-closure lowering rather than the
+ * eager-buffer generator path, whose `__gen_*` host imports a no-JS-host module
+ * cannot satisfy — that trade (a loud leak for a silent wrong value) is what a
+ * bare widening of the two generator tests produced (#6651 C4).
+ */
+function isNativeGeneratorMethodClosure(ctx: CodegenContext, arrow: ts.Node): arrow is ts.MethodDeclaration {
+  return (
+    ts.isMethodDeclaration(arrow) &&
+    arrow.asteriskToken !== undefined &&
+    (ctx.standalone || ctx.wasi) &&
+    ts.isObjectLiteralExpression(arrow.parent) &&
+    !arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) &&
+    arrow.body !== undefined &&
+    isNativeGeneratorCandidate(ctx, arrow)
+  );
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -3519,8 +3611,10 @@ export function compileArrowAsClosure(
     ensureCurrentThisGlobal(ctx);
   }
 
-  // Check if this is a generator function expression (function*() { ... })
-  const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+  // Check if this is a generator function expression (function*() { ... }), or
+  // (#6651 A3) an object-literal generator METHOD routed here as a closure.
+  const isGenerator =
+    (ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) || isNativeGeneratorMethodClosure(ctx, arrow);
   if (isGenerator) ctx.generatorFunctions.add(closureName);
   // `isAsync` is still consumed below (generator-create name selection); the
   // return-type derivation moved into computeClosureWrapperSig.
@@ -4094,6 +4188,22 @@ export function collectMutatedCaptureNames(
   return result;
 }
 
+/**
+ * (#5407) True when `compileArrowAsCallback` could only end in its #3235
+ * degrade-to-closure arm: a host-free lane (standalone/WASI) with no callback
+ * bridge registered. Asked BEFORE the callback body is compiled — asking after
+ * (as the degrade arm does) first compiled the whole body into an
+ * exported-but-never-called `__cb_<id>`, so every `assert.throws(E, () => …)`
+ * arrow in a standalone module was emitted twice per init pass. On this lane
+ * `resolveCallbackMakerName` picks the same name with no side effects, and the
+ * bridge imports are registered before codegen, so the answer cannot change
+ * while the body compiles.
+ */
+function hostFreeCallbackBridgeMissing(ctx: CodegenContext, needsThis: boolean): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  return !ctx.funcMap.has(needsThis ? "__make_getter_callback" : "__make_callback");
+}
+
 /** (#2128) Per-literal registry of shared capture ref cells — see compileArrowAsCallback. */
 export type SharedRefCellMap = Map<string, { refCellLocal: number; refCellTypeIdx: number; valType: ValType }>;
 
@@ -4151,6 +4261,8 @@ export function compileArrowAsCallback(
   ) {
     return compileArrowAsClosure(ctx, fctx, arrow);
   }
+
+  if (hostFreeCallbackBridgeMissing(ctx, options?.needsThis === true)) return compileArrowAsClosure(ctx, fctx, arrow);
 
   const cbId = ctx.callbackCounter++;
   const cbName = `__cb_${cbId}`;

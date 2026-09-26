@@ -60,3 +60,25 @@ import type { ValType } from "../ir/types.js";
 export function isAdmissibleDynamicReadNarrowing(kind: ValType["kind"]): boolean {
   return kind === "f64";
 }
+
+/**
+ * (#5383) True when this module sits on a standalone wasm↔wasm LINK — it is a
+ * provider whose exports another wasm module consumes, or a consumer of such a
+ * provider. The Phase-3 vote only sees THIS module's struct types, but across a
+ * link the receiver is routinely the peer's object (Temporal's
+ * `GetRoundingIncrementOption(options)` reads `options.roundingIncrement` off
+ * the test's literal). Narrowing that read to the local f64 vote runs the
+ * peer's answer through `__unbox_number`, so `2n` / `"2"` arrive as the NUMBER
+ * 2 — `typeof` says "number" and the spec's BigInt TypeError never fires. Keep
+ * the honest externref carrier on both sides of a link.
+ */
+export function dynamicReadCrossesStandaloneLink(ctx: {
+  standalone: boolean;
+  exportsConsumedByWasm?: boolean;
+  linkedNamespaces: ReadonlySet<string>;
+}): boolean {
+  if (!ctx.standalone) return false;
+  if (ctx.exportsConsumedByWasm === true) return true;
+  for (const name of ctx.linkedNamespaces) if (name.startsWith("js2wasm:npm:")) return true;
+  return false;
+}

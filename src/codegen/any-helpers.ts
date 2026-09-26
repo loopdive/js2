@@ -18,6 +18,7 @@ import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-hel
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
+import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
 export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -839,16 +840,8 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "local.get", index: 3 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "i64.eq" },
-              { op: "return" },
-            ],
+            // (#6656) exact for a value past i64, not just its low 64 bits.
+            then: [...bigIntCarrierEqInstrs(ctx, 2, 3), { op: "return" }],
           },
         ]
       : []) satisfies Instr[]),

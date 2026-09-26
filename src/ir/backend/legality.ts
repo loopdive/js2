@@ -51,10 +51,16 @@ export function projectIrBackendTargetProfile(
   profile: CompileTargetProfile,
   options: { readonly fast?: boolean } = {},
 ): IrBackendTargetProfile {
+  // (#5385) The IR asks a SEMANTIC question here ("which provider regime lowers
+  // this?"), not an environment one. A JS-environment build under the
+  // native-first policy lowers with the standalone regime and never receives
+  // an implicit host semantic import, so it projects exactly like standalone.
+  const nativeRegimeInJs = profile.nativeRegime && profile.target === "gc";
   return Object.freeze({
     backend: profile.backend,
-    target: profile.target,
-    allowHostImports: profile.environment === "javascript" && profile.capabilityPolicy === "ambient-js",
+    target: nativeRegimeInJs ? "standalone" : profile.target,
+    allowHostImports:
+      profile.environment === "javascript" && profile.capabilityPolicy === "ambient-js" && !nativeRegimeInJs,
     fast: options.fast,
   });
 }
