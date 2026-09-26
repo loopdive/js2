@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -212,6 +214,49 @@ function generateWithCapturedRegistry(
   return { registry, result: result! };
 }
 
+type CompileResult = Awaited<ReturnType<typeof compile>>;
+
+/**
+ * (#6697) Standalone/WASI compiles run out of process with an explicit heap:
+ * in-process they push the 512 MB Vitest fork over its limit. Returns the
+ * serialisable CompileResult fields this file reads, in job order.
+ */
+async function compileIsolated(
+  jobs: readonly { source: string; options: Record<string, unknown> }[],
+): Promise<CompileResult[]> {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const stdout = await new Promise<string>((resolveRun, rejectRun) => {
+    const child = execFile(
+      process.execPath,
+      ["--max-old-space-size=2048", "--import", "tsx", join(repoRoot, "tests/fixtures/issue-3520-compile-probe.mts")],
+      { cwd: repoRoot, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 },
+      (error, out) => (error ? rejectRun(error) : resolveRun(out)),
+    );
+    child.stdin!.end(JSON.stringify(jobs));
+  });
+  const rows = JSON.parse(stdout) as (Omit<CompileResult, "binary"> & { binary: string })[];
+  return rows.map((row) => ({ ...row, binary: new Uint8Array(Buffer.from(row.binary, "base64")) }) as CompileResult);
+}
+
+/** The untracked/tracked pair for each host-free target, compiled out of process. */
+async function compileHostFreePairs(
+  source: string,
+  fileStem: string,
+): Promise<Map<"standalone" | "wasi", { untracked: CompileResult; tracked: CompileResult }>> {
+  const targets = ["standalone", "wasi"] as const;
+  const jobs = targets.flatMap((target) => {
+    const options = { fileName: `${fileStem}-${target}.ts`, experimentalIR: true, target };
+    return [
+      { source, options },
+      { source, options: { ...options, trackIrOutcomes: true } },
+    ];
+  });
+  const results = await compileIsolated(jobs);
+  return new Map(
+    targets.map((target, index) => [target, { untracked: results[2 * index]!, tracked: results[2 * index + 1]! }]),
+  );
+}
+
 async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof compile>>): Promise<{
   readonly exports: Record<string, unknown>;
   readonly result: Awaited<ReturnType<typeof compile>>;
@@ -307,14 +352,9 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
 
   it("strips compiler constructor-closure exports in standalone and WASI with exact parity", async () => {
     const expectedNames = [...CLOSURE_STANDALONE_HELPER_EXPORTS, "getCtor", "invokeCtor"];
+    const pairs = await compileHostFreePairs(CONSTRUCTIBLE_CLOSURE_SOURCE, "issue-3520-closure-ctor");
     for (const target of ["standalone", "wasi"] as const) {
-      const options = {
-        fileName: `issue-3520-closure-ctor-${target}.ts`,
-        experimentalIR: true,
-        target,
-      } as const;
-      const untracked = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, options);
-      const tracked = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, { ...options, trackIrOutcomes: true });
+      const { untracked, tracked } = pairs.get(target)!;
       expect(untracked.success, `${target} untracked`).toBe(true);
       expect(tracked.success, `${target} tracked`).toBe(true);
       expect(untracked.imports, `${target} untracked imports`).toEqual([]);
@@ -350,14 +390,9 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       "getCtor",
       "invokeCtor",
     ];
+    const pairs = await compileHostFreePairs(CLOSURE_COLLISION_SOURCE, "issue-3520-closure-collisions");
     for (const target of ["standalone", "wasi"] as const) {
-      const options = {
-        fileName: `issue-3520-closure-collisions-${target}.ts`,
-        experimentalIR: true,
-        target,
-      } as const;
-      const untracked = await compile(CLOSURE_COLLISION_SOURCE, options);
-      const tracked = await compile(CLOSURE_COLLISION_SOURCE, { ...options, trackIrOutcomes: true });
+      const { untracked, tracked } = pairs.get(target)!;
       expect(untracked.success, `${target} untracked`).toBe(true);
       expect(tracked.success, `${target} tracked`).toBe(true);
       expect(untracked.imports, `${target} untracked imports`).toEqual([]);
@@ -430,14 +465,9 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
             entry.intent.origin === "support",
         ),
     ).toEqual([]);
+    const pairs = await compileHostFreePairs(CLOSURE_FREE_SPOOF_SOURCE, "issue-3520-closure-spoof");
     for (const target of ["standalone", "wasi"] as const) {
-      const options = {
-        fileName: `issue-3520-closure-spoof-${target}.ts`,
-        experimentalIR: true,
-        target,
-      } as const;
-      const untracked = await compile(CLOSURE_FREE_SPOOF_SOURCE, options);
-      const tracked = await compile(CLOSURE_FREE_SPOOF_SOURCE, { ...options, trackIrOutcomes: true });
+      const { untracked, tracked } = pairs.get(target)!;
       expect(untracked.success, `${target} untracked`).toBe(true);
       expect(tracked.success, `${target} tracked`).toBe(true);
       expect(untracked.imports, `${target} imports`).toEqual([]);
