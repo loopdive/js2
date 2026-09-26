@@ -17,7 +17,7 @@
 // the cross-family distinctness checks. Each score below therefore awards
 // points for "is an object" separately from "differs from its sibling".
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
 async function runStandalone(source: string): Promise<{ value: number; hostImports: string[] }> {
@@ -41,7 +41,32 @@ async function runStandalone(source: string): Promise<{ value: number; hostImpor
   return { value: (exports.test as () => number)(), hostImports };
 }
 
+const postDeleteArgumentsLengthSource = `function inspect(a, b) {
+  var it: any = arguments[Symbol.iterator]();
+  arguments.length = 1;
+  var override = arguments.length === 1;
+  var deleted = delete arguments.length;
+  var ownAfter = arguments.hasOwnProperty("length");
+  var directAfter = arguments.length === undefined;
+  var step: any = it.next();
+  // With no inherited length installed, ordinary Get after the delete
+  // must be undefined and ArrayIterator next must report done.
+  return (override ? 1 : 0) + (deleted ? 2 : 0) + (!ownAfter ? 4 : 0) +
+    (directAfter ? 8 : 0) + (step.done === true ? 16 : 0) +
+    (step.value === undefined ? 32 : 0);
+}
+export function test(): number { return inspect(10, 20); }`;
+
 describe("#6484 — intrinsic iterator prototypes are reachable (standalone)", () => {
+  // Compile/instantiate/import failures must be ordinary setup failures, not
+  // a way for the expected-failure assertion below to appear green.
+  let postDeleteArgumentsLengthValue = Number.NaN;
+  beforeAll(async () => {
+    const { value, hostImports } = await runStandalone(postDeleteArgumentsLengthSource);
+    expect(hostImports).toEqual([]);
+    postDeleteArgumentsLengthValue = value;
+  });
+
   it("all four array-iterator producers report ONE %ArrayIteratorPrototype%", async () => {
     const { value, hostImports } = await runStandalone(
       `var a = [1, 2, 3];
@@ -301,6 +326,116 @@ describe("#6484 — intrinsic iterator prototypes are reachable (standalone)", (
     );
     expect(hostImports).toEqual([]);
     expect(value).toBe(103);
+  });
+
+  it("arguments iterators use live ToLength and retain ArrayIterator next ordering", async () => {
+    // This is deliberately one standalone module: `$__arguments_vec` is a
+    // fill-time subtype and every assertion needs the same iterator arm. The
+    // score keeps the primary mapped/unmapped regression distinct from the
+    // safety controls that guard the arm's observable order and bounds.
+    const { value, hostImports } = await runStandalone(
+      `function mapped(a, b, c) {
+         var it: any = arguments[Symbol.iterator]();
+         it.next();
+         it.next();
+         arguments.length = 2;
+         var r: any = it.next();
+         return r.done === true && r.value === undefined ? 1 : 0;
+       }
+       function unmapped(a, b, c) {
+         "use strict";
+         var it: any = arguments[Symbol.iterator]();
+         it.next();
+         it.next();
+         arguments.length = 2;
+         var r: any = it.next();
+         return r.done === true && r.value === undefined ? 2 : 0;
+       }
+       function grown(a) {
+         var it: any = arguments[Symbol.iterator]();
+         arguments.length = 3;
+         var first: any = it.next();
+         var missingOne: any = it.next();
+         var missingTwo: any = it.next();
+         var done: any = it.next();
+         return first.value === a && first.done === false &&
+           missingOne.value === undefined && missingOne.done === false &&
+           missingTwo.value === undefined && missingTwo.done === false &&
+           done.value === undefined && done.done === true ? 4 : 0;
+       }
+       function stringLength(a, b) {
+         var it: any = arguments[Symbol.iterator]();
+         arguments.length = "1.9";
+         var first: any = it.next();
+         var done: any = it.next();
+         return first.value === a && first.done === false &&
+           done.value === undefined && done.done === true ? 8 : 0;
+       }
+       function objectLength(a, b) {
+         var calls = 0;
+         var it: any = arguments[Symbol.iterator]();
+         arguments.length = { valueOf: function () { calls++; return 1; } };
+         var first: any = it.next();
+         var done: any = it.next();
+         return calls === 2 && first.value === a && first.done === false &&
+           done.value === undefined && done.done === true ? 16 : 0;
+       }
+       function abruptLength(a, b) {
+         var calls = 0;
+         var it: any = arguments[Symbol.iterator]();
+         arguments.length = { valueOf: function () { calls++; throw 33; } };
+         var threw = false;
+         try { it.next(); } catch (e) { threw = e === 33; }
+         // An abrupt length conversion happens before [[ArrayLikeNextIndex]]
+         // advances, so the first value remains available after recovery.
+         arguments.length = 2;
+         var after: any = it.next();
+         return threw && calls === 1 && after.value === a && after.done === false ? 32 : 0;
+       }
+       function abruptElement(a, b) {
+         "use strict";
+         var reads = 0;
+         var it: any = arguments[Symbol.iterator]();
+         Object.defineProperty(arguments, "0", {
+           configurable: true,
+           get: function () { reads++; throw 41; }
+         });
+         var threw = false;
+         try { it.next(); } catch (e) { threw = e === 41; }
+         // ES2015 §22.1.5.2.1 steps 11–15 advance the cursor before Get, so
+         // the catch continuation observes the second argument, not the first.
+         var after: any = it.next();
+         return threw && reads === 1 && after.value === b && after.done === false ? 64 : 0;
+       }
+       function exhaustedLatch(a) {
+         var it: any = arguments[Symbol.iterator]();
+         arguments.length = 0;
+         var first: any = it.next();
+         var calls = 0;
+         arguments.length = {
+           valueOf: function () { calls++; return 9007199254740991; }
+         };
+         // A finished iterator must not revive or even convert the later
+         // huge length value; the one-way cursor latch is checked first.
+         var after: any = it.next();
+         return first.done === true && after.done === true && calls === 0 ? 128 : 0;
+       }
+       var score = mapped(10, 20, 30) + unmapped(10, 20, 30) + grown(10) +
+         stringLength(10, 20) + objectLength(10, 20) + abruptLength(10, 20) +
+         abruptElement(10, 20) + exhaustedLatch(10);
+       export function test(): number { return score; }`,
+    );
+    expect(hostImports).toEqual([]);
+    expect(value).toBe(255);
+  });
+
+  // This is deliberately NOT folded into S4's acceptance score. The ordinary
+  // setup above has already compiled and executed the probe without imports;
+  // only the established #4622/#3251 semantic mismatch is expected here.
+  it.fails("hands post-delete arguments.length semantics to #4622/#3251", () => {
+    // Expected bits: override read (1), delete success (2), no own property
+    // (4), undefined direct Get (8), done (16), undefined iterator value (32).
+    expect(postDeleteArgumentsLengthValue).toBe(63);
   });
 
   it("an iterator VALUE still drives the eager helper loop (carrier migration)", async () => {

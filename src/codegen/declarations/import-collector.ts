@@ -48,6 +48,7 @@ import {
 } from "../index.js";
 import { isPlainNamedMethodDeclaration, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
+import { registerBigIntToStringDemand } from "../bigint-string-context.js";
 import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeBigIntFormat } from "../bigint-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
@@ -725,6 +726,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       if (isNumberType(spanType) || isBooleanType(spanType) || isBigIntType(spanType) || isAnyOrUnknown) {
         state.primitiveNeeded.add("number_toString");
       }
+      registerBigIntToStringDemand(ctx, state.primitiveNeeded, isBigIntType(spanType));
     }
   }
   // String(expr) and new String(expr) need number_toString for ToString.
@@ -734,9 +736,11 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     node.expression.text === "String" &&
     (node.arguments?.length ?? 0) >= 1
   ) {
-    if (ctx.oracle.typeFactOf(node.arguments![0]!).kind !== "string") {
+    const stringArgFact = ctx.oracle.typeFactOf(node.arguments![0]!);
+    if (stringArgFact.kind !== "string") {
       state.primitiveNeeded.add("number_toString");
     }
+    registerBigIntToStringDemand(ctx, state.primitiveNeeded, stringArgFact.kind === "bigint");
   }
   // String + non-string concatenation
   if (
@@ -751,6 +755,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (!isStringType(leftType) && isStringType(rightType)) {
       state.primitiveNeeded.add("number_toString");
     }
+    const concatBigInt =
+      (isStringType(leftType) && isBigIntType(rightType)) || (isBigIntType(leftType) && isStringType(rightType));
+    registerBigIntToStringDemand(ctx, state.primitiveNeeded, concatBigInt);
     if (
       node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken &&
       (leftType.flags & ts.TypeFlags.Any) !== 0 &&

@@ -96,5 +96,9 @@ export function buildVecPopBody(
     ];
   }
   body.push(...current);
+  // Every carrier arm and the unsupported fallback return. Make that terminal
+  // contract explicit after the empty-typed dispatch ladder: no result value
+  // may be invented for a fallthrough that cannot execute.
+  body.push({ op: "unreachable" });
   return { locals, body };
 }

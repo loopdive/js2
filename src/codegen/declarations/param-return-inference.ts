@@ -5,6 +5,7 @@
  * codegen/declarations.ts (#3268).
  */
 import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
@@ -37,7 +38,7 @@ export function resolveGenericCallSiteTypes(
         const sigParams = sig.getParameters();
         for (let i = 0; i < sigParams.length; i++) {
           const paramType = ctx.checker.getTypeOfSymbol(sigParams[i]!);
-          params.push(resolveWasmType(ctx, paramType));
+          params.push(widenJsDefaultGuessSymbolSlot(sigParams[i], resolveWasmType(ctx, paramType)));
         }
         const retType = ctx.checker.getReturnTypeOfSignature(sig);
         // (#2905) Carrier own-return guard. resolveWasmType(Promise<T>) lowers to

@@ -6,6 +6,7 @@
  */
 import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { paramReadIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 const indexedStaleProperties = new WeakMap<CodegenContext, Set<ts.Declaration>>();
@@ -94,6 +95,12 @@ export function equalityOperandHasStaleStaticType(
   return (
     (ts.isIdentifier(expr) &&
       (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))) ||
+    // (#6651 C3) Third stale carrier, same kind as the two above: a JS
+    // defaulted parameter's checker type is read off its own initializer, so
+    // the §7.2.16 step-1 fold in `binary-ops-typed-dispatch` decided
+    // `Type(number) !== Type(boolean)` and answered a constant `false` for
+    // `a === false` without ever reading the boxed boolean that arrived.
+    paramReadIsJsDefaultGuess(ctx, expr) ||
     expressionHasWidenedPropertyType(ctx, expr)
   );
 }

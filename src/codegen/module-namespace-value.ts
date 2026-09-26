@@ -11,10 +11,18 @@ import { isNodeBuiltin, normalizeNodeBuiltin } from "../import-resolver.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { withRuntimeModuleCallableBindings } from "./runtime-module-callable-metadata.js";
 import { coerceType } from "./shared.js";
+
+/** §10.4.6.2 module namespace own `Symbol.toStringTag` metadata. */
+const MODULE_NAMESPACE_TO_STRING_TAG = "Module";
+const MODULE_NAMESPACE_TO_STRING_TAG_SYMBOL_ID = 4;
+// `__defineProperty_value` host ABI: data value present (bit 7), and all three
+// false attributes explicitly present (bits 3/4/5).
+const MODULE_NAMESPACE_TO_STRING_TAG_FLAGS = 0xb8;
 
 interface NamespaceFunctionExport {
   readonly kind: "function";
@@ -494,6 +502,7 @@ function emitNamespaceObject(
   fctx: FunctionContext,
   cacheKey: object,
   exports: readonly NamespaceExport[],
+  moduleNamespaceTag: boolean,
 ): ValType | undefined {
   const existing = cacheMap(ctx).get(cacheKey);
   if (existing) {
@@ -502,13 +511,29 @@ function emitNamespaceObject(
     fctx.body.push({ op: "call", funcIdx: getterIdx });
     return { kind: "externref" };
   }
-  const newObjectIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
-  const setIdx = ensureLateImport(
-    ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
-  );
+
+  // The namespace is an ordinary `$Object` carrier with a deliberately narrow
+  // own-property surface. Only an actual ESM namespace import owns the Module
+  // tag; this emitter also serves TypeScript runtime namespace projections.
+  // Establish the native descriptor helper only for the native provider. Host
+  // GC uses the shared descriptor late import below; eagerly minting the native
+  // runtime there would incorrectly require native-string helpers.
+  if (moduleNamespaceTag && ctx.targetProfile.semanticProviders === "native-first") ensureObjectRuntime(ctx);
+  ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
+  if (moduleNamespaceTag) {
+    ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      "__defineProperty_value",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
+    // Reserve the tag literal before the one flush below, alongside every
+    // helper used by the cached initializer. The final helper indices are read
+    // from the live map only after that flush.
+    addStringConstantGlobal(ctx, MODULE_NAMESPACE_TO_STRING_TAG);
+  }
   for (const entry of exports) addStringConstantGlobal(ctx, entry.key);
   // Reserve the host-member carrier imports in the SAME batch as the object
   // helpers: every `ensureLateImport` shifts the defined-function index space,
@@ -521,9 +546,15 @@ function emitNamespaceObject(
     addStringConstantGlobal(ctx, entry.propertyName);
   }
   flushLateImportShifts(ctx, fctx);
-  const finalNewObjectIdx = ctx.funcMap.get("__new_plain_object") ?? newObjectIdx;
-  const finalSetIdx = ctx.funcMap.get("__extern_set") ?? setIdx;
-  if (finalNewObjectIdx === undefined || finalSetIdx === undefined) return undefined;
+  const finalNewObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const finalSetIdx = ctx.funcMap.get("__extern_set");
+  if (finalNewObjectIdx === undefined || finalSetIdx === undefined) {
+    return undefined;
+  }
+  const finalBoxSymbolIdx = moduleNamespaceTag ? ctx.funcMap.get("__box_symbol") : undefined;
+  const finalDefinePropertyValueIdx = moduleNamespaceTag ? ctx.funcMap.get("__defineProperty_value") : undefined;
+  if (moduleNamespaceTag && (finalBoxSymbolIdx === undefined || finalDefinePropertyValueIdx === undefined))
+    return undefined;
 
   const cacheGlobal: GlobalDef = {
     name: `__module_namespace_${ctx.mod.globals.length}`,
@@ -555,6 +586,24 @@ function emitNamespaceObject(
     kind: "externref",
   });
   getterFctx.body.push({ op: "local.set", index: objectLocal });
+  if (moduleNamespaceTag) {
+    // §10.4.6.2: every module namespace owns `Symbol.toStringTag` = "Module"
+    // with all three descriptor attributes false. This is a genuine well-known
+    // symbol key, not the unrelated string property "toStringTag".
+    if (finalBoxSymbolIdx === undefined || finalDefinePropertyValueIdx === undefined) {
+      popBody(getterFctx, savedBody);
+      return undefined;
+    }
+    getterFctx.body.push(
+      { op: "local.get", index: objectLocal },
+      { op: "i32.const", value: MODULE_NAMESPACE_TO_STRING_TAG_SYMBOL_ID },
+      { op: "call", funcIdx: finalBoxSymbolIdx },
+      ...stringConstantExternrefInstrs(ctx, MODULE_NAMESPACE_TO_STRING_TAG),
+      { op: "f64.const", value: MODULE_NAMESPACE_TO_STRING_TAG_FLAGS },
+      { op: "call", funcIdx: finalDefinePropertyValueIdx },
+      { op: "drop" },
+    );
+  }
   // `global.get` indices baked here can still move: reserving a function-value
   // cache or a string constant adds import globals and shifts the module-global
   // range. `ctx.moduleGlobals` is shifted with them, so remember each emitted
@@ -670,7 +719,7 @@ export function tryEmitCompiledModuleNamespaceObject(
   const declaration = ctx.oracle.valueDeclarationOf(identifier);
   if (declaration === undefined || !ts.isNamespaceImport(declaration)) return undefined;
   const exports = namespaceFunctionExports(ctx, declaration);
-  return exports ? emitNamespaceObject(ctx, fctx, declaration, exports) : undefined;
+  return exports ? emitNamespaceObject(ctx, fctx, declaration, exports, true) : undefined;
 }
 
 function namespaceMemberAccessForIdentifier(
@@ -716,5 +765,5 @@ export function tryEmitCompiledRuntimeNamespaceFunctionObject(
     const keys = finiteStringKeys(ctx, access.argumentExpression);
     if (!keys || [...keys].some((key) => !surface.keys.has(key))) return undefined;
   }
-  return emitNamespaceObject(ctx, fctx, surface.symbol, surface.exports);
+  return emitNamespaceObject(ctx, fctx, surface.symbol, surface.exports, false);
 }

@@ -1,12 +1,29 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { buildVecPopBody, type VecPopEntry } from "../src/codegen/vec-pop-body.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const artifacts = mkdtempSync(join(tmpdir(), "js2-5883-P-"));
 import { createHash } from "node:crypto";
+
+describe("5883 pop dispatcher terminal contract", () => {
+  for (const [name, entries] of [
+    ["empty", []],
+    ["skipped carrier", [undefined]],
+    ["carrier", [{ elemKey: "externref", vecTypeIdx: 0, arrTypeIdx: 1, isNativeStr: false, storageGet: undefined }]],
+  ] as const) {
+    it(name, () => {
+      const result = buildVecPopBody(entries as readonly (Readonly<VecPopEntry> | undefined)[], undefined);
+      expect(result.body.at(-1)).toEqual({ op: "unreachable" });
+      // The explicit terminal instruction supplements, rather than replaces,
+      // the original returning fallback / carrier dispatch.
+      expect(result.body.at(-2)?.op).toBe(name === "carrier" ? "if" : "return");
+    });
+  }
+});
 
 describe("5883 P externref nonempty storage pop", () => {
   for (const optimize of [0, 2] as const)

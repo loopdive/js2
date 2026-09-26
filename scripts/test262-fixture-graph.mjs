@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST262_ROOT = join(ROOT, "test262");
+const NAMESPACE_TEST_PREFIX = "language/module-code/namespace/";
 
 function normalizeTestPath(path) {
   const normalized = path
@@ -119,6 +120,33 @@ export function hasSelfModuleImport(testPath, entrySource, { test262Root = TEST2
     const target = resolve(testRoot, dirname(normalizedEntry), specifier);
     return target === entryAbsolute || `${target}.js` === entryAbsolute;
   });
+}
+
+/**
+ * Validate the only empty static graph that the FYI worker may link: a
+ * Test262 module-namespace entry which imports its own canonical virtual key.
+ *
+ * `compileMulti` needs the entry key even when there are no `_FIXTURE.js`
+ * dependencies. Keep this check here so the reader and worker use the same
+ * static-edge oracle; a caller-supplied boolean or arbitrary entryFile alone
+ * is never enough to activate the graph path.
+ */
+export function hasPinnedNamespaceSelfModuleImport(entryFile, entrySource, { test262Root = TEST262_ROOT } = {}) {
+  if (typeof entryFile !== "string" || typeof entrySource !== "string" || !entryFile.startsWith("./")) return false;
+  const testPath = entryFile.slice(2);
+  if (!testPath.startsWith(NAMESPACE_TEST_PREFIX)) return false;
+  if (testPath.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..")) return false;
+
+  try {
+    // `discoverFixtureGraph` produces this canonical virtual-key form. Reject
+    // dot, parent, empty, and noncanonical paths before resolving the source's
+    // relative import.
+    if (`./${normalizeTestPath(testPath)}` !== entryFile) return false;
+  } catch {
+    return false;
+  }
+
+  return hasSelfModuleImport(testPath, entrySource, { test262Root });
 }
 
 function resolveFixture(testRoot, importerPath, specifier, required = true) {

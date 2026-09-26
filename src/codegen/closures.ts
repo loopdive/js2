@@ -1,4 +1,5 @@
 import { initializeNativeGeneratorFunctionValue } from "./generators-factory-prototype.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Closure and arrow-function compilation for js2wasm.
@@ -4262,7 +4263,7 @@ export function compileArrowAsCallback(
   const cbArrowParams = runtimeParameters(arrow);
   for (const p of cbArrowParams) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    const staticallyResolved = resolveWasmType(ctx, paramType);
+    const staticallyResolved = widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType));
     // A callback exported to the JS host receives ordinary host objects as
     // externrefs. A binding-pattern annotation/inference can nevertheless
     // describe the parameter as a closed Wasm struct (Axios' descriptor

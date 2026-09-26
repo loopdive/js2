@@ -1,0 +1,140 @@
+built-ins/GeneratorPrototype/return/try-finally-set-property-within-try.js	ExpressionStatement :: obj.foo = yield;
+language/computed-property-names/class/method/constructor-can-be-generator.js	NO-BAIL(candidate gate)
+language/computed-property-names/class/method/generator.js	NO-BAIL(candidate gate)
+language/computed-property-names/class/static/generator-constructor.js	NO-BAIL(candidate gate)
+language/computed-property-names/object/method/generator.js	NO-BAIL(candidate gate)
+language/expressions/assignment/dstr/array-elem-init-yield-expr.js	ExpressionStatement :: result = [ x = yield ] = vals;
+language/expressions/assignment/dstr/array-elem-iter-rtrn-close-err.js	ExpressionStatement :: result = [ {}[ yield ] ] = vals;
+language/expressions/assignment/dstr/array-elem-iter-rtrn-close-null.js	ExpressionStatement :: result = [ {} = yield ] = vals;
+language/expressions/assignment/dstr/array-elem-iter-rtrn-close.js	ExpressionStatement :: result = [ {} = yield ] = vals;
+language/expressions/assignment/dstr/array-elem-nested-array-yield-expr.js	ExpressionStatement :: result = [[x[yield]]] = vals;
+language/expressions/assignment/dstr/array-elem-nested-obj-yield-expr.js	ExpressionStatement :: result = [{ x = yield }] = vals;
+language/expressions/assignment/dstr/array-elem-target-yield-expr.js	ExpressionStatement :: result = [ x[yield] ] = vals;
+language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close-err.js	ExpressionStatement :: result = [ {} = yield , ] = vals;
+language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close-null.js	ExpressionStatement :: result = [ {} = yield , ] = vals;
+language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close.js	ExpressionStatement :: result = [ {} = yield , ] = vals;
+language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js	ExpressionStatement :: result = [ x , ...{}[yield] ] = vals;
+language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js	ExpressionStatement :: result = [ x , ...{}[yield] ] = vals;
+language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close.js	ExpressionStatement :: result = [ x , ...{}[yield] ] = vals;
+language/expressions/assignment/dstr/array-rest-iter-rtrn-close-err.js	ExpressionStatement :: result = [...{}[yield]] = vals;
+language/expressions/assignment/dstr/array-rest-iter-rtrn-close-null.js	ExpressionStatement :: result = [...{}[yield]] = vals;
+language/expressions/assignment/dstr/array-rest-iter-rtrn-close.js	ExpressionStatement :: result = [...{}[yield]] = vals;
+language/expressions/assignment/dstr/array-rest-nested-array-yield-expr.js	ExpressionStatement :: result = [...[x[yield]]] = vals;
+language/expressions/assignment/dstr/array-rest-nested-obj-yield-expr.js	ExpressionStatement :: result = [...{ x = yield }] = vals;
+language/expressions/assignment/dstr/array-rest-yield-expr.js	ExpressionStatement :: result = [...x[yield]] = vals;
+language/expressions/assignment/dstr/obj-id-init-yield-expr.js	ExpressionStatement :: result = { x = yield } = vals;
+language/expressions/assignment/dstr/obj-prop-elem-init-yield-expr.js	ExpressionStatement :: result = { x: x = yield } = vals;
+language/expressions/assignment/dstr/obj-prop-elem-target-yield-expr.js	ExpressionStatement :: result = { x: x[yield] } = vals;
+language/expressions/assignment/dstr/obj-prop-nested-array-yield-expr.js	ExpressionStatement :: result = { x: [x = yield] } = vals;
+language/expressions/assignment/dstr/obj-prop-nested-obj-yield-expr.js	ExpressionStatement :: result = { x: { x = yield } } = vals;
+language/expressions/class/accessor-name-inst-computed-yield-expr.js	ExpressionStatement :: C = class { get [yield]() { return 'get yield'; } set [yield](param) { yieldSet = param; } };
+language/expressions/class/accessor-name-static-computed-yield-expr.js	ExpressionStatement :: C = class { static get [yield]() { return 'get yield'; } static set [yield](param) { yieldSet = param; } };
+language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-yield-expression.js	FirstStatement :: let C = class { get [yield 9]() { return 9; } set [yield 9](v) { return 9; } static get [yield 9]() { return 9
+language/expressions/class/cpn-class-expr-computed-property-name-from-yield-expression.js	ExpressionStatement :: assert.sameValue( c[yield 9](), 9 );
+language/expressions/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js	NO-BAIL(candidate gate)
+language/expressions/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js	NO-BAIL(candidate gate)
+language/expressions/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-arrow.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-fn.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/ary-ptrn-elem-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-arrow.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-fn.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-arrow.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-fn.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/dflt-obj-ptrn-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-arrow.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-fn.js	NO-BAIL(candidate gate)
+language/expressions/generators/dstr/obj-ptrn-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/expressions/generators/named-no-strict-reassign-fn-name-in-body-in-arrow.js	NO-BAIL(candidate gate)
+language/expressions/generators/named-no-strict-reassign-fn-name-in-body-in-eval.js	NO-BAIL(candidate gate)
+language/expressions/generators/named-no-strict-reassign-fn-name-in-body.js	NO-BAIL(candidate gate)
+language/expressions/generators/named-strict-error-reassign-fn-name-in-body-in-arrow.js	NO-BAIL(candidate gate)
+language/expressions/generators/named-strict-error-reassign-fn-name-in-body-in-eval.js	NO-BAIL(candidate gate)
+language/expressions/generators/named-strict-error-reassign-fn-name-in-body.js	NO-BAIL(candidate gate)
+language/expressions/generators/scope-name-var-close.js	NO-BAIL(candidate gate)
+language/expressions/generators/scope-name-var-open-non-strict.js	NO-BAIL(candidate gate)
+language/expressions/generators/scope-name-var-open-strict.js	NO-BAIL(candidate gate)
+language/expressions/generators/scope-param-rest-elem-var-close.js	NO-BAIL(candidate gate)
+language/expressions/generators/scope-param-rest-elem-var-open.js	NO-BAIL(candidate gate)
+language/expressions/generators/yield-as-literal-property-name.js	ExpressionStatement :: ({ get yield() { return 1 } });
+language/expressions/object/accessor-name-computed-yield-expr.js	NO-BAIL(candidate gate)
+language/expressions/object/concise-generator.js	NO-BAIL(candidate gate)
+language/expressions/object/cpn-obj-lit-computed-property-name-from-yield-expression.js	FirstStatement :: let o = { [yield 9]: 9 };
+language/expressions/object/method-definition/computed-property-name-yield-expression.js	NO-BAIL(candidate gate)
+language/expressions/object/method-definition/generator-prop-name-yield-expr.js	NO-BAIL(candidate gate)
+language/expressions/object/method-definition/generator-super-prop-body.js	NO-BAIL(candidate gate)
+language/expressions/object/method-definition/yield-as-generator-method-binding-identifier.js	ExpressionStatement :: (yield 3) + (yield 4);
+language/expressions/object/method-definition/yield-as-literal-property-name.js	ExpressionStatement :: ({ get yield() { return 1 } });
+language/expressions/object/scope-gen-meth-param-rest-elem-var-close.js	NO-BAIL(candidate gate)
+language/expressions/object/scope-gen-meth-param-rest-elem-var-open.js	NO-BAIL(candidate gate)
+language/expressions/yield/from-with.js	WithStatement :: with ({ x: 2 }) { yield x; }
+language/expressions/yield/rhs-regexp.js	NO-BAIL(candidate gate)
+language/expressions/yield/rhs-template-middle.js	ExpressionStatement :: str = `1${ yield }3${ 4 }5`;
+language/module-code/eval-export-dflt-expr-gen-anon.js	NO-BAIL(candidate gate)
+language/module-code/eval-export-dflt-expr-gen-named.js	NO-BAIL(candidate gate)
+language/module-code/eval-export-dflt-gen-anon-semi.js	NO-BAIL(candidate gate)
+language/module-code/instn-iee-bndng-gen.js	NO-BAIL(candidate gate)
+language/module-code/instn-named-bndng-dflt-gen-anon.js	NO-BAIL(candidate gate)
+language/module-code/instn-named-bndng-dflt-gen-named.js	NO-BAIL(candidate gate)
+language/module-code/instn-named-bndng-gen.js	NO-BAIL(candidate gate)
+language/statements/class/accessor-name-inst-computed-yield-expr.js	ClassDeclaration :: class C_ { get [yield]() { return 'get yield'; } set [yield](param) { yieldSet = param; } }
+language/statements/class/accessor-name-static-computed-yield-expr.js	ClassDeclaration :: class C_ { static get [yield]() { return 'get yield'; } static set [yield](param) { yieldSet = param; } }
+language/statements/class/cpn-class-decl-accessors-computed-property-name-from-yield-expression.js	ClassDeclaration :: class C { get [yield 9]() { return 9; } set [yield 9](v) { return 9; } static get [yield 9]() { return 9; } st
+language/statements/class/cpn-class-decl-computed-property-name-from-yield-expression.js	ExpressionStatement :: assert.sameValue( c[yield 9](), 9 );
+language/statements/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js	NO-BAIL(candidate gate)
+language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js	NO-BAIL(candidate gate)
+language/statements/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js	NO-BAIL(candidate gate)
+language/statements/class/definition/fn-name-gen-method.js	NO-BAIL(candidate gate)
+language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js	ExpressionStatement :: (yield 3) + (yield 4);
+language/statements/class/definition/methods-gen-yield-as-literal-property-name.js	ExpressionStatement :: ({ get yield() { return 1 } });
+language/statements/class/syntax/class-declaration-computed-method-generator-definition.js	NO-BAIL(candidate gate)
+language/statements/for-of/dstr/array-elem-init-in.js	NO-BAIL(candidate gate)
+language/statements/for-of/dstr/array-elem-init-yield-expr.js	ForOfStatement :: for ([ x = yield ] of [[]]) { counter += 1; }
+language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js	ForOfStatement :: for ([ {}[ yield ] ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-elem-iter-rtrn-close-null.js	ForOfStatement :: for ([ {} = yield ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-elem-iter-rtrn-close.js	ForOfStatement :: for ([ {} = yield ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js	ForOfStatement :: for ([[x[yield]]] of [value]) { counter += 1; }
+language/statements/for-of/dstr/array-elem-nested-obj-yield-expr.js	ForOfStatement :: for ([{ x = yield }] of [[{}]]) { counter += 1; }
+language/statements/for-of/dstr/array-elem-target-yield-expr.js	ForOfStatement :: for ([ x[yield] ] of [[33]]) { counter += 1; }
+language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close-err.js	ForOfStatement :: for ([ {} = yield , ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close-null.js	ForOfStatement :: for ([ {} = yield , ] of [iterable]) { counter += 1; }
+language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close.js	ForOfStatement :: for ([ {} = yield , ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js	ForOfStatement :: for ([ x , ...{}[yield] ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js	ForOfStatement :: for ([ x , ...{}[yield] ] of [iterable]) { counter += 1; }
+language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js	ForOfStatement :: for ([ x , ...{}[yield] ] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js	ForOfStatement :: for ([...{}[yield]] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js	ForOfStatement :: for ([...{}[yield]] of [iterable]) { counter += 1; }
+language/statements/for-of/dstr/array-rest-iter-rtrn-close.js	ForOfStatement :: for ([...{}[yield]] of [iterable]) { unreachable += 1; counter += 1; }
+language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js	ForOfStatement :: for ([...[x[yield]]] of [[86]]) { counter += 1; }
+language/statements/for-of/dstr/array-rest-nested-obj-yield-expr.js	ForOfStatement :: for ([...{ x = yield }] of [[{}]]) { counter += 1; }
+language/statements/for-of/dstr/array-rest-yield-expr.js	ForOfStatement :: for ([...x[yield]] of [[33, 44, 55]]) { counter += 1; }
+language/statements/for-of/dstr/obj-id-init-yield-expr.js	ForOfStatement :: for ({ x = yield } of [{}]) { counter += 1; }
+language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js	ForOfStatement :: for ({ x: x = yield } of [{}]) { counter += 1; }
+language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js	ForOfStatement :: for ({ x: x[yield] } of [{ x: 23 }]) { counter += 1; }
+language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js	ForOfStatement :: for ({ x: [x = yield] } of [{ x: [] }]) { counter += 1; }
+language/statements/for-of/dstr/obj-prop-nested-obj-yield-expr.js	ForOfStatement :: for ({ x: { x = yield } } of [{ x: {} }]) { counter += 1; }
+language/statements/for-of/yield-from-catch.js	ForOfStatement :: for (var x of dataIterator) { try { throw new Error(); throw new Test262Error('This code is unreachable.'); } 
+language/statements/for-of/yield-from-finally.js	ForOfStatement :: for (var x of dataIterator) { try { } finally { i++; yield; j++; } k++; }
+language/statements/for-of/yield-from-try.js	ForOfStatement :: for (var x of dataIterator) { try { i++; yield; j++; } catch (err) {} k++; }
+language/statements/for-of/yield-star-from-catch.js	ForOfStatement :: for (var x of dataIterator) { try { throw new Error(); throw new Test262Error('This code is unreachable.'); } 
+language/statements/for-of/yield-star-from-finally.js	ForOfStatement :: for (var x of dataIterator) { try { } finally { i++; yield * values(); j++; } k++; }
+language/statements/for-of/yield-star-from-try.js	ForOfStatement :: for (var x of dataIterator) { try { i++; yield * values(); j++; } catch (err) {} k++; }
+language/statements/for-of/yield-star.js	ForOfStatement :: for (var x of dataIterator) { i++; yield * values(); j++; }
+language/statements/for-of/yield.js	ForOfStatement :: for (var x of dataIterator) { i++; yield; j++; }
+language/statements/generators/dstr/ary-ptrn-elem-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/ary-ptrn-elem-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/dflt-ary-ptrn-elem-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/dflt-obj-ptrn-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/dflt-obj-ptrn-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/obj-ptrn-id-init-fn-name-class.js	NO-BAIL(candidate gate)
+language/statements/generators/dstr/obj-ptrn-id-init-fn-name-gen.js	NO-BAIL(candidate gate)
+language/statements/generators/scope-param-rest-elem-var-close.js	NO-BAIL(candidate gate)
+language/statements/generators/scope-param-rest-elem-var-open.js	NO-BAIL(candidate gate)
+language/statements/generators/yield-as-generator-declaration-binding-identifier.js	ExpressionStatement :: (yield 3) + (yield 4);
+language/statements/generators/yield-as-literal-property-name.js	ExpressionStatement :: ({ get yield() { return 1 } });

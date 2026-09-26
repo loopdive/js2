@@ -1,0 +1,9 @@
+built-ins/RegExp/prototype/Symbol.match/exec-err.js
+built-ins/RegExp/prototype/Symbol.match/exec-invocation.js
+built-ins/RegExp/prototype/Symbol.match/exec-return-type-invalid.js
+built-ins/RegExp/prototype/Symbol.match/exec-return-type-valid.js
+built-ins/RegExp/prototype/Symbol.match/get-exec-err.js
+built-ins/RegExp/prototype/Symbol.match/g-get-result-err.js
+built-ins/RegExp/prototype/Symbol.match/builtin-success-g-set-lastindex-err.js
+built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-samevalue.js
+built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-samevalue.js

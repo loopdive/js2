@@ -1,10 +1,10 @@
 ---
 id: 6484
 title: "ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator — r3"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-16
-updated: 2026-09-16
+updated: 2026-09-20
 priority: high
 horizon: l
 feasibility: medium
@@ -48,6 +48,9 @@ loc-budget-allow:
   - src/codegen/property-access.ts
   - src/codegen/map-runtime.ts
   - src/codegen/index.ts
+  # 2026-09-20 (#6484 S4, planned): one focused standalone regression pin for
+  # the live arguments iterator path; no general runner or runtime test edits.
+  - tests/issue-6484-iterator-prototypes.test.ts
 func-budget-allow:
   # 2026-09-16 (#6484 S3, merged here): the TypedArray `@@iterator` dispatch arm
   # in `fillClosedMethodDispatch` — one case beside the sibling carrier cases it
@@ -66,6 +69,12 @@ func-budget-allow:
   - src/codegen/map-runtime.ts::fillMapSetDynDispatchArms
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/index.ts::generateModule
+# 2026-09-20 (#6484 S4): the arguments iterator preflights the complete
+# canonical object/string/number conversion provider set and delegates its
+# logical-length work to buildArrayLikeToLengthFromExternref, rather than
+# hand-rolling a second conversion matrix.
+coercion-sites-allow:
+  - src/codegen/iterator-native.ts
 ---
 
 # ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator
@@ -582,3 +591,238 @@ afterwards and the file is byte-identical to the validated fix.
   module that arms the flag AND asks a string iterator's prototype, the string
   iterator still reports `%StringIteratorPrototype%` (bitmask 63/63), so it is
   not shadowing. Left in place rather than removed as out-of-scope cleanup.
+
+## S4 — `arguments` iterator observes its logical `length` (completed slice, 2026-09-20)
+
+### Scope and claim boundary
+
+This is a narrow residual discovered after S1–S3. Its only implementation
+ownership is `src/codegen/iterator-native.ts`, plus one focused pin in
+`tests/issue-6484-iterator-prototypes.test.ts`. It must not change `$__IterRec`
+layout, any IR/selected-factory/struct-layout code, `object-runtime.ts`, the
+arguments branding/runtime implementation, or the RegExp/raw-object work being
+landed separately. Array and TypedArray iterator paths remain on their existing
+fast path.
+
+The live upstream claim gate found no open upstream PR matching #6484,
+`ArrayIteratorPrototype`, `MapIteratorPrototype`, `SetIteratorPrototype`, or
+this `arguments` slice. The historical compiler `d5e585` / oracle-14 snapshot
+is diagnosis only, not a current-main pass claim: after filtering with the
+current ES2015 edition map it has 54 direct iterator-prototype rows, 51 pass
+and these three non-passes:
+
+1. `built-ins/ArrayIteratorPrototype/next/args-mapped-truncation-before-exhaustion.js`
+2. `built-ins/ArrayIteratorPrototype/next/args-unmapped-truncation-before-exhaustion.js`
+3. `built-ins/ArrayIteratorPrototype/next/detach-typedarray-in-progress.js`
+
+The first two are the fix target. The third is a TypedArray detachment-family
+control (#1645/#3975), not an iterator-prototype or S4 fix target; it must be
+measured separately and left unchanged by this slice.
+
+### Diagnosis
+
+`arguments` is represented by the `$__arguments_vec` subtype. An assignment to
+its ordinary `length` property records an override value/flag without changing
+the physical vector length in field 0 — correctly, because `arguments.length`
+is an ordinary configurable property rather than Array exotic length. Direct
+`arguments[Symbol.iterator]()` creates a live VEC `$__IterRec`; its step body
+currently compares the cursor only with that physical field 0. Consequently,
+after two `next()` calls and `arguments.length = 2`, it still exposes argument
+three. Both mapped and unmapped rows exercise this same path.
+
+### Implementation plan
+
+1. In the iterator step/check in `iterator-native.ts`, add a narrowly guarded
+   `$__arguments_vec` path that obtains the **logical** arguments length on
+   every `next()` call. Preserve the existing physical-vector check unchanged
+   for ordinary Array and TypedArray carriers. A logical length grown beyond
+   the backing argument count must not feed an out-of-bounds `array.get`:
+   obtain the missing-index answer through the existing authoritative arguments
+   indexed-get path (normally `undefined`), preserving ordinary indexed
+   properties if they exist.
+2. Interpret an assigned `arguments.length` using the compiler's authoritative
+   `ToLength` semantics, including non-numeric and boundary values; do not use
+   a raw floating-point cast or merely special-case the numeric value `2`.
+   Preserve abrupt conversion/evaluation order. The override is observable
+   between steps, so do not cache or write back a bound, and do not mutate
+   field 0. Observable deletion of that ordinary property is a separately
+   tracked #4622/#3251 descriptor-sidecar residual; S4 must not fake a
+   tombstone or expand into that owner.
+3. Keep exhausted-cursor behavior intact: once the logical bound is reached,
+   return the normal done result and retain the existing `INT32_MAX` exhaustion
+   latch. Test the latch before any later large `ToLength` result so an iterator
+   exhausted at a short bound can never be revived by assigning a huge length.
+   After a successful length check, advance the cursor before the indexed Get:
+   ES2015 [`%ArrayIteratorPrototype%.next`, steps 11–15](https://262.ecma-international.org/6.0/#sec-%arrayiteratorprototype%.next)
+   writes `[[ArrayLikeNextIndex]]` before `Get(O, index)`. Thus a throwing or
+   reentrant indexed getter consumes that index, whereas an abrupt length
+   conversion remains before the advance.
+4. Add a compact standalone pin covering mapped and unmapped `arguments` after
+   mid-iteration truncation, a growth-past-argument-count case, an
+   exhausted-then-huge-length case, and string/object/abrupt conversion cases
+   sufficient to distinguish `ToLength` from a raw cast, plus a throwing
+   indexed-get continuation control. Keep the detachment row out of that pin
+   because it belongs to the separate TypedArray detach family. Keep the
+   no-inherited-length post-delete expectation in an explicit #4622/#3251
+   expected-failure handoff, not in this S4 acceptance score.
+
+### Deferred post-delete and inherited-length limitation
+
+ECMAScript's ordinary `Get(arguments, "length")` after deletion can find an
+inherited data property or accessor, including after `Object.setPrototypeOf`;
+an accessor must receive the original arguments object as its receiver. The
+current arguments delete lowering only reports success; it cannot record the
+deleted named key, so both own-property queries and direct reads still see the
+surviving carrier value. The available receiver-aware prototype companion
+helper also models fixed implicit carrier brands (and classifies a vec as
+Array) rather than an arbitrary changed arguments prototype. This S4 slice
+must not hard-code `Object.prototype`, invent a tombstone, or invoke an
+inherited accessor with the wrong receiver. The #4622/#3251 handoff must first
+make deletion observable; full inherited lookup remains an independent
+object-runtime/prototype-chain residual outside this ownership boundary.
+
+### Validation plan
+
+First run exactly the three original test262 paths above with
+`scripts/run-test262-paths.mts --isolate --standalone` on a verified
+upstream-main worktree, and record the terminal per-row verdicts before source
+edits. After the implementation, rerun those same three originals and the
+focused pin: both arguments rows must move from their original non-pass state
+to pass, while the detachment control is reported separately and not claimed as
+fixed. Run only the approved scoped controls after the shared compiler lease is
+granted; no empty or missing corpus result is evidence of a pass.
+
+### #4622/#3251 post-delete handoff (still failing; not S4 acceptance)
+
+The no-inherited-length program in
+`tests/issue-6484-iterator-prototypes.test.ts` is deliberately an `it.fails`
+handoff. Its bit mask is: override read after `arguments.length = 1` (1),
+`delete arguments.length` returns true (2), no own `length` remains (4), direct
+post-delete Get is `undefined` (8), the pre-existing iterator is done (16),
+and its value is `undefined` (32). The ECMAScript expectation is therefore
+63. This is separate from the S4 positive score, which only exercises the
+new iterator arm after observable length assignments.
+
+Its compile, instantiation, execution, and zero-host-import check run in an
+ordinary `beforeAll`; the expected-failure body asserts only value 63. Thus a
+toolchain or standalone-import failure cannot be misreported as the known
+deletion residual.
+
+The exact direct-property control and iterator control both instead produced
+3 (only bits 1 and 2), with zero host imports, in both comparisons below:
+
+- candidate compiler: this worktree at base
+  `4c43798b4979c6f5497b8fc1eca996f8c572c942` plus source-only S4 diff
+  `a9dde716849549ef031a3f9bb5d9597c6fb781b294e047c7a287fc8da552c41e`;
+  durable receipt
+  `/private/tmp/js2-6484-iterator-residual-terra-20260920-delete-probe-20260920.log`;
+- untouched compiler: detached, provisioned
+  `/private/tmp/js2-6484-iterator-residual-terra-20260920-baseline-4c` at
+  `4c43798b4979c6f5497b8fc1eca996f8c572c942`; durable receipt
+  `/private/tmp/js2-6484-iterator-residual-terra-20260920-delete-probe-4c-20260920.log`.
+
+The matching baseline proves this is not an S4 regression. Existing
+`src/codegen/arguments-object-mop.ts` and
+`tests/issue-4622.test.ts` identify the needed owner as the #3251 arguments
+descriptor-sidecar representation. A later, separately claimed fix/PR must
+repair that source and then revisit inherited receiver-correct Get; this PR
+must retain the visible expected failure rather than lowering S4's expected
+score to conceal it. It is not automatically the next ES2015 slice: select an
+actual current ES2015 non-pass original and reproduce it on the then-current
+baseline before expanding into #3251 substrate work.
+
+### Candidate receipt (2026-09-20; two target originals only)
+
+The first post-source candidate run deliberately excluded the independent
+TypedArray-detachment control and used this exact two-row manifest:
+
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-candidate.paths`
+
+Its SHA-256 is
+`aaa46d8aedd23fa924f10387ffc42b99406237d7547c776899da9e8d6387db3f`; both
+entries were independently resolved beneath `test262/test`. The worktree base
+was `4c43798b4979c6f5497b8fc1eca996f8c572c942`; the source-only candidate diff
+(`git diff --no-ext-diff -- src/codegen/iterator-native.ts`) SHA-256 was
+`a9dde716849549ef031a3f9bb5d9597c6fb781b294e047c7a287fc8da552c41e`.
+
+Command (from `/private/tmp/js2-6484-iterator-residual-terra-20260920`):
+
+```sh
+VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 /Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --import tsx scripts/run-test262-paths.mts /private/tmp/js2-6484-iterator-residual-terra-20260920-candidate.paths --isolate --standalone
+```
+
+The agent tool result was exit 0 after 16.621 seconds, with terminal summary
+`{ pass: 2 }` and `0 non-pass (excluding skip)`. No durable terminal log was
+captured for this run; this is a tool-result receipt, not a reconstructed log.
+All later validation runs must capture an independently readable terminal log.
+
+### Guarded final validation receipt (2026-09-20)
+
+The focused standalone file was rerun after the #4622/#3251 handoff was moved
+behind ordinary `beforeAll` compilation/import validation:
+
+```sh
+VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 /Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node node_modules/vitest/vitest.mjs run tests/issue-6484-iterator-prototypes.test.ts
+```
+
+It exited 0; durable log:
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-issue6484-focused-guarded-20260920.log`.
+The account is 12 ordinary conformance controls passed plus one explicit,
+separately compiled #4622/#3251 expected failure; Vitest's aggregate `13
+passed` must not be described as 13 conformance passes.
+
+The exact two target originals were then retained with the already verified
+two-path manifest (SHA-256
+`aaa46d8aedd23fa924f10387ffc42b99406237d7547c776899da9e8d6387db3f`):
+
+```sh
+VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 /Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --import tsx scripts/run-test262-paths.mts /private/tmp/js2-6484-iterator-residual-terra-20260920-candidate.paths --isolate --standalone
+```
+
+It exited 0 with `{ pass: 2 }` and `0 non-pass (excluding skip)`; durable log:
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-original2-retention-20260920.log`.
+The separate typed-array detachment control remains unclaimed and was not
+included in this retention result.
+
+**S4 completion boundary.** The two mapped/unmapped arguments originals now
+pass on the final publication tree, and the focused suite retains its 12
+ordinary controls. This completes the owned S4 live-length slice only. #6484
+as a whole remains `in-progress`: the independent TypedArray-detachment row
+and the separately tracked #4622/#3251 post-delete behavior are not closed or
+claimed by this branch.
+
+### Post-sync publication-tree receipt (2026-09-20)
+
+After checkpoint `d08cb026cd2ac94b5d5f54fbe1316e6c1caf0e83`, the branch normally
+merged upstream `200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567` at
+`b4d05facdaa1ecc8b3e6a2d2ca602a6d1c90469f`. The merge changed only the
+upstream edition-closeout documentation; nevertheless, both scoped validation
+commands were repeated on that final publication tree.
+
+The exact two-original manifest again exited 0 with `{ pass: 2 }` and `0
+non-pass (excluding skip)`; durable log:
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-original2-final-tree-20260920.log`.
+The guarded focused suite again exited 0; it has 12 ordinary conformance
+controls and one explicitly separate #4622/#3251 expected failure, not 13
+conformance passes; durable log:
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-focused-final-tree-20260920.log`.
+
+### Publication handoff blocker (2026-09-20)
+
+The completed local branch is
+`codex/6484-iterator-residual-20260920a` at checkpoint
+`0ab8d03e0d72710d971be203de7c1929c9167db4`. Its normal commit hooks completed
+with formatting/lint, LOC/function budgets, the changed-root focused suite,
+and the oracle ratchet green (the focused aggregate is still 12 ordinary
+controls plus the separate expected #4622/#3251 failure).
+
+The ordinary fork push remains pending. An earlier sandboxed
+`git push --set-upstream fork codex/6484-iterator-residual-20260920a` could not
+resolve GitHub, and a later retry was denied before execution; neither attempt
+made network contact or created a remote branch or PR. On 2026-09-20 the user
+explicitly authorized a normal fork-feature-branch push and an unsigned commit
+for completed fixes. This branch now awaits the serialized normal-hook slot;
+it must still run those hooks and use only `fork`, never push to `main`. The
+prepared PR body is
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-pr-body.md`; it uses
+the canonical website issue links and leaves the CLA checkbox unchecked.

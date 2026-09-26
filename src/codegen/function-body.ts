@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { functionLikeReferencesOwnThis } from "./helpers/body-references-own-this.js";
@@ -312,7 +313,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // both declare `visitNode`). Use the cache only as a fallback when no
       // registered parameter exists.
       const paramType =
-        sigParamType ?? resolved?.params[i] ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+        sigParamType ??
+        resolved?.params[i] ??
+        widenJsDefaultGuessSlot(param, resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param)));
       params.push({ name: paramName, type: paramType });
       wasmParamCursor++;
     }

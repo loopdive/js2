@@ -870,7 +870,10 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         },
       ];
     }
-    body.push(...current);
+    // Every carrier arm and the unsupported fallback return. Preserve that
+    // terminal contract when Get is inlined into a result-valued block in Pop;
+    // the empty-typed dispatch itself has no executable fallthrough value.
+    body.push(...current, { op: "unreachable" });
 
     // local 2 = __any (anyref). (#2001 S1 regress) When the module has holes,
     // local 3 = __hole_scratch (externref) backs the `$Hole → undefined`

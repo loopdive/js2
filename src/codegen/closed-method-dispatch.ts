@@ -393,7 +393,14 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__extern_get_idx` vec/array-like arms the loop reads through are emitted
   // only under `ctx.standalone` (see `objArrayLikeArms` in object-runtime.ts —
   // same gate as the vararg dispatcher above).
-  if (ctx.standalone && NATIVE_HOF_METHODS.has(methodName) && arity >= 1) {
+  // (#6651 E-S1) Arity 0 is admitted too: `sample.every()` is `IsCallable(undefined)`
+  // → TypeError per §23.1.3.x step 3, and without the arm the zero-arg call fell
+  // to the open-`$Object` bottom arm, where `__extern_method_call` answers
+  // `undefined` for a vec brand — a normal return where the spec requires a
+  // throw (`<m>/callbackfn-{not-callable,is-not-callable}-throws.js`, the
+  // "no arg(s)" assertion). The arm passes the canonical `undefined` as the
+  // callback so the helper's own IsCallable gate raises the TypeError.
+  if (ctx.standalone && NATIVE_HOF_METHODS.has(methodName)) {
     getOrRegisterVecBaseType(ctx);
     ensureNativeArrayHof(ctx, methodName);
   }
@@ -1654,17 +1661,13 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     {
       const hofFuncIdx = ctx.funcMap.get(`__hof_${methodName}`);
       const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
-      if (
-        ctx.standalone &&
-        arity >= 1 &&
-        hofFuncIdx !== undefined &&
-        ctx.vecBaseTypeIdx >= 0 &&
-        objVecTypeIdx !== undefined
-      ) {
+      if (ctx.standalone && hofFuncIdx !== undefined && ctx.vecBaseTypeIdx >= 0 && objVecTypeIdx !== undefined) {
         const isReduceForm = methodName === "reduce" || methodName === "reduceRight";
         const hofCall: Instr[] = [
           { op: "local.get", index: 0 }, // recv (externref)
-          { op: "local.get", index: 1 }, // cb
+          // (#6651 E-S1) arity 0 has no `cb` param to read — feed the canonical
+          // `undefined` so the helper's IsCallable gate throws the TypeError.
+          ...((arity >= 1 ? [{ op: "local.get", index: 1 }] : canonicalUndefinedExternInstrs(ctx)) satisfies Instr[]),
           ...((arity >= 2 ? [{ op: "local.get", index: 2 }] : [{ op: "ref.null.extern" }]) satisfies Instr[]), // thisArg | init
           ...((isReduceForm ? [{ op: "i32.const", value: arity >= 2 ? 1 : 0 }] : []) satisfies Instr[]), // hasInit
           { op: "call", funcIdx: hofFuncIdx },

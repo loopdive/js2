@@ -176,6 +176,29 @@ function scopeStatements(scope: ts.Node): readonly ts.Statement[] {
 }
 
 /**
+ * (#6651 C3) Is `name` a FORMAL PARAMETER of the var scope `scope`?
+ *
+ * B.3.3.1 step 1.a.ii guards the whole web-compat step — the declaration in
+ * step 1 AND the `SetMutableBinding` in step 3 — on "**parameterNames does not
+ * contain F**". A parameter is therefore categorically different from the
+ * `var f` that {@link scopeBindsName} also reports: `var f` gets the step-3
+ * assignment (#4131, the `*-existing-var-update` family), a parameter gets
+ * nothing at all (the `*-skip-param` / `*-skip-dft-param` families, which
+ * assert the parameter still reads 123 AFTER the block ran).
+ */
+function scopeBindsNameAsParameter(scope: ts.Node, name: string): boolean {
+  if (ts.isSourceFile(scope) || ts.isModuleBlock(scope)) return false;
+  const params = (scope as ts.FunctionLikeDeclarationBase).parameters;
+  if (!params) return false;
+  for (const p of params) {
+    const names = new Set<string>();
+    collectBoundNames(p.name, names);
+    if (names.has(name)) return true;
+  }
+  return false;
+}
+
+/**
  * Does the var scope `scope` already bind `name` in its OWN right — a parameter,
  * a `var` anywhere inside it, or a scope-top-level `let`/`const`/`class`/
  * `function`? When it does, Annex B simply declines to create an ADDITIONAL
@@ -336,6 +359,12 @@ export function annexBUpdatesExistingVarBinding(fd: ts.FunctionDeclaration): boo
   // A cancelled extension creates NO binding and updates none either (B.3.3.1
   // step 1.a.ii skips the whole step-3 replacement).
   if (hasInterveningLexicalBinder(fd.parent, name, scope)) return false;
+  // (#6651 C3) B.3.3.1 step 1.a.ii — `parameterNames does not contain F`.
+  // Measured: with the parameter on an `f64` slot the step-3 store was dropped
+  // by the type mismatch and the eight `*-func-skip-dft-param.js` rows passed
+  // by accident; widening that slot to externref made the store land and
+  // `after` read the function object instead of 123.
+  if (scopeBindsNameAsParameter(scope, name)) return false;
   return scopeBindsName(scope, name);
 }
 

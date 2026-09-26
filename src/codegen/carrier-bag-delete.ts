@@ -65,10 +65,16 @@
  * to exactly today's behaviour instead of trapping.
  */
 import type { Instr } from "../ir/types.js";
+import { selectNativeStringLiteral } from "../runtime/wasmgc/values/string-literal-bodies.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { exposedClosedStructFieldName, FNCTOR_CONSTRUCTOR_FIELD } from "./fnctor-identity-fields.js";
 import { buildInstanceTombstoneDeleteArm } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { addFuncType } from "./registry/types.js";
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js";
+import { linkBrandRoleOf } from "./shape-brand.js";
+import { isInternalStructFieldName } from "./struct-field-exports.js";
+import { isNominalStructParent } from "./struct-hierarchy-layout.js";
 
 /** The tri-state carrier-bag delete native minted here. */
 export const CARRIER_BAG_DELETE = "__carrier_bag_delete";
@@ -85,6 +91,179 @@ const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
 
 /** Sole local of `__carrier_bag_delete` (params are 0=obj, 1=key). */
 const BAG = 2;
+
+/**
+ * A closed anonymous receiver which may use the identity bag for a true
+ * expando delete. This is intentionally narrower than the generic
+ * `IS_INSTANCE_EXPANDO_CARRIER` universe: classes retain #5753's marker arm,
+ * fnctors own their split/cold layouts, and every unknown representation keeps
+ * the historical `-1` fallthrough.
+ */
+type PreexistingNativeStringLiteral =
+  | { readonly kind: "global"; readonly globalIdx: number }
+  | { readonly kind: "callable"; readonly funcIdx: number };
+
+type PhysicalAnonymousField = {
+  /**
+   * Materialized before FINALIZE. The anonymous delete fill must never append a
+   * literal global or helper while it is wiring an existing native.
+   */
+  readonly literal: PreexistingNativeStringLiteral;
+};
+
+type AnonymousExpandoDeleteCandidate = {
+  readonly typeIdx: number;
+  readonly physicalFields: readonly PhysicalAnonymousField[];
+  readonly shapeFieldIdx?: number;
+  readonly shapeId?: number;
+};
+
+/**
+ * Recover a literal materialization that source emission has already made
+ * available. Selection is pure; unlike `nativeStringLiteralInstrs`, this cannot
+ * mint a late global or oversized rope helper during FINALIZE.
+ */
+function preexistingNativeStringLiteral(
+  ctx: CodegenContext,
+  value: string,
+): PreexistingNativeStringLiteral | undefined {
+  const selection = selectNativeStringLiteral(ctx.utf8Storage, ctx.utf8StrTypeIdx >= 0, value);
+  if (selection.kind === "global") {
+    const globalIdx = ctx.nativeStrLiteralGlobals.get(selection.key);
+    return globalIdx === undefined ? undefined : { kind: "global", globalIdx };
+  }
+  const funcIdx = ctx.nativeStrHelpers.get(selection.key);
+  return funcIdx === undefined ? undefined : { kind: "callable", funcIdx };
+}
+
+function preexistingNativeStringLiteralInstrs(literal: PreexistingNativeStringLiteral): Instr[] {
+  return literal.kind === "global"
+    ? [{ op: "global.get", index: literal.globalIdx }]
+    : [{ op: "call", funcIdx: literal.funcIdx }];
+}
+
+/**
+ * Return only receiver types whose final identity can be established without a
+ * new layout marker.
+ *
+ * This runs after `resolveAndRecordShapeStamping`, while all user source bodies
+ * and their struct types are complete. `brandCollidingShapeTypes` runs later:
+ * an admitted bare `__anon_` type is either structurally unique or receives a
+ * trailing nominal brand before encoding. `noBrandShapeTypes`, supertype
+ * edges, aliases, and linked modules are deliberately declined because that
+ * final argument would no longer establish an exact receiver inventory.
+ */
+function collectAnonymousExpandoDeleteCandidates(ctx: CodegenContext): AnonymousExpandoDeleteCandidate[] {
+  if (!(ctx.standalone || ctx.wasi)) return [];
+  // A linked peer can contribute a canonical twin that this module cannot
+  // inventory here. The shape-brand pass handles that broader problem, but this
+  // narrow consumer has no cross-module receipt, so retain the old fallback.
+  if (linkBrandRoleOf(ctx) !== undefined) return [];
+
+  // `shape-brand.ts` only brands a bare candidate after this anchor. Requiring
+  // the same precondition keeps a later same-layout type from widening a
+  // `ref.test` arm which the branding pass cannot repair.
+  const shapeBrandAnchorIdx = ctx.structMap.get("__vec_base");
+  if (shapeBrandAnchorIdx === undefined) return [];
+
+  const namesByTypeIdx = new Map<number, string[]>();
+  for (const [structName, typeIdx] of ctx.structMap) {
+    const names = namesByTypeIdx.get(typeIdx);
+    if (names) names.push(structName);
+    else namesByTypeIdx.set(typeIdx, [structName]);
+  }
+
+  const out: AnonymousExpandoDeleteCandidate[] = [];
+  for (const [structName, fields] of ctx.structFields) {
+    if (!structName.startsWith("__anon_")) continue;
+    const typeIdx = ctx.structMap.get(structName);
+    if (typeIdx === undefined || typeIdx <= shapeBrandAnchorIdx) continue;
+    // `structMap` aliases are not a runtime identity proof. Require both maps
+    // to name exactly this source shape before emitting a `ref.test` arm.
+    const aliases = namesByTypeIdx.get(typeIdx);
+    if (aliases?.length !== 1 || aliases[0] !== structName || ctx.typeIdxToStructName.get(typeIdx) !== structName) {
+      continue;
+    }
+    const typeDef = ctx.mod.types[typeIdx];
+    if (
+      !typeDef ||
+      typeDef.kind !== "struct" ||
+      typeDef.name !== structName ||
+      typeDef.fields !== fields ||
+      typeDef.superTypeIdx !== undefined ||
+      isNominalStructParent(ctx.mod, typeIdx) ||
+      ctx.noBrandShapeTypes.has(typeIdx)
+    ) {
+      continue;
+    }
+    // Cold/residual layouts are fnctor-owned. An anonymous type must never
+    // borrow their incomplete field inventory merely because it has an
+    // incidental structural match.
+    if (
+      ctx.fnctorColdTailTypeIdx?.has(structName) ||
+      ctx.fnctorColdTailStructName?.has(structName) ||
+      ctx.fnctorLayoutInfo?.has(structName)
+    ) {
+      continue;
+    }
+
+    const physicalFields: PhysicalAnonymousField[] = [];
+    const seenPhysicalNames = new Set<string>();
+    let completeInventory = true;
+    for (const field of fields) {
+      if (!field || field.name === undefined) {
+        completeInventory = false;
+        break;
+      }
+      // A user-recorded `$constructor` is not fnctor identity state. Preserve
+      // both its literal spelling and the dynamic-reader's historical exposed
+      // `constructor` spelling, so neither overlay can reveal a stale slot.
+      // Every other spelling is internal only when the insertion metadata says
+      // so. Test `undefined`, rather than truthiness: the empty string is a
+      // legal physical key.
+      const sourceRecorded = !isInternalStructFieldName(ctx, structName, field.name);
+      const physicalNames =
+        field.name === FNCTOR_CONSTRUCTOR_FIELD && sourceRecorded
+          ? [field.name, exposedClosedStructFieldName(field.name)]
+          : [exposedClosedStructFieldName(field.name) ?? (sourceRecorded ? field.name : undefined)];
+      for (const physicalName of physicalNames) {
+        if (physicalName === undefined || seenPhysicalNames.has(physicalName)) continue;
+        // Well-known Symbol fields use their `@@name` internal spelling. A
+        // string comparison cannot distinguish `Symbol.iterator` from the
+        // ordinary string "@@iterator", so decline this whole receiver rather
+        // than delete a bag overlay and resurrect physical Symbol storage.
+        if (physicalName.startsWith("@@")) {
+          completeInventory = false;
+          break;
+        }
+        const literal = preexistingNativeStringLiteral(ctx, physicalName);
+        // The inventory is all-or-nothing: an oversized or otherwise
+        // unmaterialized physical field must decline the whole candidate rather
+        // than tempt FINALIZE to mint a new literal helper.
+        if (literal === undefined) {
+          completeInventory = false;
+          break;
+        }
+        seenPhysicalNames.add(physicalName);
+        physicalFields.push({ literal });
+      }
+      if (!completeInventory) break;
+    }
+    if (!completeInventory) continue;
+
+    const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
+    const shapeId = ctx.shapeIdByStructName.get(structName);
+    // A partial stamp is not an identity guard. A non-stamped type is safe only
+    // through the unique-or-later-branded rule above.
+    if (shapeFieldIdx >= 0 !== (shapeId !== undefined)) continue;
+    out.push({
+      typeIdx,
+      physicalFields,
+      ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+    });
+  }
+  return out.sort((left, right) => left.typeIdx - right.typeIdx);
+}
 
 /**
  * Reserve `__carrier_bag_delete(externref, externref) -> i32` as an
@@ -208,6 +387,126 @@ export function buildNonObjectDeleteArms(
 }
 
 /**
+ * `BAG` remains null until an exact anonymous-shape arm finds the receiver's
+ * existing identity bag. The candidate ordinal is set only with a non-null
+ * lookup result, so the common tail can decide whether stored-key physical
+ * collision screening applies without widening the closure/vec/Error routes.
+ */
+function buildAnonymousExpandoLookupArm(
+  candidates: readonly AnonymousExpandoDeleteCandidate[],
+  lookupIdx: number,
+  anyLocal: number,
+  candidateLocal: number,
+): Instr[] {
+  let dispatch: Instr[] = [];
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    const candidate = candidates[index]!;
+    const ordinal = index + 1;
+    const hit: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: lookupIdx },
+      { op: "local.tee", index: BAG },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [],
+        else: [
+          { op: "i32.const", value: ordinal },
+          { op: "local.set", index: candidateLocal },
+        ],
+      },
+    ];
+    dispatch = buildShapeGuardedArm(anyLocal, candidate.typeIdx, candidate, { kind: "empty" }, hit, dispatch);
+  }
+  return [
+    { op: "local.get", index: BAG },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: anyLocal },
+        ...dispatch,
+      ],
+    },
+  ];
+}
+
+/**
+ * Return `-1` when the found bag entry overlays a physical field of the
+ * admitted anonymous receiver. The entry's field 0 is the stored key; using it
+ * here (and for the delegated delete) avoids adding a caller-key coercion
+ * replay after this lookup and preserves Symbol identity.
+ */
+function buildAnonymousPhysicalCollisionScreen(
+  ctx: CodegenContext,
+  candidates: readonly AnonymousExpandoDeleteCandidate[],
+  args: {
+    candidateLocal: number;
+    entryLocal: number;
+    flatKeyLocal: number;
+    propEntryTypeIdx: number;
+    flattenIdx: number;
+    equalsIdx: number;
+  },
+): Instr[] {
+  const notHandled = (): Instr[] => [{ op: "i32.const", value: -1 }, { op: "return" }];
+  let candidateChecks: Instr[] = [];
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    const candidate = candidates[index]!;
+    const physicalNameChecks: Instr[] = [];
+    for (const physicalField of candidate.physicalFields) {
+      physicalNameChecks.push(
+        { op: "local.get", index: args.flatKeyLocal },
+        { op: "ref.as_non_null" },
+        ...preexistingNativeStringLiteralInstrs(physicalField.literal),
+        { op: "call", funcIdx: args.equalsIdx },
+        { op: "if", blockType: { kind: "empty" }, then: notHandled() },
+      );
+    }
+    candidateChecks = [
+      { op: "local.get", index: args.candidateLocal },
+      { op: "i32.const", value: index + 1 },
+      { op: "i32.eq" },
+      { op: "if", blockType: { kind: "empty" }, then: physicalNameChecks, else: candidateChecks },
+    ];
+  }
+  return [
+    { op: "local.get", index: args.candidateLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ne" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // Symbols are not strings, and therefore cannot equal any physical
+        // field name. They keep the ordinary bag-delete path without a cast.
+        { op: "local.get", index: args.entryLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: args.propEntryTypeIdx, fieldIdx: 0 },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: args.entryLocal },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: args.propEntryTypeIdx, fieldIdx: 0 },
+            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+            { op: "call", funcIdx: args.flattenIdx },
+            { op: "local.set", index: args.flatKeyLocal },
+            ...candidateChecks,
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * Fill `__carrier_bag_delete` at FINALIZE, once `__delete_property` /
  * `__obj_find` and the carrier substrates are in `funcMap`:
  *
@@ -227,9 +526,14 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
   if (cbdIdx === undefined) return;
   const fn = definedFuncAt(ctx, cbdIdx);
   if (!fn) return;
-  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  const runtimeTypes = ctx.objectRuntimeTypes;
+  const objectTypeIdx = runtimeTypes?.objectTypeIdx;
+  const propEntryTypeIdx = runtimeTypes?.propEntryTypeIdx;
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const deleteIdx = ctx.funcMap.get("__delete_property");
+  // `propEntryTypeIdx` is required only by the anonymous data-expando arm
+  // below. The existing closure/vec/Error arms must retain their historical
+  // early return when an older or partial runtime has no `$PropEntry` layout.
   if (objectTypeIdx === undefined || objFindIdx === undefined || deleteIdx === undefined) return;
 
   /** `if (<carrier predicate>) bag = <lookup>(obj);` guarded on bag still being null. */
@@ -300,15 +604,109 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
         ];
   const vecArm = lookupArm(ctx.funcMap.get(IS_VEC_PROP_CARRIER), ctx.funcMap.get(VEC_BAG_LOOKUP));
   const errorArm = lookupArm(ctx.funcMap.get(IS_ERROR_PROP_CARRIER), ctx.funcMap.get(ERROR_PROP_BAG_LOOKUP));
-  if (closureArm.length === 0 && nativeGeneratorArm.length === 0 && vecArm.length === 0 && errorArm.length === 0)
+  const anonymousCandidates = collectAnonymousExpandoDeleteCandidates(ctx);
+  const anonymousLookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
+  const flattenIdx = ctx.funcMap.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  // This is eligibility only. It deliberately allocates no locals before the
+  // common arm gate: #5753's class retained-marker arm replaces its local list
+  // after that gate, so a composed tree must form that class arm first and then
+  // append this slice's scratch locals below it.
+  const anonymousPlan =
+    propEntryTypeIdx === undefined ||
+    anonymousCandidates.length === 0 ||
+    anonymousLookupIdx === undefined ||
+    flattenIdx === undefined ||
+    equalsIdx === undefined ||
+    ctx.anyStrTypeIdx < 0 ||
+    ctx.nativeStrTypeIdx < 0
+      ? undefined
+      : {
+          candidates: anonymousCandidates,
+          lookupIdx: anonymousLookupIdx,
+          flattenIdx,
+          equalsIdx,
+          propEntryTypeIdx,
+          nativeStrTypeIdx: ctx.nativeStrTypeIdx,
+        };
+
+  // `reserveClosurePropHelpers` is unconditional inside standalone/WASI
+  // `ensureObjectRuntime`, so `__carrier_bag_delete` is already reserved before
+  // `__delete_property` bakes its call even in an anonymous-only module. Keep
+  // anonymous eligibility in this gate explicitly: closure/vec/Error arms must
+  // not be the accidental reason an anonymous-only finalizer appears filled.
+  if (
+    closureArm.length === 0 &&
+    nativeGeneratorArm.length === 0 &&
+    vecArm.length === 0 &&
+    errorArm.length === 0 &&
+    anonymousPlan === undefined
+  )
     return;
 
+  let anonymousArm: Instr[] = [];
+  let anonymousState:
+    | {
+        candidateLocal: number;
+        entryLocal: number;
+        flatKeyLocal: number;
+      }
+    | undefined;
+  if (anonymousPlan !== undefined) {
+    // This is the composition point after the common gate. When #5753's class
+    // retained-marker arm is present, it forms and replaces `fn.locals` above
+    // this point (owning 3/4/5); this slice only appends to that final list.
+    const anyLocal = 2 + fn.locals.length;
+    const candidateLocal = anyLocal + 1;
+    const entryLocal = candidateLocal + 1;
+    const flatKeyLocal = entryLocal + 1;
+    fn.locals.push(
+      { name: "anonAny", type: { kind: "anyref" } },
+      { name: "anonCandidate", type: { kind: "i32" } },
+      { name: "anonEntry", type: { kind: "ref_null", typeIdx: anonymousPlan.propEntryTypeIdx } },
+      { name: "anonFlatKey", type: { kind: "ref_null", typeIdx: anonymousPlan.nativeStrTypeIdx } },
+    );
+    anonymousArm = buildAnonymousExpandoLookupArm(
+      anonymousPlan.candidates,
+      anonymousPlan.lookupIdx,
+      anyLocal,
+      candidateLocal,
+    );
+    anonymousState = { candidateLocal, entryLocal, flatKeyLocal };
+  }
+
   const notHandled: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
+  const foundEntryTee: Instr[] =
+    anonymousState === undefined ? [] : [{ op: "local.tee", index: anonymousState.entryLocal }];
+  const delegatedDeleteKey: Instr[] =
+    anonymousState === undefined
+      ? [{ op: "local.get", index: 1 }]
+      : [
+          // Anonymous candidates delegated through a found `$PropEntry`; use
+          // that entry's stored key rather than replaying an arbitrary caller
+          // coercion in the ordinary-delete helper. Legacy carrier arms retain
+          // their original key verbatim.
+          { op: "local.get", index: anonymousState.candidateLocal },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ne" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: anonymousState.entryLocal },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: anonymousPlan!.propEntryTypeIdx, fieldIdx: 0 },
+              { op: "extern.convert_any" },
+            ],
+            else: [{ op: "local.get", index: 1 }],
+          },
+        ];
   fn.body = [
     ...closureArm,
     ...nativeGeneratorArm,
     ...vecArm,
     ...errorArm,
+    ...anonymousArm,
     { op: "local.get", index: BAG },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },
@@ -329,10 +727,21 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
     { op: "ref.cast", typeIdx: objectTypeIdx },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: objFindIdx },
+    ...foundEntryTee,
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },
+    ...(anonymousState === undefined
+      ? []
+      : buildAnonymousPhysicalCollisionScreen(ctx, anonymousPlan!.candidates, {
+          candidateLocal: anonymousState.candidateLocal,
+          entryLocal: anonymousState.entryLocal,
+          flatKeyLocal: anonymousState.flatKeyLocal,
+          propEntryTypeIdx: anonymousPlan!.propEntryTypeIdx,
+          flattenIdx: anonymousPlan!.flattenIdx,
+          equalsIdx: anonymousPlan!.equalsIdx,
+        })),
     { op: "local.get", index: BAG },
-    { op: "local.get", index: 1 },
+    ...delegatedDeleteKey,
     { op: "call", funcIdx: deleteIdx },
   ];
 }

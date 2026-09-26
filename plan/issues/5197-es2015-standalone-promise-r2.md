@@ -4,7 +4,7 @@ title: "ES2015 standalone promise — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-13
+updated: 2026-09-21
 loc-budget-allow:
   # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
   # metadata carrier. Each grant lives in the module that already OWNS the
@@ -268,6 +268,28 @@ row `built-ins/Promise/all/invoke-resolve.js` both returned `ROW pass`
 `.tmp/5197-test262-original.WI7qya`). The latter is one measured official
 conformance gain over its prior `callCount` 0-versus-3 failure. It does not
 close the full 23-row R3-2 cohort or the documented direct-VEC limitations.
+### Earlier integrated implementation evidence (retained historical snapshot)
+
+Current bounded evidence on the e002 baseline is a 10/10 focused standalone
+protocol suite (54.62 s, single fork): literal evaluation/Get order, one
+captured resolve and call receiver/arity, contrasting and original-order
+callback-arity probes, one captured `then`, abrupt Call rejection, the
+remaining-elements sentinel, per-slot f64 boxing, and race handler identity.
+The unchanged official `all/invoke-resolve.js` previously failed with
+`callCount` 0 versus 3 and remains the acceptance row; its exact assembled
+harness diagnostic is still required before claiming it fixed. A filtered WAT
+compile registered the observable resolve-cap type, which proves route
+registration but not the exact callback execution path.
+
+### September 22 merge reconciliation
+
+Main's D2 integration contains the earlier observable implementation inside
+`promise-combinators.ts`; PR5883's separate-module integration preserves a
+different snapshot. Both historical evidence records above are retained, but
+neither validates this merge. The intrinsic observable dispatcher now uses
+`promise-observable-combinators.ts` consistently; upstream's custom-constructor
+D1 route and the legacy combinator implementation remain intact. No retirement,
+full R3-2 completion, or current-main conformance claim follows from this merge.
 
 ## Problem
 

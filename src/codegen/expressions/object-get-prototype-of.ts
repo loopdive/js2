@@ -230,6 +230,11 @@ export function tryCompileEs5GetPrototypeOfEarly(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
 
+  // (#6651 cluster F) A binding whose [[Prototype]] this module writes must be
+  // READ, not folded — see `tryEmitDynamicProtoRuntimeRead`.
+  const dynamicProtoRead = tryEmitDynamicProtoRuntimeRead(ctx, fctx, arg0);
+  if (dynamicProtoRead) return dynamicProtoRead;
+
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
@@ -609,6 +614,140 @@ function isEmptyReconstructedConstructor(ctx: CodegenContext, expr: ts.NewExpres
   const gate = ctx.fnctorEscapeGate;
   if (!gate?.approved.has(expr) || !ts.isIdentifier(expr.expression)) return false;
   return gate.ctorDeclByName.get(expr.expression.text)?.body?.statements.length === 0;
+}
+
+/**
+ * (#6651 cluster F) Per-source-file set of identifier NAMES that appear as the
+ * `[[Prototype]]`-mutation RECEIVER of a `{Object,Reflect}.setPrototypeOf(x, …)`
+ * call or an `x.__proto__ = …` assignment.
+ *
+ * Why this is scanned here rather than read off `ctx.dynamicProtoLiteralNodes`,
+ * which `scanForDynamicProto` already maintains: that set is populated by
+ * `markReceiver`, whose FIRST branch is `ctx.oracle.typeFactOf(recv).kind ===
+ * "class"` — and test262 rows are **JS**, where TypeScript's expando inference
+ * gives `var o = {}` an anonymous type whose symbol carries the VARIABLE's
+ * name, so the fact reads `{kind:"class", name:"o"}` and the function returns
+ * before it ever records the literal. (Cluster B hit the identical trap from
+ * the other side: a gate that admitted only `{kind:"object"}` compiled, fired
+ * under a hand-written `.ts` probe, and never fired under the runner.)
+ * Measured: for `var o = {}; Reflect.setPrototypeOf(o, proto)` the literal is
+ * NOT in `dynamicProtoLiteralNodes`, yet the write lands — so that set is not
+ * the fact this reader needs.
+ *
+ * Cached per `SourceFile`; the walk is structural and runs at most once.
+ */
+const dynamicProtoReceiverNamesBySource = new WeakMap<ts.SourceFile, Set<string>>();
+
+function dynamicProtoReceiverNames(source: ts.SourceFile): Set<string> {
+  const cached = dynamicProtoReceiverNamesBySource.get(source);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    let cur = e;
+    while (
+      ts.isAsExpression(cur) ||
+      ts.isParenthesizedExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isSatisfiesExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
+  const mark = (e: ts.Expression | undefined): void => {
+    if (!e) return;
+    const target = unwrap(e);
+    if (ts.isIdentifier(target)) names.add(target.text);
+  };
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      (node.expression.expression.text === "Object" || node.expression.expression.text === "Reflect") &&
+      node.expression.name.text === "setPrototypeOf" &&
+      node.arguments.length >= 1
+    ) {
+      mark(node.arguments[0]);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === "__proto__"
+    ) {
+      mark(node.left.expression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  dynamicProtoReceiverNamesBySource.set(source, names);
+  return names;
+}
+
+/**
+ * (#6651 cluster F) `Object.getPrototypeOf(o)` where `o`'s prototype is written
+ * somewhere in this module: read the field, do not fold.
+ *
+ * Several downstream arms answer this query from the binding's DECLARATION — an
+ * object literal with no colon-form `__proto__` folds to `%Object.prototype%`,
+ * and (in the JS shapes test262 is written in) the expando-inferred struct name
+ * lands in `ctx.classSet`, so the class arm answers with the compile-time
+ * prototype singleton instead. Both are exact for a literal whose prototype is
+ * never written and UNSOUND for one whose prototype is written later. Measured
+ * on this branch's base: `var o = {}; Reflect.setPrototypeOf(o, proto)` made the
+ * inherited read `o.tag` resolve through `proto` — the WRITE was already
+ * correct — while `Object.getPrototypeOf(o)` still answered `%Object.prototype%`.
+ * One object, one link, two answers.
+ *
+ * This is the same unsoundness #5270 step 2 recognised for `{ __proto__: v }`;
+ * the only difference is that the write is a statement rather than a property.
+ *
+ * It must ROUTE, not merely decline. A decline in the literal folds below falls
+ * through to the class arm, which re-folds — measured: the decline alone moved
+ * nothing for the JS shape. So this claims the expression here, ahead of every
+ * fold, and emits the generic `__getPrototypeOf` read.
+ *
+ * Deliberately placed AFTER the integrity arm above: a `preventExtensions`-
+ * marked receiver keeps the compiler-owned singleton (its `$proto` field is
+ * never written, and `Reflect/setPrototypeOf/return-false-*` assert exactly
+ * that answer after a REFUSED set).
+ *
+ * An unset `$proto` reads back as `%Object.prototype%` through this native, not
+ * as `null` — verified with a probe before relying on it, because the whole
+ * "refused set leaves Object.prototype" family depends on it.
+ *
+ * Standalone-gated: the fold is wrong in both lanes, but the host lane answers
+ * this query through its own `__getPrototypeOf` import on a real JS object and
+ * is not measured by this cluster.
+ */
+function tryEmitDynamicProtoRuntimeRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!(ctx.standalone || ctx.wasi) || !ts.isIdentifier(arg0)) return null;
+  // Narrow on purpose: only a binding whose declaration is a plain object
+  // literal. That is the one carrier whose runtime `__getPrototypeOf` answer is
+  // verified equivalent to the fold it replaces (an unset `$proto` reads back
+  // as `%Object.prototype%`); a name match alone would also claim arrays, class
+  // instances and builtin carriers, whose folds are the only correct answer.
+  const initializer = ctx.oracle.variableInitializerOf(arg0);
+  if (!initializer || !ts.isObjectLiteralExpression(initializer)) return null;
+  if (!dynamicProtoReceiverNames(arg0.getSourceFile()).has(arg0.text)) return null;
+  const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (gptIdx === undefined) return null;
+  const argType = compileExpression(ctx, fctx, arg0);
+  if (!argType) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getPrototypeOf") ?? gptIdx });
+  return { kind: "externref" };
 }
 
 function hasProvablyNonNullOrdinaryPrototype(ctx: CodegenContext, expr: ts.Expression): boolean {

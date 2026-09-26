@@ -238,12 +238,14 @@ import {
   typedArrayViewSignedness,
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
 import {
+  arrayIndexConstantKey,
   elementAccessTypedArrayName,
   emitDynamicVecElementGet,
   emitDynamicStringVecElementGet,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
+  isDynamicStringVecKey,
   isDynamicPropertyKeyExpression,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
@@ -6460,6 +6462,24 @@ export function compileElementAccessBody(
     }
 
     const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
+    // A capture result has physical `index` / `input` fields in addition to its
+    // ordinary vec prefix. In standalone, the generic dynamic-string vec route
+    // below intentionally declines, so these keys must use the existing
+    // externref `__extern_get` dispatch before the numeric element fallback.
+    // Reuse the helper rather than duplicating its receiver/key staging: it
+    // evaluates both exactly once and resolves the import after nested emission.
+    // A literal canonical array index such as `m["1"]` retains the existing
+    // positional read. `arrayIndexConstantKey` deliberately declines mutable
+    // identifier initializers, so dynamic string keys still reach __extern_get.
+    if (
+      isRegexMatchVec &&
+      arrayIndexConstantKey(ctx, fctx, expr.argumentExpression) === undefined &&
+      isDynamicStringVecKey(ctx, expr.argumentExpression)
+    ) {
+      return emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+    }
     // Dynamic object-like keys must be canonicalized with ToPropertyKey before
     // the receiver-specific runtime dispatch. This is the read twin of the
     // assignment fallback above: numeric results (for example an object's
@@ -6520,7 +6540,18 @@ export function compileElementAccessBody(
     // elements use the dedicated reference-array widen below.
     const numericHint = expectedType?.kind === "f64" || expectedType?.kind === "i32";
     const taClass = classifyTypedArrayType(ctx.checker.getTypeAtLocation(expr.expression), ctx.checker);
-    const oobUndefined = !numericHint && taClass === "other" && !isRegexMatchVec;
+    // `$__regexp_match_vec` carries physical `index` / `input` metadata, but
+    // its `{length,data}` prefix remains an ordinary nullable native-string
+    // array for a numeric element read. The constant non-array numeric-key
+    // route above has already handled literal `m[-1]`, `m[1.5]`, and other
+    // compile-time named numeric properties through the expando reader. A
+    // number-typed variable retains the established direct-i32 lowering; this
+    // change only gives its positional element result the existing
+    // boxed-or-undefined boundary, and does not claim a general runtime
+    // canonical-numeric-property implementation.
+    const numericRegexMatchElementRead =
+      isRegexMatchVec && isNumericIndexExpression(ctx, expr.argumentExpression, fctx);
+    const oobUndefined = !numericHint && taClass === "other" && (!isRegexMatchVec || numericRegexMatchElementRead);
     // (#2798 — hybrid audit Row 9) A genuine typed-array VIEW OOB element read
     // returns JS `undefined` (the view length is the bound). Mutually exclusive
     // with the plain-array F1 arm above (`taClass !== "other"` vs `=== "other"`).

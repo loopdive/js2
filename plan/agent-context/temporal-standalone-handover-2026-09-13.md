@@ -1111,3 +1111,317 @@ four `subclassing-ignored` rows); then the two PlainDate `era` rows
 (#6633), the >2^63 BigInt range, `Duration/compare/order-of-operations.js`
 (#6628), `PlainDateTime/from/argument-string-offset.js`, the Duration
 one-offs.
+
+## Stack state 2026-09-19 (post-S66) — PR #5990 (S65) MERGED; S66 on `issue-5383-standalone-temporal-s66` at `3e7ac90073`; #6644 in-progress (three mechanisms landed); four-family 459/480
+
+PR #5990 landed on `main` 19:44 UTC. S66 (Opus) landed cross-link
+`instanceof`, static inheritance through a linked heritage and identifier
+heritage with a captured parent (see #5383 "### S66 findings"); rows
+unchanged. Base TSVs: `.tmp/s66/battery/*-cur.tsv` in worktree
+`agent-a5b45fd9c24d31356` (identical to S65's).
+
+**Next lanes** (one at a time, Opus): S67 = #6644 blockers (a) computed
+static read class-name resolution via the property-access dispatch's
+`resolvedClass`, (b) runtime spread into a resolved provider static
+(`S[m](...a)`) — the two `from/*` `subclassing-ignored` rows; then
+`super(...<runtime spread>)` via S34's argv driver (`abs`/`add` rows), the
+two PlainDate `era` rows (#6633), the >2^63 BigInt range,
+`Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js`, the Duration one-offs.
+
+## Stack state 2026-09-20 (post-S67) — PR #5992 (S66) MERGED; S67 on `issue-5383-standalone-temporal-s67` at `907ac32037` (+ merge of main); #6644 in-progress (residuals 1, 2, 4 closed); four-family 459/480
+
+PR #5992 landed on `main` 00:22 UTC. S67 (Opus; lane killed by the 03:20
+container restart, lead finished verification) landed identity-keyed
+linked-static resolution, runtime spread into an inherited linked static,
+and `super(...spread)` through a linked heritage (see #5383 "### S67
+findings", #6644 "S67"). Rows unchanged at 459/480; the two `from/*`
+`subclassing-ignored` rows now stop on `SameValue(«null», «undefined»)`.
+Base TSVs: `.tmp/s67/battery/*-cur.tsv` in worktree
+`agent-a6457c177911f46f1` (identical statuses to S66's; corpus base is
+`.tmp/s67/corpus-fix.jsonl` — S66's stored corpus base had one stale sha).
+
+**Next lanes** (one at a time, Opus): (a) the `SameValue(«null»,
+«undefined»)` mechanism — `temporalHelpers.js` `canonicalizeCalendarEra`
+receives `null` for an `undefined` `era` (#6633 era rows,
+`PlainDate/from/argument-object-valid.js`, `argument-string.js`, the two
+`from/subclassing-ignored` rows) — together with S67 residual 1 (a
+rest-forwarded spread call `fwd(...args){ return this.echo(...args) }`
+answers `undefined`, no provider needed; both are needed for the
+`from/*` rows); (b) `instance[method](...a)` on a subclass instance
+(`abs`/`add` rows); then the >2^63 BigInt range (new issue),
+`Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js` +
+`overflow-default-constrain.js`, the Duration one-offs.
+
+Environment traps unchanged (see post-S59/S60): rebuild
+`scripts/compiler-bundle.mjs` before every prewarm, `JS2WASM_TEMPORAL_CACHE`
+is a full path with a fresh label per src change, copy the QuickJS artifact
++ rebuild the eval provider in a fresh worktree, CI `quality` runs Node 25
+(no legacy `try`). Container restarts every ~2–3 h: lanes commit WIP early.
+
+## Stack state 2026-09-20 (post-S68) — S68 on `issue-5383-standalone-temporal-s68` at `537b436084`+ (off the S67 PR #5998 head); #6646 + #6645 DONE; four-family 459 → **463/480**, 0 pass→fail
+
+S68 (Opus) landed two mechanisms and closed the `SameValue(«null»,
+«undefined»)` blocker. **The headline is a correction**: it was never a
+provider resurrection. `PlainDate.prototype.era` answers `undefined` through
+all eight routes measured (`from`, `from.apply`, `C["from"](...)`, a subclass,
+a property descriptor — `.tmp/s68/probes/e4.js`), and
+`canonicalizeCalendarEra` answers correctly for every spelling of `undefined`.
+The `null` comes from ARGUMENT BINDING at the call site, in two arms:
+
+- **#6646** — a spread into an identifier-held dynamic callee is lowered
+  fixed-arity, so the source array becomes formal zero. The JS-host lane
+  already had a repair (`emitDynamicSpreadCall`); the standalone twin was
+  missing. New leaf `src/codegen/standalone-dynamic-spread-call.ts`
+  (`__objvec` argv + `__apply_closure`), one splice in `call-identifier.ts`.
+- **#6645** — a spread into a MEMBER callee, two arms: a positional argument
+  AFTER a spread (the resolved-method arm binds formals by a compile-time
+  accounting that a runtime-length spread breaks) and a spread into a callable
+  PROPERTY (fixed-arity). Two splices in `call-receiver-method.ts`.
+
+Rows: `PlainDate/from/argument-object-valid.js`, `…/argument-string.js`,
+`PlainDate/from/subclassing-ignored.js`, `Duration/from/subclassing-ignored.js`
+— all four **pass** (the last two with the callable-property splice alone; the
+first two need the trailing-spread one, which is how each row is attributed).
+Four-family **463/480** (PlainDate **120/120** ← 117, Duration 109 ← 108,
+PlainDateTime 117, ZDT 117), 0 pass→fail; the nine must-not-move groups
+(3,204 rows) are flat in both directions; corpus 42×{gc,standalone}
+statusFlips=0 shaFlips=0; equivalence 22 / 1720 / 22; witness sweep 51 files /
+287 tests green under Node 22 AND Node 25.9.
+
+**S67's residual 1 was a misattribution** — `fwd(...args){return
+this.echo(...args)}` was already correct; that probe's callee reads
+`arguments`, and `this.<m>(…)` on an `arguments`-reading method answers `null`
+with no spread at all. A second splice written for that shape was REMOVED
+rather than shipped.
+
+**Environment trap the brief's prewarm line misses:** `node
+scripts/prewarm-temporal-provider.mjs` builds only the HOST provider. Every
+standalone Temporal probe/row needs `--target standalone` (or `both`), else it
+answers `Temporal is not defined` / `standalone target emitted host imports`.
+The QuickJS eval adapter must ALSO be rebuilt after each compiler-bundle
+rebuild (its key hashes the bundle), or every row reports "quickjs provider is
+not built".
+
+Full writeup: #5383 "### S68 findings", plus the two issue files. Base TSVs for
+the next lane: `.tmp/s68/battery/*-cur.tsv` in worktree
+`agent-ab63aa31880f93760`; corpus base `.tmp/s68/corpus-fix.jsonl`
+(statusFlips=0 shaFlips=0 vs S67's).
+
+**Next lanes** (one at a time, Opus): (a) `instance[method](...a)` on a
+subclass instance — the `abs`/`add` rows, still S67 residual 3; (b) the four
+S68 residuals, all argument-binding cousins: a spread with no trailing
+argument not applying a formal's DEFAULT (`number/2000/5/NULL`),
+`this.<m>(…)` on an `arguments`-reading method answering `null`, a stored
+function property called through a rest forward TRAPPING, and a defaulted
+parameter returning `null` inside a `temporalHelpers.js`-scale module; then
+the >2^63 BigInt range, `Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js`, the Duration one-offs.
+
+## Stack state 2026-09-20 (post-S69) — S69 on `issue-5383-standalone-temporal-s69` at `0981ed3967` (off the S68 PR #6005 head `ce58705b68`); #6647 one mechanism fixed, the five briefed rows attributed and CLOSED as not-ours
+
+S69 (Opus) was briefed on five red rows sharing
+`Expected a RangeError … no exception was thrown at all`. **None of the five is
+a js2wasm call-shape defect, and both briefed hypotheses are falsified.** The
+three `+00:0000` offset rows reproduce under **plain Node importing the
+polyfill directly** (`.tmp/s69/probes/host-truth.mjs`) — the vendored
+`@js-temporal/polyfill` grammar makes the offset separators independently
+optional and predates the normative "separators must match" rule, so the HOST
+lane fails them too. The two epoch-limit rows are **standalone BigInt being a
+branded i64**: `864n * 10n ** 19n` wraps to `6923773503929843712`, so the
+`ZonedDateTime` under test is ~219 years from the epoch and nothing overflows.
+The first needs a polyfill upgrade, the second arbitrary-precision BigInt (XL).
+
+**Trap:** the runner's `assert.throws` line attribution names the FIRST
+`assert.throws(` in a file, not the failing one —
+`overflow-adding-months-to-max-year.js` reports L12, but L12 PASSES and L15 is
+the failure.
+
+**What was fixed (#6647).** Probing surfaced a separate, bigger defect: with
+`eval` reachable and a provider linked, `function g(){ return {a:1}; } g()`
+answered **`null`**, while `.call`/`.apply`/`new`/a function EXPRESSION/a
+primitive result were all correct. Bisected to ONE LINE —
+`function ev(s){ return eval(s); }` — with a ~7 s repro loop
+(`.tmp/s69/probes/tp3.mts`, real provider via `compileWithTemporalGlobal`).
+`eval` sets `ctx.runtimeEvalGlobalFunctionBindings`, which routes every
+top-level declaration's call through the generic dynamic dispatcher; that
+dispatcher can only produce an `externref`, but `ensureFuncClosureSingleton`
+kept the callee's CONCRETE struct result in the wrapper's funcref type, so no
+arm matched. Fix: promote the WRAPPER's result to `externref` for exactly that
+case — one gate + one `extern.convert_any` in
+`src/codegen/closures/method-trampolines.ts`, the same shape as the
+parked-async (#4630) and native-generator bridges already on that line. Byte-
+inert without `eval`: the standalone provider binary is **3 489 530 B before and
+after**.
+
+**The next lane's target, measured and handed over:**
+`Temporal.PlainDate.prototype.add` is broken for EVERY input
+(`TypeError: Cannot destructure 'null' or 'undefined'`) and is **not** the
+mechanism above — it reproduces with no `eval` and no harness, straight through
+`compileWithTemporalGlobal` (`.tmp/s69/probes/spec2.json`), with `PD.with(…)`
+and `zdt.add(dur)` as clean controls. **22/39** rows fail in
+`PlainDate/prototype/add/` and **56/111** across
+`PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` —
+~78 rows on one mechanism. It sits on the polyfill's `Wr()` path
+(`{...qr(e).date, days:n}`), which `PlainDate`/`PlainYearMonth` arithmetic uses
+and `ZonedDateTime` (via `Ar`) does not.
+
+**REDUCED** (`.tmp/s69/probes/linked5.mts` → `linked8.mts`, ~15 s per run, a
+custom provider through the S68 linked harness): **an object built by an
+object-SPREAD literal from a provider-LOCAL source is broken once it crosses a
+FUNCTION-RETURN boundary** — `typeof` still says `"object"`, but a property read
+answers `Cannot access property on null or undefined`, and reading it inside
+the provider (`wrDays(e){ return wr(e).days; }`) TRAPS with `dereferencing a
+null pointer`. Clean controls: the same spread read WITHOUT returning the object
+(`const x={...o,days:9}; return x.days` → 9), a spread of a PARAMETER
+(`collideParam(o){ return {...o,days:9}; }` → 9), and any non-spread object
+literal. So the boundary is the function return, not the link, and the suspect
+is the source object's local/return representation rather than the spread
+builder.
+
+**Environment notes that cost time this lane:**
+- A fresh harness worktree has **no `test262` submodule**. Symlinking a sibling
+  worktree's `test262/` works but leaves a ` T test262` typechange in
+  `git status` — never `git add -A`.
+- The battery kit ships its own `*-cur.tsv`; `run-batch.mts` SKIPS any pair
+  whose out-file exists, so the copied TSVs must be moved to `base/` and
+  deleted before the run, or the whole battery silently no-ops in 2 seconds.
+- A file-copy revert for an A/B measurement **stops the in-process battery from
+  measuring what you think it is** — run-family compiles from `src/` live. Kill
+  and restart the battery around any revert window.
+
+**Validation:** four-family **463/480** (PlainDate 120, Duration 109,
+PlainDateTime 117, ZDT 117) — unchanged from S68; all 13 battery groups
+(3 684 rows) **0 pass→fail, 0 fail→pass**; corpus statusFlips=0 shaFlips=0;
+equivalence 22 / 1720 / 22; witness sweep 52 files / 290 tests green under
+Node 22 AND Node 25 apart from the two known `origin/main` breakages
+(#6602, #6603). The one flip the contended battery showed —
+`Duration/negative-infinity-throws-rangeerror.js` → `compilation timeout
+(32.3 s)` against a 30 s budget while the corpus/equivalence/sweep runs
+shared the box — re-runs **pass** on an idle box with the battery's own
+settings; `Duration-cur.tsv` is the idle-box run, the contended one is kept
+as `Duration-cur-contended.tsv`.
+
+Base TSVs for the next lane: `.tmp/s69/battery/*-cur.tsv` in worktree
+`agent-aa4900de162b96313`; corpus base `.tmp/s69/corpus-fix.jsonl`.
+
+## Stack state 2026-09-20 (post-S70) — PR #6011 (S69) MERGED; S70 on `issue-5383-standalone-temporal-s70` at `ac9c098e1e`+; #6650 DONE; four-family 463/480; add/subtract 138/150
+
+PR #6011 landed on `main` 15:22 UTC. S70 (Opus; lane killed by the ~16:10
+container restart after its fixes were pushed, lead finished verification)
+fixed the return-carrier mismatch for a spread-built object literal returned
+from a function declaration, plus the comma-expression unwrap the minified
+polyfill needs (see #5383 "### S70 findings", #6650). `PlainDate`/`PlainYearMonth`
+add/subtract 72 → 138/150; four-family unchanged 463/480. Base TSVs:
+`.tmp/s70/battery/*-cur.tsv` (13 groups + `AddSub-cur.tsv`) in worktree
+`agent-a81e3f8f42bdcb089`; corpus base `.tmp/s70/lead-corpus-fix.jsonl`.
+
+**Next lanes** (one at a time, Opus): (a) the same return-carrier mismatch for
+the four other callable shapes (arrow, function expression, object-literal
+method, class method, nested function declaration — #6650 residual table,
+probe `.tmp/s70/probes/solo3.mts`), measured against the whole Temporal
+corpus, since the minified polyfill uses all of them; (b) subclassing-ignored
+`abs`/`add` (`instance[method](...a)` on a subclass instance); (c) the >2^53
+precision rows + two epoch-limit rows (arbitrary-precision BigInt, XL, new
+issue); (d) `__apply_closure` unreachable ×3 (#6628 etc.); the three
+offset-grammar rows are polyfill-version, not ours.
+
+Traps added this slice: `run-batch.mts` skips any pair whose out-file exists
+(move the kit's shipped TSVs to `base/` first); a fresh harness worktree has no
+`test262` submodule (symlink a sibling's, never commit the ` T` typechange);
+`prewarm-temporal-provider.mjs` needs `--target both`; a file-copy revert
+corrupts an in-process battery; container restarts kill lanes every ~2–3 h —
+the lead finishes a dead lane's verification from its worktree.
+
+## Stack state 2026-09-20 (post-S71) — S71 on `issue-5383-standalone-temporal-s71` at `8d587b0159` (off the S70 PR head `78dd538964`); #6652 DONE; four-family 463/480; add/subtract 138/150 — both UNCHANGED, and that is the finding
+
+S71 (Opus) finished #6650's residual table: the return-carrier mismatch — a
+spread-built object literal is an open host `$Object` externref while the
+enclosing function's result ABI is the checker-inferred concrete struct, so the
+emitted return is a guarded downcast that always takes the null arm — is now
+fixed for the **arrow, function expression, object-literal method, class method
+and nested function declaration** as well as the top-level declaration #6650
+covered. One predicate, in the pre-pass that already walked every callable
+shape: `collectAccessorLiteralReturnCarrierTypes` consulted only the
+accessor reason, never `objectLiteralSpreadTakesHostPath`; and its private
+wrapper peeler lacked #6650's comma arm, so the two boundaries now share ONE
+peeler in `src/codegen/declarations/host-carrier-object-literal.ts`.
+
+**Read this before planning the next Temporal lane.** The standalone Temporal
+provider is **byte-identical** base vs fix (`57781189fa76e796`, 3 491 376 B,
+`cmp`-verified). The minified polyfill's five non-declaration spread-returns all
+spread a **PARAMETER** — `any` in untyped JS, hence already on the externref
+carrier, hence never broken. #6652 is a **user-code correctness fix, not a
+Temporal row-mover**; the brief's expectation that it would move Temporal rows
+outside the S70 sample is falsified, and measured
+(`.tmp/s71/probes/polyfill-shapes.mts` runs the polyfill's own shapes on the
+base and they answer correctly). The corpus is not literally flat, because a
+test262 row also compiles the TEST BODY: the new `Temporal-rest` group's chunk-3
+base run found 3 `compile_error → pass`, 0 pass→fail.
+
+Validation: 15 battery groups / 4 434 rows, 0 pass→fail everywhere; four-family
+463/480 and AddSub 138/150 both unchanged; corpus 0 status / 0 sha flips;
+equivalence 22 / 1720 / 22; witness sweep 58 files / 365 tests green on Node 22
+AND Node 25. Base TSVs for the next lane: `.tmp/s71/battery/*-cur.tsv` (15
+groups) in worktree `agent-a1913968da57de166`; corpus base
+`.tmp/s71/corpus-fix.jsonl`. **Caveat (coordinator decision, box contention):**
+`Temporal-rest` chunks 1–2 (400 of its 600 rows) have a fix-tree run only, no
+reverted-base run; the byte-identical provider bounds that to test-body
+compilation, which chunk 3 measured at 0 pass→fail.
+
+**Next lanes** (one at a time, Opus): (a) subclassing-ignored `abs`/`add`
+(`instance[method](...a)` on a subclass instance); (b) the >2^53 precision rows
++ two epoch-limit rows (arbitrary-precision BigInt, XL, new issue);
+(c) `__apply_closure` unreachable ×3 (#6628 etc.); (d) NEW — an object-literal
+method and a class method sharing a NAME emit an **invalid module**
+(`local.set[0] expected type (ref null N), found ref.as_non_null of type
+(ref M)`), no spread involved, pre-existing; five-line repro
+`.tmp/s71/probes/collide.mts`. The three offset-grammar rows remain
+polyfill-version, not ours.
+
+Traps added this slice: the **oracle-ratchet gate counts `ctx.checker` in
+COMMENTS**, so a prose mention in a new file fails it; the box has **no swap and
+sibling lanes** — run ONE `run-batch`/`run-family` at a time and `--maxWorkers=1`
+for vitest, and **reap orphaned vitest/`tsc` workers from your own earlier
+sweeps** (`ps -eo pid,rss --sort=-rss`) before blaming concurrency, they held
+~6 GB here; `run-batch.mts` writes its TSV only at GROUP end, so a kill loses the
+whole group — chunk long groups at ≤200 rows; `pnpm install` in a fresh harness
+worktree needs `CI=true` (no TTY); a `git checkout HEAD -- <path>` elsewhere in
+the tree can drop the `test262` symlink back to an empty submodule dir — re-link
+before any further battery run.
+
+## Stack state 2026-09-21 (post-S74) — parallel lanes S71–S74 all landed or landing; four-family 465/480; add/subtract 139/150; THIS BOX'S DISK IS FAILING
+
+On the user's directive the remaining buckets ran as four parallel Opus lanes
+(spawn load cap raised via the gitignored `.claude/max-load`). Outcome:
+
+| lane | issue | PR | result |
+| --- | --- | --- | --- |
+| S71 | #6652 return-carrier for arrow/fn-expr/method/class/nested | #6019 merged | user-code fix; provider byte-identical; +3 `Instant` rows |
+| S72 | #6654 `instance[method](...a)` on a subclass of a linked class | #6021 | both `subclassing-ignored` rows + `PlainYearMonth/subtract/subclassing-ignored` pass; four-family 463 → 465, AddSub 138 → 139 |
+| S73 | #6655 `__apply_closure` unreachable = >8-formal arity ceiling | landing (branch `issue-5383-standalone-temporal-s73`) | caller-side ladder fixed + witnessed; trap kept because the three rows die again in the PROVIDER's own ladder cap — S75 brief in #6655 (recommended: measure a fixed shared ceiling first, then the module-origin closure tag that also closes #6628) |
+| S74 | #6656 BigInt, slice 2 | #6020 merged | exact static ToString; the eight rows re-attributed: `any`-typed bigint ARITHMETIC does not exist in standalone (no bigint tag in the `AnyValue` set) — slice 3 designed in #6656 ("Slice 3 design"), i64 carrier, `src/codegen/any-helpers.ts` |
+
+**Next lanes** (one at a time or in parallel, Opus): S74b = #6656 slice 3
+(`any`-typed bigint arithmetic; acceptance `bi5.mts` 11/11 + the eight
+Target8 rows re-measured); S75 = #6655 provider-side arity ladder cap; then
+#6656 slices 4–5 (limbs); the three offset-grammar rows are polyfill-version.
+
+**Environment — read before starting anywhere.** The container that ran
+S67–S74 has a FAILING DISK: bad sectors inside `.git/objects/pack/pack-d51ee84f…`
+(the `tailwindcss-4.3.3.tgz` fixture blob), every fresh worktree checkout
+SIGBUSes at ~65 %, a full `--refetch` was cut off by the proxy, and the kernel
+error count kept rising with no probes. Every lane commit and landing branch is
+on origin, so nothing is lost — but the NEXT SESSION MUST START ON A FRESH
+CONTAINER; do not try to repair that pack. Base TSVs for the next lane are
+S70's (`.tmp/s70/battery/*-cur.tsv` in worktree `agent-a81e3f8f42bdcb089`) plus
+S72's for the two flipped rows — regenerate a base on the new box instead of
+copying. Traps learned this night: at most ONE battery process per lane and
+`--maxWorkers=1` sweeps on a 4-core/16 GB no-swap box (three concurrent
+batteries OOM-killed each other); never `pnpm install` in a worktree whose
+`node_modules` is a symlink (it rewrote the shared install's links and broke
+three lanes); `run-batch.mts` skips pairs whose out-file exists and writes a
+TSV only at group end; `prewarm-temporal-provider.mjs` needs `--target both`;
+the oracle-ratchet gate counts the token `ctx.checker` even in comments; a
+`Hook timed out` vitest file under load is re-run alone before it counts.
