@@ -12548,6 +12548,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/console-host-marshal.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/cross-module-struct-owners.ts",
       "state": "unmigrated",
       "layer": "legacy-host"

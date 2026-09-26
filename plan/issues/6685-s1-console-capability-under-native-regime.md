@@ -21,8 +21,14 @@ related: [3469, 4397, 4398, 6671]
 # 2026-09-26 (#6685): the plan (#5385 v2, "Design rule for every slice") places
 # the new `hostFreeEnvironment(ctx)` predicate next to the ctx types in
 # context/types.ts; +10 lines (one exported function + its doc comment).
+# 2026-09-26 (#6685 S1b): the console capability must marshal a Wasm-owned
+# string to a JS string. builtins.ts +10 (bridge export at the externref console
+# call + import). The runtime marshal lives in the new
+# src/runtime/console-host-marshal.ts with an injected converter; runtime.ts is
+# net 0 lines (host-import-policy runtimeTsLines ceiling unchanged).
 loc-budget-allow:
   - src/codegen/context/types.ts
+  - src/codegen/expressions/builtins.ts
 ---
 
 # #6685 — S1: console is a capability in a JS environment (native regime)
@@ -105,3 +111,30 @@ The in-module `__stdout_*` gates in the runner twins (`scripts/test262-worker.mj
 `target === "standalone"`; `drainAndCaptureNativeStdout` was already
 feature-detecting, so this also drains a regime module's native microtask ring.
 
+
+## Follow-up (S1b, 2026-09-26)
+
+S1 routed console to the `console_log_*` capability, but the test262 harness
+`print(x)` is untyped, so under the regime it lowers to `console_log_externref`
+and hands the host a Wasm-owned string ("Cannot convert object to primitive
+value" — reported by the #6687 lane). Three changes:
+
+1. `hostStringBridgeUsable` (native-strings.ts) asks the environment
+   (`!hostFreeEnvironment(ctx) && !ctx.strictNoHostImports`), not the regime.
+2. `compileConsoleCall`'s externref arm exports the native-string boundary
+   bridge under the regime (`ensureNativeStringBoundaryBridge`).
+3. the resolved console capability is wrapped by `wrapConsoleForHost`
+   (new `src/runtime/console-host-marshal.ts`, converter injected by runtime.ts,
+   no import back into runtime.ts) so a Wasm-owned primitive arrives as its JS
+   value (bool variants untouched). runtime.ts is net 0 lines.
+
+Guards (base = upstream/main @ fcb3ed03e7, which already contains S1):
+
+| guard | before | after |
+| --- | --- | --- |
+| 4396 byte identity | green | green |
+| 4397 with `JS2WASM_NATIVE_REGIME_JS=1` | 18 red / 12 green | 4 red / 26 green |
+| `JS2WASM_NATIVE_REGIME_JS=1 check:host-import-policy` | red (`__boundary_callback_call_1 … missing`) | red, same error (S2) |
+| 321-row sample | 219 / 321 | 219 / 321 |
+| `language/statements/async-function/` native-first sample | 31 / 74 | 65 / 74 |
+| `tests/issue-6685.test.ts` (+1 `print(any)` test) + #3469/#6671 | — | 26/26 green |
