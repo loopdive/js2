@@ -23,7 +23,7 @@ related: [3469, 4397, 4398, 6671]
 # context/types.ts; +10 lines (one exported function + its doc comment).
 # 2026-09-26 (#6685 S1b): the console capability must marshal a Wasm-owned
 # string to a JS string. builtins.ts +10 (bridge export at the externref console
-# call + import), runtime.ts +13 (`_consoleToHost` wrapper applied to the resolved
+# call + import), runtime.ts +9 (`_consoleToHost` wrapper applied to the resolved
 # console capability). Both are the console call site / adapter wiring themselves.
 loc-budget-allow:
   - src/codegen/context/types.ts

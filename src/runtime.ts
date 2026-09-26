@@ -8047,15 +8047,11 @@ function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): 
   return raw;
 }
 
-/** (#6685) The console capability receives a Wasm-owned primitive (native string, boxed number…) as its JS value. */
-function _consoleToHost(
-  capability: Function,
-  intent: { variant: string },
-  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
-): Function {
-  if (intent.variant === "bool" || intent.variant.endsWith("_bool")) return capability;
+/** (#6685) Console capability: Wasm-owned primitives (native strings, boxed numbers) arrive as JS values. */
+function _consoleToHost(capability: Function, intent: { variant: string }, state?: { getExports(): any }): Function {
+  if (intent.variant.endsWith("bool")) return capability;
   return function consoleWithHostPrimitives(value: unknown) {
-    const primitive = _nativePrimitiveToHost(value, callbackState?.getExports());
+    const primitive = _nativePrimitiveToHost(value, state?.getExports());
     return capability(primitive === _MISS ? value : primitive);
   };
 }
