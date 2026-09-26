@@ -12356,3 +12356,166 @@ all four changed/added files **0**. No new raw-checker call (the predicate reads
 `ctx.classStaticMethodNames` / `ctx.classExprNameMap` and `ts.SymbolFlags`, both
 already in hand). Growth grants are dated C1 entries at the head of this file's
 `loc-budget-allow` and `func-budget-allow`; `scripts/*-baseline.json` untouched.
+
+## TA2 receipt — 2026-09-26 (TypedArray-tagged ES2015, standalone-only residual)
+
+Lane TA2, continuing TA1's bucket. **No code landed.** Branch
+`worktree-agent-a85ccf1fddae45eff`, tree identical to `4e86543ca8`. What is
+below is the measurement; the reason nothing landed is stated plainly at the
+end and is a scope decision, not a blocker.
+
+### The partition, re-derived independently (TA1's numbers hold exactly)
+
+From the live `loopdive/js2wasm-baselines` standalone JSONL (fetched
+2026-09-26, `timestamp 26.9.2026 11:53`, 48,735 rows), selecting rows whose
+test262 frontmatter `features` contains `TypedArray` and whose
+`classifyEdition` is 2015:
+
+| set | rows |
+| --- | ---: |
+| TypedArray-tagged ES2015 | **1,050** |
+| pass | 983 |
+| fail | **67** |
+| of the 67: host baseline says `pass` (standalone-only) | **36** |
+| of the 67: host fails too (NOT this lane) | 31 |
+
+Confirmed by RUNNING, not only by reading baselines — the 36 were swept in the
+authoritative lane (`tests/test262-shared.ts::runTest262Chunk` under
+`TEST262_PATH_FILTER_FILE`, pool 2, `TEST262_IT_TIMEOUT_MS=180000`):
+
+- **standalone: 0 pass / 36 fail** (73 s wall)
+- **host: 36 pass / 0 fail**
+
+So the bucket is real and the host/standalone split is exact. TA1's partition
+needs no revision.
+
+### The 36 are 36 near-singletons, not a few big causes
+
+Grouped by normalised error text (not by directory), the largest groups inside
+the 36 are: `invoked-as-*`/`invoked` brand rows **5**, `entries|keys|values`
+`return-itor` **3**, `speciesctor-get-species-custom-ctor-invocation` **3**,
+`OwnPropertyKeys` `Reflect.ownKeys` **3**, `internals/Set` **3**,
+`speciesctor-…-returns-another-instance` **2**,
+`callbackfn-set-value-during-iteration` **2**, `@@toStringTag` chained
+descriptor **1**, and **14** genuine singletons. Cross-edition twins add a
+little: the `return-itor` cause is 6 rows with its BigInt twins, the species
+groups 4 each.
+
+### Sized causes (candidate set vs measured size)
+
+- **`invoked-as-*` brand family: candidate set 120 files, measured size 6.**
+  Every `TypedArray/prototype/*/invoked-as-*.js`, `this-is-not-*`, plus
+  `TypedArray/invoked.js` — 120 rows in the baseline, **114 already pass on
+  standalone**, 6 fail, and all 6 are standalone-only. A filename match here
+  over-estimates 20×.
+- **Array/TypedArray iterator `next()`: 12 standalone-only rows** — the 6
+  `TypedArray/prototype/{values,keys,entries}[/BigInt]/return-itor.js` **plus**
+  6 `Array/prototype/{values,keys,entries}/iteration{,-mutable}.js`. One shared
+  cause (below). This is the largest single cause found anywhere near the
+  bucket and is the recommended next target.
+- **Whole TA/AB/DV area, all editions: 439 standalone-only fails.** The two
+  biggest groups are NOT ES2015: 92 rows are `standalone target emitted host
+  imports: env::SharedArrayBuffer_new`, and 34 are
+  `return-abrupt-from-this-out-of-bounds.js` reporting `Expected a TypeError
+  but got a Test262Error` (resizable-buffer era).
+
+### Per-member diagnosis of the brand family (probe, standalone)
+
+`%TypedArray%` itself is fine in standalone — `Object.getPrototypeOf(Int8Array)`
+(harness `testTypedArray.js:64`) yields a function named `TypedArray` with its
+own `.prototype`, distinct from every view's, carrying the member CSV and a real
+`@@toStringTag` accessor. The defect is per-member, on the **prototype as
+receiver**:
+
+| expression (`P = TypedArray.prototype`) | standalone answers | spec |
+| --- | --- | --- |
+| `TypedArray()` / `new TypedArray()` | `null` | TypeError |
+| `P.length` | `0` | TypeError |
+| `P.byteLength` | `0` | TypeError |
+| `P.byteOffset` | TypeError ✓ | TypeError |
+| `P.buffer` | TypeError ✓ | TypeError |
+| `P.join()` | `""` | TypeError |
+| `P.slice()` | `null` | TypeError |
+| `gOPD(P, @@toStringTag).get()` via a local | `undefined` ✓ | `undefined` |
+
+The `@@toStringTag/invoked-as-func.js` row is NOT a brand bug: the getter is
+correct when the descriptor is stored in a variable first. The row's failure
+(`Cannot access property on null or undefined`) comes from the **chained**
+`Object.getOwnPropertyDescriptor(...).get` read — a property-access-on-call-result
+defect, unrelated to TypedArray.
+
+### TWO RECORDED-SEAM DISPROOFS (measured, please do not re-derive)
+
+Both `__extern_get` and `__extern_method_call` look like the obvious seam for a
+`$NativeProto` receiver — `native-proto-method-call.ts` (#4619) and
+`native-proto-instance-method-read.ts` (#4248) exist for exactly that shape.
+**Neither is on the path for these rows.** Built a
+`ta-intrinsic-proto-brand.ts` that unshifted a `$NativeProto`+`%TypedArray%`-brand
+throw arm onto both, verified by trace that both arms were EMITTED
+(`protoTypeIdx=198`, brand `-1073741821`, ladders of 150 and 10 instrs), then:
+
+1. dropped the brand test — no change to any answer;
+2. put an **unconditional throw as the first instruction of
+   `__extern_method_call`'s body** — `P.join()` still returned `""`.
+
+So `__extern_method_call` is never entered for `P.join()`. The real seam is the
+standalone **`any`-receiver array-like fast paths**, and there is a different one
+per member:
+
+- `join` → `calls-closures.ts` ~L2617 `noJsHost(ctx) && methodName === "join"`
+  → `compileArrayJoinExtern` → `compileArrayJoinExternNative`
+  (`array-methods.ts` ~L5557), which reads `__extern_length(recv)` = 0 on a
+  `$NativeProto` and folds an empty join. This is the SAME site that already
+  carries `taDynDetachedGuardPrologue` (#6501), so a sibling guard fits there.
+- `slice` → `calls-closures.ts` ~L2379 refuses extern-class dispatch for
+  `slice`/`valueOf` outright and falls to the generic String/Array path.
+- `length` / `byteLength` → a dedicated read arm, *not* `__extern_get` (proved
+  by (1) above). Their reflective getter bodies
+  (`emitTypedArrayProtoMemberBody`, `array-object-proto.ts` ~L1862) DO brand-check
+  correctly — which is why sibling `byteOffset` throws — so whatever answers
+  these two preempts the getter.
+
+**The generalisation worth recording:** the standalone `any`-receiver fast paths
+treat an unrecognised externref as an **array-like of length 0**. `%TypedArray%.prototype`
+is such an externref, so it silently answers as an empty array instead of failing
+the brand check the reflective closure bodies already implement. Four wrong
+answers, four entry points, one root shape.
+
+### Why nothing landed
+
+The correct fix is one shared "receiver is a builtin `$NativeProto` carrier ⇒
+decline the array-like fast path" check at the entry of those paths, so the
+reflective closure (which throws correctly today) gets the call. That changes
+control flow on the hottest generic dispatch in the standalone lane for a
+**4-row** justification, and needs its own wide control run — the same reason
+TA1 declined its `detached-buffer.js` gate widening. Four independent
+throw-guards instead would be four hot-path edits for one row each. Judged not
+worth it at this size; recorded here so the next lane can price it correctly
+rather than re-derive the seams.
+
+Verified the revert: tree clean at `4e86543ca8`, bundles rebuilt (all three,
+in order), the 6-row family re-swept → 6/6 fail, i.e. base verdicts exactly.
+
+### Recommended next target in this bucket
+
+**`$__IterRec.next()` — 12 standalone-only rows, one cause.** In standalone
+`arr.values()` / `ta.values()` returns the canonical externref `$Vec` by design
+(`compileNativeArrayIterator`, `array-methods.ts` ~L3206: "the *consumer*
+(`__iterator`) wraps it into the `$IterRec` … single wrap point"), so a direct
+`.next()` has no cursor. Measured: `[10,20].values().next()` returns **`null`**
+(`typeof it.next === "function"` — #6484 S2's `__iter_rec_proto` read arm
+already resolves the name, only the body is missing), and
+`typedArray.values()/keys()/entries()` all return `null` while
+`ta[Symbol.iterator]` is `undefined` and `for (const x of ta)` throws
+TypeError. Flipping this needs the producer to hand back a real `$IterRec`
+(with `__iterator` idempotent on one) plus a `next` body returning a live
+`{value, done}` — worth a spec, because for-of/spread/destructuring all ride
+the same substrate.
+
+Also unowned and unchanged: `Reflect.ownKeys` on a TypedArray (3), `internals/Set`
+receiver rows (3, cluster E2), the species-constructor `this` rows (4 — our
+`Construct(S, args)` of an ordinary closure does not give the callee a `this`
+whose `[[Prototype]]` is `S.prototype`), and `speciesctor-…-returns-another-instance`
+(4 — `TypedArrayCreate`'s validation is `ref.test $__ta_dyn_view`, so a species
+that returns a STATICALLY-typed `new Int8Array([…])` is rejected as "non-TypedArray";
+architectural, the static value carries no TA brand).
