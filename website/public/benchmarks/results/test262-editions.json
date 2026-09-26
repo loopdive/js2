@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10224,
-    "fail": 1462,
+    "pass": 10230,
+    "fail": 1456,
     "ce": 18,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2171,
-        "fail": 315,
+        "pass": 2173,
+        "fail": 313,
         "ce": 0,
         "skip": 0,
         "total": 2486,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 331,
-        "fail": 75,
+        "pass": 337,
+        "fail": 69,
         "ce": 4,
         "skip": 0,
         "total": 410,
-        "pct": 81
+        "pct": 82
       },
       {
         "name": "Reflect",
@@ -808,8 +808,8 @@
   },
   {
     "edition": "ES2017",
-    "pass": 570,
-    "fail": 119,
+    "pass": 572,
+    "fail": 117,
     "ce": 1,
     "skip": 0,
     "total": 690,
@@ -817,8 +817,8 @@
     "features": [
       {
         "name": "async-functions",
-        "pass": 323,
-        "fail": 25,
+        "pass": 325,
+        "fail": 23,
         "ce": 0,
         "skip": 0,
         "total": 348,
@@ -898,12 +898,12 @@
       },
       {
         "name": "class",
-        "pass": 28,
-        "fail": 3,
+        "pass": 30,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 31,
-        "pct": 90
+        "pct": 97
       },
       {
         "name": "Reflect.construct",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3717,
-    "fail": 1102,
+    "pass": 3719,
+    "fail": 1100,
     "ce": 4,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2775,
-        "fail": 1032,
+        "pass": 2777,
+        "fail": 1030,
         "ce": 3,
         "skip": 0,
         "total": 3810,
@@ -1179,12 +1179,12 @@
       },
       {
         "name": "class",
-        "pass": 33,
-        "fail": 11,
+        "pass": 35,
+        "fail": 9,
         "ce": 0,
         "skip": 0,
         "total": 44,
-        "pct": 75
+        "pct": 80
       },
       {
         "name": "Symbol",

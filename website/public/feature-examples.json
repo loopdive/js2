@@ -47842,7 +47842,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2171,
+      "passCount": 2173,
       "totalCount": 2486,
       "tests": [
         {
@@ -50866,7 +50866,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 367,
+      "passCount": 373,
       "totalCount": 461,
       "tests": [
         {
@@ -69433,7 +69433,7 @@
         "language/expressions/async-function",
         "language/statements/async-function"
       ],
-      "passCount": 323,
+      "passCount": 325,
       "totalCount": 348,
       "tests": [
         {
@@ -73685,7 +73685,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2777,
+      "passCount": 2779,
       "totalCount": 3812,
       "tests": [
         {
