@@ -187,6 +187,36 @@ loc-budget-allow:
   #     ConstructorDeclaration), which is the trap that made the rule wrong.
   - src/codegen/object-ops.ts
   - src/compiler/early-errors/node-checks.ts
+  # 2026-09-26 — lane TA1 (`toLocaleString`'s number ELEMENT, §23.1.3.32 step
+  # 6.c.i, which §23.2.3.29 reuses). All ~420 lines of mechanism live in the NEW
+  # leaf `src/codegen/to-locale-string-element.ts`; the god-files keep only the
+  # four sites that cannot move:
+  #   - `context/types.ts` +16: the two reserve flags, each with the note saying
+  #     why its body is filled at FINALIZE and not at its call site. The ordering
+  #     fact those comments carry (a `Number`-brand companion hit is only known
+  #     to be a USER value once the native-proto seeder registry is final) is the
+  #     single thing that made the first cut a measured no-op, so it belongs on
+  #     the flag rather than in a commit message.
+  #   - `array-methods.ts` +11: the reserve call plus the comment naming which
+  #     receiver shape this arm serves, spliced into `compileArrayJoinNative`'s
+  #     numeric `numToStrChain`. It cannot move to the leaf: the chain is built
+  #     inline in that function from `elemType`, and the decision "this element
+  #     may carry an override" has to be readable where the numeric rendering is
+  #     chosen.
+  #   - `expressions/call-receiver-method.ts` +12: the second, DISJOINT call site
+  #     — a dynamically-typed receiver never reaches the join lowering at all
+  #     (measured; it is the shape test262's `testWithTypedArrayConstructors`
+  #     produces). Mirrors E7's `taToStringApplies`/`ensureTaToStringHelper`
+  #     three-liner two arms below it, plus the by-name re-resolve of `toLSIdx`
+  #     that the reserve's own late imports make necessary (#2043).
+  #   - `index.ts` +10: the two finalize fill calls in each of `generateModule` /
+  #     `generateMultiModule`, beside the `fillArrayToPrimitive` /
+  #     `fillClassToPrimitive` calls they twin. Finalize ordering lives in the
+  #     driver, which is the whole reason the fill exists there.
+  - src/codegen/context/types.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/index.ts
   # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). +2 lines in
   # `src/codegen/index.ts`: ONE `fillArrayProtoSingleton(ctx)` call in each of
   # the two finalize paths (`generateModule`, `generateMultiModule`), placed
@@ -737,6 +767,19 @@ func-budget-allow:
   # immediately below, so the decision "this receiver also owns `constructor`"
   # has to sit between them. The first cut inlined the rule and cost +51.
   - src/codegen/object-ops.ts::compilePropertyIntrospection
+  # 2026-09-26 — lane TA1 (`toLocaleString`'s number element). Three functions,
+  # +20 lines, every one of them a call site of mechanism that lives in the new
+  # leaf `to-locale-string-element.ts`:
+  #   - `compileReceiverMethodCall` +11: the reserve at the zero-argument
+  #     `toLocaleString` arm, the by-name re-resolve of `toLSIdx` the reserve's
+  #     late imports force (#2043), and the six comment lines recording that this
+  #     receiver shape is DISJOINT from the join lowering — the fact whose
+  #     absence made the first cut of this slice a measured no-op on all 10 rows.
+  #   - `generateModule` +6 / `generateMultiModule` +3: the two finalize fill
+  #     calls each, beside `fillArrayToPrimitive`/`fillClassToPrimitive`. A fill
+  #     must run at finalize (the seeder registry is not final before then) and
+  #     finalize ordering is the driver's.
+  # `compileArrayJoinNative` also grew (+11) and is within its own ceiling.
   # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). Three functions, +4
   # lines total, all of them call sites of mechanism that lives elsewhere:
   #   - `buildObjectPrototypeHelpers` +2: one line reserving the
@@ -1032,6 +1075,20 @@ func-budget-allow:
   # and `compileReceiverMethodCall` +4 are listed above.
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
 coercion-sites-allow:
+# 2026-09-26 — lane TA1: `to-locale-string-element.ts` is a NEW file, so its
+# baseline is 0 and every textual mention of a native name counts as growth
+# (the gate is a name scan, and most of these 8 occurrences are in the module
+# header's prose). The module hand-rolls no conversion matrix at all: it CALLS
+# the engine's existing providers — `number_toString` for §23.1.3.32's
+# unpatched numeric element (the very native `compileArrayJoinNative`'s numeric
+# arm already emits, reused verbatim so the `(f64) -> externref` ABI matches)
+# and `__extern_toString` for §7.1.17 ToString of the `Invoke(element,
+# "toLocaleString")` RESULT plus the non-dyn-view receiver fallthrough. Both
+# helpers are minted at FINALIZE (the seeder registry is only final once
+# `ensureObjectRuntime` has flushed), where there is no `FunctionContext` to
+# route through `coerceType`. Net effect on total coercion vocabulary is
+# reuse, not a second matrix.
+  - src/codegen/to-locale-string-element.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
   - src/codegen/ta-dyn-own-keys.ts
@@ -12356,3 +12413,119 @@ all four changed/added files **0**. No new raw-checker call (the predicate reads
 `ctx.classStaticMethodNames` / `ctx.classExprNameMap` and `ts.SymbolFlags`, both
 already in hand). Growth grants are dated C1 entries at the head of this file's
 `loc-budget-allow` and `func-budget-allow`; `scripts/*-baseline.json` untouched.
+## 2026-09-26 — lane TA1 receipt: the TypedArray feature-tag bucket, and `toLocaleString`'s element Invoke
+
+### The bucket, measured (not estimated)
+
+1,052 files carry the TypedArray feature tag inside ES2015; 1,050 of them are in
+the 2026-09-26 standalone baseline (`.test262-cache/test262-standalone-current.jsonl`):
+**983 pass / 67 fail** — the brief's number reproduced exactly.
+
+Partition by running all 67 on **host** as well as standalone:
+
+| | rows |
+| --- | --- |
+| standalone-only (host passes) | **36** |
+| fails on host too (shared front-end work, not a lowering gap) | **31** |
+
+The `toLocaleString` cluster — the largest single coherent cause in the bucket —
+is entirely in the second column: **all 10 rows fail identically on host.** So
+the coordinator's dormant-record figure ("14 rows non-pass, 13 also host") is
+the right shape; my own count for the ES2015 slice is 10/10. The fix below is
+therefore a *shared* codegen gap that happens to be reachable from the
+standalone lane first; it is nevertheless installed behind `ctx.standalone`,
+because the host lowering reaches `toLocaleString` through
+`__extern_toLocaleString` (a real host import that already does the right
+thing) and only standalone shortcuts it to `__extern_toString`.
+
+### Cause landed
+
+§23.2.3.29 reuses §23.1.3.32 verbatim, and its element step is
+`ToString(? Invoke(element, "toLocaleString"))` — **not** `ToString(element)`.
+#4655 installed that Invoke only on the arms whose element can carry an OWN
+`toLocaleString`; a **number** element was left rendering through
+`number_toString`, so a `Number.prototype.toLocaleString` override was ignored.
+
+The measurement that mattered, and that two earlier cuts missed, is that **two
+disjoint lowerings** answer `toLocaleString` and the receiver's static shape
+picks one:
+
+| receiver | lowering | helper added |
+| --- | --- | --- |
+| locally-resolvable view / plain numeric array | `array-methods.ts::compileArrayJoinNative` numeric arm | `__num_to_locale_string` |
+| dynamically typed — what test262's `testWithTypedArrayConstructors` produces | `expressions/call-receiver-method.ts` `toLocaleString` arm | `__ta_to_locale_string` |
+
+The first cut served only the join arm: its hand probe passed and **all 67 rows
+stayed unchanged**. Both helpers are reserve/fill (the `reserveArrayToPrimitiveString`
+precedent) because the seeded-companion registry is only final after
+`ensureObjectRuntime` flushes.
+
+Gating is `ctx.standalone && ctx.protoNamedDirty &&
+sourceOverridesBuiltinPrototypeMember(anchor, "Number", "toLocaleString")`.
+A **coarser** gate was tried first and was also a measured no-op: declining
+when `nativeProtoSeedersByBrandOffset(ctx).has(NUMBER_OFF)` is true blocks
+exactly the modules the fix is for, because a real harness module always has
+Number seeded. A user write overwrites the seeded companion slot, so once the
+gate is constructor-precise the decline is unnecessary.
+
+Absent-not-wrong: when the reflective read of the companion slot answers
+`undefined` the helper falls through to the unpatched native bytes, so an
+unpatched module renders identically.
+
+### Row deltas I measured
+
+Per-row set diff, never count comparison. Standalone, honest local lane
+(`runTest262Chunk` under `TEST262_PATH_FILTER_FILE`, `TEST262_IT_TIMEOUT_MS`):
+
+- **67-row bucket: +6 / −0** — `calls-tolocalestring-from-each-value`,
+  `calls-tostring-from-each-value`,
+  `return-abrupt-from-{first,next}element-tolocalestring`,
+  `return-abrupt-from-{first,next}element-tostring`.
+- **1,158-row control** (every `toLocaleString`-ish and TypedArray row that
+  registers out of a 1,288-path filter): new tree 1,018 pass / 140 fail.
+  55 rows differ from the committed baseline; a **base-tree run of exactly
+  those 55** says **49 are identical on base and new** (they are a local-tree
+  artifact — e.g. 49 `Temporal/*/toLocaleString/*` rows that pass in CI fail
+  here with `ReferenceError: Temporal is not defined`), and the real flips are
+  the same **6, all fail→pass. Zero regressions.**
+- **Host: unchanged by construction** (both helpers are `ctx.standalone`-gated).
+  The 10 host failures stand as shared front-end work.
+
+Regression test `tests/issue-6651-ta1-typedarray.test.ts`: **6 failed / 2 passed
+on reverted sources, 8 passed / 0 failed with the fix.** The 2 that pass on both
+are the deliberate negative controls (an unpatched module renders natively;
+`join`/`toString` do not move in an overriding module).
+
+### Residual in this cluster, diagnosed rather than guessed
+
+- **3 `valueOf` rows** (`calls-valueof-from-each-value`,
+  `return-abrupt-from-{first,next}element-valueof`) — now visibly stuck at
+  `"[object Object],[object Object]"`: `__extern_toString` does not run
+  §7.1.1.1 OrdinaryToPrimitive step 5 on `{toString: undefined, valueOf() {…}}`.
+  Cross-cluster ToString work, not TypedArray. Tried and reverted:
+  swapping in `__any_to_string` moves none of the three.
+- **`detached-buffer.js` (+ its BigInt twin)** — precisely diagnosed, deliberately
+  NOT fixed here. The test does **not** override `Number.prototype.toLocaleString`,
+  so the helper is not installed and the call keeps the pre-existing standalone
+  shortcut to `__extern_toString`, which runs no ValidateTypedArray (§23.2.4.4
+  step 5). The one-line shape of the fix is to let `taToLocaleStringApplies`
+  also admit a non-overriding module that uses a dyn view and emit
+  `[taDynDetachedGuardPrologue…, call __extern_toString]` — the existing bytes
+  plus the guard. Declined because it changes the emitted bytes for **every**
+  dyn-view module that calls `toLocaleString`, not just overriding ones, which
+  needs its own 1,158-row control run to claim honestly. Worth ~2 rows.
+- **BigInt64/BigUint64 variants** are out of the ES2015 slice and stay failing;
+  the helper deliberately gates its companion arm on `__typeof_number(elem)` so
+  a BigInt element never takes Number's member.
+
+### Plan-file claims this lane DISPROVED
+
+- Slice **E8**'s recorded prerequisite — that a real standalone
+  `Number.prototype.toLocaleString` **value body** is needed first — is wrong.
+  The reflective read answers `undefined` when unpatched, so absent-not-wrong
+  applies and no value body is required. E8 was stranded on a prerequisite that
+  does not exist.
+- E8's recorded residual probe, `String({toString: undefined, valueOf(){return "z"}})`
+  → `"[object Object]"`, does **not** reproduce on current main: it answers
+  `"z"`. The real residual is narrower — it is `__extern_toString` on that shape
+  that answers `"[object Object]"`, which is what the 3 `valueOf` rows hit.

@@ -2530,6 +2530,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arrayToPrimitiveReserved?: boolean;
   /**
+   * (#6651 TA1) True once a `toLocaleString` join reserved the
+   * `__num_to_locale_string` placeholder (num-to-locale-string.ts). Filled by
+   * `fillNumberToLocaleString` at finalize rather than at the call site, because
+   * whether the element Invoke may consult the `Number.prototype` brand
+   * companion depends on the `nativeProtoSeedersByBrandOffset` registry, which is
+   * only complete after `ensureObjectRuntime` flushes its pending seeders.
+   */
+  numToLocaleStringReserved?: boolean;
+  /**
+   * (#6651 TA1) True once an `any`-receiver `.toLocaleString()` call site
+   * reserved the `__ta_to_locale_string` placeholder — §23.2.3.29 over a
+   * `$__ta_dyn_view`, the spelling test262's `testWithTypedArrayConstructors`
+   * produces. Same finalize-fill reason as `numToLocaleStringReserved`.
+   */
+  taToLocaleStringReserved?: boolean;
+  /**
    * (#2638) True once `__to_primitive` has reserved the `__class_to_primitive`
    * driver — standalone routing of a nominal CLASS-instance struct (neither
    * `$Object` nor `$Vec`) through the per-struct `__call_valueOf`/`__call_toString`
