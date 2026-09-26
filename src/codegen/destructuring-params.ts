@@ -64,7 +64,12 @@ import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
-import { coerceTupleBindingElement, emitExhaustedTupleElement, emitExhaustedTupleRest } from "./tuple-rest.js";
+import {
+  coerceTupleBindingElement,
+  emitExhaustedTupleElement,
+  emitExhaustedTupleRest,
+  patternBindsRestAtAnyDepth,
+} from "./tuple-rest.js";
 // (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
 // imports `destructureParamArray` from here. ESM resolves the cycle because the
 // references are used only at call time (inside
@@ -2442,11 +2447,22 @@ export function destructureParamArray(
           ts.isBindingElement(element) &&
           (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name))
         ) {
+          // (#6651 GEN1) A rest-bearing sub-pattern goes to the recursion as
+          // `externref`, not as the tuple FIELD's type, so this arm agrees with
+          // the sibling generic arm on the one local slot the rest binding gets
+          // — see `patternBindsRestAtAnyDepth` for the orphaned-slot defect.
+          const restBearing = fieldType.kind !== "externref" && patternBindsRestAtAnyDepth(element.name);
           const tmpLocal = allocLocal(fctx, `__dparam_${fctx.locals.length}`, fieldType);
           fctx.body.push({ op: "local.get", index: paramIdx });
           fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: i });
           fctx.body.push({ op: "local.set", index: tmpLocal });
           // Handle default initializer for tuple destructuring (#794)
+          //
+          // The default check stays on the FIELD's own type: a missing tuple
+          // element rides the field as a wasm null, which §13.3.3.6 step 5 says
+          // fires the default, while `__extern_is_undefined` (the externref
+          // check) deliberately answers `false` for a null externref because
+          // there that encodes JS `null`. Only the RECURSION below is re-typed.
           if (element.initializer) {
             (ctx as any)._arrayLiteralForceVec = true;
             try {
@@ -2455,10 +2471,19 @@ export function destructureParamArray(
               (ctx as any)._arrayLiteralForceVec = false;
             }
           }
+          let nestedLocal = tmpLocal;
+          let nestedType = fieldType;
+          if (restBearing) {
+            nestedType = { kind: "externref" };
+            nestedLocal = allocLocal(fctx, `__dparam_rest_ext_${fctx.locals.length}`, nestedType);
+            fctx.body.push({ op: "local.get", index: tmpLocal });
+            coerceType(ctx, fctx, fieldType, nestedType);
+            fctx.body.push({ op: "local.set", index: nestedLocal });
+          }
           if (ts.isObjectBindingPattern(element.name)) {
-            destructureParamObject(ctx, fctx, tmpLocal, element.name, fieldType, opts);
+            destructureParamObject(ctx, fctx, nestedLocal, element.name, nestedType, opts);
           } else {
-            destructureParamArray(ctx, fctx, tmpLocal, element.name, fieldType, opts);
+            destructureParamArray(ctx, fctx, nestedLocal, element.name, nestedType, opts);
           }
           continue;
         }
