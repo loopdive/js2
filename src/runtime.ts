@@ -8047,6 +8047,19 @@ function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): 
   return raw;
 }
 
+/** (#6685) The console capability receives a Wasm-owned primitive (native string, boxed number…) as its JS value. */
+function _consoleToHost(
+  capability: Function,
+  intent: { variant: string },
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): Function {
+  if (intent.variant === "bool" || intent.variant.endsWith("_bool")) return capability;
+  return function consoleWithHostPrimitives(value: unknown) {
+    const primitive = _nativePrimitiveToHost(value, callbackState?.getExports());
+    return capability(primitive === _MISS ? value : primitive);
+  };
+}
+
 /** Convert one native boundary carrier into its JS-side value/view. */
 function _nativeBoundaryToHost(value: any, exports: Record<string, Function>): any {
   const primitive = _nativePrimitiveToHost(value, exports);
@@ -11504,7 +11517,7 @@ function resolveImport(
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
-  if (capability) return capability;
+  if (capability) return intent.type === "console_log" ? _consoleToHost(capability, intent, callbackState) : capability;
   const compatibilitySemantic = resolveCompatibilitySemanticImport(intent, {
     strictEqual: _hostStrictEqual,
     isWasmStruct: _isWasmStruct,

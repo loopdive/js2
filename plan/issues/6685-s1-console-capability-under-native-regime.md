@@ -21,8 +21,14 @@ related: [3469, 4397, 4398, 6671]
 # 2026-09-26 (#6685): the plan (#5385 v2, "Design rule for every slice") places
 # the new `hostFreeEnvironment(ctx)` predicate next to the ctx types in
 # context/types.ts; +10 lines (one exported function + its doc comment).
+# 2026-09-26 (#6685 S1b): the console capability must marshal a Wasm-owned
+# string to a JS string. builtins.ts +10 (bridge export at the externref console
+# call + import), runtime.ts +13 (`_consoleToHost` wrapper applied to the resolved
+# console capability). Both are the console call site / adapter wiring themselves.
 loc-budget-allow:
   - src/codegen/context/types.ts
+  - src/codegen/expressions/builtins.ts
+  - src/runtime.ts
 ---
 
 # #6685 — S1: console is a capability in a JS environment (native regime)
