@@ -169,3 +169,6 @@ signature); after with the S1 branch (a58d9e5d5a) merged locally =
 The same message appears on a plain control, `statements/async-function/evaluation-body-that-returns-after-await.js`,
 so it is a general async/console-boundary residual, not this defect. **The acceptance line
 "validate and pass" is only half met: they validate; passing is blocked on that residual.**
+
+Re-measured after merging upstream main with S1 landed (`fcb3ed03e7`): same six rows,
+same `Cannot convert object to primitive value`; focused test + #4396 green.
