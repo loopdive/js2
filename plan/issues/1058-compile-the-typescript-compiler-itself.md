@@ -6210,6 +6210,13 @@ unchanged by this work.
 
 ### September 27 main-integration checkpoint (PR5753)
 
+Follow-up CI repair: restore real use of the retained Function.call body under
+main's linked-aware entry and single guard, with semantic vector reads rather
+than unsafe raw storage reads. Exact-parent mutation/accessor comparisons and
+remaining native mismatches are preserved in
+`plan/agent-context/5753-function-call-preservation-2026-09-27.md`. This is bounded
+preservation evidence, not clearance of the original standalone-floor hold.
+
 The exact-main conflict decisions and paired runtime evidence are recorded in
 `plan/agent-context/5753-main-repair-2026-09-27.md`. Both original binder fixture
 sets are preserved byte-for-byte at separate paths. The captured host constructor

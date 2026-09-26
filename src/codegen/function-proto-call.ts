@@ -2,47 +2,51 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { undefinedExternInstrs } from "./any-helpers.js";
-import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
-import { flushLateImportShifts } from "./shared.js";
 
-/** Receiver-aware variadic ABI: self, callable this, complete call arguments. */
-export function emitFunctionProtoCallBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
+/** Pure representation check. Compatible user arrays can also reach this ABI. */
+export function packedFunctionCallLayout(ctx: CodegenContext, fctx: FunctionContext) {
+  if (ctx.targetProfile.target !== "standalone" || ctx.exportsConsumedByWasm || ctx.linkedNamespaces.size !== 0) {
+    return undefined;
+  }
+  if (fctx.params.length !== 3 || fctx.params[0]?.type.kind !== "ref" || fctx.params[1]?.type.kind !== "externref") {
+    return undefined;
+  }
   const argv = fctx.params[2]?.type;
-  if (!argv || (argv.kind !== "ref" && argv.kind !== "ref_null")) return null;
+  if (!argv || (argv.kind !== "ref" && argv.kind !== "ref_null")) return undefined;
+  if (argv.typeIdx !== ctx.vecTypeMap.get("externref")) return undefined;
   const arrayTypeIdx = getArrTypeIdxFromVec(ctx, argv.typeIdx);
-  if (arrayTypeIdx < 0) return null;
-  ensureObjectRuntime(ctx);
-  ensureObjVecBuilders(ctx);
-  reserveApplyClosure(ctx);
-  const invalid = buildThrowJsErrorInstrs(ctx, "TypeError", "Function.prototype.call requires a callable receiver", {
-    flush: fctx,
-  });
-  flushLateImportShifts(ctx, fctx);
-  const isCallable = ctx.funcMap.get("__typeof_function");
-  const undefinedValue = undefinedExternInstrs(ctx);
-  if (isCallable === undefined || !undefinedValue) return null;
+  if (arrayTypeIdx < 0) return undefined;
+  const vec = ctx.mod.types[argv.typeIdx];
+  const array = ctx.mod.types[arrayTypeIdx];
+  if (vec.kind !== "struct" || vec.fields[0]?.type.kind !== "i32") return undefined;
+  if (array.kind !== "array" || array.element.kind !== "externref") return undefined;
+  return { vecTypeIdx: argv.typeIdx };
+}
+
+/** Retained packed-vector body; its caller owns preparation and IsCallable. */
+export function emitFunctionProtoCallBody(
+  fctx: FunctionContext,
+  layout: NonNullable<ReturnType<typeof packedFunctionCallLayout>>,
+  prepared: { newIdx: number; pushIdx: number; applyIdx: number; getIdx: number; undefinedValue: Instr[] },
+): ValType {
+  const { vecTypeIdx } = layout;
+  const { newIdx, pushIdx, applyIdx, getIdx, undefinedValue } = prepared;
   const receiver = allocLocal(fctx, "call_this", { kind: "externref" });
   const args = allocLocal(fctx, "call_args", { kind: "externref" });
   const length = allocLocal(fctx, "call_length", { kind: "i32" });
   const index = allocLocal(fctx, "call_index", { kind: "i32" });
   const argAt = (position: Instr): Instr[] => [
     { op: "local.get", index: 2 },
-    { op: "struct.get", typeIdx: argv.typeIdx, fieldIdx: 1 },
+    { op: "extern.convert_any" },
     position,
-    { op: "array.get", typeIdx: arrayTypeIdx },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: getIdx },
   ];
   fctx.body.push(
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: isCallable },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: invalid },
     ...undefinedValue,
     { op: "local.set", index: receiver },
-    { op: "call", funcIdx: ctx.funcMap.get("__objvec_new")! },
+    { op: "call", funcIdx: newIdx },
     { op: "local.set", index: args },
     { op: "local.get", index: 2 },
     { op: "ref.is_null" },
@@ -52,10 +56,11 @@ export function emitFunctionProtoCallBody(ctx: CodegenContext, fctx: FunctionCon
       then: [],
       else: [
         { op: "local.get", index: 2 },
-        { op: "struct.get", typeIdx: argv.typeIdx, fieldIdx: 0 },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
         { op: "local.tee", index: length },
         { op: "i32.const", value: 0 },
-        { op: "i32.gt_u" },
+        // Match main's signed header conversion, including its high-bit limitation.
+        { op: "i32.gt_s" },
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -75,11 +80,11 @@ export function emitFunctionProtoCallBody(ctx: CodegenContext, fctx: FunctionCon
           body: [
             { op: "local.get", index },
             { op: "local.get", index: length },
-            { op: "i32.ge_u" },
+            { op: "i32.ge_s" },
             { op: "br_if", depth: 1 },
             { op: "local.get", index: args },
             ...argAt({ op: "local.get", index }),
-            { op: "call", funcIdx: ctx.funcMap.get("__objvec_push")! },
+            { op: "call", funcIdx: pushIdx },
             { op: "local.get", index },
             { op: "i32.const", value: 1 },
             { op: "i32.add" },
@@ -92,7 +97,7 @@ export function emitFunctionProtoCallBody(ctx: CodegenContext, fctx: FunctionCon
     { op: "local.get", index: 1 },
     { op: "local.get", index: receiver },
     { op: "local.get", index: args },
-    { op: "call", funcIdx: ctx.funcMap.get("__apply_closure")! },
+    { op: "call", funcIdx: applyIdx },
   );
   return { kind: "externref" };
 }

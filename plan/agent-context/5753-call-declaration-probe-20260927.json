@@ -1,0 +1,8 @@
+{
+  "baseline": "c6ece2eb",
+  "source": "\nconst callValue: any = Function.prototype.call;\nconst receiver: any = { base: 10 };\nfunction add(this: any, a: number, b: number): number { return this.base + a + b; }\nfunction empty(this: any): boolean { \"use strict\"; return this === undefined; }\nexport function run(): number {\n  if (callValue.call(add, receiver, 1, 2) !== 13) return -1;\n  if (!callValue.call(empty)) return -2;\n  let caught = false;\n  try { callValue.call(7); } catch (e) { caught = e instanceof TypeError; }\n  return caught ? 1 : -3;\n}",
+  "actual": -2,
+  "expected": 1,
+  "candidate": -2,
+  "note": "Initial declaration-shaped route probe: both exact published baseline and candidate fail the unchanged expected value. Retained as a diagnostic, not a passing conformance test."
+}
