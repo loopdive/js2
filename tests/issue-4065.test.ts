@@ -165,10 +165,10 @@ describe("#4065 anchored-alternations fast path must not treat '.' as literal", 
   });
 });
 
-describe("#4065 constructs outside the runtime grammar stay LOUD refusals", () => {
-  // A refusal is recoverable; a wrong match is not. Each of these needs engine
-  // features the runtime grammar does not have, so the decoder reports
-  // TOKEN_UNSUPPORTED rather than guess.
+describe("#4065 constructs outside the SIMPLE runtime grammar", () => {
+  // These were loud refusals of the #4065 subset. Since #6677 the simple
+  // compiler hands them to the full-grammar runtime compiler
+  // (src/codegen/regex-runtime/), so they now compile and must agree with Node.
   it.each([
     ["class escape \\d", "\\d", "5"],
     ["class escape \\w", "\\w", "q"],
@@ -178,7 +178,12 @@ describe("#4065 constructs outside the runtime grammar stay LOUD refusals", () =
     ["character class", "[abc]", "b"],
     ["quantifier", "a*b", "aab"],
     ["\\x with bad hex digits", "\\xZZ", "xZZ"],
-  ])("refuses %s", async (_label, pattern, subject) => {
-    expect(await runDynamic(pattern, "", subject)).toBe("REFUSED");
+  ])("compiles %s", async (_label, pattern, subject) => {
+    await expectMatchesNode(pattern, "", subject);
+  });
+
+  it("still refuses what the full compiler cannot model (non-ASCII `i` folding)", async () => {
+    // A refusal is recoverable; a wrong match is not.
+    expect(await runDynamic("\u00e9", "i", "\u00c9")).toBe("REFUSED");
   });
 });
