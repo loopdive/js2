@@ -11686,3 +11686,119 @@ must-NOT-claim-`%Array.prototype%` cases (an ordinary object, a string).
 - The `$262` shim's missing intrinsic forwards (the ~30 rows above) were NOT
   attempted, per the brief's scope boundary.
 - No PR opened; handed back to the dispatching session.
+## Lane S1 receipt — `$262.createRealm().global` intrinsic forwards (2026-09-26)
+
+**Verdict: nothing landed.** The forwards are worth **+3 standalone rows**, not the
+~30 the brief's ceiling suggested, and the two full corpus sweeps that would be
+required to justify touching `scripts/test262-fyi-runtime.js` (it compiles into every
+test262 module in every lane) were not feasible — the box is 4-core and sat at load
+9–11 from other lanes throughout. Per the lane's own rule, a partial validation on
+that file is worth less than no change, so the shim edit is on the branch only, with
+no PR. The durable output of this lane is the root-cause correction below.
+
+### Corrected root cause — the forwards were never the binding constraint
+
+Standalone resolves `globalThis.<Name>` member reads for only a **subset** of
+intrinsics, and every test262 module is a **runtime-eval module** (the `$262` shim
+carries `evalScript`), so `appendStandaloneGlobalConstructorSeeds`
+(`src/codegen/standalone-global-object-carriers.ts`) takes its early return and seeds
+only `STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES`.
+
+Measured directly, one standalone module reading `typeof other[Name]` for 19 names
+(probe run 2026-09-26, worktree `issue-6651-s1-shim-intrinsic-forwards`):
+
+| resolves | `undefined` |
+| --- | --- |
+| `Object Array ArrayBuffer Iterator Math Proxy Symbol Promise DataView` | `Number Boolean String RegExp Date Function Map Set WeakMap WeakSet` |
+
+**`Date` and `Function` are already in the shim's forward list and are already dead
+in standalone.** That is the actual reason the cross-realm corpus dies early — not a
+missing forward. `other.Function` in particular is the most-read realm name in the
+corpus (76 reads), and it is the one name whose seed cannot simply be moved (see
+below).
+
+### What each change is actually worth (standalone, 196-row cross-realm bucket)
+
+Bucket = every non-`staging` test262 file containing `createRealm`, restricted to
+discovered `TEST_CATEGORIES`, plus the landmine row. Authoritative lane
+(`runTest262Chunk`, honest oracle, quickjs eval engine, pool 3). Per-row set diffs,
+0 `error` rows in every run, 196/196 rows in every JSONL.
+
+| state | pass | fail | CE | rows dying on the early `other.X` read |
+| --- | --- | --- | --- | --- |
+| base | 61 | 126 | 9 | 68 |
+| + shim forwards (11 names) | 64 | 121 | 11 | 59 |
+| + shim forwards + widened seed list | 64 | 121 | 11 | 36 |
+
+- **Shim forwards alone: +3** — `built-ins/Object/proto-from-ctor-realm.js`,
+  `built-ins/DataView/proto-from-ctor-realm.js`,
+  `built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js`. Eight
+  of the eleven added names are **inert in standalone today** (they resolve to
+  `undefined`); they are correct for the host lane and become live only once the seed
+  list widens.
+- **Two rows degrade `fail` → `compile_error`**:
+  `built-ins/Error/prototype/stack/{getter,setter}-cross-realm.js`, on
+  `standalone target emitted host imports: env::Object_new (#2961)`. Cause is
+  `new realmB.Object()`, which only becomes reachable once `other.Object` is a real
+  constructor. Neutral for pass counts, but it is a new host-import leak and should
+  be named in any PR that lands the `Object` forward.
+- **Widening the seed list: +0 more passes, but it unblocks 23 further rows** to
+  reach their real assertion (early-death 59 → 36) with **zero** status changes
+  against the forwards-only run. Those rows then fail on the genuine missing feature
+  — `GetPrototypeFromConstructor`'s realm fallback, e.g.
+  `built-ins/Boolean/proto-from-ctor-realm.js` goes from
+  `Cannot access property on null or undefined at 345:44` to
+  `Expected SameValue («[object Object]», «false»)`. **That is lane R1's territory,
+  and it is the real ES2015 cross-realm lever.**
+
+Experiment used for that row (reverted; compiler-bundle/runtime-bundle/quickjs
+adapter rebuilt after, adapter key returned to `e9554e1d4909724f`): move
+`String Boolean Number Date RegExp Map Set WeakMap WeakSet` out of
+`STANDALONE_GLOBAL_CONSTRUCTOR_NAMES` and into
+`STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES`. Re-probed: all nine then resolve;
+`Function` stays `undefined` because it is deliberately left behind the gate.
+`Function` is the one name the #6651 lane-X1 comment identifies as the `%Function%`
+parity / stack-exhaustion hazard, so moving it needs its own slice — and it is the
+name 7 of the 36 remaining early-death rows are still blocked on.
+
+Remaining 36 early-death rows by area: `TypedArrayConstructors` 10 (they die inside
+`harness/testTypedArray.js`, not on an `other.X` read — the brief's "column 44
+identifies them mechanically" holds only for the `proto-from-ctor-realm` family),
+`built-ins/Function` 7, `language/expressions` 4, `Proxy` 3, and singles across
+`GeneratorFunction`, `AsyncGeneratorFunction`, `AsyncFunction`, `WeakRef`,
+`AggregateError`, `SuppressedError`, `DisposableStack`, `language/types`,
+`language/eval-code`.
+
+### The 2026-08-23 `Object` landmine does NOT reproduce on current main
+
+Tested in isolation: added **only** `Object: globalThis.Object` to the realm global,
+ran the host lane over the same 196-row bucket. **Zero rows changed status** —
+`language/expressions/dynamic-import/assignment-expression/import-meta.js`, the row
+the note names, still passes. The full 11-name forward set is likewise **0 gained /
+0 changed** on the host lane in this bucket. The in-file note claiming any compiled
+read of `globalThis.Object` degrades `error.constructor` from TypeError to Error is
+**stale**; the defect it describes has since been fixed. (Scope of that statement:
+one 196-row bucket, not the whole corpus — a full host sweep is still what would be
+needed to retire the note outright.)
+
+Standalone is unaffected either way: that row is a `compile_error` there
+(`Standalone dynamic import is unsupported until compileMulti provides internal
+module records and namespace objects`), in base and after.
+
+### What a follow-up lane should do
+
+1. **Land the seed widening first** (`src/codegen/standalone-global-object-carriers.ts`,
+   lane X1's file) — it is regression-free in this bucket, it is the thing that makes
+   any realm forward actually work in standalone, and without it eight of the eleven
+   shim forwards are dead weight.
+2. **Then the shim forwards**, together with the `env::Object_new` leak note above.
+3. The passes are in **`GetPrototypeFromConstructor`'s realm fallback** (lane R1) and
+   in **`globalThis.Function` inside an eval module**, not in the shim.
+
+### Not done
+
+- No full host sweep and no full standalone sweep. All numbers above are the 196-row
+  cross-realm bucket only. Nothing here may be read as corpus-wide evidence.
+- No regression test: no code defect was isolated that a test could pin. The two
+  defects found (`Function` still gated; `GetPrototypeFromConstructor` realm fallback)
+  belong to other lanes' files.
