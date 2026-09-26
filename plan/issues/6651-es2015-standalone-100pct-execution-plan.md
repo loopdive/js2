@@ -169,6 +169,32 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). +2 lines in
+  # `src/codegen/index.ts`: ONE `fillArrayProtoSingleton(ctx)` call in each of
+  # the two finalize paths (`generateModule`, `generateMultiModule`), placed
+  # beside the `fillObjectProtoSingleton(ctx)` call it twins. That call cannot
+  # move: the reserve-then-fill discipline REQUIRES the fill to run at finalize,
+  # after the brand's lazy `$NativeProto` global exists, and finalize ordering
+  # lives in the driver. Every line of mechanism (the reservation, the arm, the
+  # fill body) is in `src/codegen/object-runtime-prototype.ts`.
+  - src/codegen/index.ts
+  # 2026-09-26 — lane RF1 (Reflect bucket): `Reflect.construct(proxy, args,
+  # NewTarget)` must deliver the caller's NewTarget to the `construct` trap.
+  # The two new runtime natives (~130 LOC) live in the NEW subsystem module
+  # `src/codegen/object-runtime-proxy-construct-chain.ts`, exactly as the gate
+  # advises — the god-files keep only the wiring that cannot move:
+  #   - object-runtime-proxy.ts +3: the import, capturing
+  #     `__proxy_construct_dispatch`'s funcIdx (the chain walker needs it and it
+  #     is only knowable at that registration), and the one call.
+  #   - call-namespace-static.ts +10: the dispatch arm itself. The decision
+  #     "this Reflect.construct target is a proxy, so construct-then-patch
+  #     cannot serve it" has to be readable where the ordinary lowering starts,
+  #     and it must run BEFORE `compileNewExpression` evaluates the callee.
+  #     The whole emitter (~190 LOC) is in
+  #     `src/codegen/expressions/reflect-construct-newtarget.ts`, which is not a
+  #     god-file. Inlined at the call site the same change was +20.
+  - src/codegen/object-runtime-proxy.ts
+  - src/codegen/expressions/call-namespace-static.ts
   # 2026-09-24 — cluster B1 slice N1 (module namespace: live bindings, null
   # prototype, non-extensible). `src/codegen/module-namespace-value.ts`
   # 769 → 1008 (+239). The growth is in ONE emitter and cannot move out of it:
@@ -183,6 +209,25 @@ loc-budget-allow:
   # message. Measured: +11 rows on each lane across
   # `language/module-code/namespace/internals/**`, 0 regressions across
   # `language/module-code/**` (597 rows, both lanes).
+  # 2026-09-26 — cluster B1 slice N4 (`export class C {}` inside a module whose
+  # namespace is taken). `src/codegen/module-namespace-value.ts` +229/−7 on top
+  # of N3. Three parts, none of which can leave the emitter: the `class` export
+  # kind and its by-IDENTITY resolution through `ctx.classDeclarationMap` (the
+  # codegen key is not always the source name); `ensureClassObjectGetters`,
+  # which must run in the same pre-reservation slot as N3's nested-namespace
+  # getters because `emitLazyClassObjectGet` interns string constants and
+  # flushes late imports MID-BUILD, which the single-batch index discipline
+  # forbids; and the split of the (then 301-LOC) `ensureNamespaceObjectGetter`
+  # into `reserveNamespaceObjectHelpers` + `buildNamespaceObjectGetterBody`,
+  # taken instead of a `func-budget-allow` grant. That split is most of the
+  # line count — the reservation phase's resolved indices now travel as a named
+  # record rather than as locals in one scope. Comment-dominated otherwise: the
+  # two new doc blocks record the measured before-state (one `export class`
+  # line declined the WHOLE namespace) and the index-discipline reason the
+  # getter is minted rather than inlined. Measured: +1 row in the
+  # CI-equivalent lane (`get-nested-namespace-props-nrml.js` fail → pass), 0
+  # regressions across `language/module-code/**` (599 rows, both lanes,
+  # per-ROW set diff).
   - src/codegen/module-namespace-value.ts
   # 2026-09-24 — lane W1 (`with` / Object Environment Record, §9.1.1.2).
   # `src/runtime.ts` +24, and ~19 of those are comment. Three edits, all inside
@@ -664,6 +709,31 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-26 — lane R1 (`__getPrototypeOf`'s array arm). Three functions, +4
+  # lines total, all of them call sites of mechanism that lives elsewhere:
+  #   - `buildObjectPrototypeHelpers` +2: one line reserving the
+  #     `%Array.prototype%` singleton (`reserveArrayProtoSingleton`) and one
+  #     `...arrayGetPrototypeArm(...)` spread inside `__getPrototypeOf`'s
+  #     non-`$Object` else-arm. Both helpers are module-level functions in the
+  #     same file; the first cut inlined them and cost +9. What cannot move is
+  #     the spread itself — the arm has to be ordered relative to the fnctor arm
+  #     and the boundary fallback, and that ordering IS the body being built.
+  #   - `generateModule` +1 / `generateMultiModule` +1: the finalize-time
+  #     `fillArrayProtoSingleton(ctx)` call, one line each, beside its
+  #     `fillObjectProtoSingleton` twin (see the loc grant above).
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  # 2026-09-26 — lane RF1: the same two wiring sites as the `loc-budget-allow`
+  # grant above, and the same reason. `ensureProxyRuntime` +2 (one call, one
+  # blank line) and `compileNamespaceStaticCall` +9 (the proxy dispatch arm).
+  # Both host functions are ALREADY far past the 300-line rule (2588 and 3740)
+  # — splitting them is a pre-existing consolidation task (#3399), not
+  # something a 4-row conformance slice can carry. The extraction that WAS
+  # available was taken: the 130-LOC native body moved to a new module, cutting
+  # `ensureProxyRuntime`'s growth from +114 to +2.
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   # 2026-09-24 — lane W1: +24 inside `src/runtime.ts::resolveImport`, which is
   # the same 24 lines as the `loc-budget-allow` grant above (the three edited
   # host-import bodies are all closures built inside `resolveImport`'s by-name
@@ -2503,7 +2573,7 @@ dynamic text that the target has no host for) · **(c)** environment-unmeasurabl
 | B10 | global-object declaration descriptors | 7 | 7 / 0 | a | L | `var`/`function`/`let` at global code must create global-object properties with the spec's `configurable:false` and collide per §9.1.1.4. Two rows escape a bare `WebAssembly.Exception`. |
 | B9 | arrow `this` / `new.target` / `super` | 7 | 7 / 0 | a | L | lexical capture of the *enclosing function's* `new.target` and `[[HomeObject]]`. One row (`lexical-this.js`) is a null-pointer trap in `__module_init`, i.e. a miscompile, not a missing feature. |
 | B7 | tagged template | 7 | 6 / 1 | a | L | the site object is not frozen, is not passed as argument 0 in the member/call-expression forms, `this` binding is wrong for `obj.fn\`\``, `new tag\`\`` is not constructible, and one row still leaks `env::__tagged_template`. |
-| B4 | cross-realm | 6 | 6 / 0 | **b** | — | every row calls `$262.createRealm()`. A standalone binary is one realm by construction; there is no host to make a second one. **The clearest wont-fix-with-reason group in the cluster.** |
+| B4 | cross-realm | 6 | 6 / 0 | **b** | — | ~~every row calls `$262.createRealm()`. A standalone binary is one realm by construction; there is no host to make a second one. **The clearest wont-fix-with-reason group in the cluster.**~~ **SUPERSEDED 2026-09-26 by lane X1 — this reasoning is wrong.** `$262` is not a host object here: it is ordinary JS compiled into the module from `scripts/test262-fyi-runtime.js`, and its `createRealm()` returns a plain object forwarding ten real intrinsics off `globalThis`. The foreign realm already exists and 39/128 rows already passed. X1 landed +11 against it. Only **16** of 128 rows genuinely need realm isolation; the honest ceiling without it is 112/128. See the X1 receipt below. |
 | B8 | `instanceof` | 6 | 6 / 0 | a | M | 3 × `@@hasInstance` (**root cause proven, see below**), 3 × an accessor `Function.prototype.prototype` that `Get(C,"prototype")` must call observably. |
 | B12 | `arguments` object | 5 | 5 / 0 | a | M | own `@@iterator` (2 rows), and `arguments`-named-`arguments` shadowing, which currently traps with `illegal cast` (2) or reports `typeof "function"` (1). |
 | B2 | `module-code` generator exports | 5 | 0 / 5 | a | — | all five are `standalone target emitted host imports: env::g` — a **generator** leak. Same family as cluster A; they landed in I only because the partition rule keyed on the path, not the error. Hand to A. |
@@ -10603,3 +10673,1462 @@ note here would have sent the next lane at the wrong code. Treat every recorded
 cause in this document as a point-in-time hypothesis: re-probe it before you
 build on it. The handoff section above says to check `git log` on any file a
 note names; add to that — check the note's *claim*, not just its freshness.
+
+## Lane N3 receipt — nested module namespaces (`export * as ns from …`)
+
+Branch `issue-6651-n3-nested-namespace`, based on
+`origin/claude/project-thread-yhj9pp` (the N1 live-bindings work is **not** on
+`main` — verified 2026-09-25: commit `151541b1` "module namespace — live
+bindings, default export, null proto, non-extensible" exists only on that
+branch).
+
+### What landed
+
+One new export kind in `src/codegen/module-namespace-value.ts`: a
+`ts.NamespaceExport` (`export * as ns2 from './x.js'`) now materializes the
+re-exported module's namespace object recursively instead of declining the
+whole enclosing namespace. Supporting changes, all in the same file:
+
+- `namespaceFunctionExports` split into a thin resolver plus
+  `moduleSymbolNamespaceExports(ctx, moduleSymbol, visiting)`, so the export
+  walk can recurse. `visiting` is a fresh per-level set, which makes a
+  re-export cycle decline rather than recurse forever.
+- `emitNamespaceObject` split into `ensureNamespaceObjectGetter` (builds/reuses
+  the getter, returns its NAME) plus a thin emit wrapper. The name, not the
+  index, is the stable handle — `flushLateImportShifts` keeps `ctx.funcMap` in
+  lockstep, so a caller resolving the index after its own flush always gets the
+  current one.
+- Nested getters are built **before** the enclosing object reserves any of its
+  own late imports (`ensureNestedNamespaceGetters`), so each inner import batch
+  completes before the outer body is laid out. Interleaving would flush
+  mid-layout and strand already-baked indices.
+
+### N2's root-cause note: CONFIRMED, and incomplete in one way that matters
+
+N2's site was exactly right — no arm for `ts.NamespaceExport`, terminal decline,
+whole namespace rejected. Re-probed on this tree before building on it.
+
+But **the two target rows do not hit that decline first.** Measured:
+
+- `get-nested-namespace-dflt-skip.js` — **FIXED** on both lanes, but only on the
+  lane that can measure it (below).
+- `get-nested-namespace-props-nrml.js` — **still fails, both lanes**, and the
+  namespace arm is not the blocker. It declines on
+  `export class starAsClassDecl {}`: a class binding has **no module-global
+  cell** (`ctx.moduleGlobals` does not contain it; the constructor object lives
+  in `ctx.classObjectGlobals` and is materialized by `emitLazyClassObjectGet`
+  in `src/codegen/expressions/extern.ts`). Proof that this is the ONLY
+  remaining blocker for that row: with the single `export class` line removed
+  from the fixture, the same probe returns 1 on both lanes — generator
+  declaration, `export {x as y} from`, and two-level nesting all work.
+  Deliberately not fixed: `emitLazyClassObjectGet` interns string-constant
+  globals mid-build, which is exactly what the namespace emitter's
+  single-batch index discipline forbids. It would need the same
+  "mint a separate getter during the reservation phase" treatment the nested
+  arm uses. That is the next slice.
+
+### Measurement lane caveat — read this before trusting any sweep of these rows
+
+`scripts/run-test262-paths.mts` (via `runTest262File`) **single-file compiles**
+(`compile(wrappedSource, {fileName: "test.ts"})`). It has no `_FIXTURE` link.
+The CI/sharded lane (`tests/test262-vitest.test.ts`) *does*: it calls
+`discoverFixtureGraph` and links through `compileMulti`.
+
+Consequence: **every row that imports a separate `_FIXTURE.js` is unmeasurable
+in the `run-test262-paths` lane** — `ctx.oracle.valueDeclarationOf` answers
+`none`, the binding never materializes, and the row reports
+`ReferenceError: ns is not defined` whatever the compiler does. In
+`namespace/internals` that is exactly three rows:
+`get-nested-namespace-dflt-skip.js`, `get-nested-namespace-props-nrml.js`,
+`own-property-keys-binding-types.js`. Verified by instrumenting
+`tryEmitCompiledModuleNamespaceObject` and running the row: 4 calls, all
+`decl=none`.
+
+So the whole-directory sweeps below correctly show **no change** on those rows;
+that is a runner artifact, not evidence the fix is inert.
+
+### Sweeps that RAN TO COMPLETION
+
+`language/module-code/**` — 599 rows (fixtures excluded), per-ROW set diff,
+`--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`, both lanes, base vs after.
+Base = this branch with `src/codegen/module-namespace-value.ts` reverted.
+
+| lane | base non-pass | after non-pass | fixed | regressed | status-changed | `error` rows (NOT MEASURED) |
+| --- | --- | --- | --- | --- | --- | --- |
+| host (gc) | 215 | 215 | 0 | 0 | 0 | 2 base / 2 after (`top-level-await/dynamic-import-of-waiting-module.js` and one sibling) |
+| standalone | 238 | 238 | 0 | 0 | 0 | 0 base / 0 after |
+
+Net zero on both lanes: **no regressions**, and no fixes visible in this lane
+for the reason above.
+
+### The measurement that DOES see the fix
+
+CI-lane-equivalent probe (`discoverFixtureGraph` + `wrapTest` + `compileMulti`
++ instantiate + run), base vs after, both lanes:
+
+| row | host base → after | standalone base → after |
+| --- | --- | --- |
+| `get-nested-namespace-dflt-skip.js` | THROW → **PASS** | THROW → **PASS** |
+| `get-nested-namespace-props-nrml.js` | THROW → THROW | THROW → THROW |
+| `own-property-keys-binding-types.js` | CE → CE (probe artifact, see below) | CE → CE |
+
+`own-property-keys-binding-types.js` came back `CE Type annotations can only be
+used in TypeScript files` in that probe — a probe artifact, not a verdict. Its
+real state, measured by running the row through the single-file runner with the
+namespace emitter instrumented, is: the namespace object IS built, with **7**
+keys (`live:a_local1, live:b_renamed, live:c_localUninit1, live:d_renamedUninit,
+default:default, live:e_indirect, live:f_indirectUninit`) against the 10 the row
+asserts. That is consistent with N2's finding that the N1 attribution for this
+row is wrong, and narrows it: three exported names are missing from the export
+walk, not mis-lowered.
+
+### Regression test
+
+`tests/issue-6651-n3-nested-namespace.test.ts` — 4 cases (2 shapes × 2 lanes).
+Proven red on the reverted base: **4 failed / 4**. Green with the fix:
+**4 passed / 4**.
+
+### Gates (all run bare, chained, exit code read directly)
+
+`check-loc-budget` 0 (net +145 LOC, no allowance needed) · `check-func-budget` 0
+· `check-coercion-sites` 0 · `check:oracle-ratchet` 0 · `check:dead-exports` 0 ·
+`check-host-import-policy` 0 (`runtimeTsLines` 20214 — unchanged, `src/runtime.ts`
+not touched) · `check-compiler-boundaries --mode inventory` 0
+(`inventoryValid: true`; no new file under `src/`).
+
+`check-func-budget` failed on the first cut — the renamed
+`ensureNamespaceObjectGetter` crossed 300 LOC at 316. Resolved by splitting out
+two cohesive helpers (`rebaseNamespaceGlobalReads`,
+`ensureNestedNamespaceGetters`), not by an allowance.
+
+### Not done
+
+- `own-property-keys-sort.js` (the secondary investigation) — not started. The
+  primary consumed the window.
+- `props-nrml`'s `export class` arm — sited precisely above, not attempted.
+
+---
+
+## Lane P1 receipt — `Proxy` bucket triage (2026-09-26)
+
+Scope: the 118 not-pass rows in the ES2015 × `Proxy` feature bucket on
+`--target standalone` (431 rows total, 115 fail + 3 compile_error, 73%).
+Reproduced the artifact exactly from the per-row JSONL, so the partition below
+is over the same row set the landing page counts.
+
+### Measurement lanes used
+
+- **Row set**: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`
+  (48,735 rows, fetched fresh) ∩ `scripts/generate-editions.ts`'s own
+  `parseFrontmatter` + `classifyEdition` + the `--host-free` pass definition.
+  Independently reproduces `431 / 115 fail / 3 CE`.
+- **Authoritative verdicts**: `tests/test262-shared.ts::runTest262Chunk` under
+  `TEST262_TARGET=standalone`, driven from a gitignored `tests/probe-*.test.ts`
+  with `TEST262_PATH_FILTER`, `--isolate`, `JS2WASM_ROW_TIMEOUT_MS=420000`.
+- **Standalone IS measurable in the CI-faithful lane in this container.**
+  The previously recorded "no built runtime-eval provider" blocker did not
+  apply: the only missing pieces were `scripts/compiler-bundle.mjs` and
+  `scripts/runtime-bundle.mjs`, which are gitignored build products
+  (`npx esbuild scripts/{compiler,runtime}-bundle-entry.ts …`, ~750 ms each).
+  **The test262 worker compiles through those bundles, so they MUST be rebuilt
+  after every `src/` edit or the lane measures the previous tree.**
+- Ad-hoc snippet lane (`compile(src, {target:"standalone"})` + `WebAssembly.
+  instantiate`) used only for bisection. It disagreed with the harness on this
+  bucket **four separate times** (see "snippet-lane hazard" below); every
+  conclusion recorded here is anchored to an authoritative-lane verdict or to a
+  snippet run with the REAL test262 harness prepended.
+
+### Host-vs-standalone split of the 118
+
+| | rows |
+|---|---|
+| host **pass**, standalone not-pass → standalone-only gap | **59** |
+| host **fail** too → shared front-end, different slice | **59** |
+
+### Partition by ROOT CAUSE (not by directory)
+
+| group | rows | SA-only | status |
+|---|---|---|---|
+| `Function.prototype` members unreadable as VALUES | 7 (+3 later editions, +1 CE) | 7 | **root-caused, sited, unfixed** |
+| proxy in a PROTOTYPE chain is invisible | 15 | 6 | architectural, confirmed |
+| cross-realm | 10 | 5 | belongs to the cross-realm slice |
+| revoked-proxy reachability | 8 | 6 | not root-caused |
+| ownKeys / gOPN invariants | 7 | 6 | not root-caused |
+| ArraySpeciesCreate through a proxy (`*/create-proxy.js`) | 5 | 0 | shared front-end |
+| residual, individually sited | ~66 | 29 | mixed |
+
+### Three RECORDED causes corrected by re-probe
+
+1. **"nested proxy forwarding (`target-is-proxy`) is broken" — WRONG.**
+   Nested trap-absent forwarding works: `new Proxy(new Proxy({x:1},
+   {get(){…}}), {})` runs the inner trap and returns its value; the `has`
+   twin likewise (probe `.tmp/p1/g4.js`, 4/4 bits correct). The 24
+   `*-target-is-proxy.js` rows are **composites** — each also does
+   `Object.create(proxy)` and/or reads builtin-prototype members
+   (`name`, `length`, `ignoreCase`) through the proxy. Grouping them by
+   filename produced a 24-row "cause" that does not exist.
+
+2. **"trap `this` is not the handler" (row 7 in the F1/F2 tables) — WRONG.**
+   The trap `this` IS the handler on every path where the trap runs
+   (`.tmp/p1/r3.js` bits 12/15: direct `has`/`get`/`set` traps all fire with
+   `this === handler`). The `_handler === undefined` assertions fail because
+   **the trap never runs at all** — the proxy sits in the prototype chain.
+   Same underlying cause as (3), not a calling-convention defect.
+
+3. **`Proxy/has/trap-is-undefined.js` is not a Proxy row at all.**
+   It fails on `"length" in Object.create(Array.prototype)`, which answers
+   `false` **with no proxy anywhere in the picture** (`.tmp/p1/r2.js` bit 1;
+   `"push" in` the same object answers `true`, so the chain walk is fine —
+   `Array.prototype`'s own `length` is what `in` cannot see).
+
+The prototype-chain note (`$Object.$proto` is `ref null $Object`, `$Proxy` is
+not a subtype) **re-probed as CORRECT**, and the cited #2009 canonicalisation
+failure is documented in `object-runtime.ts` at the `$Object` declaration.
+Measured shape: a proxy reached through the prototype chain is completely
+invisible — `has`, `get` and `set` all skip it and operate on the proxy's
+target (`.tmp/p1/r3.js`: bits 1–10 all fail, bits 11–15 — the direct-receiver
+controls — all pass). One non-architectural route the earlier notes did not
+consider: `$Object` has only **4** `struct.new` sites, so APPENDING a 7th
+`protoExtern: externref` field is mechanically tractable and is *not* the
+non-final/subtype change that triggered #2009. Not attempted here — it rewrites
+every proto-walk loop in `__extern_get`/`__extern_has`/ordinary-set plus
+`Object.create` / `setPrototypeOf` / `instanceof` / `isPrototypeOf`, which is an
+architect spec, not a lane slice.
+
+### Root cause found and precisely sited (the intended fix, not landed)
+
+**No `Function.prototype` member is reachable as a VALUE off a function object
+in `--target standalone`.** `f.apply`, `f.call`, `f.bind`, `f.toString` — and
+the computed-key and fully-laundered-receiver spellings of each — all evaluate
+to `undefined` (`.tmp/p1/g2v.js`: 7/7 undefined). Calls (`f.apply(…)`) are
+unaffected; only the value read is.
+
+This is the whole of the `built-ins/Function/prototype/toString/proxy-*`
+bucket — **10 fail + 1 CE measured authoritatively**, of which 7 are in ES2015
+and all 7 are host-pass (standalone-only). Evidence chain:
+
+1. Authoritative lane, all 10: `Test262Error: Conforms to NativeFunction
+   Syntax: "undefined"` (the CE is `proxy-async-generator-method-definition.js`,
+   an unrelated host-import leak: `env::__create_async_generator`).
+2. `harness/nativeFunctionMatcher.js`'s `assertNativeFunction` computes
+   `"" + fn` — **not** `Function.prototype.toString.call(fn)`.
+3. Every one of those rows has the same two-line shape:
+   `assertNativeFunction(new Proxy(<callable>, {}))` then
+   `assertNativeFunction(new Proxy(<callable>, { apply() {} }).apply)`.
+4. With the REAL harness prepended and the assertions at module top level
+   (`.tmp/p1/g2l.js`), **line 1 passes and line 2 fails with `"undefined"`** —
+   line 1 is already served by #5269 C-1's `buildProxyCallableToStringArm`.
+5. Line 2's operand is `proxy.apply`, and `.apply` read off *any* function —
+   proxy or not — is `undefined` (step above).
+
+**Fix site**: `src/codegen/closure-props.ts`, the `__closure_prop_get` terminal
+miss — `...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss())` (~L978). That
+consult is receiver-aware and does route a closure receiver to the Function
+brand's companion (`__protoidx_get_r`), but the companion is **minted empty for
+the Function brand** — `native-proto.ts`'s seeder comment says so explicitly
+("The companion is simply minted EMPTY — nothing ever put the builtin's own
+members in it"), and `ensureFunctionNativeProtoGlue` (array-object-proto.ts
+L3054) is reached only from syntactic sites. Naming `Function.prototype` in the
+source does **not** fix the closure read (`.tmp/p1/g2u.js`) — the direct
+`Function.prototype.apply` read is a separate syntactic fold, which is why the
+gap is invisible from that spelling.
+
+Two candidate shapes, in increasing blast radius:
+- a narrow arm at the miss that maps the fixed set `{apply, call, bind,
+  toString}` to `ensureStandaloneNativeMethodClosure(ctx, functionBrand, m,
+  "method")` — converts `undefined` into the correct value and touches nothing
+  else (not enumeration, not `hasOwnProperty`);
+- seeding the Function brand companion wholesale — principled, but makes every
+  closure inherit every `Function.prototype` member dynamically in one step,
+  which changes `for…in` / `hasOwnProperty` / gOPD at the same time.
+
+A static fold in `property-access.ts` (mirroring
+`tryCompileStandaloneFunctionHasInstanceRead`) would ALSO move these rows and is
+tempting because `new Proxy(f, h)` carries `f`'s TS type, so `fact.kind ===
+"function"` holds — **do not take it**: it would bypass a `get` trap on the
+handler, trading 10 rows for a silent MOP violation.
+
+### Snippet-lane hazard (worth recording — it cost this lane most of its window)
+
+An ad-hoc `compile()` + `instantiate()` probe disagreed with the harness four
+times on this bucket, each time in the "everything looks fine" direction:
+`"" + proxyOfFunction` answered correctly when the operand had a static type
+(the `callableToStringLiteral` arm fires) and only reproduced the defect once
+the value arrived through an untyped parameter **and** the assertions ran at
+module top level. `String(x)` on a boolean traps in that harness, and
+`out.join(" | ")` throws "Cannot convert object to primitive value" — both
+unrelated to the subject. Anchor every claim to `runTest262Chunk`, or to a
+snippet with the real harness text prepended.
+
+### Sweeps: complete vs. cut short
+
+- **Complete**: the 118-row partition (offline, over the full per-row JSONL);
+  the `built-ins/Function/prototype/toString/proxy-` authoritative sweep
+  (11 rows, 0 pass / 10 fail / 1 CE, **0 `error` rows**); the 2-row
+  `Proxy/has` authoritative control (2 fail, **0 `error` rows**, both
+  reproducing the baseline error text verbatim).
+- **Not run**: any before/after sweep — no source change was made, so there is
+  no delta to report and no regression test to prove red. Nothing in this
+  receipt is a performance or conformance *change* claim.
+
+### Not done
+
+- No code change. The `Function.prototype`-member-value fix is sited above but
+  was not implemented: the window went to triage, and the three corrected
+  root-cause notes were worth more than a half-proven change in the dynamic
+  property-read path.
+- `revoked-proxy` (8 rows) and `ownKeys/gOPN invariants` (7 rows) are grouped
+  but NOT root-caused — treat their labels as directory-shaped until re-probed,
+  exactly like the three corrected above.
+## Lane N4 receipt — `export class` in a namespaced module; and why the
+## `own-property-keys-binding-types` 7-vs-10 gap was never a compiler defect
+## (2026-09-26)
+
+Base: `origin/issue-6651-n3-nested-namespace` (PR #6119, **not** merged to
+`main` at branch time — `git log origin/main` did not contain N3's commit
+`9380458`, and `main`'s `module-namespace-value.ts` had no `namespace` export
+kind). Branch `issue-6651-n4-namespace-class-exports`.
+
+### Row 1 — `get-nested-namespace-props-nrml.js`: FIXED
+
+N3's siting was exact and is what this slice implemented. `export class
+starAsClassDecl {}` has no module-global cell, so it matched no arm of
+`moduleSymbolNamespaceExports` and fell through to the terminal
+"mutable values require live-binding getters" decline — which rejects the
+WHOLE namespace object, so `ns.exportns` read back undefined.
+
+The class's constructor object lives behind the `__class_<Name>` singleton and
+is materialized by `emitLazyClassObjectGet`. That helper interns string-constant
+globals (each an IMPORTED global, which shifts the global index space) and runs
+its own `flushLateImportShifts`, so it cannot be called while the namespace body
+is being laid out. `ensureClassObjectGetters` therefore mints one zero-argument
+getter per exported class in the SAME pre-reservation slot N3 uses for nested
+namespaces, and the slot is filled by CALLING it — the name, not the index, is
+the handle, because `flushLateImportShifts` keeps `ctx.funcMap` in lockstep.
+
+The class key is resolved by IDENTITY through `ctx.classDeclarationMap`, not by
+reading `node.name.text`: the codegen key is not always the source name (class
+expressions are dual-registered, a multi-module graph may disambiguate), and a
+key that merely looks right would publish a DIFFERENT class's constructor.
+
+`ensureNamespaceObjectGetter` hit 301 LOC with the new arm. Split into
+`reserveNamespaceObjectHelpers` (reserve one batch, flush once, read back final
+indices) + `buildNamespaceObjectGetterBody`, rather than taking a
+`func-budget-allow` grant.
+
+### Row 2 — `own-property-keys-binding-types.js`: NEGATIVE RESULT, no compiler
+### change. The 7-vs-10 gap is an artifact of the measurement lane.
+
+The three missing names are **`g_star`, `h_starRenamed`, `i_starIndirect`** —
+exactly and only the exports of
+`own-property-keys-binding-types_FIXTURE.js`, reached through
+`export * from './own-property-keys-binding-types_FIXTURE.js'`.
+
+They are missing because the FIXTURE is **not in the compilation**.
+`runTest262File` (and therefore `scripts/run-test262-paths.mts`) compiles this
+row's entry ALONE — its `selfModuleImport` branch calls
+`compileMulti({ [entryFile]: source }, …)` with no fixture files — so the star
+re-export has no module to resolve against and the checker never sees those
+three names. Measured directly, same checker, same options, differing only in
+whether the fixture file is in the map:
+
+| graph | `checker.getExportsOfModule(entry)` |
+| --- | --- |
+| entry only (`run-test262-paths` lane) | 7 — `a_local1, b_renamed, c_localUninit1, d_renamedUninit, default, e_indirect, f_indirectUninit` |
+| entry + FIXTURE (CI lane) | 10 — the above plus `g_star, h_starRenamed, i_starIndirect` |
+
+The 7 are byte-identical to the 7 recorded in the dispatch brief, so that
+instrumentation was taken in the un-linked lane. The export walk itself is
+correct; nothing is mis-lowered and nothing is dropped.
+
+**The row already passes in the authoritative lane.** On this branch's base,
+the CI-faithful sweep scores it `pass`; so does the published baseline
+(`test262-current.jsonl`, entry stamped `oracle_lane: linked-harness`,
+`"status": "pass"`). Both earlier attributions for this row — a
+`namespaceFunctionExports` alias-resolution defect, and a test-runner blocker —
+are superseded: there is no defect to fix.
+
+Corollary for anyone measuring this tree: a row whose assertions depend on a
+separate `_FIXTURE.js` is **not measurable** with `run-test262-paths`, and its
+verdict there is not evidence about the compiler.
+
+### Sweeps that RAN TO COMPLETION
+
+**1. CI-faithful lane** (`tests/test262-shared.ts::runTest262Chunk` — the
+original-harness + fixture-linked path the sharded CI run uses), filtered to
+`language/module-code/namespace/`, 38 rows, base vs after, HOST target:
+
+| | base | after |
+| --- | --- | --- |
+| pass | 25 | **26** |
+| fail | 13 | 12 |
+
+Per-ROW set diff: exactly **one** flip, `get-nested-namespace-props-nrml.js`
+fail → pass. 0 regressions. 0 `error` rows. (Re-run after the function split,
+with both bundles rebuilt from the final source; same result.)
+
+**2. Control neighbourhood** `language/module-code/**` — 599 rows (fixtures
+excluded), `scripts/run-test262-paths.mts --isolate`,
+`JS2WASM_ROW_TIMEOUT_MS=420000`, per-ROW set diff, base vs after, both lanes.
+Base = this branch with `src/codegen/module-namespace-value.ts` reverted to its
+committed content (file-copy A/B, no `git stash`).
+
+| lane | base | after | flips |
+| --- | --- | --- | --- |
+| host (gc) | pass 381 · fail 185 · compile_error 27 · skip 4 · **error 2** | pass 381 · fail 185 · compile_error 27 · skip 4 · **error 2** | **0** |
+| standalone | pass 357 · fail 178 · compile_error 60 · skip 4 · **error 0** | pass 357 · fail 178 · compile_error 60 · skip 4 · **error 0** | **0** |
+
+**`error` rows are NOT MEASURED, not verdicts.** Host: 2 in base and 2 in after,
+the same two rows both times —
+`top-level-await/dynamic-import-of-waiting-module.js` (child process died) and
+`top-level-await/while-dynamic-evaluation.js` (`spawnSync … ETIMEDOUT`).
+Standalone: 0 in base, 0 in after. No fix is visible in this lane, by
+construction — both target rows import fixtures.
+
+### Sweeps that did NOT yield (stated, not hidden)
+
+- **CI-faithful lane, STANDALONE target: 0 of 38 rows measured.** Every row
+  fails before reaching the compiler — with `JS2WASM_EVAL_ENGINE=quickjs`,
+  34/38 report "the quickjs provider is not built"; with
+  `=interpreter`, all 38 report `WebAssembly.instantiate(): Import #0
+  module="js2wasm:runtime-eval": module is not an object or func`. This
+  container has no built runtime-eval provider. The standalone evidence for
+  this slice is therefore the regression test's standalone lane plus the
+  599-row standalone control sweep above, **not** a CI-lane row diff.
+- **First control sweep attempt discarded.** It was launched before the
+  function split and observed a transient broken edit (esbuild
+  `Expected identifier`); killed and re-run from scratch. Numbers above are
+  from the clean re-run.
+- **A first CI-faithful attempt over all of `language/module-code/`** (599
+  rows) OOM'd in the vitest fork at ~510 MB inside the `top-level-await`
+  bucket. Scoped to `namespace/` and raised `VITEST_FORK_MAX_OLD_SPACE_SIZE`.
+
+### Regression test
+
+`tests/issue-6651-n4-namespace-class-export.test.ts` — 3 shapes × 2 lanes
+(host, standalone).
+
+Proven red on the reverted base, per test:
+
+| case | host base | standalone base | after (both) |
+| --- | --- | --- | --- |
+| exported class is a namespace property | PASS | PASS | PASS |
+| namespace slot and direct import are one class object | **FAIL** | **FAIL** | PASS |
+| re-exported namespace containing a class | **FAIL** | **FAIL** | PASS |
+
+Base: **4 failed / 2 passed (6)**. After: **6 passed (6)**.
+
+The first case passes on the base too — stated rather than dressed up as a
+regression test. A single-module `import * as ns` whose module declares a class
+already produced an object with the right keys on the declining path; what the
+base cannot do is give that slot the SAME class object as a direct import
+(case 2) or materialize the namespace at all once it is re-exported (case 3).
+
+### Gates (all run bare, chained, exit code read directly — never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 ·
+`check-host-import-policy` 0 (`runtimeTsLines` 20214 — unchanged;
+`src/runtime.ts` not touched) ·
+`check-compiler-boundaries --mode inventory --base HEAD^1` 0
+(`inventoryValid: true`; no new file under `src/`, so no
+`scripts/compiler-boundaries.json` entry) · `npm run -s typecheck` 0.
+
+`check-func-budget` failed on the first cut at
+`ensureNamespaceObjectGetter: 301 (> 300, +1)`. Resolved by the split described
+above, not by an allowance. No `scripts/*-baseline.json` was edited.
+
+### Not done
+
+- `get-nested-namespace-dflt-skip.js` and the remaining 12 `namespace/**`
+  failures are untouched — they are TDZ / `[[DefineOwnProperty]]` / `__proto__`
+  behaviours, unrelated to this arm.
+- The `own-property-keys-binding-types` row needed no change; the residual
+  there is in the MEASUREMENT tooling (`run-test262-paths` does not link
+  fixtures), not in the compiler. Worth a follow-up only if someone wants that
+  lane to be usable on fixture rows.
+## 2026-09-26 — lane X1: the ES2015 `cross-realm` bucket, triaged end to end
+
+- **Branch** `x1-6651-crossrealm-globalthis-symbol`, based on `origin/main`
+  @ `0d119cbcfb`. **Worktree**
+  `/home/claude/js2/.claude/worktrees/agent-a9ec88129cf08ceb1`.
+- **Manifest** `/tmp/claude-0/xr128.txt`, the 128 rows the dashboard counts,
+  sha256 `abb9905b0a56748eb3be2100d80d7cd408747bc5453ecce61f9885ac1f1d2aff`.
+  Derived by running `scripts/generate-editions.ts`'s own `parseFrontmatter` +
+  `classifyEdition` over every `cross-realm`-tagged file and keeping
+  `edition === 2015` — it reproduces the published `39 / 89 / 0` exactly.
+
+### The recorded cause was wrong, and it is the load-bearing correction here
+
+The 2026-09-2x triage recorded bucket **B4 `cross-realm` as a wont-fix (b)**:
+*"every row calls `$262.createRealm()`. A standalone binary is one realm by
+construction; there is no host to make a second one."*
+
+**That is not what happens.** `$262` is not a host object in this lane — it is
+ordinary JavaScript **compiled into the module**, from
+`scripts/test262-fyi-runtime.js`. Its `createRealm()` returns a plain object
+whose `global` **forwards ten real intrinsics off `globalThis`**
+(`Array ArrayBuffer Date Function Iterator Math Proxy Symbol eval parseInt`) and
+mints seven **distinct** error constructors (#4634). So the "foreign realm" is
+present, and **39 of the 128 rows already pass standalone**. The bucket is
+ordinary compiler and harness work, not an architectural impossibility.
+
+What IS impossible under a forwarding shim is only the subset that asserts a
+realm *difference* — see the third partition axis below.
+
+### Partition of the 89 standalone failures
+
+Cross-tabulated against the host baseline (`test262-current.jsonl`, fetched
+2026-09-26 02:46Z) — this is the "is it standalone or is it shared" axis:
+
+| | host pass | host fail |
+| --- | ---: | ---: |
+| **standalone pass** | 26 | 13 |
+| **standalone fail** | **30** | **59** |
+
+So only **30** of the 89 are standalone-lowering gaps. **59 fail on host too**
+and are shared front-end work.
+
+By what the row reads off the realm global (mechanical scan of every row's
+`$262.createRealm().global` expression):
+
+| group | rows | what it is |
+| ---: | ---: | --- |
+| **A** | 40 | the row reads a name the shim **does not forward** — `Object` 17, `RegExp` 7, `String` 6, `Boolean` 5, `Number` 4, and one each of `Promise` `Map` `Set` `WeakMap` `WeakSet` `DataView`. **All 40 fail on host too.** The read answers `undefined` and the row dies before its assertion. |
+| **B** | 49 | the row reads only forwarded names, so it reaches its assertion and fails on semantics. |
+
+And orthogonally, by whether the assertion can hold when `other === current`:
+
+| | rows | |
+| ---: | ---: | --- |
+| satisfiable with a forwarding shim | 73 | the `proto-from-ctor-realm*` family (~45), the well-known-symbol family, most Proxy rows |
+| **needs a genuinely DISTINCT realm** | **16** | `assert.notSameValue(…)` or `assert.throws(other.TypeError, …)` where the throw must *originate* in the foreign realm: all 7 `RegExp/prototype/<flag>/cross-realm`, both `Error/prototype/stack/*-cross-realm`, `ThrowTypeError/distinct-cross-realm`, `Symbol/for` + `Symbol/keyFor` (they assert `Symbol.for !== OSymbol.for`), both `String/prototype/*/non-generic-realm`, both `Function/prototype/apply/*-realm`, `tagged-template/cache-realm` |
+
+### Measurement lane — validated, not assumed
+
+Standalone **is** measurable in this container, contrary to two earlier entries
+here; the #6651 F2 entry was right and F1 was wrong. Two artifacts have to be
+built first or every row reports the same non-verdict:
+
+```bash
+npm run -s build:compiler-bundle && npm run -s build:runtime-bundle
+node scripts/build-quickjs-eval-provider.mjs
+```
+
+**The QuickJS adapter key is derived from the compiler bundle**, so *any* source
+change invalidates it and the next run reports
+`quickjs provider is not built (missing …-<newkey>.wasm)` on **every** row. That
+is an `error` state, not a verdict — it cost one full 128-row sweep here
+(reported `0 pass / 128 fail`) before it was recognised. Rebuild the provider
+after every bundle rebuild.
+
+Evidence the lane is faithful: the base sweep reproduced CI's published
+standalone numbers for this bucket **exactly** — 39 pass / 89 fail / 0 CE /
+0 error on 128 rows.
+
+### What landed — one seam, +11 rows, 0 lost
+
+**Root cause, probed not inferred.** One standalone module reading
+`{ X: globalThis.X }` for 21 builtin names on base: 17 answered a real carrier;
+exactly **`Symbol` `ArrayBuffer` `DataView` `Promise` answered null**. Meanwhile
+`Symbol`, `{ S: Symbol }.S`, and `{ S: Symbol }.S.iterator === Symbol.iterator`
+all already worked. So the carrier was never missing — the realm **object's
+property** was. The shim builds its foreign realm global by MEMBER reads off
+`globalThis` (deliberately, per its own comment), so
+`$262.createRealm().global.Symbol` was `undefined` and every well-known-symbol
+row died on the property read.
+
+`src/codegen/standalone-global-object-carriers.ts` —
+`appendStandaloneGlobalConstructorSeeds` now seeds those four names. All four are
+already in `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES`, so the seeded value is the SAME
+`__builtin_ctor_<Name>` singleton the bare read produces: this closes a split
+between two spellings of one intrinsic, it does not mint a second.
+
+**The second half of the fix is the one that actually mattered, and the first
+cut missed it.** Adding the names to the existing list changed **nothing**
+(re-measured: 39/89, a per-row diff with zero changes). That function early-
+returns for any module with a runtime-eval boundary site — and **every** test262
+module carrying the `$262` shim also carries its `evalScript`, so the early
+return always fires in this corpus. The four names are now a separate list
+seeded on **both** sides of that gate. The gate's stated hazard is `%Function%`
+parity re-entry; these four are not built by the eval boundary and are not
+reachable from `%Function%`'s carrier.
+
+| standalone, `--isolate`, 128 rows | pass | fail | CE | error |
+| --- | ---: | ---: | ---: | ---: |
+| before (`/tmp/claude-0/base128.jsonl`) | 39 | 89 | 0 | 0 |
+| after (`/tmp/claude-0/after128c.jsonl`) | **50** | 78 | 0 | 0 |
+
+Per-PATH join, not a count comparison: **+11, −0, no other verdict changed.**
+The 11 are `built-ins/Symbol/{iterator,species,match,replace,search,split,
+hasInstance,isConcatSpreadable,toPrimitive,toStringTag,unscopables}/cross-realm.js`.
+The two Symbol rows that did **not** flip are `for` and `keyFor` — both assert
+`notSameValue(Symbol.for, OSymbol.for)`, i.e. they are in the distinct-realm 16.
+
+Regression test `tests/issue-6651-x1-realm-global-ctor-seeds.test.ts`, proven
+**3/3 red** with `src/codegen/standalone-global-object-carriers.ts` reverted to
+`HEAD` and **3/3 green** restored (file-copy A/B, no stash).
+
+### Feasibility verdict on the remaining 78
+
+| slice | rows in reach | size | what it touches |
+| --- | ---: | --- | --- |
+| **`proto-from-ctor-realm` semantics** — the single biggest lever | ~45 | **L** | §9.1.14 GetPrototypeFromConstructor must fall back to the *intrinsic* default prototype when `newTarget.prototype` is not an object. Measured symptom: `Object.getPrototypeOf(Reflect.construct(Array, [], newTarget))` answers **`null`**, so the row's own assertion message reads `SameValue(«null», «[object Array]»)`. One mechanism, many rows; it spans both groups A and B. |
+| **shim forwards** for `RegExp String Boolean Number Map Set WeakMap WeakSet DataView Promise` | up to 23 (unblocks them to *reach* their assertion) | **M–L** | a 10-line diff in `scripts/test262-fyi-runtime.js` — but that file compiles into **every test262 module in every lane**, so the validation is a full host + standalone sweep, not a neighbourhood. Necessary, not sufficient: each unblocked row then still needs the slice above, or a non-generic brand check. |
+| **`Object` forward** | 17 | **L** | same shape, but carries a recorded 2026-08-23 landmine: any compiled read of `globalThis.Object` in that prelude degraded `error.constructor` TypeError→Error and regressed `language/expressions/dynamic-import/assignment-expression/import-meta.js`. Needs the compiler-side fix first, then the forward. Largest single sub-bucket in the whole gap. |
+| **real realm isolation** | 16 | **XL — recommend wont-fix-with-reason** | would need per-realm intrinsic tables (every `__builtin_ctor_*` / native-prototype singleton becomes realm-indexed), a realm field on every function object so `GetFunctionRealm` can answer, realm-aware error construction, and a harness that mints a genuine second global instead of forwarding. Five subsystems for 16 rows. |
+
+Net: of the 89, **73 are ordinary defects** and **16 are architectural**. The
+honest ceiling for this bucket without realm isolation is **112 / 128 (88 %)**,
+not 100 %.
+
+### Not done
+
+- Slices 2–4 above — sized, not attempted; slice 2/3 need a corpus-wide sweep
+  this window could not pay for.
+- The WASI lane is on the same `ctx.standalone || ctx.wasi` gate as the seed and
+  was **not** swept; residual risk, stated rather than measured.
+
+### Regression sweep — 1,680 rows, standalone, `--isolate`
+
+The seed runs in **every** standalone/WASI module, so the neighbourhood is the
+whole surface the four names can touch: `built-ins/{Symbol,ArrayBuffer,DataView,
+Promise,global}/**` + `language/global-code/**` = 1,680 rows.
+`/tmp/claude-0/neigh-after.jsonl`, **1,204 pass / 286 fail / 190 CE / 0 error**.
+
+Compared **per PATH** against CI's published standalone baseline
+(`test262-standalone-current.jsonl`, fetched 2026-09-26 02:46Z — CI's number,
+not mine; every one of the 1,680 rows was present in it):
+
+- **+20 gained**, and the five outside the cross-realm family are the same
+  defect seen from the other side — `Symbol/symbol.js`, `DataView/dataview.js`,
+  `ArrayBuffer/prop-desc.js`, `Promise/promise.js`,
+  `Promise/prototype/catch/S25.4.5.1_A2.1_T1.js` all run
+  `verifyProperty(this, '<Name>')` against the realm object. Four further
+  cross-realm Symbol rows outside ES2015 also flip (`matchAll`, `asyncIterator`,
+  `dispose`, `asyncDispose`).
+- **3 apparent losses, all `fail -> compile_error`, and all three are LOCAL
+  DRIFT, not this change.** `Promise/any/invoke-{resolve,then,then-get}-error-
+  close.js` report `worker terminated unexpectedly after retry (SIGABRT)`. Re-run
+  in isolation on the branch: 3 CE. Re-run in isolation with
+  `src/codegen/standalone-global-object-carriers.ts` reverted to `HEAD`, bundles
+  and QuickJS adapter rebuilt: **3 CE, identical**. They crash the compiler
+  worker on base too, so the branch neither causes nor fixes them.
+- **0 pass rows lost.**
+
+---
+
+## Receipt — lane F1: `%Function.prototype%` members unreadable as VALUES in standalone (2026-09-26)
+
+**Result: +8 rows** in `built-ins/Function/prototype/toString/proxy-*`, 0 regressions
+across a 588-row targeted sweep. Branch `issue-6651-f1-function-proto-values`.
+
+### The defect, as measured
+
+In `--target standalone`, `f.apply` / `f.call` / `f.bind` / `f.toString` all evaluated
+to `undefined` while `typeof f === "function"` — including the computed-key spelling
+(`f["apply"]`), a receiver laundered through an untyped parameter, and a
+`new Proxy(<function>, h)` wrapper. **Calling** them was never affected; those fold at
+the call site, which is why the gap was invisible from every ordinary spelling. It
+only surfaced where the member is handed on as a value, e.g. test262's
+`assertNativeFunction(new Proxy(fn, { apply() {} }).apply)`.
+
+### Root cause — prior lane P1's site: CONFIRMED in substance, CORRECTED in two details
+
+P1 named `src/codegen/closure-props.ts`, the `__closure_prop_get` terminal miss
+(`protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()`), and said the Function brand
+companion is "minted empty". That is the right subsystem and the right mechanism. Two
+corrections, both measured:
+
+1. **P1 said naming `Function.prototype` in source does NOT fix the closure read. It
+   does.** Compiling `var fp: any = Function.prototype;` ahead of the same reads flips
+   `g.apply` / `g["call"]` / `g.toString` and the proxy-wrapped `p.apply` from
+   `undefined` to callables in one step. That single fact is what localises the cause
+   to *demand*, not to the consult's shape — and it is why the fix is ~6 lines rather
+   than a new runtime arm.
+2. **There are TWO gates, not one, and in the real test262 rows the FIRST one is what
+   fires.** Instrumenting `built-ins/Function/prototype/toString/proxy-function-expression.js`
+   at the end of `ensureObjectRuntime` printed
+   `standalone=true storeReserved=undefined carrier=true memberDirty=false`. So in those
+   modules the proto-index store is **never reserved at all** and the consult P1 pointed
+   at is not even emitted; `getMiss()` answers. The empty-companion gate is real but only
+   becomes reachable once the store exists.
+
+   - Gate A — `reserveProtoIndexStore` self-gates on
+     `protoIndexDirty || protoNamedDirty || protoMemberDirty || moduleUsesDynTaView`.
+     Every one of those is a pre-scan for a **prototype OBJECT** being named. A bare
+     `fn.apply` read names no prototype, so nothing armed.
+   - Gate B — with the store reserved but the Function glue unregistered, the reads are
+     still `undefined` (isolated by compiling `var ap: any = Array.prototype;` — which
+     arms the store but not the Function brand — alongside the same reads: `2 0 0 0 0`).
+     The brand's companion is populated by a *seeder*, and the seeder is registered as a
+     side effect of materializing the brand's `$NativeProto` singleton, which only a
+     syntactic `Function.prototype` read ever did.
+
+### The fix
+
+Two edits, ~60 lines including commentary, no new runtime arm and no new file:
+
+- `src/codegen/array-holes.ts` — new pre-scan predicate
+  `isFunctionProtoMemberValueUse`: a `.apply` / `.bind` / `.call` / `.toString` read
+  (property or string-literal computed key) that is **not** in callee position, **not**
+  an assignment target, and whose receiver is **not** already a `<Builtin>.prototype`
+  expression. It sets the existing `protoMemberDirty`, which is what reserves the store.
+  Armed in the SAME pre-pass as its siblings for the reason in that file's header —
+  function compilation order is not source order, so a lazy per-site flag desyncs.
+- `src/codegen/closure-props.ts` — `ensureDynamicFunctionProtoCompanion`, called at the
+  end of `reserveClosurePropHelpers`: registers the `%Function.prototype%` glue and its
+  companion seeder, gated on `standalone && protoMemberDirty` (the same condition
+  `ensureNativeProtoCompanionSeeder` applies, checked first so a module that would be
+  refused does not pay for the glue's five member closures).
+
+Registering the seeder is the whole of the second half: `__protoidx_companion`'s
+`buildSeededOffsetForceCreateArms` already force-creates and seeds a companion on a
+`create = 0` read for exactly the seeded offsets, and does so **after** the slot store,
+so re-entry through the seeder's own `__defineProperty_value` calls is safe. Nothing is
+materialized eagerly.
+
+**The tempting shortcut was deliberately NOT taken.** A static fold in
+`property-access.ts` mirroring `tryCompileStandaloneFunctionHasInstanceRead` would move
+the same rows — `new Proxy(f, h)` carries `f`'s TS type, so `fact.kind === "function"`
+holds — and would bypass a handler's `get` trap. The fix goes through the dynamic path
+instead; `tests/issue-6651-f1-function-proto-values.test.ts` asserts the trap still sees
+`apply`/`call`/`bind`.
+
+**Placement note (LOC budget).** The demand call sat in `ensureObjectRuntime` in the
+first cut. `object-runtime.ts`, `array-object-proto.ts` and `proto-index-store.ts` are
+all god-files whose caps equal their current size, so *any* line added to them fails the
+gate. `closure-props.ts` and `array-holes.ts` are uncapped, and `closure-props.ts` is
+also where the consult this serves already lives — so the hook moved there and **no
+allowance was needed**. No `scripts/*-baseline.json` was edited.
+
+### Measurement
+
+Authoritative lane throughout: `tests/test262-shared.ts::runTest262Chunk`, driven from
+gitignored `tests/probe-f1s{1..6}.test.ts` under `TEST262_PATH_FILTER_FILE`,
+`TEST262_TARGET=standalone`, `JS2WASM_EVAL_ENGINE=quickjs`,
+`TEST262_IT_TIMEOUT_MS=420000`, `COMPILER_POOL_SIZE=2`. All three build products
+(`build:compiler-bundle`, `build:runtime-bundle`, `build-quickjs-eval-provider.mjs`)
+rebuilt after every `src/` edit, on both sides of the A/B.
+
+Target bucket, `built-ins/Function/prototype/toString/proxy-*` (11 rows), per row:
+
+| row | base | fix |
+| --- | --- | --- |
+| `proxy-arrow-function.js` | fail | **pass** |
+| `proxy-async-function.js` | fail | **pass** |
+| `proxy-async-generator-function.js` | fail | **pass** |
+| `proxy-async-method-definition.js` | fail | **pass** |
+| `proxy-bound-function.js` | fail | **pass** |
+| `proxy-function-expression.js` | fail | **pass** |
+| `proxy-generator-function.js` | fail | **pass** |
+| `proxy-method-definition.js` | fail | **pass** |
+| `proxy-class.js` | fail | fail (unchanged — see below) |
+| `proxy-non-callable-throws.js` | fail | fail (unchanged — different defect) |
+| `proxy-async-generator-method-definition.js` | compile_error | compile_error (unchanged) |
+
+No-regression sweep, 588 rows — every test file in the corpus whose text can trip the
+new pre-scan predicate, plus every row including `deepEqual.js` or `proxyTrapsHelper.js`
+(the only two harness files that can), plus the 11 target rows. `built-ins/Temporal`,
+`intl402` and `staging` excluded to bound wall time; those rows fail on
+`Temporal is not defined` / missing Intl in standalone regardless, so a flip there is
+not measurable.
+
+```
+base  588 rows  pass 414  fail 115  compile_error 44  skip 15
+fix   588 rows  pass 422  fail 107  compile_error 44  skip 15
+IMPROVED 8 · REGRESSED 0 · OTHER FLIPS 0 · error rows 0 (both sides) · unmeasured 0
+```
+
+Per-row set diff, not a count comparison; both sides recorded all 588 rows and neither
+produced an `error`, `compile_timeout` or missing row. Re-run end-to-end on the final
+code shape after the LOC-driven relocation — byte-for-byte the same verdict set.
+
+`tests/issue-6651-f1-function-proto-values.test.ts` (9 cases): **6 failed / 3 passed** on
+reverted base sources, **9 passed** with the fix. Both logs kept.
+
+Gates, all run bare: `check-loc-budget` 0 (`net +116 LOC`, no unallowed growth) ·
+`check-func-budget` 0 · `check-coercion-sites` 0 · `check:oracle-ratchet` 0 ·
+`check:dead-exports` 0 · `check-host-import-policy` 0 (`runtimeTsLines` 20214,
+unchanged — `src/runtime.ts` not touched) · `typecheck` 0.
+
+### Deliberately NOT done
+
+- **`proxy-class.js`** — `new Proxy(class {}, {}).apply` is still `undefined`, and so is
+  a bare class constructor's `K.apply`. Measured: `Object.getPrototypeOf(K) ===
+  Function.prototype` is **true** and `typeof K === "function"` is **true**, while
+  `proxyOfPlainFunction.apply` now resolves — so `__getPrototypeOf` agrees and the
+  remaining gap is specifically that **`__protoidx_brand_off` does not classify a class
+  constructor's carrier as `FUN_OFF`**. Most likely the `$Object` arm (the boxed-
+  primitive wrapper test) returns `OBJ_OFF` for it before the closure-carrier test is
+  reached. Fixing that means reordering or widening that ladder, which is on the read
+  path of every standalone property access — one row is not worth that risk in this
+  lane. Worth its own slice.
+- **`proxy-non-callable-throws.js`** — `Function.prototype.toString.call(new Proxy({}, {}))`
+  returns `undefined` instead of throwing a TypeError. Independent defect: the
+  syntactic `Function.prototype.toString` value resolves fine (measured: it is a
+  callable), but its brand check against a non-callable `this` does not refuse. Not a
+  value-read gap.
+- **`proxy-async-generator-method-definition.js`** — compile_error, `standalone target
+  emitted host imports: env::__create_async_generator, env::__gen_create_buffer`. A
+  standalone async-generator gap, unrelated.
+- **Object.prototype members off a function value** — `f.hasOwnProperty` is still
+  `undefined` in standalone. Same shape of gap one brand further up (the Object brand's
+  companion has no registered glue either), unchanged by this fix and measured both
+  before and after. The regression test states this explicitly rather than asserting it.
+
+---
+
+## Lane R1 receipt — the ES2015 cross-realm `proto-from-ctor-realm` rows are
+## NOT a GetPrototypeFromConstructor defect. `Object.getPrototypeOf` over a
+## DYNAMICALLY-typed array answered `null`. (2026-09-26)
+
+Branch `issue-6651-r1-proto-from-ctor-realm`, base `origin/main` @ `be445f616e`.
+
+### The recorded diagnosis was wrong — corrected by re-probe
+
+The dispatch brief (from X1's mechanical scan) recorded:
+
+> §9.1.14 GetPrototypeFromConstructor must fall back to the *intrinsic* default
+> prototype when `newTarget.prototype` is not an object. It currently does not.
+> … ~45 rows in the ES2015 cross-realm bucket.
+
+**That fallback already works on base.** Measured through the authoritative
+lane (`tests/test262-shared.ts::runTest262Chunk`, original harness,
+`--target standalone`, QuickJS eval engine) with a hand-written row:
+
+```js
+function NT() {}
+NT.prototype = null;
+var arr = Reflect.construct(Array, [1], NT);
+assert.sameValue(Object.getPrototypeOf(arr), Array.prototype);   // PASSES on base
+```
+
+`call-namespace-static.ts`'s `Reflect.construct` arm resolves the static
+`NT.prototype = …` assignment, `isDefinitelyPrimitivePrototype` recognises
+`null`/`undefined`/a primitive, and the arm **returns early without writing** —
+which is exactly §10.1.14 step 4, because the ordinary construction already
+installed the intrinsic default. Instrumenting that arm (temporary
+`JS2WASM_R1_DEBUG` print, removed) showed the failing and passing programs take
+the **identical** branch (`staticProto: "null", primitive: true`), and a
+normalised WAT diff of the two compiled functions is **byte-identical**.
+
+### What the defect actually is
+
+```js
+function id(x) { return x; }
+Object.getPrototypeOf(id([1]))     // null on base; node answers Array.prototype
+```
+
+No realm, no `Reflect`, no `$262` anywhere. A compiled array is a
+`__vec_<elem>` struct, not an `$Object`, so it has no `$proto` field;
+`__getPrototypeOf`'s `ref.test $Object` fails and the helper falls through to
+its boundary/`null` answer. The gap is invisible for a **statically**
+array-typed receiver because `expressions/object-get-prototype-of.ts` folds
+that case to `%Array.prototype%` before the helper is ever called — so it only
+shows through an `any` binding. `Reflect.construct(...)` has static type `any`,
+which is the whole reason the three witnesses are filed under *cross-realm*.
+
+Bisected to that minimal form over eleven probe rounds; the intermediate states
+are worth recording because each looked like a different bug:
+
+| program | base verdict |
+| --- | --- |
+| `Object.getPrototypeOf(new Array(1))`, no realm | pass |
+| same + `$262.createRealm()` | pass |
+| `Reflect.construct(Array,[1])` (no NewTarget) + realm | pass |
+| `Reflect.construct(Array,[1],NT)`, `NT.prototype=null`, **no** realm | pass |
+| same **with** `$262.createRealm()` | **null** |
+| `Object.getPrototypeOf(id([1]))`, no realm at all | **null** |
+
+The `$262.createRealm()` line is a red herring twice over: it does not change
+the emitted code at the call site, it changes which *binding shape* the
+surrounding program gives `arr` — and the last row shows the defect with no
+realm in the program.
+
+### Fix
+
+`src/codegen/object-runtime-prototype.ts` — a third non-`$Object` arm in
+`__getPrototypeOf`, beside the existing fnctor-instance (#4643) and boundary
+arms:
+
+- `reserveArrayProtoSingleton` reserves `__array_proto_singleton` with the
+  pre-fix `ref.null.extern` body (standalone/WASI only);
+- `fillArrayProtoSingleton` fills it at finalize from
+  `buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Array)` — the SAME
+  brand global a program's own `Array.prototype` read resolves to, so
+  `Object.getPrototypeOf(a) === Array.prototype` is an `===` on one carrier;
+- `arrayGetPrototypeArm` tests `__extern_is_array` — the same §7.2.2 predicate
+  `Array.isArray` uses, so the static and dynamic arms cannot disagree about
+  what an Array is, and the packed byte carriers behind
+  ArrayBuffer/DataView/TypedArrays are excluded there and therefore here.
+
+It **widens a missing answer, never replaces a present one**: the `$Object`
+then-arm still wins for anything with a real `$proto`, the fnctor arm still
+runs first, and when the singleton is still the reserved null (a module whose
+`Array` brand global was never materialised) the arm falls through to the
+pre-existing boundary answer instead of publishing a null prototype of its own.
+In gc/host nothing is reserved, the arm emits zero instructions, and
+`__getPrototypeOf` stays byte-identical.
+
+`src/codegen/index.ts` carries only the two one-line finalize calls (single-
+and multi-source), beside their `fillObjectProtoSingleton` twins.
+
+### Measurement — per-row set diffs, both lanes, `error` counts stated
+
+Authoritative lane throughout: a gitignored `tests/probe-*.test.ts` calling
+`runTest262Chunk(0,1)` under `TEST262_PATH_FILTER_FILE`, with
+`TEST262_TARGET=standalone` and `JS2WASM_EVAL_ENGINE=quickjs`. All three
+artifacts (`build:compiler-bundle`, `build:runtime-bundle`,
+`build-quickjs-eval-provider.mjs`) were rebuilt after every source flip; the
+base runs were taken on sources `cp`-reverted to `HEAD` (verified: `git diff
+src/` empty, and the QuickJS adapter cache returned to its original key
+`425b82e317bcab8d`).
+
+**ES2015 cross-realm bucket — 128 rows** (the runner's own set; 138 rows carry
+`cross-realm` and classify ES2015, of which the 10 `intl402/` ones are outside
+`TEST_CATEGORIES`). The base run reproduces CI's published bucket numbers
+exactly, which is what makes the delta a delta:
+
+| | pass | fail | compile_error | error |
+| --- | --- | --- | --- | --- |
+| base | 39 | 89 | 0 | **0** |
+| after | 42 | 86 | 0 | **0** |
+
+```
+GAINED 3   built-ins/Array/proto-from-ctor-realm-{one,two,zero}.js
+LOST   0
+OTHER  0
+```
+
+Re-confirmed on the FINAL tree after the budget-driven refactor of the patch.
+
+**Wider no-regression sweep — 577 rows**: every test under `built-ins/Array`,
+`built-ins/Object`, `built-ins/Reflect` and `language/expressions/instanceof`
+whose source mentions `getPrototypeOf` / `isPrototypeOf` / `setPrototypeOf` /
+`__proto__` / `instanceof`. That is the reachable blast radius: the arm fires
+only when `__extern_is_array` says the `[[GetPrototypeOf]]` receiver IS a
+native array carrier.
+
+| | pass | fail | compile_error | error |
+| --- | --- | --- | --- | --- |
+| base | 454 | 118 | 5 | **0** |
+| after | 457 | 115 | 5 | **0** |
+
+```
+GAINED 3   (the same three rows)
+LOST   0
+OTHER  0
+```
+
+A first attempt at a 6,689-row sweep (all of those four directories, unfiltered)
+was abandoned: at the measured throughput it was ~90 min per side, and a pool-4
+retry was OOM-killed (exit 137) at 358/577 rows. The 577-row run was re-done at
+pool 3 with a 2 GB fork heap and completed with a valid shard-completion
+manifest. Two things follow for the next lane: an incomplete JSONL here looks
+exactly like a finished one unless you check the manifest, and `vitest exit=137`
+is the tell.
+
+### Honest count — 3 rows, not ~45
+
+X1's ~45 was a path-name scan (48 non-`intl402` `*proto-from-ctor-realm*` rows
+in the ES2015 bucket). Only **3** are gated on this cause. The other 45 are
+blocked by something this lane deliberately does not touch, and would not move
+even with a perfect §9.1.14:
+
+- **~30** assert against a foreign intrinsic the `$262` shim does not forward —
+  `other.Object`, `other.Number`, `other.Boolean`, `other.String`,
+  `other.RegExp`, `other.Map`/`Set`/`WeakMap`/`WeakSet`, `other.Promise`,
+  `other.DataView`, `other[TA.name]` for the 12 TypedArray rows. Measured on
+  base, those rows die one line EARLIER than the prototype check, on
+  `TypeError: Cannot access property on null or undefined at N:44` — column 44
+  is the `other.X` read itself. Out of scope by the brief
+  (`scripts/test262-fyi-runtime.js` compiles into every module in every lane).
+- **7** (`Error` plus the six `NativeErrors`) assert against the shim's
+  *distinct-identity* error constructors, whose `.prototype` reads `undefined`
+  in standalone — the `Function.prototype` member-read lane (F1), not this one.
+- **10** `Array/prototype/*/create-proto-from-ctor-realm-*` are
+  ArraySpeciesCreate rows, a different operation; 5 already pass and the 5
+  `-non-array` ones fail on the species path.
+
+The addressable-in-principle set was 8 rows (the ones whose asserted intrinsic
+IS identity-forwarded by the shim: 3 × Array, 3 × Date, ArrayBuffer, Function);
+of those, Date/ArrayBuffer/Function are blocked by the `other.X` read above,
+leaving 3. Stated plainly per the brief: the lever is real and general, but it
+is **not** a 45-row lever in this bucket.
+
+### Value outside the bucket (not measured here)
+
+The fix is not cross-realm-specific — it corrects `[[GetPrototypeOf]]` for every
+dynamically-typed array receiver in standalone, including through
+`Reflect.getPrototypeOf`. The 577-row sweep found no other row that flips, but
+that sweep is scoped to four directories; a full-corpus standalone run is where
+any further gain would show, and it was not run here.
+
+### Gates (all run bare, exit code read directly — never piped)
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 · `check-host-import-policy`
+0 · `check-compiler-boundaries --mode inventory` 0 (`inventoryValid: true`).
+
+The loc/func gates required grants (recorded in this file's frontmatter with
+the rationale): +2 lines in `src/codegen/index.ts` (the two finalize calls) and
++2/+1/+1 lines in `buildObjectPrototypeHelpers` / `generateModule` /
+`generateMultiModule`. The first cut of the patch cost +9/+3/+2; extracting
+`reserveArrayProtoSingleton` and moving the prose into the helpers' docstrings
+brought it down. Splitting those three functions is out of scope — they are
+pre-existing god functions at 696/1884/1281 lines.
+
+### Regression test
+
+`tests/issue-6651-r1-proto-from-ctor-realm.test.ts`, 7 cases, compiled through
+`compile(src, { target: "standalone" })` and executed — no test262 dependency,
+so it runs in a bare checkout.
+
+- **RED on reverted base sources**: 3 failed / 4 passed. The three witnesses are
+  the `any`-typed array literal, the array read out of an `any` container, and
+  `Reflect.getPrototypeOf`.
+- **GREEN on this branch**: 7 passed.
+
+The other 4 cases are deliberate hold-the-line guards that pass on base too: the
+statically-typed answer, the already-folded `id(new Array(1))`, and two
+must-NOT-claim-`%Array.prototype%` cases (an ordinary object, a string).
+
+### Not done / known residual
+
+- `Object.getPrototypeOf(id({ a: 1 }))` — an `any`-typed ORDINARY object — still
+  answers `null` in standalone. A separate `__getPrototypeOf` gap in the
+  `$Object` implicit-terminal path (#5270's arm is not reached through that
+  binding shape). Pinned only negatively in the regression test
+  (`not.toBe(%Array.prototype%)`); not investigated further.
+- An array whose prototype was legitimately changed still cannot report it:
+  `__object_setPrototypeOf` is a silent no-op on a vec carrier (no `$proto`
+  field), as `reflect-construct-newtarget.ts` documents. Before this change such
+  an array read `null`; now it reads `%Array.prototype%`. Both are wrong against
+  a custom prototype and no row in either sweep distinguishes them — but a
+  program doing `Object.setPrototypeOf(arr, null)` moves from an
+  accidentally-right `null` to a wrong `%Array.prototype%`. Closing that needs a
+  `$proto` slot on the array carrier, i.e. a value-representation change.
+- `class X extends Array` instances are in the same position: unchanged-wrong.
+- The `$262` shim's missing intrinsic forwards (the ~30 rows above) were NOT
+  attempted, per the brief's scope boundary.
+- No PR opened; handed back to the dispatching session.
+## Lane S1 receipt — `$262.createRealm().global` intrinsic forwards (2026-09-26)
+
+**Verdict: nothing landed.** The forwards are worth **+3 standalone rows**, not the
+~30 the brief's ceiling suggested, and the two full corpus sweeps that would be
+required to justify touching `scripts/test262-fyi-runtime.js` (it compiles into every
+test262 module in every lane) were not feasible — the box is 4-core and sat at load
+9–11 from other lanes throughout. Per the lane's own rule, a partial validation on
+that file is worth less than no change, so the shim edit is on the branch only, with
+no PR. The durable output of this lane is the root-cause correction below.
+
+### Corrected root cause — the forwards were never the binding constraint
+
+Standalone resolves `globalThis.<Name>` member reads for only a **subset** of
+intrinsics, and every test262 module is a **runtime-eval module** (the `$262` shim
+carries `evalScript`), so `appendStandaloneGlobalConstructorSeeds`
+(`src/codegen/standalone-global-object-carriers.ts`) takes its early return and seeds
+only `STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES`.
+
+Measured directly, one standalone module reading `typeof other[Name]` for 19 names
+(probe run 2026-09-26, worktree `issue-6651-s1-shim-intrinsic-forwards`):
+
+| resolves | `undefined` |
+| --- | --- |
+| `Object Array ArrayBuffer Iterator Math Proxy Symbol Promise DataView` | `Number Boolean String RegExp Date Function Map Set WeakMap WeakSet` |
+
+**`Date` and `Function` are already in the shim's forward list and are already dead
+in standalone.** That is the actual reason the cross-realm corpus dies early — not a
+missing forward. `other.Function` in particular is the most-read realm name in the
+corpus (76 reads), and it is the one name whose seed cannot simply be moved (see
+below).
+
+### What each change is actually worth (standalone, 196-row cross-realm bucket)
+
+Bucket = every non-`staging` test262 file containing `createRealm`, restricted to
+discovered `TEST_CATEGORIES`, plus the landmine row. Authoritative lane
+(`runTest262Chunk`, honest oracle, quickjs eval engine, pool 3). Per-row set diffs,
+0 `error` rows in every run, 196/196 rows in every JSONL.
+
+| state | pass | fail | CE | rows dying on the early `other.X` read |
+| --- | --- | --- | --- | --- |
+| base | 61 | 126 | 9 | 68 |
+| + shim forwards (11 names) | 64 | 121 | 11 | 59 |
+| + shim forwards + widened seed list | 64 | 121 | 11 | 36 |
+
+- **Shim forwards alone: +3** — `built-ins/Object/proto-from-ctor-realm.js`,
+  `built-ins/DataView/proto-from-ctor-realm.js`,
+  `built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js`. Eight
+  of the eleven added names are **inert in standalone today** (they resolve to
+  `undefined`); they are correct for the host lane and become live only once the seed
+  list widens.
+- **Two rows degrade `fail` → `compile_error`**:
+  `built-ins/Error/prototype/stack/{getter,setter}-cross-realm.js`, on
+  `standalone target emitted host imports: env::Object_new (#2961)`. Cause is
+  `new realmB.Object()`, which only becomes reachable once `other.Object` is a real
+  constructor. Neutral for pass counts, but it is a new host-import leak and should
+  be named in any PR that lands the `Object` forward.
+- **Widening the seed list: +0 more passes, but it unblocks 23 further rows** to
+  reach their real assertion (early-death 59 → 36) with **zero** status changes
+  against the forwards-only run. Those rows then fail on the genuine missing feature
+  — `GetPrototypeFromConstructor`'s realm fallback, e.g.
+  `built-ins/Boolean/proto-from-ctor-realm.js` goes from
+  `Cannot access property on null or undefined at 345:44` to
+  `Expected SameValue («[object Object]», «false»)`. **That is lane R1's territory,
+  and it is the real ES2015 cross-realm lever.**
+
+Experiment used for that row (reverted; compiler-bundle/runtime-bundle/quickjs
+adapter rebuilt after, adapter key returned to `e9554e1d4909724f`): move
+`String Boolean Number Date RegExp Map Set WeakMap WeakSet` out of
+`STANDALONE_GLOBAL_CONSTRUCTOR_NAMES` and into
+`STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES`. Re-probed: all nine then resolve;
+`Function` stays `undefined` because it is deliberately left behind the gate.
+`Function` is the one name the #6651 lane-X1 comment identifies as the `%Function%`
+parity / stack-exhaustion hazard, so moving it needs its own slice — and it is the
+name 7 of the 36 remaining early-death rows are still blocked on.
+
+Remaining 36 early-death rows by area: `TypedArrayConstructors` 10 (they die inside
+`harness/testTypedArray.js`, not on an `other.X` read — the brief's "column 44
+identifies them mechanically" holds only for the `proto-from-ctor-realm` family),
+`built-ins/Function` 7, `language/expressions` 4, `Proxy` 3, and singles across
+`GeneratorFunction`, `AsyncGeneratorFunction`, `AsyncFunction`, `WeakRef`,
+`AggregateError`, `SuppressedError`, `DisposableStack`, `language/types`,
+`language/eval-code`.
+
+### The 2026-08-23 `Object` landmine does NOT reproduce on current main
+
+Tested in isolation: added **only** `Object: globalThis.Object` to the realm global,
+ran the host lane over the same 196-row bucket. **Zero rows changed status** —
+`language/expressions/dynamic-import/assignment-expression/import-meta.js`, the row
+the note names, still passes. The full 11-name forward set is likewise **0 gained /
+0 changed** on the host lane in this bucket. The in-file note claiming any compiled
+read of `globalThis.Object` degrades `error.constructor` from TypeError to Error is
+**stale**; the defect it describes has since been fixed. (Scope of that statement:
+one 196-row bucket, not the whole corpus — a full host sweep is still what would be
+needed to retire the note outright.)
+
+Standalone is unaffected either way: that row is a `compile_error` there
+(`Standalone dynamic import is unsupported until compileMulti provides internal
+module records and namespace objects`), in base and after.
+
+### What a follow-up lane should do
+
+1. **Land the seed widening first** (`src/codegen/standalone-global-object-carriers.ts`,
+   lane X1's file) — it is regression-free in this bucket, it is the thing that makes
+   any realm forward actually work in standalone, and without it eight of the eleven
+   shim forwards are dead weight.
+2. **Then the shim forwards**, together with the `env::Object_new` leak note above.
+3. The passes are in **`GetPrototypeFromConstructor`'s realm fallback** (lane R1) and
+   in **`globalThis.Function` inside an eval module**, not in the shim.
+
+### Not done
+
+- No full host sweep and no full standalone sweep. All numbers above are the 196-row
+  cross-realm bucket only. Nothing here may be read as corpus-wide evidence.
+- No regression test: no code defect was isolated that a test could pin. The two
+  defects found (`Function` still gated; `GetPrototypeFromConstructor` realm fallback)
+  belong to other lanes' files.
+## Lane RF1 receipt — the ES2015 `Reflect` bucket, triaged end to end; and why
+## it is not a `Reflect` bucket (2026-09-26)
+
+Scope: the 94 not-pass rows in the ES2015 × `Reflect` feature slice on
+`--target standalone` (330 rows, 86 fail + 8 CE, 71 %).
+
+### The bucket's name is misleading, and that is load-bearing
+
+`Reflect` here is a **frontmatter `features:` tag**, not a directory. Of the 94
+not-pass rows only **9** live under `built-ins/Reflect/`; the tag is carried
+mostly by **Proxy** tests (they drive traps through `Reflect.*`), by
+`*/proto-from-ctor-realm*.js`, and by TypedArray internals. Of the 32
+standalone-only rows, **15 are Proxy rows** — i.e. this bucket and lane P1's
+`Proxy` bucket overlap by roughly half. Anyone sizing "Reflect: 94 failing" as
+Reflect work will size it wrong.
+
+### Measurement lane — reproduced, not assumed
+
+- Row set: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`
+  (48,735 rows, fetched fresh 2026-09-26) ∩ `scripts/generate-editions.ts`'s own
+  `parseFrontmatter` + `classifyEdition`, host-free status. Independently
+  reproduces the published **330 / 236 pass / 86 fail / 8 CE**.
+- Verdicts: `tests/test262-shared.ts::runTest262Chunk` under
+  `TEST262_TARGET=standalone`, from a gitignored `tests/probe-rf1.test.ts`,
+  `TEST262_PATH_FILTER_FILE`, `--isolate`, `TEST262_IT_TIMEOUT_MS=420000`,
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`.
+- **Base sweep reproduced the artifact exactly**: 94 rows registered, 94
+  recorded, 94 canonical verdicts, `allCallbacksSettled: true`, **0 pass /
+  86 fail / 8 CE / 0 `error`**. Shard-completion manifest checked on every
+  sweep quoted here.
+- Bundles + QuickJS adapter rebuilt after every `src/` edit
+  (`build:compiler-bundle`, `build:runtime-bundle`,
+  `scripts/build-quickjs-eval-provider.mjs`).
+
+### Axis 1 — host vs standalone: the bucket HALVES, and then some
+
+| | rows |
+|---|---|
+| host **pass**, standalone not-pass → standalone-only gap | **32** |
+| host **fail/CE** too → shared front-end, a different slice | **62** |
+
+(`sa=fail host=fail` 55 · `sa=fail host=pass` 31 · `sa=CE host=fail` 7 ·
+`sa=CE host=pass` 1.) Two thirds of the "Reflect bucket" is not standalone
+lowering at all. Host verdicts from the published host baseline for the same
+48,735 rows.
+
+### Axis 2 — the 32 standalone-only rows, by ACTUAL error, not by directory
+
+| # | cause | rows | status |
+|---|---|---|---|
+| A | **Proxy `[[Construct]]` does not thread NewTarget** | 4 | **root-caused, FIXED** |
+| B | `TypeError: Cannot access property on null or undefined` | 5 | **directory/text-shaped label — NOT one cause** |
+| C | `Reflect.ownKeys called on non-object` (TypedArray) | 3 | root-caused, sited, not taken |
+| D | `RuntimeError: illegal cast` (module-namespace ownKeys) | 2 | belongs to the N2/N4 namespace slice |
+| E | ownKeys completeness / order | 3 | **three DISTINCT causes, not one** |
+| F | individually sited singletons | 15 | mixed |
+
+**A — FIXED (the only group large enough and coherent enough to take).**
+All four rows fail the same assertion, and `call-parameters-new-target.js`
+isolates it with no nesting: every other assertion in its trap (`this ===
+handler`, `target === Target`, `args`) passes; only `newTarget === NewTarget`
+fails. Root cause read in source, then confirmed by the fix moving exactly
+those rows:
+
+- `src/codegen/expressions/call-namespace-static.ts` lowers
+  `Reflect.construct(t, args, NT)` as the **ordinary `new t(...)` followed by a
+  prototype patch** to `NT.prototype`. That shape carries a prototype, never a
+  NewTarget **identity** — and a proxy's `construct` trap takes NewTarget as its
+  third argument (§10.5.13 step 9), so it is observable.
+- `src/codegen/native-construct.ts`'s driver proxy arm therefore passed the
+  proxy itself: `// Ordinary `new proxy(...)` uses the proxy itself as
+  NewTarget` — correct for `new P()`, wrong here.
+- With the trap absent it forwarded to `[[ProxyTarget]]` by re-entering the
+  driver, which **re-derived** NewTarget from the INNER proxy — so a nested
+  proxy lost it a second time. That is why all three `trap-is-*` rows report
+  two indistinguishable `function () { [native code] }` values.
+
+**B — the trap the brief warns about, and it is real here.** Five rows share
+one error STRING and nothing else: `Date/proto-from-ctor-realm-two.js`,
+`Function/prototype/bind/get-fn-realm.js`,
+`Object/{freeze,seal}/proxy-with-defineProperty-handler.js`,
+`Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js`. The
+reported positions differ (347:44, 367:22, 358:18, 349:18, 363:44) and three of
+them are `$262`/realm rows that belong to the cross-realm and shim lanes. Do
+not size this as a 5-row cause; it is at most a 2-row candidate
+(`Object/freeze` + `Object/seal`, same filename, same position shape) plus
+three unrelated rows.
+
+**C — sited, deliberately not taken.** All three are
+`TypedArrayConstructors/internals/OwnPropertyKeys/*` under
+`testWithTypedArrayConstructors`, so the receiver arrives through a dynamic
+`TA` parameter. The refusal is `emitNativeReflectTargetGuard`
+(`src/codegen/reflect-target-guard.ts`): its Type(V)-is-Object union
+(`__typeof_object` ∪ `__typeof_function`, minus null/undefined/Symbol) does not
+brand a dynamically-typed typed-array view. **Fixing the guard alone would not
+move the rows** — `Reflect.ownKeys` would then have to actually enumerate the
+integer indices, which is a second, separate capability. Two fixes for three
+rows; a poor trade against A.
+
+**E — NOT one cause, despite the shared word "ownKeys".** This corrects lane
+P1's grouped residual ("ownKeys / gOPN invariants, 7 rows, not root-caused"):
+- `Reflect/ownKeys/order-after-define-property.js` — `[a, b, length]` where the
+  spec wants `[length, a, b]`: an array's `length` is **appended** by our
+  ownKeys rather than being an own property in creation order.
+- `Object/getOwnPropertyDescriptors/order-after-define-property.js` — `[a]`
+  where the spec wants `[lastIndex, a]`: a RegExp's `lastIndex` own property is
+  **absent entirely**, not merely misordered. Different defect.
+- `Proxy/ownKeys/trap-is-missing-target-is-proxy.js` — `[0,1,2,length]` where
+  the spec wants a trailing `Symbol()`: **symbol keys** are not reported.
+
+### What landed — one seam, +4 rows, 0 lost
+
+Three sites, all standalone-gated (`ctx.standalone`), plus one new module:
+
+1. `src/codegen/object-runtime-proxy-construct-chain.ts` (new) —
+   `__proxy_construct_chain(v, argumentsList, newTarget)` walks the
+   `[[ProxyTarget]]` chain invoking each link's construct trap with the caller's
+   newTarget held **invariant**, returning the first trap result, or null when
+   nothing in the chain trapped; and `__proxy_ultimate_target(v)`, the first
+   non-proxy in that chain. Loops, not self-recursion: the dispatch's own
+   funcIdx is not available inside its own body (reserve-then-fill, #1719), and
+   a loop cannot blow the stack on a long chain.
+2. `src/codegen/object-runtime-proxy.ts` (+3) — capture
+   `__proxy_construct_dispatch`'s funcIdx and register the two natives.
+3. `src/codegen/expressions/reflect-construct-newtarget.ts` (+190) —
+   `tryEmitProxyConstructWithNewTarget`: calls the chain with the real
+   NewTarget, and falls back to the ordinary `[[Construct]]` driver on
+   `__proxy_ultimate_target` (with `? Get(NewTarget, "prototype")`, read ONLY on
+   that arm so a `prototype` getter does not run when a trap answered).
+4. `src/codegen/expressions/call-namespace-static.ts` (+10) — the dispatch arm,
+   ahead of the ordinary-function arm.
+
+**The gate is deliberately narrow**: `isUnreassignedProxyValue` admits only a
+literal `new Proxy(…)` or a single-declaration binding initialised with one and
+never written afterwards (and `Proxy` itself not shadowed). Everything else
+keeps the pre-existing construct-then-patch lowering with all its
+carrier-specific arms — which is what lets the new arm skip that fallback
+entirely.
+
+One correction worth recording: the obvious reuse, `isRebound`, is **wrong for
+a variable binding** — it counts the binding's own `VariableDeclaration` as a
+rebind (right for its function-declaration callers, where a same-named variable
+shadows the function). The first cut used it and the arm silently never fired;
+the four rows were unchanged and the sweep read as a no-op fix.
+`isWrittenAfterDeclaration` scans writes only.
+
+### Measurement
+
+| sweep | rows | before | after |
+|---|---|---|---|
+| the 94 not-pass Reflect-bucket rows | 94 | 0 pass / 86 fail / 8 CE / **0 error** | 4 pass / 82 fail / 8 CE / **0 error** |
+
+Per-ROW set diff, not counts: **GAINED 4, LOST 0, other status change 0, rows
+only in before 0, rows only in after 0.**
+
+```
++ built-ins/Proxy/construct/call-parameters-new-target.js
++ built-ins/Proxy/construct/trap-is-undefined.js
++ built-ins/Proxy/construct/trap-is-null.js
++ built-ins/Proxy/construct/trap-is-undefined-no-property.js
+```
+
+**Wider no-regression sweep — 843 rows, standalone, `--isolate`** (all of
+`built-ins/Proxy`, `built-ins/Reflect`, `language/expressions/new.target`,
+`built-ins/Object/{assign,freeze,seal,getOwnPropertyDescriptors}`,
+`built-ins/Array/length`, `language/module-code/namespace/internals`, ∪ the
+whole 330-row Reflect bucket). Manifest: 843 registered / 843 recorded / 843
+canonical verdicts / `allCallbacksSettled: true`, **0 `error` rows**.
+
+| | pass | fail | CE | error |
+|---|---|---|---|---|
+| published standalone baseline, same 843 rows | 679 | 154 | 10 | — |
+| this branch | **683** | 150 | 10 | **0** |
+
+Per-ROW diff: **GAINED 4 (the same four), LOST 0.**
+
+Caveat stated rather than hidden: the wider sweep's "before" is the published
+`test262-standalone-current.jsonl`, not a second local run. That artifact is
+`origin/main`'s own baseline and my locally-executed base run over the 94-row
+subset agreed with it on **94/94 rows**, which is why it is trusted here. The
+843-row sweep ran against the pre-module-split build; the 94-row bucket was
+re-run after the split and reproduced 4 pass / 82 fail / 8 CE / 0 error
+identically (manifest 94/94/94, settled).
+
+### Regression test
+
+`tests/issue-6651-rf1-reflect.test.ts`, 5 cases, `--target standalone`,
+instantiated with **no import object** (the host-free assertion).
+
+- Proven **RED on the reverted base sources** (file copies of all three edited
+  files, `.tmp/base-*.ts`): `3 failed | 2 passed` — `expected 33 to be 73`,
+  `expected 1007 to be 1107`, `expected +0 to be 11`.
+- **GREEN** with the fix: `5 passed`. Re-run green after the module split.
+- The 2 that pass on base are CONTROLS and are there on purpose: `new P()` must
+  keep using the proxy itself as NewTarget, and a non-proxy target must keep the
+  pre-existing construct-then-patch answer.
+
+### Gates (all run bare, exit code read directly — never piped)
+
+| gate | exit |
+|---|---|
+| `scripts/check-loc-budget.mjs` | 0 |
+| `scripts/check-func-budget.mjs` | 0 |
+| `scripts/check-coercion-sites.mjs` | 0 |
+| `check:oracle-ratchet` | 0 |
+| `check:dead-exports` | 0 |
+| `scripts/check-host-import-policy.ts` | 0 |
+| `check-compiler-boundaries.mjs --mode inventory --base HEAD^1` | 0 |
+
+The budget gates were RED first, at +114 / +19. The available extraction was
+taken — the 130-LOC native body moved to its own module, cutting
+`ensureProxyRuntime` from +114 to +2 — and only the irreducible wiring (+3 and
++10 file lines, +2 and +9 function lines) is granted, in this file's
+frontmatter, dated, with the reason each line cannot move. The new module is
+registered in `scripts/compiler-boundaries.json` as text in place.
+
+### Not done, and why
+
+- **No host-lane work.** 62 of the 94 fail on the default target too; by
+  definition no standalone lowering can move them.
+- **Group C (3 rows)** — sited above; needs two fixes, not one.
+- **Group E (3 rows)** — three separate ownKeys defects, each a singleton.
+  Recorded so the next lane does not re-group them as one.
+- **#2917** (`Array.prototype`'s two unequal internal representations) was not
+  touched; it is still unowned.
+- **The driver's own nested-proxy path** (`new NestedProxy()`, no
+  `Reflect.construct`) still derives newTarget from the inner proxy rather than
+  the outer one. `__proxy_construct_chain` is the mechanism that fixes it —
+  routing `native-construct.ts`'s proxy arm through it is a small follow-up —
+  but no ES2015 row in this bucket demanded it, so it was left out rather than
+  shipped untested.
+
+#### The 32 standalone-only rows, verbatim (so the next lane need not re-derive them)
+
+```
+A  NewTarget not threaded through proxy [[Construct]]        (4, FIXED)
+     built-ins/Proxy/construct/call-parameters-new-target.js
+     built-ins/Proxy/construct/trap-is-null.js
+     built-ins/Proxy/construct/trap-is-undefined.js
+     built-ins/Proxy/construct/trap-is-undefined-no-property.js
+B  "Cannot access property on null or undefined"  (5, LABEL not cause)
+     built-ins/Date/proto-from-ctor-realm-two.js                      347:44
+     built-ins/Function/prototype/bind/get-fn-realm.js                367:22
+     built-ins/Object/freeze/proxy-with-defineProperty-handler.js     358:18
+     built-ins/Object/seal/proxy-with-defineProperty-handler.js       349:18
+     built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js  363:44
+C  "Reflect.ownKeys called on non-object"                     (3, sited)
+     built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes.js
+     built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-keys.js
+     built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-and-symbol-keys-.js
+D  "RuntimeError: illegal cast"                    (2, N2/N4 namespace slice)
+     language/module-code/namespace/internals/own-property-keys-sort.js
+     language/module-code/namespace/internals/own-property-keys-binding-types.js
+E  ownKeys completeness / order              (3, THREE distinct defects)
+     built-ins/Reflect/ownKeys/order-after-define-property.js          [a,b,length] vs [length,a,b]
+     built-ins/Object/getOwnPropertyDescriptors/order-after-define-property.js  [a] vs [lastIndex,a]
+     built-ins/Proxy/ownKeys/trap-is-missing-target-is-proxy.js        missing Symbol() key
+F  singletons                                                            (15)
+     built-ins/Array/length/define-own-prop-length-no-value-order.js
+         TypeError: Cannot redefine property: enumerable attribute of a non-configurable property
+     built-ins/ArrayBuffer/proto-from-ctor-realm.js       SameValue(«null», «[object ArrayBuffer]»)
+     built-ins/Function/proto-from-ctor-realm.js          SameValue(«[object Function]», «undefined»)
+     built-ins/Proxy/apply/trap-is-missing-target-is-proxy.js
+         Object.prototype.hasOwnProperty is not yet implemented in --target standalone
+     built-ins/Proxy/defineProperty/trap-is-null-target-is-proxy.js     SameValue(«undefined», «2»)
+     built-ins/Proxy/defineProperty/trap-is-undefined-target-is-proxy.js  expected a TypeError
+     built-ins/Proxy/deleteProperty/trap-is-null-target-is-proxy.js       expected a TypeError
+     built-ins/Proxy/deleteProperty/trap-is-undefined-strict.js    SameValue(«[object Object]», «undefined»)
+     built-ins/Proxy/get-fn-realm.js       TypeError: Reflect.construct newTarget is not a constructor
+     built-ins/Proxy/has/trap-is-missing-target-is-proxy.js               expected true but got false
+     built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js  ReferenceError: ns is not defined
+     built-ins/Proxy/set/trap-is-missing-target-is-proxy.js               expected a TypeError
+     built-ins/Reflect/enumerate/undefined.js   CE: Reflect.hasOwnProperty not supported in standalone (#1472 Phase C)
+     built-ins/Reflect/ownKeys/return-on-corresponding-order-large-index.js  «"12345678900"» vs «"4294967294"»
+     built-ins/Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js  «true» vs «false»
+```
+
+The eight `*-target-is-proxy.js` rows across B/E/F are a **filename family with
+six different error texts** — exactly the shape lane P1 warned about when 24
+Proxy rows grouped by that name produced a cause that did not exist. They are
+listed apart on purpose.
+
+### Neighbourhood unit suites — and 17 failures that are NOT this lane's
+
+All 44 `tests/*` files matching proxy / reflect / newtarget / the touched issue
+numbers were run (batched, `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048` — the full set
+in one vitest invocation OOMs on this box). Result: **17 failures, all 17
+reproduce IDENTICALLY with the three edited source files reverted to `HEAD~1`
+and the new module moved aside**, so none is this change's:
+
+- `deno-primordials-reflection-phases.test.ts` — 1
+- `issue-1712-reflection-identity.test.ts` — 5
+- `issue-3371.test.ts` — 1 (`preserves the TypedArray carrier through a
+  harness-style callback`; in this lane's own neighbourhood, hence checked first)
+- `issue-3638-reflective-instance-method-call.test.ts` — 1 (self-described
+  KNOWN GAP)
+- `issue-4397-native-semantic-js-host.test.ts` — 1
+- `issue-4754-module-global-proxy-escape.test.ts` — 6
+- `issue-5122-es2015-proxy-symbol-targets.test.ts` — 2
+
+Stated rather than skipped: they were measured file-by-file here, not through
+whatever suite-level setup CI uses, so "red on `origin/main`" is the honest
+claim, not necessarily "red in CI". The 27 other files (357 tests) are green.

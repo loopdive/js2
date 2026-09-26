@@ -391,7 +391,7 @@ import {
   unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
-import { fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2)
+import { fillArrayProtoSingleton, fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2; #6651 R1)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillProxyRevokerFnMeta } from "./proxy-revoker-meta.js"; // (#5196) revoker name/length meta arm
@@ -410,6 +410,7 @@ import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-r
 import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484 S2) record property reads
 import { unshiftRegExpAccessorGetArm } from "./regexp-accessor-get-arm.js"; // (#6651 B4) §22.2.6 accessor reads
 import { installRegExpLastIndexCarrierArms } from "./regexp-lastindex-carrier.js"; // (#6651 B6) lastIndex MOP
+import { unshiftDateCarrierMemberArms } from "./date-carrier-dynamic-member.js"; // (#6678) untyped Date members
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import {
   noteNumberPrimitiveMethodDemand,
@@ -6581,6 +6582,7 @@ export function generateModule(
     // (#6484 S2) A `$__IterRec` has no own properties — resolve every read off
     // one through `__iter_rec_proto`. No-op unless the module demanded it.
     unshiftExternGetIterRecArm(ctx);
+    unshiftDateCarrierMemberArms(ctx); // (#6678) untyped Date members
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
@@ -6904,6 +6906,7 @@ export function generateModule(
     // object, and the brand's lazy `$NativeProto` global only exists once the
     // native-proto glue has been registered.
     fillObjectProtoSingleton(ctx);
+    fillArrayProtoSingleton(ctx); // (#6651 R1) its `%Array.prototype%` twin
 
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
@@ -11337,6 +11340,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // helper. MUST stay ahead of the cache arm below, which has to remain the
     // body's PREFIX for the #4157 inline extractor.
     profilePhase("unshift-extern-get-iter-rec", () => unshiftExternGetIterRecArm(ctx));
+    profilePhase("unshift-date-carrier-member", () => unshiftDateCarrierMemberArms(ctx)); // (#6678)
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
@@ -11644,6 +11648,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#5270 step 2) Multi-source parity for the `%Object.prototype%` carrier;
     // see the single-source placement above.
     profilePhase("fill-object-proto-singleton", () => fillObjectProtoSingleton(ctx));
+    profilePhase("fill-array-proto-singleton", () => fillArrayProtoSingleton(ctx)); // (#6651 R1)
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /

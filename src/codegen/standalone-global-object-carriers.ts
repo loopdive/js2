@@ -69,6 +69,25 @@ const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
   "WeakSet",
 ] as const;
 
+/**
+ * (#6651 lane X1) The four names whose realm-global property was MISSING while
+ * their bare-identifier read already answered a real carrier.
+ *
+ * Probed on `origin/main` @ `0d119cbcfb`, one standalone module reading
+ * `{ X: globalThis.X }` for 21 builtin names: 17 answered a real carrier and
+ * exactly `Symbol` / `ArrayBuffer` / `DataView` / `Promise` answered null,
+ * while `Symbol`, `{ S: Symbol }.S` and `{ S: Symbol }.S.iterator ===
+ * Symbol.iterator` all already worked. So the carrier was never missing — only
+ * the realm-object property was. All four are in
+ * `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES`, so the value seeded is the SAME
+ * `__builtin_ctor_<Name>` singleton the bare read produces: this closes a split
+ * between two spellings of one intrinsic, it does not mint a second.
+ *
+ * Kept in a SEPARATE list because it is seeded even in a runtime-eval module,
+ * which the list above is not — see `appendStandaloneGlobalConstructorSeeds`.
+ */
+const STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES = ["Symbol", "ArrayBuffer", "DataView", "Promise"] as const;
+
 export function appendStandaloneGlobalConstructorSeeds(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -80,8 +99,19 @@ export function appendStandaloneGlobalConstructorSeeds(
   // native global object is itself being built recursively expands Function
   // parity modules and can exhaust codegen's stack. The ES5 reflection row is
   // eval-free, so its concrete constructor-name carriers still take this path.
-  if ((ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0) return;
-  for (const name of STANDALONE_GLOBAL_CONSTRUCTOR_NAMES) {
+  //
+  // (#6651 lane X1) That hazard is about `%Function%` parity and the callable
+  // wrapper ctors the eval boundary re-mints; it does not reach the four names
+  // below, which the boundary never builds and which are not reachable from
+  // `%Function%`'s carrier. They are therefore seeded on BOTH sides of this
+  // gate — the test262 corpus needs exactly that, since every module carrying
+  // the `$262` host-object shim also carries its `evalScript`, so it is
+  // always a runtime-eval module and the early return below always fires.
+  const evalModule = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0;
+  const names: readonly string[] = evalModule
+    ? STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES
+    : [...STANDALONE_GLOBAL_CONSTRUCTOR_NAMES, ...STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES];
+  for (const name of names) {
     fctx.body.push({ op: "local.get", index: objectLocal });
     addStringConstantGlobal(ctx, name);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
