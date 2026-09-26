@@ -169,6 +169,19 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-26 — lane GEN1 (a rest binding inside a nested pattern was given TWO
+  # local slots; see the receipt at the end of this file).
+  # `src/codegen/destructuring-params.ts` +25 (path already listed below,
+  # restated here because a grant is only honoured when the PR modifies the issue
+  # file carrying it). The MECHANISM plus all of its rationale (~34 lines) went
+  # into the subsystem module `src/codegen/tuple-rest.ts`, which carries no
+  # budget. What is left in the god-file is the irreducible call site: the
+  # decision "this sub-pattern's rest binding must agree with the SIBLING arm's
+  # representation, because `allocLocal` remaps the NAME and the last arm wins"
+  # has to be readable at the point the tuple arm picks the type it recurses
+  # with — written anywhere else it is a fact about a slot the reader cannot see.
+  # 4 of the 25 lines are the import statement prettier splits once it names a
+  # fourth symbol from `tuple-rest.js`. Inlined, the same change was +56.
   # 2026-09-26 — lane C1 (§15.7 own `constructor`). Two god-files, +12 and +10.
   #   - `src/codegen/object-ops.ts` +12: 6 comment lines and one 4-line `if` that
   #     adds `"constructor"` to the two own-key sets. The RULE and all of its
@@ -757,6 +770,15 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-26 — lane GEN1: `destructureParamArray` +20 (path already listed
+  # below, restated per the stranded-grant rule). The growth is the one arm of
+  # this function's tuple-struct lane that chooses the recursion's element type,
+  # and it cannot move behind a seam: the arm READS `fieldType` and `element`
+  # from the loop it sits in, and the correction is precisely which of the two
+  # types the recursion is given. The predicate it consults
+  # (`patternBindsRestAtAnyDepth`) and the whole WAT-verified rationale live in
+  # `src/codegen/tuple-rest.ts`. Splitting the function is out of this slice's
+  # scope and would move code the slice does not otherwise touch.
   # 2026-09-26 — lane C1 (§15.7 own `constructor`). One function, +12 lines, of
   # which 6 are comment: `compilePropertyIntrospection` gains the single `if`
   # that admits `"constructor"` into its own-key sets. The predicate itself is a
@@ -13184,3 +13206,222 @@ untouched; no growth grant added; `scripts/*-baseline.json` untouched. No raw
   `Object(sym) === sym` / "ToObject has no Symbol-wrapper carrier" half was
   already closed by slice I4 — `typeof Object(Symbol('d'))` reads `"object"` and
   `Object(sym).valueOf() === sym` holds on current main.
+
+## Lane GEN1 receipt — the ES2015 × `generators` feature-tag bucket, triaged end
+## to end. One cause is worth 3 rows in the bucket (and 29 corpus-wide); the
+## other 120 are near-singletons. (2026-09-26)
+
+Scope: the ES2015 × `generators` feature slice on `--target standalone` — the
+last unmeasured bucket on this issue. The dispatch brief said **126 failing of
+2,486**; the artifact promoted today says **2,486 total / 2,363 pass / 83 fail /
+40 CE**, i.e. **123 not-pass**, reproduced exactly.
+
+### The partition, up front
+
+| | rows |
+| --- | ---: |
+| generator-tagged rows, **all** editions | 4,119 (360 not-pass) |
+| of those, edition **ES2015** | **2,486** (123 not-pass) |
+| ES2015 not-pass, host **passes** → standalone-only gap | **25** |
+| ES2015 not-pass, host fails too → shared front-end | **98** |
+| another bucket's by construction (`iterator-chunking` ×4, `cross-realm` ×3) | 7 |
+
+- The edition axis is handled up front, not after the fact: the 123 **are** the
+  ES2015-tagged subset, because the row set is
+  `classifyEdition(parseFrontmatter(file)) === 2015` from
+  `scripts/generate-editions.ts` itself. The other **1,633** generator-tagged
+  rows (237 not-pass) are ES2018/ES2022 async-generator and class-field shapes
+  and are NOT this bucket.
+- The bucket is genuinely generator material: **all 123** carry the bare
+  `generators` tag. Unlike the `Reflect` bucket, the name is not misleading.
+  Only 7 belong elsewhere — see the next point, which is a classifier finding.
+- **4 rows are ES2015 only by a classifier gap.** `built-ins/Iterator/prototype/`
+  `{chunks,windows}/{non-constructible,result-is-iterator}.js` carry
+  `[iterator-chunking, generators]`, and `iterator-chunking` is **absent** from
+  `FEATURE_EDITIONS` in `scripts/generate-editions.ts`, so `generators` (2015)
+  decides the edition for a 2026-era proposal. They are 4 of the 25
+  standalone-only rows — 16 % of the actionable set — and no ES2015 work will
+  ever close them. (`iterator-helpers` 2025 and `iterator-sequencing` 2026 ARE
+  mapped; this tag was missed.) Adding the tag is a one-line fix in a file this
+  lane did not own.
+
+### Measurement lane — and the stale-artifact rule, obeyed
+
+- Row set: `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl`,
+  fetched `--force` 2026-09-26 (48,735 rows, internal row timestamps `26.9.2026`)
+  ∩ the editions classifier above.
+- Verdicts: `tests/test262-shared.ts::runTest262Chunk` from a gitignored
+  `tests/probe-gen1.test.ts`, `TEST262_PATH_FILTER_FILE` (paths carry the
+  `test/` prefix — `relPath` is relative to `test262/`, not `test262/test/`),
+  `TEST262_IT_TIMEOUT_MS=420000`, `COMPILER_POOL_SIZE=2`,
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, `--isolate`, forks max 1.
+  **Shard-completion manifest checked on every one of the 8 sweeps quoted here**
+  (`registered = recorded = canonical`, `allCallbacksSettled: true`).
+- All three artifacts (`build:compiler-bundle` → `build:runtime-bundle` →
+  `scripts/build-quickjs-eval-provider.mjs`) rebuilt after every `src/` edit and
+  on **both** sides of the A/B. The QuickJS adapter key was
+  `76472c1a920adf23` on the base build and again `76472c1a920adf23` after the
+  revert — the revert was exact — and `e25bca1395f951bf` with the fix.
+- **The host axis was RUN, never joined from the committed host baseline.**
+  Base standalone reproduced the artifact exactly (0 pass / 83 fail / 40 CE,
+  zero status drift on all 123 rows); base host of the same 123 rows measured
+  **25 pass / 98 fail** on the same commit, the same day.
+
+### The decision-changing fact about the CE rows
+
+`standalone target emitted host imports: env::__gen_*` (26 rows) and
+`native generator lowering supports only sequential numeric yields (#680)` (11)
+look like the bucket's biggest lever. **34 of those 37 CE rows fail on HOST
+too**, with real semantic errors (`Expected SameValue(«undefined», «"get
+yield"»)` ×5, `Cannot read properties of undefined (reading 'next')` ×5,
+`First iteration: pre-yield Expected SameValue(«2», «1»)` ×4, …). Closing the
+standalone generator-lowering gap on them converts CE → fail and gains **zero
+rows**. Only 5 of the 37 CEs are host-passing.
+
+### The 25 standalone-only rows, grouped by ACTUAL cause
+
+| rows | cause | state |
+| ---: | --- | --- |
+| **3** | a REST binding inside a nested pattern gets TWO local slots (below) | **LANDED** |
+| 4 | named generator fn-expr whose body references/reassigns its own name (`bodyReferencesOwnName` bail) — needs §10.2.1's immutable self-name binding | declined, see correction below |
+| 4 | `iterator-chunking` proposal rows (2 causes ×2) — not ES2015 work | out of scope |
+| 2 | `scope-*param-elem-var-close` — direct `eval` in parameter scope writing a `var` | not taken |
+| 1 | `scope-gen-meth-param-rest-elem-var-close` — rest param + parameter-scope `eval` (CE) | not taken |
+| 1 | `GeneratorPrototype/return/from-state-executing` — no "executing" state guard | not taken |
+| 1 | `GeneratorPrototype/throw/from-state-executing` — same guard, "Thrown value was not an object!" | not taken |
+| 1 | `GeneratorPrototype/next/result-prototype` — the iter-result object's `[[Prototype]]` is `null` | not taken |
+| 1 | `GeneratorFunction/instance-length` — a generator instance's `length` is 0, want 1 | not taken |
+| 1 | `GeneratorFunction/instance-name` — null deref reading `name` | not taken |
+| 1 | `method-definition/generator-property-desc` — a generator method's descriptor is not `configurable` | not taken |
+| 1 | `scope-body-lex-distinct` — a duplicate lexical declaration must be an early SyntaxError | not taken |
+| 1 | `eval-body-proto-realm` — cross-realm, lane X1's material | out of lane |
+| 1 | `yield-star-before-newline` — invalid Wasm, `__gen_resume_g` `local.tee[0]` expected `(ref null 90)` got `ref.as_non_null` | pre-existing, recorded by slice A1 |
+| 1 | `annexB/RegExp-invalid-control-escape-character-class` — dynamic RegExp pattern compiler | cluster B's material |
+| 1 | `TypedArrayConstructors/ctors/object-arg/iterating-throws` | cluster E's material |
+
+So: **after this slice, no remaining cause in the bucket is worth more than
+one row except the 4-row self-name family and the 4-row out-of-scope proposal
+family.** That is the answer to the question the brief asked.
+
+### CORRECTION to a recorded root cause (re-probed, per the method rule)
+
+This file's cluster-A round-2 note says lifting `bodyReferencesOwnName`
+"turns 9 loud compile errors into 9 **wrong answers**: the body's `g` resolves
+to the OUTER `var g` (`scope-name-var-close` reports `g === <function>` where
+`'outside'` is required)". Re-probed by lifting the bail behind an env flag and
+running the two shapes on standalone (bitmask, verbatim test262 spelling):
+
+- `g === 'outside'` **HOLDS** with the gate lifted — the outer binding is NOT
+  clobbered, so the symptom the record names is **inverted**.
+- What actually fails is `probe() === func` (the closure's `g` reads the outer
+  `'outside'` instead of the function) and `BindingIdentifier = 1; return
+  BindingIdentifier` answering `1` instead of the function.
+- **The CONCLUSION stands** — the bail must stay until the immutable self-name
+  binding exists; only the recorded symptom was wrong. Worth 4 ES2015 rows here.
+
+### What landed — one seam, +23 standalone / +6 host rows, 0 lost
+
+`destructureParamArray`'s externref lane emits several **mutually exclusive**
+arms for one pattern — a native-generator arm, one arm per candidate tuple
+struct (#862), then the generic `__vec_externref` arm — and each arm recursively
+re-emits the SAME pattern with its own element type. A rest binding is the one
+binding whose slot is **re-allocated** when those types disagree (the #971
+re-type in the rest-vec build), and `allocLocal` remaps the **name**, so the arm
+emitted LAST owns the binding while every earlier arm keeps writing an orphaned
+slot. When an earlier arm wins at run time, the body reads a local nothing ever
+wrote.
+
+WAT-verified on the base tree for `function f([[...x] = values]) {}`: **two**
+`(local $x …)` slots of different vec types — `(ref null 4)` written by the
+tuple arm at `struct.new 4; local.set 6`, `(ref null 2)` read by the body at
+`local.get 56` — and the tuple arm also set `__dparam_done`, so the generic arm
+never ran. `Array.isArray(x)` answered `true` for the never-written slot and
+`x[0]` then threw `Cannot access property on null or undefined`, which is why
+the family reads as a null-deref bug rather than a slot-aliasing one.
+
+Fix: the tuple lane hands a **rest-bearing** sub-pattern to the recursion as
+`externref` — the representation the generic arm also produces — so exactly one
+slot is minted. `patternBindsRestAtAnyDepth` (new, in the tuple-rest subsystem
+module `src/codegen/tuple-rest.ts`) asks "anywhere inside", not
+`patternIteratorStepCount(…) < 0`, because the diverging rest may sit a level
+further down (`[[[...x]]]`).
+
+Two details are load-bearing, both measured rather than assumed:
+
+1. **The DEFAULT check stays on the tuple FIELD's own type.** A missing tuple
+   element rides the field as a wasm null, which §13.3.3.6 step 5 says fires the
+   default, while `__extern_is_undefined` (the externref check) deliberately
+   answers `false` for a null externref because there that encodes JS `null`. A
+   first cut re-typed the default check too and turned the whole family into
+   `TypeError: Cannot destructure 'null' or 'undefined'`.
+2. **The change is NOT `ctx.standalone`-gated.** The arm runs on both targets, so
+   host was measured, and host improves too (+6). Fixing it unconditionally is
+   what the brief's "prefer the unconditional fix" rule asks for.
+
+### Per-row set diffs — both lanes, both sides measured by me
+
+| sweep | base | after | delta |
+| --- | --- | --- | --- |
+| ES2015 × `generators` bucket, 123 rows, **standalone** | 0 pass / 83 fail / 40 CE | **3** pass / 80 fail / 40 CE | **+3 gained, 0 lost, 0 other status change** |
+| the same 123 rows, **host** | 25 pass / 98 fail | 25 pass / 98 fail | **+0, −0** (those 3 already passed on host) |
+| control: every `ary-ptrn*rest` row corpus-wide, 1,842 rows, **standalone** | 1,783 pass / 35 fail / 24 CE | **1,806** pass / 12 fail / 24 CE | **+23 gained, 0 lost, 0 other status change** |
+| the same 1,842 rows, **host** | 1,775 pass / 67 fail | **1,781** pass / 61 fail | **+6 gained, 0 lost** |
+
+The 23 standalone gains are exactly the failing members of the
+`*-ary-ptrn-elem-ary-rest-init` family — the plain `function`/`arrow-function`/
+`generators`/`async-generator` declaration and expression lanes, the
+object-literal `meth`/`gen-meth`/`async-gen-meth` lanes and the class
+`private-*meth*` lanes. The 6 host gains are the class `*-meth-static-*` lanes.
+So the cause spans ES2015, ES2018 and ES2022; **3** of the rows are in this
+bucket. The three ES2015 × `generators` rows also sit in the frozen
+`G-forof-destructuring-iterators`, `A2-forof-pattern-suspension` and
+`C-class-object-super` manifests; none of those closed slices fixed it.
+
+Base runs were executed on a reverted tree (file-copy A/B, all three artifacts
+rebuilt per side, adapter key confirming the revert), not inherited.
+
+### Regression test
+
+`tests/issue-6651-gen1-nested-rest-binding-slot.test.ts`, 8 cases:
+**4 failed / 4 passed on reverted sources** → **8 passed with the fix.** Three
+of the four green-on-base cases are declared negative controls (nested rest with
+no default; nested non-rest under a default; the host lane of the fixed shape)
+and the fourth pins the recorded residual — a rest over a **string** default
+(`[[...x] = "ab"]`) is still wrong on standalone (`x.length !== 2`) while host
+answers correctly, asserted in its current spec-wrong state so a later lane
+closing it gets a failing assertion instead of a silently moved boundary.
+
+### Gates (all run bare, exit status read directly — never piped)
+
+`check-coercion-sites` 0 · `check:oracle-ratchet` 0 · `check:dead-exports` 0 ·
+`check-host-import-policy` 0 · `check-compiler-boundaries --mode inventory` 0 ·
+`typecheck` 0 · prettier/biome 0. `check-loc-budget` and `check-func-budget`
+pass under the grants restated below (both also re-run with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`). `scripts/*-baseline.json`
+untouched; no new file needing a `compiler-boundaries.json` classification (the
+predicate went into the existing `tuple-rest.ts`).
+
+**Growth, dated 2026-09-26 (lane GEN1).** `src/codegen/destructuring-params.ts`
+**+25** / `destructureParamArray` **+20**, and both paths are already in this
+file's `loc-budget-allow` / `func-budget-allow` lists (restated here because a
+grant is only honoured when the PR modifies the issue file that carries it —
+the stranded-grant rule). The MECHANISM and all of its rationale (~34 lines)
+moved into the subsystem module `src/codegen/tuple-rest.ts`, which carries no
+budget; what is left in the god-file is the irreducible call site: the decision
+"this sub-pattern's rest binding must agree with the sibling arm's
+representation" has to be readable at the point the tuple arm chooses the type
+it recurses with, and 4 of the 25 lines are the import statement prettier splits
+across lines once it names a fourth symbol. Inlined in the god-file the same
+change was +56.
+
+### Not done, and why
+
+- **22 of the 25 standalone-only rows are left open.** Not a budget excuse: the
+  cause table above is one row per cause, with the two 4-row families being
+  (a) blocked on the §10.2.1 self-name binding, which the re-probe confirms must
+  land first, and (b) a 2026 proposal misfiled into ES2015 by a missing feature
+  tag. There is no grouping left that buys more than one row.
+- **The 98 shared rows were not touched**, and 34 of them are the CE rows whose
+  standalone lowering gap is worth 0 until the shared front-end semantics move.
+- **No sweep outside the 123-row bucket and its 1,842-row control.** Nothing
+  here may be read as corpus-wide evidence.
