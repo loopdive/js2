@@ -19,10 +19,10 @@ async function runHost(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as never);
   if (!r.success) throw new Error("compile error: " + (r.errors?.[0]?.message ?? "unknown"));
   const imp = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
-    setExports?: (e: unknown) => void;
+    setInstance?: (i: WebAssembly.Instance) => void;
   };
   const { instance } = await WebAssembly.instantiate(r.binary, imp);
-  if (typeof imp.setExports === "function") imp.setExports(instance.exports);
+  if (typeof imp.setInstance === "function") imp.setInstance(instance);
   return (instance.exports as { test(): unknown }).test();
 }
 

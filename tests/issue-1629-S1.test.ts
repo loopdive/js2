@@ -26,8 +26,8 @@ async function runHost(src: string): Promise<unknown> {
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   // Make __sget_* struct getters discoverable to the runtime, as the real
   // test262 runner does after instantiation.
-  if (typeof (imports as { setExports?: (e: unknown) => void }).setExports === "function") {
-    (imports as { setExports: (e: unknown) => void }).setExports(instance.exports);
+  if (typeof (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance === "function") {
+    (imports as { setInstance: (i: WebAssembly.Instance) => void }).setInstance(instance);
   }
   return (instance.exports as { test?: () => unknown }).test?.();
 }
