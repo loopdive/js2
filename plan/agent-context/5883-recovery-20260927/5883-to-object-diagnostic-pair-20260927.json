@@ -1,0 +1,296 @@
+{
+  "baselineHead": "608be80f6beef338665fdcdb834e7d9b9f20b925",
+  "candidateHead": "18f1bd831312b3f5805f1e176388aac449c2d389",
+  "candidateState": "A/B/C/D integration before semantic index Get change",
+  "baselineHandle": 20226,
+  "candidateHandle": 14417,
+  "bothExit": 1,
+  "count": 12,
+  "baselinePass": 2,
+  "candidatePass": 3,
+  "pairs": [
+    {
+      "baseline": {
+        "name": "BigInt 7n: slot control without iterator",
+        "source": "export function test() { const p = 7n; const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = BigInt.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }",
+        "sha256": "e8879b4bd0303c5116dfba396d30add333f70ae9abbfa15ee3566aed41d2bbec",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -3,
+        "failure": "AssertionError: expected -3 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt 7n: slot control without iterator",
+        "source": "export function test() { const p = 7n; const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = BigInt.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }",
+        "sha256": "e8879b4bd0303c5116dfba396d30add333f70ae9abbfa15ee3566aed41d2bbec",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -3,
+        "failure": "AssertionError: expected -3 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "BigInt 7n: prototype Get without valueOf",
+        "source": "export function test() { const p = 7n; let r; let l=0; let i=0; Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(BigInt.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }",
+        "sha256": "32b7346adb0304de6a9feba3af6665c6b9e1456325ce92ec02780ea7f4c8a5c3",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt 7n: prototype Get without valueOf",
+        "source": "export function test() { const p = 7n; let r; let l=0; let i=0; Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(BigInt.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }",
+        "sha256": "32b7346adb0304de6a9feba3af6665c6b9e1456325ce92ec02780ea7f4c8a5c3",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "BigInt 18446744073709551617n: slot control without iterator",
+        "source": "export function test() { const p = 18446744073709551617n; const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = BigInt.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }",
+        "sha256": "0eaf495e0a575bab98c05a092c0036a077fb038bfd536b545524c8badeb3bd8b",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -3,
+        "failure": "AssertionError: expected -3 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt 18446744073709551617n: slot control without iterator",
+        "source": "export function test() { const p = 18446744073709551617n; const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = BigInt.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }",
+        "sha256": "0eaf495e0a575bab98c05a092c0036a077fb038bfd536b545524c8badeb3bd8b",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -3,
+        "failure": "AssertionError: expected -3 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "BigInt 18446744073709551617n: prototype Get without valueOf",
+        "source": "export function test() { const p = 18446744073709551617n; let r; let l=0; let i=0; Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(BigInt.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }",
+        "sha256": "778261b5551e49d3dde4c2fb60af635ed05d526b94aea98173e7930f322ffe77",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt 18446744073709551617n: prototype Get without valueOf",
+        "source": "export function test() { const p = 18446744073709551617n; let r; let l=0; let i=0; Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(BigInt.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }",
+        "sha256": "778261b5551e49d3dde4c2fb60af635ed05d526b94aea98173e7930f322ffe77",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "Symbol Symbol(\"probe\"): slot control without iterator",
+        "source": "export function test() { const p = Symbol(\"probe\"); const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = Symbol.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }",
+        "sha256": "616b3204c73e1d63d2e4a9067b7e9eaae6a453b403f12e0b2c6423ca439ad4d9",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -3,
+        "failure": "AssertionError: expected -3 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "Symbol Symbol(\"probe\"): slot control without iterator",
+        "source": "export function test() { const p = Symbol(\"probe\"); const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = Symbol.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }",
+        "sha256": "616b3204c73e1d63d2e4a9067b7e9eaae6a453b403f12e0b2c6423ca439ad4d9",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -3,
+        "failure": "AssertionError: expected -3 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "Symbol Symbol(\"probe\"): prototype Get without valueOf",
+        "source": "export function test() { const p = Symbol(\"probe\"); let r; let l=0; let i=0; Object.defineProperty(Symbol.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(Symbol.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }",
+        "sha256": "d14f995a469d51b7b2dd689a986fe711e74c77beefb28cf62175f8840a8955e6",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "Symbol Symbol(\"probe\"): prototype Get without valueOf",
+        "source": "export function test() { const p = Symbol(\"probe\"); let r; let l=0; let i=0; Object.defineProperty(Symbol.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(Symbol.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }",
+        "sha256": "d14f995a469d51b7b2dd689a986fe711e74c77beefb28cf62175f8840a8955e6",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "baseline": {
+        "name": "String: direct staged control",
+        "source": "export function test(){let stage=1;try {const o=Object(\"ab\");stage=2;stage=3;if(Reflect.get(o,\"length\",o)!==2)return -10;stage=4;return Reflect.get(o,\"0\",o)===\"a\"?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "907846be82ddb56bb6625ea188bb874dbaa431c1dea8b6933b3644a2b2c63de7",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -10,
+        "failure": "AssertionError: expected -10 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "String: direct staged control",
+        "source": "export function test(){let stage=1;try {const o=Object(\"ab\");stage=2;stage=3;if(Reflect.get(o,\"length\",o)!==2)return -10;stage=4;return Reflect.get(o,\"0\",o)===\"a\"?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "907846be82ddb56bb6625ea188bb874dbaa431c1dea8b6933b3644a2b2c63de7",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -10,
+        "failure": "AssertionError: expected -10 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "String: iterator staged control",
+        "source": "export function test(){let stage=1;try {const o=Object(\"ab\");stage=2;stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===\"a\"?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "34415b9b0d30ce1be846e23103390206854f74557c81119c1821486ef35e769d",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -10,
+        "failure": "AssertionError: expected -10 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "String: iterator staged control",
+        "source": "export function test(){let stage=1;try {const o=Object(\"ab\");stage=2;stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===\"a\"?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "34415b9b0d30ce1be846e23103390206854f74557c81119c1821486ef35e769d",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -10,
+        "failure": "AssertionError: expected -10 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "function: direct staged control",
+        "source": "export function test(){let stage=1;try {const o=function(){};stage=2;Object.defineProperty(o,\"length\",{configurable:true,value:1});Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;if(Reflect.get(o,\"length\",o)!==1)return -10;stage=4;return Reflect.get(o,\"0\",o)===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "cf36d26bcf1869d706dabf4decb149d247f1a00429115bfdc2079643a322b9ec",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "function: direct staged control",
+        "source": "export function test(){let stage=1;try {const o=function(){};stage=2;Object.defineProperty(o,\"length\",{configurable:true,value:1});Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;if(Reflect.get(o,\"length\",o)!==1)return -10;stage=4;return Reflect.get(o,\"0\",o)===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "cf36d26bcf1869d706dabf4decb149d247f1a00429115bfdc2079643a322b9ec",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "baseline": {
+        "name": "function: iterator staged control",
+        "source": "export function test(){let stage=1;try {const o=function(){};stage=2;Object.defineProperty(o,\"length\",{configurable:true,value:1});Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "b5d99eb7de28f85432e1371c5ff42965d6ac5da832e52fc96f8f5166d27458fd",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -10,
+        "failure": "AssertionError: expected -10 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "function: iterator staged control",
+        "source": "export function test(){let stage=1;try {const o=function(){};stage=2;Object.defineProperty(o,\"length\",{configurable:true,value:1});Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "b5d99eb7de28f85432e1371c5ff42965d6ac5da832e52fc96f8f5166d27458fd",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -11,
+        "failure": "AssertionError: expected -11 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "baseline": {
+        "name": "array: direct staged control",
+        "source": "export function test(){let stage=1;try {const o=[0];stage=2;Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;if(Reflect.get(o,\"length\",o)!==1)return -10;stage=4;return Reflect.get(o,\"0\",o)===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "6ba8348e9793381cba139290c621c04e02cd65dc7f989d5c333957a8d42026c6",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "array: direct staged control",
+        "source": "export function test(){let stage=1;try {const o=[0];stage=2;Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;if(Reflect.get(o,\"length\",o)!==1)return -10;stage=4;return Reflect.get(o,\"0\",o)===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "6ba8348e9793381cba139290c621c04e02cd65dc7f989d5c333957a8d42026c6",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "baseline": {
+        "name": "array: iterator staged control",
+        "source": "export function test(){let stage=1;try {const o=[0];stage=2;Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "68faa6a6ea59de1242561e5a480fd1e785c8fd52df9d6c3dbf3d546fe0533873",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -104,
+        "failure": "AssertionError: expected -104 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "array: iterator staged control",
+        "source": "export function test(){let stage=1;try {const o=[0];stage=2;Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===7?1:-11;}catch(e){return -100-stage;}}",
+        "sha256": "68faa6a6ea59de1242561e5a480fd1e785c8fd52df9d6c3dbf3d546fe0533873",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -104,
+        "failure": "AssertionError: expected -104 to be 1 // Object.is equality"
+      }
+    }
+  ]
+}

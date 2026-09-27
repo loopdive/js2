@@ -1,0 +1,419 @@
+
+ RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5883-preservation-repair-20260927
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps number once and preserves its primitive slot
+{"name":"wraps number once and preserves its primitive slot","source":"export function test() { \n    const primitive = 3;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"c2f931e059257fec5bd162679d1636cadcb4f4d485185e32d87c5d6c629d22bf","native":1,"success":true,"errors":[]}
+{"name":"wraps number once and preserves its primitive slot","source":"export function test() { \n    const primitive = 3;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"c2f931e059257fec5bd162679d1636cadcb4f4d485185e32d87c5d6c629d22bf","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps negative zero once and preserves its primitive slot
+{"name":"wraps negative zero once and preserves its primitive slot","source":"export function test() { \n    const primitive = -0;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"8948e5112f682409a400d8def52a4f6fef58f814604fad3e38c1183feae125e1","native":1,"success":true,"errors":[]}
+{"name":"wraps negative zero once and preserves its primitive slot","source":"export function test() { \n    const primitive = -0;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"8948e5112f682409a400d8def52a4f6fef58f814604fad3e38c1183feae125e1","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps genuine NaN once and preserves its primitive slot
+{"name":"wraps genuine NaN once and preserves its primitive slot","source":"export function test() { \n    const primitive = NaN;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"ca8e44f48ba504857c1c1d5b1d5baee66031546c18c9589b75f6a4f5e66c25b0","native":1,"success":true,"errors":[]}
+{"name":"wraps genuine NaN once and preserves its primitive slot","source":"export function test() { \n    const primitive = NaN;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"ca8e44f48ba504857c1c1d5b1d5baee66031546c18c9589b75f6a4f5e66c25b0","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps boolean false once and preserves its primitive slot
+{"name":"wraps boolean false once and preserves its primitive slot","source":"export function test() { \n    const primitive = false;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Boolean.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Boolean.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"7778c1e245e1e142437c3444f6f38ec170130b2801517048ce8be70579216075","native":1,"success":true,"errors":[]}
+{"name":"wraps boolean false once and preserves its primitive slot","source":"export function test() { \n    const primitive = false;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Boolean.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Boolean.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"7778c1e245e1e142437c3444f6f38ec170130b2801517048ce8be70579216075","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps bigint once and preserves its primitive slot
+{"name":"wraps bigint once and preserves its primitive slot","source":"export function test() { \n    const primitive = 7n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"745eb42c17db9385bd9878fa09efaea735c6fc830f6c5e7e9175e677661d3e45","native":1,"success":true,"errors":[]}
+{"name":"wraps bigint once and preserves its primitive slot","source":"export function test() { \n    const primitive = 7n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"745eb42c17db9385bd9878fa09efaea735c6fc830f6c5e7e9175e677661d3e45","native":1,"actual":-2,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps wide bigint once and preserves its primitive slot
+{"name":"wraps wide bigint once and preserves its primitive slot","source":"export function test() { \n    const primitive = 18446744073709551617n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"51295b423b1e2744f01597fc0b3267275b1b2cbaf534afe04383ccfea6006544","native":1,"success":true,"errors":[]}
+{"name":"wraps wide bigint once and preserves its primitive slot","source":"export function test() { \n    const primitive = 18446744073709551617n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"51295b423b1e2744f01597fc0b3267275b1b2cbaf534afe04383ccfea6006544","native":1,"actual":-2,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > wraps symbol once and preserves its primitive slot
+{"name":"wraps symbol once and preserves its primitive slot","source":"export function test() { \n    const primitive = Symbol(\"receiver\");\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Symbol.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Symbol.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"27a98b2f02d440ec1bc3428e12ef5ed8c0764916dbd2befa14a9f01f2cf3d665","native":1,"success":true,"errors":[]}
+{"name":"wraps symbol once and preserves its primitive slot","source":"export function test() { \n    const primitive = Symbol(\"receiver\");\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Symbol.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Symbol.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }","sha256":"27a98b2f02d440ec1bc3428e12ef5ed8c0764916dbd2befa14a9f01f2cf3d665","native":1,"actual":-2,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > string primitive yields UTF-16 indexed values, not code points
+{"name":"string primitive yields UTF-16 indexed values, not code points","source":"export function test() { \n  const iterator = Array.prototype.values.call(\"A\\uD83D\\uDE00\");\n  const a = iterator.next();\n  const hi = iterator.next();\n  const lo = iterator.next();\n  const end = iterator.next();\n  return !a.done && a.value === \"A\" && !hi.done && hi.value === \"\\uD83D\" &&\n    !lo.done && lo.value === \"\\uDE00\" && end.done && end.value === undefined ? 1 : -1;\n }","sha256":"c0b4cbbeb8cf9f3af2b71430af19a4f1ac26b5381f88cbb6ade9d60639d03371","native":1,"success":true,"errors":[]}
+{"name":"string primitive yields UTF-16 indexed values, not code points","source":"export function test() { \n  const iterator = Array.prototype.values.call(\"A\\uD83D\\uDE00\");\n  const a = iterator.next();\n  const hi = iterator.next();\n  const lo = iterator.next();\n  const end = iterator.next();\n  return !a.done && a.value === \"A\" && !hi.done && hi.value === \"\\uD83D\" &&\n    !lo.done && lo.value === \"\\uDE00\" && end.done && end.value === undefined ? 1 : -1;\n }","sha256":"c0b4cbbeb8cf9f3af2b71430af19a4f1ac26b5381f88cbb6ade9d60639d03371","native":1,"actual":-1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > retains existing Number wrapper identity
+{"name":"retains existing Number wrapper identity","source":"export function test() { \n    const primitive = 3;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"06a4ab938039f3bd0457599900a9a8da5d7ab4a35dd321f57b2b19d7834aa2ad","native":1,"success":true,"errors":[]}
+{"name":"retains existing Number wrapper identity","source":"export function test() { \n    const primitive = 3;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"06a4ab938039f3bd0457599900a9a8da5d7ab4a35dd321f57b2b19d7834aa2ad","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > retains existing Boolean wrapper identity
+{"name":"retains existing Boolean wrapper identity","source":"export function test() { \n    const primitive = false;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"0704f0a51f50dc7ffdc38a6e844c450855b478a977ee061bc841a6562f16a446","native":1,"success":true,"errors":[]}
+{"name":"retains existing Boolean wrapper identity","source":"export function test() { \n    const primitive = false;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"0704f0a51f50dc7ffdc38a6e844c450855b478a977ee061bc841a6562f16a446","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > retains existing BigInt wrapper identity
+{"name":"retains existing BigInt wrapper identity","source":"export function test() { \n    const primitive = 7n;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"4bc01d8b6df1c1eb6bce3a597754f8c59f514a2deff1eeb8de8941a4f2b6f63c","native":1,"success":true,"errors":[]}
+{"name":"retains existing BigInt wrapper identity","source":"export function test() { \n    const primitive = 7n;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"4bc01d8b6df1c1eb6bce3a597754f8c59f514a2deff1eeb8de8941a4f2b6f63c","native":1,"actual":-2,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > retains existing Symbol wrapper identity
+{"name":"retains existing Symbol wrapper identity","source":"export function test() { \n    const primitive = Symbol(\"boxed\");\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"56b2330445598bca4a889d0450b3cca081ba50c7dfd116d3edf6624db04cb726","native":1,"success":true,"errors":[]}
+{"name":"retains existing Symbol wrapper identity","source":"export function test() { \n    const primitive = Symbol(\"boxed\");\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }","sha256":"56b2330445598bca4a889d0450b3cca081ba50c7dfd116d3edf6624db04cb726","native":1,"actual":-2,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > retains a String wrapper target and its explicit proxy receiver
+{"name":"retains a String wrapper target and its explicit proxy receiver","source":"export function test() { \n  const boxed = Object(\"ab\");\n  let reads = 0;\n  let wrong = 0;\n  const source = new Proxy(boxed, {\n    get: function (target, key, receiver) {\n      if (target !== boxed || receiver !== source) wrong++;\n      if (key === \"length\" || key === \"0\" || key === \"1\") reads++;\n      return Reflect.get(target, key, receiver);\n    }\n  });\n  const iterator = Array.prototype.values.call(source);\n  if (reads !== 0 || wrong !== 0) return -1;\n  const first = iterator.next();\n  const second = iterator.next();\n  return !first.done && first.value === \"a\" && !second.done && second.value === \"b\" &&\n    reads === 4 && wrong === 0 ? 1 : -2;\n }","sha256":"5ba7cf1c9996c91bd6ddb0e2f0f7dfa77d74f66377cef911c9d59e2eb029d3bd","native":1,"success":true,"errors":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > preserves ordinary object receiver identity
+{"name":"preserves ordinary object receiver identity","source":"export function test() { \n    const source = {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }","sha256":"8f56ab77934b3e23cb8b3a3fd2022eb85bd52e93ad5c18bfd6e77a7cc3d8d28b","native":1,"success":true,"errors":[]}
+{"name":"preserves ordinary object receiver identity","source":"export function test() { \n    const source = {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }","sha256":"8f56ab77934b3e23cb8b3a3fd2022eb85bd52e93ad5c18bfd6e77a7cc3d8d28b","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > preserves array receiver identity
+{"name":"preserves array receiver identity","source":"export function test() { \n    const source = [0];\n    let reads = 0;\n    \n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }","sha256":"44644c5a233bd4a16359c82a4a2e29ffd79020a4e19b8595d96122d71ddd0ee9","native":1,"success":true,"errors":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > preserves function receiver identity
+{"name":"preserves function receiver identity","source":"export function test() { \n    const source = function () {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }","sha256":"45ff5933c473ee5664f4ed6d5d5d93bff36a209c94f057d59aa7311a349de28a","native":1,"success":true,"errors":[]}
+{"name":"preserves function receiver identity","source":"export function test() { \n    const source = function () {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }","sha256":"45ff5933c473ee5664f4ed6d5d5d93bff36a209c94f057d59aa7311a349de28a","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > does not Get or coerce an object receiver at factory creation
+{"name":"does not Get or coerce an object receiver at factory creation","source":"export function test() { \n  let reads = 0;\n  let conversions = 0;\n  const reason = {};\n  const source = {\n    get length() { reads++; return 1; },\n    get 0() { reads += 10; return this === source ? 7 : -9; },\n    valueOf: function () { conversions++; throw reason; },\n    toString: function () { conversions++; throw reason; },\n    [Symbol.toPrimitive]: function () { conversions++; throw reason; }\n  };\n  let iterator;\n  try { iterator = Array.prototype.values.call(source); } catch (_) { return -1; }\n  if (reads !== 0 || conversions !== 0) return -2;\n  const first = iterator.next();\n  return !first.done && first.value === 7 && reads === 11 && conversions === 0 ? 1 : -3;\n }","sha256":"88767d1b770a0bb07810d1e9d2dc4c1fdd4e3deacfb49419f58aea58f5589fdd","native":1,"success":true,"errors":[{"message":"Cannot access 'source' before initialization","line":7,"column":44,"severity":"warning"}]}
+{"name":"does not Get or coerce an object receiver at factory creation","source":"export function test() { \n  let reads = 0;\n  let conversions = 0;\n  const reason = {};\n  const source = {\n    get length() { reads++; return 1; },\n    get 0() { reads += 10; return this === source ? 7 : -9; },\n    valueOf: function () { conversions++; throw reason; },\n    toString: function () { conversions++; throw reason; },\n    [Symbol.toPrimitive]: function () { conversions++; throw reason; }\n  };\n  let iterator;\n  try { iterator = Array.prototype.values.call(source); } catch (_) { return -1; }\n  if (reads !== 0 || conversions !== 0) return -2;\n  const first = iterator.next();\n  return !first.done && first.value === 7 && reads === 11 && conversions === 0 ? 1 : -3;\n }","sha256":"88767d1b770a0bb07810d1e9d2dc4c1fdd4e3deacfb49419f58aea58f5589fdd","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > allocates fresh primitive wrappers per factory call and retains each across steps
+{"name":"allocates fresh primitive wrappers per factory call and retains each across steps","source":"export function test() { \n  let firstReceiver;\n  let secondReceiver;\n  let current;\n  let lengths = 0;\n  Object.defineProperty(Number.prototype, \"length\", {\n    configurable: true,\n    get: function () {\n      \"use strict\";\n      lengths++;\n      current = this;\n      if (lengths === 1) firstReceiver = this;\n      if (lengths === 2) secondReceiver = this;\n      return 2;\n    }\n  });\n  const getter = function () {\n    \"use strict\";\n    if (this !== current || typeof this !== \"object\") return -9;\n    return this === firstReceiver ? 7 : this === secondReceiver ? 8 : -8;\n  };\n  Object.defineProperty(Number.prototype, \"0\", { configurable: true, get: getter });\n  Object.defineProperty(Number.prototype, \"1\", { configurable: true, get: getter });\n  const values = Array.prototype.values;\n  const first = values.call(3);\n  const second = values.call(3);\n  if (lengths !== 0) return -1;\n  if (first.next().value !== 7 || second.next().value !== 8) return -2;\n  if (firstReceiver === secondReceiver) return -3;\n  const again = first.next();\n  return !again.done && again.value === 7 && current === firstReceiver && lengths === 3 ? 1 : -4;\n }","sha256":"616e57add40cb33c66b25b987bb161f451d1208f5067c9ef8cc93bd195ec0ead","native":1,"success":true,"errors":[]}
+{"name":"allocates fresh primitive wrappers per factory call and retains each across steps","source":"export function test() { \n  let firstReceiver;\n  let secondReceiver;\n  let current;\n  let lengths = 0;\n  Object.defineProperty(Number.prototype, \"length\", {\n    configurable: true,\n    get: function () {\n      \"use strict\";\n      lengths++;\n      current = this;\n      if (lengths === 1) firstReceiver = this;\n      if (lengths === 2) secondReceiver = this;\n      return 2;\n    }\n  });\n  const getter = function () {\n    \"use strict\";\n    if (this !== current || typeof this !== \"object\") return -9;\n    return this === firstReceiver ? 7 : this === secondReceiver ? 8 : -8;\n  };\n  Object.defineProperty(Number.prototype, \"0\", { configurable: true, get: getter });\n  Object.defineProperty(Number.prototype, \"1\", { configurable: true, get: getter });\n  const values = Array.prototype.values;\n  const first = values.call(3);\n  const second = values.call(3);\n  if (lengths !== 0) return -1;\n  if (first.next().value !== 7 || second.next().value !== 8) return -2;\n  if (firstReceiver === secondReceiver) return -3;\n  const again = first.next();\n  return !again.done && again.value === 7 && current === firstReceiver && lengths === 3 ? 1 : -4;\n }","sha256":"616e57add40cb33c66b25b987bb161f451d1208f5067c9ef8cc93bd195ec0ead","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > rejects null at factory creation with TypeError
+{"name":"rejects null at factory creation with TypeError","source":"export function test() { \n    try {\n      Array.prototype.values.call(null);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }","sha256":"83e5ab35151ae827a4f4f4666eea7c831b85893842dde8652354dc129491a057","native":1,"success":true,"errors":[]}
+{"name":"rejects null at factory creation with TypeError","source":"export function test() { \n    try {\n      Array.prototype.values.call(null);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }","sha256":"83e5ab35151ae827a4f4f4666eea7c831b85893842dde8652354dc129491a057","native":1,"actual":1,"imports":[]}
+
+stdout | tests/issue-5883-runtime-to-object.test.ts > rejects undefined at factory creation with TypeError
+{"name":"rejects undefined at factory creation with TypeError","source":"export function test() { \n    try {\n      Array.prototype.values.call(undefined);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }","sha256":"d58425af15275d2099a0ee677fb3cdb73ca8de8ec97e099e8c674d11fdd38254","native":1,"success":true,"errors":[]}
+{"name":"rejects undefined at factory creation with TypeError","source":"export function test() { \n    try {\n      Array.prototype.values.call(undefined);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }","sha256":"d58425af15275d2099a0ee677fb3cdb73ca8de8ec97e099e8c674d11fdd38254","native":1,"actual":1,"imports":[]}
+
+ ❯ tests/issue-5883-runtime-to-object.test.ts (20 tests | 8 failed) 6262ms
+   ✓ wraps number once and preserves its primitive slot  1140ms
+   ✓ wraps negative zero once and preserves its primitive slot  388ms
+   ✓ wraps genuine NaN once and preserves its primitive slot  318ms
+   ✓ wraps boolean false once and preserves its primitive slot  304ms
+   × wraps bigint once and preserves its primitive slot 319ms
+     → expected -2 to be 1 // Object.is equality
+   × wraps wide bigint once and preserves its primitive slot 253ms
+     → expected -2 to be 1 // Object.is equality
+   × wraps symbol once and preserves its primitive slot 310ms
+     → expected -2 to be 1 // Object.is equality
+   × string primitive yields UTF-16 indexed values, not code points 246ms
+     → expected -1 to be 1 // Object.is equality
+   ✓ retains existing Number wrapper identity 269ms
+   ✓ retains existing Boolean wrapper identity  309ms
+   × retains existing BigInt wrapper identity 246ms
+     → expected -2 to be 1 // Object.is equality
+   × retains existing Symbol wrapper identity 242ms
+     → expected -2 to be 1 // Object.is equality
+   × retains a String wrapper target and its explicit proxy receiver 323ms
+     → undefined
+   ✓ preserves ordinary object receiver identity 252ms
+   × preserves array receiver identity 206ms
+     → undefined
+   ✓ preserves function receiver identity 217ms
+   ✓ does not Get or coerce an object receiver at factory creation 286ms
+   ✓ allocates fresh primitive wrappers per factory call and retains each across steps 269ms
+   ✓ rejects null at factory creation with TypeError 190ms
+   ✓ rejects undefined at factory creation with TypeError 175ms
+stdout | tests/issue-5883-live-array-substrate.test.ts > opt-in live array cursor substrate (not GetIterator integration) > passes explicit number to hint-sensitive length @@toPrimitive
+{"case":"length hint trace after exhaustion","native":1111,"wasm":111,"expected":111}
+
+ ❯ tests/issue-5883-live-array-substrate.test.ts (12 tests | 2 failed) 5829ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > observes replacement/growth and permanently latches, strict=false  1091ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > observes replacement/growth and permanently latches, strict=true  472ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > polls rest through terminal, advances, and cannot revive after regrowth  373ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > has no signed-i32 sentinel or cursor wrap at the unsigned array boundary  339ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > observes shrink/regrow without resurrecting deleted values  323ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > bounded materialization advances exactly n steps, then helper loops resume  305ms
+   × opt-in live array cursor substrate (not GetIterator integration) > preserves holes, own undefined and genuine NaN through semantic indexed Get 407ms
+     → expected [ +0, -1000 ] to deeply equal [ +0, 41 ]
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > retains advancement after throwing indexed Get and permits reentrant next  493ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > does not Get or convert length again after exhaustion  448ms
+   × opt-in live array cursor substrate (not GetIterator integration) > passes explicit number to hint-sensitive length @@toPrimitive 384ms
+     → expected 1111 to be 111 // Object.is equality
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > reads Array.prototype inherited data, preserving own undefined/NaN  375ms
+   ✓ opt-in live array cursor substrate (not GetIterator integration) > reads Array.prototype inherited getter, preserving own undefined/NaN  818ms
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > BigInt 7n: slot control without iterator
+{"name":"BigInt 7n: slot control without iterator","source":"export function test() { const p = 7n; const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = BigInt.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }","sha256":"e8879b4bd0303c5116dfba396d30add333f70ae9abbfa15ee3566aed41d2bbec","native":1,"success":true,"errors":[],"imports":[],"actual":-3,"failure":"AssertionError: expected -3 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > BigInt 7n: prototype Get without valueOf
+{"name":"BigInt 7n: prototype Get without valueOf","source":"export function test() { const p = 7n; let r; let l=0; let i=0; Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(BigInt.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }","sha256":"32b7346adb0304de6a9feba3af6665c6b9e1456325ce92ec02780ea7f4c8a5c3","native":1,"success":true,"errors":[],"imports":[],"actual":-2,"failure":"AssertionError: expected -2 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > BigInt 18446744073709551617n: slot control without iterator
+{"name":"BigInt 18446744073709551617n: slot control without iterator","source":"export function test() { const p = 18446744073709551617n; const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = BigInt.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }","sha256":"0eaf495e0a575bab98c05a092c0036a077fb038bfd536b545524c8badeb3bd8b","native":1,"success":true,"errors":[],"imports":[],"actual":-3,"failure":"AssertionError: expected -3 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > BigInt 18446744073709551617n: prototype Get without valueOf
+{"name":"BigInt 18446744073709551617n: prototype Get without valueOf","source":"export function test() { const p = 18446744073709551617n; let r; let l=0; let i=0; Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(BigInt.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }","sha256":"778261b5551e49d3dde4c2fb60af635ed05d526b94aea98173e7930f322ffe77","native":1,"success":true,"errors":[],"imports":[],"actual":-2,"failure":"AssertionError: expected -2 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > Symbol Symbol("probe"): slot control without iterator
+{"name":"Symbol Symbol(\"probe\"): slot control without iterator","source":"export function test() { const p = Symbol(\"probe\"); const o = Object(p); try { if (typeof o !== \"object\") return -1; const v = Symbol.prototype.valueOf.call(o); if (typeof v !== typeof p) return -2; return Object.is(v,p) ? 1 : -3; } catch(e) { return -4; } }","sha256":"616b3204c73e1d63d2e4a9067b7e9eaae6a453b403f12e0b2c6423ca439ad4d9","native":1,"success":true,"errors":[],"imports":[],"actual":-3,"failure":"AssertionError: expected -3 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > Symbol Symbol("probe"): prototype Get without valueOf
+{"name":"Symbol Symbol(\"probe\"): prototype Get without valueOf","source":"export function test() { const p = Symbol(\"probe\"); let r; let l=0; let i=0; Object.defineProperty(Symbol.prototype,\"length\",{configurable:true,get:function(){\"use strict\";l++;r=this;return 1;}}); Object.defineProperty(Symbol.prototype,\"0\",{configurable:true,get:function(){\"use strict\";i++;return this===r && typeof this===\"object\" ? 7 : -9;}}); const it=Array.prototype.values.call(p); if(l!==0||i!==0)return -1; const first=it.next(); if(l!==1)return -2; if(first.done)return -3; if(i!==1)return -4; return first.value===7 ? 1 : -5; }","sha256":"d14f995a469d51b7b2dd689a986fe711e74c77beefb28cf62175f8840a8955e6","native":1,"success":true,"errors":[],"imports":[],"actual":1}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > String: direct staged control
+{"name":"String: direct staged control","source":"export function test(){let stage=1;try {const o=Object(\"ab\");stage=2;stage=3;if(Reflect.get(o,\"length\",o)!==2)return -10;stage=4;return Reflect.get(o,\"0\",o)===\"a\"?1:-11;}catch(e){return -100-stage;}}","sha256":"907846be82ddb56bb6625ea188bb874dbaa431c1dea8b6933b3644a2b2c63de7","native":1,"success":true,"errors":[],"imports":[],"actual":-10,"failure":"AssertionError: expected -10 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > String: iterator staged control
+{"name":"String: iterator staged control","source":"export function test(){let stage=1;try {const o=Object(\"ab\");stage=2;stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===\"a\"?1:-11;}catch(e){return -100-stage;}}","sha256":"34415b9b0d30ce1be846e23103390206854f74557c81119c1821486ef35e769d","native":1,"success":true,"errors":[],"imports":[],"actual":-10,"failure":"AssertionError: expected -10 to be 1 // Object.is equality"}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > function: direct staged control
+{"name":"function: direct staged control","source":"export function test(){let stage=1;try {const o=function(){};stage=2;Object.defineProperty(o,\"length\",{configurable:true,value:1});Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;if(Reflect.get(o,\"length\",o)!==1)return -10;stage=4;return Reflect.get(o,\"0\",o)===7?1:-11;}catch(e){return -100-stage;}}","sha256":"cf36d26bcf1869d706dabf4decb149d247f1a00429115bfdc2079643a322b9ec","native":1,"success":true,"errors":[],"imports":[],"actual":1}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > function: iterator staged control
+{"name":"function: iterator staged control","source":"export function test(){let stage=1;try {const o=function(){};stage=2;Object.defineProperty(o,\"length\",{configurable:true,value:1});Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===7?1:-11;}catch(e){return -100-stage;}}","sha256":"b5d99eb7de28f85432e1371c5ff42965d6ac5da832e52fc96f8f5166d27458fd","native":1,"success":true,"errors":[],"imports":[],"actual":1}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > array: direct staged control
+{"name":"array: direct staged control","source":"export function test(){let stage=1;try {const o=[0];stage=2;Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;if(Reflect.get(o,\"length\",o)!==1)return -10;stage=4;return Reflect.get(o,\"0\",o)===7?1:-11;}catch(e){return -100-stage;}}","sha256":"6ba8348e9793381cba139290c621c04e02cd65dc7f989d5c333957a8d42026c6","native":1,"success":true,"errors":[],"imports":[],"actual":1}
+
+stdout | tests/issue-5883-to-object-diagnostic.test.ts > array: iterator staged control
+{"name":"array: iterator staged control","source":"export function test(){let stage=1;try {const o=[0];stage=2;Object.defineProperty(o,\"0\",{configurable:true,get:function(){\"use strict\";return this===o?7:-9;}});stage=3;const it=Array.prototype.values.call(o);stage=4;const first=it.next();if(first.done)return -10;return first.value===7?1:-11;}catch(e){return -100-stage;}}","sha256":"68faa6a6ea59de1242561e5a480fd1e785c8fd52df9d6c3dbf3d546fe0533873","native":1,"success":true,"errors":[],"imports":[],"actual":-104,"failure":"AssertionError: expected -104 to be 1 // Object.is equality"}
+
+ ❯ tests/issue-5883-to-object-diagnostic.test.ts (12 tests | 8 failed) 3796ms
+   × BigInt 7n: slot control without iterator 855ms
+     → expected -3 to be 1 // Object.is equality
+   × BigInt 7n: prototype Get without valueOf 534ms
+     → expected -2 to be 1 // Object.is equality
+   × BigInt 18446744073709551617n: slot control without iterator 268ms
+     → expected -3 to be 1 // Object.is equality
+   × BigInt 18446744073709551617n: prototype Get without valueOf 294ms
+     → expected -2 to be 1 // Object.is equality
+   × Symbol Symbol("probe"): slot control without iterator 227ms
+     → expected -3 to be 1 // Object.is equality
+   ✓ Symbol Symbol("probe"): prototype Get without valueOf  303ms
+   × String: direct staged control 207ms
+     → expected -10 to be 1 // Object.is equality
+   × String: iterator staged control 225ms
+     → expected -10 to be 1 // Object.is equality
+   ✓ function: direct staged control 224ms
+   ✓ function: iterator staged control 235ms
+   ✓ array: direct staged control 200ms
+   × array: iterator staged control 223ms
+     → expected -104 to be 1 // Object.is equality
+stdout | tests/issue-5883-reflective-live-values.test.ts > boxes primitive receivers once before deferred property reads
+{"name":"boxes primitive receivers once before deferred property reads","source":"export function test() { \n    let receiver;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; receiver = this; return 1; }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; return this === receiver && typeof this === \"object\" ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(3);\n    if (receiver !== undefined) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 ? 1 : -2;\n   }","sha256":"7e1ca922f8351b682f0cd70a2d07a72265eef5b24cfd6fb2e60e8de79e6d3042","native":1,"actual":1}
+
+stdout | tests/issue-5883-reflective-live-values.test.ts > does not read length or indices at creation
+{"name":"does not read length or indices at creation","source":"export function test() { \n    let reads = 0;\n    const source = { get length() { reads++; return 1; }, get 0() { reads += 10; return 7; } };\n    const values = Array.prototype.values;\n    const iterator = values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || reads !== 11) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && reads === 12 ? 1 : -3;\n   }","sha256":"835ccdf6439b2d72d14a75f24bfc5301d9ee8b41c1b4c6a6d949e1541c917478","native":1,"actual":1}
+
+stdout | tests/issue-5883-reflective-live-values.test.ts > observes replacement and growth on the original receiver
+{"name":"observes replacement and growth on the original receiver","source":"export function test() { \n    const source = { 0: 1, 1: 2, 2: 3, length: 2 };\n    const values = Array.prototype.values;\n    const iterator = values.call(source);\n    if (iterator.next().value !== 1) return -1;\n    source[1] = 7;\n    source.length = 3;\n    if (iterator.next().value !== 7 || iterator.next().value !== 3) return -2;\n    return iterator.next().done ? 1 : -3;\n   }","sha256":"3a8fc54e92ba262ad129186ac109bf0ba51c2c62a66ea965799d6f6cb8324f49","native":1,"actual":1}
+
+stdout | tests/issue-5883-reflective-live-values.test.ts > does not revive an exhausted cursor after regrowth
+{"name":"does not revive an exhausted cursor after regrowth","source":"export function test() { \n    let reads = 0;\n    let length = 1;\n    const source = { 0: 1, 1: 2, get length() { reads++; return length; } };\n    const iterator = Array.prototype.values.call(source);\n    if (iterator.next().value !== 1 || !iterator.next().done || reads !== 2) return -1;\n    length = 2;\n    const again = iterator.next();\n    return again.done && again.value === undefined && reads === 2 ? 1 : -2;\n   }","sha256":"44c40ee9087f70b05d35dd2418b3b8fa472f41b12b82b40a1bd9ff5403be5d26","native":-2,"actual":1}
+
+stdout | tests/issue-5883-reflective-live-values.test.ts > defers a throwing length getter until next
+{"name":"defers a throwing length getter until next","source":"export function test() { \n    const reason = {};\n    const source = { get length() { throw reason; } };\n    let iterator;\n    try { iterator = Array.prototype.values.call(source); } catch (_) { return -1; }\n    try { iterator.next(); return -2; } catch (error) { return error === reason ? 1 : -3; }\n   }","sha256":"35898074313f62fc852beda9cabc1ccd238c188d6d4e02b4d35ed651a67852b2","native":1,"actual":1}
+
+stdout | tests/issue-5883-reflective-live-values.test.ts > retains nullish receiver rejection
+{"name":"retains nullish receiver rejection","source":"export function test() { \n    const values = Array.prototype.values;\n    let caught = 0;\n    try { values.call(null); } catch (error) { if (error instanceof TypeError) caught++; }\n    try { values.call(undefined); } catch (error) { if (error instanceof TypeError) caught++; }\n    return caught === 2 ? 1 : -1;\n   }","sha256":"95ce699a77c384da7d04afa01b5ef3a6c8adfd4a1935af85c71d04a964d27f12","native":1,"actual":1}
+
+ ❯ tests/issue-5883-reflective-live-values.test.ts (6 tests | 1 failed) 2488ms
+   ✓ boxes primitive receivers once before deferred property reads  1053ms
+   ✓ does not read length or indices at creation  357ms
+   ✓ observes replacement and growth on the original receiver  308ms
+   × does not revive an exhausted cursor after regrowth 258ms
+     → expected -2 to be 1 // Object.is equality
+   ✓ defers a throwing length getter until next 281ms
+   ✓ retains nullish receiver rejection 229ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 19 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-5883-live-array-substrate.test.ts > opt-in live array cursor substrate (not GetIterator integration) > preserves holes, own undefined and genuine NaN through semantic indexed Get
+AssertionError: expected [ +0, -1000 ] to deeply equal [ +0, 41 ]
+
+- Expected
++ Received
+
+  [
+    0,
+-   41,
++   -1000,
+  ]
+
+ ❯ tests/issue-5883-live-array-substrate.test.ts:223:57
+    221|     const control = a.values();
+    222|     const rec = ex.__live_array_values(ex.make());
+    223|     for (let n = 0; n < 4; n++) expect(step(rec, true)).toEqual(native…
+       |                                                         ^
+    224|   });
+    225| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/19]⎯
+
+ FAIL  tests/issue-5883-live-array-substrate.test.ts > opt-in live array cursor substrate (not GetIterator integration) > passes explicit number to hint-sensitive length @@toPrimitive
+AssertionError: expected 1111 to be 111 // Object.is equality
+
+- Expected
++ Received
+
+- 111
++ 1111
+
+ ❯ tests/issue-5883-live-array-substrate.test.ts:300:19
+    298|       }),
+    299|     );
+    300|     expect(hints).toBe(111);
+       |                   ^
+    301|     expect(ex.hintTrace()).toBe(hints);
+    302|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/19]⎯
+
+ FAIL  tests/issue-5883-reflective-live-values.test.ts > does not revive an exhausted cursor after regrowth
+AssertionError: expected -2 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -2
+
+ ❯ tests/issue-5883-reflective-live-values.test.ts:110:20
+    108|       JSON.stringify({ name, source, sha256: createHash("sha256").upda…
+    109|     );
+    110|     expect(native).toBe(1);
+       |                    ^
+    111|     expect(actual).toBe(native);
+    112|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/19]⎯
+
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > wraps bigint once and preserves its primitive slot
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > wraps wide bigint once and preserves its primitive slot
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > wraps symbol once and preserves its primitive slot
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > retains existing BigInt wrapper identity
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > retains existing Symbol wrapper identity
+AssertionError: expected -2 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -2
+
+ ❯ tests/issue-5883-runtime-to-object.test.ts:243:20
+    241|     console.log(JSON.stringify({ name, source, sha256, native, actual,…
+    242|     expect(native).toBe(1);
+    243|     expect(actual).toBe(1);
+       |                    ^
+    244|   });
+    245| }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/19]⎯
+
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > string primitive yields UTF-16 indexed values, not code points
+AssertionError: expected -1 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -1
+
+ ❯ tests/issue-5883-runtime-to-object.test.ts:243:20
+    241|     console.log(JSON.stringify({ name, source, sha256, native, actual,…
+    242|     expect(native).toBe(1);
+    243|     expect(actual).toBe(1);
+       |                    ^
+    244|   });
+    245| }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/19]⎯
+
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > retains a String wrapper target and its explicit proxy receiver
+{
+  constructor: 'Function<Exception>',
+  getArg: 'Function<getArg>',
+  is: 'Function<is>',
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/19]⎯
+
+ FAIL  tests/issue-5883-runtime-to-object.test.ts > preserves array receiver identity
+{
+  constructor: 'Function<Exception>',
+  getArg: 'Function<getArg>',
+  is: 'Function<is>',
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/19]⎯
+
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > BigInt 7n: slot control without iterator
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > BigInt 18446744073709551617n: slot control without iterator
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > Symbol Symbol("probe"): slot control without iterator
+AssertionError: expected -3 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -3
+
+ ❯ tests/issue-5883-to-object-diagnostic.test.ts:73:30
+     71|       receipt.actual=(instance.exports.test as ()=>number)();
+     72|       expect(native).toBe(1);
+     73|       expect(receipt.actual).toBe(1);
+       |                              ^
+     74|     } catch(error) {
+     75|       receipt.failure=String(error);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/19]⎯
+
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > BigInt 7n: prototype Get without valueOf
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > BigInt 18446744073709551617n: prototype Get without valueOf
+AssertionError: expected -2 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -2
+
+ ❯ tests/issue-5883-to-object-diagnostic.test.ts:73:30
+     71|       receipt.actual=(instance.exports.test as ()=>number)();
+     72|       expect(native).toBe(1);
+     73|       expect(receipt.actual).toBe(1);
+       |                              ^
+     74|     } catch(error) {
+     75|       receipt.failure=String(error);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/19]⎯
+
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > String: direct staged control
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > String: iterator staged control
+AssertionError: expected -10 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -10
+
+ ❯ tests/issue-5883-to-object-diagnostic.test.ts:73:30
+     71|       receipt.actual=(instance.exports.test as ()=>number)();
+     72|       expect(native).toBe(1);
+     73|       expect(receipt.actual).toBe(1);
+       |                              ^
+     74|     } catch(error) {
+     75|       receipt.failure=String(error);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/19]⎯
+
+ FAIL  tests/issue-5883-to-object-diagnostic.test.ts > array: iterator staged control
+AssertionError: expected -104 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ -104
+
+ ❯ tests/issue-5883-to-object-diagnostic.test.ts:73:30
+     71|       receipt.actual=(instance.exports.test as ()=>number)();
+     72|       expect(native).toBe(1);
+     73|       expect(receipt.actual).toBe(1);
+       |                              ^
+     74|     } catch(error) {
+     75|       receipt.failure=String(error);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/19]⎯
+
+
+ Test Files  4 failed (4)
+      Tests  19 failed | 31 passed (50)
+   Start at  04:44:19
+   Duration  36.34s (transform 8.80s, setup 0ms, collect 17.05s, tests 18.37s, environment 1ms, prepare 174ms)
