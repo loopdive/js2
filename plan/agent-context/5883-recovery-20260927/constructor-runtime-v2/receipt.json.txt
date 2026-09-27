@@ -1,0 +1,23 @@
+{
+  "sourceHash": "a122d333957f9aa8498bcbb86c889f372ef0dd0da281bb6f4fddbf61daa5ecb5",
+  "runtimeProof": "UNOBSERVED",
+  "rollbackProof": "UNOBSERVED",
+  "basis": {
+    "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+    "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+    "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+    "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+    "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+    "src/codegen/proto-index-store.ts": "4ea3558e2b9cfce07c0ae896d342dcb176aaced813b39ae5c088a84f36e7a250",
+    "src/emit/resolve-layout.ts": "eee0e63fa1b665e2260b366cd82b00386dbb08b792765314fb66086067e8620e",
+    "src/emit/binary.ts": "d00d7c8d830fc566e9a5d5241630e3b0c81f756cf2b782e87770c28975ea0034",
+    "src/compiler.ts": "05b2ac81280356c1cf3707c2b5444f6f3a6edfdf9548cb674fb573349796f2af"
+  },
+  "harnessHash": "b67d6081bf47bdde9f855c82ba72d336c3fa61181a6cfd27915e60a6eaeb3b6b",
+  "compile": {
+    "success": true,
+    "errors": [],
+    "binaryHash": "d01e230aa4ee91ebb57bb19f742ea8aba5562e6ea23deb8e2a361dda1f107fd1"
+  },
+  "error": "Error: constructor allocation/publication/seed sequence not proved"
+}

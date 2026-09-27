@@ -1,0 +1,390 @@
+diff --git a/src/ir/program/vector-domain-plan.ts b/src/ir/program/vector-domain-plan.ts
+new file mode 100644
+--- /dev/null
++++ b/src/ir/program/vector-domain-plan.ts
+@@ -0,0 +1,99 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++/** Dormant ABI roles. These declarations neither activate a carrier nor enroll an instance. */
++export type VectorSemanticKind = 1 | 2 | 3 | 4 | 5;
++export type VectorStorageKind = 1 | 2 | 3 | 4;
++export type VectorDomainValueKind = "externref" | "i32";
++export interface VectorDomainSignature {
++  readonly params: readonly VectorDomainValueKind[];
++  readonly results: readonly VectorDomainValueKind[];
++}
++
++const signature = (params: readonly VectorDomainValueKind[], results: readonly VectorDomainValueKind[]): VectorDomainSignature =>
++  Object.freeze({ params: Object.freeze([...params]), results: Object.freeze([...results]) });
++const E = "externref", I = "i32";
++
++/** Field order is the DomainV1 ServicesV1 ABI, not an object enumeration convention. */
++export const VECTOR_DOMAIN_SERVICES = Object.freeze([
++  ["rawLength", signature([E], [I])],
++  ["rawOwnPresent", signature([E, I], [I])],
++  ["rawLoadPresent", signature([E, I], [E])],
++  ["rawStorePresent", signature([E, I, E], [])],
++  ["rawMarkAbsent", signature([E, I, I], [])],
++  ["hasOwn", signature([E, E], [I])],
++  ["has", signature([E, E], [I])],
++  ["get", signature([E, E, E], [E])],
++  ["set", signature([E, E, E, E], [I])],
++  ["getOwnDescriptor", signature([E, E], [I, E])],
++  ["defineOwn", signature([E, E, E], [I])],
++  ["deleteOwn", signature([E, E], [I])],
++  ["ownKeys", signature([E], [E])],
++  ["getPrototype", signature([E], [E])],
++  ["setPrototype", signature([E, E], [I])],
++  ["isExtensible", signature([E], [I])],
++  ["preventExtensions", signature([E], [I])],
++] as const);
++export type VectorDomainService = (typeof VECTOR_DOMAIN_SERVICES)[number][0];
++for (const entry of VECTOR_DOMAIN_SERVICES) Object.freeze(entry);
++export const VECTOR_DOMAIN_VALIDATOR_SIGNATURE = signature([E, E], [I]);
++
++export interface VectorDomainAllocationRole {
++  readonly allocationRole: string;
++  /** Exact carrier reservation key; NEVER a cross-module numeric type index. */
++  readonly layoutBinding: string;
++  readonly semanticKind: VectorSemanticKind;
++  readonly storageKind: VectorStorageKind;
++}
++
++export interface VectorDomainPlan {
++  readonly abi: "js2.vector-domain.v1";
++  readonly anchor: string;
++  readonly allocations: readonly VectorDomainAllocationRole[];
++}
++
++/** Pure role validation only: actual carrier reservations authenticate at reserve time. */
++export function planVectorDomains(anchor: string, allocations: readonly VectorDomainAllocationRole[]): VectorDomainPlan {
++  if (!anchor || allocations.length === 0) throw new Error("vector domain plan requires anchor and allocations");
++  const roles = new Set<string>();
++  const rows = allocations.map((row) => {
++    if (!row.allocationRole || !row.layoutBinding || roles.has(row.allocationRole))
++      throw new Error("invalid or duplicate vector domain allocation role");
++    if (![1, 2, 3, 4, 5].includes(row.semanticKind) || ![1, 2, 3, 4].includes(row.storageKind))
++      throw new Error("invalid vector domain kind");
++    roles.add(row.allocationRole);
++    return Object.freeze({ allocationRole: row.allocationRole, layoutBinding: row.layoutBinding,
++      semanticKind: row.semanticKind, storageKind: row.storageKind });
++  });
++  return Object.freeze({ abi: "js2.vector-domain.v1", anchor, allocations: Object.freeze(rows) });
++}
++
++/**
++ * Proposed embedded manifest payload, NOT wired into ProviderManifestV1 yet.
++ * Names locate roles only after artifact/Module -> genuine Instance enrollment.
++ * Exporting these roles also requires physical-bootstrap init-guard exclusion.
++ */
++export interface VectorDomainManifestRoles {
++  readonly abi: VectorDomainPlan["abi"];
++  readonly allocation: VectorDomainAllocationRole;
++  readonly domainGlobalRole: string;
++  readonly validatorRole: string;
++  readonly serviceRoles: readonly { readonly operation: VectorDomainService; readonly role: string }[];
++  readonly lifecycle: "instantiate-bind-all-explicit-init";
++}
++
++/** No readiness assertion and no active provider-manifest serialization. */
++export function vectorDomainManifestRoles(plan: VectorDomainPlan, allocationRole: string): VectorDomainManifestRoles {
++  const canonical = planVectorDomains(plan.anchor, plan.allocations);
++  if (plan.abi !== canonical.abi) throw new Error("vector domain ABI mismatch");
++  const allocation = canonical.allocations.find((row) => row.allocationRole === allocationRole);
++  if (!allocation) throw new Error("unknown vector domain allocation role");
++  const prefix = JSON.stringify([canonical.abi, canonical.anchor, allocation.allocationRole, allocation.layoutBinding]);
++  return Object.freeze({
++    abi: canonical.abi, allocation,
++    domainGlobalRole: prefix + ":domain",
++    validatorRole: prefix + ":validate",
++    serviceRoles: Object.freeze(VECTOR_DOMAIN_SERVICES.map(([operation]) =>
++      Object.freeze({ operation, role: prefix + ":" + operation }))),
++    lifecycle: "instantiate-bind-all-explicit-init",
++  });
++}
+diff --git a/src/backend/wasmgc/resources/native-vector-domain-types.ts b/src/backend/wasmgc/resources/native-vector-domain-types.ts
+new file mode 100644
+--- /dev/null
++++ b/src/backend/wasmgc/resources/native-vector-domain-types.ts
+@@ -0,0 +1,31 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++import type { StructTypeDef } from "../../../wasm/model/module-records.js";
++import type { ValType } from "../../../wasm/model/instructions.js";
++import { VECTOR_DOMAIN_SERVICES } from "../../../ir/program/vector-domain-plan.js";
++
++export function vectorDomainOriginType(): StructTypeDef {
++  return { kind: "struct", name: "__vector_origin_v1", fields: [] };
++}
++
++export function vectorDomainServicesType(signatures: readonly number[]): StructTypeDef {
++  if (signatures.length !== VECTOR_DOMAIN_SERVICES.length ||
++      signatures.some((index) => !Number.isSafeInteger(index) || index < 0))
++    throw new Error("invalid vector service signature coordinates");
++  return { kind: "struct", name: "__vector_services_v1",
++    fields: VECTOR_DOMAIN_SERVICES.map(([name], index) => ({
++      name, type: { kind: "ref", typeIdx: signatures[index]! }, mutable: false,
++    })) };
++}
++
++export function vectorDomainRecordType(origin: number, services: number): StructTypeDef {
++  if (![origin, services].every((index) => Number.isSafeInteger(index) && index >= 0) || origin === services)
++    throw new Error("invalid vector domain type coordinates");
++  const fields: [string, ValType][] = [
++    ["version", { kind: "i32" }], ["semanticKind", { kind: "i32" }],
++    ["storageKind", { kind: "i32" }], ["origin", { kind: "ref", typeIdx: origin }],
++    ["hole", { kind: "externref" }], ["services", { kind: "ref", typeIdx: services }],
++  ];
++  return { kind: "struct", name: "__vector_domain_v1",
++    fields: fields.map(([name, type]) => ({ name, type, mutable: false })) };
++}
+diff --git a/src/backend/wasmgc/resources/native-vector-domains.ts b/src/backend/wasmgc/resources/native-vector-domains.ts
+new file mode 100644
+--- /dev/null
++++ b/src/backend/wasmgc/resources/native-vector-domains.ts
+@@ -0,0 +1,245 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
++import {
++  type PhysicalModuleReservations, type TypeReservation, type GlobalReservation,
++  type FunctionReservation,
++} from "../../../wasm/physical/module-reservations.js";
++import {
++  planVectorDomains, vectorDomainManifestRoles, VECTOR_DOMAIN_SERVICES,
++  VECTOR_DOMAIN_VALIDATOR_SIGNATURE, type VectorDomainPlan, type VectorDomainManifestRoles,
++  type VectorDomainService, type VectorDomainSignature,
++} from "../../../ir/program/vector-domain-plan.js";
++import { vectorDomainOriginType, vectorDomainRecordType, vectorDomainServicesType } from "./native-vector-domain-types.js";
++
++export interface VectorDomainCarrierBinding {
++  readonly allocationRole: string;
++  readonly layoutBinding: string;
++  readonly carrier: TypeReservation;
++  readonly backing: TypeReservation;
++}
++export interface ReservedVectorDomainRow {
++  readonly manifest: VectorDomainManifestRoles;
++  readonly binding: VectorDomainCarrierBinding;
++  readonly domain: GlobalReservation;
++  readonly services: GlobalReservation;
++  readonly validator: FunctionReservation;
++  readonly operations: readonly { readonly operation: VectorDomainService; readonly function: FunctionReservation }[];
++}
++declare const phaseBrand: unique symbol;
++export interface ReservedVectorDomains {
++  readonly [phaseBrand]: "reserved";
++  readonly rows: readonly ReservedVectorDomainRow[];
++}
++export interface FilledVectorDomains {
++  readonly [phaseBrand]: "filled";
++  readonly rows: readonly ReservedVectorDomainRow[];
++}
++/**
++ * Physical completion ONLY. Not ReadyVectorDomains: cannot authorize allocation,
++ * field2 attachment, manifest publication, runtime enrollment or source admission.
++ */
++export interface SealedVectorDomainResources {
++  readonly [phaseBrand]: "sealed-resources";
++  readonly rows: readonly ReservedVectorDomainRow[];
++}
++export interface VectorDomainFunctionFill {
++  /** Exact reservation, not a matching name/handle or a caller-provided ownership flag. */
++  readonly target: FunctionReservation;
++  readonly locals: LocalDef[];
++  readonly body: Instr[];
++}
++export interface VectorDomainPhysicalRoles {
++  readonly originType: TypeReservation;
++  readonly servicesType: TypeReservation;
++  readonly domainType: TypeReservation;
++  readonly holeType: TypeReservation;
++  readonly origin: GlobalReservation;
++  readonly hole: GlobalReservation;
++  readonly rows: readonly ReservedVectorDomainRow[];
++}
++interface Owner {
++  readonly transaction: PhysicalModuleReservations;
++  readonly originType: TypeReservation;
++  readonly servicesType: TypeReservation;
++  readonly domainType: TypeReservation;
++  readonly holeType: TypeReservation;
++  readonly origin: GlobalReservation;
++  readonly hole: GlobalReservation;
++  readonly rows: readonly ReservedVectorDomainRow[];
++  phase: "reserved" | "filling" | "filled" | "sealed-resources" | "failed";
++}
++const owners = new WeakMap<object, Owner>();
++// A complete module plan reserves one origin, not one origin per caller/row.
++const reservedTransactions = new WeakSet<PhysicalModuleReservations>();
++function fail(message: string): never { throw new Error("native vector domains: " + message); }
++function physicalSignature(signature: VectorDomainSignature): { params: ValType[]; results: ValType[] } {
++  return { params: signature.params.map((kind) => ({ kind })), results: signature.results.map((kind) => ({ kind })) };
++}
++function ownerFor(transaction: PhysicalModuleReservations, pack: object, phase: Owner["phase"]): Owner {
++  const owner = owners.get(pack);
++  if (!owner || owner.transaction !== transaction || owner.phase !== phase) fail("foreign or stale domain resources");
++  return owner;
++}
++
++/** Exact owner-issued allocations for the future graph binder; names confer no authority. */
++export function vectorDomainPhysicalRoles(
++  transaction: PhysicalModuleReservations,
++  pack: ReservedVectorDomains | FilledVectorDomains | SealedVectorDomainResources,
++): VectorDomainPhysicalRoles {
++  const owner = owners.get(pack);
++  if (!owner || owner.transaction !== transaction || owner.phase === "failed" || transaction.state === "failed")
++    fail("foreign or failed domain resources");
++  return Object.freeze({
++    originType: owner.originType, servicesType: owner.servicesType, domainType: owner.domainType,
++    holeType: owner.holeType, origin: owner.origin, hole: owner.hole, rows: owner.rows,
++  });
++}
++
++/** No carrier layout change. Caller must reserve ordinary imports before this call. */
++export function reserveVectorDomains(
++  transaction: PhysicalModuleReservations,
++  input: VectorDomainPlan,
++  bindings: readonly VectorDomainCarrierBinding[],
++): ReservedVectorDomains {
++  if (transaction.state !== "reserving") fail("reservation phase required");
++  if (reservedTransactions.has(transaction)) fail("domain plan already reserved for this transaction");
++  const plan = planVectorDomains(input.anchor, input.allocations);
++  if (input.abi !== plan.abi || bindings.length !== plan.allocations.length) fail("plan/binding population mismatch");
++  // Authenticate every prerequisite before allocating any new dependent resource.
++  const used = new Set<VectorDomainCarrierBinding>();
++  const rows = plan.allocations.map((allocation) => {
++    const matches = bindings.filter((row) => row.allocationRole === allocation.allocationRole);
++    if (matches.length !== 1) fail("allocation role does not resolve exactly once");
++    const binding = matches[0]!;
++    if (used.has(binding) || binding.layoutBinding !== allocation.layoutBinding ||
++        binding.carrier.key !== binding.layoutBinding) fail("layout binding mismatch");
++    used.add(binding);
++    transaction.assertTypeReservation(binding.carrier);
++    transaction.assertTypeReservation(binding.backing);
++    const carrier = binding.carrier.object, backing = binding.backing.object;
++    if (carrier.kind !== "struct" || backing.kind !== "array" ||
++        carrier.fields[0]?.type.kind !== "i32") fail("invalid carrier prefix");
++    const data = carrier.fields[1]?.type;
++    if (data?.kind !== "ref" || data.typeIdx !== binding.backing.typeIndex) fail("carrier/backing allocation mismatch");
++    if (allocation.storageKind === 1 && !["externref", "ref_extern"].includes(backing.element.kind))
++      fail("token domain requires externref backing");
++    if (allocation.storageKind === 2 && backing.element.kind !== "f64") fail("f64 domain requires f64 backing");
++    return { manifest: vectorDomainManifestRoles(plan, allocation.allocationRole),
++      binding: Object.freeze({ ...binding }) };
++  });
++  reservedTransactions.add(transaction);
++  const key = (role: string): string => JSON.stringify([plan.abi, plan.anchor, role]);
++  const originType = transaction.reserveType(key("origin-type"), vectorDomainOriginType());
++  const holeType = transaction.reserveType(key("hole-type"), { kind: "struct", name: "__vector_hole_v1", fields: [] });
++  const signatures = VECTOR_DOMAIN_SERVICES.map(([, signature]) => {
++    const physical = physicalSignature(signature);
++    return transaction.internFunctionType(physical.params, physical.results);
++  });
++  const servicesType = transaction.reserveType(key("services-type"), vectorDomainServicesType(signatures));
++  const domainType = transaction.reserveType(key("domain-type"),
++    vectorDomainRecordType(originType.typeIndex, servicesType.typeIndex));
++  const origin = transaction.reserveGlobal(key("origin"), "__vector_origin_v1",
++    { kind: "ref", typeIdx: originType.typeIndex }, false);
++  const hole = transaction.reserveGlobal(key("hole"), "__vector_hole_v1",
++    { kind: "ref", typeIdx: holeType.typeIndex }, false);
++  const reserved = rows.map(({ manifest, binding }): ReservedVectorDomainRow => {
++    const services = transaction.reserveGlobal(key(manifest.domainGlobalRole + ":services"),
++      manifest.domainGlobalRole + ":services", { kind: "ref", typeIdx: servicesType.typeIndex }, false);
++    const domain = transaction.reserveGlobal(manifest.domainGlobalRole, manifest.domainGlobalRole,
++      { kind: "ref", typeIdx: domainType.typeIndex }, false);
++    const validator = transaction.reserveFunction(manifest.validatorRole, manifest.validatorRole,
++      physicalSignature(VECTOR_DOMAIN_VALIDATOR_SIGNATURE));
++    const operations = manifest.serviceRoles.map(({ operation, role }, index) => Object.freeze({
++      operation, function: transaction.reserveFunction(role, role,
++        physicalSignature(VECTOR_DOMAIN_SERVICES[index]![1])),
++    }));
++    return Object.freeze({ manifest, binding, domain, services, validator, operations: Object.freeze(operations) });
++  });
++  const frozen = Object.freeze(reserved);
++  const pack = Object.freeze({ rows: frozen }) as ReservedVectorDomains;
++  owners.set(pack, { transaction, originType, servicesType, domainType, holeType, origin, hole,
++    rows: frozen, phase: "reserved" });
++  return pack;
++}
++
++/**
++ * Attach actual owner-prepared bodies to exact reserved targets. No recipe callbacks,
++ * imports, type/function/global allocations, user evaluation, or body regeneration.
++ * The physical owner validates instructions and once-fill; semantic closure is a
++ * separate future activation requirement, not inferred from nonempty bodies.
++ */
++export function fillVectorDomainServices(
++  transaction: PhysicalModuleReservations,
++  pack: ReservedVectorDomains,
++  definitions: readonly VectorDomainFunctionFill[],
++): FilledVectorDomains {
++  const owner = ownerFor(transaction, pack, "reserved");
++  if (transaction.state !== "filling") fail("freeze reservations before fill");
++  const targets = owner.rows.flatMap((row) => [row.validator, ...row.operations.map((entry) => entry.function)]);
++  if (definitions.length !== targets.length || new Set(definitions.map((entry) => entry.target)).size !== targets.length)
++    fail("incomplete or duplicate domain function fills");
++  for (const definition of definitions) {
++    if (!targets.includes(definition.target) || definition.body.length === 0) fail("foreign or empty domain function fill");
++    transaction.physicalIndex(definition.target);
++  }
++  for (const type of [owner.originType, owner.holeType, owner.servicesType, owner.domainType])
++    transaction.physicalIndex(type);
++  for (const row of owner.rows) {
++    transaction.physicalIndex(row.binding.carrier);
++    transaction.physicalIndex(row.binding.backing);
++    transaction.physicalIndex(row.domain);
++    transaction.physicalIndex(row.services);
++  }
++  owner.phase = "filling";
++  try {
++    for (const definition of definitions) transaction.fillFunction(definition.target,
++      { locals: definition.locals, body: definition.body });
++    transaction.fillGlobal(owner.origin, [{ op: "struct.new", typeIdx: owner.originType.typeIndex }]);
++    transaction.fillGlobal(owner.hole, [{ op: "struct.new", typeIdx: owner.holeType.typeIndex }]);
++    for (const row of owner.rows) {
++      for (const entry of row.operations) transaction.declareFunctionReference(entry.function);
++      transaction.fillGlobal(row.services, [
++        ...row.operations.map((entry): Instr => ({ op: "ref.func", funcIdx: entry.function.handle })),
++        { op: "struct.new", typeIdx: owner.servicesType.typeIndex },
++      ]);
++      const holeValue: Instr[] = row.manifest.allocation.storageKind === 1
++        ? [{ op: "global.get", index: transaction.physicalIndex(owner.hole) }, { op: "extern.convert_any" }]
++        : [{ op: "ref.null.extern" }];
++      transaction.fillGlobal(row.domain, [
++        { op: "i32.const", value: 1 },
++        { op: "i32.const", value: row.manifest.allocation.semanticKind },
++        { op: "i32.const", value: row.manifest.allocation.storageKind },
++        { op: "global.get", index: transaction.physicalIndex(owner.origin) },
++        ...holeValue,
++        { op: "global.get", index: transaction.physicalIndex(row.services) },
++        { op: "struct.new", typeIdx: owner.domainType.typeIndex },
++      ]);
++    }
++    owner.phase = "filled";
++    const filled = Object.freeze({ rows: owner.rows }) as FilledVectorDomains;
++    owners.set(filled, owner);
++    return filled;
++  } catch (error) {
++    owner.phase = "failed";
++    // No fake module rollback. The transaction owner decides disposal/recovery.
++    throw error;
++  }
++}
++
++/** Caller seals its complete transaction first; this never seals unrelated work. */
++export function sealVectorDomainResources(
++  transaction: PhysicalModuleReservations, pack: FilledVectorDomains,
++): SealedVectorDomainResources {
++  const owner = ownerFor(transaction, pack, "filled");
++  if (transaction.state !== "sealed") fail("physical transaction must be sealed first");
++  for (const token of [owner.origin, owner.hole,
++    ...owner.rows.flatMap((row) => [row.services, row.domain])]) transaction.assertCompletedReservation(token);
++  for (const row of owner.rows)
++    for (const token of [row.validator, ...row.operations.map((entry) => entry.function)])
++      transaction.assertCompletedReservation(token);
++  owner.phase = "sealed-resources";
++  const sealed = Object.freeze({ rows: owner.rows }) as SealedVectorDomainResources;
++  owners.set(sealed, owner);
++  return sealed;
++}

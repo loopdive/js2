@@ -1,0 +1,349 @@
+// Manual, separately named instrumented derivative. NOT V6 coverage or production.
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+import { expect, it, vi } from "vitest";
+import { compile } from "../src/index.js";
+import { ts } from "../src/ts-api.js";
+import * as binary from "../src/emit/binary.js";
+import { resolveLayout } from "../src/emit/resolve-layout.js";
+import type { CodegenContext } from "../src/codegen/context/types.js";
+import * as seeds from "../src/codegen/builtin-ctor-own-props.js";
+import * as companion from "../src/codegen/builtin-proto-constructor-seed.js";
+import * as constructors from "../src/codegen/builtin-static-globals.js";
+import type { Instr, WasmModule, WasmFunction } from "../src/ir/types.js";
+
+const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+const basisPins: Record<string, string> = {
+  "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+  "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+  "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+  "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+  "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+  "src/codegen/proto-index-store.ts": "4ea3558e2b9cfce07c0ae896d342dcb176aaced813b39ae5c088a84f36e7a250",
+  "src/emit/resolve-layout.ts": "eee0e63fa1b665e2260b366cd82b00386dbb08b792765314fb66086067e8620e",
+  "src/emit/binary.ts": "d00d7c8d830fc566e9a5d5241630e3b0c81f756cf2b782e87770c28975ea0034",
+  "src/compiler.ts": "05b2ac81280356c1cf3707c2b5444f6f3a6edfdf9548cb674fb573349796f2af",
+};
+function encode(root: unknown): string {
+  const seen = new Map<object, number>();
+  function visit(value: unknown): unknown {
+    if (value === undefined) return { atom: "undefined" };
+    if (typeof value === "bigint") return { bigint: String(value) };
+    if (typeof value === "number" && (!Number.isFinite(value) || Object.is(value, -0)))
+      return { number: Object.is(value, -0) ? "-0" : String(value) };
+    if (typeof value === "function" || typeof value === "symbol")
+      throw new Error(`Unsupported snapshot value: ${typeof value}`);
+    if (value === null || typeof value !== "object") return value;
+    const previous = seen.get(value);
+    if (previous !== undefined) return { ref: previous };
+    const id = seen.size;
+    seen.set(value, id);
+    if (value instanceof Map) return { id, map: [...value].map(([k, v]) => [visit(k), visit(v)]) };
+    if (value instanceof Set) return { id, set: [...value].map(visit) };
+    if (ArrayBuffer.isView(value))
+      return { id, view: value.constructor.name, bytes: [...new Uint8Array(value.buffer, value.byteOffset, value.byteLength)] };
+    if (value instanceof ArrayBuffer) return { id, buffer: [...new Uint8Array(value)] };
+    const entries = Reflect.ownKeys(value).map((key) => {
+      if (typeof key !== "string") throw new Error("Symbol snapshot key");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!("value" in descriptor)) throw new Error(`Accessor snapshot key: ${key}`);
+      return [key, visit(descriptor.value)];
+    });
+    return { id, kind: Array.isArray(value) ? "array" : "object", entries };
+  }
+  return JSON.stringify(visit(root));
+}
+
+
+
+type Site = { fn: WasmFunction; body: Instr[]; index: number; instr: Instr };
+function sites(mod: WasmModule): Site[] {
+  const out: Site[] = [];
+  const visit = (value: unknown, fn: WasmFunction, seen: Set<object>): void => {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) throw new Error("cycle/alias in function instruction graph");
+    seen.add(value);
+    if (Array.isArray(value)) {
+      if (value.length && value.every((entry) => entry && typeof entry === "object" && "op" in entry))
+        value.forEach((instr, index) => out.push({ fn, body: value as Instr[], index, instr }));
+      for (const entry of value) visit(entry, fn, seen);
+    } else {
+      for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value)))
+        if ("value" in descriptor && descriptor.value && typeof descriptor.value === "object")
+          visit(descriptor.value, fn, seen);
+    }
+    seen.delete(value);
+  };
+  for (const fn of mod.functions) visit(fn.body, fn, new Set());
+  return out;
+}
+
+it("instrumented runtime Promise companion cycle — unchanged cold seam", async () => {
+  const output = process.env.CTOR_RUNTIME_OUTPUT;
+  if (!output) throw new Error("CTOR_RUNTIME_OUTPUT must name a fresh directory");
+  mkdirSync(output, { recursive: true });
+  const save = (name: string, value: string | Uint8Array) =>
+    writeFileSync(resolve(output, name), value, { flag: "wx" });
+  // Exact original seam-cold source, including its two spaces on the blank line.
+  const source = `export function test(marker: any): number {
+  
+  const first: any = Promise;
+  const second: any = Promise;
+  const proto: any = Promise.prototype;
+  const key: any = "constructor";
+  const descriptor: any = Object.getOwnPropertyDescriptor(proto, key);
+  return first === second && descriptor.value === first ? 1 : -1;
+}`;
+  save("source.ts", source);
+  const receipt: Record<string, unknown> = { sourceHash: sha(source), runtimeProof: "UNOBSERVED", rollbackProof: "UNOBSERVED" };
+  const rawEmit = binary.emitBinary;
+  const initSpans: Array<{ first: Instr; publication: Instr; last: Instr }> = [];
+  const nestedReads: Instr[][] = [];
+  const seederBodies: Instr[][] = [];
+  const backrefStores: Instr[][] = [];
+  let companionDepth = 0;
+  let sourceContext: CodegenContext | undefined;
+  let finalModule: WasmModule | undefined;
+  let finalBytes: Uint8Array | undefined;
+  const rawSeed = seeds.pushBuiltinCtorOwnPropSeed;
+  const rawCompanion = companion.pushCompanionConstructorSeed;
+  const rawCtor = constructors.emitBuiltinConstructorIdentity;
+  const spies = [
+    vi.spyOn(seeds, "pushBuiltinCtorOwnPropSeed").mockImplementation((ctx, fctx, name, local) => {
+      sourceContext = ctx;
+      const body = fctx.body;
+      const first = body[0], publication = body[3];
+      const result = rawSeed(ctx, fctx, name, local);
+      if (name === "Promise" && first && publication) initSpans.push({ first, publication, last: body.at(-1)! });
+      return result;
+    }),
+    vi.spyOn(companion, "pushCompanionConstructorSeed").mockImplementation((ctx, fctx, name, flags) => {
+      const start = fctx.body.length;
+      if (name === "Promise") companionDepth++;
+      try {
+        const result = rawCompanion(ctx, fctx, name, flags);
+        if (name === "Promise" && result) {
+          seederBodies.push(fctx.body);
+          backrefStores.push(fctx.body.slice(start));
+        }
+        return result;
+      } finally { if (name === "Promise") companionDepth--; }
+    }),
+    vi.spyOn(constructors, "emitBuiltinConstructorIdentity").mockImplementation((ctx, fctx, name) => {
+      const body = fctx.body, start = body.length;
+      const result = rawCtor(ctx, fctx, name);
+      if (name === "Promise" && companionDepth > 0 && fctx.body === body)
+        nestedReads.push(body.slice(start));
+      return result;
+    }),
+    vi.spyOn(binary, "emitBinary").mockImplementation((mod) => {
+      const bytes = rawEmit(mod);
+      if (finalModule) throw new Error("multiple binary emissions: provenance ambiguous");
+      finalModule = mod; finalBytes = bytes;
+      return bytes;
+    }),
+  ];
+  let failure: unknown;
+  try {
+    const basis = Object.fromEntries(Object.keys(basisPins).map((path) => [path, sha(readFileSync(resolve(path)))]));
+    receipt.basis = basis;
+    receipt.harnessHash = sha(readFileSync(resolve("tests/issue-5883-constructor-runtime-cycle-v2.test.ts")));
+    for (const [path, expected] of Object.entries(basisPins))
+      if (basis[path] !== expected) throw new Error("source pin mismatch: " + path);
+    const result = await compile(source, { fileName: "5883-constructor-seam-cold.ts", target: "standalone",
+      nativeStrings: true, optimize: false, emitWat: true });
+    spies.reverse().forEach((spy) => spy.mockRestore());
+    save("original.wat", result.wat); save("original.wasm", result.binary);
+    receipt.compile = { success: result.success, errors: result.errors, binaryHash: sha(result.binary) };
+    if (!result.success || !finalModule || !finalBytes || sha(finalBytes) !== sha(result.binary))
+      throw new Error("original compile/final-module association failed");
+    if (sha(source) !== "a122d333957f9aa8498bcbb86c889f372ef0dd0da281bb6f4fddbf61daa5ecb5")
+      throw new Error("original cold-seam source hash changed");
+    const originalGraph = encode(finalModule);
+    save("original-final-graph.json", originalGraph);
+    const locations = sites(finalModule);
+    const locate = (instr: Instr) => {
+      const matches = locations.filter((site) => site.instr === instr);
+      if (matches.length !== 1) throw new Error("instruction detached or multiply placed");
+      return matches[0]!;
+    };
+    const liveSpans = initSpans.filter((span) => locations.some((site) => site.instr === span.publication));
+    if (!liveSpans.length) throw new Error("no surviving Promise initializer");
+    for (const span of liveSpans) {
+      const first = locate(span.first), publish = locate(span.publication), last = locate(span.last);
+      if (span.first.op !== "call" || span.publication.op !== "global.set" ||
+        first.body !== publish.body || first.body !== last.body || publish.index !== first.index + 3)
+        throw new Error("constructor allocation/publication/seed sequence not proved");
+    }
+    const globalIndices = new Set(liveSpans.map((span) => span.publication.op === "global.set" ? span.publication.index : -1));
+    if (globalIndices.size !== 1) throw new Error("Promise publication global ambiguous");
+    const ctorGlobal = [...globalIndices][0]!;
+    const funcImports = finalModule.imports.filter((imp) => imp.desc.kind === "func").length;
+    if (!sourceContext || sourceContext.mod !== finalModule) throw new Error("provider registry is not the final module's context");
+    const layout = resolveLayout(finalModule);
+    const callResolutions: Array<{ role: string; rawHandle: number; resolvedIndex: number; definedOrdinal: number }> = [];
+    receipt.callResolutions = callResolutions;
+    const target = (handle: Parameters<typeof layout.func>[0], role: string) => {
+      const resolvedIndex = layout.func(handle);
+      const definedOrdinal = resolvedIndex - funcImports;
+      callResolutions.push({ role, rawHandle: handle, resolvedIndex, definedOrdinal });
+      return finalModule!.functions[definedOrdinal];
+    };
+    const provider = (name: string) => {
+      const handle = sourceContext!.funcMap.get(name);
+      if (handle === undefined) throw new Error("missing registered provider: " + name);
+      const fn = target(handle, "registry:" + name);
+      if (!fn) throw new Error("provider is not a defined module function: " + name);
+      return fn;
+    };
+    const newObjectFn = provider("__new_plain_object");
+    const defineValueFn = provider("__defineProperty_value");
+    const companionFn = provider("__protoidx_companion");
+    for (const span of liveSpans) {
+      if (span.first.op !== "call" ||
+        target(span.first.funcIdx, "constructor allocation") !== newObjectFn)
+        throw new Error("allocation anchor is not the actual plain-object provider call");
+    }
+    const liveReads = nestedReads.filter((read) => read.length === 4 && locations.some((site) => site.instr === read[3]));
+    if (liveReads.length !== 1) throw new Error("expected one surviving real companion constructor back-reference");
+    const read = liveReads[0]!;
+    if (read[0]!.op !== "global.get" || read[0]!.index !== ctorGlobal ||
+      read[1]!.op !== "ref.is_null" || read[2]!.op !== "if" ||
+      read[3]!.op !== "global.get" || read[3]!.index !== ctorGlobal)
+      throw new Error("companion back-reference is not the exact lazy constructor read");
+    const readSites = read.map(locate);
+    const readSite = readSites[3]!;
+    if (!readSites.every((site, index) => site.fn === readSite.fn && site.body === readSite.body &&
+      site.index === readSites[0]!.index + index))
+      throw new Error("all four nested read instructions must be uniquely consecutive in the seeder list");
+    if (!seederBodies.some((body) => body === readSite.fn.body))
+      throw new Error("back-reference not attached to the real companion seeder");
+    const importCount = finalModule.imports.filter((imp) => imp.desc.kind === "func").length;
+    const store = backrefStores.find((span) => span.includes(read[3]!));
+    const defineCall = store?.at(-2);
+    if (!store || !defineCall || defineCall.op !== "call" || store.at(-1)?.op !== "drop" ||
+      target(defineCall.funcIdx, "constructor back-reference store") !== defineValueFn)
+      throw new Error("actual companion constructor back-reference store missing");
+    const defineSite = locate(defineCall);
+    const dropSite = locate(store.at(-1)!);
+    if (dropSite.fn !== readSite.fn || dropSite.body !== readSite.body || dropSite.index !== defineSite.index + 1)
+      throw new Error("captured back-reference drop not uniquely placed immediately after define call");
+    if (defineSite.body !== readSite.body || defineSite.index <= readSite.index)
+      throw new Error("back-reference store detached from captured constructor read");
+    const seederIndex = importCount + finalModule.functions.indexOf(readSite.fn);
+    const companionCalls = locations.filter((site) => site.fn === companionFn && site.instr.op === "call" && target(site.instr.funcIdx, "companion call inspected") === readSite.fn);
+    if (companionCalls.length !== 1) throw new Error("registered seeder call edge missing/ambiguous");
+    // Publication must precede seeder call in an enclosing instruction list.
+    const call = companionCalls[0]!;
+    const encloses = (instr: Instr, target: Instr): boolean => {
+      const graph = sites({ ...finalModule!, functions: [{ ...companionFn, body: [instr] }] });
+      return graph.some((site) => site.instr === target);
+    };
+    const publishes = locations.filter((site) => site.fn === companionFn && site.instr.op === "array.set" &&
+      site.body.slice(site.index + 1).some((instr) => encloses(instr, call.instr)));
+    if (publishes.length !== 1) throw new Error("companion publication-before-seeder edge not proved");
+    const companionIndex = importCount + finalModule.functions.indexOf(companionFn);
+    const seedCallsCompanion = liveSpans.some((span) => {
+      const first = locate(span.first), last = locate(span.last);
+      const body = first.body.slice(first.index, last.index + 1);
+      return sites({ ...finalModule!, functions: [{ ...first.fn, body }] }).some((site) =>
+        site.instr.op === "call" && target(site.instr.funcIdx, "outer seed call inspected") === companionFn);
+    });
+    if (!seedCallsCompanion) throw new Error("no surviving outer seed -> companion edge");
+    receipt.graphProof = { initializers: liveSpans.length, ctorGlobal, seederIndex, companionIndex,
+      seederName: readSite.fn.name, companionPublicationBeforeSeeder: true, survivingBackrefs: 1 };
+    save("provenance-graph.json", encode({ module: finalModule, liveSpans, read, seeder: readSite.fn, companionPublication: publishes[0]!.instr }));
+
+    const nativeJS = ts.transpileModule(source.replace("export function test(", "function test(") + "\ntest(null);",
+      { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+    save("native.js", nativeJS);
+    receipt.native = runInNewContext(nativeJS, {}, { timeout: 5000 });
+    const originalWasm = await WebAssembly.compile(new Uint8Array(result.binary));
+    receipt.originalImports = WebAssembly.Module.imports(originalWasm);
+    const original = await WebAssembly.instantiate(originalWasm, {});
+    receipt.originalActual = (original.exports.test as (marker: unknown) => number)(null);
+
+    // Only an explicit cloned derivative is instrumented, after final-graph proof.
+    // Original instructions remain; no new constructor read or provider callback.
+    const cloned = structuredClone({ mod: finalModule, spans: liveSpans, read, seeder: readSite.fn });
+    const mod = cloned.mod;
+    const importedGlobals = mod.imports.filter((imp) => imp.desc.kind === "global").length;
+    const counter = (name: string, ref = false) => {
+      const index = importedGlobals + mod.globals.length;
+      mod.globals.push({ name: "__diag_" + name, type: { kind: ref ? "externref" : "i32" },
+        mutable: true, init: ref ? [{ op: "ref.null.extern" }] : [{ op: "i32.const", value: 0 }] });
+      mod.exports.push({ name: "__diag_" + name, desc: { kind: "global", index } });
+      return index;
+    };
+    const depth = counter("depth"), allocations = counter("allocations"), companionDuring = counter("companionDuring");
+    const nestedDuring = counter("nestedDuring"), lastRead = counter("lastRead", true), duringCarrier = counter("duringCarrier", true);
+    mod.exports.push({ name: "__diag_published", desc: { kind: "global", index: ctorGlobal } });
+    const bump = (index: number, value: number): Instr[] => [
+      { op: "global.get", index }, { op: "i32.const", value }, { op: "i32.add" }, { op: "global.set", index }];
+    const active = (then: Instr[]): Instr[] => [{ op: "global.get", index: depth },
+      { op: "if", blockType: { kind: "empty" }, then, else: [] }];
+    // Capture original site lists before inserting diagnostic leaves.
+    const cloneSites = sites(mod);
+    const after = new Map<Instr, Instr[]>();
+    for (const span of cloned.spans) {
+      after.set(span.first, bump(allocations, 1));
+      after.set(span.publication, bump(depth, 1));
+      after.set(span.last, [...(after.get(span.last) ?? []), ...bump(depth, -1)]);
+    }
+    after.set(cloned.read[3]!, [
+      { op: "global.set", index: lastRead },
+      ...active([...bump(nestedDuring, 1), { op: "global.get", index: lastRead }, { op: "global.set", index: duringCarrier }]),
+      { op: "global.get", index: lastRead },
+    ]);
+    const arrays = new Set(cloneSites.map((site) => site.body));
+    for (const body of arrays) {
+      const rewritten = body.flatMap((instr) => [instr, ...(after.get(instr) ?? [])]);
+      body.splice(0, body.length, ...rewritten);
+    }
+    cloned.seeder.body.unshift(...active(bump(companionDuring, 1)));
+    const instrumented = rawEmit(mod);
+    save("instrumented-final-graph.json", encode(mod)); save("instrumented.wasm", instrumented);
+    if (encode(finalModule) !== originalGraph) throw new Error("original final module mutated");
+    receipt.instrumentedHash = sha(instrumented);
+    const wasm = await WebAssembly.compile(new Uint8Array(instrumented));
+    receipt.instrumentedImports = WebAssembly.Module.imports(wasm);
+    const instance = await WebAssembly.instantiate(wasm, {});
+    const get = (name: string) => (instance.exports["__diag_" + name] as WebAssembly.Global).value;
+    const snapshot = () => ({ depth: get("depth"), allocations: get("allocations"),
+      companionDuring: get("companionDuring"), nestedDuring: get("nestedDuring"),
+      publishedNull: get("published") === null,
+      samePublishedCarrier: get("duringCarrier") !== null && get("duringCarrier") === get("published") });
+    const start = snapshot();
+    receipt.afterInstantiation = start;
+    // No resets. A start-preinitialized instance is a failed cold control.
+    if (start.allocations !== 0 || !start.publishedNull || start.depth !== 0 ||
+      start.companionDuring !== 0 || start.nestedDuring !== 0)
+      throw new Error("INCONCLUSIVE: start preinitialized Promise; need a genuinely cold existing entry");
+    receipt.coldActual = (instance.exports.test as (marker: unknown) => number)(null);
+    const cold = snapshot(); receipt.cold = cold;
+    const coldPublished = get("published");
+    const coldCaptured = get("duringCarrier");
+    receipt.warmActual = (instance.exports.test as (marker: unknown) => number)(null);
+    const warm = snapshot(); receipt.warm = warm;
+    const identity = { coldNonNull: coldPublished !== null, coldCapturedExact: coldCaptured === coldPublished,
+      warmPublishedExactCold: get("published") === coldPublished,
+      warmCapturedExactCold: get("duringCarrier") === coldPublished };
+    receipt.crossInvocationIdentity = identity;
+    const proved = cold.allocations === 1 && cold.depth === 0 && cold.companionDuring === 1 &&
+      cold.nestedDuring === 1 && cold.samePublishedCarrier &&
+      Object.values(identity).every((value) => value === true) &&
+      JSON.stringify(cold) === JSON.stringify(warm) &&
+      receipt.native === 1 && receipt.originalActual === 1 && receipt.coldActual === 1 && receipt.warmActual === 1 &&
+      (receipt.originalImports as unknown[]).length === 0 && (receipt.instrumentedImports as unknown[]).length === 0;
+    receipt.runtimeProof = proved ? "OBSERVED" : "FAILED";
+    if (!proved) throw new Error("runtime cycle/cold/warm control failed");
+  } catch (error) {
+    failure = error; receipt.error = String(error);
+  } finally {
+    spies.forEach((spy) => spy.mockRestore());
+    save("receipt.json", JSON.stringify(receipt, null, 2));
+  }
+  expect(failure, JSON.stringify(receipt)).toBeUndefined();
+}, 120000);
