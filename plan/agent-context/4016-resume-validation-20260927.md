@@ -223,10 +223,9 @@ this exact indexOf slice is already active. Do not steal that claim or edit
 its source/issue record before ownership is resolved. This holds only the
 next slice; #4016 validation/publication can continue independently.
 
-On September 28 the same audit checkout was reassigned to the separately
-scoped runner-discovery issue
-`plan/issues/6712-test262-exact-manifest-discovery.md`, branch
-`codex/6712-exact-manifest-discovery-20260928`. Its dedicated pre-dispatch gate
+On September 28 the same audit checkout was reassigned to separately scoped
+runner-discovery issue 6712 (`test262-exact-manifest-discovery`) on parallel
+branch `codex/6712-exact-manifest-discovery-20260928`. Its dedicated pre-dispatch gate
 returned CLEAR and its claim was verified upstream. The broad umbrella gate
 had flagged active compiler subissues, so no implementation proceeded under
 that STOP; the superseded `4444:manifest-discovery` claim was released after
