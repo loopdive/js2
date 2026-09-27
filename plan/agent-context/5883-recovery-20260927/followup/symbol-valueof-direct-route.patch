@@ -1,0 +1,25 @@
+diff --git a/src/codegen/expressions/calls.ts b/src/codegen/expressions/calls.ts
+index fe1733c1af..7efed11a62 100644
+--- a/src/codegen/expressions/calls.ts
++++ b/src/codegen/expressions/calls.ts
+@@ -313,6 +313,7 @@ import {
+   ensureNativeErrorNativeProtoGlue,
+   ensureNumberNativeProtoGlue,
+   ensureBooleanNativeProtoGlue,
++  ensureSymbolNativeProtoGlue,
+   ensureObjectNativeProtoGlue,
+   ensurePromiseNativeProtoGlue,
+   ensureStringNativeProtoGlue,
+@@ -1363,6 +1364,11 @@ function tryEmitNativeProtoReflectiveCall(
+   if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+   else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
+     brand = ensureBooleanNativeProtoGlue(ctx);
++  // Direct Symbol.prototype.valueOf.call/apply must reach the same native
++  // receiver/slot body as an extracted method. Keep this to the measured
++  // member; BigInt's reflective valueOf body is a separate missing provider.
++  else if (brand === undefined && ifaceName === "Symbol" && member === "valueOf")
++    brand = ensureSymbolNativeProtoGlue(ctx);
+   // (#5197 Slice C) The same one-member-at-a-time discipline for `Promise`.
+   // `Promise.prototype.catch.call(target, f)` in its DIRECT syntactic form fell
+   // to the legacy `.call` tail, which drops `thisArg` — so the object's own
+

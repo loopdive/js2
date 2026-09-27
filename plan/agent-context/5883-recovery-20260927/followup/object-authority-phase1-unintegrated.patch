@@ -1,0 +1,300 @@
+diff --git a/src/codegen/object-runtime.ts b/src/codegen/object-runtime.ts
+index 11f9dae03d..89c8f13c99 100644
+--- a/src/codegen/object-runtime.ts
++++ b/src/codegen/object-runtime.ts
+@@ -55,6 +55,12 @@
+  * runtime — it emits `struct.get`/`struct.set` directly and never calls
+  * `ensureLateImport` for these names.
+  */
++import {
++  OBJECT_PROTOTYPE_NULL_FLAG as OBJ_FLAG_NULL_PROTO,
++  objectPrototypeSlotField,
++  objectPrototypeSlotGet,
++  objectPrototypeSlotNull,
++} from "./object-prototype-slot.js";
+ import {
+   createArgumentVectorArrayType,
+   createArgumentVectorType,
+@@ -349,7 +355,7 @@ export const OBJ_FLAG_RAWJSON = 0x08;
+ // implicit Object.prototype terminal. This bit records the distinct
+ // `Object.create(null)` / `Object.setPrototypeOf(o, null)` state without
+ // widening the prototype field or changing the object layout.
+-const OBJ_FLAG_NULL_PROTO = 0x80;
++// Physical slot/flag constants are owned by object-prototype-slot.ts.
+ 
+ /**
+  * Type indices for the open-object runtime structs/arrays, allocated once per
+@@ -1328,7 +1334,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+ 
+   const objectTypeIdx = ctx.mod.types.length;
+   const objectFields: FieldDef[] = [
+-    { name: "proto", type: { kind: "ref_null", typeIdx: objectTypeIdx }, mutable: true },
++    objectPrototypeSlotField(objectTypeIdx),
+     { name: "props", type: { kind: "ref", typeIdx: propMapTypeIdx }, mutable: true },
+     { name: "count", type: { kind: "i32" }, mutable: true },
+     { name: "tombstones", type: { kind: "i32" }, mutable: true },
+@@ -2119,7 +2125,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+   // 0, tombstones: 0, flags: 0, nextSeq: 0 }, then extern.convert_any.
+   {
+     const body: Instr[] = [
+-      { op: "ref.null", typeIdx: objectTypeIdx }, // proto
++      objectPrototypeSlotNull(objectTypeIdx), // proto
+       { op: "i32.const", value: INITIAL_CAP }, // props: array.new_default count
+       { op: "array.new_default", typeIdx: propMapTypeIdx },
+       { op: "i32.const", value: 0 }, // count
+@@ -2273,7 +2279,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+               // own marker decides whether Object.prototype is implicit.
+               { op: "local.get", index: 1 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "ref.is_null" },
+               {
+                 op: "if",
+@@ -2290,7 +2296,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+               },
+               { op: "local.get", index: 1 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 1 },
+               { op: "br", depth: 0 },
+             ],
+@@ -2798,7 +2804,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+               // o = o.proto ; loop
+               { op: "local.get", index: 2 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 2 },
+               // (#3673 round 9b) left the first prototype — stop cache writes.
+               ...(protoCacheEnabled
+@@ -3166,7 +3172,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+   // __obj_insert is called directly.
+   const emitWrapperBuildTail = (valueLocal: number, objLocal: number): Instr[] => [
+     // o = new $Object { proto: null, props: $PropMap[INITIAL_CAP], 0,0,0, nextSeq=1 }
+-    { op: "ref.null", typeIdx: objectTypeIdx }, // proto
++    objectPrototypeSlotNull(objectTypeIdx), // proto
+     { op: "i32.const", value: INITIAL_CAP },
+     { op: "array.new_default", typeIdx: propMapTypeIdx },
+     { op: "i32.const", value: 0 }, // count
+@@ -3611,7 +3617,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+             then: [
+               { op: "local.get", index: 4 },
+               { op: "ref.cast", typeIdx: objectTypeIdx },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 9 },
+             ],
+             else:
+@@ -3722,7 +3728,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+                   },
+                   { op: "local.get", index: 9 },
+                   { op: "ref.as_non_null" },
+-                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++                  objectPrototypeSlotGet(objectTypeIdx),
+                   { op: "local.set", index: 9 },
+                   { op: "br", depth: 0 },
+                 ],
+@@ -3932,7 +3938,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+           blockType: { kind: "empty" },
+           then: [
+             { op: "local.get", index: 3 },
+-            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 }, // $proto
++            objectPrototypeSlotGet(objectTypeIdx), // $proto
+             { op: "local.set", index: protoCursorLocal },
+             {
+               op: "block",
+@@ -3993,7 +3999,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+                     },
+                     { op: "local.get", index: protoCursorLocal },
+                     { op: "ref.as_non_null" },
+-                    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++                    objectPrototypeSlotGet(objectTypeIdx),
+                     { op: "local.set", index: protoCursorLocal },
+                     { op: "br", depth: 0 },
+                   ],
+@@ -4913,7 +4919,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+                             },
+                             { op: "local.get", index: 2 },
+                             { op: "ref.as_non_null" },
+-                            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++                            objectPrototypeSlotGet(objectTypeIdx),
+                             { op: "local.set", index: 2 },
+                             { op: "br", depth: 0 },
+                           ],
+@@ -4981,7 +4987,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+               // o = o.proto ; loop
+               { op: "local.get", index: 2 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 2 },
+               { op: "br", depth: 0 },
+             ],
+diff --git a/src/codegen/object-runtime-prototype.ts b/src/codegen/object-runtime-prototype.ts
+index 914704542b..3044727d7d 100644
+--- a/src/codegen/object-runtime-prototype.ts
++++ b/src/codegen/object-runtime-prototype.ts
+@@ -1,3 +1,4 @@
++import { objectPrototypeSlotGet, objectPrototypeSlotSet, objectPrototypeSlotNull } from "./object-prototype-slot.js";
+ import { NATIVE_GENERATOR_PROTO_VIEW } from "./generators-native-protocol.js";
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ /**
+@@ -506,7 +507,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+     { op: "local.get", index: 3 },
+     { op: "local.get", index: 2 },
+     { op: "ref.as_non_null" },
+-    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++    objectPrototypeSlotGet(objectTypeIdx),
+     { op: "ref.eq" },
+     {
+       op: "if",
+@@ -585,7 +586,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+       const raw: Instr[] = [
+         { op: "local.get", index: 1 },
+         { op: "ref.cast", typeIdx: objectTypeIdx },
+-        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++        objectPrototypeSlotGet(objectTypeIdx),
+         { op: "extern.convert_any" },
+         // (#4637 A1) `$proto` may be the `$Object` PROTO-VIEW of a function
+         // value (see `proto-function-value.ts`). Answering the view itself
+@@ -598,7 +599,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+       return [
+         { op: "local.get", index: 1 },
+         { op: "ref.cast", typeIdx: objectTypeIdx },
+-        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++        objectPrototypeSlotGet(objectTypeIdx),
+         { op: "ref.is_null" },
+         {
+           op: "if",
+@@ -678,7 +679,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+           { op: "local.get", index: 1 },
+           { op: "ref.cast", typeIdx: objectTypeIdx },
+         ],
+-        else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
++        else: [objectPrototypeSlotNull(objectTypeIdx)],
+       },
+       // struct.new $Object {proto, props, count=0, tombstones=0,
+       //   flags=(raw proto is null ? NULL_PROTO : 0), nextSeq=0}
+@@ -796,7 +797,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+           { op: "local.get", index: 5 },
+           { op: "ref.cast", typeIdx: objectTypeIdx },
+         ],
+-        else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
++        else: [objectPrototypeSlotNull(objectTypeIdx)],
+       },
+       { op: "local.set", index: 3 },
+       // step 2: SameValue includes the explicit-null-prototype bit when both
+@@ -842,7 +843,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+               // p = p.$proto ; loop
+               { op: "local.get", index: 4 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 4 },
+               { op: "br", depth: 0 },
+             ],
+@@ -853,7 +854,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+       { op: "local.get", index: 2 },
+       { op: "ref.as_non_null" },
+       { op: "local.get", index: 3 },
+-      { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 0 },
++      objectPrototypeSlotSet(objectTypeIdx),
+       // Keep every unrelated object flag and replace only the explicit-null
+       // classification after the write has passed all refusal checks.
+       ...updateNullPrototypeFlag(),
+@@ -928,7 +929,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+           { op: "local.get", index: 5 },
+           { op: "ref.cast", typeIdx: objectTypeIdx },
+         ],
+-        else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
++        else: [objectPrototypeSlotNull(objectTypeIdx)],
+       },
+       { op: "local.set", index: 3 },
+       // step 2: SameValue includes the explicit-null-prototype bit when both
+@@ -971,7 +972,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+               },
+               { op: "local.get", index: 4 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 4 },
+               { op: "br", depth: 0 },
+             ],
+@@ -1033,7 +1034,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+           { op: "local.get", index: 4 },
+           { op: "ref.cast", typeIdx: objectTypeIdx },
+         ],
+-        else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
++        else: [objectPrototypeSlotNull(objectTypeIdx)],
+       },
+       { op: "local.set", index: 3 },
+       ...fnctorIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5), // (#4643) cur=3, target=2, scratch=5
+@@ -1058,7 +1059,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
+               // cur = cur.$proto
+               { op: "local.get", index: 3 },
+               { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
++              objectPrototypeSlotGet(objectTypeIdx),
+               { op: "local.set", index: 3 },
+               // if cur == null break (reached end of chain)
+               { op: "local.get", index: 3 },
+diff --git a/src/codegen/object-prototype-slot.ts b/src/codegen/object-prototype-slot.ts
+new file mode 100644
+index 0000000000..530d84fc76
+--- /dev/null
++++ b/src/codegen/object-prototype-slot.ts
+@@ -0,0 +1,51 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/**
++ * Trusted physical $Object prototype-slot emitters (encapsulation phase only).
++ *
++ * These factories emit the EXISTING typed representation, not an actual-JS-
++ * prototype decoder. Callers must already have an Object owner and, for stores,
++ * a validated/encoded `(ref null $Object)` payload on the operand stack.
++ * Neither owner selection nor proposal canonicalization belongs here.
++ *
++ * Null alone does not distinguish the implicit default from explicit null:
++ * callers retain the existing NULL_PROTO flag operations and their order.
++ * The typed store below deliberately does NOT update flags. It is not the
++ * future atomic `__object_proto_store_raw(owner, externref)` commit API.
++ *
++ * No runtime helper reservation, imports, globals, defaults or second storage.
++ * Each call returns a fresh instruction/type object for in-place IR remappers.
++ * Widening this slot requires the separate atomic reader/writer/allocator and
++ * mixed-carrier migration; changing these factories alone is NOT a cutover.
++ */
++import type { FieldDef, Instr, ValType } from "../ir/types.js";
++
++export const OBJECT_PROTOTYPE_SLOT_FIELD = 0;
++export const OBJECT_PROTOTYPE_NULL_FLAG = 0x80;
++
++/** Physical payload type, NOT the type of an arbitrary JavaScript prototype. */
++export function objectPrototypeSlotType(objectTypeIdx: number): ValType {
++  return { kind: "ref_null", typeIdx: objectTypeIdx };
++}
++
++/** Field zero of the existing final, six-field $Object layout. */
++export function objectPrototypeSlotField(objectTypeIdx: number): FieldDef {
++  return { name: "proto", type: objectPrototypeSlotType(objectTypeIdx), mutable: true };
++}
++
++/** Stack: trusted Object owner -> encoded nullable Object prototype. */
++export function objectPrototypeSlotGet(objectTypeIdx: number): Instr {
++  return { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OBJECT_PROTOTYPE_SLOT_FIELD };
++}
++
++/** Stack: trusted Object owner, encoded nullable Object prototype -> empty. */
++export function objectPrototypeSlotSet(objectTypeIdx: number): Instr {
++  return { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: OBJECT_PROTOTYPE_SLOT_FIELD };
++}
++
++/**
++ * Stack: empty -> typed null payload, for allocation or legacy cast-or-null.
++ * Does not select a default or mark explicit null; the owner's flags do that.
++ */
++export function objectPrototypeSlotNull(objectTypeIdx: number): Instr {
++  return { op: "ref.null", typeIdx: objectTypeIdx };
++}
+

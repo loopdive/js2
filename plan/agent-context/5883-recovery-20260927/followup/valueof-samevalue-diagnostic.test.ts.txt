@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Supplemental localization controls. Original acceptance fixtures remain unchanged.
+const cases = [
+  {
+    "name": "BigInt SameValue without method",
+    "source": "export function test() { try { const p=7n; return Object.is(p,p) && !Object.is(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "Symbol SameValue without method",
+    "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); return Object.is(p,p) && !Object.is(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "BigInt extracted SameValue without method",
+    "source": "export function test() { try { const p=7n; const same=Object.is; return same(p,p) && !same(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "Symbol extracted SameValue without method",
+    "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); const same=Object.is; return same(p,p) && !same(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "BigInt direct method primitive arithmetic",
+    "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(p); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "BigInt direct method wrapper arithmetic",
+    "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "BigInt extracted method wrapper arithmetic",
+    "source": "export function test() { try { const p=7n; const method=BigInt.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "Symbol direct method primitive key identity",
+    "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(p); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "Symbol direct method wrapper key identity",
+    "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "Symbol extracted method wrapper key identity",
+    "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const method=Symbol.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "Symbol key identity without method",
+    "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; return p!==q && o[p]===17 && o[q]===23 ? 1 : -1; } catch(error) { return -90; } }",
+    "expected": 1
+  },
+  {
+    "name": "BigInt arithmetic without method",
+    "source": "export function test() { try { const p=7n; return p+2n===9n && p-7n===0n ? 1 : -1; } catch(error) { return -90; } }",
+    "expected": 1
+  }
+];
+for (const {name, source} of cases) {
+  it(name, async () => {
+    const sha256 = createHash("sha256").update(source).digest("hex");
+    const native = runInNewContext(source.replace("export function test", "function test") + ";test()", {}, { timeout: 5000 });
+    const receipt: Record<string, unknown> = {name,source,sha256,native};
+    try {
+      const result = await compile(source, {fileName:"5883-valueof-samevalue-diagnostic.js",allowJs:true,skipSemanticDiagnostics:true,target:"standalone",nativeStrings:true});
+      receipt.success=result.success; receipt.errors=result.errors;
+      expect(result.success, JSON.stringify(result.errors)).toBe(true);
+      const module=new WebAssembly.Module(result.binary);
+      receipt.imports=WebAssembly.Module.imports(module);
+      expect(receipt.imports).toEqual([]);
+      const instance=new WebAssembly.Instance(module,{});
+      receipt.actual=(instance.exports.test as ()=>number)();
+      expect(native).toBe(1);
+      expect(receipt.actual).toBe(1);
+    } catch(error) {
+      receipt.failure=String(error);
+      throw error;
+    } finally { console.log(JSON.stringify(receipt)); }
+  });
+}
+
+
