@@ -1,12 +1,11 @@
 {
   "id": "6715",
   "assignee": "ttraenkler/terra-max",
-  "requested_by": "ttraenkler/terra-max",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "",
-  "reserved_at": "2026-09-27T22:48:28Z",
   "claimed_at": "2026-09-27T22:48:28Z",
-  "updated_at": "2026-09-27T22:48:28Z",
-  "write_id": "98348-yr3vjdbx",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-27T22:56:28Z",
+  "write_id": "93229-9q67lw3g",
+  "released_at": "2026-09-27T22:56:28Z"
 }
