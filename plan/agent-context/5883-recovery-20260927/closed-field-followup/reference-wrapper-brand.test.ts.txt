@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { expect, it, vi } from "vitest";
+import type { Instr } from "../src/ir/types.js";
+import { builtinBrandOffsetOf } from "../src/codegen/builtin-brands.js";
+import { buildReferenceWrapperBrandArms } from "../src/codegen/reference-wrapper-brand.js";
+
+// Independent literal form of the previous inlined arms. Pin full instruction
+// order and missing-provider behavior, not only result length or helper calls.
+function original(symbol: number, bigint: number): Instr[] {
+  const arm = (typeIdx: number, brand: "Symbol" | "BigInt"): Instr[] => [
+    { op: "local.get", index: 17 },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: builtinBrandOffsetOf(brand)! }, { op: "return" }],
+    },
+  ];
+  return [...(symbol >= 0 ? arm(symbol, "Symbol") : []), ...(bigint >= 0 ? arm(bigint, "BigInt") : [])];
+}
+
+it.each([
+  [-1, -1],
+  [0, -1],
+  [-1, 0],
+  [7, 19],
+])("preserves exact original arms for Symbol=%s BigInt=%s", (symbolTypeIdx, nativeBigIntTypeIdx) => {
+  const ctx = Object.freeze({ symbolTypeIdx, nativeBigIntTypeIdx });
+  const slot = vi.fn((): Instr[] => [{ op: "local.get", index: 17 }]);
+  expect(buildReferenceWrapperBrandArms(ctx, slot)).toEqual(original(symbolTypeIdx, nativeBigIntTypeIdx));
+  expect(slot).toHaveBeenCalledTimes(Number(symbolTypeIdx >= 0) + Number(nativeBigIntTypeIdx >= 0));
+});
+
+it("never shares emitted instructions across builds or the two arms", () => {
+  const ctx = { symbolTypeIdx: 7, nativeBigIntTypeIdx: 19 };
+  const build = () => buildReferenceWrapperBrandArms(ctx, (): Instr[] => [{ op: "local.get", index: 17 }]);
+  const first = build();
+  const second = build();
+  expect(first).toEqual(second);
+  for (let i = 0; i < first.length; i++) expect(first[i]).not.toBe(second[i]);
+  expect(first[0]).not.toBe(first[3]);
+  expect(first[2]).not.toBe(first[5]);
+});
