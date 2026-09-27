@@ -1,0 +1,119 @@
+// Read only. Does not compile, instantiate, normalize identity graphs or edit evidence.
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+const [bDir, cDir, ...extra] = process.argv.slice(2);
+assert(bDir && cDir && extra.length === 0, "usage: comparator B_DIR C_DIR");
+const read = (dir, file) => readFileSync(resolve(dir, file));
+const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const ids = ["seam-cold", "seam-controlled-reserved", "seam-already-emitted", "drive-all", "drive-race"];
+const sharedBasis = {
+  "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+  "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+  "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+  "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+  "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+  "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+  "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+  "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd",
+};
+const drivePath = "src/codegen/promise-combinator-drive.ts";
+const protocolPath = "src/codegen/promise-combinator-observable-protocol.ts";
+const armBasis = {
+  B: ["3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2", "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b"],
+  C: ["19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813", "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b"],
+};
+for (const dir of [bDir, cDir]) assert.deepEqual(
+  readdirSync(dir).filter((name) => name.endsWith(".receipt.json")).sort(),
+  ids.map((id) => `${id}.receipt.json`).sort(), "exact five receipts, no silent missing cases",
+);
+const rows = [];
+for (const id of ids) {
+  let b, c;
+  const failures = [];
+  const check = (label, fn) => { try { fn(); } catch (error) { failures.push({ label, error: String(error) }); } };
+  check("receipts", () => {
+    b = JSON.parse(read(bDir, `${id}.receipt.json`));
+    c = JSON.parse(read(cDir, `${id}.receipt.json`));
+  });
+  if (!b || !c) { rows.push({ id, correspondencePassed: false, failures, coveragePassed: false }); continue; }
+  for (const [arm, dir, row] of [["B", bDir, b], ["C", cDir, c]]) {
+    check(`${arm}: provenance/outcomes`, () => {
+      assert.equal(row.arm, arm); assert.equal(row.row.id, id);
+      assert.deepEqual(row.basis, { ...sharedBasis, [drivePath]: armBasis[arm][0], [protocolPath]: armBasis[arm][1] });
+      assert.equal(row.sourceHash, sha(read(dir, `${id}.source.ts`)));
+      assert.equal(row.binaryHash, sha(read(dir, `${id}.wasm`)));
+      assert.deepEqual(row.observerErrors, []);
+      assert.equal(row.success, true);
+      for (const key of ["compileError", "runtimeError", "nativeError"]) assert.equal(row[key], null);
+      assert.deepEqual(row.imports, []); assert.equal(row.nativeActual, 1); assert.equal(row.actual, 1);
+    });
+    check(`${arm}: real routes/state`, () => {
+      const seam = id.startsWith("seam-");
+      const count = seam ? 2 : 1;
+      assert.equal(row.transientEvidence.regionCalls, arm === "C" ? count : 0);
+      assert.equal(row.transientEvidence.transfers, arm === "C" ? count : 0);
+      if (seam) {
+        assert.equal(row.selected.length, 2); assert.equal(row.driveHits.length, 0);
+        assert.equal(row.sourceReads, id === "seam-already-emitted" ? 3 : 2);
+        assert(row.selected.every((hit) => hit.active === true));
+        assert.equal(row.selected[0].beforeReservation, id === "seam-already-emitted");
+        const expectedSnapshots = [0, 1].flatMap((n) => [`selected-${n}-before.json`, `selected-${n}-after.json`]);
+        assert.deepEqual(row.snapshots, expectedSnapshots);
+        if (id === "seam-controlled-reserved") {
+          const reservations = row.events.filter((event) => event.kind === "controlled-real-reservation");
+          assert.equal(reservations.length, 1); assert.equal(reservations[0].alreadyPresent, false);
+          assert.equal(row.selected[0].globalAtEntry, reservations[0].global);
+        }
+      } else {
+        assert.deepEqual(row.selected, []);
+        assert.deepEqual(row.driveHits, [{ method: id.slice(6), arg: "input", observable: true, captured: true }]);
+        assert.deepEqual(row.snapshots, ["drive-0-before.json", "drive-0-after.json"]);
+        assert(row.readEvidence.some((hit) => hit.phase === "before-drive"));
+        assert(row.readEvidence.some((hit) => hit.phase === "after-drive"));
+      }
+      for (let i = 0; i < row.snapshots.length; i += 2)
+        assert.notDeepEqual(read(dir, `${id}.${row.snapshots[i]}`), read(dir, `${id}.${row.snapshots[i + 1]}`), "emission must change physical state");
+    });
+    check(`${arm}: transient and probe evidence retained`, () => {
+      assert(row.transientEvidence.files.length > 0);
+      assert.equal(new Set(row.transientEvidence.files).size, row.transientEvidence.files.length);
+      const transient = row.transientEvidence.files.map((suffix) => JSON.parse(read(dir, `${id}.${suffix}`)));
+      const phases = transient.map((graph) => graph.entries.find(([key]) => key === "phase")?.[1]);
+      assert(phases.includes("seed-enter")); assert(phases.includes("seed-leave"));
+      if (arm === "C") { assert(phases.includes("region-enter")); assert(phases.includes("region-finished")); }
+      assert(row.probes.length > 0);
+      assert.equal(new Set(row.probes).size, row.probes.length);
+      for (const suffix of row.probes) JSON.parse(read(dir, `${id}.${suffix}`));
+      const probeEvents = row.events.filter((event) => event.kind === "probe");
+      assert.equal(probeEvents.filter((event) => event.commit === true).length, row.seedEvidence.committed);
+      assert.equal(probeEvents.filter((event) => event.commit === false).length, row.seedEvidence.declined);
+      assert.equal(row.events.filter((event) => event.kind === "constructor-reentry" && event.published).length, row.seedEvidence.publishedReentries);
+    });
+  }
+  check("strict post-attachment/drive correspondence", () => {
+    // Only verified source arm/basis and separately retained transient R data
+    // differ by design. All diagnostics, outcomes, seed events, state and read
+    // evidence remain compared, even if success is true.
+    const residual = ({ arm, basis, transientEvidence, ...rest }) => {
+      const { [drivePath]: drive, [protocolPath]: protocol, ...shared } = basis;
+      return { ...rest, basis: shared };
+    };
+    assert.deepEqual(residual(b), residual(c));
+    for (const suffix of ["source.ts", "native.js", "wat", "wasm", ...b.snapshots, ...b.probes])
+      assert.deepEqual(read(bDir, `${id}.${suffix}`), read(cDir, `${id}.${suffix}`), `${id}: raw ${suffix}`);
+  });
+  const coverage = [b, c].map((row) => ({ arm: row.arm, failures: row.coverageFailures, seedEvidence: row.seedEvidence, runtimeReentry: row.runtimeReentry }));
+  // Never infer complete coverage from matching failures or from a source
+  // comment. Runtime evidence is deliberately absent in this uninstrumented v1.
+  const coveragePassed = coverage.every((item) => item.failures.length === 0 &&
+    item.seedEvidence.publishedReentries > 0 && item.seedEvidence.committed > 0 && item.seedEvidence.declined > 0 &&
+    item.runtimeReentry.status === "OBSERVED");
+  rows.push({ id, correspondencePassed: failures.length === 0, failures, coveragePassed, coverage });
+}
+console.log(JSON.stringify({ denominator: 5,
+  correspondencePassed: rows.filter((row) => row.correspondencePassed).length,
+  coveragePassed: rows.filter((row) => row.coveragePassed).length,
+  overallAccepted: rows.every((row) => row.correspondencePassed && row.coveragePassed), rows }, null, 2));
+if (!rows.every((row) => row.correspondencePassed && row.coveragePassed)) process.exitCode = 1;

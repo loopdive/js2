@@ -1,0 +1,366 @@
+// Additive manual observer. Copy unchanged into tests/ in a full source tree.
+// No fabricated contexts, flags or providers. No binary instrumentation.
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+import { expect, it, vi } from "vitest";
+import { compile } from "../src/index.js";
+import { ts } from "../src/ts-api.js";
+import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
+import * as constructors from "../src/codegen/builtin-static-globals.js";
+import * as regions from "../src/codegen/builtin-constructor-prepared.js";
+import * as seeds from "../src/codegen/builtin-ctor-own-props.js";
+import * as companion from "../src/codegen/builtin-proto-constructor-seed.js";
+import * as speculative from "../src/codegen/context/speculative.js";
+import * as bindings from "../src/codegen/staging-bindings.js";
+import * as drive from "../src/codegen/promise-combinator-drive.js";
+
+const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+function encode(root: unknown): string {
+  const seen = new Map<object, number>();
+  function visit(value: unknown): unknown {
+    if (value === undefined) return { atom: "undefined" };
+    if (typeof value === "bigint") return { bigint: String(value) };
+    if (typeof value === "number" && (!Number.isFinite(value) || Object.is(value, -0)))
+      return { number: Object.is(value, -0) ? "-0" : String(value) };
+    if (typeof value === "function" || typeof value === "symbol")
+      throw new Error(`Unsupported snapshot value: ${typeof value}`);
+    if (value === null || typeof value !== "object") return value;
+    const previous = seen.get(value);
+    if (previous !== undefined) return { ref: previous };
+    const id = seen.size;
+    seen.set(value, id);
+    if (value instanceof Map) return { id, map: [...value].map(([k, v]) => [visit(k), visit(v)]) };
+    if (value instanceof Set) return { id, set: [...value].map(visit) };
+    if (ArrayBuffer.isView(value))
+      return { id, view: value.constructor.name, bytes: [...new Uint8Array(value.buffer, value.byteOffset, value.byteLength)] };
+    if (value instanceof ArrayBuffer) return { id, buffer: [...new Uint8Array(value)] };
+    const entries = Reflect.ownKeys(value).map((key) => {
+      if (typeof key !== "string") throw new Error("Symbol snapshot key");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!("value" in descriptor)) throw new Error(`Accessor snapshot key: ${key}`);
+      return [key, visit(descriptor.value)];
+    });
+    return { id, kind: Array.isArray(value) ? "array" : "object", entries };
+  }
+  return JSON.stringify(visit(root));
+}
+
+
+type State = "cold" | "controlled-reserved" | "already-emitted";
+type Case = { id: string; group: "seam"; state: State } | { id: string; group: "drive"; method: "all" | "race" };
+const cases: Case[] = [
+  { id: "seam-cold", group: "seam", state: "cold" },
+  { id: "seam-controlled-reserved", group: "seam", state: "controlled-reserved" },
+  { id: "seam-already-emitted", group: "seam", state: "already-emitted" },
+  { id: "drive-all", group: "drive", method: "all" },
+  { id: "drive-race", group: "drive", method: "race" },
+];
+function sourceFor(row: Case): string {
+  if (row.group === "seam") return `export function test(marker: any): number {
+  ${row.state === "already-emitted" ? "const warm: any = Promise;" : ""}
+  const first: any = Promise;
+  const second: any = Promise;
+  const proto: any = Promise.prototype;
+  const key: any = "constructor";
+  const descriptor: any = Object.getOwnPropertyDescriptor(proto, key);
+  return ${row.state === "already-emitted" ? "warm === first && " : ""}first === second && descriptor.value === first ? 1 : -1;
+}`;
+  return `declare function __drain_microtasks(): void;
+export function test(marker: any): number {
+  let answer = -100;
+  const before: any = Promise;
+  const input: any[] = [1, 2];
+  (Promise as any).resolve = function(value: any): any {
+    return {then: function(ok: any): void { ok(value); }};
+  };
+  const aggregate = Promise.${row.method}(input).then(function(value: any): void {
+    answer = ${row.method === "all" ? "value[0] * 10 + value[1]" : "value"};
+  }, function(): void { answer = -200; });
+  const after: any = Promise;
+  const proto: any = Promise.prototype;
+  const key: any = "constructor";
+  const descriptor: any = Object.getOwnPropertyDescriptor(proto, key);
+  __drain_microtasks();
+  return before === after && descriptor.value === before && answer === ${row.method === "all" ? 12 : 1} ? 1 : -1;
+}`;
+}
+
+function existingSlot(ctx: CodegenContext, name: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(ctx, name);
+  if (!descriptor) return undefined;
+  if (!("value" in descriptor)) throw new Error(`Accessor observation slot: ${name}`);
+  return descriptor.value;
+}
+function physical(ctx: CodegenContext, fctx: FunctionContext): string {
+  return encode({
+    module: ctx.mod, funcMap: ctx.funcMap, structMap: ctx.structMap,
+    structFields: ctx.structFields, typeNames: ctx.typeIdxToStructName,
+    stringGlobals: ctx.stringGlobalMap, nativeStringGlobals: ctx.nativeStrLiteralGlobals,
+    nativeStringHelpers: ctx.nativeStrHelpers, ctorGlobals: ctx.builtinObjectGlobals,
+    imports: [ctx.numImportFuncs, ctx.numImportGlobals], errors: ctx.errors,
+    pendingShift: ctx.pendingLateImportShift, liveBodies: ctx.liveBodies,
+    caller: { name: fctx.name, params: fctx.params, locals: fctx.locals,
+      localMap: fctx.localMap, body: fctx.body, savedBodies: fctx.savedBodies,
+      returnType: fctx.returnType, blockDepth: fctx.blockDepth,
+      breakStack: fctx.breakStack, continueStack: fctx.continueStack, labelMap: fctx.labelMap },
+    sourceDerivedFlags: { standalone: ctx.standalone, nativeStrings: ctx.nativeStrings,
+      protoNamedDirty: ctx.protoNamedDirty, protoMemberDirty: ctx.protoMemberDirty,
+      protoNamedWrittenMembers: ctx.protoNamedWrittenMembers },
+    seeders: existingSlot(ctx, "__nativeProtoSeeders"),
+    seededCtors: existingSlot(ctx, "__nativeProtoSeededCtors"),
+    pendingSeeds: existingSlot(ctx, "__nativeProtoPendingSeeds"),
+  });
+}
+
+for (const row of cases) {
+  it(`real Promise constructor correspondence ${row.id}`, async () => {
+    const arm = process.env.CTOR_OBSERVER_ARM;
+    const output = process.env.CTOR_OBSERVER_OUTPUT;
+    if (!output || (arm !== "B" && arm !== "C")) throw new Error("Set CTOR_OBSERVER_ARM=B|C and a fresh CTOR_OBSERVER_OUTPUT");
+    mkdirSync(output, { recursive: true });
+    const save = (suffix: string, value: string | Uint8Array) => writeFileSync(resolve(output, `${row.id}.${suffix}`), value, { flag: "wx" });
+    const observerErrors: string[] = [];
+    const record = (fn: () => void) => { try { fn(); } catch (error) { observerErrors.push(String(error)); } };
+    const source = sourceFor(row);
+    save("source.ts", source);
+    const events: unknown[] = [];
+    const selected: Array<Record<string, unknown>> = [];
+    const driveHits: Array<Record<string, unknown>> = [];
+    const seedStack: Array<{ ctx: CodegenContext; name: string; publication: boolean; publishedIndex: () => number | undefined }> = [];
+    const readEvidence: Array<{ name: string; frame: string; phase: string; global: number | null }> = [];
+    let driveDepth = 0, completedDrives = 0;
+    let committed = 0, declined = 0, reentries = 0, publishedReentries = 0, seedCalls = 0;
+    let sourceReads = 0, probeOrdinal = 0, rootOrdinal = 0, regionCalls = 0, transfers = 0;
+    const snapshots: string[] = [];
+    const probes: string[] = [];
+    const roots: string[] = [];
+    const graph = (label: string, ctx: CodegenContext, fctx: FunctionContext) => record(() => {
+      const suffix = `${label}.json`; save(suffix, physical(ctx, fctx)); snapshots.push(suffix);
+    });
+    const transient = (phase: string, ctx: CodegenContext, fctx: FunctionContext, child?: unknown) => record(() => {
+      const suffix = `roots-${rootOrdinal++}.json`;
+      save(suffix, encode({ phase, liveBodies: ctx.liveBodies, body: fctx.body,
+        savedBodies: fctx.savedBodies, child }));
+      roots.push(suffix);
+    });
+    const rawRead = constructors.emitBuiltinConstructorIdentity;
+    const rawSeed = seeds.pushBuiltinCtorOwnPropSeed;
+    const rawCompanion = companion.pushCompanionConstructorSeed;
+    const rawProbe = speculative.withSpeculativeCompile;
+    const rawDrive = drive.emitStandalonePromiseCombinatorDrive;
+    const rawRegion = regions.prepareBuiltinConstructorRegion;
+    const rawAttach = bindings.attachRenderedCapturedDrive;
+    const restorers: Array<() => void> = [];
+    const track = (spy: { mockRestore(): void }) => restorers.push(() => spy.mockRestore());
+
+    track(vi.spyOn(seeds, "pushBuiltinCtorOwnPropSeed").mockImplementation((ctx, fctx, name, objLocal) => {
+      let publication = false;
+      const publishInstruction = fctx.body[3];
+      record(() => {
+        seedCalls++;
+        const prefix = fctx.body.slice(0, 4);
+        const global = ctx.builtinObjectGlobals.get(`ctor:${name}`);
+        publication = prefix[2]?.op === "local.get" && prefix[2].index === objLocal &&
+          prefix[3]?.op === "global.set" && prefix[3].index === global;
+        events.push({ kind: "seed-enter", name, frame: fctx.name, objLocal, global, publication,
+          prefix: encode(prefix), depth: seedStack.length });
+      });
+      transient("seed-enter", ctx, fctx);
+      seedStack.push({ ctx, name, publication,
+        publishedIndex: () => publishInstruction?.op === "global.set" ? publishInstruction.index : undefined });
+      try { return rawSeed(ctx, fctx, name, objLocal); }
+      finally {
+        seedStack.pop();
+        transient("seed-leave", ctx, fctx);
+        record(() => events.push({ kind: "seed-leave", name, frame: fctx.name }));
+      }
+    }));
+    track(vi.spyOn(companion, "pushCompanionConstructorSeed").mockImplementation((...args) => {
+      const value = rawCompanion(...args);
+      record(() => events.push({ kind: "companion", name: args[2], frame: args[1].name, result: value }));
+      return value;
+    }));
+    const probeWrapper: typeof speculative.withSpeculativeCompile = (ctx, fctx, fn) => {
+      if (!seedStack.some((seed) => seed.ctx === ctx)) return rawProbe(ctx, fctx, fn);
+      const ordinal = probeOrdinal++;
+      const capture = (phase: string) => record(() => {
+        const suffix = `probe-${ordinal}-${phase}.json`;
+        save(suffix, encode({ body: fctx.body, locals: fctx.locals, localMap: fctx.localMap,
+          imports: ctx.mod.imports, numImportFuncs: ctx.numImportFuncs,
+          numImportGlobals: ctx.numImportGlobals, funcs: ctx.funcMap,
+          errors: ctx.errors, pendingShift: ctx.pendingLateImportShift }));
+        probes.push(suffix);
+      });
+      capture("before");
+      try {
+        return rawProbe(ctx, fctx, () => {
+          const outcome = fn();
+          record(() => {
+            if (outcome.commit) committed++; else declined++;
+            events.push({ kind: "probe", ordinal, frame: fctx.name, seed: seedStack.at(-1)?.name, commit: outcome.commit });
+          });
+          capture("callback-return");
+          return outcome;
+        });
+      } finally { capture("after"); }
+    };
+    track(vi.spyOn(speculative, "withSpeculativeCompile").mockImplementation(probeWrapper));
+    track(vi.spyOn(regions, "prepareBuiltinConstructorRegion").mockImplementation((...args) => {
+      regionCalls++;
+      transient("region-enter", args[0], args[1]);
+      const child = rawRegion(...args);
+      transient("region-finished", args[0], args[1]);
+      return child;
+    }));
+    // Owners contain private state; attach instrumentation does not inspect or
+    // fabricate it. Selected-region roots are captured with real ctx/frame below.
+    track(vi.spyOn(bindings, "attachRenderedCapturedDrive").mockImplementation((...args) => {
+      const value = rawAttach(...args);
+      transfers++;
+      return value;
+    }));
+    track(vi.spyOn(constructors, "emitBuiltinConstructorIdentity").mockImplementation((ctx, fctx, name) => {
+      const outer = [...seedStack].reverse().find((seed) => seed.ctx === ctx && seed.name === name);
+      if (outer) record(() => {
+        reentries++;
+        const samePublishedGlobal = outer.publication && outer.publishedIndex() === ctx.builtinObjectGlobals.get(`ctor:${name}`);
+        if (samePublishedGlobal) publishedReentries++;
+        events.push({ kind: "constructor-reentry", name, frame: fctx.name,
+          global: ctx.builtinObjectGlobals.get(`ctor:${name}`), published: samePublishedGlobal });
+      });
+      if (name === "Promise" && fctx.name === "test" && seedStack.length === 0 && driveDepth === 0)
+        record(() => readEvidence.push({ name, frame: fctx.name,
+          phase: completedDrives === 0 ? "before-drive" : "after-drive",
+          global: ctx.builtinObjectGlobals.get("ctor:Promise") ?? null }));
+      // Only actual source reads in test are switched. Nested provider frames
+      // and unrelated compiler emissions always use the original provider.
+      if (row.group !== "seam" || name !== "Promise" || fctx.name !== "test" || seedStack.length !== 0)
+        return rawRead(ctx, fctx, name);
+      const occurrence = sourceReads++;
+      if (row.state === "already-emitted" && occurrence === 0) return rawRead(ctx, fctx, name);
+      const ordinal = selected.length;
+      const beforeReservation = ctx.builtinObjectGlobals.has("ctor:Promise");
+      if (row.state === "controlled-reserved" && ordinal === 0) {
+        const global = constructors.reserveBuiltinConstructorIdentityGlobal(ctx, "Promise");
+        events.push({ kind: "controlled-real-reservation", global, alreadyPresent: beforeReservation,
+          claim: "harness calls real provider; not source-native reservation" });
+      }
+      const hit: Record<string, unknown> = { occurrence, ordinal, beforeReservation,
+        globalAtEntry: ctx.builtinObjectGlobals.get("ctor:Promise") ?? null,
+        requestedState: row.state, active: ctx.currentFunc === fctx || ctx.funcStack.includes(fctx) };
+      selected.push(hit);
+      graph(`selected-${ordinal}-before`, ctx, fctx);
+      try {
+        if (arm === "B") return rawRead(ctx, fctx, name);
+        const marker = fctx.localMap.get("marker");
+        if (marker === undefined) throw new Error("Real marker declaration missing");
+        const owner = bindings.beginCapturedFrame(ctx, fctx, "all", marker);
+        try {
+          transient("frame-begun", ctx, fctx);
+          const construction = bindings.beginRetainedChild(owner, [{ kind: "externref" }]);
+          regions.prepareBuiltinConstructorRegion(ctx, fctx, name, construction);
+          const authorization = bindings.authorizeCapturedRender(owner);
+          if (authorization.children.length !== 1) throw new Error("Expected one real constructor child");
+          const child = authorization.children[0]!;
+          const instructions = [...child.instructions];
+          transient("authorized", ctx, fctx, child.instructions);
+          const value = bindings.attachRenderedCapturedDrive(owner, {
+            authorization, instructions,
+            childPlacements: [{ child, destination: instructions, start: 0 }],
+            result: [{ kind: "externref" }],
+          });
+          transient("attached", ctx, fctx);
+          return value;
+        } catch (error) {
+          try { bindings.abortCapturedFrame(owner); } catch (cleanup) { record(() => observerErrors.push(`abort: ${String(cleanup)}`)); }
+          throw error;
+        }
+      } finally { graph(`selected-${ordinal}-after`, ctx, fctx); }
+    }));
+    track(vi.spyOn(drive, "emitStandalonePromiseCombinatorDrive").mockImplementation((...args) => {
+      const [ctx, fctx, method, arg, observable, options] = args;
+      const ordinal = driveHits.length;
+      driveHits.push({ method, arg: arg.getText(), observable,
+        captured: options?.iteratorProtocol === "captured-source-vector" });
+      graph(`drive-${ordinal}-before`, ctx, fctx);
+      transient("drive-enter", ctx, fctx);
+      driveDepth++;
+      try { return rawDrive(...args); }
+      finally {
+        driveDepth--; completedDrives++;
+        graph(`drive-${ordinal}-after`, ctx, fctx); transient("drive-leave", ctx, fctx);
+      }
+    }));
+    let result: Awaited<ReturnType<typeof compile>> | undefined;
+    let compileError: string | null = null;
+    try { result = await compile(source, { fileName: `5883-constructor-${row.id}.ts`, target: "standalone", nativeStrings: true, optimize: false, emitWat: true }); }
+    catch (error) { compileError = String(error); }
+    finally { restorers.reverse().forEach((restore) => restore()); }
+    const nativeSource = row.group === "drive"
+      ? source.replace("export function test(", "async function test(").replace("__drain_microtasks();", "await aggregate;") + "\ntest(null);"
+      : source.replace("export function test(", "function test(") + "\ntest(null);";
+    const nativeJS = ts.transpileModule(nativeSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+    save("native.js", nativeJS);
+    let nativeActual: unknown = null, actual: unknown = null;
+    let nativeError: string | null = null, runtimeError: string | null = null;
+    let imports: WebAssembly.ModuleImportDescriptor[] | null = null;
+    try { nativeActual = await runInNewContext(nativeJS, {}, { timeout: 5000 }); }
+    catch (error) { nativeError = String(error); }
+    if (result) {
+      save("wat", result.wat); save("wasm", result.binary);
+      if (result.success) try {
+        const module = await WebAssembly.compile(new Uint8Array(result.binary));
+        imports = WebAssembly.Module.imports(module);
+        const instance = await WebAssembly.instantiate(module, {});
+        actual = (instance.exports.test as (marker: unknown) => number)(null);
+      } catch (error) { runtimeError = String(error); }
+    }
+    const coverageFailures: string[] = [];
+    if (!seedCalls) coverageFailures.push("real constructor seed not observed");
+    if (!publishedReentries) coverageFailures.push("publish-before-seed compiler reentry not observed");
+    if (!committed) coverageFailures.push("real committed seed probe not observed");
+    if (!declined) coverageFailures.push("real declined seed probe not observed");
+    coverageFailures.push("runtime seed reentry unobserved: binaries intentionally uninstrumented");
+    const basis = Object.fromEntries([
+      "src/codegen/promise-combinator-drive.ts", "src/codegen/promise-combinator-observable-protocol.ts",
+      "src/codegen/builtin-static-globals.ts", "src/codegen/builtin-constructor-prepared.ts",
+      "src/codegen/staging-bindings.ts", "src/codegen/builtin-ctor-own-props.ts",
+      "src/codegen/builtin-proto-constructor-seed.ts", "src/codegen/context/speculative.ts",
+      "src/codegen/native-proto.ts", "tests/issue-5883-real-constructor-observer.test.ts",
+    ].map((path) => [path, sha(readFileSync(resolve(path)))]));
+    save("receipt.json", JSON.stringify({ arm, row, basis, sourceHash: sha(source),
+      selected, sourceReads, readEvidence, driveHits, observerErrors, snapshots, probes,
+      seedEvidence: { seedCalls, committed, declined, reentries, publishedReentries },
+      transientEvidence: { files: roots, regionCalls, transfers },
+      events, coverageFailures, runtimeReentry: { status: "UNOBSERVED", instrumentation: "none" },
+      compileError, success: result?.success, errors: result?.errors,
+      binaryHash: result ? sha(result.binary) : null, nativeActual, nativeError, actual, runtimeError, imports,
+    }, null, 2));
+    expect(observerErrors).toEqual([]);
+    if (row.group === "seam") {
+      expect(selected).toHaveLength(2);
+      expect(driveHits).toHaveLength(0);
+      expect(selected.every((hit) => hit.active === true)).toBe(true);
+      if (row.state === "cold" || row.state === "controlled-reserved") expect(selected[0]!.beforeReservation).toBe(false);
+      else expect(selected[0]!.beforeReservation).toBe(true);
+      expect(sourceReads).toBe(row.state === "already-emitted" ? 3 : 2);
+      expect(regionCalls).toBe(arm === "C" ? 2 : 0);
+      expect(transfers).toBe(arm === "C" ? 2 : 0);
+    } else {
+      expect(driveHits).toEqual([{ method: row.method, arg: "input", observable: true, captured: true }]);
+      expect(readEvidence.some((hit) => hit.phase === "before-drive")).toBe(true);
+      expect(readEvidence.some((hit) => hit.phase === "after-drive")).toBe(true);
+      expect(regionCalls).toBe(arm === "C" ? 1 : 0);
+      expect(transfers).toBe(arm === "C" ? 1 : 0);
+    }
+    expect(compileError).toBeNull();
+    expect(result?.success, JSON.stringify(result?.errors)).toBe(true);
+    expect(nativeError).toBeNull(); expect(nativeActual).toBe(1);
+    expect(imports).toEqual([]); expect(runtimeError).toBeNull(); expect(actual).toBe(1);
+    // Honest coverage failure is separate from preserved correspondence data.
+    // This cannot go green merely because identical uninstrumented rows pass.
+    expect(coverageFailures, "mandatory constructor coverage remains unmet").toEqual([]);
+  }, 120000);
+}
