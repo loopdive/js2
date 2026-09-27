@@ -222,3 +222,14 @@ The authoritative claim check returned exit 3: #6651 is claimed by
 this exact indexOf slice is already active. Do not steal that claim or edit
 its source/issue record before ownership is resolved. This holds only the
 next slice; #4016 validation/publication can continue independently.
+
+On September 28 the same audit checkout was reassigned to the separately
+scoped runner-discovery issue
+`plan/issues/6712-test262-exact-manifest-discovery.md`, branch
+`codex/6712-exact-manifest-discovery-20260928`. Its dedicated pre-dispatch gate
+returned CLEAR and its claim was verified upstream. The broad umbrella gate
+had flagged active compiler subissues, so no implementation proceeded under
+that STOP; the superseded `4444:manifest-discovery` claim was released after
+the dedicated claim succeeded. The indexOf branch still exists but is not the
+active checkout and has no implementation. Do not switch this occupied
+worktree back to it while the discovery worker is active.

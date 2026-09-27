@@ -10,7 +10,7 @@ reasoning_effort: max
 goal: standalone-gap
 assignee: ttraenkler/M-regexp
 created: 2026-08-01
-updated: 2026-09-27
+updated: 2026-09-28
 oracle-ratchet-allow: []
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
@@ -176,6 +176,62 @@ At most this state can be a clearly labelled draft checkpoint using the
 repository-sanctioned slow-precommit policy, with the raw receipts and these
 unresolved boundaries retained. No test is skipped, expected-failed, or moved
 to obtain that status.
+
+### 2026-09-28 final formatted checkpoint validation
+
+The recovered merge checkpoint is now committed as
+`ef0cad7dbe08458b9b3f23a9770ca23d65a56eac`, with the recovered checkpoint
+and `44c2fb086278cd6d0b24efdaa061112452f901f1` as its two parents. The
+working tree was clean before the final evidence run. The final formatted
+candidate hashes are:
+
+- `src/codegen/coercion-engine.ts`:
+  `6804d725aff9f17a82195356ad59332df33673be2a929a351d22a4d331176ebb`;
+- `src/codegen/expressions/calls.ts`:
+  `641f39cf086d9f08dc64f403600cd6507947baf9167a621bc6c8827c50498665`;
+- `src/codegen/string-split-coercion.ts`:
+  `546d11e5a017f60f7d827fb5e10a006f4f5d6cc7056a2aaa4e9794268b59baf7`;
+- the final S2v3b fixture:
+  `92bd8d30a494c17e6d1e04c07c0498a51a61311a619303a48c1f5f2c7fc46efc`.
+
+Normal fast pre-commit checks passed on that committed tree: lint-staged,
+the LOC and function budgets against explicit base `44c2`, and the required
+commit-message attribution. The sanctioned slow tier was skipped; that does
+not turn the retained ordinary red assertions into passes.
+
+Because Prettier changed `coercion-engine.ts` after the earlier 121-path
+candidate receipt, the final candidate bundle and provider were rebuilt rather
+than treated as source-identical. The official QuickJS artifact cache hit key
+`2e2d7736713beeda` (Wasm SHA-256
+`e9f8d30bc347dbc56f31b3389f7696eb6dedc9f05ea729781fc412f09a3e6b17`);
+the final compiler bundle key was `116ca7f490f8c161`, and the newly compiled,
+canary-verified adapter key was `f95dd8028e57742c`.
+
+The same maintained one-shard runner, manifest, QuickJS lane, and 2 GiB
+single-worker configuration then produced fresh final candidate evidence:
+
+- final candidate JSONL:
+  `benchmarks/results/issue4016-split121-candidate-results-4016split121candidatefinal20260928a.jsonl`
+  (SHA-256
+  `4e76229f9284767603ddfae37402adef3de6381135c5efdef0ce062c26673ac6`);
+- runner result: **120 pass / 1 fail / 0 compile-error / 0 skip**, with the
+  sole failure still Annex B ES2027 `custom-splitter-emulates-undefined.js`;
+- completeness validation: **1 shard, 121 verdicts, 121 registered, zero
+  explicit exclusions** (exit 0);
+- exact comparison with the unchanged clean-`44c2` JSONL found no missing or
+  extra paths and one transition only: the unclassified
+  `separator-undef-limit-zero.js` row **fail → pass**;
+- the 12 manifest members classified ES2015 remain **12 pass → 12 pass**.
+
+This is fresh final-tree preservation evidence, not an ES2015 gain claim.
+
+The post-merge changed-root command, with explicit `44c2` base, exited 1 as
+intended by the current ordinary red fixture: `issue-1917` passed 16/16 and
+the 47-test #4016 fixture passed 42 with the five residual assertions listed
+above still red. Its receipt is
+`.tmp/4016/changed-root-postmerge-ef0cad7d-20260928.log`. This transparent
+failure prevents a ready-for-merge conclusion; a draft checkpoint may carry
+the work without masking or weakening any of those assertions.
 
 ## 2026-09-20 reopened: observable split coercion order
 
