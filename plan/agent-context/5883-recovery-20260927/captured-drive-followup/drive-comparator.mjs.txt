@@ -1,0 +1,49 @@
+// Read-only comparator. No compiler imports or execution.
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import assert from "node:assert/strict";
+const [baseline, candidate] = process.argv.slice(2);
+assert(baseline && candidate, "usage: node comparator.mjs BASELINE_DIR CANDIDATE_DIR");
+const hashes = [
+  "76c601c3c77d00924bec66fc6b722338664299fff5bdfeafc0a0ae2dbb0f49b4",
+  "4533f252a35fbebaa4feb9582d29cdd84a289040b33cd179dda64a5b6ab011f7",
+];
+const ids = ["all", "race"].flatMap(method =>
+  ["captured-observable", "legacy-observable", "legacy-plain"].map(mode => `${method}-${mode}`));
+const read = (dir, file) => readFileSync(resolve(dir, file));
+for (const dir of [baseline, candidate]) {
+  assert.deepEqual(readdirSync(dir).filter(file => file.endsWith(".receipt.json")).sort(),
+    ids.map(id => `${id}.receipt.json`).sort(), "exact six receipts required");
+}
+const rows = [];
+for (const id of ids) {
+  const records = [baseline, candidate].map((dir, side) => {
+    const row = JSON.parse(read(dir, `${id}.receipt.json`).toString());
+    assert.equal(row.driveHash, hashes[side], `${id}: exact drive provenance`);
+    assert.deepEqual(row.observerErrors, [], `${id}: observer must have seen state`);
+    assert.equal(row.hits.length, 1, `${id}: exactly one real call`);
+    assert.equal(row.success, true, `${id}: compilation required`);
+    assert.deepEqual(row.imports, [], `${id}: zero imports`);
+    assert.equal(row.compileError, null);
+    assert.equal(row.runtimeError, null);
+    assert.equal(row.nativeError, null);
+    assert.equal(row.nativeActual, id.startsWith("all-") ? "12" : "1");
+    assert.equal(row.actual, row.nativeActual);
+    const method = id.startsWith("all-") ? "all" : "race";
+    assert.equal(row.hits[0].method, method);
+    assert.equal(row.hits[0].observable, !id.endsWith("legacy-plain"));
+    assert.equal(row.hits[0].captured, id.includes("captured-observable"));
+    // Only differing source provenance is excluded. NO outcome/path normalization.
+    const { driveHash, ...comparable } = row;
+    return comparable;
+  });
+  assert.deepEqual(records[0], records[1], `${id}: receipts differ`);
+  for (const dir of [baseline, candidate])
+    assert.notDeepEqual(read(dir, `${id}.entry-0-before.json`), read(dir, `${id}.entry-0-after.json`),
+      `${id}: positive emission delta required`);
+  for (const suffix of ["source.ts", "native.js", "entry-0-before.json", "entry-0-after.json", "wat", "wasm"])
+    assert.deepEqual(read(baseline, `${id}.${suffix}`), read(candidate, `${id}.${suffix}`), `${id}: ${suffix} differs`);
+  rows.push({ id, entrySnapshotsEqual: true, binaryEqual: true, nativeActual: records[0].nativeActual,
+    actual: records[0].actual, internalInterval: "unknown" });
+}
+console.log(JSON.stringify({ denominator: 6, equal: rows.length, rows }, null, 2));

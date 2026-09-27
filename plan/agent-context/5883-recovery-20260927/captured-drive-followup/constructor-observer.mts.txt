@@ -1,0 +1,61 @@
+import { createHash } from "node:crypto";
+import "../src/index.ts";
+import { analyzeSource } from "../src/checker/index.ts";
+import { createEmptyModule } from "../src/ir/types.ts";
+import { createCodegenContext } from "../src/codegen/context/create-context.ts";
+import type { FunctionContext } from "../src/codegen/context/types.ts";
+import {
+  emitBuiltinConstructorIdentity,
+  reserveBuiltinConstructorIdentityGlobal,
+} from "../src/codegen/builtin-static-globals.ts";
+
+function serialize(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "bigint") return { bigint: item.toString() };
+    if (typeof item === "number" && (!Number.isFinite(item) || Object.is(item, -0))) {
+      return { number: Object.is(item, -0) ? "-0" : String(item) };
+    }
+    if (item instanceof Map) return { map: [...item] };
+    if (item instanceof Set) return { set: [...item] };
+    return item;
+  });
+}
+const hash = (value: unknown) => createHash("sha256").update(serialize(value)).digest("hex");
+const records = [];
+for (const name of ["Promise", "Object", "Array", "Number", "Symbol", "Int8Array"]) {
+  for (const reserved of [false, true]) {
+    const source = analyzeSource("export function test(): number { return 1; }", "constructor-observe.ts");
+    const ctx = createCodegenContext(createEmptyModule(), source.checker, { standalone: true, nativeStrings: true });
+    const fctx: FunctionContext = {
+      name: "constructor-observe", params: [], locals: [], localMap: new Map(),
+      returnType: { kind: "externref" }, body: [], blockDepth: 0,
+      breakStack: [], continueStack: [], labelMap: new Map(), savedBodies: [],
+    };
+    if (reserved) reserveBuiltinConstructorIdentityGlobal(ctx, name);
+    for (const occurrence of [1, 2]) {
+      const resultType = emitBuiltinConstructorIdentity(ctx, fctx, name);
+      const globalIndex = ctx.builtinObjectGlobals.get(`ctor:${name}`);
+      if (globalIndex === undefined || fctx.body.length === 0 || ctx.mod.functions.length === 0) {
+        throw new Error(`Missing constructor observation: ${name}/${reserved}/${occurrence}`);
+      }
+      const lazyReads = fctx.body.filter(instr => instr.op === "if");
+      if (lazyReads.length !== occurrence) throw new Error("Constructor lazy-read denominator changed");
+      records.push({
+        name, reserved, occurrence, resultType, globalIndex,
+        functionCount: ctx.mod.functions.length, typeCount: ctx.mod.types.length,
+        globalCount: ctx.mod.globals.length, localCount: fctx.locals.length,
+        moduleSha256: hash(ctx.mod), callerSha256: hash(fctx),
+        orderedFuncMapSha256: hash([...ctx.funcMap]),
+        constructorMapSha256: hash([...ctx.builtinObjectGlobals]),
+        structMapSha256: hash([...ctx.structMap]),
+        structFieldsSha256: hash([...ctx.structFields]),
+        liveBodiesSha256: hash([...ctx.liveBodies]),
+      });
+    }
+  }
+}
+if (records.length !== 24) throw new Error("Expected all 24 constructor observations");
+console.log(JSON.stringify({
+  lane: "standalone nativeStrings", records,
+  scope: "Actual immediate constructor emission, cold/reserved and repeated; not runtime or delayed-retention proof",
+}, null, 2));
