@@ -1,9 +1,10 @@
 ---
 id: 6706
 title: "S4: the native-first measurement lane links the same eval and Temporal providers as the standalone lane"
-status: ready
+status: done
 created: 2026-09-27
 updated: 2026-09-27
+completed: 2026-09-27
 priority: high
 horizon: m
 feasibility: medium
@@ -13,6 +14,7 @@ area: ci, testing
 language_feature: test262-runner
 goal: architecture
 sprint: current
+assignee: ttraenkler/opus-6706
 parent: 5385
 depends_on: [6685]
 related: [2928, 4242, 5353, 5383, 6489]
@@ -97,3 +99,77 @@ imports will not resolve.
       and `test262-standalone-current.json` before/after; the promote job
       never reads native-first artifacts).
 - [ ] `tests/issue-3431-mg-matrix.test.ts` and the workflow lint pass.
+
+## Outcome (2026-09-27, opus-6706)
+
+**A landed in full; B is plumbed and fail-closed (B.4).**
+
+- **A.** `runtime-eval-provider` has the `schedule` arm (its step guards are
+  `run_standalone != 'false'`, which the empty `changes` outputs on `schedule`
+  already satisfy). `test262-native-first` `needs: [runtime-eval-provider,
+  temporal-provider]`, downloads + verifies the shared provider
+  (`--require-cache` / `--require-full-cache`), and no longer builds the
+  REFUSAL tier. Its `if:` is `!cancelled()` + explicit `needs.*.result ==
+  'success'` rather than the implicit `success()`: on `schedule` the
+  providers' ancestors (`changes`, `mg-artifact-probe`) are skipped, and the
+  implicit form cascade-skips the job. The same trap currently skips every
+  `test262-honest-audit` shard on the nightly (run 36228065594: temporal-provider
+  `success`, all audit shards `skipped`) — out of scope here, worth its own fix.
+  The lane also takes the standalone cells' `TEST262_FULL_RUNTIME_EVAL=1` and
+  `TEST262_IT_TIMEOUT_MS=300000` (eval-heavy rows killed by vitest write no row
+  and would fail the completeness validator).
+- **B.** `temporalProviderCompileOptions(target, semanticProviders)` returns
+  `{ semanticProviders: "native-first", hostBridge: "always" }` for the JS-host
+  native-first lane; its stamp is `prewarm-native-first.json` and records
+  `semanticProviders` + `nativeRegime` (the cache key does not see the
+  `JS2WASM_NATIVE_REGIME_JS` opt-in, so the stamp does and the consumer
+  compares). `prewarm-temporal-provider.mjs --semantic-providers native-first`
+  (host only, requires `JS2WASM_NATIVE_REGIME_JS=1`). The `temporal-provider`
+  job builds it soft into its own dir/cache/artifact
+  (`temporal-provider-native-first-<run>`); the host artifact is untouched.
+  The worker passes the lane's `semanticProviders` to the stamp check; with no
+  regime stamp the rows run unlinked, announced once per fork — never against
+  the host-semantics provider.
+
+### Finding — why the regime Temporal provider does not build yet (input for a follow-up)
+
+`JS2WASM_NATIVE_REGIME_JS=1 node scripts/prewarm-temporal-provider.mjs --target host --semantic-providers native-first`
+fails: the linker's provider compile (`src/package-linker.ts` ~L1907, source
+`@js-temporal/polyfill`) is rejected by the native-first import gate
+(`src/compiler.ts` ~L1203):
+
+> Native-first semantic-provider policy rejected implicit or unclassified host
+> imports: `env::__exn` (unknown, owner #4401).
+
+`env::__exn` is the shared exception tag the linker requests for every provider
+and consumer (`sharedExceptionTag: true`, #5226). `src/codegen/context/create-context.ts`
+~L248 makes it an **imported** tag only when the target is not `standalone`/`wasi`,
+and the host-import inventory classifies it `unknown`. The standalone Temporal
+provider does not carry it (built 2026-09-27: 3.78 MB, `WebAssembly.Module.imports` = `[]`).
+So a JS-environment-only arm still mints a raw `__exn` import under the regime.
+The consumer side (`compileWithTemporalGlobal`, also `sharedExceptionTag: true`)
+will hit the same gate. Fix belongs in `src/` (classify the linker's shared tag,
+or define it module-locally under the regime) — not in this CI slice. Until
+then the nightly regime build step fails soft each run (~1 min).
+
+## Test Results
+
+- `tests/issue-6706-native-first-lane-providers.test.ts` (new, 7) pass;
+  `issue-3431-mg-matrix`, `issue-2928-e6-provider-cache`, `issue-4242-eval-engine-parity`,
+  `issue-5353-sharded-temporal-lane`, `test262-per-lane-gating`,
+  `test262-baseline-pair-admission`, `issue-2178-*`, `issue-3303`, and the
+  `S3` block of `issue-5383-*` pass. Pre-existing on base and unrelated:
+  `issue-5385-test262-native-lane` "worker compile branches",
+  `issue-5382` "separates every fingerprinted option".
+- Workflow YAML parses; `run-test262-vitest.sh` still defaults
+  `EVAL_ENGINE=quickjs` for native-first.
+- Scoped local run (`TEST262_SEMANTIC_PROVIDERS=native-first`,
+  `TEST262_PATH_FILTER=built-ins/Temporal/Now/`, interpreter engine): prewarm
+  reports UNAVAILABLE, each fork announces `Temporal provider NOT linked (the
+  host/native-first lane has no eligible provider)`; 48/66 rows `Temporal is
+  not defined`, unchanged from before (the lane was unlinked before too).
+- `tests/issue-5383-standalone-temporal-provider.test.ts` is left at main's
+  content (the #3008 changed-file gate would otherwise root on it, and its
+  "S2i … DYNAMIC class-value receiver" test fails on main independently:
+  `expected NaN to be 8`). The #6706 source-shape assertions live in
+  `tests/issue-6706-native-first-lane-providers.test.ts`.

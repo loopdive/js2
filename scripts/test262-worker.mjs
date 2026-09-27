@@ -1333,9 +1333,16 @@ function temporalWiringAvailable() {
   );
 }
 
-/** Build (or, in practice, cache-read) the provider once per fork, per target. */
-async function getWorkerTemporalProvider(target) {
-  const memoKey = target ?? "host";
+/**
+ * Build (or, in practice, cache-read) the provider once per fork, per target.
+ *
+ * (#6706) ...and per semantic-provider policy: the native-first lane links a
+ * provider compiled under the native regime, certified by its OWN stamp. With
+ * no such stamp its rows run unlinked (announced) — never against the
+ * host-semantics provider, which would label host results as regime results.
+ */
+async function getWorkerTemporalProvider(target, semanticProviders = "auto") {
+  const memoKey = semanticProviders === "native-first" ? `${target ?? "host"}/native-first` : (target ?? "host");
   const memoised = temporalProviderPromises.get(memoKey);
   if (memoised) return memoised;
   const promise = (async () => {
@@ -1349,17 +1356,17 @@ async function getWorkerTemporalProvider(target) {
     }
     // The lane question, asked HERE rather than per row: this getter memoises,
     // so the stamp is read once per fork instead of once per Temporal row.
-    if (!test262TemporalLaneEnabled(target)) {
+    const cacheDir = temporalCacheDir();
+    if (!test262TemporalLaneEnabled(target, cacheDir, semanticProviders)) {
       announceTemporalUnavailable(`the ${memoKey} lane has no eligible provider`);
       return null;
     }
-    const cacheDir = temporalCacheDir();
-    const stamp = readTemporalPrewarmStamp(cacheDir, target);
+    const stamp = readTemporalPrewarmStamp(cacheDir, target, semanticProviders);
     if (!stamp) {
       announceTemporalUnavailable(`no ${memoKey} pre-warm stamp in ${cacheDir}`);
       return null;
     }
-    const compileOptions = temporalProviderCompileOptions(target);
+    const compileOptions = temporalProviderCompileOptions(target, semanticProviders);
     const { loadTemporalPolyfillSource } = await import("./test262-temporal.mjs");
     const polyfillSource = await loadTemporalPolyfillSource();
     const key = compilerBundle.temporalProviderCacheKey({ polyfillSource, compileOptions });
@@ -2018,8 +2025,10 @@ process.on("message", async (msg) => {
   // so a fork without a matching pre-warm stamp asks once and then costs
   // nothing per row.
   let temporal = null;
-  if (msg.temporal === true && semanticProviders === "auto" && originalHarness) {
-    temporal = await getWorkerTemporalProvider(target);
+  // (#6706) native-first rows link only the regime-compiled provider (their
+  // own stamp); the getter answers null — rows unlinked — without one.
+  if (msg.temporal === true && originalHarness) {
+    temporal = await getWorkerTemporalProvider(target, semanticProviders);
   }
 
   // (#3451) Linked shadow lane. The parent owns the split (it is the side that

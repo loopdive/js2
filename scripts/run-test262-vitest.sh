@@ -243,6 +243,12 @@ else
     else
       echo "Temporal provider (standalone): OFF (set JS2WASM_TEST262_TEMPORAL_STANDALONE=1 to link)"
     fi
+  elif [ "$TEST262_SEMANTIC_PROVIDERS" = "native-first" ]; then
+    # (#6706) The native-first lane links a provider compiled under the native
+    # regime, stamped separately. Soft, like standalone: no stamp means the rows
+    # run unlinked (announced) — never against the host-semantics provider.
+    node scripts/prewarm-temporal-provider.mjs --target host --semantic-providers native-first ||
+      echo "Temporal provider (native-first): UNAVAILABLE — those rows run unlinked"
   else
     node scripts/prewarm-temporal-provider.mjs --target host
   fi

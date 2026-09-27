@@ -39,6 +39,15 @@
  *   node scripts/prewarm-temporal-provider.mjs --cache-dir <dir>
  *   node scripts/prewarm-temporal-provider.mjs --target standalone
  *   node scripts/prewarm-temporal-provider.mjs --target both
+ *   JS2WASM_NATIVE_REGIME_JS=1 node scripts/prewarm-temporal-provider.mjs \
+ *     --target host --semantic-providers native-first
+ *
+ * (#6706) `--semantic-providers native-first` builds the provider the
+ * native-first measurement lane links: compiled with native semantic providers
+ * under the native regime, stamped `prewarm-native-first.json` (with the regime
+ * flag recorded) so it never certifies — or is certified by — the host lane.
+ * Only meaningful with `--target host`; it REQUIRES JS2WASM_NATIVE_REGIME_JS=1
+ * because that is the regime the CI lane compiles its consumers under.
  *
  * Requires `scripts/compiler-bundle.mjs` built from `scripts/compiler-bundle-entry.ts`
  * (`pnpm run build:compiler-bundle`) — the entry that publishes the provider.
@@ -71,6 +80,33 @@ function parseTargets(argv) {
   return targets.length > 0 ? [...new Set(targets)] : [undefined];
 }
 
+/** (#6706) `auto` (default) or `native-first`. */
+function parseSemanticProviders(argv, targets) {
+  const index = argv.indexOf("--semantic-providers");
+  if (index < 0) return "auto";
+  const value = argv[index + 1];
+  if (value !== "auto" && value !== "native-first") {
+    console.error(
+      `prewarm-temporal-provider: --semantic-providers must be auto|native-first (got ${value ?? "nothing"})`,
+    );
+    process.exit(2);
+  }
+  if (value === "native-first") {
+    if (targets.some((target) => target !== undefined)) {
+      console.error("prewarm-temporal-provider: --semantic-providers native-first is only defined for --target host");
+      process.exit(2);
+    }
+    if (process.env.JS2WASM_NATIVE_REGIME_JS !== "1") {
+      console.error(
+        "prewarm-temporal-provider: --semantic-providers native-first needs JS2WASM_NATIVE_REGIME_JS=1 " +
+          "(the regime the native-first lane compiles its consumers under)",
+      );
+      process.exit(2);
+    }
+  }
+  return value;
+}
+
 function parseCacheDir(argv) {
   const index = argv.indexOf("--cache-dir");
   if (index >= 0) {
@@ -88,6 +124,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const cacheDir = parseCacheDir(argv);
   const targets = parseTargets(argv);
+  const semanticProviders = parseSemanticProviders(argv, targets);
   const bundle = await import("./compiler-bundle.mjs");
   if (typeof bundle.buildTemporalProvider !== "function" || typeof bundle.temporalProviderCacheKey !== "function") {
     // The bundle predates #5353 or was built straight from `src/index.ts` by a
@@ -102,8 +139,13 @@ async function main() {
 
   const polyfillSource = await loadTemporalPolyfillSource();
   for (const target of targets) {
-    const label = target ?? "host";
-    const compileOptions = temporalProviderCompileOptions(target);
+    const label = semanticProviders === "native-first" ? "host/native-first" : (target ?? "host");
+    // The host/standalone lanes keep their pre-#6706 call verbatim; only the
+    // native-first lane (#6706) passes its semantic-provider policy.
+    const compileOptions =
+      semanticProviders === "auto"
+        ? temporalProviderCompileOptions(target)
+        : temporalProviderCompileOptions(target, semanticProviders);
     // The key MUST be computed with the same options the build uses, or the
     // stamp certifies an artifact nobody will ask for and the consuming lane
     // refuses with a key mismatch it cannot act on.
@@ -120,6 +162,7 @@ async function main() {
         cacheHit: provider.cacheHit,
       },
       target,
+      semanticProviders,
     );
     console.log(
       `prewarm-temporal-provider: OK — ${label} ${provider.namespace} (${stamp.bytes} B) ` +
