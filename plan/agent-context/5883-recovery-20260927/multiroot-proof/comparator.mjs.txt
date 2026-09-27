@@ -1,0 +1,171 @@
+// Mandatory A/B/C, read only. Raw B/C graphs are NEVER normalized.
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+
+const [aDir, bDir, cDir, ...extra] = process.argv.slice(2);
+assert(aDir && bDir && cDir && extra.length === 0, "usage: comparator A_DIR B_DIR C_DIR (all three required)");
+const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const read = (dir, name) => readFileSync(resolve(dir, name));
+const sharedBasis = {
+  "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+  "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+  "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+  "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+  "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+  "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+};
+const drivePath = "src/codegen/promise-combinator-drive.ts";
+const protocolPath = "src/codegen/promise-combinator-observable-protocol.ts";
+const armBasis = {
+  A: ["4533f252a35fbebaa4feb9582d29cdd84a289040b33cd179dda64a5b6ab011f7", "cd9f65ea77c9418874bdd69f9666e27c25259ed93f35656b41f2ad3357afa8ac"],
+  B: ["3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2", "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b"],
+  C: ["19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813", "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b"],
+};
+
+// Compare expanded values while recording the actual graph's identity map.
+// This is ONLY the A/B repair diagnostic, never the B/C acceptance comparison.
+function identityDelta(left, right, rootCount, callableLocal) {
+  function index(root) {
+    const nodes = new Map();
+    function visit(value) {
+      if (!value || typeof value !== "object") return;
+      if (!Array.isArray(value) && Object.hasOwn(value, "id")) {
+        assert(!nodes.has(value.id), "duplicate graph definition");
+        nodes.set(value.id, value);
+      }
+      Object.values(value).forEach(visit);
+    }
+    visit(root);
+    return nodes;
+  }
+  const ln = index(left), rn = index(right);
+  const forward = new Map(), backward = new Map(), visited = new Set();
+  const link = (map, key, value) => {
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(value);
+  };
+  function walk(a, b, path) {
+    if (!a || !b || typeof a !== "object" || typeof b !== "object") {
+      assert.deepEqual(a, b, `A/B value mismatch at ${path}`);
+      return;
+    }
+    if (Object.hasOwn(a, "ref")) { assert(ln.has(a.ref)); a = ln.get(a.ref); }
+    if (Object.hasOwn(b, "ref")) { assert(rn.has(b.ref)); b = rn.get(b.ref); }
+    const aNode = Object.hasOwn(a, "id"), bNode = Object.hasOwn(b, "id");
+    assert.equal(aNode, bNode, `A/B node mismatch at ${path}`);
+    if (aNode) {
+      link(forward, a.id, b.id); link(backward, b.id, a.id);
+      const pair = `${a.id}:${b.id}`;
+      if (visited.has(pair)) return;
+      visited.add(pair);
+    }
+    assert.equal(Array.isArray(a), Array.isArray(b), `A/B array mismatch at ${path}`);
+    const ak = Object.keys(a).filter((key) => key !== "id");
+    const bk = Object.keys(b).filter((key) => key !== "id");
+    assert.deepEqual(ak, bk, `A/B ordered properties mismatch at ${path}`);
+    for (const key of ak) walk(a[key], b[key], `${path}/${key}`);
+  }
+  walk(left, right, "root");
+  const splits = [...forward].filter(([, ids]) => ids.size > 1).map(([oldId, ids]) => ({ oldId, newIds: [...ids], oldNode: ln.get(oldId), newNodes: [...ids].map((id) => rn.get(id)) }));
+  const merges = [...backward].filter(([, ids]) => ids.size > 1).map(([newId, ids]) => ({ newId, oldIds: [...ids] }));
+  // Preserve the measured raw identity delta even if its acceptance check fails.
+  console.log(JSON.stringify({ kind: "AB-raw-identity-delta", rootCount, callableLocal, splits, merges }));
+  assert.equal(splits.length, 2, "A/B must demonstrate exactly TWO actual shared-object splits");
+  assert.deepEqual(merges, [], "A/B must not merge instruction identities");
+  const expected = [
+    [["op", "i32.const"], ["value", 1]],
+    [["op", "local.set"], ["index", callableLocal]],
+  ];
+  assert.deepEqual(splits.map((split) => split.oldNode.entries), expected, "only resolve's two match leaves may split");
+  for (const split of splits) {
+    assert.equal(split.newIds.length, rootCount, "each shared leaf must split once per actual root");
+    for (const node of split.newNodes) assert.deepEqual(node.entries, split.oldNode.entries);
+  }
+  return { splits, merges, expectedLeavesOnly: true, expandedValuesEqual: true };
+}
+
+const dirs = { A: aDir, B: bDir, C: cDir };
+for (const dir of Object.values(dirs)) {
+  assert.deepEqual(readdirSync(dir).filter((name) => name.endsWith(".receipt.json")).sort(), ["all.receipt.json", "race.receipt.json"], "exact two receipts per arm");
+}
+const rows = [];
+for (const method of ["all", "race"]) {
+  const records = {};
+  for (const [arm, dir] of Object.entries(dirs)) {
+    const row = JSON.parse(read(dir, `${method}.receipt.json`));
+    records[arm] = row;
+    assert.equal(row.arm, arm);
+    assert.equal(row.method, method);
+    assert.deepEqual(row.basis, { ...sharedBasis, [drivePath]: armBasis[arm][0], [protocolPath]: armBasis[arm][1] }, "exact complete pinned basis");
+    assert.equal(row.sourceHash, sha(read(dir, `${method}.source.ts`)));
+    assert.equal(row.binaryHash, sha(read(dir, `${method}.wasm`)));
+    assert.deepEqual(row.observerErrors, []);
+    assert.equal(row.hits.length, 1);
+    assert.equal(row.hits[0].method, method);
+    assert.equal(row.hits[0].arg, "input");
+    assert.equal(row.hits[0].captured, true);
+    assert.equal(row.hits[0].observable, true);
+    assert(row.hits[0].entryBoundTypeIdx >= 0);
+    assert(row.hits[0].entryBindProvider !== null);
+    const observation = row.hits[0].observation;
+    assert(observation.rootCount > 1);
+    assert.equal(observation.rootCount, observation.distinctRoots);
+    assert(observation.arms.some((item) => item.typeIdx === row.hits[0].boundTypeIdx));
+    assert.equal(observation.uniqueLeaves, arm === "A" ? 2 : 2 * observation.rootCount);
+    assert.equal(row.success, true);
+    for (const key of ["compileError", "runtimeError", "nativeError"]) assert.equal(row[key], null);
+    assert.deepEqual(row.imports, []);
+    assert.equal(row.nativeActual, method === "all" ? 12 : 1);
+    assert.equal(row.actual, row.nativeActual);
+    assert.notDeepEqual(read(dir, `${method}.entry-0-before.json`), read(dir, `${method}.entry-0-after.json`), "non-vacuous emission delta");
+  }
+  // The ONLY B/C exclusions: already verified arm and drive/protocol hashes.
+  function comparable(row) {
+    const { arm, basis, ...rest } = row;
+    const { [drivePath]: drive, [protocolPath]: protocol, ...shared } = basis;
+    return { ...rest, basis: shared };
+  }
+  assert.deepEqual(comparable(records.B), comparable(records.C), `${method}: strict B/C receipts`);
+  const suffixes = ["source.ts", "native.js", "entry-0-before.json", "entry-0-after.json", "wat", "wasm"];
+  for (const suffix of suffixes) assert.deepEqual(read(bDir, `${method}.${suffix}`), read(cDir, `${method}.${suffix}`), `${method}: strict raw B/C ${suffix}`);
+  for (const suffix of suffixes.filter((suffix) => suffix !== "entry-0-after.json")) assert.deepEqual(read(aDir, `${method}.${suffix}`), read(bDir, `${method}.${suffix}`), `${method}: A/B ${suffix}`);
+  const a = records.A.hits[0].observation, b = records.B.hits[0].observation;
+  assert.equal(a.rootCount, b.rootCount);
+  const values = (observation) => observation.arms.map(({ typeIdx, leafValues }) => ({ typeIdx, leafValues }));
+  assert.deepEqual(values(a), values(b));
+  const delta = identityDelta(JSON.parse(read(aDir, `${method}.entry-0-after.json`)), JSON.parse(read(bDir, `${method}.entry-0-after.json`)), a.rootCount, records.A.hits[0].resolveLocals.callable[0][1]);
+  // identityDelta above has independently proved exactly the two permitted
+  // physical match-leaf splits. Check the receipt's identity observations too,
+  // BEFORE omitting them from the A/B residual comparison.
+  for (const [label, observation] of [["A", a], ["B", b]]) {
+    assert.equal(observation.arms.length, observation.rootCount);
+    const expectedIds = observation.arms.map((_, index) => label === "A" ? [0, 1] : [2 * index, 2 * index + 1]);
+    assert.deepEqual(observation.arms.map((item) => item.leafIds), expectedIds, `${method}: ${label} actual match-leaf identities`);
+    assert.equal(observation.uniqueLeaves, label === "A" ? 2 : 2 * observation.rootCount);
+  }
+  // Preserve EVERY remaining receipt field, including errors on successful
+  // compiles, all hit metadata, local declarations, and future added fields.
+  // comparable removes only the already verified arm/drive/protocol provenance.
+  // These two identity fields are the sole additional A/B exclusions.
+  function abResidual(row) {
+    const residual = comparable(row);
+    return {
+      ...residual,
+      hits: residual.hits.map((hit) => {
+        const { uniqueLeaves, ...observation } = hit.observation;
+        return {
+          ...hit,
+          observation: {
+            ...observation,
+            arms: observation.arms.map(({ leafIds, ...remaining }) => remaining),
+          },
+        };
+      }),
+    };
+  }
+  assert.deepEqual(abResidual(records.A), abResidual(records.B), `${method}: full A/B residual receipts`);
+  rows.push({ method, roots: a.rootCount, AB: delta, BC: { rawGraphsEqual: true, watEqual: true, binaryEqual: true, receiptsEqualExceptVerifiedProvenance: true } });
+}
+console.log(JSON.stringify({ denominator: 2, ABCPassed: rows.length, rows }, null, 2));
