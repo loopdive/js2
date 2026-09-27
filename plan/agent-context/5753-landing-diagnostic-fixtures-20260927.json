@@ -1,0 +1,202 @@
+{
+  "date": "2026-09-27",
+  "mainCommit": "935dab385ba7f21588ea371d052e7f143f894205",
+  "controlCommit": "b212925eaba4a038e3b422b21232c41000e2b451",
+  "node": "v22.23.2",
+  "configuration": {
+    "target": "standalone",
+    "maxForks": 1,
+    "forkMemoryMiB": 2048
+  },
+  "fixtures": [
+    {
+      "name": "issue-5753-computed-generator-floor.test.ts",
+      "source": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { expect, it } from \"vitest\";\nimport { compile } from \"../src/index.js\";\n\nconst cases = [\n  {\n    name: \"computed Symbol method keeps key evaluation, name, captures, receiver and lazy resumptions\",\n    source: `export function test() {\n      let keys = 0;\n      let steps = 0;\n      let offset = 3;\n      const key = Symbol(\"floor\");\n      function getKey() { keys++; return key; }\n      const object = {\n        value: 7,\n        get size() { return steps; },\n        *[getKey()]() { steps++; yield this.value + offset; steps++; yield this.value + offset; }\n      };\n      if (keys !== 1 || steps !== 0) return -1;\n      const descriptor = Object.getOwnPropertyDescriptor(object[key], \"name\");\n      if (descriptor.value !== \"[floor]\" || descriptor.writable !== false ||\n          descriptor.enumerable !== false || descriptor.configurable !== true) return -2;\n      const iterator = object[key]();\n      if (steps !== 0) return -3;\n      const other = { value: 99, read() { return this.value; } };\n      other.read();\n      const first = iterator.next();\n      if (first.done || first.value !== 10 || steps !== 1) return -4;\n      object.value = 9;\n      offset = 4;\n      other.read();\n      const second = iterator.next();\n      if (second.done || second.value !== 13 || steps !== 2) return -5;\n      const end = iterator.next();\n      if (!end.done || end.value !== undefined || !iterator.next().done) return -6;\n      return keys === 1 && steps === 2 ? 1 : -7;\n    }`,\n  },\n  {\n    name: \"different runtime Symbol keys with the same description retain distinct factories\",\n    source: `export function test() {\n      const a = Symbol(\"same\");\n      const b = Symbol(\"same\");\n      let steps = 0;\n      const object = {\n        *[a]() { steps++; yield 11; },\n        *[b]() { steps++; yield 22; }\n      };\n      const left = object[a]();\n      const right = object[b]();\n      if (steps !== 0) return -1;\n      if (left.next().value !== 11 || right.next().value !== 22 || steps !== 2) return -2;\n      if (!left.next().done || !right.next().done) return -3;\n      return object[a] !== object[b] ? 1 : -4;\n    }`,\n  },\n  {\n    name: \"abrupt computed-key evaluation runs once and prevents later properties and generator execution\",\n    source: `export function test() {\n      let keys = 0;\n      let steps = 0;\n      let later = 0;\n      const marker = {};\n      function fail() { keys++; throw marker; }\n      function after() { later++; return 1; }\n      try {\n        const object = { *[fail()]() { steps++; yield 1; }, later: after() };\n        return -1;\n      } catch (error) {\n        return error === marker && keys === 1 && steps === 0 && later === 0 ? 1 : -2;\n      }\n    }`,\n  },\n];\n\n// Keep the original three sources above unchanged. A partially constructed\n// object literal is not observable in JS: capture the previously published\n// method during replacement-key evaluation, not an inaccessible literal slot.\nconst duplicateCases = [\n  {\n    name: \"duplicate synchronous names preserve a saved factory across replacement key evaluation\",\n    source: `export function test() {\n      let steps = 0;\n      let keys = 0;\n      let saved;\n      let object = { get marker() { return 0; }, *same() { steps++; yield 11; } };\n      function replacementKey() { keys++; saved = object.same; return \"same\"; }\n      object = {\n        get marker() { return 0; },\n        *same() { steps += 100; yield 99; },\n        *[replacementKey()]() { steps++; yield 22; }\n      };\n      if (keys !== 1 || steps !== 0 || saved === object.same) return -1;\n      const first = saved();\n      const last = object.same();\n      if (steps !== 0) return -2;\n      if (first.next().value !== 11 || last.next().value !== 22 || steps !== 2) return -3;\n      if (!first.next().done || !last.next().done || keys !== 1) return -4;\n      return saved.name === \"same\" && object.same.name === \"same\" ? 1 : -5;\n    }`,\n  },\n  {\n    name: \"literal duplicate synchronous names select the last independent lazy factory\",\n    source: `export function test() {\n      let steps = 0;\n      const object = {\n        get marker() { return 0; },\n        *same() { steps += 100; yield 99; },\n        *same() { steps++; yield 22; }\n      };\n      const first = object.same();\n      const second = object.same();\n      if (steps !== 0) return -1;\n      if (first === second) return -2;\n      if (first.next().value !== 22 || second.next().value !== 22 || steps !== 2) return -3;\n      return first.next().done && second.next().done ? 1 : -4;\n    }`,\n  },\n  {\n    name: \"an async spelling collision does not reject the later synchronous lazy method\",\n    source: `export function test() {\n      let steps = 0;\n      const object = {\n        get marker() { return 0; },\n        async *same() {},\n        *same() { steps++; yield 33; }\n      };\n      const iterator = object.same();\n      if (steps !== 0) return -1;\n      const first = iterator.next();\n      if (first.done || first.value !== 33 || steps !== 1) return -2;\n      return iterator.next().done && object.same.name === \"same\" ? 1 : -3;\n    }`,\n  },\n];\n\nfor (const optimize of [0, 2] as const) {\n  for (const fixture of [...cases, ...duplicateCases]) {\n    it(`${fixture.name} O${optimize}`, async () => {\n      // Native JS is an independent oracle, not a compiler-derived expectation.\n      const reference = new Function(fixture.source.replace(\"export function test\", \"function test\") + \"; return test();\");\n      expect(reference()).toBe(1);\n      const result = await compile(fixture.source, {\n        fileName: \"5753-computed-generator-floor.js\",\n        allowJs: true,\n        skipSemanticDiagnostics: true,\n        target: \"standalone\",\n        optimize,\n      });\n      expect(result.success, JSON.stringify(result.errors)).toBe(true);\n      const module = new WebAssembly.Module(result.binary);\n      expect(WebAssembly.Module.imports(module)).toEqual([]);\n      const instance = new WebAssembly.Instance(module, {});\n      expect((instance.exports.test as () => number)()).toBe(1);\n    });\n  }\n}\n",
+      "sha256": "c8f75c60598fc7a709069851cbbf7c61014a97c8fb8944eb46123ebf163b99e9",
+      "nativeExpectation": 1
+    },
+    {
+      "name": "issue-5753-generator-class-receiver-scan.test.ts",
+      "source": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { expect, it } from \"vitest\";\nimport { compile } from \"../src/index.js\";\n\n// Unrun source witnesses for the lifted-object-method admission review.\n// Pair these exact sources before/after the generator patch. The old unresolved\n// method-key refusal selected a host-backed fallback, not proven correct native\n// execution. Do not treat that baseline limitation as an expected JS result.\nconst cases = [\n  {\n    name: \"computed class field key preserves the generator's call-time receiver\",\n    source: `export function test() {\n      const key = Symbol(\"receiver\");\n      let observed = 0;\n      let evaluations = 0;\n      function record(value) { evaluations++; observed = value; return \"field\"; }\n      const object = {\n        key: 17,\n        get marker() { return 0; },\n        *[key]() {\n          class C { [record(this.key)] = 1; }\n          yield observed;\n        }\n      };\n      const iterator = object[key]();\n      if (evaluations !== 0) return -1;\n      const other = { key: 99, read() { return this.key; } };\n      if (other.read() !== 99) return -2;\n      const first = iterator.next();\n      if (first.done || first.value !== 17 || evaluations !== 1) return -3;\n      return iterator.next().done && evaluations === 1 ? 1 : -4;\n    }`,\n  },\n  {\n    name: \"class heritage preserves the generator's call-time receiver\",\n    source: `export function test() {\n      const key = Symbol(\"receiver\");\n      class Base {}\n      let observed;\n      let evaluations = 0;\n      function record(value) { evaluations++; observed = value; return value; }\n      const object = {\n        Base,\n        get marker() { return 0; },\n        *[key]() {\n          class C extends record(this.Base) {}\n          yield observed === Base ? 1 : -10;\n        }\n      };\n      const iterator = object[key]();\n      if (evaluations !== 0) return -1;\n      const other = { value: 99, read() { return this.value; } };\n      if (other.read() !== 99) return -2;\n      const first = iterator.next();\n      if (first.done || first.value !== 1 || evaluations !== 1) return -3;\n      return iterator.next().done && evaluations === 1 ? 1 : -4;\n    }`,\n  },\n] as const;\n\nfor (const optimize of [0, 2] as const) {\n  for (const fixture of cases) {\n    it(`${fixture.name} O${optimize}`, async () => {\n      const reference = new Function(\n        '\"use strict\";\\n' + fixture.source.replace(\"export function test\", \"function test\") + \"\\nreturn test();\",\n      );\n      expect(reference()).toBe(1);\n      const result = await compile(fixture.source, {\n        fileName: \"5753-generator-class-receiver-scan.js\",\n        allowJs: true,\n        skipSemanticDiagnostics: true,\n        target: \"standalone\",\n        optimize,\n      });\n      expect(result.success, JSON.stringify(result.errors)).toBe(true);\n      const module = new WebAssembly.Module(result.binary);\n      expect(WebAssembly.Module.imports(module)).toEqual([]);\n      const instance = new WebAssembly.Instance(module, {});\n      expect((instance.exports.test as () => number)()).toBe(1);\n    });\n  }\n}\n",
+      "sha256": "5c124e0fc49106c8de49e8101f99c4ea4d33364689575f294eb3f128e28817e6",
+      "nativeExpectation": 1
+    },
+    {
+      "name": "issue-5753-error-constructor-diagnostic.test.ts",
+      "source": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { expect, it } from \"vitest\";\nimport { compile } from \"../src/index.js\";\n\n// Additive diagnostic, not an edit to the original Test262 fixture.\nconst prefix = `var nativeErrors = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];`;\nconst cases = [\n  {\n    name: \"dynamic Error constructor produces real named message-bearing objects\",\n    source: `${prefix}\n      export function test() {\n        for (var i = 0; i < nativeErrors.length; ++i) {\n          var Ctor = nativeErrors[i];\n          var err = new Ctor('msg');\n          if (err === undefined) return 100 + i;\n          if (err === null) return 200 + i;\n          if (typeof err !== 'object') return 300 + i;\n          if (err.message !== 'msg') return 400 + i;\n          if (err.name !== Ctor.name) return 500 + i;\n          var another = new Ctor('other');\n          if (err === another || another.message !== 'other') return 600 + i;\n        }\n        return 1;\n      }`,\n  },\n  {\n    name: \"borrowed own-property method receives the actual constructed Error\",\n    source: `${prefix}\n      export function test() {\n        for (var i = 0; i < nativeErrors.length; ++i) {\n          var Ctor = nativeErrors[i];\n          var err = new Ctor('msg');\n          if (err === null || err === undefined) return 100 + i;\n          if (!Object.prototype.hasOwnProperty.call(err, 'message')) return 200 + i;\n          if (Object.prototype.hasOwnProperty.call(err, 'missing')) return 300 + i;\n        }\n        return 1;\n      }`,\n  },\n] as const;\n\nfor (const fixture of cases) {\n  it(fixture.name, async () => {\n    const reference = new Function(\n      '\"use strict\";\\n' + fixture.source.replace(\"export function test\", \"function test\") + \"\\nreturn test();\",\n    );\n    expect(reference()).toBe(1);\n    const result = await compile(fixture.source, {\n      fileName: \"5753-error-constructor-diagnostic.js\",\n      allowJs: true,\n      skipSemanticDiagnostics: true,\n      target: \"standalone\",\n      optimize: 0,\n    });\n    expect(result.success, JSON.stringify(result.errors)).toBe(true);\n    const module = new WebAssembly.Module(result.binary);\n    expect(WebAssembly.Module.imports(module)).toEqual([]);\n    const instance = new WebAssembly.Instance(module, {});\n    const actual = (instance.exports.test as () => number)();\n    console.log(JSON.stringify({ name: fixture.name, source: fixture.source, expected: 1, actual }));\n    expect(actual).toBe(1);\n  });\n}\n",
+      "sha256": "b04a8bd532ff413f9c99287b33a83fbe087e0414c8460a8a0d85befde19bea7d",
+      "nativeExpectation": 1
+    },
+    {
+      "name": "issue-5753-class-evaluation-ownership.test.ts",
+      "source": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { expect, it } from \"vitest\";\nimport { compile } from \"../src/index.js\";\n\n// Diagnostic acceptance tests, not preservation of the compiler's wrong answers.\n// Each source has an independent native-JavaScript expectation of 1. Keep the\n// identity, value, descriptor and reentrant cases separate so an early identity\n// failure cannot conceal all of the storage obligations. Not run when added.\nconst cases = [\n  {\n    name: \"one class-expression site creates distinct constructors and prototypes\",\n    source: `\n      function make() { return class {}; }\n      export function test() {\n        const first = make();\n        const second = make();\n        if (first === second) return -1;\n        if (first.prototype === second.prototype) return -2;\n        if (first.prototype.constructor !== first) return -3;\n        if (second.prototype.constructor !== second) return -4;\n        return 1;\n      }`,\n  },\n  {\n    name: \"earlier static values survive later evaluations and independent writes\",\n    source: `\n      let sequence = 0;\n      function make() { return class { static value = ++sequence; }; }\n      export function test() {\n        const first = make();\n        const second = make();\n        if (sequence !== 2) return -1;\n        if (first.value !== 1 || second.value !== 2) return -2;\n        first.value = 17;\n        if (first.value !== 17 || second.value !== 2) return -3;\n        second.value = 29;\n        return first.value === 17 && second.value === 29 ? 1 : -4;\n      }`,\n  },\n  {\n    name: \"nonconfigurable earlier statics do not poison later definition delete or re-add\",\n    source: `\n      function make() { return class { static value = 7; }; }\n      export function test() {\n        const first = make();\n        Object.defineProperty(first, \"value\", {\n          value: 41, writable: false, enumerable: true, configurable: false\n        });\n        const second = make();\n        const before = Object.getOwnPropertyDescriptor(second, \"value\");\n        if (!before || before.value !== 7 || before.writable !== true ||\n            before.enumerable !== true || before.configurable !== true) return -1;\n        if (!delete second.value) return -2;\n        if (Object.prototype.hasOwnProperty.call(second, \"value\")) return -3;\n        if (!Object.prototype.hasOwnProperty.call(first, \"value\")) return -4;\n        Object.defineProperty(second, \"value\", {\n          value: 73, writable: true, enumerable: true, configurable: true\n        });\n        const earlier = Object.getOwnPropertyDescriptor(first, \"value\");\n        if (!earlier || earlier.value !== 41 || earlier.writable !== false ||\n            earlier.configurable !== false) return -5;\n        return first.value === 41 && second.value === 73 ? 1 : -6;\n      }`,\n  },\n  {\n    name: \"reentrant evaluation keeps the suspended outer constructor and static store\",\n    source: `\n      let depth = 0;\n      let inner;\n      function initialValue() {\n        if (depth++ === 0) {\n          inner = make();\n          return 11;\n        }\n        return 22;\n      }\n      function make() { return class { static value = initialValue(); }; }\n      export function test() {\n        const outer = make();\n        if (depth !== 2) return -1;\n        if (outer.value !== 11 || inner.value !== 22) return -2;\n        if (outer === inner || outer.prototype === inner.prototype) return -3;\n        inner.value = 31;\n        return outer.value === 11 && inner.value === 31 ? 1 : -4;\n      }`,\n  },\n] as const;\n\nfor (const optimize of [0, 2] as const) {\n  for (const fixture of cases) {\n    it(`${fixture.name} O${optimize}`, async () => {\n      // Both sources have module/strict semantics. This native oracle neither\n      // consults compiler output nor substitutes an observed baseline value.\n      const reference = new Function(\n        '\"use strict\";\\n' + fixture.source.replace(\"export function test\", \"function test\") + \"\\nreturn test();\",\n      );\n      expect(reference()).toBe(1);\n      const result = await compile(fixture.source, {\n        fileName: \"5753-class-evaluation-ownership.js\",\n        allowJs: true,\n        skipSemanticDiagnostics: true,\n        target: \"standalone\",\n        optimize,\n      });\n      expect(result.success, JSON.stringify(result.errors)).toBe(true);\n      const module = new WebAssembly.Module(result.binary);\n      expect(WebAssembly.Module.imports(module)).toEqual([]);\n      const instance = new WebAssembly.Instance(module, {});\n      expect((instance.exports.test as () => number)()).toBe(1);\n    });\n  }\n}\n",
+      "sha256": "04d6ada4874121930542824f6e5f25a257dceeb7b626ab6962bb2c819def954f",
+      "nativeExpectation": 1
+    }
+  ],
+  "runs": [
+    {
+      "label": "b212-generator-receiver-error",
+      "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5753-floor-candidate-20260927/.tmp/5753-generator-error-control.log",
+      "total": 18,
+      "pass": 1,
+      "fail": 17,
+      "logSha256": "cccc935e5662193f666d7db6112c3f3a892866c74d30639f86766950de11553f",
+      "summary": [
+        "   × computed Symbol method keeps key evaluation, name, captures, receiver and lazy resumptions O0 1956ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × different runtime Symbol keys with the same description retain distinct factories O0 617ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × abrupt computed-key evaluation runs once and prevents later properties and generator execution O0 566ms",
+        "     → expected [ { module: 'env', …(2) }, …(2) ] to deeply equal []",
+        "   × duplicate synchronous names preserve a saved factory across replacement key evaluation O0 682ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × literal duplicate synchronous names select the last independent lazy factory O0 418ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × an async spelling collision does not reject the later synchronous lazy method O0 479ms",
+        "     → expected [ { module: 'env', …(2) }, …(2) ] to deeply equal []",
+        "   × computed Symbol method keeps key evaluation, name, captures, receiver and lazy resumptions O2 4196ms",
+        "     → expected [ { module: 'env', …(2) }, …(6) ] to deeply equal []",
+        "   × different runtime Symbol keys with the same description retain distinct factories O2 3152ms",
+        "     → expected [ { module: 'env', …(2) }, …(6) ] to deeply equal []",
+        "   ✓ abrupt computed-key evaluation runs once and prevents later properties and generator execution O2  3122ms",
+        "   × duplicate synchronous names preserve a saved factory across replacement key evaluation O2 3802ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × literal duplicate synchronous names select the last independent lazy factory O2 3394ms",
+        "     → expected [ { module: 'env', …(2) }, …(6) ] to deeply equal []",
+        "   × an async spelling collision does not reject the later synchronous lazy method O2 3214ms",
+        "     → expected [ { module: 'env', …(2) }, …(2) ] to deeply equal []",
+        "   × computed class field key preserves the generator's call-time receiver O0 2221ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × class heritage preserves the generator's call-time receiver O0 894ms",
+        "     → expected [ { module: 'env', …(2) }, …(7) ] to deeply equal []",
+        "   × computed class field key preserves the generator's call-time receiver O2 4176ms",
+        "     → expected [ { module: 'env', …(2) }, …(6) ] to deeply equal []",
+        "   × class heritage preserves the generator's call-time receiver O2 3211ms",
+        "     → expected [ { module: 'env', …(2) }, …(6) ] to deeply equal []",
+        "   × dynamic Error constructor produces real named message-bearing objects 2059ms",
+        "     → expected 100 to be 1 // Object.is equality",
+        "   × borrowed own-property method receives the actual constructed Error 994ms",
+        "     → expected 100 to be 1 // Object.is equality",
+        "      Tests  17 failed | 1 passed (18)"
+      ],
+      "errorDiagnosticRows": [
+        {
+          "name": "dynamic Error constructor produces real named message-bearing objects",
+          "source": "var nativeErrors = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];\n      export function test() {\n        for (var i = 0; i < nativeErrors.length; ++i) {\n          var Ctor = nativeErrors[i];\n          var err = new Ctor('msg');\n          if (err === undefined) return 100 + i;\n          if (err === null) return 200 + i;\n          if (typeof err !== 'object') return 300 + i;\n          if (err.message !== 'msg') return 400 + i;\n          if (err.name !== Ctor.name) return 500 + i;\n          var another = new Ctor('other');\n          if (err === another || another.message !== 'other') return 600 + i;\n        }\n        return 1;\n      }",
+          "expected": 1,
+          "actual": 100
+        },
+        {
+          "name": "borrowed own-property method receives the actual constructed Error",
+          "source": "var nativeErrors = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];\n      export function test() {\n        for (var i = 0; i < nativeErrors.length; ++i) {\n          var Ctor = nativeErrors[i];\n          var err = new Ctor('msg');\n          if (err === null || err === undefined) return 100 + i;\n          if (!Object.prototype.hasOwnProperty.call(err, 'message')) return 200 + i;\n          if (Object.prototype.hasOwnProperty.call(err, 'missing')) return 300 + i;\n        }\n        return 1;\n      }",
+          "expected": 1,
+          "actual": 100
+        }
+      ]
+    },
+    {
+      "label": "draft-lifted-identity-generator-receiver",
+      "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5753-generator-floor-repair-20260927/.tmp/5753-generator-patch-first.log",
+      "total": 16,
+      "pass": 6,
+      "fail": 10,
+      "logSha256": "8cb819eedc6e540fec99f55704336a6b8572afcd42e397758d077bd0cac43689",
+      "summary": [
+        "   × computed Symbol method keeps key evaluation, name, captures, receiver and lazy resumptions O0 2476ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   ✓ different runtime Symbol keys with the same description retain distinct factories O0  758ms",
+        "   ✓ abrupt computed-key evaluation runs once and prevents later properties and generator execution O0  634ms",
+        "   × duplicate synchronous names preserve a saved factory across replacement key evaluation O0 724ms",
+        "     → expected -5 to be 1 // Object.is equality",
+        "   ✓ literal duplicate synchronous names select the last independent lazy factory O0  606ms",
+        "   × an async spelling collision does not reject the later synchronous lazy method O0 613ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   × computed Symbol method keeps key evaluation, name, captures, receiver and lazy resumptions O2 4421ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   ✓ different runtime Symbol keys with the same description retain distinct factories O2  3562ms",
+        "   ✓ abrupt computed-key evaluation runs once and prevents later properties and generator execution O2  3453ms",
+        "   × duplicate synchronous names preserve a saved factory across replacement key evaluation O2 3787ms",
+        "     → expected -5 to be 1 // Object.is equality",
+        "   ✓ literal duplicate synchronous names select the last independent lazy factory O2  3952ms",
+        "   × an async spelling collision does not reject the later synchronous lazy method O2 3580ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   × computed class field key preserves the generator's call-time receiver O0 2157ms",
+        "     → expected -3 to be 1 // Object.is equality",
+        "   × class heritage preserves the generator's call-time receiver O0 748ms",
+        "     → expected -3 to be 1 // Object.is equality",
+        "   × computed class field key preserves the generator's call-time receiver O2 4606ms",
+        "     → expected -3 to be 1 // Object.is equality",
+        "   × class heritage preserves the generator's call-time receiver O2 3687ms",
+        "     → expected -3 to be 1 // Object.is equality",
+        "      Tests  10 failed | 6 passed (16)"
+      ],
+      "errorDiagnosticRows": []
+    },
+    {
+      "label": "main935-error",
+      "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5753-floor-main-20260927/.tmp/5753-error-diagnostic-main.log",
+      "total": 2,
+      "pass": 0,
+      "fail": 2,
+      "logSha256": "9b677b5ecc7df8c5ea94eacdf71f108114acf77069fca916c35e74ddd6cf7e01",
+      "summary": [
+        "   × dynamic Error constructor produces real named message-bearing objects 2201ms",
+        "     → expected 100 to be 1 // Object.is equality",
+        "   × borrowed own-property method receives the actual constructed Error 761ms",
+        "     → expected 100 to be 1 // Object.is equality",
+        "      Tests  2 failed (2)"
+      ],
+      "errorDiagnosticRows": [
+        {
+          "name": "dynamic Error constructor produces real named message-bearing objects",
+          "source": "var nativeErrors = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];\n      export function test() {\n        for (var i = 0; i < nativeErrors.length; ++i) {\n          var Ctor = nativeErrors[i];\n          var err = new Ctor('msg');\n          if (err === undefined) return 100 + i;\n          if (err === null) return 200 + i;\n          if (typeof err !== 'object') return 300 + i;\n          if (err.message !== 'msg') return 400 + i;\n          if (err.name !== Ctor.name) return 500 + i;\n          var another = new Ctor('other');\n          if (err === another || another.message !== 'other') return 600 + i;\n        }\n        return 1;\n      }",
+          "expected": 1,
+          "actual": 100
+        },
+        {
+          "name": "borrowed own-property method receives the actual constructed Error",
+          "source": "var nativeErrors = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];\n      export function test() {\n        for (var i = 0; i < nativeErrors.length; ++i) {\n          var Ctor = nativeErrors[i];\n          var err = new Ctor('msg');\n          if (err === null || err === undefined) return 100 + i;\n          if (!Object.prototype.hasOwnProperty.call(err, 'message')) return 200 + i;\n          if (Object.prototype.hasOwnProperty.call(err, 'missing')) return 300 + i;\n        }\n        return 1;\n      }",
+          "expected": 1,
+          "actual": 100
+        }
+      ]
+    },
+    {
+      "label": "b212-class-evaluation",
+      "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5753-floor-candidate-20260927/.tmp/5753-class-evaluation-control.log",
+      "total": 8,
+      "pass": 0,
+      "fail": 8,
+      "logSha256": "c4f47d08ac4967f459fab45d9c6a9090481cc6a0e7652191ff64bf66b2d99631",
+      "summary": [
+        "   × one class-expression site creates distinct constructors and prototypes O0 1931ms",
+        "     → expected -1 to be 1 // Object.is equality",
+        "   × earlier static values survive later evaluations and independent writes O0 842ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   × nonconfigurable earlier statics do not poison later definition delete or re-add O0 1195ms",
+        "     → expected -1 to be 1 // Object.is equality",
+        "   × reentrant evaluation keeps the suspended outer constructor and static store O0 717ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   × one class-expression site creates distinct constructors and prototypes O2 4393ms",
+        "     → expected -1 to be 1 // Object.is equality",
+        "   × earlier static values survive later evaluations and independent writes O2 5608ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "   × nonconfigurable earlier statics do not poison later definition delete or re-add O2 5472ms",
+        "     → expected -1 to be 1 // Object.is equality",
+        "   × reentrant evaluation keeps the suspended outer constructor and static store O2 3124ms",
+        "     → expected -2 to be 1 // Object.is equality",
+        "      Tests  8 failed (8)"
+      ],
+      "errorDiagnosticRows": []
+    }
+  ],
+  "interpretation": [
+    "All fixture sources and native expectations are retained; this is diagnostic evidence, not expected-wrong-value conformance.",
+    "The initial uncommitted lifted-factory-identity draft changed closures.ts and generators-native.ts admission/registration only. It was not published; subsequent draft changes require separate reruns.",
+    "Receiver4 moved from host-import refusal to zero-import wrong result -3; the draft is not acceptable as tested.",
+    "Error2 return100 on both exact subjects before borrowed call, showing a shared simplified-source constructor defect. Full original-fixture vacuity remains unproven.",
+    "Class8 fails only on tested b212 here; no paired main class8 result is claimed.",
+    "Full IR implementation/equivalence and retirement are not certified."
+  ]
+}

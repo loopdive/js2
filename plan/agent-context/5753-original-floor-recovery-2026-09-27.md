@@ -49,8 +49,15 @@ creation-time test does not by itself prove generator invocation correctness.
 ## Next work and limits
 
 The exact 176-path main control completed: 154 pass, 22 fail, 176 unique verdicts,
-176 registered paths, zero exclusions; 507.47 seconds. The candidate176 arm is
-not yet run. This control is not a PR verdict. The paired work uses immutable worktrees
+176 registered paths, zero exclusions; 507.47 seconds. Candidate176 completed:
+38 pass, 138 fail, all 176 unique verdicts and registered paths, zero exclusions;
+559.20 seconds. The scoped pair has 129 losses and 13 gains: 124 class-property
+failures, four generator host-import refusals, and one Error failure. Full raw
+candidate rows and every changed status/error are preserved in
+`5753-original-floor-candidate176-20260927.jsonl` and
+`5753-original-floor-pair176-20260927.json`. Nonpassing-to-nonpassing differences,
+including timeouts, remain visible and are not silently classified as equal.
+The paired work uses immutable worktrees
 `.codex-worktrees/codex-5753-floor-main-20260927` and
 `.codex-worktrees/codex-5753-floor-candidate-20260927`. Per-worktree logs and
 timestamped result JSONL are retained; never delete caches, reports or fixtures.
