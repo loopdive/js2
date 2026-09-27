@@ -396,6 +396,7 @@ import {
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { fillArrayProtoSingleton, fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2; #6651 R1)
+import { prependNativeGeneratorResultPrototypeArm } from "./generators-native-protocol.js"; // (#6651 SG1)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillProxyRevokerFnMeta } from "./proxy-revoker-meta.js"; // (#5196) revoker name/length meta arm
@@ -6279,6 +6280,7 @@ export function generateModule(
     fillAnyIterNext(ctx);
     // (#6484 S3 review) `%ArrayIteratorPrototype%` for a kind-VEC `$__IterRec`.
     prependIterRecPrototypeArm(ctx);
+    prependNativeGeneratorResultPrototypeArm(ctx); // (#6651 SG1) %Object.prototype%
 
     // (#2922) Rebuild `__combinator_to_vec`'s user-iterable arm with the same
     // closed-struct dispatchers (identical five-dispatcher condition, so the
@@ -11578,6 +11580,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
     profilePhase("prepend-iter-rec-prototype-arm", () => prependIterRecPrototypeArm(ctx));
+    profilePhase("prepend-gen-result-proto-arm", () => prependNativeGeneratorResultPrototypeArm(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
 
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).

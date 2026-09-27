@@ -169,6 +169,22 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-09-26 — lane SC1 (a generator body could not see a `var` a
+  # PARAMETER-LIST direct eval introduced; receipt at the end of this file).
+  # `src/codegen/generators-native.ts` +20 (path already listed below, restated
+  # here because a grant is only honoured when the PR modifies the issue file that
+  # carries it — the stranded-grant rule). Both mechanisms live in
+  # `src/codegen/direct-eval-environment.ts`, which is under budget and already
+  # owns the direct-eval reification this reuses: the name collector
+  # (`collectParamScopeEvalVarNames`, with its own narrow constant-string resolver
+  # rather than an import cycle back into `eval-inline.ts`) and the boxed-local
+  # reader (`readPossiblyBoxedLocal`). What is left in the god-file is two call
+  # sites that cannot move: the spill registration has to sit in
+  # `buildNativeGeneratorPlan` beside the destructuring-param registration it
+  # copies (it writes that function's local `patternParamSpillTypes` /
+  # `undefWidenedPatternBindings` / `addSpill`), and the pack-site read has to sit
+  # inside the `struct.new` operand sequence, where the value is pushed. The first
+  # cut inlined both and cost +41.
   # 2026-09-26 — lane GEN1 (a rest binding inside a nested pattern was given TWO
   # local slots; see the receipt at the end of this file).
   # `src/codegen/destructuring-params.ts` +25 (path already listed below,
@@ -182,6 +198,34 @@ loc-budget-allow:
   # with — written anywhere else it is a fact about a slot the reader cannot see.
   # 4 of the 25 lines are the import statement prettier splits once it names a
   # fourth symbol from `tuple-rest.js`. Inlined, the same change was +56.
+  # 2026-09-26 — lane SG1 (generator singletons: §27.5.3 `executing` guard,
+  # §27.5.1.5 iteration-result prototype, §19.2.1.3 eval var/lex conflict in a
+  # generator body). Two god-files, +13 and +3. The two new MECHANISMS live in
+  # subsystem modules, not here: the `%Object.prototype%` arm for the iteration
+  # result is ~90 lines in `generators-native-protocol.ts`, and the syntactic
+  # scope walk is ~63 lines in `direct-eval-environment.ts` (the module that
+  # already owns `currentDirectEvalLexicalBindingNames`, the function whose empty
+  # answer the walk disambiguates). `generators-native.ts` is net **+0** — the
+  # gate decoupling was rewritten to occupy the same two lines and its rationale
+  # folded into the adjacent comment block.
+  #   - `src/codegen/expressions/eval-inline.ts` +13: an import that prettier
+  #     splits across 5 lines once it names a third symbol, one optional
+  #     parameter on `foldedEvalLowerLexicalCollision` with the 3 comment lines
+  #     saying what its absence means, the 2-line fallback expression, and the
+  #     2 call sites that now pass the eval call node. What cannot move is the
+  #     call: `varNames` and `fctx` are built inside `tryStaticEvalInline` and
+  #     the §EvalDeclarationInstantiation decision is read a few lines later, so
+  #     the "which lexical names are intervening" question has to be answerable
+  #     at that point. Inlined here the same change was +73.
+  #   - `src/codegen/index.ts` +3: the import plus the ONE finalize call, at each
+  #     of the two finalize entry points (`generateModule` /
+  #     `generateMultiModule`). Two entry points is this file's established
+  #     pattern for a prepend-an-arm phase — the neighbouring
+  #     `prependIterRecPrototypeArm` (#6484 S3) is wired identically — and the
+  #     arm must run at both or a multi-module compile silently keeps the old
+  #     `null` answer.
+  - src/codegen/expressions/eval-inline.ts
+  - src/codegen/index.ts
   # 2026-09-26 — lane C1 (§15.7 own `constructor`). Two god-files, +12 and +10.
   #   - `src/codegen/object-ops.ts` +12: 6 comment lines and one 4-line `if` that
   #     adds `"constructor"` to the two own-key sets. The RULE and all of its
@@ -770,6 +814,28 @@ loc-budget-allow:
   # `dataview-native.ts` +17 (the callable disjunct of the §23.2.5.1 object-arm
   # guard; that guard exists only inside `emitTaDynCtorConstructFromLocals`).
 func-budget-allow:
+  # 2026-09-26 — lane SC1: `buildNativeGeneratorPlan` +15 as the gate measures it
+  # (path already listed below, restated per the stranded-grant rule), of which 9
+  # are the comment
+  # stating §10.2.11's step 20 → step 28 `varEnv` rule and why the spill is typed
+  # `externref` and undef-widened. The code is a 5-line `for` that registers the
+  # eval-introduced names exactly as the destructuring-param loop 80 lines above
+  # registers pattern bindings, and it cannot move behind a seam for the same
+  # reason that loop cannot: it writes three collections that are locals of this
+  # function and are read by its own spill-typing pass further down. The collector
+  # it calls, and the whole argument, live in `direct-eval-environment.ts`.
+  # 2026-09-26 — lane SP1, STRANDED-GRANT RESTATEMENT ONLY, not new growth.
+  # `src/codegen/object-runtime.ts::fillClosedStructExternGetArms` is 539 > 519
+  # (+20) on `origin/main` as of this branch's base; the growth landed with
+  # another lane's PR and its rationale lives in that lane's issue file, which
+  # this change-set does not modify. SP1 does not touch `object-runtime.ts` at
+  # all (its diff is `closure-prototype-edge.ts` + one new test file), and the
+  # merge-base run of `check-func-budget` is clean — the breach appears ONLY
+  # under `LOC_GATE_BASE=origin/main`, i.e. CI's merge-preview base. Restated
+  # here per the stranded-grant rule so the gate can see the allowance from a
+  # file this change-set does touch. Remove once main's post-merge baseline
+  # refresh absorbs it.
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
   # 2026-09-26 — lane GEN1: `destructureParamArray` +20 (path already listed
   # below, restated per the stranded-grant rule). The growth is the one arm of
   # this function's tuple-struct lane that chooses the recursion's element type,
@@ -779,6 +845,19 @@ func-budget-allow:
   # (`patternBindsRestAtAnyDepth`) and the whole WAT-verified rationale live in
   # `src/codegen/tuple-rest.ts`. Splitting the function is out of this slice's
   # scope and would move code the slice does not otherwise touch.
+  # 2026-09-26 — lane SG1. Three functions, +1 line each — the minimum a
+  # prepend-an-arm phase and one extra argument can cost.
+  #   - `tryStaticEvalInline` +1: the reflowed
+  #     `foldedEvalLowerLexicalCollision(..., expr)` call. The predicate itself
+  #     moved OUT of this file into `direct-eval-environment.ts`; this is the
+  #     argument that reaches it.
+  #   - `generateModule` / `generateMultiModule` +1 each: the single
+  #     `prependNativeGeneratorResultPrototypeArm(ctx)` finalize call, beside the
+  #     `prependIterRecPrototypeArm` it mirrors. It has to be in both, or a
+  #     multi-module compile keeps answering `null` for an iteration result.
+  - src/codegen/expressions/eval-inline.ts::tryStaticEvalInline
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
   # 2026-09-26 — lane C1 (§15.7 own `constructor`). One function, +12 lines, of
   # which 6 are comment: `compilePropertyIntrospection` gains the single `if`
   # that admits `"constructor"` into its own-key sets. The predicate itself is a
@@ -13880,3 +13959,712 @@ exit **1** on five files this branch never touches:
 still records 2509 — so the diff-against-`origin/main` reads this branch's
 inherited copy as growth. Both gates exit **0** against this branch's own base.
 The dispatcher's catch-up merge of `origin/main` resolves it; nothing to fix here.
+
+## Lane SG1 receipt — generator singletons (2026-09-26)
+
+Branch `issue-6651-sg1-generator-singletons`, base `807812e182`. Batched
+because cost-per-fix in this bucket is cost-per-control-run, not cost-per-line.
+
+### Rows fixed — +8 standalone, +3 host, 0 losses
+
+**ES2015-tagged subset: 6 of the 8 standalone rows.** Each carries
+`features: [generators]` (two also `let`), so `classifyEdition` = 2015. The two
+`AsyncGeneratorPrototype` rows carry `features: [async-iteration]` ⇒ **ES2018**,
+free collateral from cause 2, not ES2015 credit.
+
+| row | target | cause |
+| --- | --- | --- |
+| `GeneratorPrototype/next/from-state-executing` | standalone | 1 |
+| `GeneratorPrototype/return/from-state-executing` | standalone | 1 |
+| `GeneratorPrototype/throw/from-state-executing` | standalone | 1 |
+| `GeneratorPrototype/next/result-prototype` | standalone | 2 |
+| `AsyncGeneratorPrototype/next/iterator-result-prototype` (ES2018) | standalone | 2 |
+| `AsyncGeneratorPrototype/return/iterator-result-prototype` (ES2018) | standalone | 2 |
+| `language/statements/generators/scope-body-lex-distinct` | **both** | 3 |
+| `language/expressions/generators/scope-body-lex-distinct` | standalone | 3 |
+| `language/expressions/function/scope-body-lex-distinct` | host | 3 |
+| `language/eval-code/direct/var-env-lower-lex-non-strict` | host | 3 |
+
+`next/from-state-executing` was **not** in the dispatch list and was not a wrong
+answer — it was unbounded recursion. It came free with the same field.
+
+### Cause 1 — §27.5.3 GeneratorValidate: the `executing` field was never minted
+
+Recorded as "the executing mechanism is missing". It was **not** missing. The
+guard `nativeGeneratorExecutingCheck` and its 1-on-entry / 0-on-every-exit
+maintenance already existed and were already wired at all five entry points
+(`generators-native.ts:6067`, `generators-native-consumer.ts:150/187/198/709`).
+Every one of those readers is a silent no-op when `info.executingFieldIdx ===
+undefined`, and the field was pushed only when `nativeDelegates` was true —
+i.e. only for a generator that carries a `yield *` / `for-of-step` site. A plain
+generator therefore had no re-entrancy guard at all.
+
+`nativeDelegates` could not simply be widened: it *also* reserves the delegation
+runtime helpers (`ensureNativeDelegatedResultHelpers`). Fix introduces a separate
+`executingFieldIdx` condition (`noJsHostTarget(ctx)`) and leaves `nativeDelegates`
+untouched. The field stays the **last** push into `stateFields`, so no existing
+field index moves — checked against the `frame-core.ts` ABI
+(`STATE/SENT/MODE/ABRUPT/ERROR` + `PARAM_FIELD_OFFSET`) and the spill/delegation
+slots that are appended after it.
+
+Host: `return`/`throw` already passed and still pass; `next` is unchanged (the
+host lane has its own `__gen_*` substrate). Host net +0 for this cause.
+`src/codegen/generators-native.ts`, net **+0 lines**.
+
+### Cause 2 — §27.5.1.5 CreateIterResultObject has no `[[Prototype]]`
+
+A native generator's result is a closed WasmGC struct
+(`__NativeGeneratorResult_<kind>`, one per element kind, #2171) with no `$proto`
+field, so `Object.getPrototypeOf(g.next())` answered `null` while
+`hasOwnProperty("value")` already answered off the struct shape.
+
+**First attempt was wrong and is recorded here so nobody repeats it.** A static
+fold in `__getPrototypeOf`'s caller, keyed on the compiled argument's `ValType`,
+never fired: traced, the corpus spelling compiles the argument to a bare
+`externref` with `typeIdx: undefined`, because the binding is widened before the
+call. Reverted from a file copy and rewritten as a finalize-time **runtime** arm.
+
+`prependNativeGeneratorResultPrototypeArm` (new, in
+`generators-native-protocol.ts`, +91) prepends to `__getPrototypeOf` one
+`ref.test` per distinct `__NativeGeneratorResult_*` struct type, answering the
+`OBJECT_PROTO_SINGLETON` — the singleton, so `=== Object.prototype` holds — and
+**falling through** when the singleton is null rather than returning null. Same
+"prepend an arm on a native at finalize" shape as `prependIterRecPrototypeArm`
+(#6484 S3), which is the template. Three narrowings: standalone/wasi only, the
+struct-name screen is deduped through `ctx.typeIdxToStructName` so an aliased
+name cannot emit two arms, and it no-ops when either `funcMap` lookup misses.
+
+Wired at both finalize sites in `index.ts` (`generateModule` and
+`generateMultiModule`), +3 lines total.
+
+### Cause 3 — §19.2.1.3 step 5.d: the pre-pass never reaches a resume function
+
+The direct-eval binding pre-pass populates `directEvalBindingNames` /
+`directEvalActivationBindings` while lowering a function **declaration**. A
+generator body does not lower as one — it compiles into a synthetic resume
+function (`__gen_resume_<g>`), which never receives the pre-pass. So
+`currentDirectEvalLexicalBindingNames(fctx)` answered the **empty set**, the
+var/let collision test found nothing, and the step-5.d SyntaxError was never
+raised.
+
+What localised it: the plain-function and arrow members of the same five-row
+test262 family PASSED. A defect in the collision test itself would have taken
+all five.
+
+**Correction to the dispatch brief:** it describes `scope-body-lex-distinct` as
+"an early SyntaxError that should not be raised". It is the opposite — a
+**runtime** SyntaxError that **should** be raised and was not. Lane GEN1's record
+was right.
+
+The empty answer is ambiguous between "no lexical bindings here" and "this
+lowering never got the pre-pass", and only the empty case is ambiguous. So the
+fallback fires *only* then: `enclosingLexicalDeclaredNames`
+(`direct-eval-environment.ts`, +71 — the module that already owns
+`currentDirectEvalLexicalBindingNames`) walks the AST outward from the `eval`
+call collecting `let`/`const`/`class` names, stopping at the nearest
+function-like ancestor *after* scanning its body block. A syntactic read is sound
+here because a SyntaxError decision needs no reified environment — nothing is
+looked up, only named. `eval-inline.ts` +13: the two `tryStaticEvalInline` call
+sites pass the `ts.CallExpression` through.
+
+### Dropped, with the cause named — not papered over
+
+- **`generator-property-desc` / `name-property-desc` (closed-struct `delete`
+  visibility).** `delete` on a closed struct clears the field but leaves it
+  *visible*: `hasOwnProperty` answers off the struct shape, not off a liveness
+  bit. Proved `clearField` genuinely executes by injecting an unconditional
+  `unreachable` at its head. Fixing visibility first would violate #4098's
+  ordering law — *own-property VISIBILITY cannot ship before own-property
+  DELETABILITY* — which is what the −684 receipt bought. Needs the instance
+  tombstone substrate, not a patch here.
+  *Methodology note:* four hand-written TS probes all PASSED; the row only
+  reproduces through `runTest262File` (harness-assembled `verifyProperty` with
+  captured primordials). A hand probe is not a reproduction for a
+  `propertyHelper` row.
+- **`GeneratorFunction/instance-length`, `instance-name`.** These call
+  `%GeneratorFunction%` as a constructor; that is CreateDynamicFunction, which
+  `generator-function-intrinsic.ts` documents as out of scope under
+  "## What is NOT modelled". The callee is fully dynamic. Substrate change —
+  dropped per the brief.
+- **`yield-star-before-newline`.** Still real, still a #2170 delegation-slot
+  layout/emit disagreement: `local.tee[0] expected (ref null 90), found
+  ref.as_non_null of (ref eq)`. Compile-time invalid Wasm, not a semantics bug.
+  Pinned spec-wrong in the test file.
+
+**Not reached** (time, after the three causes above landed): the two
+`scope-*param-elem-var-close` rows, `scope-gen-meth-param-rest-elem-var-close`,
+and GEN1's `[[...x] = "ab"]` residual in
+`tests/issue-6651-gen1-nested-rest-binding-slot.test.ts` — that pin is untouched
+and still valid.
+
+### Control run — one wide run, both targets, per-row set diff
+
+1,909 rows: the union of the three blast radii —
+`language/{statements,expressions}/generators/` (556),
+`built-ins/GeneratorPrototype/` (61), `built-ins/GeneratorFunction/` (23),
+`language/expressions/object/method-definition/` (303),
+`built-ins/Object/getPrototypeOf/` (39), `built-ins/Reflect/getPrototypeOf/`
+(10), `language/eval-code/` (816), `built-ins/eval/` (10),
+`built-ins/AsyncGenerator{Function,Prototype}/` (71),
+`class/definition/methods-gen` (17), the 5 `scope-body-lex-distinct` rows.
+Lane: `runTest262Chunk` from a gitignored `tests/probe-sg1.test.ts`,
+`TEST262_IT_TIMEOUT_MS=120000`, forks pool 2.
+
+| | base | after | Δ |
+| --- | --- | --- | --- |
+| standalone | 1706 pass / 127 fail / 76 CE | 1714 / 119 / 76 | **+8 / −0** |
+| host | 1476 pass / 433 fail | 1479 / 430 | **+3 / −0** |
+
+Per-row diff both ways: gained as tabled, **LOST 0**, other-status-change 0,
+row sets identical (no only-in-base / only-in-after). Both sides are runs this
+lane executed on this box, not a joined committed baseline.
+
+**The revert-key check earned its keep.** After the base run I rebuilt the fixed
+tree and the provider key came back `e9256d9b023eed79`, not the
+`01e49a6dab6e048d` the first pair of "after" runs had printed. Cause: the
+LOC-budget refactor (moving the scope walk out of `eval-inline.ts`) landed while
+the first standalone run was in flight, so **both** original after-runs measured
+bundle `d0fb81559752e8d0` — behaviourally the same tree, textually not the
+committed one. Both were re-run on the committed tree and reproduced the same
+numbers and the same per-row sets. Keys, all three printed by the provider build
+and by the worker banner: base `b11ae67b59e4dcf1` (bundle `028969b32b131a40`),
+committed `e9256d9b023eed79` (bundle `2810c842b98277d8`).
+Do not edit `src/` while a control run is in flight — the run reads the bundle,
+not the tree, so the mismatch is silent.
+
+### Tests
+
+`tests/issue-6651-sg1-generator-singletons.test.ts` — 15 cases, all passing on
+the committed tree: 3 + 1 control for the executing guard, 2 + 1 control for the
+iteration-result prototype, 2 + 3 controls for the eval collision, 3 residual
+pins. Needs `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`; at the default heap the fork
+OOMs at ~510 MB before running a case (the known `issue-tests` OOM, not a
+failure).
+
+The eval cases carry `sloppy: true`, which sets
+`inferModuleStrictArguments: false`. **That flag is load-bearing, not tidiness:**
+the vitest module lane is strict, the collision check is gated on
+`!evalIsStrict`, and without it all five eval cases — including the control that
+mirrors a passing test262 row — are vacuously green.
+
+### Gates — each run bare, exit code read directly
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 · `check-host-import-policy` 0 ·
+`check-compiler-boundaries --mode inventory --base HEAD^1` 0 · `typecheck` 0.
+No new `src/` file, so no `compiler-boundaries.json` registration. No
+`scripts/*-baseline.json` touched.
+
+Growth: `eval-inline.ts` +13, `index.ts` +3, and three functions +1/+2, all
+granted dated above in this file. `generators-native.ts` is net **+0** — the gate
+decoupling was rewritten to occupy the same two lines, with its rationale folded
+into the adjacent comment block at that block's original length, rather than
+taking a grant for a god-file.
+
+**Both budget gates fail when re-run with `LOC_GATE_BASE=origin/main`
+(`d8786be299`), on files this diff does not touch:** `closure-exports.ts` +1,
+`registry/imports.ts::addUnionImportsAsNativeFuncs` +8,
+`expressions/calls.ts::tryEmitInlineDynamicCall` +2,
+`closure-exports.ts::emitClosureCallExportN` +1 / `…MethodCallExportN` +1. That
+is main drift between base `807812e182` and the current tip; it belongs to the
+integrator's catch-up merge, which this lane was told not to perform.
+---
+
+## Lane SC1 receipt — the `scope-*param-*elem-var-close` family (2026-09-26)
+
+**Count first, and the family is not a destructuring family at all.** Every one
+of the 14 rows whose filename matches
+`scope-*param-*elem-var-close` is a **sloppy direct `eval` in a formal
+parameter's initializer that introduces a `var`**, asserted visible both to
+closures built in the parameter list and to the function body. Nothing in them
+turns on destructuring; the `elem` in the name is the pattern the harness happens
+to use.
+
+| | rows |
+| --- | ---: |
+| filename-matched candidates (`scope-*param-*elem-var-close`) | 14 |
+| of those, already passing on standalone | 6 |
+| of those, failing on host too (not a standalone gap) | 5 |
+| of those, **standalone-only** (not-pass on standalone, pass on host) | **3** |
+| **standalone rows FIXED here** (measured, per-row set diff) | **3** |
+| — of which standalone-only | 2 |
+| — of which also red on host, and now green on BOTH axes | 1 |
+| **attempted and DROPPED** | **1** (`expressions/object/scope-gen-meth-param-rest-elem-var-close`, the third standalone-only row) |
+
+**ES2015-tagged subset: all 3 gained rows and the 1 dropped row carry
+`features: [generators]` and no later-edition tag**, so `classifyEdition`'s
+highest-mapped-year rule puts every one of them in ES2015. Checked per row, not
+inferred from the directory — so the ES2015 subset here is the whole set, 3 of 3.
+
+The three gained rows:
+
+| row | standalone | host |
+| --- | --- | --- |
+| `expressions/generators/scope-param-elem-var-close` | fail → **pass** | pass → pass |
+| `expressions/object/scope-gen-meth-param-elem-var-close` | fail → **pass** | pass → pass |
+| `statements/generators/scope-param-elem-var-close` | fail → **pass** | fail → **pass** |
+
+The first two are standalone-only rows the brief named. The third was red on both
+axes and the same fix closes both, so it is a host gain as well — the only one.
+
+### Causes, one line each
+
+| rows | cause | spec |
+| ---: | --- | --- |
+| 3 | A native-lowered generator's BODY could not see a `var` introduced by a direct eval in its own PARAMETER list. The binding is created by the static-eval-inline splice (#1163, `hoistVarDeclarations`) as a local of the function being compiled — correct for a plain function, but a generator evaluates its formals in the FACTORY and runs its body in a separate RESUME function, so the body's read fell through to the outer binding. **FIXED.** | §10.2.11 step 20 (separate parameter environment) → step 28 `varEnv`; §19.2.1.1 PerformEval |
+| 1 | `scope-gen-meth-param-rest-elem-var-close` is a COMPILE ERROR, and neither eval nor destructuring is involved: a **rest parameter on any generator** fails `isNativeGeneratorCandidate`'s `param.dotDotDotToken` bail (documented there as the #2920/#3386 "separate follow-up"), which routes to the host-generator eager-buffer path and leaks `env::__create_generator` & co. **DROPPED** — see below. | §10.2.11 step 21.b / §27.5 |
+
+### What `functionMayReachDirectEval` cannot see, and the disproof probe
+
+`functionMayReachDirectEval` / `functionOwnScopeMayReachDirectEval` both start
+their walk at `decl.body`, by construction — so an `eval` that appears only in a
+formal's initializer is invisible to every existing reification. That is why the
+gap had no owner.
+
+The path that DOES create the binding was proved rather than assumed, per the
+method rule: an unconditional `throw` at the top of `compileInlinedEvalStatements`
+turned all four probe shapes (generator expression, generator declaration, plain
+function expression, plain function declaration) into
+`SC1_PROBE_static_eval_inline_reached`. Every one of them goes through the
+static-inline splice.
+
+Three probes localised the failure, and each of them corrects a plausible wrong
+guess:
+
+- **It is not about closures.** `got = x` read DIRECTLY in the generator body
+  fails identically. The `probe1`/`probe2` closures built in the PARAMETER list
+  were already correct on the base tree; only `probeBody` was wrong.
+- **It is not about destructuring.** The minimal repro has no pattern at all:
+  `(function*(_ = eval('var x = "inside";')) { got = x; yield 1; }()).next()`.
+- **It is not about eval-in-generators.** `eval` in the generator BODY was already
+  correct — there the splice runs inside the resume function itself.
+
+### The fix
+
+`collectParamScopeEvalVarNames` (in `src/codegen/direct-eval-environment.ts`,
+which already owns the #2925 direct-eval reification) parses the constant-string
+argument of each direct eval in the parameter list and returns the `var` names it
+hoists, minus the names `decl` itself binds. `buildNativeGeneratorPlan` registers
+those names as native-generator SPILLS exactly as it registers a
+destructuring-param binding (#3386): the factory packs the value into the spill
+field at `struct.new` and the resume function's ordinary spill-load loop
+rehydrates it on every entry, so the binding also survives a suspension.
+
+Three details are load-bearing and each is pinned in
+`tests/issue-6651-sc1-param-scope-eval-var.test.ts`:
+
+- **The factory must DEREFERENCE a boxed local.** A parameter-list closure that
+  captures the name boxes it into a one-field ref cell (`boxedCaptures`), and
+  packing the cell stores the carrier where the resume function expects a value.
+  `readPossiblyBoxedLocal` does the read, with the same two-sided staleness guard
+  `reifyCurrentDirectEvalBindings` uses (metadata AND live local type must agree).
+- **The spill is `externref` and undef-widened.** The checker resolves this name
+  to the OUTER declaration, whose type says nothing about the eval-created value,
+  so a resume-state read must skip the checker-type unbox narrowing.
+- **The constant-string resolver is deliberately narrow** — string literal,
+  substitution-free template, `+` of those. A wider resolver would be worse than
+  useless: naming a binding the splice does not actually create would shadow the
+  outer binding with an inert frame slot. Under-approximating only leaves a row at
+  today's answer, and the non-constant case is pinned in that state.
+
+The change is **not** standalone-gated (the plan builder runs in both lanes), so
+host was measured, not assumed.
+
+### Dropped: the rest-parameter bail, and why the trade is bad
+
+`scope-gen-meth-param-rest-elem-var-close` needs `function* g(...a)` to lower
+natively. Measured scope of lifting that bail:
+
+- 54 corpus rows have a genuine generator REST PARAMETER (TS-parser check, not a
+  regex — a rest BINDING ELEMENT inside a pattern param is a different thing and
+  already lowers natively). 48 already pass; the 6 that do not are exactly this
+  `scope-*param-rest-elem-var-{open,close}` family, and only **1** of those 6 is
+  host-passing.
+- So the bail costs **1 standalone-only row**, and the other 5 need a separate
+  shared front-end fix (their host failures are `dereferencing a null pointer`,
+  a different bug).
+- Lifting it is not local: it needs the `dotDotDotToken` bail removed from BOTH
+  shape gates (`isNativeGeneratorCandidate`, `isNativeGeneratorExpressionShape`),
+  the declaration site's generator branch taught the vec-typed rest lowering plus
+  the `ctx.funcRestParams` registration it currently skips, and the plan builder
+  taught to spill the rest identifier — and it changes the lowering path for
+  rest-param generators in the class / object-literal / fn-expr / declaration
+  lanes on the HOST target as well as standalone.
+
+One row against a four-site change with that blast radius is not a trade this
+lane can justify, and it is not something to guess at: the bail's own comment
+already calls it a separate follow-up. Pinned in its current state (the bare
+`function* g(...a){}` compile error, plus the two controls that localise it to
+`dotDotDotToken` meeting `*`) so a later lane lifting it gets a failing assertion
+here rather than moving an unrecorded boundary.
+
+### Nearby residuals this lane deliberately did not take
+
+- **The `-var-open` twins** (`scope-*param-elem-var-open`: 3 non-rest rows, plus 3
+  more behind the rest bail) require a closure built BEFORE the eval, earlier in
+  the same parameter list, to see the eval's binding. All 3 non-rest ones fail on
+  HOST too and were unmoved by this change (they are in the belt), so the gap is
+  shared front-end ORDERING — the reification would have to run before the
+  defaults, not after — not the generator frame. Out of this fix's mechanism.
+- **`statements/generators/scope-param-elem-var-close` on HOST** stays red. This
+  slice makes it pass on standalone; the host failure is a different path.
+- **The GEN1 pin was NOT flipped.** `[[...x] = "ab"]` — a rest over a STRING
+  default — still answers a non-2 length on standalone;
+  `tests/issue-6651-gen1-nested-rest-binding-slot.test.ts` is green unmodified on
+  this tree, so the recorded residual is unchanged and correctly still recorded.
+
+### Control run
+
+Authoritative lane: `tests/test262-shared.ts::runTest262Chunk` from a gitignored
+`tests/probe-sc1.test.ts` under `TEST262_PATH_FILTER_FILE`,
+`TEST262_IT_TIMEOUT_MS=120000`, `COMPILER_POOL_SIZE=2`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, `--isolate`, forks max 2. All three
+artifacts (`build:compiler-bundle` → `build:runtime-bundle` →
+`scripts/build-quickjs-eval-provider.mjs`) rebuilt after every `src/` edit and on
+both sides of the A/B. **Shard-completion manifest checked on every sweep quoted
+below** (`registeredTests = recordedRows = canonicalVerdicts`,
+`allCallbacksSettled: true`).
+
+Adapter keys, and the reason the run below was done TWICE:
+
+| tree | compiler bundle | QuickJS adapter key | sweeps |
+| --- | --- | --- | --- |
+| base, first build | `af727ccac8594733` | `458095b247c54f72` | — |
+| fix, first cut | `e463ca909305e4ae` | `ea873bd2432f2fb2` | first A/B |
+| base, after revert (re-derived) | `af727ccac8594733` | `458095b247c54f72` | **base standalone + base host** |
+| **fix, committed tree** | `266ef5a51a332dc6` | `5c6213ca49a41d3b` | **fix standalone + fix host** |
+
+The revert was exact — re-deriving the base build reproduced both the bundle hash
+and the adapter key, byte for byte. The re-derivation on the COMMITTED tree then
+caught a real mismatch: after the first A/B the change was refactored (the two
+mechanisms moved into `direct-eval-environment.ts` to keep the god-file at +20),
+which moved the bundle to `266ef5a51a332dc6`. The first "after" sweeps therefore
+measured a tree that is not the one being handed over, so both were re-run on the
+committed tree and only those numbers are quoted. They reproduce the first cut's
+verdicts exactly, but that is a result, not an assumption.
+
+One caveat stated plainly: the compile itself comes from `src/` (the runner
+imports `../src/index.js`); the bundle/adapter key pins the QuickJS eval PROVIDER,
+which is the artifact whose staleness silently zeroes an eval-dependent lane.
+
+Belt: 635 rows = the 116 rows whose source has a generator with `eval` in its
+parameter list (the direct blast radius, TS-parser selected) + 59 further
+`scope-*param*` rows + 460 generator `dstr` rows whose element default builds a
+closure (the shapes that can BOX a packed pattern-param binding, which is what
+the pack-site change touches).
+
+Per-row set diff, not a count comparison. `LOST` is stated explicitly in both
+lanes and is **0** in both.
+
+**standalone — 635-row belt** (`registeredTests = recordedRows =
+canonicalVerdicts = 635`, `allCallbacksSettled: true` on both sides)
+
+| | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| base | 610 | 19 | 6 |
+| fix | **613** | 16 | 6 |
+
+| change | row |
+| --- | --- |
+| GAINED `fail → pass` | `test/language/expressions/generators/scope-param-elem-var-close.js` |
+| GAINED `fail → pass` | `test/language/expressions/object/scope-gen-meth-param-elem-var-close.js` |
+| GAINED `fail → pass` | `test/language/statements/generators/scope-param-elem-var-close.js` |
+| **LOST** | **none (0)** |
+| other status changes / set mismatches | none (0) |
+
+**host — the same 635-row belt** (same manifest identity on both sides)
+
+| | pass | fail |
+| --- | ---: | ---: |
+| base | 609 | 26 |
+| fix | **610** | 25 |
+
+| change | row |
+| --- | --- |
+| GAINED `fail → pass` | `test/language/statements/generators/scope-param-elem-var-close.js` |
+| **LOST** | **none (0)** |
+| other status changes / set mismatches | none (0) |
+
+**standalone — the 14-row filename family in isolation**, measured first, before
+any edit, and again after: `6 pass / 5 fail / 3 CE` → `9 pass / 2 fail / 3 CE`,
+the same three rows gained, 0 lost. The base run reproduced the committed
+`test262-standalone-current.jsonl` artifact on all 14 rows with zero status drift,
+and the HOST axis was RUN on the same commit the same day rather than joined from
+the committed host baseline.
+
+Unit A/B, `tests/issue-6651-sc1-param-scope-eval-var.test.ts` (16 cases) plus
+`tests/issue-6651-gen1-nested-rest-binding-slot.test.ts` (8 cases, unmodified):
+**6 RED on reverted sources, 24/24 GREEN with the fix.** Every case labelled
+`[green on base too]` is green on both sides, which is what makes it a control.
+The GEN1 pin needed no flip — its recorded residual (`[[...x] = "ab"]`, a rest
+over a STRING default) is unchanged on this tree.
+
+### Gates
+
+Each run BARE, never piped:
+
+| gate | result |
+| --- | --- |
+| `node scripts/check-loc-budget.mjs` | OK — `generators-native.ts` 6528 → 6548 (+20), granted by this file |
+| `node scripts/check-func-budget.mjs` | OK — `buildNativeGeneratorPlan` 2264 → 2279 (+15), granted by this file |
+| `node scripts/check-coercion-sites.mjs` | OK — no net vocabulary growth |
+| `npm run -s check:oracle-ratchet` | OK — `getTypeAtLocation +0`, `ctx.checker +0` |
+| `npm run -s check:dead-exports` | OK |
+| `npx tsx scripts/check-host-import-policy.ts` | OK — 0 new host imports (`src/runtime.ts` untouched) |
+| `node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base origin/main` | OK — `inventoryValid: true` (no new `src/` file, so no `compiler-boundaries.json` entry needed) |
+| `npm run -s typecheck` | OK |
+| `npx biome lint --diagnostic-level=error` on the three touched files | OK |
+| `npx prettier --write` on the three touched files | both `src/` files already canonical; the test file formatted |
+
+**Simulating CI's base (`LOC_GATE_BASE=origin/main`) — one PRE-EXISTING failure,
+not from this change, flagged for the integrator.** `check-loc-budget` passes.
+`check-func-budget` fails on
+`src/codegen/object-runtime.ts::fillClosedStructExternGetArms: 539 > 519 (+20)` —
+a file this change does not touch. `origin/main` is 16 commits ahead of this
+branch's base and SHRANK that function by 19 lines there, so the gate is comparing
+this branch's older copy against the new, smaller ceiling. Merging `origin/main`
+into the branch resolves it; it is not a grant this lane should take.
+
+### Not done
+
+- **Only the 635-row belt and the 14-row family were swept.** Nothing here may be
+  read as corpus-wide evidence.
+- **The rest-parameter bail is untouched** (1 standalone-only row, reasoned above).
+- **A non-constant eval argument is out of scope** by design, and pinned.
+## Lane SP1 receipt — species-constructor `this`, and the wrapper-prototype family (2026-09-26)
+
+**0 rows fixed. 7 rows attempted and dropped (4 ES2015-tagged). Target 2
+collapsed under measurement from "a family" to 2 rows, 1 of them ES2015.**
+One spec-correct half of the species cause is implemented, measured and
+row-neutral; it is held deliberately, because the other half turned out to
+be a different defect than the one on record and is out of this lane's reach.
+
+**NOTE FROM INTEGRATION (2026-09-27): only this receipt landed on `main` — the
+code did NOT.** The §10.2.5 MakeConstructor arm buys 0 rows today, adds +129
+lines to the standalone dynamic-property read path, and is useless until the
+value-representation half below is scheduled; the earlier RS1 lane reverted the
+same half for the same reason. It is preserved on the unmerged branch
+`issue-6651-sp1-species-and-wrapper-protos` (commit `108dda21bc`) with its own
+test and A/B copies, so whoever takes the value-representation half gets the
+prototype half for free rather than building it a third time. The findings below
+— in particular that the second half is NOT callability — are the deliverable.
+
+### The bucket, re-derived by RUNNING both axes (not by joining baselines)
+
+Every `speciesctor|species-ctor` not-pass row in the standalone baseline
+(`test262-standalone-current.jsonl`, `timestamp 27.9.2026 00:01`, 48,735 rows):
+**29**. Nine are `resizable-arraybuffer`-era (ES2022), so the live set is 20.
+Those 20 were swept on BOTH axes, same day, same filter file, authoritative lane
+(`tests/test262-shared.ts::runTest262Chunk` under `TEST262_PATH_FILTER_FILE`,
+`TEST262_IT_TIMEOUT_MS=120000`, pool 2, shard-completion manifest checked):
+
+| axis | result |
+| --- | --- |
+| standalone | **0 pass / 20 fail** |
+| host | **15 pass / 5 fail** |
+
+So **15 are standalone-only** and 5 fail on host too — including
+`subarray/speciesctor-get-species-custom-ctor-invocation.js`, which is ES2015 and
+**standalone-only for the `this` assertion** but host-failing on an earlier
+argument assertion. The committed host baseline would have mis-split this; it was
+run, not read.
+
+Grouping the 15 by their standalone error text, the `this`-assertion cause is
+exactly **7 rows** — `TypedArray/prototype/{filter,map,slice,subarray}/
+speciesctor-get-species-custom-ctor-invocation.js` plus the `BigInt` twins of
+`map`, `slice` and `subarray` — of which **4 are ES2015** (`Symbol.species,
+TypedArray`; the BigInt twins classify 2020). That confirms the 7/4 figure in the
+brief.
+
+### Cause 1 — §10.2.5 MakeConstructor is never performed for an anonymous function expression written into a property. IMPLEMENTED, row-neutral.
+
+A standalone function value's prototype object is keyed by a **compile-time
+name** (`ctx.fnctorPrototypeObject` for user fnctors, `ctx.protoGlobals` for
+classes). The species function —
+
+```js
+sample.constructor[Symbol.species] = function (count) { … };
+```
+
+— is in neither registry, so `Get(S, "prototype")` answered `undefined`.
+`__native_construct_<N>` (#3981) opens with
+`if (proto == null) proto = __extern_get(callee, "prototype")` and then
+`__object_create(proto)`, so the constructed `this` came back with **no
+`[[Prototype]]` link** and `ctorThis instanceof S` was false.
+
+`closure-prototype-edge.ts::closurePrototypeEdgeGetArm` now performs
+MakeConstructor **lazily** on that miss: after both the own-bag check and the
+#2660 M3 identity edge decline, it mints one `$Object` and defines it as the
+closure's own `prototype` (`__defineProperty_value`, flag word `0xb9` — the same
+descriptor `closure-props.ts::buildFnctorPrototypeWriteArm` writes for an explicit
+`f.prototype = v`, so a vivified property is indistinguishable from a written
+one). Storing it in the #3468 bag is what makes the operation idempotent: later
+reads hit the `hasOwn` guard and answer the SAME object, which is the identity
+`instanceof`, `Object.getPrototypeOf(new S())` and the construct driver must all
+agree on. Gated on a `ref.test` against `ctx.constructibleClosureTypeIdxs`
+(#3371), so an arrow / concise method / bound function is unreachable by
+construction, not by an ad-hoc exclusion. No string constant and no function is
+minted at fill time (the #4221 hazard): the key it defines under is the
+receiver's own `keySlot`, already proven `ref.eq` to the interned `"prototype"`.
+
+The `constructor` back-ref (§10.2.5 step 4) is deliberately **not** installed — it
+would need a second interned literal minted at FILL time. `S.prototype.constructor`
+stays absent for an anonymous property-held function, which is its pre-change
+answer, so nothing regresses.
+
+**Measured effect, on the real row.** An instrumented copy of
+`built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-invocation.js`
+was placed in the corpus and run through the authoritative lane. On the base,
+`typeof S.prototype` was `"undefined"`. After:
+
+| assertion | base | after |
+| --- | --- | --- |
+| `typeof S.prototype === "object"` | ✗ | ✓ |
+| `Object.getPrototypeOf(ctorThis) === S.prototype` | ✗ | ✓ |
+| `S.prototype.isPrototypeOf(ctorThis)` | ✗ | ✓ |
+| `ctorThis instanceof S` | ✗ | **✗ — cause 2** |
+
+It also fixes shapes outside the species family: `var A = S0; new A(2)` now
+answers `A.prototype`-linked and `t instanceof A` (bitmask 21 → 119 in
+`tests/issue-6651-sp1-closure-prototype-vivify.test.ts`).
+
+### Cause 2 — a captured `var` holding an object survives `===` but not a property store, and `instanceof` folds to false on it. NOT FIXED.
+
+**The diagnosis on record — "the closure arrives through a dynamic-view expando
+round-trip and is no longer considered callable (`__typeof_function`)" — is
+DISPROVED.** Callability is fine: `typeof S === "function"` is true on the base,
+`S(1)` returns, and with cause 1 fixed `Object.create(S.prototype) instanceof S`
+answers **true** with that same `S` as the right-hand operand. The right operand
+was never the problem.
+
+The remaining failure is on the LEFT operand, and it is a value-representation
+defect in the captured-`var` channel. Same value reached two ways inside one
+instrumented row (`--target standalone`):
+
+| expression | answer |
+| --- | --- |
+| `obs.self instanceof S` (written to a plain-object property inside the species body) | **true** |
+| `cap instanceof S` (written to a `var` captured from the enclosing function) | **false** |
+| `cap === obs.self` | **true** |
+| `(true ? cap : cap) instanceof S` | **true** |
+| `o2.v = cap; o2.v === obs.self` | **false** |
+| `cap.w = 1; cap.w` | `null` |
+
+So the read of `cap` compares equal to the raw value, yet storing it into an
+object property yields a third value, property writes to it do not stick, and
+`instanceof` answers false — while a ternary over the very same read answers
+correctly, because a ternary's join goes through `coerceType`. The value's
+identity is intact; its CARRIER is not.
+
+Three seams were checked and are **not** the fix:
+
+1. `compileInstanceOf`'s dynamic arm (`typeof-delete.ts`) uses a bare
+   `extern.convert_any`, which looked like the #5378/#6632 unbox defect. Replacing
+   it with `coerceType` changed nothing, and a compile-time trace proved the arm
+   **is never entered** for these expressions — `resolveInstanceOfRHS` declines
+   earlier and the site goes to `emitDynamicInstanceOf` →
+   `tryEmitNativeDynamicInstanceOf`. The edit was reverted.
+2. `native-dynamic-instanceof.ts`'s call-site emitter **already** routes both
+   operands through `coerceType`. Traced: it sees `{"kind":"externref"}` for
+   `obs.self`, `o2.v` and the ternary alike, so no coercion arm can distinguish
+   the true answer from the false one — the operands differ in VALUE, not in type.
+3. `cap instanceof S` and `arr[0] instanceof S` never reach that emitter at all
+   (no trace line), so they are folded earlier — consistent with the captured
+   `var`'s static type being the evolving-`any` `undefined` that
+   `isExclusivelyPrimitiveType` accepts.
+
+Closing this means fixing how an `any`-typed value crosses the captured-`var` ref
+cell, which is value-representation work, not a species or prototype fix. It is
+the blocker for all 7 rows; **cause 1 is necessary and not sufficient.**
+
+### Target 2 — the wrapper-prototype gap is 2 rows, not a family
+
+`Object(1)`, `Object("s")` and `Object(true)` do answer `Object.prototype`. The
+family that RIDES it was measured against the 27.9 standalone baseline rather
+than estimated from path names:
+
+| candidate (grep: `getPrototypeOf(Object(`, `getPrototypeOf(new {Number,String,Boolean}`, `__proto__ === {Number,String}.prototype`) | baseline |
+| --- | --- |
+| `built-ins/Number/15.7.4-1.js` | **pass** |
+| `built-ins/Number/prototype/15.7.3.1-2.js` | **pass** |
+| `built-ins/StringIteratorPrototype/next/length.js` | **pass** |
+| `built-ins/StringIteratorPrototype/next/name.js` | **pass** |
+| `built-ins/Symbol/constructor.js` | fail — `Object.getPrototypeOf(Object(Symbol('66'))).constructor` |
+
+Plus one found by scanning baseline ERROR TEXT rather than sources:
+`built-ins/Array/prototype/concat/call-with-boolean.js`
+(`Array.prototype.concat.call(true)[0] instanceof Boolean`) — and it has no
+`call-with-number` / `call-with-string` twins in the corpus.
+
+**So the measured size is 2 rows, exactly 1 of them ES2015-tagged**
+(`Symbol/constructor.js`, `features: [Symbol]`; the `concat` row carries no
+mapped feature, `classifyEdition` = legacy). The fix still lives in the #2175
+proto-index store, which is a substantial mechanism for 1 ES2015 row — priced
+here so the next lane does not re-derive it. **`tests/issue-6651-sy1-symbol.test.ts`'s
+wrapper pin was NOT flipped**, because nothing about the wrappers changed.
+
+### Control run — per-row set diff, both adapter keys
+
+Both sides built with all three artifacts in order
+(`build:compiler-bundle` → `build:runtime-bundle` →
+`scripts/build-quickjs-eval-provider.mjs`) on a file-copy A/B of
+`src/codegen/closure-prototype-edge.ts`, and both keys re-derived on the
+committed tree afterwards:
+
+| side | bundle | adapter key |
+| --- | --- | --- |
+| base (`cp .tmp/sp1/base-closure-prototype-edge.ts`) | `af727ccac8594733` | `458095b247c54f72` |
+| after (committed tree) | `a12263e76693c02c` | `1d58292cb87c95fc` |
+
+Control set: **611 rows** — every `built-ins/Function` (509), every
+`language/expressions/instanceof` (43), every `built-ins/Object/getPrototypeOf`,
+and the 20 live species rows. `--target standalone`, pool 2,
+`TEST262_IT_TIMEOUT_MS=120000`, shard-completion manifest present for both runs.
+
+| sweep | base | after | per-row diff |
+| --- | --- | --- | --- |
+| 611-row control, standalone | 532 pass / 77 fail / 2 CE | 532 pass / 77 fail / 2 CE | **0 gained, 0 LOST, 0 status-changed** |
+| the 20 species rows, standalone | 0 pass / 20 fail | 0 pass / 20 fail | **0 gained, 0 LOST** |
+
+Stated plainly: the change is **row-neutral**, not row-positive. `LOST` is zero
+on every row of the control. No host sweep was run for the after-state — the arm
+is inside `__closure_prop_get`, which is emitted only under
+`ctx.standalone || ctx.wasi`, so the gc/host lane is untouched by construction;
+that is an argument from the gate, not a measurement, and is flagged as such.
+
+### Regression test
+
+`tests/issue-6651-sp1-closure-prototype-vivify.test.ts`, 6 cases:
+**4 failed / 2 passed on reverted sources** (`expected 1 to be 63`,
+`expected 21 to be 119`, `expected 55 to be 63`, `expected 9 to be 11`) →
+**6 passed with the fix**. The two base-green ones are the negative controls that
+matter most: §15.3 (arrow / concise method / bound function must have NO
+`prototype`) and the named-fnctor identity guard (the vivify must not mint a
+SECOND prototype object for a function the compiler could name). One case pins
+the residual `new` on a property-sourced callee at today's answer (`null`).
+
+### Gates
+
+Run **bare**, all exit 0: `check-loc-budget` (net **+129**, granted by this
+file), `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`
+(getTypeAtLocation +0, ctx.checker +0), `check:dead-exports`,
+`check-host-import-policy`, `check-compiler-boundaries --mode inventory`
+(`inventoryValid: true`), `npm run -s typecheck`. CI-base simulation
+(`LOC_GATE_BASE=$(git rev-parse origin/main)`): `check-loc-budget` 0.
+`check-func-budget` under that base reports
+`object-runtime.ts::fillClosedStructExternGetArms 539 > 519` — a **stranded
+grant from another lane's just-merged PR**, in a file SP1 does not touch;
+restated in this file's `func-budget-allow` per the stranded-grant rule. No new
+file under `src/`, so `scripts/compiler-boundaries.json` is untouched; no
+`scripts/*-baseline.json` touched; `src/runtime.ts` untouched (no host-import
+line growth).
+
+### Recommendation
+
+**Do not land cause 1 alone unless the value-representation half is scheduled.**
+It is spec-correct, measured, zero-regression and required for the 7 rows, but it
+buys 0 rows today and it touches the standalone dynamic-property read. The
+brief's instruction was to land the pair; the second half is not callability and
+not a prototype question, so it needs its own slice in the value-representation
+area. Held on this branch with the receipt above so the decision is the
+integrator's.

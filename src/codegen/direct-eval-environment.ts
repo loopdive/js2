@@ -864,3 +864,192 @@ export function currentDirectEvalBindings(ctx: CodegenContext, fctx: FunctionCon
   }
   return { activation, lexical, outer };
 }
+/**
+ * (#6651 SG1) The lexically-declared names in scope at `node`, read from the
+ * AST, up to (and including) the body of the nearest enclosing function.
+ *
+ * This is the fallback for a lowering whose FunctionContext never received the
+ * direct-eval binding pre-pass. `collectDirectEvalBindingNames` is applied in
+ * `function-body.ts` (and the lifted-closure sites) to the function DECLARATION,
+ * but a native generator body is compiled into a synthetic resume function
+ * (`__gen_resume_<g>`) that is built directly, so its `fctx` has an empty
+ * `directEvalBindingNames` and `currentDirectEvalLexicalBindingNames` — whose
+ * whole test is "the live local differs from the persistent activation cell" —
+ * necessarily answers the empty set. Measured on this branch's base, standalone,
+ * for the two `generators/scope-body-lex-distinct.js` rows:
+ *
+ *     fn=f               vars=x lexical=x bindingNames=arguments,x   → throws (correct)
+ *     fn=__gen_resume_g  vars=x lexical=  bindingNames=              → silent (wrong)
+ *
+ * The plain-function and arrow-function members of the same family PASS, which is
+ * what localises this to the resume-function lowering rather than to eval.
+ *
+ * Reading the scope chain syntactically is sound here because the question is a
+ * §19.2.1.3 step 5.d SyntaxError decision, not a value lookup: no environment
+ * has to be reified to answer it, and the answer cannot depend on the frame
+ * representation. Only `let` / `const` / `class` are collected — a `var` or a
+ * parameter of the same name is NOT a conflict (it lives in the very
+ * VariableEnvironment the eval declaration targets), and Annex B block functions
+ * are handled by their own cancellation rule at the call site.
+ *
+ * The walk stops at the nearest function-like ancestor, AFTER that function's
+ * body block has been scanned: a direct eval inside a nested function targets
+ * that function's VariableEnvironment, so an outer function's `let` is not an
+ * intervening record for it.
+ */
+export function enclosingLexicalDeclaredNames(node: ts.Node): Set<string> {
+  const names = new Set<string>();
+  const addBound = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      names.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) addBound(element.name);
+    }
+  };
+  const addFrom = (statements: readonly ts.Statement[]): void => {
+    for (const statement of statements) {
+      if (ts.isVariableStatement(statement)) {
+        const flags = statement.declarationList.flags;
+        if ((flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          addBound(declaration.name);
+        }
+      } else if (ts.isClassDeclaration(statement) && statement.name) {
+        names.add(statement.name.text);
+      }
+    }
+  };
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isBlock(parent) || ts.isCaseClause(parent) || ts.isDefaultClause(parent)) addFrom(parent.statements);
+    if (ts.isForStatement(parent) || ts.isForInStatement(parent) || ts.isForOfStatement(parent)) {
+      const initializer = parent.initializer;
+      if (initializer && ts.isVariableDeclarationList(initializer)) {
+        if ((initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) {
+          for (const declaration of initializer.declarations) addBound(declaration.name);
+        }
+      }
+    }
+    if (ts.isFunctionLike(parent) || ts.isSourceFile(parent)) break;
+  }
+  return names;
+}
+
+/**
+ * (#6651 SC1) Resolve a compile-time-constant eval argument, narrowly.
+ *
+ * Deliberately a subset of `eval-inline.ts`'s `resolveConstantString`: only the
+ * three shapes whose value is decidable with no checker and no binding
+ * resolution (string literal, substitution-free template, `+` of those). This
+ * module is imported BY `eval-inline.ts`, so calling back into it would close an
+ * import cycle; and a WIDER resolver here would be worse than useless — it would
+ * name bindings the static-inline splice does not actually create, shadowing the
+ * outer binding with an inert frame slot. Under-approximating only leaves a row
+ * at today's answer.
+ */
+function constantEvalText(expr: ts.Expression): string | undefined {
+  let node = expr;
+  while (ts.isParenthesizedExpression(node)) node = node.expression;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = constantEvalText(node.left);
+    const right = constantEvalText(node.right);
+    if (left !== undefined && right !== undefined) return left + right;
+  }
+  return undefined;
+}
+
+/** Var-scoped names a parsed eval Script hoists into its VariableEnvironment. */
+function scriptVarNames(text: string): Set<string> {
+  const names = new Set<string>();
+  let sf: ts.SourceFile;
+  try {
+    sf = ts.createSourceFile("<param-eval>.js", text, ts.ScriptTarget.ESNext, true);
+  } catch {
+    return names;
+  }
+  const visit = (node: ts.Node): void => {
+    // `var` hoists out of blocks but NOT out of a nested function/class scope.
+    if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const list = node.parent;
+      if (ts.isVariableDeclarationList(list) && (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+        names.add(node.name.text);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sf, visit);
+  return names;
+}
+
+/**
+ * (#6651 SC1) Names that a direct eval in `decl`'s PARAMETER LIST introduces as
+ * `var`s in `decl`'s VariableEnvironment and that `decl` does not itself bind.
+ *
+ * §10.2.11 step 20 gives a function with a non-simple parameter list a separate
+ * parameter environment, so a `var` created by a direct eval in a formal's
+ * initializer lands in the *body's* VariableEnvironment (step 28's `varEnv`) and
+ * is visible to the body — the assertion the `scope-*param-elem-var-*` family
+ * makes. In this compiler that binding is created by the static-eval-inline
+ * splice (#1163, `hoistVarDeclarations`) as an ordinary local of the function
+ * being compiled. Correct for a plain function; NOT for a native-lowered
+ * generator, where the formals run in the factory and the body runs in a
+ * separate resume function, so the body's read of the name falls through to the
+ * outer binding.
+ *
+ * `functionMayReachDirectEval` cannot answer this: it scans `decl.body` only, by
+ * construction. Names `decl` already binds are excluded — they have real slots
+ * and the splice reuses them.
+ */
+export function collectParamScopeEvalVarNames(decl: ts.FunctionLikeDeclaration, oracle: TypeOracle): Set<string> {
+  const introduced = new Set<string>();
+  if (decl.parameters.length === 0) return introduced;
+  const visit = (node: ts.Node): void => {
+    if (isDirectEvalCall(node, oracle)) {
+      const call = node as ts.CallExpression;
+      const arg = call.arguments.length === 1 ? call.arguments[0] : undefined;
+      const text = arg ? constantEvalText(arg) : undefined;
+      if (text !== undefined) for (const name of scriptVarNames(text)) introduced.add(name);
+    }
+    forEachChild(node, visit);
+  };
+  for (const param of decl.parameters) visit(param);
+  if (introduced.size === 0) return introduced;
+  for (const own of collectDirectEvalBindingNames(decl)) introduced.delete(own);
+  return introduced;
+}
+
+/**
+ * (#6651 SC1) Instructions that read the CURRENT VALUE of `name`'s local, seeing
+ * through the one-field ref cell when that local is boxed.
+ *
+ * The boxing is not optional information a caller may skip: `boxedCaptures` is
+ * how both the #2925 direct-eval reification and ordinary mutable-capture
+ * lowering represent a name a nested function captured, and a site that reads the
+ * local directly gets the CARRIER instead of the value. The check is deliberately
+ * two-sided — the metadata must exist AND the live local must actually carry that
+ * cell type — because a rolled-back speculative promotion can leave stale
+ * metadata pointing at a cell the local no longer holds (the same guard
+ * `reifyCurrentDirectEvalBindings` applies, for the same reason).
+ *
+ * Returns the ValType the emitted sequence leaves on the stack, or `undefined`
+ * when the local has no resolvable type (caller decides what to do).
+ */
+export function readPossiblyBoxedLocal(
+  fctx: FunctionContext,
+  name: string,
+  localIdx: number,
+): { instrs: Instr[]; valType: ValType | undefined } {
+  const rawType = getLocalType(fctx, localIdx);
+  const boxed = fctx.boxedCaptures?.get(name);
+  const cellBacked =
+    boxed !== undefined &&
+    (rawType?.kind === "ref" || rawType?.kind === "ref_null") &&
+    rawType.typeIdx === boxed.refCellTypeIdx;
+  const instrs: Instr[] = [{ op: "local.get", index: localIdx }];
+  if (!cellBacked) return { instrs, valType: rawType };
+  instrs.push({ op: "ref.as_non_null" }, { op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  return { instrs, valType: boxed.valType };
+}

@@ -1520,6 +1520,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         current = [
           { op: "local.get", index: anyLocalIdx },
           { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
+          ...arraySubclassOwnMethodShadowTest(ctx, methodName), // (#6683)
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },

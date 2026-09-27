@@ -48,17 +48,17 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10230,
-    "fail": 1456,
+    "pass": 10242,
+    "fail": 1444,
     "ce": 18,
     "skip": 0,
     "total": 11704,
-    "pct": 87,
+    "pct": 88,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3918,
-        "fail": 234,
+        "pass": 3922,
+        "fail": 230,
         "ce": 1,
         "skip": 0,
         "total": 4153,
@@ -66,12 +66,12 @@
       },
       {
         "name": "generators",
-        "pass": 2173,
-        "fail": 313,
+        "pass": 2178,
+        "fail": 308,
         "ce": 0,
         "skip": 0,
         "total": 2486,
-        "pct": 87
+        "pct": 88
       },
       {
         "name": "default-parameters",
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 54,
-        "fail": 22,
+        "pass": 61,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 71
+        "pct": 80
       },
       {
         "name": "Symbol.match",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3719,
-    "fail": 1100,
+    "pass": 3721,
+    "fail": 1098,
     "ce": 4,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2777,
-        "fail": 1030,
+        "pass": 2779,
+        "fail": 1028,
         "ce": 3,
         "skip": 0,
         "total": 3810,

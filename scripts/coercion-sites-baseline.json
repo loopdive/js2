@@ -10,6 +10,7 @@
   "codegen/array-methods.ts": 20,
   "codegen/array-nonindex-key.ts": 2,
   "codegen/array-prototype-borrow.ts": 4,
+  "codegen/array-slice-native.ts": 1,
   "codegen/array-species.ts": 2,
   "codegen/array-to-primitive.ts": 5,
   "codegen/array-tolocalestring.ts": 1,
