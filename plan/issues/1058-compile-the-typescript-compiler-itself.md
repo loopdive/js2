@@ -6210,6 +6210,14 @@ unchanged by this work.
 
 ### September 27 main-integration checkpoint (PR5753)
 
+Original-floor recovery: ordinary CI run 36280469255 is green at b212925eab,
+but an exact-pinned-fixture comparison found eight regressions among 16 original
+cases (main 15/16, candidate 7/16; both complete). The recovered 176-path
+historical status/error projection, raw paired rows, and next implementation
+work are recorded in `plan/agent-context/5753-original-floor-recovery-2026-09-27.md`.
+Keep HOLD. Generator admission and native class ownness require semantic repairs;
+do not restore a passing fold or weaken the fixtures to hide these failures.
+
 Follow-up CI repair: restore real use of the retained Function.call body under
 main's linked-aware entry and single guard, with semantic vector reads rather
 than unsafe raw storage reads. Exact-parent mutation/accessor comparisons and

@@ -1,0 +1,74 @@
+{
+  "evidence": "HISTORICAL exact status/error projection; not current candidate or rerun evidence",
+  "recoveredAt": "2026-09-27",
+  "projection": "5753-original-status-deltas-20260927.jsonl",
+  "source": {
+    "path": "/Users/thomas/.codex/sessions/2026/09/15/rollout-2026-09-15T00-37-34-01a0a211-8e37-7aa3-9e0c-16a57210ed29.jsonl",
+    "line": 2084,
+    "field": "payload.item.stdout",
+    "selection": "Lines beginning {\"file\":, retained verbatim in original order with final newline; no reconstruction or JSON reserialization"
+  },
+  "independentHistoricalReceipt": {
+    "path": "/Users/thomas/.codex/sessions/2026/09/15/rollout-2026-09-15T00-18-57-01a0a200-8090-7c83-90c7-0b6b62fa4d50.jsonl",
+    "line": 1716,
+    "field": "payload.item.stdout"
+  },
+  "expected": {
+    "records": 176,
+    "uniquePaths": 176,
+    "losses": 137,
+    "gains": 31,
+    "classLosses": 124,
+    "sha256": "5ad595da9901050bb577d35181ace60df3d5e827a21b83d5288bdf132d685452",
+    "lossProjectionSha256": "cb29ee0d8e621c6b41277672e638e5f89c4eafbf21a8f32dd1bfda9e775a40cb",
+    "gainProjectionSha256": "8ecfacf86862e735f1f0a54c6296dc90cb04a1dac23eb815c1e538305b4b1b88"
+  },
+  "selectionPredicates": {
+    "loss": "base === \"pass\" && current !== \"pass\"",
+    "gain": "base !== \"pass\" && current === \"pass\""
+  },
+  "githubInspection": {
+    "repository": "loopdive/js2",
+    "artifact": {
+      "id": 10376532377,
+      "status": 404,
+      "response": {
+        "message": "Not Found",
+        "documentation_url": "https://docs.github.com/rest/actions/artifacts#get-an-artifact",
+        "status": "404"
+      }
+    },
+    "candidate": {
+      "run": 34916265939,
+      "headSha": "cb07815129e65312bc8f02675644146318e1ce49",
+      "conclusion": "failure",
+      "artifactsResponse": {
+        "total_count": 0,
+        "artifacts": []
+      }
+    },
+    "predecessor": {
+      "run": 34914537075,
+      "headSha": "d6de81ced13f27930c83980e498a510e044435cd",
+      "conclusion": "success",
+      "artifactsResponse": {
+        "total_count": 0,
+        "artifacts": []
+      }
+    },
+    "limitation": "Expiration versus deletion is not established."
+  },
+  "historicalFullReportReceipts": {
+    "populationPerReport": 48735,
+    "uniquePathsPerReport": 48735,
+    "missingPaths": 0,
+    "beforeHostFreePasses": 35767,
+    "afterHostFreePasses": 35661,
+    "baselineSha256": "065ee96841631f86e0dfc812793b6206739e084ab3a34d797cca9448652b213c",
+    "candidateSha256": "ca920db1af76f3cf1db9a1d48322928a0702ca3938129e83ec2c54d747ac8add",
+    "candidateArchiveSha256": "67249724f3eab6671f31a6f645dee915bfedff48ca81b2513c04d13cca92ffd0",
+    "test262Pin": "b363f29d3c43c626dc852744ad64a0b48a003693"
+  },
+  "caveat": "Full original reports and archive bytes are missing; their hashes and full-population facts above are historical receipts, not freshly recomputed verification. This projection contains complete status-change paths/statuses/errors, not full original report records or unchanged rows. It does not establish floor clearance.",
+  "actions": "Only projection and provenance written with apply_patch. No source/test edits, compiler/tests, Git commit or push."
+}
