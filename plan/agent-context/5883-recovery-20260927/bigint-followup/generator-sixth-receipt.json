@@ -1,0 +1,31 @@
+{
+  "candidatePatchSha256": "27d6c0be691ef5287c798c355c5ae27fe251ea0375bb52c21b84312caedc0413",
+  "typecheck": {
+    "handle": 42666,
+    "exit": 1,
+    "error": "lifted-generator-receiver-capability.ts:100 TS2322",
+    "logSha256": "def8dfdca454ca1adb062627161bbc00b3b3b87a883c3eb5c99942e5b0a7a3a2"
+  },
+  "runtime": {
+    "handle": 1203,
+    "exit": 1,
+    "durationSeconds": 46.48,
+    "pass": 14,
+    "fail": 8,
+    "logSha256": "6f5d19cde121e1b5336e604d3cc7b03a66c1dbacd04c0325c926fcbfd60d3246"
+  },
+  "original12": { "pass": 12, "fail": 0, "delta": "mixed spelling O0/O2 now pass; all fifth passing rows retained" },
+  "additive6": {
+    "pass": 2,
+    "fail": 4,
+    "delta": "own-next O0/O2 now pass; synchronous then changes from -3 to illegal cast O0/O2; genuine async remains blocked on host imports O0/O2"
+  },
+  "receiver4": {
+    "pass": 0,
+    "fail": 4,
+    "delta": "all remain blocked on host imports; no conformance or regression claim"
+  },
+  "slot": "released",
+  "postRunSourceOnlyChange": "callee annotated ts.Expression, matching the expression wrappers removed by the narrowing loop; no any cast; unvalidated after run",
+  "preAnnotationHelperSha256": "62c2816d9e68cddbd7a77019163f0983d68d97bd89008bec2c7199d44d8b36ae"
+}
