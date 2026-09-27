@@ -8,6 +8,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import { isNamespaceQualifier } from "./static-enum-receiver.js";
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
 import { isAccessorReceiver } from "./accessor-object-literal.js";
 import {
@@ -24,7 +25,7 @@ import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { tryEmitAnyValueArrayUndefinedOobGet } from "./any-value-element-read.js"; // (#6651 G3)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
-import { isConstructedFnctorName } from "./fnctor-instance-names.js"; // (#1058)
+import { isConstructedFnctorName, isFunctionConstructorInstanceType } from "./fnctor-instance-names.js"; // (#1058)
 import {
   PROXY_READ_DECLINE,
   tryProxyReceiverElementRead,
@@ -112,6 +113,7 @@ import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
+import { compileOptionalNativeCollectionSize } from "./expressions/optional-native-set.js";
 import {
   tryCompileNativeDisposableStackAnyDisposedGet,
   tryCompileNativeDisposableStackDisposedGet,
@@ -1030,7 +1032,10 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
   if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
     // (#1058) An interface named like a constructed function holds fnctor
     // instances (resolveWasmType types it that way), not its own struct.
-    return !ctx.classSet.has(name) && isConstructedFnctorName(ctx, name) ? undefined : name;
+    const dynamicInstance =
+      isConstructedFnctorName(ctx, name) ||
+      (!ctx.standalone && !ctx.wasi && isFunctionConstructorInstanceType(ctx, tsType));
+    return !ctx.classSet.has(name) && dynamicInstance ? undefined : name;
   }
   // Check class expression name mapping (e.g. "__class" → "Point")
   if (name) {
@@ -2517,8 +2522,10 @@ export function compileOptionalPropertyAccess(
   // leaving the receiver ref stranded on the stack (#1603).
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
-  let elseResultType: ValType | null = null;
-  if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
+  let elseResultType = compileOptionalNativeCollectionSize(ctx, fctx, objType, tsObjType, propName);
+  if (elseResultType !== null) {
+    // The saved native collection receiver was consumed by its size helper.
+  } else if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
     compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName);
     elseResultType = { kind: "externref" };
   } else if (isStringType(tsObjType) && propName === "length") {
@@ -3810,8 +3817,9 @@ interface RuntimeNamespaceFunctionValueReceiver {
 
 function runtimeNamespaceFunctionValueReceiver(
   ctx: CodegenContext,
-  identifier: ts.Identifier,
+  identifier: ts.Expression,
 ): RuntimeNamespaceFunctionValueReceiver | undefined {
+  if (!ts.isIdentifier(identifier) && !isNamespaceQualifier(ctx, identifier)) return undefined;
   const directDeclaration = ctx.oracle.valueDeclarationOf(identifier);
   if (directDeclaration !== undefined && ts.isNamespaceImport(directDeclaration)) {
     return { sourceModule: true, moduleBlocks: new Set() };
@@ -3852,7 +3860,7 @@ function tryEmitRuntimeNamespaceFunctionValue(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
   const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
   if (receiver === undefined) return undefined;
   const declaration = ctx.oracle.valueDeclarationOf(expr.name);
@@ -3897,9 +3905,8 @@ function tryEmitRuntimeNamespaceFunctionValue(
  * values live in the program ABI. Calls and function-value reads already
  * resolve through that ABI, but a data read such as `Debug.isDebugging` used to
  * compile the namespace identifier as null and then attempt a property read on
- * it. Resolve only named/local runtime namespaces here. A source-module
- * namespace (`import * as ns`) has different export ownership and keeps using
- * the ordinary module-namespace path.
+ * it. Source-module namespace reads resolve their exact exported top-level
+ * binding too, without materializing unrelated or mutable exports.
  *
  * Declaration and allocator identity make this fail closed for merged
  * namespaces and same-named exports. The TDZ check is deliberately dynamic:
@@ -3911,21 +3918,29 @@ function tryEmitRuntimeNamespaceVariableValue(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
   const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
-  if (receiver === undefined || receiver.sourceModule) return undefined;
+  if (receiver === undefined) return undefined;
 
-  const declaration = ctx.oracle.valueDeclarationOf(expr.name);
+  const declaration = receiver.sourceModule
+    ? ctx.oracle.aliasedValueDeclarationOf(expr.name)
+    : ctx.oracle.valueDeclarationOf(expr.name);
   if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return undefined;
 
-  let namespaceBlock: ts.ModuleBlock | undefined;
-  for (let current: ts.Node | undefined = declaration.parent; current; current = current.parent) {
-    if (ts.isModuleBlock(current)) {
-      namespaceBlock = current;
-      break;
+  if (receiver.sourceModule) {
+    const statement = declaration.parent.parent;
+    if (!ts.isVariableStatement(statement) || statement.parent !== declaration.getSourceFile()) return undefined;
+    if (isAmbientDeclarationContext(declaration)) return undefined;
+  } else {
+    let namespaceBlock: ts.ModuleBlock | undefined;
+    for (let current: ts.Node | undefined = declaration.parent; current; current = current.parent) {
+      if (ts.isModuleBlock(current)) {
+        namespaceBlock = current;
+        break;
+      }
     }
+    if (namespaceBlock === undefined || !receiver.moduleBlocks.has(namespaceBlock)) return undefined;
   }
-  if (namespaceBlock === undefined || !receiver.moduleBlocks.has(namespaceBlock)) return undefined;
 
   const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
   if (binding === undefined) return undefined;
@@ -4332,6 +4347,12 @@ export function compileExternPropertyGet(
 ): ValType | null {
   const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
   if (!className) return null;
+  if (
+    ["Set", "Map", "WeakMap", "WeakSet"].includes(className) &&
+    ts.isIdentifier(expr.expression) &&
+    ctx.externrefAccessorVars.has(expr.expression.text)
+  )
+    return null;
 
   // (#1103a) Native Map `.size` accessor in standalone / nativeStrings mode →
   // `__map_size` instead of the `Map_get_size` host import. Mirrors the method

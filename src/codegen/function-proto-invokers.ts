@@ -77,6 +77,10 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { linkedForeignCallableBitInstrs } from "./standalone-link-boundary.js"; // (#6643)
 import {
+  emitFunctionProtoCallBody as emitPackedFunctionProtoCallBody,
+  packedFunctionCallLayout,
+} from "./function-proto-call.js";
+import {
   ensureObjectRuntime,
   ensureObjVecBuilders,
   reserveApplyClosure,
@@ -238,7 +242,18 @@ export function emitFunctionProtoCallBody(ctx: CodegenContext, fctx: FunctionCon
   if (externLengthIdx === undefined || externGetIdxIdx === undefined) return null;
   if (!pushIsCallableGuard(ctx, fctx, "call")) return null;
 
-  const undef = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr];
+  const canonicalUndefined = undefinedExternInstrs(ctx);
+  const packedLayout = packedFunctionCallLayout(ctx, fctx);
+  if (packedLayout && canonicalUndefined) {
+    return emitPackedFunctionProtoCallBody(fctx, packedLayout, {
+      newIdx: ctx.funcMap.get("__objvec_new")!,
+      pushIdx: ctx.funcMap.get("__objvec_push")!,
+      applyIdx: ctx.funcMap.get("__apply_closure")!,
+      getIdx: ctx.funcMap.get("__extern_get_idx")!,
+      undefinedValue: canonicalUndefined,
+    });
+  }
+  const undef = canonicalUndefined ?? [{ op: "ref.null.extern" } as Instr];
   const argsLocal = allocLocal(fctx, "__fpc_args", { kind: "externref" });
   const lenLocal = allocLocal(fctx, "__fpc_len", { kind: "f64" });
   const thisArgLocal = allocLocal(fctx, "__fpc_thisarg", { kind: "externref" });

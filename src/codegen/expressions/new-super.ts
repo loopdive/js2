@@ -4563,7 +4563,10 @@ function emitDynamicNewFallback(
   // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
   // meaningful even with ZERO candidate classes. A typed #1058 driver owns the
   // same no-candidate shape when the declared construct result is a Wasm struct.
-  const useConstructClosureBase = typedConstructDriver === undefined && usesHostConstructClosureBase(ctx, calleeExpr);
+  const useConstructClosureBase =
+    typedConstructDriver === undefined &&
+    (usesHostConstructClosureBase(ctx, calleeExpr) ||
+      (!noJsHost(ctx) && lateAssignedResultWasmType?.kind === "externref"));
   if (candidates.length === 0 && !useConstructClosureBase && typedConstructDriver === undefined) return false;
 
   // (#53) The runtime-argv path needs the `$ObjVecArr` `(array (mut externref))`

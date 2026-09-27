@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { createDerivedIrUnitId } from "../../shared/contracts/identity-values.js";
+import { ProgramAbiInvariantError } from "../../shared/contracts/program-abi-error.js";
+export { ProgramAbiInvariantError, type ProgramAbiInvariantCode } from "../../shared/contracts/program-abi-error.js";
 import type {
   IrBindingId,
   IrClassId,
@@ -143,84 +145,6 @@ export type ProgramAbiPlanEntry =
 export interface ProgramAbiFinalIndex {
   readonly space: ProgramAbiSlotSpace;
   readonly index: number;
-}
-
-export type ProgramAbiInvariantCode =
-  | "duplicate-binding-plan"
-  | "invalid-plan-order"
-  | "duplicate-plan-order"
-  | "invalid-slot-policy"
-  | "missing-source-unit"
-  | "invalid-callable-provenance"
-  | "unknown-inventory-unit"
-  | "unknown-inventory-class"
-  | "inventory-source-order-mismatch"
-  | "duplicate-derived-unit"
-  | "invalid-derived-unit"
-  | "unknown-derived-parent"
-  | "derived-unit-cycle"
-  | "unknown-derived-source"
-  | "derived-source-mismatch"
-  | "unknown-derived-terminal-owner"
-  | "derived-terminal-owner-mismatch"
-  | "planning-sealed"
-  | "planning-not-sealed"
-  | "binding-complete"
-  | "unknown-binding"
-  | "missing-alias-target"
-  | "alias-cycle"
-  | "alias-intent-kind-mismatch"
-  | "alias-signature-mismatch"
-  | "alias-contract-mismatch"
-  | "alias-slot-space-mismatch"
-  | "intent-slot-space-mismatch"
-  | "export-target-mismatch"
-  | "invalid-export-target"
-  | "duplicate-export-name"
-  | "alias-final-binding"
-  | "slotless-final-binding"
-  | "duplicate-final-binding"
-  | "final-index-space-mismatch"
-  | "final-index-collision"
-  | "unresolved-required-binding"
-  | "missing-legacy-name"
-  | "ambiguous-legacy-name"
-  | "no-internal-wasm-name"
-  | "duplicate-session-draft"
-  | "session-draft-mismatch"
-  | "invalid-draft-order"
-  | "duplicate-draft-order"
-  | "unknown-draft-source"
-  | "unknown-order-anchor"
-  | "ambiguous-order-anchor"
-  | "session-closed"
-  | "session-publish-once"
-  | "context-session-mismatch"
-  | "unknown-locator-binding"
-  | "missing-binding-reference"
-  | "invalid-binding-reference"
-  | "binding-reference-mismatch"
-  | "locator-not-required"
-  | "duplicate-slot-locator"
-  | "slot-locator-space-mismatch"
-  | "locator-remap-mismatch"
-  | "foreign-type-cell"
-  | "duplicate-type-cell"
-  | "foreign-type-object"
-  | "ambiguous-type-remap"
-  | "type-remap-mismatch"
-  | "missing-required-locator"
-  | "eliminated-required-locator"
-  | "callable-provider-mismatch";
-
-export class ProgramAbiInvariantError extends Error {
-  constructor(
-    readonly code: ProgramAbiInvariantCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ProgramAbiInvariantError";
-  }
 }
 
 const indexKey = (finalIndex: ProgramAbiFinalIndex): string => `${finalIndex.space}:${finalIndex.index}`;

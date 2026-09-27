@@ -651,15 +651,16 @@ function wrapper<T>(callback: () => T): T { return scanner.lookAhead(callback); 
   });
 });
 
-async function compileAndInstantiate(source: string) {
+async function compileAndInstantiate(source: string, target: "gc" | "standalone" = "gc") {
   const result = await compile(source, {
     fileName: "issue-1058-generic-callback-result.ts",
     platform: "node",
     skipSemanticDiagnostics: true,
-    target: "gc",
+    target,
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
+  if (target === "standalone") expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
   const imports = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
@@ -689,14 +690,20 @@ export function test(mode: number): number {
     expect(exports.test(2)).toBe(42);
   });
 
-  it("keeps later scalar and TypeNode callback results behind the same local wrapper", async () => {
-    const exports = await compileAndInstantiate(`
+  it.each(["gc", "standalone"] as const)(
+    "keeps later scalar and TypeNode callback results behind the same local wrapper in %s",
+    async (target) => {
+      const exports = await compileAndInstantiate(
+        `
 interface TypeNode {
   kind: number;
   detail: number;
 }
 
 let currentToken = 150;
+// A realm reference prevents the conservative global-builtin stability proof.
+// Generic result lowering must remain correct without that optimization proof.
+const realm = globalThis;
 
 interface Scanner {
   lookAhead<T>(callback: () => T): T;
@@ -723,11 +730,13 @@ function createScanner(): Scanner {
     lookAhead: scannerLookAhead,
     tryScan: scannerTryScan,
   };
-  Object.defineProperty(scannerImpl, "__debugShowCurrentPositionInText", { value: 1 });
+  Object.defineProperty(scannerImpl, "__debugShowCurrentPositionInText", { get: () => 1 });
   return scannerImpl;
 }
 
 const scanner = createScanner();
+
+function resetParser(): void { speculationHelper(() => {}, true); }
 
 function speculationHelper<T>(callback: () => T, isLookahead: boolean): T {
   const saveToken = currentToken;
@@ -763,6 +772,7 @@ function fallback(): TypeNode {
 }
 
 export function scalarCase(): number {
+  resetParser();
   const predicate = tryParse(() => lookAhead(isStartOfType));
   const scalar = tryParse(parseScalar);
   return (predicate ? 1000 : 0) + scalar;
@@ -774,11 +784,14 @@ export function referenceCase(): number {
   const node = tryParse(parseKeywordAndNoDot) || fallback();
   return (predicate ? 1000 : 0) + node.kind + node.detail;
 }
-`);
+`,
+        target,
+      );
 
-    expect(exports.scalarCase()).toBe(1042);
-    expect(exports.referenceCase()).toBe(1192);
-  });
+      expect(exports.scalarCase()).toBe(1042);
+      expect(exports.referenceCase()).toBe(1192);
+    },
+  );
 
   it("keeps a lifted two-layer parser helper result after a void call and unary scanner read", async () => {
     const exports = await compileAndInstantiate(`

@@ -964,13 +964,15 @@ function compileSpreadCallArgs(
     if (argIdx < expr.arguments.length) {
       const restArg = expr.arguments[argIdx]!;
       if (ts.isSpreadElement(restArg)) {
-        // The spread source is already a vec struct — pass directly, projected
-        // onto the rest vec when its element type differs (#1058: TypeScript's
-        // `addRelatedInfo(diag, ...relatedInformation)` otherwise hit a bare
-        // `ref.cast` between two unrelated vec types and trapped).
-        const restType = paramTypes?.[paramOffset + restInfo.restIndex];
+        // A source vec can have a different invariant element heap type from
+        // the rest parameter. Apply the ordinary vector conversion instead of
+        // leaving stack repair to insert an invalid nominal downcast (#1058).
+        const restType = paramTypes?.[paramOffset + restInfo.restIndex] ?? {
+          kind: "ref" as const,
+          typeIdx: restInfo.vecTypeIdx,
+        };
         const spreadType = compileExpression(ctx, fctx, restArg.expression, restType);
-        if (spreadType && restType && !valTypesMatch(spreadType, restType)) coerceType(ctx, fctx, spreadType, restType);
+        if (spreadType && !valTypesMatch(spreadType, restType)) coerceType(ctx, fctx, spreadType, restType);
       } else {
         // Single non-spread arg as rest — wrap in vec struct { 1, [val] }
         fctx.body.push({ op: "i32.const", value: 1 });

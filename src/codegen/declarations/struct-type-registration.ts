@@ -12,6 +12,7 @@ import type { FieldDef, StructTypeDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-type.js";
+import { recordUserStructuralCarrier } from "../user-declared-structs.js";
 import {
   hasStructPrefix,
   linkCompatibleDeclaredStructAncestor,
@@ -224,11 +225,10 @@ function typescriptSharedSyntaxNodeCarrier(
   // of the union/intersection factory: it allocates through createBaseNode and
   // installs `types` afterward. Materializing any of these producer views as a
   // distinct nominal struct would turn the real value into null at the parser
-  // return boundary.
-  const isHostUnionOrIntersectionAllocationView =
-    !ctx.standalone &&
-    !ctx.wasi &&
-    (declaration.name.text === "UnionTypeNode" || declaration.name.text === "IntersectionTypeNode");
+  // return boundary. This allocation contract is target-independent: native
+  // ordinary-property sidecars also preserve the derived fields on Node.
+  const isUnionOrIntersectionAllocationView =
+    declaration.name.text === "UnionTypeNode" || declaration.name.text === "IntersectionTypeNode";
   const allocationViewBaseName =
     declaration.name.text === "LiteralLikeNode"
       ? "Node"
@@ -236,14 +236,14 @@ function typescriptSharedSyntaxNodeCarrier(
         ? "NamedDeclaration"
         : declaration.name.text === "PropertyAccessChain"
           ? "PropertyAccessExpression"
-          : isHostUnionOrIntersectionAllocationView
+          : isUnionOrIntersectionAllocationView
             ? "TypeNode"
             : undefined;
   const hasExactMergedTypeNodeBase =
-    isHostUnionOrIntersectionAllocationView &&
+    isUnionOrIntersectionAllocationView &&
     recordsExactInterfaceCarrierAlias(ctx, baseTypes[0]?.getSymbol()) &&
     ctx.structMap.get("TypeNode") === ctx.structMap.get("Node");
-  const hasEligibleAllocationViewBase = isHostUnionOrIntersectionAllocationView
+  const hasEligibleAllocationViewBase = isUnionOrIntersectionAllocationView
     ? hasExactMergedTypeNodeBase
     : directBaseDeclarations?.length === 1 && directBaseDeclarations[0]?.getSourceFile() === sourceFile;
   const isSingleBaseSyntaxAllocationView =
@@ -287,6 +287,10 @@ function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDe
   // JS-host module a bigint field must remain an externref, otherwise a wide
   // value is truncated when struct.get/struct.set crosses the field.
   const nullable = getNullablePrimitiveInfo(memberType);
+  // A boolean field needs three distinct values when undefined/null is part
+  // of its contract. Unlike f64, i32 has no missing-value sentinel; unboxing
+  // the initializer here irreversibly changes undefined into false.
+  if (nullable?.primitiveKind === "boolean") return { kind: "externref" };
   const isBigIntField =
     usesHostBigIntCarrier(ctx) && (isBigIntType(memberType) || nullable?.primitiveKind === "bigint");
   return isBigIntField ? resolveWasmType(ctx, memberType) : mapTsTypeToWasm(memberType, ctx.checker);
@@ -463,6 +467,7 @@ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclarat
   }
 
   const typeIdx = registerStructType(ctx, name, fields);
+  if (!decl.getSourceFile().isDeclarationFile) recordUserStructuralCarrier(ctx, typeIdx);
   const registrations = registeredInterfaces.get(ctx) ?? [];
   registrations.push({
     decl,
@@ -943,6 +948,7 @@ export function collectObjectType(
   }
 
   if (fields.length > 0) {
-    registerStructType(ctx, name, fields);
+    const typeIdx = registerStructType(ctx, name, fields);
+    if (declaration && !declaration.getSourceFile().isDeclarationFile) recordUserStructuralCarrier(ctx, typeIdx);
   }
 }

@@ -1,0 +1,1130 @@
+{
+  "mainCommit": "935dab385ba7f21588ea371d052e7f143f894205",
+  "candidateCommit": "b212925eaba4a038e3b422b21232c41000e2b451",
+  "test262Commit": "b363f29d3c43c626dc852744ad64a0b48a003693",
+  "population": 176,
+  "mainPass": 154,
+  "candidatePass": 38,
+  "losses": 129,
+  "gains": 13,
+  "mainSha256": "601e1c4fc972dd85d7706a58fa9f76101baa4ae1365bd9e2acbb1b4581d732fa",
+  "candidateSha256": "d9417a6d3bb59ad7dca9300d41ad00ec4a2018afccde958b3d80b9c7d8142a89",
+  "candidateCompletion": {
+    "schema": "test262-shard-completion-v2",
+    "runTimestamp": "5753-candidate176-20260927",
+    "chunkIndex": 0,
+    "chunkTotal": 1,
+    "target": "standalone",
+    "semanticProviders": "auto",
+    "registeredTests": 176,
+    "registeredPaths": [
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-method-privatename-identifier.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier-initializer-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "test/built-ins/TypedArray/prototype/Symbol.toStringTag/this-has-no-typedarrayname-internal.js",
+      "test/language/statements/class/elements/multiple-definitions-static-private-fields.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-private-setter-alt.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "test/built-ins/TypedArray/prototype/Symbol.toStringTag/BigInt/this-has-no-typedarrayname-internal.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-private-method.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-field-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-field-identifier.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-private-method.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-private-method-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier.js",
+      "test/built-ins/TypedArray/prototype/Symbol.toStringTag/BigInt/this-is-not-object.js",
+      "test/language/expressions/class/elements/multiple-definitions-private-field-usage.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-private-setter.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-method.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier-alt.js",
+      "test/built-ins/TypedArray/prototype/Symbol.toStringTag/this-is-not-object.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt-by-classname.js",
+      "test/language/expressions/class/elements/multiple-definitions-private-method-getter-usage.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-private-setter.js",
+      "test/language/statements/class/elements/multiple-definitions-private-method-getter-usage.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-private-getter.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-private-setter-alt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-getter.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-field-identifier-initializer.js",
+      "test/built-ins/TypedArray/Symbol.species/result.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-field-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-private-method-alt.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-private-getter.js",
+      "test/language/expressions/object/method-definition/generator-prop-name-eval-error.js",
+      "test/language/expressions/class/elements/multiple-definitions-static-private-methods.js",
+      "test/language/expressions/class/elements/multiple-definitions-private-names.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods.js",
+      "test/language/expressions/class/elements/multiple-definitions-static-private-methods-with-fields.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-method.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-method-privatename-identifier-alt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-definitions-private-names.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-private-method-usage.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-method-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
+      "test/language/statements/class/elements/multiple-definitions-private-method-usage.js",
+      "test/language/statements/class/elements/multiple-definitions-static-private-methods.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-private-getter-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-private-field-usage.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-field-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-private-names.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-static-private-fields.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer-alt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier.js",
+      "test/built-ins/Map/iterator-item-first-entry-returns-abrupt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-setter.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer-alt.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-initializer-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-static-private-fields.js",
+      "test/language/statements/class/elements/multiple-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "test/language/expressions/class/elements/redeclaration.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier.js",
+      "test/language/expressions/object/dstr/async-gen-meth-dflt-obj-ptrn-empty.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-getter-alt.js",
+      "test/language/statements/class/elements/redeclaration.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-private-method-getter-usage.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-private-names.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-alt.js",
+      "test/language/expressions/class/elements/multiple-definitions-private-method-usage.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-method-alt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
+      "test/language/expressions/object/method-definition/generator-name-prop-symbol.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-by-classname.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-setter.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-field-identifier.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-getter-alt.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-getter.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-static-private-methods.js",
+      "test/language/statements/class/elements/multiple-definitions-private-field-usage.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-field-identifier-initializer.js",
+      "test/language/expressions/object/method-definition/fn-name-gen.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-private-method-getter-usage.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-alt.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-alt-by-classname.js",
+      "test/language/statements/for-of/yield-from-catch.js",
+      "test/language/statements/for-of/yield-from-finally.js",
+      "test/language/statements/class/elements/multiple-stacked-definitions-rs-field-identifier.js",
+      "test/language/statements/class/elements/field-definition-accessor-no-line-terminator.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-static-private-fields.js",
+      "test/language/expressions/object/__proto__-permitted-dup.js",
+      "test/language/expressions/object/dstr/async-gen-meth-obj-ptrn-empty.js",
+      "test/language/expressions/tagged-template/cache-realm.js",
+      "test/built-ins/Function/prototype/Symbol.hasInstance/this-val-not-callable.js",
+      "test/language/expressions/class/elements/private-field-as-async-function.js",
+      "test/language/module-code/namespace/internals/get-str-update.js",
+      "test/language/statements/class/elements/multiple-definitions-rs-private-getter-alt.js",
+      "test/language/statements/for-of/yield-from-try.js",
+      "test/built-ins/Map/iterator-item-second-entry-returns-abrupt.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-private-method-usage.js",
+      "test/language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-empty.js",
+      "test/language/expressions/super/prop-dot-obj-ref-non-strict.js",
+      "test/language/expressions/object/dstr/gen-meth-obj-ptrn-empty.js",
+      "test/language/statements/for-of/yield.js",
+      "test/built-ins/Array/prototype/lastIndexOf/calls-only-has-on-prototype-after-length-zeroed.js",
+      "test/built-ins/WeakMap/prototype/getOrInsertComputed/throw-if-key-cannot-be-held-weakly.js",
+      "test/built-ins/Array/prototype/indexOf/calls-only-has-on-prototype-after-length-zeroed.js",
+      "test/language/expressions/class/elements/multiple-stacked-definitions-private-field-usage.js",
+      "test/language/expressions/super/prop-expr-obj-ref-non-strict.js",
+      "test/language/statements/class/elements/private-field-as-async-function.js",
+      "test/language/expressions/class/elements/private-field-as-async-arrow-function.js",
+      "test/language/expressions/class/elements/field-definition-accessor-no-line-terminator.js",
+      "test/language/statements/class/elements/private-field-as-async-arrow-function.js",
+      "test/built-ins/WeakMap/prototype/getOrInsert/throw-if-key-cannot-be-held-weakly.js",
+      "test/built-ins/Error/prototype/stack/getter-this-not-object.js",
+      "test/built-ins/Error/prototype/stack/setter-non-extensible-receiver.js",
+      "test/built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js",
+      "test/built-ins/Error/prototype/stack/setter-proxy-wrapping-prototype.js",
+      "test/built-ins/Error/prototype/stack/setter-receiver-is-null-proto.js",
+      "test/built-ins/Error/prototype/stack/setter-this-not-object.js",
+      "test/built-ins/Iterator/prototype/join/receiver-not-object.js",
+      "test/built-ins/Promise/allKeyed/invoke-resolve-error-reject.js",
+      "test/built-ins/Promise/allKeyed/invoke-resolve-get-error-reject.js",
+      "test/built-ins/Promise/allKeyed/invoke-resolve-get-once.js",
+      "test/built-ins/Promise/allKeyed/invoke-then-not-callable-reject.js",
+      "test/built-ins/Promise/allKeyed/resolve-not-callable-reject-with-typeerror.js",
+      "test/built-ins/Promise/allSettledKeyed/invoke-resolve-error-reject.js",
+      "test/built-ins/Promise/allSettledKeyed/invoke-resolve-get-error-reject.js",
+      "test/built-ins/Promise/allSettledKeyed/invoke-resolve-get-once.js",
+      "test/built-ins/Promise/allSettledKeyed/invoke-then-not-callable-reject.js",
+      "test/built-ins/Promise/allSettledKeyed/resolve-not-callable-reject-with-typeerror.js",
+      "test/language/module-code/instn-iee-star-cycle.js",
+      "test/language/module-code/instn-star-iee-cycle.js",
+      "test/language/module-code/instn-star-star-cycle.js"
+    ],
+    "recordedRows": 176,
+    "canonicalVerdicts": 176,
+    "exclusions": {
+      "proposal": {
+        "count": 0,
+        "paths": []
+      },
+      "official": {
+        "count": 0,
+        "paths": []
+      }
+    },
+    "callbacksStarted": 176,
+    "callbacksSettled": 176,
+    "allCallbacksSettled": true
+  },
+  "deltas": [
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-private-setter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-private-method.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-field-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-field-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-private-field-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-private-setter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-method.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-private-method-getter-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-private-getter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-getter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-field-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-private-method-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/object/method-definition/generator-prop-name-eval-error.js",
+      "main": "pass",
+      "candidate": "compile_error",
+      "candidateError": "standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer (#2961)"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-static-private-methods.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-private-names.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-static-private-methods-with-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-method-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-private-getter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-field-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-private-names.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-rs-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-static-private-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/redeclaration.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: y does not appear as an own property on C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/object/dstr/async-gen-meth-dflt-obj-ptrn-empty.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "TypeError: value is not iterable"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-getter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-definitions-private-method-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/object/method-definition/generator-name-prop-symbol.js",
+      "main": "pass",
+      "candidate": "compile_error",
+      "candidateError": "standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer (#2961)"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-rs-private-setter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-static-private-methods.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/object/method-definition/fn-name-gen.js",
+      "main": "pass",
+      "candidate": "compile_error",
+      "candidateError": "standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_throw (#2961)"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-private-method-getter-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-static-private-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/object/__proto__-permitted-dup.js",
+      "main": "pass",
+      "candidate": "compile_error",
+      "candidateError": "standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer (#2961)"
+    },
+    {
+      "file": "test/language/expressions/object/dstr/async-gen-meth-obj-ptrn-empty.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "TypeError: value is not iterable"
+    },
+    {
+      "file": "test/language/expressions/tagged-template/cache-realm.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "TypeError: Cannot access property on null or undefined"
+    },
+    {
+      "file": "test/language/expressions/class/elements/private-field-as-async-function.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "async continuation threw before completion: illegal cast [in __then_fulfill_3() ← __drain_microtasks]"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-private-method-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/super/prop-dot-obj-ref-non-strict.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "Test262Error: x is defined as an own property"
+    },
+    {
+      "file": "test/language/expressions/class/elements/multiple-stacked-definitions-private-field-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/expressions/super/prop-expr-obj-ref-non-strict.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "Test262Error: x is defined as an own property"
+    },
+    {
+      "file": "test/language/expressions/class/elements/private-field-as-async-arrow-function.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "async continuation threw before completion: illegal cast [in __then_fulfill_3() ← __drain_microtasks]"
+    },
+    {
+      "file": "test/language/expressions/class/elements/field-definition-accessor-no-line-terminator.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: C instance has an own property $"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-static-private-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-private-method.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-private-method-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-async-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-private-setter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-private-method-getter-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-private-setter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-field-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-private-getter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-method.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-private-names.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-private-method-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-private-method-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-static-private-methods.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-private-field-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-async-method-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-static-private-fields.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-setter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/redeclaration.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: y does not appear as an own property on C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-private-method-getter-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-private-names.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-method-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-field-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-getter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-private-getter.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-private-field-usage.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-static-method-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-field-identifier-initializer.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-alt-by-classname.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-stacked-definitions-rs-field-identifier.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/field-definition-accessor-no-line-terminator.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: C instance has an own property $"
+    },
+    {
+      "file": "test/language/statements/class/elements/multiple-definitions-rs-private-getter-alt.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "Test262Error: foo doesn't appear as an own property on the C constructor"
+    },
+    {
+      "file": "test/language/statements/class/elements/private-field-as-async-function.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "async continuation threw before completion: illegal cast [in __then_fulfill_3() ← __drain_microtasks]"
+    },
+    {
+      "file": "test/language/statements/class/elements/private-field-as-async-arrow-function.js",
+      "main": "fail",
+      "candidate": "pass",
+      "mainError": "async continuation threw before completion: illegal cast [in __then_fulfill_3() ← __drain_microtasks]"
+    },
+    {
+      "file": "test/built-ins/Map/iterator-item-first-entry-returns-abrupt.js",
+      "main": "fail",
+      "candidate": "compile_timeout",
+      "mainError": "Test262Error: Expected a Test262Error but got a TypeError",
+      "candidateError": "timeout (10s)"
+    },
+    {
+      "file": "test/built-ins/Map/iterator-item-second-entry-returns-abrupt.js",
+      "main": "fail",
+      "candidate": "compile_timeout",
+      "mainError": "Test262Error: Expected a Test262Error but got a TypeError",
+      "candidateError": "timeout (10s)"
+    },
+    {
+      "file": "test/built-ins/Error/prototype/stack/setter-non-extensible-receiver.js",
+      "main": "pass",
+      "candidate": "fail",
+      "candidateError": "TypeError: hasOwnProperty called on null or undefined"
+    },
+    {
+      "file": "test/built-ins/Promise/allKeyed/invoke-resolve-error-reject.js",
+      "main": "compile_error",
+      "candidate": "fail",
+      "mainError": "L34:10 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.",
+      "candidateError": "Test262:AsyncTestFailure:Test262Error: TypeError: called value is not a function"
+    },
+    {
+      "file": "test/built-ins/Promise/allKeyed/invoke-resolve-get-error-reject.js",
+      "main": "compile_error",
+      "candidate": "fail",
+      "mainError": "L32:10 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.",
+      "candidateError": "Test262:AsyncTestFailure:Test262Error: TypeError: called value is not a function"
+    },
+    {
+      "file": "test/built-ins/Promise/allKeyed/invoke-resolve-get-once.js",
+      "main": "compile_error",
+      "candidate": "fail",
+      "mainError": "L50:1 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.",
+      "candidateError": "TypeError: called value is not a function"
+    },
+    {
+      "file": "test/built-ins/Promise/allKeyed/invoke-then-not-callable-reject.js",
+      "main": "compile_error",
+      "candidate": "pass",
+      "mainError": "L30:12 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports."
+    },
+    {
+      "file": "test/built-ins/Promise/allKeyed/resolve-not-callable-reject-with-typeerror.js",
+      "main": "compile_error",
+      "candidate": "pass",
+      "mainError": "L29:12 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports."
+    },
+    {
+      "file": "test/built-ins/Promise/allSettledKeyed/invoke-resolve-error-reject.js",
+      "main": "compile_error",
+      "candidate": "fail",
+      "mainError": "L34:10 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.",
+      "candidateError": "Test262:AsyncTestFailure:Test262Error: TypeError: called value is not a function"
+    },
+    {
+      "file": "test/built-ins/Promise/allSettledKeyed/invoke-resolve-get-error-reject.js",
+      "main": "compile_error",
+      "candidate": "fail",
+      "mainError": "L32:10 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.",
+      "candidateError": "Test262:AsyncTestFailure:Test262Error: TypeError: called value is not a function"
+    },
+    {
+      "file": "test/built-ins/Promise/allSettledKeyed/invoke-resolve-get-once.js",
+      "main": "compile_error",
+      "candidate": "fail",
+      "mainError": "L50:1 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.",
+      "candidateError": "TypeError: called value is not a function"
+    },
+    {
+      "file": "test/built-ins/Promise/allSettledKeyed/invoke-then-not-callable-reject.js",
+      "main": "compile_error",
+      "candidate": "pass",
+      "mainError": "L30:12 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports."
+    },
+    {
+      "file": "test/built-ins/Promise/allSettledKeyed/resolve-not-callable-reject-with-typeerror.js",
+      "main": "compile_error",
+      "candidate": "pass",
+      "mainError": "L29:12 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports."
+    }
+  ],
+  "limitations": [
+    "Scoped original status-change population only; not full 48735-case floor clearance.",
+    "Same Node22.23.2 and configuration as paired16; historical CI used Node25.",
+    "Timeouts are retained, not independently attributed; every apparent new timeout requires isolated paired rerun before causal claims.",
+    "All status/error changes are preserved, including different nonpassing outcomes."
+  ]
+}

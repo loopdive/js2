@@ -16,8 +16,8 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { numberIsPredicateOps } from "./number-is-predicate-ops.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitStandaloneDateNowValue } from "./standalone-clock-capability.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addUnionImports, TYPED_ARRAY_NAMES, typedArrayPackedSignedness } from "./index.js";
 import {
   coerceType,
@@ -1008,6 +1008,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   let genericThrowBody = false;
 
   switch (key) {
+    case "Date.now":
+      paramTypes = [];
+      genericThrowBody = !ctx.standalone && !(ctx.wasi && ctx.funcMap.has("__wasi_date_now"));
+      returnType = genericThrowBody ? { kind: "externref" } : { kind: "f64" };
+      break;
     case "Array.isArray":
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
@@ -1287,12 +1292,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     }
-    // (#6681) `Date.now` as a VALUE (lodash-es `_shortOut`): the direct call's
-    // own lowering, as `() -> f64` — the checker's `() => number` call ABI.
-    case "Date.now":
-      paramTypes = [];
-      returnType = { kind: "f64" };
-      break;
     default: {
       // (#2984 Phase 3) Any OTHER standard builtin static method — the
       // `BUILTIN_STATIC_METHOD_ARITY` membership is the complete own
@@ -1335,7 +1334,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.liftedSelfTypeIdx };
     const closureFctx = makeBuiltinClosureFctx(funcName, selfType, paramTypes, returnType);
 
-    if (key === "Array.isArray") {
+    if (key === "Date.now" && !genericThrowBody) {
+      // Stored timestamp callbacks share the direct-call clock policy.
+      if (ctx.wasi && ctx.funcMap.has("__wasi_date_now")) {
+        closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! });
+      } else {
+        emitStandaloneDateNowValue(ctx, closureFctx);
+      }
+    } else if (key === "Array.isArray") {
       closureFctx.body.push({ op: "local.get", index: 1 });
       emitArrayIsArrayExternrefPredicate(ctx, closureFctx);
     } else if (key === "Object.assign") {
@@ -1740,8 +1746,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           ],
         },
       );
-    } else if (key === "Date.now") {
-      emitStandaloneDateNowValue(ctx, closureFctx);
     } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
       // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
       // upstream module mints the `Math_<fn>` kernel late itself, so it needs

@@ -7,7 +7,7 @@ import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repository = resolve(import.meta.dirname, "..");
-const foundation = ["source-origin.ts", "ir-identity.ts", "identity-values.ts"].map(
+const foundation = ["source-origin.ts", "ir-identity.ts", "identity-values.ts", "program-abi-error.ts"].map(
   (name) => `src/shared/contracts/${name}`,
 );
 const core = "src/ir/core/binding-key-primitives.ts";
@@ -54,7 +54,7 @@ function fixture() {
         roots: ["src/shared/contracts"],
         required: true,
         entries: foundation,
-        minModules: 3,
+        minModules: 4,
       },
       { id: "core", status: "active", roots: ["src/ir/core"], required: true, entries: [core], minModules: 1 },
       { id: "program", status: "active", roots: ["src/ir/program"], required: true, entries: program, minModules: 2 },
@@ -106,6 +106,17 @@ function fixture() {
 }
 
 describe("program ABI seam boundaries", () => {
+  it("rejects the missing error leaf after a valid positive fixture", () => {
+    const f = fixture();
+    expect(f.run().status).toBe(0);
+    rmSync(resolve(f.root, "src/shared/contracts/program-abi-error.ts"));
+    const negative = f.run();
+    expect(negative.status).not.toBe(0);
+    expect(negative.report.unresolvedEdges).toEqual(
+      expect.arrayContaining([expect.objectContaining({ from: program[1] })]),
+    );
+  });
+
   it("loads only the canonical closure and executes a nonempty data-only ABI lifecycle in a fresh process", () => {
     const script = String.raw`
       import assert from 'node:assert/strict';
@@ -152,6 +163,7 @@ describe("program ABI seam boundaries", () => {
       assert.ok(visited.has('src/ir/program/abi.ts'));
       assert.ok(visited.has('src/ir/core/binding-key-primitives.ts'));
       assert.ok(visited.has('src/shared/contracts/identity-values.ts'));
+      assert.ok(visited.has('src/shared/contracts/program-abi-error.ts'));
       console.log(JSON.stringify({ visited: [...visited].sort(), planned: abi.entries().length }));
     `;
     const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
@@ -162,20 +174,20 @@ describe("program ABI seam boundaries", () => {
     expect(child.status, child.stderr + child.stdout).toBe(0);
     const report = JSON.parse(child.stdout);
     expect(report.planned).toBe(2);
-    expect(report.visited.length).toBeGreaterThanOrEqual(3);
+    expect(report.visited.length).toBeGreaterThanOrEqual(4);
     expect(report.visited.every((path: string) => clean.includes(path))).toBe(true);
   });
 
-  it("checks six actual clean modules with D0 while retaining the legacy debt", () => {
+  it("checks seven actual clean modules with D0 while retaining the legacy debt", () => {
     const f = fixture();
     const result = f.run();
     expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
-    expect(result.report.counts.total).toBe(8);
+    expect(result.report.counts.total).toBe(9);
     expect(result.report.resolvedEdgeCount).toBeGreaterThanOrEqual(8);
     expect(result.report.unknownEdges).toEqual([]);
     expect(result.report.unresolvedEdges).toEqual([]);
     expect(result.report.activatedRoots).toEqual([
-      expect.objectContaining({ layer: "foundation", modules: 3, visitedEntries: foundation }),
+      expect.objectContaining({ layer: "foundation", modules: 4, visitedEntries: foundation }),
       expect.objectContaining({ layer: "core", modules: 1, visitedEntries: [core] }),
       expect.objectContaining({ layer: "program", modules: 2, visitedEntries: program }),
     ]);
@@ -193,7 +205,7 @@ describe("program ABI seam boundaries", () => {
     const f = fixture();
     const positive = f.run();
     expect(positive.status, JSON.stringify(positive.report.errors)).toBe(0);
-    expect(positive.report.counts.total).toBe(8);
+    expect(positive.report.counts.total).toBe(9);
     f.append(program[1], edge);
     const negative = f.run();
     expect(negative.status).not.toBe(0);
@@ -211,7 +223,7 @@ describe("program ABI seam boundaries", () => {
     f.append(program[1], 'export { ProgramAbiMap as Hidden } from "./barrel.js";');
     const result = f.run();
     expect(result.status).not.toBe(0);
-    expect(result.report.counts.total).toBe(9);
+    expect(result.report.counts.total).toBe(10);
     expect(result.report.errors.map((error: { code: string }) => error.code)).toContain("forbidden-transitive-path");
   });
 

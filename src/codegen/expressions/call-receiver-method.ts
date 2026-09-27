@@ -95,7 +95,7 @@ import {
   STRING_METHODS,
   typedArrayVecStorage,
 } from "../index.js";
-import { isTaViewTypeIdx, taCtorIdentityTestInstrs } from "../registry/types.js"; // (#5383 S14) brand-checked TA-ctor identity
+import { isTaViewTypeIdx, taCtorIdentityTestInstrs, taCtorKindOf } from "../registry/types.js";
 import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -145,9 +145,10 @@ import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
 import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
+import { tryVecPrototypeToString } from "../vec-prototype-method-call.js";
 import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
 import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
-import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
+import { defaultValueInstrs, emitGuardedRefCast, getVecInfo, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
 import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
@@ -281,6 +282,7 @@ import {
   emitWrapperDynamicMethodCall,
   flattenCallArgs,
   isNumberDotPrototype,
+  isGlobalBuiltinIdentifier,
   isNumberMethodReceiver,
   normalizeNaNToZero,
   resolveAssignedNominalType,
@@ -903,6 +905,9 @@ export function compileReceiverMethodCall(
   const receiverTagExpr = skipTransparentExpressions(propAccess.expression);
   const receiverIsExternrefTagged =
     ts.isIdentifier(receiverTagExpr) && ctx.externrefAccessorVars.has(receiverTagExpr.text);
+  const receiverIsSourceCollection =
+    receiverIsExternrefTagged &&
+    ["Set", "Map", "WeakMap", "WeakSet"].includes(ctx.oracle.builtinReceiverOf(receiverTagExpr) ?? "");
 
   // (#4449) Dynamic TypedArray producer methods must be recognized before the
   // generic native-string ladder below: `any` receivers are intentionally
@@ -1093,7 +1098,10 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
+  if (
+    !receiverIsSourceCollection &&
+    (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined)
+  ) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
@@ -2792,8 +2800,11 @@ export function compileReceiverMethodCall(
     ctx.standalone &&
     ts.isPropertyAccessExpression(propAccess) &&
     tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
+  const vecPrototypeCall = tryVecPrototypeToString(ctx, fctx, expr, propAccess, receiverType);
+  if (vecPrototypeCall !== undefined) return vecPrototypeCall;
   if (
     !receiverIsTypedArrayIntrinsicProto &&
+    !receiverIsSourceCollection &&
     !(
       ctx.targetProfile.semanticProviders === "native-first" &&
       (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
@@ -4058,7 +4069,7 @@ export function compileReceiverMethodCall(
           : undefined;
         const preferOpenBuiltinNamespace =
           builtinNamespace !== undefined && isSupportedBuiltinStaticProperty(builtinNamespace, methodName);
-        if (!preferOpenBuiltinNamespace) {
+        if (!preferOpenBuiltinNamespace && !receiverIsSourceCollection) {
           const externResult = tryExternClassMethodOnAny(ctx, fctx, expr, propAccess, methodName);
           if (externResult !== null) return externResult;
         }
@@ -4753,7 +4764,10 @@ export function compileReceiverMethodCall(
           [{ kind: "externref" }],
         );
         // For built-in class identifiers, import __get_builtin to resolve real JS object
-        const receiverIsBuiltin = isHostResolvedBuiltinReceiver(ctx, propAccess.expression); // (#1472)
+        const receiverIsBuiltin =
+          ts.isIdentifier(propAccess.expression) &&
+          isHostResolvedBuiltinReceiver(ctx, propAccess.expression) &&
+          isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression);
         const getBuiltinIdx = receiverIsBuiltin
           ? ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }])
           : undefined;
@@ -4813,6 +4827,19 @@ export function compileReceiverMethodCall(
         return { kind: "externref" };
       }
     }
+  }
+
+  // Packed typed arrays can inherit user methods through their prototype
+  // override. Earlier compiled-method paths retain precedence; marshal the
+  // raw vec here so inherited `this` refers to the original byte storage.
+  if (
+    ctx.standalone &&
+    (recvWasm.kind === "ref" || recvWasm.kind === "ref_null") &&
+    getVecInfo(ctx, recvWasm.typeIdx) !== null &&
+    taCtorKindOf(recvTsType.symbol?.name ?? "") >= 0
+  ) {
+    const delegated = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text, true);
+    if (delegated !== undefined) return delegated;
   }
 
   // (#3201) Unknown-method fallback for NATIVE (ref/ref_null) receivers on

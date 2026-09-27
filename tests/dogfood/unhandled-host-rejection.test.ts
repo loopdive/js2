@@ -175,6 +175,12 @@ describe("unhandled host rejections (#5369)", () => {
     });
     expect(report.compile.details[0].runtimeError).toContain("unhandled rejection");
     expect(report.compile.details[0].runtimeError).toContain(REASON);
+    expect(report.compile.details[0]).toMatchObject({
+      nativeTestCount: 3,
+      nativeStatusCount: 3,
+      wasmTestCount: 3,
+      wasmStatusCount: 3,
+    });
     expect(report.summary.headline).toBe("3/3 admitted original tests pass in Wasm");
   }, 180_000);
 });

@@ -12,13 +12,15 @@
 import { describe, it, expect } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { TsCheckerOracle } from "../src/checker/oracle.js";
+import { InHouseOracle } from "../src/checker/inhouse-oracle.js";
+import { createTypeOracle, DifferentialOracle, DivergenceLedger } from "../src/checker/oracle-backend.js";
 import { ts } from "../src/ts-api.js";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 function oracleFor(source: string) {
   const { sourceFile, checker } = analyzeSource(source, "oracle-probe.ts");
-  return { oracle: new TsCheckerOracle(checker), sourceFile };
+  return { oracle: new TsCheckerOracle(checker), sourceFile, checker };
 }
 
 /** First initializer expression of the var statement declaring `name`. */
@@ -34,6 +36,48 @@ function initializerOf(sf: ts.SourceFile, name: string): ts.Expression {
 }
 
 describe("#1930 TypeOracle Slice 1", () => {
+  it("distinguishes common iterator members from existential union membership", () => {
+    const { oracle, sourceFile, checker } = oracleFor(`
+      function probe(
+        iterator: IterableIterator<number>,
+        iterable: Iterable<number>,
+        partial: IterableIterator<number> | { next(): IteratorResult<number> },
+        both: IterableIterator<number> | IterableIterator<string>,
+        anyValue: any,
+        unknownValue: unknown,
+      ) {}
+    `);
+    const declaration = sourceFile.statements.find(ts.isFunctionDeclaration)!;
+    const parameters = declaration.parameters;
+    expect(parameters).toHaveLength(6);
+    expect(parameters.map((parameter) => oracle.commonIteratorMembersOf(parameter.name))).toEqual([
+      true,
+      false,
+      false,
+      true,
+      undefined,
+      undefined,
+    ]);
+    expect(oracle.wellKnownSymbolMemberOf(parameters[2]!.name, "iterator")).toBe(true);
+    for (const backend of ["checker", "inhouse", "differential"] as const) {
+      const selected = createTypeOracle(checker, backend);
+      expect(parameters.map((parameter) => selected.commonIteratorMembersOf(parameter.name))).toEqual([
+        true,
+        false,
+        false,
+        true,
+        undefined,
+        undefined,
+      ]);
+    }
+    const pureInhouse = new InHouseOracle();
+    expect(pureInhouse.commonIteratorMembersOf(parameters[0]!.name)).toBeUndefined();
+    const ledger = new DivergenceLedger();
+    const differential = new DifferentialOracle(oracle, pureInhouse, ledger);
+    expect(differential.commonIteratorMembersOf(parameters[0]!.name)).toBe(true);
+    expect(ledger.byQuery.get("commonIteratorMembersOf")?.weakened).toBe(1);
+  });
+
   it("classifies primitive lanes without any codegen context", () => {
     const { oracle, sourceFile } = oracleFor(`
       const n = 1 + 2;

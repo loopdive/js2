@@ -2,6 +2,8 @@
 
 import type { ProgramAbiCallableSignature } from "../ir/program-abi.js";
 import type { FieldDef, TypeDef, ValType } from "../ir/types.js";
+import { canonicalProgramAbiValType } from "../wasm/model/abi-value-key.js";
+export { canonicalProgramAbiValType } from "../wasm/model/abi-value-key.js";
 
 export interface ProgramAbiCallableTypeContract {
   readonly params: readonly ValType[];
@@ -20,27 +22,6 @@ export function cloneProgramAbiCallableTypeContract(signature: {
     params: Object.freeze(signature.params.map(cloneProgramAbiValType)),
     results: Object.freeze(signature.results.map(cloneProgramAbiValType)),
   });
-}
-
-export function canonicalProgramAbiValType(type: ValType): string {
-  switch (type.kind) {
-    case "i32":
-      return JSON.stringify({
-        kind: type.kind,
-        ...(type.boolean === true ? { boolean: true as const } : {}),
-        ...(type.symbol === true ? { symbol: true as const } : {}),
-      });
-    case "i64":
-      return JSON.stringify({
-        kind: type.kind,
-        ...(type.bigint === true ? { bigint: true as const } : {}),
-      });
-    case "ref":
-    case "ref_null":
-      return JSON.stringify({ kind: type.kind, typeIdx: type.typeIdx });
-    default:
-      return JSON.stringify({ kind: type.kind });
-  }
 }
 
 function canonicalProgramAbiField(field: FieldDef): object {

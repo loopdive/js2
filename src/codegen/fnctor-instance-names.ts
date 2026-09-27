@@ -1,8 +1,24 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { CodegenContext } from "./context/types.js";
 import type { FnctorEscapeGateResult } from "./fnctor-escape-gate.js";
+import { ts } from "../ts-api.js";
 
 const siteNamesByGate = new WeakMap<FnctorEscapeGateResult, ReadonlySet<string>>();
+
+/** Keep instance value typing and property layout selection in agreement. */
+export function isFunctionConstructorInstanceType(ctx: CodegenContext, type: ts.Type): boolean {
+  const symbol = type.symbol;
+  const declaration = symbol?.valueDeclaration;
+  const isFunctionConstructor =
+    (symbol?.name !== undefined && isConstructedFnctorName(ctx, symbol.name)) ||
+    (!!declaration &&
+      (ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        (ts.isVariableDeclaration(declaration) &&
+          !!declaration.initializer &&
+          ts.isFunctionExpression(declaration.initializer))));
+  return isFunctionConstructor && type.getCallSignatures().length === 0;
+}
 
 /**
  * (#1058) Is `name` a function constructor that some `new F()` site in the

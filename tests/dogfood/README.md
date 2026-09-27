@@ -71,6 +71,25 @@ node tests/dogfood/typescript-upstream-build-probe.mjs \
   --invoke-case ../../fixtures/typescript-binder/const-local.ts=65792 \
   --invoke-case ../../fixtures/typescript-binder/duplicate-let.ts=131330 \
   --timeout-ms 900000 --heap-mb 4096 --json
+
+node --experimental-wasm-exnref tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source \
+  --entry ../../fixtures/typescript-parser-standalone-workload.ts \
+  --consumer-driven-barrels --target standalone --require-invocations 3 \
+  --invoke-zero-case runBuilderStatePublic=13386537220945 \
+  --invoke-zero-case runCorePublic=40098163538143 \
+  --invoke-zero-case runPerformanceCore=49645738923599 \
+  --timeout-ms 1200000 --heap-mb 4096 --json
+
+node --experimental-wasm-exnref tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source \
+  --entry ../../fixtures/typescript-binder-standalone-workload.ts \
+  --consumer-driven-barrels --target standalone --require-invocations 2 \
+  --invoke-zero-case runConstLocal=65792 \
+  --invoke-zero-case runDuplicateLet=131330 \
+  --timeout-ms 1200000 --heap-mb 4096 --json
+
+DOGFOOD_TARGET=standalone pnpm run dogfood:typescript-upstream-suite
 ```
 
 `--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
@@ -90,6 +109,36 @@ The binder gate uses the same fail-closed multi-case contract. Its first packed
 count is deliberately only a bounded smoke oracle; the exact tracked input
 files make the two native values reproducible while a later milestone adds a
 sorted locals/exports name-and-flags fingerprint.
+`--target gc` is the default compatibility lane. `--target standalone` leaves
+the Node platform unset, requires the generated module to have zero imports,
+and invokes raw Wasm exports without the host runtime wrapper. Because a native
+Wasm string cannot be supplied as a JavaScript string, the standalone parser
+and binder fixtures embed the same pinned input bytes and expose only tracked
+zero-argument numeric oracles through repeated
+`--invoke-zero-case <export>=<safe-integer>` options. The probe rejects the
+ordinary JavaScript-string invocation flags in this lane rather than silently
+testing a host bridge. The standalone probe commands enable Node's experimental
+Wasm exnref flag because TypeScript source containing `try`/`catch` otherwise
+fails host validation at opcode `0x1f`; the compiler worker inherits that engine
+feature from the parent process.
+For a stackless Wasm exception during initialization, set
+`JS2WASM_TYPESCRIPT_PROBE_TRACE_STARTUP=1` to trace runtime function entries only
+while instantiating the module. Combine with
+`JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC=1` to suppress verbose compiler profiling.
+The trace does not change the binary or verdict; initialization failures still
+fail every requested invocation. Avoid Node's global `--trace-wasm` flag here,
+which also traces compiler-side Wasm used by tsx.
+The same `DOGFOOD_TARGET=standalone` switch runs the currently selected
+upstream-unit adapter through raw numeric exports. Its strict verdict still
+requires every selected callback to pass, so a partial runtime result exits
+nonzero while retaining the exact test and deferred-registration denominators.
+The base64 comparison uses an independent Buffer implementation, not the
+TypeScript encoder on both sides. `typescript-runtime-pin.json` pins the three
+published runtime tarballs; setup verifies their digests and links an isolated
+dependency tree without installing into shared `node_modules`. The polyfill is
+compiled into the standalone artifact. Reports identify this as oracle version
+2. The measured slice is 14/14 callbacks in 4/256 files; 1,747 registrations
+remain deferred, so this is not full upstream-suite completion.
 `--prepare-pinned-typescript` verifies the exact v5.9.3 checkout, runs
 TypeScript's checked-in `processDiagnosticMessages.mjs` generator, and verifies
 both generated diagnostic artifacts against pinned SHA-256 digests before the

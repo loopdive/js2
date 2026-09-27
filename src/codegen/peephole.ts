@@ -104,7 +104,7 @@ function crossFunctionBodies(mod: WasmModule): WeakSet<Instr[]> {
 
 /**
  * Remove redundant ref.as_non_null after ref.cast in a single instruction list.
- * Recurses into block, loop, if/then/else, and try/catch bodies.
+ * Visits block, loop, if/then/else, and try/catch bodies in postorder.
  * Mutates the array in place and returns the number of instructions removed.
  *
  * @param localTypes - flat array of Wasm types for locals in the enclosing function:
@@ -117,23 +117,36 @@ function optimizeBody(
   visited: WeakSet<Instr[]>,
   contextBlocked: WeakSet<Instr[]>,
 ): number {
-  if (visited.has(body)) return 0;
-  visited.add(body);
   let removed = 0;
-
-  // First, recurse into nested child bodies. #1920 — drive the descent through
-  // the SHARED `walkChildren` enumerator (walk-instructions.ts) instead of a
-  // hand-rolled per-op switch. The old switch silently skipped `try.catchAll`
-  // for a long time (the bug this issue tracks): every pass that re-implements
-  // child enumeration risks diverging from the others. Going through the one
-  // enumerator means peephole automatically covers every nested buffer
-  // (`then`/`else`/`body`/`catches[].body`/`catchAll`) and any future Instr
-  // child field, with no chance of the walkers drifting apart again.
-  for (const instr of body) {
-    walkChildren(instr, (children) => {
-      removed += optimizeBody(children, localTypes, visited, contextBlocked);
-    });
+  const pending = [{ body, exiting: false }];
+  while (pending.length > 0) {
+    const frame = pending.pop()!;
+    if (frame.exiting) {
+      removed += optimizeBodyPatterns(frame.body, localTypes, contextBlocked);
+      continue;
+    }
+    if (visited.has(frame.body)) continue;
+    visited.add(frame.body);
+    pending.push({ body: frame.body, exiting: true });
+    // Keep child-first, source-order traversal without growing the JS stack.
+    // Mark arrays on entry, not scheduling, so shared siblings retain the same
+    // first-owner order as recursive traversal. Use the shared enumerator to
+    // include catches/catchAll and future child fields (#1920).
+    const children: Instr[][] = [];
+    for (const instr of frame.body) walkChildren(instr, (child) => children.push(child));
+    for (let i = children.length - 1; i >= 0; i--) {
+      pending.push({ body: children[i]!, exiting: false });
+    }
   }
+  return removed;
+}
+
+function optimizeBodyPatterns(
+  body: Instr[],
+  localTypes: ValType[] | undefined,
+  contextBlocked: WeakSet<Instr[]>,
+): number {
+  let removed = 0;
 
   // Scan for peephole patterns
   let i = 0;

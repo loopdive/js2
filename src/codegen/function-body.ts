@@ -46,6 +46,7 @@ import {
   emitArgumentsVecBody,
   emitParamDefaultArgMissingCheck,
   paramDefaultNeedsArgc,
+  registerOmissionTrackedScalarParams,
 } from "./statements/nested-declarations.js";
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "./nested-function-name-scope.js"; // (#4456)
 import { emitThrowReferenceError } from "./expressions/helpers.js";
@@ -501,9 +502,15 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // The argc cache is computed FIRST, because the hoisted emission consumes
   // `__argc` — see precacheParamDefaultArgc's doc. `cacheParamDefaultArgc` is
   // idempotent, so the simple-list lane is unaffected by the reordering.
-  const needsDefaultArgc = decl.parameters.some(
-    (param, i) => param.initializer !== undefined && paramDefaultNeedsArgc(params[i]?.type),
+  const tracksScalarOmission = registerOmissionTrackedScalarParams(
+    ctx,
+    fctx,
+    decl,
+    params.map((param) => param.type),
   );
+  const needsDefaultArgc =
+    tracksScalarOmission ||
+    decl.parameters.some((param, i) => param.initializer !== undefined && paramDefaultNeedsArgc(params[i]?.type));
   if (!isSimpleParameterList(decl.parameters)) {
     if (needsDefaultArgc) cacheParamDefaultArgc(ctx, fctx);
     emitDeclarationArgumentsObject(ctx, fctx, decl, params, func.name);

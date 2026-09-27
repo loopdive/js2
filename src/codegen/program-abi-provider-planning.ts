@@ -1,6 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irCallableBindingKey } from "../ir/callable-bindings.js";
+import { irCallableBindingKey, irRuntimeFuncRef } from "../ir/callable-bindings.js";
+import {
+  assertIrUndefinedValueDemand,
+  IR_UNDEFINED_VALUE_FN,
+  type IrUndefinedValueDemand,
+} from "../ir/undefined-value-provider.js";
+import {
+  assertUndefinedValueProvider,
+  reserveUndefinedValueProvider,
+  type UndefinedValueProviderReservation,
+} from "./undefined-value-provider.js";
+import type { PreparedComponentDependencyEvidence } from "../ir/prepared-component-dependencies.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "../ir/identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { IrFuncRef } from "../ir/nodes.js";
@@ -37,6 +48,10 @@ interface ObservedProvider {
   readonly binding: ProviderBinding;
   readonly structuralReferenceKey: string;
   readonly locator: ProviderLocator;
+  readonly undefinedValue?: {
+    readonly reservation: UndefinedValueProviderReservation;
+    readonly consumers: readonly IrUndefinedValueDemand[];
+  };
 }
 
 type PreparedCallableImportDescriptor = ReturnType<ProgramAbiCallableImportRegistry["describePrepared"]>;
@@ -263,6 +278,67 @@ export class ProgramAbiCallableProviderRegistry {
     session.assertModule(ctx.mod);
   }
 
+  /** Reserve once in the existing census phase; observations are not ABI publication. */
+  prepareUndefinedValueDemands(demands: readonly IrUndefinedValueDemand[]): void {
+    if (demands.length === 0) return;
+    if (this.ctx.programAbiSession !== this.session || this.plannedValue)
+      throw providerError("undefined demand crossed its session or planning phase");
+    this.session.assertModule(this.ctx.mod);
+    for (const demand of demands) {
+      assertIrUndefinedValueDemand(demand);
+      const terminal = this.session.inventory.terminalUnits.find((unit) => unit.id === demand.terminalUnitId);
+      if (!terminal || terminal.sourceId !== demand.sourceId)
+        throw providerError("undefined demand has a foreign source or terminal owner");
+    }
+    const ref = irRuntimeFuncRef(IR_UNDEFINED_VALUE_FN);
+    const key = irCallableBindingKey(ref.binding);
+    const previous = this.observed.get(key);
+    if (previous && !previous.undefinedValue)
+      throw providerError("undefined provider has an unauthenticated prior observation");
+    const reservation = previous?.undefinedValue?.reservation ?? reserveUndefinedValueProvider(this.ctx);
+    assertUndefinedValueProvider(this.ctx, reservation);
+    if (!previous) this.observe(ref, this.ctx.funcMap.get(IR_UNDEFINED_VALUE_FN)!);
+    const consumers = [...(previous?.undefinedValue?.consumers ?? [])];
+    for (const demand of demands) {
+      if (!consumers.some((item) => item.sourceId === demand.sourceId && item.terminalUnitId === demand.terminalUnitId))
+        consumers.push(Object.freeze({ ...demand }));
+    }
+    if (!previous || consumers.length !== previous.undefinedValue!.consumers.length) {
+      this.observed.set(
+        key,
+        Object.freeze({
+          ...this.observed.get(key)!,
+          undefinedValue: Object.freeze({ reservation, consumers: Object.freeze(consumers) }),
+        }),
+      );
+    }
+  }
+
+  /** Join actual dependency consumers to this component before its batch is staged. */
+  assertUndefinedValueComponent(component: PreparedComponentDependencyEvidence): void {
+    const key = irCallableBindingKey(irRuntimeFuncRef(IR_UNDEFINED_VALUE_FN).binding);
+    const uses = component.externalCallables.filter((dependency) => dependency.structuralReferenceKey === key);
+    if (uses.length === 0) return;
+    const provider = this.observed.get(key);
+    if (!provider?.undefinedValue || !component.id)
+      throw providerError("undefined component has no authenticated reservation");
+    assertUndefinedValueProvider(this.ctx, provider.undefinedValue.reservation);
+    for (const use of uses) {
+      const owner =
+        this.session.inventory.allUnits.find((unit) => unit.id === use.ownerUnitId) ??
+        this.session.registeredDerivedUnit(use.ownerUnitId);
+      if (
+        !owner ||
+        owner.terminalOwnerId === null ||
+        !component.terminalUnitIds.includes(owner.terminalOwnerId) ||
+        !provider.undefinedValue.consumers.some(
+          (demand) => demand.terminalUnitId === owner.terminalOwnerId && demand.sourceId === owner.sourceId,
+        )
+      )
+        throw providerError("undefined component has a foreign or undemanded consumer");
+    }
+  }
+
   /**
    * Return the current slot for an already observed provider.
    *
@@ -367,6 +443,11 @@ export class ProgramAbiCallableProviderRegistry {
       const provider = this.observed.get(key);
       if (!provider) return undefined;
       if (provider.locator.kind === "import-function") imports.add(provider.locator.value);
+      if (provider.undefinedValue) {
+        assertUndefinedValueProvider(this.ctx, provider.undefinedValue.reservation);
+        const resource = provider.undefinedValue.reservation.resource;
+        if (resource.kind === "host") imports.add(resource.imported);
+      }
     }
     return imports;
   }
@@ -399,6 +480,17 @@ export class ProgramAbiCallableProviderRegistry {
       }
       return provider;
     });
+    for (const provider of requestedProviders) {
+      if (!provider.undefinedValue) continue;
+      assertUndefinedValueProvider(this.ctx, provider.undefinedValue.reservation);
+      const resource = provider.undefinedValue.reservation.resource;
+      if (
+        resource.kind === "host" &&
+        (!exactImportDescriptor ||
+          importRegistry?.preparedDescriptorBindingId(exactImportDescriptor, resource.imported) === undefined)
+      )
+        throw providerError("undefined provider requires its exact host import descriptor");
+    }
     const returnKeys = [...requestedKeys];
     const selectedKeys = new Set(returnKeys);
     for (const candidate of this.observed.values()) {
@@ -434,8 +526,34 @@ export class ProgramAbiCallableProviderRegistry {
     return descriptor;
   }
 
+  /** Exact resource dependencies of this authenticated provider contribution, not a module-wide sweep. */
+  preparedUndefinedValueResourceBindingIds(descriptor: PreparedCallableProviderDescriptor): readonly IrBindingId[] {
+    const payload = this.requirePreparedDescriptor(descriptor);
+    this.assertPreparedDescriptorCurrent(descriptor);
+    return Object.freeze(
+      payload.selected.flatMap(({ provider }) => {
+        const resource = provider.undefinedValue?.reservation.resource;
+        if (resource?.kind !== "host") return [];
+        const id =
+          payload.importDescriptor === undefined
+            ? undefined
+            : this.ctx.programAbiCallableImports?.preparedDescriptorBindingId(
+                payload.importDescriptor,
+                resource.imported,
+              );
+        if (id === undefined) throw providerError("undefined provider lost its exact host import dependency");
+        return [id];
+      }),
+    );
+  }
+
   assertPreparedDescriptorCurrent(descriptor: PreparedCallableProviderDescriptor): void {
     const payload = this.requirePreparedDescriptor(descriptor);
+    this.session.assertModule(this.ctx.mod);
+    for (const entry of payload.selected) {
+      if (entry.provider.undefinedValue)
+        assertUndefinedValueProvider(this.ctx, entry.provider.undefinedValue.reservation);
+    }
     if (this.plannedValue) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
@@ -911,6 +1029,7 @@ export class ProgramAbiCallableProviderRegistry {
             .filter(({ ownerKind }) => ownerKind === "provisional-import")
             .map(({ canonicalOwner }) => canonicalOwner),
         ),
+        ...this.preparedUndefinedValueResourceBindingIds(descriptor),
       ]);
       const closure = Object.freeze(
         payload.selected.map((entry) => entry.provider.structuralReferenceKey).filter((key) => !requestedSet.has(key)),

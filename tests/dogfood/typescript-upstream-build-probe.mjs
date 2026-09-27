@@ -47,6 +47,49 @@ function entryFor(root, mode, override) {
 }
 
 /**
+ * Keep the TypeScript probe's deployment lane explicit. An omitted option
+ * preserves the historical GC/Node probe, while every supplied value is
+ * validated instead of falling through to the compiler default.
+ */
+export function typescriptBuildProbeTarget(value) {
+  if (value === null) return "gc";
+  if (value === "gc" || value === "standalone") return value;
+  throw new Error("--target expects gc or standalone");
+}
+
+/** Parse both conventional CLI spellings without allowing a duplicate lane. */
+export function typescriptBuildProbeTargetFromArgs(args) {
+  const values = [];
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === "--target") {
+      values.push(args[index + 1]);
+      index++;
+    } else if (argument.startsWith("--target=")) {
+      values.push(argument.slice("--target=".length));
+    }
+  }
+  if (values.length === 0) return "gc";
+  if (values.length !== 1) throw new Error("--target may be specified only once");
+  return typescriptBuildProbeTarget(values[0]);
+}
+
+/**
+ * The existing invocation oracle crosses the JavaScript boundary with a JS
+ * string and wraps the exported function through the GC host ABI. Standalone
+ * needs a tracked, zero-argument static oracle before runtime execution can be
+ * accepted honestly, so reject that combination rather than silently running
+ * it through the host bridge.
+ */
+export function assertTypescriptBuildProbeInvocationSupported(target, invocationRequested, zeroArgumentOnly = false) {
+  if (target === "standalone" && invocationRequested && !zeroArgumentOnly) {
+    throw new Error(
+      "--target standalone supports only static --invoke-zero-case oracles; JavaScript-string invocation requires the GC host lane",
+    );
+  }
+}
+
+/**
  * Legacy --expected-number accepts any finite Number. Repeated --invoke-case
  * values carry packed parser fingerprints and therefore require safe integers.
  */
@@ -61,7 +104,7 @@ export function typescriptInvocationMatches(actual, expected, requireSafeInteger
  * also have run and matched. Kept pure/exported so the CLI's exit contract has
  * a fast unit test instead of relying on a multi-minute TypeScript build.
  */
-export function typescriptBuildProbeSucceeded(finalMessage, invocationRequirement) {
+export function typescriptBuildProbeSucceeded(finalMessage, invocationRequirement, requestedTarget = null) {
   if (
     finalMessage?.type !== "result" ||
     finalMessage.success !== true ||
@@ -69,6 +112,18 @@ export function typescriptBuildProbeSucceeded(finalMessage, invocationRequiremen
     finalMessage.validates !== true
   ) {
     return false;
+  }
+
+  const target = requestedTarget === null ? null : typescriptBuildProbeTarget(requestedTarget);
+  if (target !== null) {
+    if (
+      finalMessage.requestedTarget !== target ||
+      finalMessage.actualTarget !== target ||
+      !Array.isArray(finalMessage.moduleImports) ||
+      (target === "standalone" && finalMessage.moduleImports.length !== 0)
+    ) {
+      return false;
+    }
   }
 
   const required =
@@ -85,6 +140,7 @@ export function typescriptBuildProbeSucceeded(finalMessage, invocationRequiremen
     return (
       record?.matches === true &&
       record.error === undefined &&
+      (target !== "standalone" || record.zeroArguments === true) &&
       typescriptInvocationMatches(record.actual, record.expected, requireSafeIntegers)
     );
   });
@@ -96,10 +152,16 @@ export function typescriptBuildProbeSucceeded(finalMessage, invocationRequiremen
  * then hang, crash, or exit nonzero while flushing follow-up work. Timeouts keep
  * their conventional 124 status; every other lifecycle failure exits 1.
  */
-export function typescriptBuildProbeExitCode(finalMessage, invocationRequirement, timedOut, workerExitCode) {
+export function typescriptBuildProbeExitCode(
+  finalMessage,
+  invocationRequirement,
+  timedOut,
+  workerExitCode,
+  requestedTarget = null,
+) {
   if (timedOut) return 124;
   if (workerExitCode !== 0) return 1;
-  return typescriptBuildProbeSucceeded(finalMessage, invocationRequirement) ? 0 : 1;
+  return typescriptBuildProbeSucceeded(finalMessage, invocationRequirement, requestedTarget) ? 0 : 1;
 }
 
 /**
@@ -143,7 +205,13 @@ export function takeTypescriptBuildProbeArtifactCandidate(message) {
  * later compiler slices separate. Generic source and bundle entries retain a
  * mode suffix so those two probes cannot overwrite each other.
  */
-export function typescriptBuildProbeArtifactPath(entry, artifactDirectory = "/private/tmp", mode = null) {
+export function typescriptBuildProbeArtifactPath(
+  entry,
+  artifactDirectory = "/private/tmp",
+  mode = null,
+  target = "gc",
+) {
+  const acceptedTarget = typescriptBuildProbeTarget(target);
   const entryName = basename(entry, extname(entry));
   const hasWorkloadSuffix = entryName.endsWith("-workload");
   const workloadName = entryName
@@ -154,7 +222,9 @@ export function typescriptBuildProbeArtifactPath(entry, artifactDirectory = "/pr
     .replace(/[^A-Za-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   const artifactName = `${workloadName || "typescript"}${!hasWorkloadSuffix && modeName ? `-${modeName}` : ""}`;
-  return join(artifactDirectory, `ts2wasm-${artifactName}-latest.wasm`);
+  // Keep the established GC filename while giving standalone its own slot.
+  const targetSuffix = acceptedTarget === "standalone" ? "-standalone" : "";
+  return join(artifactDirectory, `ts2wasm-${artifactName}${targetSuffix}-latest.wasm`);
 }
 
 /**
@@ -272,20 +342,62 @@ export function publishTypescriptBuildProbeArtifactAfterExit({
   invocationRequirement,
   timedOut,
   workerExitCode,
+  requestedTarget = null,
 }) {
   return publishTypescriptBuildProbeArtifact({
     artifactPath,
     binary,
     sourceMap,
-    accepted: typescriptBuildProbeExitCode(finalMessage, invocationRequirement, timedOut, workerExitCode) === 0,
+    accepted:
+      typescriptBuildProbeExitCode(finalMessage, invocationRequirement, timedOut, workerExitCode, requestedTarget) ===
+      0,
   });
 }
 
 function invocationCasesFor(root, invokeExport, invokeString, expectedNumberRaw, expectedNumber) {
   const specs = optionValues("--invoke-case");
+  const zeroArgumentSpecs = optionValues("--invoke-zero-case");
   const requiredRaw = optionValue("--require-invocations");
   const required = requiredRaw === null ? null : numericOption("--require-invocations", 1);
   const hasLegacyInvocation = invokeString !== null || expectedNumberRaw !== null;
+
+  if (hasLegacyInvocation && invokeExport === null) {
+    throw new Error("--invoke-string/--expected-number require --invoke-export");
+  }
+
+  if (zeroArgumentSpecs.length > 0) {
+    if (specs.length > 0 || invokeExport !== null || hasLegacyInvocation) {
+      throw new Error(
+        "--invoke-zero-case cannot be mixed with --invoke-export/--invoke-case/--invoke-string/--expected-number",
+      );
+    }
+    if (required === null) throw new Error("repeated --invoke-zero-case requires --require-invocations");
+    if (zeroArgumentSpecs.length !== required) {
+      throw new Error(
+        `--require-invocations ${required} does not match ${zeroArgumentSpecs.length} --invoke-zero-case values`,
+      );
+    }
+    const cases = zeroArgumentSpecs.map((spec) => {
+      const separator = spec.lastIndexOf("=");
+      if (separator <= 0 || separator === spec.length - 1) {
+        throw new Error("--invoke-zero-case expects <export>=<safe-integer>");
+      }
+      const exportName = spec.slice(0, separator);
+      const expected = Number(spec.slice(separator + 1));
+      if (!Number.isSafeInteger(expected)) {
+        throw new Error(`--invoke-zero-case expected value is not a safe integer: ${spec}`);
+      }
+      return {
+        name: exportName,
+        exportName,
+        input: null,
+        expected,
+        requireSafeInteger: true,
+        zeroArguments: true,
+      };
+    });
+    return { cases, required, requirement: required, zeroArgumentOnly: true };
+  }
 
   if (specs.length > 0 && hasLegacyInvocation) {
     throw new Error("--invoke-case cannot be mixed with --invoke-string/--expected-number");
@@ -304,9 +416,19 @@ function invocationCasesFor(root, invokeExport, invokeString, expectedNumberRaw,
       cases:
         invokeExport === null
           ? []
-          : [{ name: "inline", input: invokeString, expected: expectedNumber, requireSafeInteger: false }],
+          : [
+              {
+                name: "inline",
+                exportName: invokeExport,
+                input: invokeString,
+                expected: expectedNumber,
+                requireSafeInteger: false,
+                zeroArguments: false,
+              },
+            ],
       required: invokeExport === null ? 0 : 1,
       requirement: invokeExport !== null,
+      zeroArgumentOnly: false,
     };
   }
   if (required === null) throw new Error("repeated --invoke-case requires --require-invocations");
@@ -324,14 +446,22 @@ function invocationCasesFor(root, invokeExport, invokeString, expectedNumberRaw,
     if (!Number.isSafeInteger(expected)) throw new Error(`--invoke-case expected value is not a safe integer: ${spec}`);
     const inputPath = resolve(root, name);
     if (!existsSync(inputPath)) throw new Error(`TypeScript parser input does not exist: ${inputPath}`);
-    return { name, input: readFileSync(inputPath, "utf8"), expected, requireSafeInteger: true };
+    return {
+      name,
+      exportName: invokeExport,
+      input: readFileSync(inputPath, "utf8"),
+      expected,
+      requireSafeInteger: true,
+      zeroArguments: false,
+    };
   });
-  return { cases, required, requirement: required };
+  return { cases, required, requirement: required, zeroArgumentOnly: false };
 }
 
 async function runMain() {
   const root = resolve(optionValue("--root") ?? "");
   const mode = optionValue("--mode") ?? "source";
+  const requestedTarget = typescriptBuildProbeTargetFromArgs(process.argv);
   const preparePinnedTypescript = process.argv.includes("--prepare-pinned-typescript");
   const preparedSuite = preparePinnedTypescript ? setupTypescriptUpstreamSuite() : null;
   if (preparedSuite !== null && resolve(preparedSuite.root) !== root) {
@@ -351,7 +481,12 @@ async function runMain() {
     throw new Error("--expected-number expects a finite number");
   }
   const invocationPlan = invocationCasesFor(root, invokeExport, invokeString, expectedNumberRaw, expectedNumber);
-  const diagnosticArtifactPath = typescriptBuildProbeArtifactPath(entry, "/private/tmp", mode);
+  assertTypescriptBuildProbeInvocationSupported(
+    requestedTarget,
+    invocationPlan.required > 0,
+    invocationPlan.zeroArgumentOnly,
+  );
+  const diagnosticArtifactPath = typescriptBuildProbeArtifactPath(entry, "/private/tmp", mode, requestedTarget);
   const diagnosticArtifactEnabled = process.env.JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC === "1";
   const jsonOnly = process.argv.includes("--json");
   if (!existsSync(entry)) throw new Error(`TypeScript ${mode} entry does not exist: ${entry}`);
@@ -372,6 +507,7 @@ async function runMain() {
     workerData: {
       entry,
       mode,
+      requestedTarget,
       consumerDrivenBarrels,
       invokeExport,
       invocationCases: invocationPlan.cases,
@@ -458,6 +594,7 @@ async function runMain() {
     invocationPlan.requirement,
     timedOut,
     workerExitCode,
+    requestedTarget,
   );
   let diagnosticArtifact = null;
   let artifactPublicationFailed = false;
@@ -471,6 +608,7 @@ async function runMain() {
         invocationRequirement: invocationPlan.requirement,
         timedOut,
         workerExitCode,
+        requestedTarget,
       });
     } catch (error) {
       artifactPublicationFailed = buildExitCode === 0;
@@ -486,6 +624,9 @@ async function runMain() {
   }
   const summary = {
     mode,
+    requestedTarget,
+    actualTarget: finalMessage?.actualTarget ?? null,
+    moduleImports: finalMessage?.moduleImports ?? null,
     root,
     preparePinnedTypescript,
     generatedDiagnostics: preparedSuite?.generatedDiagnostics ?? null,
@@ -499,10 +640,12 @@ async function runMain() {
     invokeExport,
     expectedNumber,
     requiredInvocations: invocationPlan.required,
-    invocationCases: invocationPlan.cases.map(({ name, input, expected }) => ({
+    invocationCases: invocationPlan.cases.map(({ name, exportName, input, expected, zeroArguments }) => ({
       name,
-      inputBytes: Buffer.byteLength(input, "utf8"),
+      exportName,
+      inputBytes: input === null ? 0 : Buffer.byteLength(input, "utf8"),
       expected,
+      zeroArguments,
     })),
     diagnosticArtifactPath,
     diagnosticArtifactEnabled,

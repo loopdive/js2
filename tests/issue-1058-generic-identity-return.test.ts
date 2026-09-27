@@ -13,9 +13,10 @@ async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
   return wrapExports(instance, { signatures: result.exportSignatures });
 }
 
-describe("#1058 generic identity returns", () => {
+describe.each(["gc", "standalone"] as const)("#1058 generic identity returns (%s)", (target) => {
   it("bridges an erased generic identity through a concrete callable property", async () => {
-    const result = await compile(`
+    const result = await compile(
+      `
       interface Box { value: number; }
       interface Rules { apply(value: Box): Box; }
 
@@ -28,13 +29,18 @@ describe("#1058 generic identity returns", () => {
       export function test(): number {
         return rules.apply({ value: 42 }).value;
       }
-    `);
+    `,
+      { target },
+    );
+
+    if (target === "standalone") expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
 
     expect((await instantiate(result)).test()).toBe(42);
   });
 
   it("does not freeze a T-to-T result to the first sibling layout", async () => {
-    const result = await compile(`
+    const result = await compile(
+      `
       type Mutable<T> = { -readonly [P in keyof T]: T[P] };
       interface Node { readonly pos: number; readonly end: number; }
       interface LeftNode extends Node { left: number; }
@@ -54,7 +60,11 @@ describe("#1058 generic identity returns", () => {
         const right = finishNode(makeRight(), 2);
         return left.left + left.pos + left.end + right.right + right.pos + right.end;
       }
-    `);
+    `,
+      { target },
+    );
+
+    if (target === "standalone") expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
 
     expect((await instantiate(result)).test()).toBe(38);
   });

@@ -12,7 +12,7 @@ import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalon
 import type { IrClosureLowering } from "./backend/handles.js";
 import type { IrClosureSignature, IrDomCallbackAuthority, IrType } from "./nodes.js";
 import type { FieldDef, StructTypeDef, ValType } from "./types.js";
-import { irTypeKey } from "./type-key.js";
+import { irPhysicalTypeKey as irTypeKey } from "./type-key.js";
 
 function signatureKey(signature: IrClosureSignature): string {
   const params = signature.params.map(irTypeKey).join(",");

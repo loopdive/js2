@@ -63,9 +63,17 @@ describe("#2856 Step 0 reject-arm attribution", () => {
     expect(details.get("objectSpread")).toBe("objectlit-spread:SpreadAssignment");
     expect(details.get("tryBinding")).toBe("try-catch-binding:ObjectBindingPattern");
     expect(details.get("closureParam")).toBe("closure-param-shape:Parameter");
-    expect(details.get("forInitializer")).toBe("for-init-var-kind:VariableDeclarationList");
+    // The safe var-loop proof now admits this fixture. Keep it as a positive
+    // control; pinning its historical refusal would defend the old limitation.
+    expect(selection.funcs.has("forInitializer")).toBe(true);
+    expect(details.has("forInitializer")).toBe(false);
     expect(details.get("updFoot")).toBe("expr-ident-not-in-scope:Identifier");
-    expect(details.get("delay")).toBe("expr-new-type-args:NewExpression");
+    // Constructor capability now rejects this before the generic new-expression
+    // shape walk. It has a typed reason, rather than a body-shape arm detail.
+    expect(selection.fallbacks?.find((row) => row.name === "delay")).toEqual({
+      name: "delay",
+      reason: "constructor-resolution-unsupported",
+    });
   });
 
   it("keeps diagnostic detail absent when the opt-in flag is unset", async () => {

@@ -4,16 +4,21 @@ import { describe, expect, it } from "vitest";
 
 import { compile, compileMulti, wrapExports } from "../src/index.js";
 
-async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
+async function instantiate(result: Awaited<ReturnType<typeof compile>>, target: "gc" | "standalone") {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
+  if (target === "standalone") {
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    return instance.exports as { test: () => number };
+  }
   const imports = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
   return wrapExports(instance, { signatures: result.exportSignatures });
 }
 
-describe("#1058 late-assigned Identifier constructor", () => {
+describe.each(["gc", "standalone"] as const)("#1058 late-assigned Identifier constructor (%s)", (target) => {
   it("constructs a local Node function that shares its imported interface name", async () => {
     const result = await compileMulti(
       {
@@ -72,10 +77,10 @@ describe("#1058 late-assigned Identifier constructor", () => {
         `,
       },
       "./entry.ts",
-      { resolve: { consumerDrivenBarrels: true } },
+      { target, resolve: { consumerDrivenBarrels: true } },
     );
 
-    expect((await instantiate(result)).test()).toBe(243);
+    expect((await instantiate(result, target)).test()).toBe(243);
   });
 
   it("constructs through a callable returned by an imported object allocator", async () => {
@@ -140,10 +145,10 @@ describe("#1058 late-assigned Identifier constructor", () => {
         `,
       },
       "./entry.ts",
-      { resolve: { consumerDrivenBarrels: true } },
+      { target, resolve: { consumerDrivenBarrels: true } },
     );
 
-    const exports = await instantiate(result);
+    const exports = await instantiate(result, target);
     expect(exports.test()).toBe(40);
   });
 
@@ -164,11 +169,17 @@ describe("#1058 late-assigned Identifier constructor", () => {
           emitNode?: unknown;
         }
 
+        type EscapedString = (string & { __escapedIdentifier: void })
+          | (void & { __escapedIdentifier: void }) | "__call";
         interface Identifier extends Node {
-          escapedText: string;
+          escapedText: EscapedString;
           jsDoc?: Node[];
           flowNode?: unknown;
           symbol: unknown;
+        }
+
+        interface ArrayLiteralExpression extends Node {
+          elements: Node[];
         }
 
         interface BaseNodeFactory {
@@ -176,7 +187,7 @@ describe("#1058 late-assigned Identifier constructor", () => {
         }
 
         function createNodeFactory(baseFactory: BaseNodeFactory) {
-          function createBaseIdentifier(escapedText: string): Identifier {
+          function createBaseIdentifier(escapedText: EscapedString) {
             const node = baseFactory.createBaseIdentifierNode(80) as Mutable<Identifier>;
             node.escapedText = escapedText;
             node.jsDoc = undefined;
@@ -185,8 +196,11 @@ describe("#1058 late-assigned Identifier constructor", () => {
             return node;
           }
 
-          function createIdentifier(text: string): Identifier {
-            return createBaseIdentifier(text);
+          function createIdentifier(text: string, originalKeywordKind?: number, hasExtendedUnicodeEscape?: boolean): Identifier {
+            if (originalKeywordKind === 80) originalKeywordKind = undefined;
+            const node = createBaseIdentifier(text as EscapedString);
+            if (hasExtendedUnicodeEscape) node.flags |= 1;
+            return node;
           }
 
           return { createIdentifier };
@@ -233,7 +247,7 @@ describe("#1058 late-assigned Identifier constructor", () => {
           }
 
           function primeFinishNodeSpecialization(): number {
-            const node: Node = {
+            const node: ArrayLiteralExpression = {
               kind: 1,
               pos: 0,
               end: 0,
@@ -243,6 +257,7 @@ describe("#1058 late-assigned Identifier constructor", () => {
               parent: undefined!,
               original: undefined,
               emitNode: undefined,
+              elements: [],
             };
             return finishNode(node, 1).kind;
           }
@@ -251,21 +266,29 @@ describe("#1058 late-assigned Identifier constructor", () => {
             IdentifierConstructor = objectAllocator.getIdentifierConstructor();
           }
 
+          const identifiers = new Map<string, string>();
+          function internIdentifier(text: string): string {
+            let identifier = identifiers.get(text);
+            if (identifier === undefined) identifiers.set(text, identifier = text);
+            return identifier;
+          }
+
           export function createIdentifier(): Identifier {
             primeFinishNodeSpecialization();
             initializeState();
-            return finishNode(factoryCreateIdentifier("hello"), 10);
+            const text = internIdentifier("__hello".substring(2));
+            return finishNode(factoryCreateIdentifier(text, 80, false), 10);
           }
         }
 
         export function test(): number {
           const identifier = Parser.createIdentifier();
-          return identifier.kind + identifier.pos + identifier.end + identifier.escapedText.length;
+          return identifier.kind + identifier.pos + identifier.end + (identifier.escapedText as string).length;
         }
       `,
-      { fileName: "issue-1058-identifier-constructor-factory.ts", skipSemanticDiagnostics: true },
+      { target, fileName: "issue-1058-identifier-constructor-factory.ts", skipSemanticDiagnostics: true },
     );
-    const exports = await instantiate(result);
+    const exports = await instantiate(result, target);
     expect(exports.test()).toBe(106);
   });
 });

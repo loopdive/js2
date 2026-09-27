@@ -68,6 +68,9 @@
  */
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
+import type { TypeOracle } from "../checker/oracle.js";
+
+type NativeAnnotationLookup = ts.TypeChecker | Pick<TypeOracle, "declarationsOf">;
 
 /**
  * Native type annotation map: type alias names that map to Wasm types.
@@ -106,7 +109,7 @@ function isNumberAliasDeclaration(decl: ts.Declaration): boolean {
  * the native aliases, or names a symbol that is not a user-declared
  * `= number` alias.
  */
-export function nativeTypeFromTypeNode(checker: ts.TypeChecker, node: ts.TypeNode | undefined): ValType | null {
+export function nativeTypeFromTypeNode(checker: NativeAnnotationLookup, node: ts.TypeNode | undefined): ValType | null {
   if (!node || !ts.isTypeReferenceNode(node)) return null;
   if (node.typeArguments && node.typeArguments.length > 0) return null;
   const nameNode = node.typeName;
@@ -116,8 +119,10 @@ export function nativeTypeFromTypeNode(checker: ts.TypeChecker, node: ts.TypeNod
   // The name must actually bind to a user-declared `= number` alias. Without
   // this check a program that declares `interface i32 { … }` (or imports an
   // unrelated `i32`) would be silently miscompiled to a Wasm i32.
-  const symbol = checker.getSymbolAtLocation(nameNode);
-  const declarations = symbol?.declarations;
+  const declarations =
+    "declarationsOf" in checker
+      ? checker.declarationsOf(nameNode)
+      : checker.getSymbolAtLocation(nameNode)?.declarations;
   if (!declarations || declarations.length === 0) return null;
   if (!declarations.every(isNumberAliasDeclaration)) return null;
   return mapped;
@@ -129,7 +134,7 @@ export function nativeTypeFromTypeNode(checker: ts.TypeChecker, node: ts.TypeNod
  * `ts.PropertyDeclaration`, signature return types, …).
  */
 export function nativeTypeOfDeclaration(
-  checker: ts.TypeChecker,
+  checker: NativeAnnotationLookup,
   decl: { readonly type?: ts.TypeNode } | undefined,
 ): ValType | null {
   return nativeTypeFromTypeNode(checker, decl?.type);

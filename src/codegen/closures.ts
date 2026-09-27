@@ -17,6 +17,7 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
  */
 
 import { ts, forEachChild } from "../ts-api.js";
+import { preserveOptionalDeclarationParameter } from "./optional-declaration-parameter.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
@@ -88,7 +89,9 @@ import {
   widenUndefinedDefaultParamSlot,
   structHintForBindingPattern,
 } from "./destructuring-params.js";
-import { compileObjectLiteralAsExternref } from "./literals.js";
+import { compileObjectLiteralAsExternref, objectLiteralForcesHostPath } from "./literals.js";
+import { sourceCollectionCallbackParameterIsErased } from "./source-collection-factory.js";
+import { isGeneratorClosureDeclaration } from "./closures/generator-declaration.js";
 import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
@@ -346,6 +349,10 @@ function closureReturnsExternrefBinding(
       ts.isSatisfiesExpression(current)
     ) {
       current = current.expression;
+    }
+    if (current.kind === ts.SyntaxKind.ThisKeyword && !ts.isArrowFunction(fn)) {
+      const owner = fn.parent;
+      if (owner && ts.isObjectLiteralExpression(owner) && objectLiteralForcesHostPath(ctx, owner)) return true;
     }
     // (#6651 E7) …or a static `$__ta_view` binding, which no vec return type holds.
     return (
@@ -2017,8 +2024,7 @@ export function computeClosureWrapperSig(
   arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
 ): { params: ValType[]; returnType: ValType | null; hasRestParam: boolean } {
   const isGenerator =
-    ((ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined) ||
-    isNativeGeneratorMethodClosure(ctx, arrow);
+    isGeneratorClosureDeclaration(arrow) || (ts.isFunctionDeclaration(arrow) && arrow.asteriskToken !== undefined);
   const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
 
   // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
@@ -2067,6 +2073,8 @@ export function computeClosureWrapperSig(
               ctx.arrayHofNullableElemParamOverride,
               runtimeIndex,
             );
+    wasmType = preserveOptionalDeclarationParameter(ctx, p, wasmType);
+    if (sourceCollectionCallbackParameterIsErased(ctx, arrow, runtimeIndex)) wasmType = EXTERNREF_PARAM;
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
     // source file. The local call-site scan cannot see those callers, so a
@@ -3148,7 +3156,7 @@ export function compileLiftedClosureBody(
     isGenerator &&
     !isAsync &&
     (ctx.standalone || ctx.wasi) &&
-    (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow)) &&
+    (ts.isFunctionExpression(arrow) || ts.isMethodDeclaration(arrow)) &&
     ts.isBlock(body) &&
     isNativeGeneratorCandidate(ctx, arrow)
   ) {
@@ -3207,18 +3215,13 @@ export function compileLiftedClosureBody(
     // the resume fn. TDZ-flagged captures store PARAM indices in
     // `boxedTdzFlags` (wrong in the resume fn's local layout) → legacy path.
     emitAsyncGenerator(ctx, liftedFctx, arrow);
-    // (#3683 S2) The trailing `ts.isFunctionExpression(arrow)` below is IMPLIED
-    // by a non-null `nativeGenExprInfo` (only the fn-expr arm above registers
-    // it); it is restated purely so TypeScript narrows `arrow` for
-    // `compileNativeGeneratorFunction`. Pre-extraction that narrowing came for
-    // free from the aliased-condition `const isGenerator =
-    // ts.isFunctionExpression(arrow) && …`, which no longer reaches this scope
-    // now that `isGenerator` arrives via `opts`.
+    // The expression/method guard below is implied by native registration;
+    // restate it so TypeScript narrows the source node for frame emission.
   } else if (
     isGenerator &&
     ts.isBlock(body) &&
     nativeGenExprInfo &&
-    (ts.isFunctionExpression(arrow) || isNativeGeneratorMethodClosure(ctx, arrow))
+    (ts.isFunctionExpression(arrow) || ts.isMethodDeclaration(arrow))
   ) {
     // (#3164) Emit the native state-struct factory (mirrors the class-method /
     // object-literal wiring, #2571/#2581): construct `$GenState_<closure>` from
@@ -3562,34 +3565,6 @@ function captureOwningDirectEvalState(
   });
 }
 
-/**
- * (#6651 A3) An object-literal generator METHOD that reaches the closure lane —
- * `emitObjectLiteralMethodFn` passes the MethodDeclaration in as if it were a
- * function expression when the literal lowers to an open `$Object` (e.g. its
- * `var` binding was first declared `{}`, so the checker types it from that
- * declaration). Every generator test here used to be spelled
- * `ts.isFunctionExpression(arrow)`, so such a method compiled as a PLAIN
- * closure: calling it ran the body at once and returned `undefined`.
- *
- * Admitted only when the native lowering will take it (standalone/WASI, not
- * async, and the one candidate gate `isNativeGeneratorCandidate` agrees).
- * Anything else keeps the historical plain-closure lowering rather than the
- * eager-buffer generator path, whose `__gen_*` host imports a no-JS-host module
- * cannot satisfy — that trade (a loud leak for a silent wrong value) is what a
- * bare widening of the two generator tests produced (#6651 C4).
- */
-function isNativeGeneratorMethodClosure(ctx: CodegenContext, arrow: ts.Node): arrow is ts.MethodDeclaration {
-  return (
-    ts.isMethodDeclaration(arrow) &&
-    arrow.asteriskToken !== undefined &&
-    (ctx.standalone || ctx.wasi) &&
-    ts.isObjectLiteralExpression(arrow.parent) &&
-    !arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) &&
-    arrow.body !== undefined &&
-    isNativeGeneratorCandidate(ctx, arrow)
-  );
-}
-
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -3607,14 +3582,13 @@ export function compileArrowAsClosure(
   // `call_ref`. Ensure a function expression that reads its own `this` emits
   // the dynamic read even when the closure is created before the callback
   // method call (for example `const cb = function () { return this; }`).
-  if (ts.isFunctionExpression(arrow) && bodyReferencesOwnThis(body)) {
+  if ((ts.isFunctionExpression(arrow) || ts.isMethodDeclaration(arrow)) && bodyReferencesOwnThis(body)) {
     ensureCurrentThisGlobal(ctx);
   }
 
-  // Check if this is a generator function expression (function*() { ... }), or
-  // (#6651 A3) an object-literal generator METHOD routed here as a closure.
-  const isGenerator =
-    (ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) || isNativeGeneratorMethodClosure(ctx, arrow);
+  // Open-object methods retain their MethodDeclaration in the closure lane.
+  // Native registration below still requires a synchronous host-free candidate.
+  const isGenerator = isGeneratorClosureDeclaration(arrow);
   if (isGenerator) ctx.generatorFunctions.add(closureName);
   // `isAsync` is still consumed below (generator-create name selection); the
   // return-type derivation moved into computeClosureWrapperSig.

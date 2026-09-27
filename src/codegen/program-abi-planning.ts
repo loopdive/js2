@@ -10,6 +10,7 @@ import type { FuncHandle, FuncTypeDef, GlobalDef, WasmFunction } from "../ir/typ
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncHandleOf } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-callable-roles.js";
+import type { PreparedProgramAbiProvisionalBinding } from "./program-abi-prepared-transaction.js";
 import {
   canonicalProgramAbiCallableTypeContract,
   canonicalProgramAbiTypeDef,
@@ -187,6 +188,24 @@ export function planProgramAbiUnitCallable(
   ctx: CodegenContext,
   plan: ProgramAbiUnitCallablePlan,
 ): IrBindingId | undefined {
+  const contribution = describeProgramAbiUnitCallable(ctx, plan);
+  if (!contribution) return undefined;
+  const session = ctx.programAbiSession!;
+  const bindingId = contribution.draft.id;
+  session.ensurePlan(contribution.draft);
+  session.registerCallableTypeContract(bindingId, contribution.callableTypeContract!);
+  session.registerStructuralReference(bindingId, contribution.structuralReferenceKey!);
+  if (!session.hasLocator(bindingId, plan.func)) {
+    session.attachLocator(bindingId, contribution.locator!);
+  }
+  return bindingId;
+}
+
+/** Describe a candidate source callable without publishing any session state. */
+export function describeProgramAbiUnitCallable(
+  ctx: CodegenContext,
+  plan: ProgramAbiUnitCallablePlan,
+): PreparedProgramAbiProvisionalBinding | undefined {
   const session = ctx.programAbiSession;
   if (!session) return undefined;
   if (plan.ref.binding.kind !== "unit") {
@@ -206,29 +225,28 @@ export function planProgramAbiUnitCallable(
   const bindingId = irUnitCallableBindingId(unitId);
   const structuralReferenceKey = irCallableBindingKey(plan.ref.binding);
   const typeContract = cloneProgramAbiCallableTypeContract(plan.signature);
-  session.ensurePlan({
-    id: bindingId,
-    structuralOrder: session.structuralOrder.forUnit(unitId, {
-      domain: "callable",
-      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.body,
-    }),
-    structuralReferenceKey,
-    displayName: plan.func.name,
-    slotPolicy: "required",
-    slotSpace: "function",
-    intent: {
-      kind: "callable",
-      origin: "source",
-      unitId,
-      signature: canonicalProgramAbiCallableTypeContract(typeContract),
+  return {
+    draft: {
+      id: bindingId,
+      structuralOrder: session.structuralOrder.forUnit(unitId, {
+        domain: "callable",
+        roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.body,
+      }),
+      structuralReferenceKey,
+      displayName: plan.func.name,
+      slotPolicy: "required",
+      slotSpace: "function",
+      intent: {
+        kind: "callable",
+        origin: "source",
+        unitId,
+        signature: canonicalProgramAbiCallableTypeContract(typeContract),
+      },
     },
-  });
-  session.registerCallableTypeContract(bindingId, typeContract);
-  session.registerStructuralReference(bindingId, structuralReferenceKey);
-  if (!session.hasLocator(bindingId, plan.func)) {
-    session.attachLocator(bindingId, { kind: "defined-function", value: plan.func });
-  }
-  return bindingId;
+    structuralReferenceKey,
+    callableTypeContract: typeContract,
+    locator: { kind: "defined-function", value: plan.func },
+  };
 }
 
 /**

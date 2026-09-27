@@ -194,16 +194,20 @@ describe("lowering cycle separation", () => {
 
   it("resolves the real transitive value graph without a wrapper/emitter/facade cycle", () => {
     const graph = valueClosure();
-    // Exact composed graph at main 1429cfdf: canonical core/analysis modules
-    // remain reachable through compatibility paths. Pin identities, not floors.
+    // Retain the original graph. Main added binding-key and string-callable
+    // leaves; this composition adds only object layout and construction order.
+    // Pin every identity and edge, including duplicate runtime re-export edges.
     expect(graph.modules).toEqual([
       "src/ir/analysis/effects.ts",
       "src/ir/backend/legality.ts",
       "src/ir/backend/wasm-int32-coercion.ts",
       "src/ir/backend/wasm-math-minmax.ts",
       "src/ir/callable-bindings.ts",
+      "src/ir/core/binding-key-primitives.ts",
       "src/ir/core/callable-bindings.ts",
       "src/ir/core/nodes.ts",
+      "src/ir/core/object-layout.ts",
+      "src/ir/core/string-callables.ts",
       "src/ir/core/tag-refinement.ts",
       "src/ir/core/types.ts",
       "src/ir/date-runtime.ts",
@@ -214,16 +218,20 @@ describe("lowering cycle separation", () => {
       "src/ir/lowering-dynamic-scratch.ts",
       "src/ir/nested-stackification.ts",
       "src/ir/nodes.ts",
+      "src/ir/object-construction-order.ts",
       "src/ir/outcomes.ts",
       "src/ir/string-runtime.ts",
       "src/ir/tag-domain.ts",
       "src/shared/contracts/identity-values.ts",
     ]);
     expect(graph.edges).toEqual([
+      "src/ir/lower-generic.ts -> src/ir/object-construction-order.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/legality.ts",
       "src/ir/backend/legality.ts -> src/ir/nodes.ts",
       "src/ir/nodes.ts -> src/ir/core/types.ts",
       "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
+      "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
+      "src/ir/core/types.ts -> src/ir/core/object-layout.ts",
       "src/ir/nodes.ts -> src/ir/core/nodes.ts",
       "src/ir/core/nodes.ts -> src/ir/core/types.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
@@ -244,9 +252,11 @@ describe("lowering cycle separation", () => {
       "src/ir/nested-stackification.ts -> src/ir/effects.ts",
       "src/ir/lower-generic.ts -> src/ir/lowering-dynamic-scratch.ts",
       "src/ir/lower-generic.ts -> src/ir/string-runtime.ts",
+      "src/ir/string-runtime.ts -> src/ir/core/string-callables.ts",
+      "src/ir/string-runtime.ts -> src/ir/core/string-callables.ts",
     ]);
     expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(12);
+    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
   });
 
   it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {

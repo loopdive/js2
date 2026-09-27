@@ -57,9 +57,69 @@
  * output stays byte-identical. Bag locals are always APPENDED, so no existing
  * local index shifts.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { buildBagMarkerTestInstrs } from "./carrier-bag-visibility.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+import { IS_CLASS_INSTANCE_CARRIER } from "./instance-tombstones.js";
 import { fnIntrinsicSeedInstrs } from "./fn-intrinsic-seed.js"; // (#4562) intrinsic length/name record
+
+/** Existing accessor preflight for carrier physical fields, unchanged by marker admission. */
+export function accessorCarrierNonExtensibleArm(
+  ownKeyIdx: number | undefined,
+  objectTypeIdx: number,
+  integrityMask: number,
+  throwError: (message: string) => Instr[],
+): Instr[] {
+  // (#5316 r6) OWN-key predicate for the non-extensible arm below; see
+  // OWN_KEY_PREDICATE for why it is this native and not `__desc_has_own`.
+  // Absent on the host/gc lanes, where `env::__defineProperty_accessor` owns
+  // this path and the native is never emitted — the arm then keeps the plain
+  // throw, which is why host output stays byte-identical.
+  const accOwnKeyIdx = ownKeyIdx;
+  // (#5316 r6) `__obj_find` answers the `$Object` prop table ONLY. On a #4194
+  // instance carrier — a class instance, or the `__anon_*` struct an object
+  // LITERAL lowers to — the receiver's own DATA properties are physical STRUCT
+  // FIELDS, not bag entries, so an EXISTING key reads as "new" here and the
+  // §10.1.6.3 step 2 throw fires on a define that must succeed. Consult the
+  // receiver `O` (local 0), not the substituted bag `o` (local 5): only the
+  // receiver can answer for its fields.
+  //   owns  → the property EXISTS; a sealed/frozen carrier makes it
+  //           non-configurable, so the data→accessor conversion is the
+  //           §10.1.6.3 step 7 rejection; otherwise fall through to the insert,
+  //           which shadows the field with a bag accessor entry exactly as it
+  //           did before #5316 recorded the flag on these carriers at all.
+  //   !owns → genuinely new; throw as before.
+  // For a plain `$Object` receiver this guard is a NO-OP: `__obj_find` null
+  // implies own-key absent, so the predicate answers false and control reaches
+  // the same throw.
+  return accOwnKeyIdx === undefined
+    ? throwError("TypeError: Cannot define property, object is not extensible")
+    : [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: accOwnKeyIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 5 },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+            { op: "i32.const", value: integrityMask },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: throwError(
+                "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+              ),
+            },
+          ],
+          else: throwError("TypeError: Cannot define property, object is not extensible"),
+        },
+      ];
+}
 
 /** Reserved helper names owned by `closure-props.ts` (#3468). */
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
@@ -77,6 +137,154 @@ const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
 const IS_ERROR_PROP_CARRIER = "__is_error_prop_carrier";
 const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
 const ERROR_PROP_BAG_ENSURE = "__error_prop_bag_ensure";
+
+/** Authenticate semantic absence without changing the physically live marker. */
+export function classMarkerDefineState(
+  ctx: CodegenContext,
+  opts: { firstLocal: number; objectLocal: number; currentLocal: number },
+) {
+  const classIdx = ctx.funcMap.get(IS_CLASS_INSTANCE_CARRIER);
+  const lookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
+  const types = ctx.objectRuntimeTypes;
+  if (classIdx === undefined || lookupIdx === undefined || !types) return undefined;
+  const { objectTypeIdx, propEntryTypeIdx } = types;
+  const retained = opts.firstLocal;
+  const bag = retained + 1;
+  const scratch = retained + 2;
+  const locals: { name: string; type: ValType }[] = [
+    { name: "classMarkerEntry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+    { name: "classMarkerBag", type: { kind: "externref" } },
+    { name: "classMarkerValue", type: { kind: "anyref" } },
+  ];
+  const present: Instr[] = [{ op: "local.get", index: retained }, { op: "ref.is_null" }, { op: "i32.eqz" }];
+  const authenticate: Instr[] = [
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        { op: "local.get", index: opts.currentLocal },
+        { op: "ref.is_null" },
+        { op: "br_if", depth: 0 },
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: classIdx },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: lookupIdx },
+        { op: "local.tee", index: bag },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
+        { op: "local.get", index: bag },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "local.get", index: opts.objectLocal },
+        { op: "ref.eq" },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
+        ...buildBagMarkerTestInstrs(ctx, { entryLocal: opts.currentLocal, bagLocal: bag, tmpAnyLocal: scratch }),
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
+        { op: "local.get", index: opts.currentLocal },
+        { op: "local.set", index: retained },
+        { op: "ref.null", typeIdx: propEntryTypeIdx },
+        { op: "local.set", index: opts.currentLocal },
+      ],
+    },
+  ];
+  return {
+    locals,
+    present,
+    authenticate: [
+      { op: "local.set", index: opts.currentLocal } as Instr,
+      ...authenticate,
+      { op: "local.get", index: opts.currentLocal } as Instr,
+    ],
+    commit: (value: Instr[], flagsLocal: number, getter: Instr[], setter: Instr[]): Instr[] => [
+      ...present.map((i) => ({ ...i })),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: retainedClassMarkerCommit(
+          objectTypeIdx,
+          propEntryTypeIdx,
+          opts.objectLocal,
+          retained,
+          value,
+          flagsLocal,
+          getter,
+          setter,
+        ),
+      },
+    ],
+  };
+}
+
+/** DATA applier ABI: value2, native flags8, host flags9; omitted value is undefined. */
+export function classMarkerDataCommit(ctx: CodegenContext, state: ReturnType<typeof classMarkerDefineState>): Instr[] {
+  if (!state) return [];
+  return state.commit(
+    [
+      { op: "local.get", index: 9 },
+      { op: "i32.const", value: 128 },
+      { op: "i32.and" },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "local.get", index: 2 }],
+        else: canonicalUndefinedExternInstrs(ctx),
+      },
+      { op: "any.convert_extern" },
+    ],
+    8,
+    [{ op: "ref.null", typeIdx: -18 }],
+    [{ op: "ref.null", typeIdx: -18 }],
+  );
+}
+
+/** Allocation/call-free commit after validation. The marker already counts as live. */
+function retainedClassMarkerCommit(
+  objectTypeIdx: number,
+  entryTypeIdx: number,
+  objectLocal: number,
+  entryLocal: number,
+  value: Instr[],
+  flagsLocal: number,
+  getter: Instr[],
+  setter: Instr[],
+): Instr[] {
+  const object = (): Instr[] => [{ op: "local.get", index: objectLocal }, { op: "ref.as_non_null" }];
+  const entry = (): Instr[] => [{ op: "local.get", index: entryLocal }, { op: "ref.as_non_null" }];
+  return [
+    ...entry(),
+    ...object(),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 5 },
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 3 },
+    ...object(),
+    ...object(),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 5 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 5 },
+    ...entry(),
+    ...value,
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 1 },
+    ...entry(),
+    { op: "local.get", index: flagsLocal },
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 2 },
+    ...entry(),
+    ...getter,
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 4 },
+    ...entry(),
+    ...setter,
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 5 },
+    { op: "local.get", index: 0 },
+    { op: "return" },
+  ];
+}
 
 /** `closure || user-instance`, whose values share the same identity bag. */
 function sharedBagCarrierTest(ctx: CodegenContext, localIdx: number): Instr[] | undefined {

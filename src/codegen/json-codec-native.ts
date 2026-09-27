@@ -397,7 +397,8 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
         ];
 
   // ── $AnyValue arm: discriminate by tag, leave a ref $AnyString on stack ────
-  // tag 0/1 → "null" (undefined-as-value at this depth already became null);
+  // Tag 1 (undefined) returns an absent piece before entering this arm.
+  // Tag 0 → "null";
   // tag 2 i32 number; tag 3 f64 number; tag 4 bool; tag 5 string; else "null".
   const anyValueArm: Instr[] = [
     // tag = av.tag
@@ -1412,7 +1413,22 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...anyValueArm, { op: "return" }],
+      then: [
+        // The canonical undefined singleton must produce an absent piece.
+        // Object callers omit it; array callers substitute JSON null.
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: anyValueTypeIdx },
+        { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }, { op: "return" }],
+        },
+        ...anyValueArm,
+        { op: "return" },
+      ],
     },
     // unsupported ref → serialises to undefined → null result (omit/null at caller)
     { op: "ref.null", typeIdx: anyStrTypeIdx },

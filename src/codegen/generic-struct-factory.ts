@@ -1788,6 +1788,15 @@ function assertedFreshWrapperFactory(
     return null;
   }
   const returnedName = unwrapExpression(returned.expression);
+  // A direct object literal is as fresh as the local-seeded form below. The
+  // assertion may extend its carrier without a nominal downcast to a struct
+  // that has not been allocated yet; no pre-existing object alias is copied.
+  if (ts.isObjectLiteralExpression(returnedName)) {
+    const seedType = eraseReadonlyView(ctx.checker.getTypeAtLocation(returnedName));
+    return seedType.getProperties().length > 0 && ctx.checker.isTypeAssignableTo(seedType, sourceConstraint)
+      ? { sourceConstraint, sourceResultAbi: true, target }
+      : null;
+  }
   if (!ts.isIdentifier(returnedName)) return null;
   const returnedSymbol = symbolAt(ctx, returnedName);
   if (!returnedSymbol) return null;
