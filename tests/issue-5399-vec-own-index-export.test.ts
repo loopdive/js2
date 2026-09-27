@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
+import type { WasmExport, WasmFunction } from "../src/ir/types.js";
 import { generateModule } from "../src/codegen/index.js";
 import { definedFuncAt } from "../src/codegen/func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "../src/codegen/program-abi-planning.js";
@@ -23,24 +24,68 @@ const F64 = "export function raw():number[]{return [1,,undefined,NaN] as number[
 async function built(source: string, optimize: 0 | 2 = 0) {
   let context: CodegenContext | undefined;
   const emit = own.emitVecOwnIndexExport;
-  // Observe the real emission; do not replace carriers, runtime or diagnostics.
-  const spy = vi.spyOn(own, "emitVecOwnIndexExport").mockImplementation((ctx) => {
+  // Test-only observation replaces the removed, unused internal getter API.
+  // Authenticate insertion and function identity, never a guessed export name.
+  const observed = new WeakMap<CodegenContext, { entry: WasmExport; func: WasmFunction; name: string }>();
+  const observedEntry = (ctx: CodegenContext): WasmExport | undefined => {
+    const allocation = observed.get(ctx);
+    if (!allocation) return undefined;
+    expect(ctx.mod.exports.filter((entry) => entry === allocation.entry)).toHaveLength(1);
+    expect(allocation.entry.name).toBe(allocation.name);
+    expect(ctx.mod.functions.filter((func) => func === allocation.func)).toHaveLength(1);
+    return allocation.entry;
+  };
+  const observeEmit = (ctx: CodegenContext) => {
     context = ctx;
-    return emit(ctx);
-  });
+    const before = [...ctx.mod.exports];
+    const identities = new Set(before);
+    const handle = emit(ctx);
+    const inserted = ctx.mod.exports.filter((entry) => !identities.has(entry));
+    // Existing descriptors must survive without replacement or duplication.
+    const retained = ctx.mod.exports.filter((entry) => identities.has(entry));
+    expect(retained).toHaveLength(before.length);
+    retained.forEach((entry, index) => expect(entry).toBe(before[index]));
+    const previous = observed.get(ctx);
+    if (handle === undefined) {
+      expect(inserted).toHaveLength(0);
+      expect(previous).toBeUndefined();
+      return handle;
+    }
+    const func = definedFuncAt(ctx, handle);
+    if (!func) throw new Error("own-index emitter returned an unresolved function handle");
+    if (previous) {
+      expect(inserted).toHaveLength(0);
+      expect(func).toBe(previous.func);
+      expect(observedEntry(ctx)).toBe(previous.entry);
+    } else {
+      expect(inserted).toHaveLength(1);
+      const entry = inserted[0]!;
+      if (entry.desc.kind !== "func") throw new Error("own-index emitter inserted a non-function export");
+      expect(entry.desc.index).toBe(handle);
+      observed.set(ctx, { entry, func, name: entry.name });
+    }
+    return handle;
+  };
+  // Call the real emitter exactly once per observed invocation; restore on error.
+  const spy = vi.spyOn(own, "emitVecOwnIndexExport").mockImplementation(observeEmit);
   let result: Awaited<ReturnType<typeof compile>>;
   try {
-    result = await compile(source, { fileName: "presence.ts", optimize, deferTopLevelInit: true });
+    result = await compile(source, {
+      fileName: "presence.ts",
+      optimize: optimize === 0 ? false : optimize,
+      deferTopLevelInit: true,
+    });
   } finally {
     spy.mockRestore();
   }
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
-  const { instance } = await WebAssembly.instantiate(result.binary, result.importObject!);
+  const binary = Uint8Array.from(result.binary);
+  const { instance } = await WebAssembly.instantiate(binary, result.importObject!);
   (result.importObject as any).__setInstance?.(instance);
   (instance.exports.__module_init as (() => void) | undefined)?.();
-  const entry = context && own.vecOwnIndexExport(context);
+  const entry = context && observedEntry(context);
   const check = entry && (instance.exports[entry.name] as ((raw: unknown, index: number) => number) | undefined);
-  return { context, result, instance, entry, check };
+  return { context, result, instance, entry, check, observeEmit, observedEntry };
 }
 
 function resultElement(ctx: CodegenContext, name: string): string {
@@ -123,9 +168,9 @@ for (const optimize of [0, 2] as const)
       expect((b.instance.exports.__vec_own_index$ as () => number)()).toBe(72);
       expect(b.entry!.name).toBe("__vec_own_index$$");
       expect(b.check!((b.instance.exports.raw as () => unknown)(), 1)).toBe(0);
-      const handle = own.emitVecOwnIndexExport(b.context!);
+      const handle = b.observeEmit(b.context!);
       expect(definedFuncAt(b.context!, handle!)?.body.length).toBeGreaterThan(1);
-      expect(own.vecOwnIndexExport(b.context!)).toBe(b.entry);
+      expect(b.observedEntry(b.context!)).toBe(b.entry);
     });
   });
 
@@ -148,7 +193,7 @@ describe("A0 demand and Program ABI ownership", () => {
     expect(first.check!((first.instance.exports.raw as () => unknown)(), 1)).toBe(0);
     expect(second.check!((second.instance.exports.raw as () => unknown)(), 2)).toBe(1);
     // No global "last compiled module" lookup chooses another helper.
-    expect(own.vecOwnIndexExport(first.context!)).toBe(first.entry);
+    expect(first.observedEntry(first.context!)).toBe(first.entry);
   });
   it("uses each supplying instance's own externref hole singleton", async () => {
     const source = "export function raw():any[]{return [undefined,,{}]}" + DEMAND;
@@ -217,7 +262,7 @@ describe("A0 demand and Program ABI ownership", () => {
     const original = ProgramAbiCallableRegistry.prototype.observeEntrySourceSupports;
     const spy = vi
       .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
-      .mockImplementation(function (rows) {
+      .mockImplementation(function (this: ProgramAbiCallableRegistry, rows) {
         if (rows.some((row) => row.role === VEC_HOST_BRIDGE_ROLE && row.derivedOrdinal === 11))
           throw new Error("A0 observation failure");
         return original.call(this, rows);

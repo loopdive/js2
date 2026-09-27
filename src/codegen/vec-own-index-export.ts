@@ -165,11 +165,6 @@ export function emitVecOwnIndexExport(ctx: CodegenContext): FuncHandle | undefin
   return handle;
 }
 
-/** Exact allocator-owned descriptor for later publication; no name lookup. */
-export function vecOwnIndexExport(ctx: CodegenContext): WasmExport | undefined {
-  return allocations.get(ctx)?.entry;
-}
-
 /** Same stable-handle/final-live-index lifecycle as the core vector bridges. */
 export function finalizeVecOwnIndexExport(ctx: CodegenContext): void {
   const allocation = allocations.get(ctx);

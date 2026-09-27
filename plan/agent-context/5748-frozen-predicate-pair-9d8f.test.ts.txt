@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { analyzeSource } from "../src/checker/index.js";
+import { generateModule } from "../src/codegen/index.js";
+import { compile } from "../src/index.js";
+import "../src/codegen/expressions.js";
+
+for (const experimentalIR of [false, true]) {
+  for (const predicate of ["isNaN", "isFinite"] as const) {
+    describe(`numeric predicate extraction: ${predicate}, IR=${experimentalIR}`, () => {
+      it("retains the exact numeric instruction suffix and local name", () => {
+        const source = `export function probe(x:number):boolean { return ${predicate}(x); }`;
+        const result = generateModule(analyzeSource(source, "predicate.ts"), { experimentalIR });
+        expect(result.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+        const fn = result.module.functions.find((candidate) => candidate.name === "probe");
+        if (!fn) throw new Error("missing emitted probe");
+        const prefix = predicate === "isNaN" ? "__isnan_" : "__isfin_";
+        const temporaries = fn.locals.filter((local) => local.name.startsWith(prefix));
+        expect(temporaries).toHaveLength(1);
+        const ordinal = fn.locals.indexOf(temporaries[0]!);
+        expect(temporaries[0]!.name).toBe(`${prefix}${ordinal}`);
+        expect(temporaries[0]!.type).toEqual({ kind: "f64" });
+        const start = fn.body.findIndex((instruction) => instruction.op === "local.tee");
+        const tee = fn.body[start];
+        if (start < 1 || tee?.op !== "local.tee") throw new Error("missing numeric operand temporary");
+        const suffix = predicate === "isNaN"
+          ? [{ op: "f64.ne" }]
+          : [{ op: "f64.sub" }, { op: "f64.const", value: 0 }, { op: "f64.eq" }];
+        expect(fn.body.slice(start - 1, start + 2 + suffix.length)).toEqual([
+          { op: "local.get", index: 0 },
+          { op: "local.tee", index: tee.index },
+          { op: "local.get", index: tee.index },
+          ...suffix,
+        ]);
+        // Retain full selected-function IR for the separately pinned before/after run.
+        console.info("PREDICATE_IR", JSON.stringify({ experimentalIR, predicate, locals: fn.locals, body: fn.body }));
+      });
+
+      for (const standalone of [false, true]) {
+        for (const symbol of [false, true]) {
+          it(`evaluates the ${symbol ? "throwing Symbol" : "numeric"} operand once, standalone=${standalone}`, async () => {
+            const expected = predicate === "isNaN" ? "true" : "false";
+            const source = symbol
+              ? `export function probe():number {
+                  let calls=0;
+                  function operand():symbol { calls++; return Symbol("operand"); }
+                  try { ${predicate}(operand()); return -1; }
+                  catch (error) { return error instanceof TypeError && calls===1 ? 1 : 0; }
+                }`
+              : `export function probe():number {
+                  let calls=0;
+                  function operand():number { calls++; return NaN; }
+                  const answer:any=${predicate}(operand());
+                  return calls===1 && typeof answer==="boolean" && answer===${expected} ? 1 : 0;
+                }`;
+            const result = await compile(source, {
+              fileName: "predicate-once.ts",
+              skipSemanticDiagnostics: true,
+              experimentalIR,
+              optimize: false,
+              ...(standalone ? { target: "standalone" as const, hostBridge: "off" as const } : {}),
+            });
+            expect(result.success, JSON.stringify(result.errors)).toBe(true);
+            const binary = Uint8Array.from(result.binary);
+            console.info("PREDICATE_BINARY", JSON.stringify({
+              experimentalIR, predicate, standalone, symbol,
+              sourceSha256: createHash("sha256").update(source).digest("hex"),
+              binarySha256: createHash("sha256").update(binary).digest("hex"),
+            }));
+            const { instance } = await WebAssembly.instantiate(binary, result.importObject ?? {});
+            const probe = instance.exports.probe;
+            if (typeof probe !== "function") throw new Error("missing runtime probe");
+            expect(probe()).toBe(1);
+          });
+        }
+      }
+    });
+  }
+}

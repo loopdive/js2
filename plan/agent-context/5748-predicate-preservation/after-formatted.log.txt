@@ -1,0 +1,120 @@
+
+ RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5748-main7443-integration-20260927
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=false > retains the exact numeric instruction suffix and local name
+PREDICATE_IR {"experimentalIR":false,"predicate":"isNaN","locals":[{"name":"__isnan_0","type":{"kind":"f64"}}],"body":[{"op":"local.get","index":0},{"op":"local.tee","index":1},{"op":"local.get","index":1},{"op":"f64.ne"},{"op":"return"}]}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=false > evaluates the numeric operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isNaN","standalone":false,"symbol":false,"sourceSha256":"9b75758a5c57df342ec312d7ea8e2ce21197ca2de3fe3ce1dd04312912b1c941","binarySha256":"2577299b16bdd7a036dfa6b62aac874d6875cbd512a45528503bfa62e01d72f4"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=false > evaluates the throwing Symbol operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isNaN","standalone":false,"symbol":true,"sourceSha256":"b04873aaccdea5bd464075b2f0d9785125f1a5692dde5ac12aa82d1fd419c53a","binarySha256":"e4550d114a8dab946fac40fb7830aab3f65fa20273f8e9df82d52305af0bc2b4"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=false > evaluates the numeric operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isNaN","standalone":true,"symbol":false,"sourceSha256":"9b75758a5c57df342ec312d7ea8e2ce21197ca2de3fe3ce1dd04312912b1c941","binarySha256":"170cf58c007bc8b5aa14ab8b17311d78e8265849b8e8e45f7a805665fa31394b"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=false > evaluates the throwing Symbol operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isNaN","standalone":true,"symbol":true,"sourceSha256":"b04873aaccdea5bd464075b2f0d9785125f1a5692dde5ac12aa82d1fd419c53a","binarySha256":"804be83f7b6366f58a084cf6391d2533807d347a163e8eba9a4265f253d53349"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=false > retains the exact numeric instruction suffix and local name
+PREDICATE_IR {"experimentalIR":false,"predicate":"isFinite","locals":[{"name":"__isfin_0","type":{"kind":"f64"}}],"body":[{"op":"local.get","index":0},{"op":"local.tee","index":1},{"op":"local.get","index":1},{"op":"f64.sub"},{"op":"f64.const","value":0},{"op":"f64.eq"},{"op":"return"}]}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=false > evaluates the numeric operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isFinite","standalone":false,"symbol":false,"sourceSha256":"a1e7066c88b8e2319bf0875eb10b50f5a3dc0ee46714d4c3fef5ebac0d11962f","binarySha256":"5ec5da964c5c798429677cc43fd6a6deac949b4699485cb8bfbea01a8df8913c"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=false > evaluates the throwing Symbol operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isFinite","standalone":false,"symbol":true,"sourceSha256":"d831755ff1a55c51bab065b18762e60f6fdb8e0eadd5f041a37ca690325d5dd0","binarySha256":"e4550d114a8dab946fac40fb7830aab3f65fa20273f8e9df82d52305af0bc2b4"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=false > evaluates the numeric operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isFinite","standalone":true,"symbol":false,"sourceSha256":"a1e7066c88b8e2319bf0875eb10b50f5a3dc0ee46714d4c3fef5ebac0d11962f","binarySha256":"be99dac3b2f5dd3fbc0c9fea72f4e4bb140d09fcfd8e6e4835c88e03f6d5e851"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=false > evaluates the throwing Symbol operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":false,"predicate":"isFinite","standalone":true,"symbol":true,"sourceSha256":"d831755ff1a55c51bab065b18762e60f6fdb8e0eadd5f041a37ca690325d5dd0","binarySha256":"804be83f7b6366f58a084cf6391d2533807d347a163e8eba9a4265f253d53349"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=true > retains the exact numeric instruction suffix and local name
+PREDICATE_IR {"experimentalIR":true,"predicate":"isNaN","locals":[{"name":"__isnan_0","type":{"kind":"f64"}}],"body":[{"op":"local.get","index":0},{"op":"local.tee","index":1},{"op":"local.get","index":1},{"op":"f64.ne"},{"op":"return"}]}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=true > evaluates the numeric operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isNaN","standalone":false,"symbol":false,"sourceSha256":"9b75758a5c57df342ec312d7ea8e2ce21197ca2de3fe3ce1dd04312912b1c941","binarySha256":"2577299b16bdd7a036dfa6b62aac874d6875cbd512a45528503bfa62e01d72f4"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=true > evaluates the throwing Symbol operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isNaN","standalone":false,"symbol":true,"sourceSha256":"b04873aaccdea5bd464075b2f0d9785125f1a5692dde5ac12aa82d1fd419c53a","binarySha256":"e4550d114a8dab946fac40fb7830aab3f65fa20273f8e9df82d52305af0bc2b4"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=true > evaluates the numeric operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isNaN","standalone":true,"symbol":false,"sourceSha256":"9b75758a5c57df342ec312d7ea8e2ce21197ca2de3fe3ce1dd04312912b1c941","binarySha256":"170cf58c007bc8b5aa14ab8b17311d78e8265849b8e8e45f7a805665fa31394b"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=true > evaluates the throwing Symbol operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isNaN","standalone":true,"symbol":true,"sourceSha256":"b04873aaccdea5bd464075b2f0d9785125f1a5692dde5ac12aa82d1fd419c53a","binarySha256":"804be83f7b6366f58a084cf6391d2533807d347a163e8eba9a4265f253d53349"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=true > retains the exact numeric instruction suffix and local name
+PREDICATE_IR {"experimentalIR":true,"predicate":"isFinite","locals":[{"name":"__isfin_0","type":{"kind":"f64"}}],"body":[{"op":"local.get","index":0},{"op":"local.tee","index":1},{"op":"local.get","index":1},{"op":"f64.sub"},{"op":"f64.const","value":0},{"op":"f64.eq"},{"op":"return"}]}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=true > evaluates the numeric operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isFinite","standalone":false,"symbol":false,"sourceSha256":"a1e7066c88b8e2319bf0875eb10b50f5a3dc0ee46714d4c3fef5ebac0d11962f","binarySha256":"5ec5da964c5c798429677cc43fd6a6deac949b4699485cb8bfbea01a8df8913c"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=true > evaluates the throwing Symbol operand once, standalone=false
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isFinite","standalone":false,"symbol":true,"sourceSha256":"d831755ff1a55c51bab065b18762e60f6fdb8e0eadd5f041a37ca690325d5dd0","binarySha256":"e4550d114a8dab946fac40fb7830aab3f65fa20273f8e9df82d52305af0bc2b4"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=true > evaluates the numeric operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isFinite","standalone":true,"symbol":false,"sourceSha256":"a1e7066c88b8e2319bf0875eb10b50f5a3dc0ee46714d4c3fef5ebac0d11962f","binarySha256":"be99dac3b2f5dd3fbc0c9fea72f4e4bb140d09fcfd8e6e4835c88e03f6d5e851"}
+
+stdout | tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=true > evaluates the throwing Symbol operand once, standalone=true
+PREDICATE_BINARY {"experimentalIR":true,"predicate":"isFinite","standalone":true,"symbol":true,"sourceSha256":"d831755ff1a55c51bab065b18762e60f6fdb8e0eadd5f041a37ca690325d5dd0","binarySha256":"804be83f7b6366f58a084cf6391d2533807d347a163e8eba9a4265f253d53349"}
+
+ ❯ tests/issue-5748-global-numeric-predicate-extraction.test.ts (20 tests | 4 failed) 3024ms
+   ✓ numeric predicate extraction: isNaN, IR=false > retains the exact numeric instruction suffix and local name  461ms
+   ✓ numeric predicate extraction: isNaN, IR=false > evaluates the numeric operand once, standalone=false 101ms
+   ✓ numeric predicate extraction: isNaN, IR=false > evaluates the throwing Symbol operand once, standalone=false 64ms
+   × numeric predicate extraction: isNaN, IR=false > evaluates the numeric operand once, standalone=true 318ms
+     → expected +0 to be 1 // Object.is equality
+   ✓ numeric predicate extraction: isNaN, IR=false > evaluates the throwing Symbol operand once, standalone=true  437ms
+   ✓ numeric predicate extraction: isFinite, IR=false > retains the exact numeric instruction suffix and local name 45ms
+   ✓ numeric predicate extraction: isFinite, IR=false > evaluates the numeric operand once, standalone=false 48ms
+   ✓ numeric predicate extraction: isFinite, IR=false > evaluates the throwing Symbol operand once, standalone=false 49ms
+   × numeric predicate extraction: isFinite, IR=false > evaluates the numeric operand once, standalone=true 136ms
+     → expected +0 to be 1 // Object.is equality
+   ✓ numeric predicate extraction: isFinite, IR=false > evaluates the throwing Symbol operand once, standalone=true  301ms
+   ✓ numeric predicate extraction: isNaN, IR=true > retains the exact numeric instruction suffix and local name 63ms
+   ✓ numeric predicate extraction: isNaN, IR=true > evaluates the numeric operand once, standalone=false 53ms
+   ✓ numeric predicate extraction: isNaN, IR=true > evaluates the throwing Symbol operand once, standalone=false 60ms
+   × numeric predicate extraction: isNaN, IR=true > evaluates the numeric operand once, standalone=true 125ms
+     → expected +0 to be 1 // Object.is equality
+   ✓ numeric predicate extraction: isNaN, IR=true > evaluates the throwing Symbol operand once, standalone=true 259ms
+   ✓ numeric predicate extraction: isFinite, IR=true > retains the exact numeric instruction suffix and local name 35ms
+   ✓ numeric predicate extraction: isFinite, IR=true > evaluates the numeric operand once, standalone=false 44ms
+   ✓ numeric predicate extraction: isFinite, IR=true > evaluates the throwing Symbol operand once, standalone=false 45ms
+   × numeric predicate extraction: isFinite, IR=true > evaluates the numeric operand once, standalone=true 131ms
+     → expected +0 to be 1 // Object.is equality
+   ✓ numeric predicate extraction: isFinite, IR=true > evaluates the throwing Symbol operand once, standalone=true 247ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=false > evaluates the numeric operand once, standalone=true
+ FAIL  tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=false > evaluates the numeric operand once, standalone=true
+ FAIL  tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isNaN, IR=true > evaluates the numeric operand once, standalone=true
+ FAIL  tests/issue-5748-global-numeric-predicate-extraction.test.ts > numeric predicate extraction: isFinite, IR=true > evaluates the numeric operand once, standalone=true
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/issue-5748-global-numeric-predicate-extraction.test.ts:74:29
+     72|             const probe = instance.exports.probe;
+     73|             if (typeof probe !== "function") throw new Error("missing …
+     74|             expect(probe()).toBe(1);
+       |                             ^
+     75|           });
+     76|         }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 16 passed (20)
+   Start at  12:04:16
+   Duration  18.77s (transform 11.06s, setup 0ms, collect 15.38s, tests 3.02s, environment 0ms, prepare 60ms)
+
+JSON report written to /Users/thomas/Code/js2/.codex-worktrees/codex-5748-main7443-integration-20260927/.tmp/5748-predicate-formatted.json
