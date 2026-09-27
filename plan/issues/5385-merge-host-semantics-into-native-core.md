@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-09-26
+updated: 2026-09-27
 priority: high
 horizon: xl
 feasibility: hard
@@ -625,6 +625,51 @@ dispatch waits on box load; the first nightly after these merges re-baselines
 the lane (expect the 2,121 async-marker rows and the ~600 `C_method` rows to
 move); then S5 (regime on by default for `native-first`) is evaluated against
 that number.
+
+### 2026-09-27 — S5 evidence and flip: the regime lane now leads both lanes
+
+Nightly 36305955119 (main @ `7443ab4826`, with S1/S1b/S2/S3-a/S3-c/#6697 in;
+S4 #6186 not yet), 48,735 rows incl. proposals, `census.py` join by `file|strict`:
+
+| lane                                                 |       pass |
+| ---------------------------------------------------- | ---------: |
+| host (`gc`, host-assisted)                           |     34,099 |
+| standalone (host-free)                               |     35,237 |
+| **native regime in JS env**                          | **35,384** |
+
+Official-scope summary (48,232 rows): regime 35,149 pass / 10,626 fail /
+2,419 compile errors. Lane agreement: all three 29,630 · regime+standalone
+only 3,911 · host only 2,314 · host+standalone but not regime 1,195 ·
+regime+host only 960 · regime only 883 · standalone only 501. The
+host-passes-but-regime-fails set fell **6,109 → 3,509**; the async-marker
+(2,121) and `C_method` invalid-Wasm (~600) buckets are gone. What remains,
+by signature:
+
+| rows | signature                                                            | owner                  |
+| ---: | -------------------------------------------------------------------- | ---------------------- |
+|  509 | policy rejected `__gen_*` / `__create_async_generator` / `SharedArrayBuffer_new` / `__array_from_async` | #3178 carriers, SAB deferred |
+|  473 | eval refusal tier                                                    | S4 #6186 (in CI)       |
+|  192 | `m should be an own property`                                        | #3468                  |
+| ~200 | `Array.prototype.reduce/reduceRight … not yet callable as a value`  | S3-b (to spec)         |
+|  129 | `Expected a TypeError … no exception`                                | S3-d triage            |
+|  116 | `called value is not a function`                                     | S3-d triage            |
+|   82 | `async continuation threw … illegal cast [in __call_fn_method_N]`   | NEW — S3-e candidate (class-method trampoline under the regime) |
+|   74 | native generator lowering (sequential numeric yields only)           | #3178                  |
+|  ~150 | Temporal (`until`/`since`/`round`, `Temporal is not defined`)       | S4 part B (blocked on `env::__exn` under native-first, see #6706) |
+
+**S5 flip (this checkpoint's PR):** `resolveCompileTargetProfile` now sets
+`nativeRegime` for `semanticProviders: "native-first"` in a JS environment
+by default; `JS2WASM_NATIVE_REGIME_JS=0` is the one-release kill switch.
+Guards on the flip: byte identity 12/12 (default `gc`/`standalone`/`wasi`
+unchanged — the default policy is still host-assisted), boundary/slice
+suites 55/56 (the one red is the known `assignmentRest` standalone provider
+defect), `check:host-import-policy` green with no ceiling change, ratchet
+gates green, 321-row sample **227/321**.
+
+**Program acceptance after S5:** rows 1 (lanes exist) and 3 (regime ≥ host)
+now hold; row 2 (perf) is still unmeasured on the full workload — schedule
+it before S6; rows 4–7 (default policy flip, `legacy-semantic` as a
+universal error, deletion, docs) are S6/S7.
 
 ### Program acceptance
 

@@ -71,18 +71,18 @@ export function b(): any { return (Array.prototype as any).forEach.call(arrayLik
     expect(wat).toContain("__hof_forEach");
   });
 
-  it("keeps the reduce family on the refusal (different arg shape)", async () => {
-    // `__hof_reduce` takes (recv, cb, init, hasInit), not (recv, cb, thisArg);
-    // routing it without marshalling those would be wrong, so it stays put.
+  it("routes the reduce family too, via its own (recv, cb, init, hasInit) marshal (#6709)", async () => {
+    // `__hof_reduce` takes (recv, cb, init, hasInit), not (recv, cb, thisArg).
+    // Until #6709 it stayed on the refusal; it now takes the packed variadic
+    // closure ABI so `hasInit` can follow argument PRESENCE (behaviour is
+    // covered in tests/issue-6709-reduce-as-value.test.ts). Boolean asserts —
+    // a failing `toContain` on a whole standalone WAT prints it and OOMs.
     const wat = await compileStandalone(`
 declare const arrayLike: any;
 declare const cb: any;
 export function main(): any { return (Array.prototype as any).reduce.call(arrayLike, cb); }
 `);
-    // The refusal message is built as a native string under `nativeStrings`,
-    // so it is not a WAT literal — assert structurally that reduce was NOT
-    // routed to the loop instead.
-    expect(wat).not.toContain("__hof_reduce");
+    expect(wat.includes("__hof_reduce")).toBe(true);
   });
 
   it("still guards a null/undefined receiver (§23.1.3 step 1)", async () => {

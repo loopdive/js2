@@ -1,7 +1,9 @@
 ---
 id: 6707
 title: "S3-e: the linker's shared exception tag `env.__exn` is an instance-wiring import, not unknown host semantics — unblocks the regime Temporal provider"
-status: ready
+status: done
+completed: 2026-09-27
+assignee: ttraenkler/opus-6707
 created: 2026-09-27
 updated: 2026-09-27
 priority: high
@@ -79,10 +81,68 @@ or the linker; do not add `__exn` to any allowlist by spelling.
 
 ## Acceptance
 
-- [ ] `pnpm run check:host-import-policy` green, ceilings unchanged (the 33
+- [x] `pnpm run check:host-import-policy` green, ceilings unchanged (the 33
       probes never request the shared tag, so import totals do not move).
-- [ ] `tests/issue-4396-target-profile.test.ts` byte-identity green.
-- [ ] Regime Temporal provider builds and stamps; scoped `Temporal/Now`
+- [x] `tests/issue-4396-target-profile.test.ts` byte-identity green.
+- [x] Regime Temporal provider builds and stamps; scoped `Temporal/Now`
       run links it; record before/after `Temporal is not defined` counts.
 - [ ] Next nightly after merge: native-first lane `Temporal is not defined`
       host-passing rows ≤ the standalone lane's count (record it in #5385).
+
+## Implementation note — where the arm actually lives (2026-09-27)
+
+The plan put the arm in `buildHostImportInventory`'s no-descriptor branch. That
+branch is never reached for `env.__exn`: `buildImportManifest`
+(`src/compiler/import-manifest.ts`) emits a descriptor for EVERY `env` import,
+recording the wasm `tag` as `kind: "global"` with the fallback intent
+`{ type: "builtin", name: "__exn" }`, which `classifyBuiltin` answers `unknown`.
+More importantly, the native-first **runtime adapter** gate (`src/runtime.ts`,
+`ambientCompatibility === false`) classifies the same manifest descriptor via
+`classifyHostImport` — measured: with only the physical-import arm, the provider
+compiled and linked, then all 66 `Temporal/Now` rows failed with
+`Native-first adapter cannot bind env::__exn: unknown import owned by #4401`.
+
+So the arm is in `classifyHostImport`, keyed on `module === "env"`, a non-`func`
+manifest kind, and the name — the one predicate both gates see. A `func`-kind
+`env.__exn` stays `unknown` (unit-asserted). No allowlist spelling, no change to
+`create-context.ts`, `linked-provider-runtime.ts`, the linker or the manifest.
+
+## Test Results (2026-09-27, measured on this branch vs its upstream/main base)
+
+Regime on via `JS2WASM_NATIVE_REGIME_JS=1` (S5 / PR #6191 not yet merged at the
+base). Before = the base `src/host-import-policy.ts`, after = this change; each
+used its own cold `JS2WASM_TEMPORAL_CACHE` so no fixed-build artifact was served.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| `prewarm-temporal-provider.mjs --target host --semantic-providers native-first` | FAILED (`provider compilation failed`, plan=bundled) | OK, 3,763,632 B, stamps `prewarm-native-first.json` |
+| scoped `built-ins/Temporal/Now/` (66 rows), provider | UNAVAILABLE — rows run unlinked | linked (`host/native-first … ceac0b969ccde8cf`) |
+| `ReferenceError: Temporal is not defined` rows | 48 | **0** |
+| pass | 1 | 0 |
+| other failures | 17 assertion failures | 66 × `wasm exception during module init` |
+
+- `pnpm run check:host-import-policy`: green before and after; 33 probes /
+  426 imports / 0 legacy / 0 unknown; compatibility legacy 23 — unchanged.
+- `tests/issue-4396-target-profile.test.ts` 12/12; `tests/issue-4401-host-import-policy.test.ts`
+  7/8 — the one red ("preserves target-derived standalone compatibility
+  fallbacks…") is pre-existing on main. The three new #6707 cases (regime on,
+  kill-switch, func-kind negative) were red on the base with the exact
+  `env::__exn (unknown, owner #4401)` diagnostic.
+
+## Finding — the next blocker is `Intl`, not the tag (out of scope here)
+
+The 66 `module init` failures are the provider's OWN top level throwing:
+`TypeError: Cannot access property on null or undefined` at polyfill `4:10198`,
+which is `ct=Intl.DateTimeFormat`. Minimal repro
+(`var ct = Intl.DateTimeFormat;`, `deferTopLevelInit`):
+
+| | native-first | auto |
+| --- | --- | --- |
+| regime on | throws (reads `Intl` as `undefined`) | OK |
+| regime off | CE: `string_constants::Intl (legacy-semantic)` | OK |
+
+Under the regime `Intl` is neither refused nor provided — it silently reads
+`undefined`. Until that is closed the native-first lane's Temporal rows move
+from `Temporal is not defined` to `module init`, not to passes, so acceptance
+item 4 (nightly native-first ≤ standalone) cannot be met by this slice alone.
+Needs its own slice (Intl as an environment global under the regime).

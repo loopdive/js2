@@ -3,10 +3,9 @@
 import { readFileSync } from "node:fs";
 import { compile } from "../src/index.ts";
 
-// (#6686) Measure the native regime by default: a native-first build in a JS
-// environment lowers with the native (standalone) regime plus its JS value
-// boundary. Set JS2WASM_NATIVE_REGIME_JS=0 to measure the pre-regime lane.
-process.env.JS2WASM_NATIVE_REGIME_JS ??= "1";
+// (#6686/#5385 S5) The native regime is the compiler's default for a
+// native-first build in a JS environment; this ratchet measures exactly what
+// the compiler ships. Set JS2WASM_NATIVE_REGIME_JS=0 to measure the kill-switch lane.
 
 interface HostImportPolicyBaseline {
   schemaVersion: 1;

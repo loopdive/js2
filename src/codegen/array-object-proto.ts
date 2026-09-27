@@ -38,6 +38,11 @@ import { ensureStandaloneSpeciesGetterClosure, pushBuiltinFnSingletonValueInstrs
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./expressions/helpers.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS, NATIVE_HOF_REDUCE } from "./hof-native.js"; // (#4394)
+import {
+  emitArrayProtoHofReceiverGuard,
+  emitArrayReduceProtoMemberBody,
+  isArrayReduceVariadicMember,
+} from "./array-reduce-proto-value.js"; // (#6709)
 import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody, emitTaCtorValue } from "./dataview-native.js";
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
@@ -932,8 +937,10 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // on nine standalone harness tests.
   //
   // The reduce family takes `(recv, cb, init, hasInit)` rather than
-  // `(recv, cb, thisArg)`, so it stays on the refusal until its own arg
-  // marshalling is written.
+  // `(recv, cb, thisArg)`; its variadic-ABI marshal lives in
+  // array-reduce-proto-value.ts (#6709), which declines off the native regime.
+  const reduceBody = emitArrayReduceProtoMemberBody(ctx, fctx, member);
+  if (reduceBody !== undefined) return reduceBody;
   if (member !== "slice" && NATIVE_HOF_METHODS.has(member) && !NATIVE_HOF_REDUCE.has(member)) {
     const hofIdx = ensureNativeArrayHof(ctx, member);
     if (hofIdx !== undefined) {
@@ -942,17 +949,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       // receiver, so `Array.prototype.map.call(undefined)` passed by accident;
       // routing to the loop without this guard silently returns an empty
       // result instead (measured: 3 regressions in the map/filter suites).
-      // Mirrors the `String.prototype.<member>` receiver guard below: under the
-      // undefined-singleton regime `undefined` is a NON-null sentinel externref,
-      // so `ref.is_null` alone misses `.call(undefined)`.
-      const thisThrow: Instr[] = [];
-      emitBrandCheckTypeError(ctx, thisThrow, `Array.prototype.${member} called on null or undefined`);
-      fctx.body.push({ op: "local.get", index: 1 }, { op: "ref.is_null" });
-      const isUndefinedIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
-      if (isUndefinedIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
-      }
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thisThrow });
+      emitArrayProtoHofReceiverGuard(ctx, fctx, member);
       // The closure ABI declares only as many params as the member's own
       // `.length`, so `thisArg` (param 3) exists for `map`/`forEach`/… but not
       // for the 1-arity members. Substitute a null externref when absent
@@ -2612,7 +2609,9 @@ function makeGlue(
       return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
     },
     memberIsVariadic: (member) =>
-      name === "Array" &&
+      // (#6709) reduce/reduceRight need the argument COUNT (initialValue presence).
+      (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
+      (name === "Array" &&
       (member === "join" ||
         member === "push" ||
         member === "unshift" ||
@@ -2626,7 +2625,7 @@ function makeGlue(
             // `(thisArg, ...rest)` — the packed vec ABI the invoker bodies below
             // unpack themselves. `apply` stays fixed at its 2-slot spec arity
             // (thisArg, argArray).
-            name === "Function" && (member === "call" || member === "bind"),
+            name === "Function" && (member === "call" || member === "bind")),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same

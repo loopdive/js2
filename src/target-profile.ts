@@ -122,19 +122,19 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           ? "required"
           : "off";
 
-  // The JS-environment arm is OPT-IN (JS2WASM_NATIVE_REGIME_JS=1) until the
-  // environment-shaped `ctx.standalone` gates (console capability, boundary
-  // object/callback adapters, error translation, string marshal) are re-keyed
-  // to `environment` / `hostValueInterop`; measured 2026-09-24 it takes a
-  // 321-test test262 sample from 0 to 218 passes but breaks 10/16 boundary
-  // interop tests in tests/issue-4397-native-semantic-js-host.test.ts.
+  // (#5385 S5) The JS-environment arm is ON by default for an explicitly
+  // selected native-first policy: measured on nightly 36305955119 (2026-09-27,
+  // main @ 7443ab4826) the regime lane passes 35,384 / 48,735 test262 rows
+  // against 34,099 for the host-assisted lane and 35,237 for standalone, with
+  // the JS boundary suites green (#6685/#6686/#6687/#6689). `JS2WASM_NATIVE_REGIME_JS=0`
+  // is the one-release kill switch that restores the pre-S5 per-family reroute.
   const nativeRegime =
     target === "standalone" ||
     (target === "gc" &&
       environment === "javascript" &&
       capabilityPolicy === "ambient-js" &&
       semanticProviderSelection === "native-first" &&
-      process.env.JS2WASM_NATIVE_REGIME_JS === "1");
+      process.env.JS2WASM_NATIVE_REGIME_JS !== "0");
 
   return Object.freeze({
     target,
