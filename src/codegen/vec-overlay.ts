@@ -104,6 +104,7 @@ import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) ind
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
+import { buildVecLengthHoleFill } from "./vec-length-hole-fill.js";
 import { buildVecGopdHoleBail } from "./vec-overlay-hole-bail.js"; // (#4491 T11) sparse marker descriptor guard
 import {
   buildArgumentsOrdinaryLengthDefineArm,
@@ -1057,6 +1058,23 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         // (#4434) f64 scratch for the canonical-numeric-string key test.
         { name: "keyNum", type: { kind: "f64" } },
       ];
+      // Reserve only locals here; finalization must not mint a Hole type.
+      const lengthFill = (newLenLocal: number): Instr[] =>
+        buildVecLengthHoleFill(
+          ctx,
+          (name, type) => {
+            const index = 4 + fn.locals.length;
+            fn.locals.push({ name: `${name}_${index}`, type });
+            return index;
+          },
+          4,
+          newLenLocal,
+          "both",
+          true,
+          true,
+        );
+      const stoppedLengthLocal = 4 + fn.locals.length;
+      fn.locals.push({ name: "__length_stop", type: { kind: "i32" } });
       // (#3251 S3) Full §7.1.4 ToNumber for the length value — ArraySetLength
       // must accept `{value: "2"}` and `{value: {toString(){return "2"}}}`
       // (the 15.2.3.6-4-142..151 family): ToPrimitive(number hint) first, then
@@ -1245,6 +1263,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                                     then: [
                                       // step 15.b–d: stop — length = k+1, sync the
                                       // companion "length" value, throw TypeError.
+                                      // Higher configurable indices were already deleted;
+                                      // preserve the blocked index and everything below it.
+                                      { op: "local.get", index: 17 },
+                                      { op: "i32.const", value: 1 },
+                                      { op: "i32.add" },
+                                      { op: "local.set", index: stoppedLengthLocal },
+                                      ...lengthFill(stoppedLengthLocal),
                                       { op: "local.get", index: 4 },
                                       { op: "ref.cast", typeIdx: vecBaseIdx },
                                       { op: "local.get", index: 17 },
@@ -1295,6 +1320,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                         ],
                       },
                       // vec.length = newLen
+                      ...lengthFill(16),
                       { op: "local.get", index: 4 },
                       { op: "ref.cast", typeIdx: vecBaseIdx },
                       { op: "local.get", index: 16 },
@@ -1315,6 +1341,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                           { op: "i32.sub" },
                           { op: "local.set", index: 17 },
                           ...growDefaultArms(4, 17, "holes"),
+                          // Growth may reuse capacity with stale/default slots.
+                          // The grow helper has updated length; local 8 still
+                          // holds the original boundary of the new hole range.
+                          ...lengthFill(8),
                         ],
                       },
                     ],

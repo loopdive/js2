@@ -6,6 +6,13 @@ sprint: current
 created: 2026-08-29
 updated: 2026-09-27
 loc-budget-allow:
+  # Live iteration prerequisite: keep descriptor admission (+6), validated
+  # assignment wiring (+11), and overlay length-deletion wiring (+30) at
+  # their existing owners. The fill implementation is shared in the separate
+  # vec-length-hole-fill module. No baseline or behavioral gate is changed.
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/vec-overlay.ts
   # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
   # metadata carrier. Each grant lives in the module that already OWNS the
   # mechanism being extended, so there is no smaller home for it:
@@ -79,6 +86,12 @@ loc-budget-allow:
   # imports to src/codegen/promise-combinators.ts or weaken that ledger.
   - src/codegen/promise-observable-combinators.ts
 func-budget-allow:
+  # Same validated ArraySetLength owner wiring as the LOC allowances above;
+  # dynamic-length growth additionally guards null backing before copying.
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  - src/codegen/vec-length-set.ts::fillVecLengthDynamicArms
   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
   # reservation block, and two three-line guard call sites on the `new` path.
   - src/codegen/object-runtime.ts::ensureObjectRuntime
@@ -1912,3 +1925,23 @@ Controls: `tests/issue-5197-nullish-receiver-proof.test.ts` gains a JS-input
 (`.js` fileName) row asserting an EXISTING own key and the nullish throw;
 `tests/issue-5197-own-then-indirection.test.ts` gains the eight-kind
 callability matrix (node oracle 11110333).
+
+## 2026-09-27: array-length prerequisite for held PR 5883
+
+Reopened: passing earlier slices did not finish observable live iteration.
+The independent array-length repair preserves the original six fixtures and
+fixes reference and dynamic shrink/regrow, including descriptor refusal.
+Implementation routes Array length descriptors away from the ordinary struct
+field store, then clears stale backing only after validation (or above a
+non-configurable stopping index). A shared compile/finalize fill keeps numeric
+and reference holes coherent without minting late runtime types.
+
+Ten focused checks pass on upstream main 2a58b9fe9f plus this patch. The original
+baseline had 3/6 mutation cases passing; the identical six now pass 6/6.
+The two dependency probes establish zero-import compilation, not execution of
+an exported setter. Full history and limitations are in
+`plan/agent-context/5883-array-length-repair-20260927.md`.
+
+This prerequisite does not complete Promise iterator acquisition, custom array
+prototype storage, IR equivalence, or legacy retirement. No frozen Promise
+source, test expectation, CI workflow, or acceptance denominator is changed.

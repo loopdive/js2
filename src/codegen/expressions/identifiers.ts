@@ -2,7 +2,10 @@
 /**
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
-import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import {
+  autoBindingNarrowedAcrossFunctionBoundary,
+  expressionHasWidenedPropertyType,
+} from "../strict-eq-stale-type.js";
 import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
@@ -2737,10 +2740,14 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // `callCount === 0` on this branch's base because this fold answered first.
   // Declining routes the site to the native operator wrapper, which answers the
   // primitive-LHS `false` itself when no handler is installed.
+  // (#6651 VR1) …and not on the evolving-`any` START state of a binding assigned
+  // across a function boundary — see `autoBindingNarrowedAcrossFunctionBoundary`.
+  const foldLeft = ctx.checker.getTypeAtLocation(expr.left);
   if (
     noJsHost(ctx) &&
     !moduleInstallsCallableHasInstance(expr.getSourceFile()) &&
-    isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))
+    isExclusivelyPrimitiveType(foldLeft) &&
+    !autoBindingNarrowedAcrossFunctionBoundary(ctx, expr.left, foldLeft)
   ) {
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });

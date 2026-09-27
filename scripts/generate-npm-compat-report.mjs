@@ -220,6 +220,16 @@ const inspectResultFloor = cliArgs.includes("--inspect-result-floor");
 const inspectIr = cliArgs.includes("--inspect-ir");
 const inspectRuntimeErrors = cliArgs.includes("--inspect-runtime-errors");
 const inspectBinaryPath = optionValue("--inspect-binary");
+
+/**
+ * Keep an optimization-error module inspectable: that status usually means the
+ * raw module is invalid, and `wasm-opt` run by hand on it names the bad function.
+ */
+function writeUnoptimizedInspectBinary(result) {
+  if (!inspectBinaryPath || !result.binary?.length) return;
+  writeFileSync(inspectBinaryPath, result.binary);
+  console.log(`[npm-compat] wrote unoptimized standalone binary to ${inspectBinaryPath}`);
+}
 const preserveDebugNames = cliArgs.includes("--preserve-debug-names");
 const linkedStandalone = cliArgs.includes("--linked-standalone");
 const reuseStandaloneBinaryPath = optionValue("--reuse-standalone-binary");
@@ -575,6 +585,7 @@ async function compileStandaloneLane({
       }
       const stageOptimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
       if (stageOptimizationFailure) {
+        writeUnoptimizedInspectBinary(result);
         return failStandalone("optimization-error", stageOptimizationFailure, {
           compileDurationMs: performance.now() - compileStarted,
         });
@@ -663,6 +674,7 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
   if (!reuseStandaloneBinaryPath) {
     const optimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
     if (optimizationFailure) {
+      writeUnoptimizedInspectBinary(result);
       return failStandalone("optimization-error", optimizationFailure, { compileDurationMs });
     }
     optimizationOmittedPasses = npmPerfOptimizationOmittedPasses(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
@@ -1679,6 +1691,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   const placement = target === "standalone" ? "standalone" : "js-host";
   const optimizationFailure = npmPerfOptimizationFailure(result, npmCompatOptimizationLevel(placement));
   if (optimizationFailure) {
+    writeUnoptimizedInspectBinary(result);
     return {
       failure: failedOptimizedPerfLane(placement, "optimization-error", optimizationFailure, {
         ...(lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {}),

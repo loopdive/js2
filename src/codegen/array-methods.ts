@@ -8980,7 +8980,7 @@ function compileArraySort(
       typeIdx: vecTypeIdx,
     });
     compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "local.tee", index: vecTmp0 });
+    fctx.body.push({ op: "local.set", index: vecTmp0 }); // #6680: not a tee — nothing here consumes the receiver
     emitReceiverNullGuard(ctx, fctx, vecTmp0, propAccess.expression);
     fctx.body.push({ op: "local.get", index: vecTmp0 });
     fctx.body.push({ op: "ref.as_non_null" });

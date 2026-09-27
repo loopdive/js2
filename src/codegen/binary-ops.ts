@@ -835,13 +835,13 @@ export function compileBinaryExpression(
     }
   }
 
-  // Comma operator: (a, b) — evaluate a, drop its value, evaluate b
+  // Comma: discard a, then evaluate b with the expected result carrier.
   if (op === ts.SyntaxKind.CommaToken) {
     const leftType = compileExpression(ctx, fctx, expr.left);
     if (leftType) {
       fctx.body.push({ op: "drop" });
     }
-    const rightType = compileExpression(ctx, fctx, expr.right);
+    const rightType = compileExpression(ctx, fctx, expr.right, expectedType);
     // `compileExpression` intentionally exposes a successfully-emitted void
     // expression as `null`.  Propagate the inner VOID_RESULT sentinel here so
     // the transactional wrapper around the comma expression commits both

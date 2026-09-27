@@ -2898,6 +2898,63 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
 }
 
 /**
+ * (#6651 B18) Is this function-typed value's type symbol the `get` / `set` slot
+ * of the `PropertyDescriptor` interface — i.e. did the value come out of a
+ * §6.2.6 property descriptor?
+ *
+ * If so its `.name` is NOT statically knowable, and the §20.2.4.2 `.name` fold
+ * in `tryLengthAndNameReads` must decline: `lib.es5.d.ts` declares the slots as
+ * `get?(): any` / `set?(v: any): void`, so the type symbol is named after the
+ * DECLARATION SLOT while §6.2.6 puts whatever function was installed in it.
+ * Publishing the slot name made
+ *
+ *     var getter = Object.getOwnPropertyDescriptor(Array, Symbol.species).get;
+ *     return getter && getter.name;     // → "get", want "get [Symbol.species]"
+ *
+ * — verbatim `test/built-ins/Symbol/species/builtin-getter-name.js` — and it
+ * renamed user accessors too (`{ get: function realGet() {} }` read back as
+ * `"get"`). It is the same defect as the `__computed` decline beside it: a type
+ * symbol whose name is a checker/declaration artefact rather than the function's.
+ *
+ * Why it hid: the slots are OPTIONAL, so the plain `desc.get.name` spelling keeps
+ * the union `(() => any) | undefined` and the fold's union exclusion already
+ * declined it. Only where control flow narrowed the `undefined` away did the fold
+ * fire — i.e. exactly the guarded spellings real code writes (`g && g.name`,
+ * `g ? g.name : x`). That is why the RECORDED diagnosis for the row (a runtime
+ * gOPD synthesising an anonymous getter, split by static vs parameter RECEIVER)
+ * is wrong in both halves: measured 2026-09-27, a STATIC receiver under the same
+ * guard was equally wrong, a PARAMETER receiver without a guard was already
+ * right, and the two descriptor reads return the identical function object.
+ *
+ * Declining costs only the fold: the read falls through to the ordinary property
+ * path, which answers from the closure's own `$fnmeta` host-free and from
+ * `__extern_get(v, "name")` on the JS host — both measured correct, which is why
+ * this is unconditional rather than `ctx.standalone`-gated.
+ */
+function symbolIsPropertyDescriptorAccessorSlot(symbol: ts.Symbol | undefined): boolean {
+  if (symbol === undefined) return false;
+  if (symbol.name !== "get" && symbol.name !== "set") return false;
+  for (const declaration of symbol.declarations ?? []) {
+    if (!ts.isMethodSignature(declaration) && !ts.isPropertySignature(declaration)) continue;
+    const owner = declaration.parent;
+    if (ts.isInterfaceDeclaration(owner) && owner.name.text === "PropertyDescriptor") return true;
+  }
+  return false;
+}
+
+/**
+ * The enumerated set of type symbols whose NAME is a declaration/checker
+ * artefact rather than the function value's own `.name`, so the §20.2.4.2
+ * `.name` fold has no static answer and must fall through to the runtime read:
+ * TypeScript's `__computed` placeholder for a symbol-keyed member (#5149
+ * cluster B) and a §6.2.6 descriptor's accessor slot (#6651 B18, above).
+ */
+function nameFoldTypeSymbolIsDeclarationArtefact(objType: ts.Type): boolean {
+  const symbol = objType.getSymbol();
+  return symbol?.name === "__computed" || symbolIsPropertyDescriptorAccessorSlot(symbol);
+}
+
+/**
  * (#5149 cluster B) Does SOME object literal in this file define `recv.<key>`
  * with a COVERED function initializer — `{ xId: (0, function () {}) }` — rather
  * than an anonymous function definition?
@@ -3210,7 +3267,7 @@ export function tryLengthAndNameReads(
       // worse than the miss it replaced. There is no static answer here (the
       // key is a runtime symbol), so fall through to the ordinary property read
       // and let the closure's own `$fnmeta` name it.
-      if (hasFuncSig && objType.getSymbol()?.name === "__computed") {
+      if (hasFuncSig && nameFoldTypeSymbolIsDeclarationArtefact(objType)) {
         // no static fold — the runtime read below answers it
       } else if (hasFuncSig && !objType.isUnion()) {
         // Resolve the function name from the type symbol or the expression.

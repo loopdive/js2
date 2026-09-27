@@ -285,6 +285,16 @@ export function locateOperandProducers(instrs: Instr[], mod: WasmModule): Map<nu
   const out = new Map<number, number[]>();
   for (let i = 0; i < instrs.length; i++) {
     const instr = instrs[i]!;
+    if (instr.op === "return_call") {
+      // A tail call is a terminator (the stack after it is polymorphic), so
+      // `instrPopsPushes` refuses it — but its arguments are exact. Record them
+      // and stop: otherwise every `return_call` fell back to the one-instruction-
+      // per-argument backward walk, which mis-pairs across a `global.set` and
+      // retyped an unrelated `ref.null extern` (lodash `baseUpdate`).
+      const ft = callTargetFuncType(instr, mod);
+      if (ft && ft.params.length <= producers.length) out.set(i, producers.slice(producers.length - ft.params.length));
+      break;
+    }
     const eff = instrPopsPushes(instr, mod);
     if (!eff) break;
     if (eff.pops > producers.length) break; // underflow — cannot model

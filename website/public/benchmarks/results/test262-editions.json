@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10242,
-    "fail": 1444,
+    "pass": 10244,
+    "fail": 1442,
     "ce": 18,
     "skip": 0,
     "total": 11704,
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 414,
-        "fail": 26,
+        "pass": 415,
+        "fail": 25,
         "ce": 0,
         "skip": 0,
         "total": 440,
@@ -156,8 +156,8 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 114,
-        "fail": 68,
+        "pass": 115,
+        "fail": 67,
         "ce": 3,
         "skip": 0,
         "total": 185,
