@@ -50,3 +50,33 @@ legacy compiler, baseline or original conformance fixture changed. The full
 array-property repair and IR equivalence obligations remain open. These tests
 prove only the bounded raw-storage primitive, not end-to-end migration or
 permission to retire the old compiler.
+
+## First CI failure and inventory correction
+
+Quality run36311050884/job108596914639 failed the compiler-boundary inventory:
+`unclassified-module` and `unclean-active-layer` both named the new
+`src/runtime/wasmgc/values/vector-storage-copy-body.ts`. The publishing checkpoint
+omitted its required exact inventory entry; the local push hooks did not run
+this CI step.
+
+The correction declares this module in the existing native-runtime layer,
+consistent with the adjacent vector-grow-store builder. Its sole dependency is
+the Wasm instruction model through a type-only import. No layer rule, active
+entry, minimum, evidence record, exception or checker implementation changes.
+This is module classification, not production activation or a runtime-readiness
+claim. Exact historical-base inventory validation is required before repushing.
+
+The exact CI command (`--mode inventory --base HEAD^1`) passed: session77924,
+terminal530c01, exit0. Comparison against the prospective commit parent HEAD
+also passed: session13115, terminalc31b89, exit0. Both reports have
+inventoryValid=true, errors=[], architectureComplete=false and status
+inventory-valid-architecture-incomplete.
+
+Focused boundary tests: session68365, terminal3097be, exit1, 124/125 passing.
+The retained failure is the existing contracts-only frontend assertion at line146:
+it expects one root/entry and minModules1, while the policy already has three.
+Read-only assertions against HEAD prove the test bytes and ALL layer records
+unchanged; the only inventory difference is the one new file classification.
+This is exact source provenance, not a claimed baseline suite execution. No
+expectation, fixture or layer rule was changed to conceal this failure. Full JSON
+is retained locally as .tmp/5883-inventory-fix-boundary-tests.json.

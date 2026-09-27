@@ -1,0 +1,268 @@
+// Read only. Does not compile, instantiate, normalize identity graphs or edit evidence.
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+const [bDir, cDir, ...extra] = process.argv.slice(2);
+assert(bDir && cDir && extra.length === 0, "usage: comparator B_DIR C_DIR");
+const read = (dir, file) => readFileSync(resolve(dir, file));
+const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const ids = ["seam-cold", "seam-controlled-reserved", "seam-already-emitted", "drive-all", "drive-race"];
+const sharedBasis = {
+  "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+  "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+  "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+  "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+  "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+  "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+  "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+  "src/codegen/function-body.ts": "51f8458179c37990f8735ee627498010cc5b1e569cd776af68915938de17444e",
+  "src/emit/binary.ts": "d00d7c8d830fc566e9a5d5241630e3b0c81f756cf2b782e87770c28975ea0034",
+  "src/compiler.ts": "05b2ac81280356c1cf3707c2b5444f6f3a6edfdf9548cb674fb573349796f2af",
+  "tests/issue-5883-real-constructor-observer-v6.test.ts": "67ecadb39f1eff1e97ee52170c74ba02ecb5989a8d808bee1f40ca81a1776fd1",
+};
+const drivePath = "src/codegen/promise-combinator-drive.ts";
+const protocolPath = "src/codegen/promise-combinator-observable-protocol.ts";
+const armBasis = {
+  B: ["3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2", "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b"],
+  C: ["19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813", "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b"],
+};
+for (const dir of [bDir, cDir]) assert.deepEqual(
+  readdirSync(dir).filter((name) => name.endsWith(".receipt.json")).sort(),
+  ids.map((id) => `${id}.receipt.json`).sort(), "exact five receipts, no silent missing cases",
+);
+const rows = [];
+for (const id of ids) {
+  let b, c;
+  const failures = [], correspondenceFailures = [];
+  const compareCheck = (label, fn) => { try { fn(); } catch (error) { correspondenceFailures.push({ label, error: String(error) }); } };
+  const check = (label, fn) => { try { fn(); } catch (error) { failures.push({ label, error: String(error) }); } };
+  compareCheck("receipts", () => {
+    b = JSON.parse(read(bDir, `${id}.receipt.json`));
+    c = JSON.parse(read(cDir, `${id}.receipt.json`));
+  });
+  if (!b || !c) { rows.push({ id, correspondencePassed: false, correspondenceFailures, observerValid: false, failures, coveragePassed: false }); continue; }
+  for (const [arm, dir, row] of [["B", bDir, b], ["C", cDir, c]]) {
+    compareCheck(`${arm}: verified correspondence exclusions`, () => {
+      assert.equal(row.arm, arm); assert.equal(row.row.id, id);
+      assert.deepEqual(row.basis, { ...sharedBasis, [drivePath]: armBasis[arm][0], [protocolPath]: armBasis[arm][1] });
+    });
+    check(`${arm}: provenance/outcomes`, () => {
+      assert.equal(row.arm, arm); assert.equal(row.row.id, id);
+      assert.deepEqual(row.basis, { ...sharedBasis, [drivePath]: armBasis[arm][0], [protocolPath]: armBasis[arm][1] });
+      assert.equal(row.sourceHash, sha(read(dir, `${id}.source.ts`)));
+      assert.equal(row.binaryHash, sha(read(dir, `${id}.wasm`)));
+      assert.deepEqual(row.observerErrors, []);
+      assert.equal(row.success, true);
+      for (const key of ["compileError", "runtimeError", "nativeError"]) assert.equal(row[key], null);
+      assert.deepEqual(row.imports, []); assert.equal(row.nativeActual, 1); assert.equal(row.actual, 1);
+    });
+    check(`${arm}: real routes/state`, () => {
+      const seam = id.startsWith("seam-");
+      const count = seam ? 2 : 1;
+      assert.equal(row.transientEvidence.regionCalls, arm === "C" ? count : 0);
+      assert.equal(row.transientEvidence.transfers, arm === "C" ? count : 0);
+      if (seam) {
+        assert.equal(row.selected.length, 2); assert.equal(row.driveHits.length, 0);
+        assert.equal(row.sourceReads, id === "seam-already-emitted" ? 3 : 2);
+        assert(row.selected.every((hit) => hit.active === true));
+        assert.equal(row.selected[0].beforeReservation, id === "seam-already-emitted");
+        const expectedSnapshots = [0, 1].flatMap((n) => [`selected-${n}-before.json`, `selected-${n}-after.json`]);
+        assert.deepEqual(row.snapshots, expectedSnapshots);
+        if (id === "seam-controlled-reserved") {
+          const reservations = row.events.filter((event) => event.kind === "controlled-real-reservation");
+          assert.equal(reservations.length, 1); assert.equal(reservations[0].alreadyPresent, false);
+          assert.equal(row.selected[0].globalAtEntry, reservations[0].global);
+        }
+      } else {
+        assert.deepEqual(row.selected, []);
+        assert.deepEqual(row.driveHits, [{ method: id.slice(6), arg: "input", observable: true, captured: true }]);
+        assert.deepEqual(row.snapshots, ["drive-0-before.json", "drive-0-after.json"]);
+        assert(row.readEvidence.some((hit) => hit.phase === "before-drive"));
+        assert(row.readEvidence.some((hit) => hit.phase === "after-drive"));
+      }
+      for (let i = 0; i < row.snapshots.length; i += 2)
+        assert.notDeepEqual(read(dir, `${id}.${row.snapshots[i]}`), read(dir, `${id}.${row.snapshots[i + 1]}`), "emission must change physical state");
+    });
+    check(`${arm}: transient and probe evidence retained`, () => {
+      assert(row.transientEvidence.files.length > 0);
+      assert.equal(new Set(row.transientEvidence.files).size, row.transientEvidence.files.length);
+      const transient = row.transientEvidence.files.map((suffix) => JSON.parse(read(dir, `${id}.${suffix}`)));
+      const phases = transient.map((graph) => graph.entries.find(([key]) => key === "phase")?.[1]);
+      assert(phases.includes("seed-enter")); assert(phases.includes("seed-leave"));
+      if (arm === "C") { assert(phases.includes("region-enter")); assert(phases.includes("region-finished")); }
+      assert(row.probes.length > 0);
+      assert.equal(new Set(row.probes).size, row.probes.length);
+      for (const suffix of row.probes) JSON.parse(read(dir, `${id}.${suffix}`));
+      const probeEvents = row.events.filter((event) => event.kind === "probe");
+      assert.equal(probeEvents.filter((event) => event.commit === true).length, row.compilationWideDiagnostics.committed);
+      assert.equal(probeEvents.filter((event) => event.commit === false).length, row.compilationWideDiagnostics.declined);
+      assert.equal(row.events.filter((event) => event.kind === "constructor-reentry" && event.published).length, row.compilationWideDiagnostics.publishedReentries);
+    });
+  }
+  for (const [arm, row] of [["B", b], ["C", c]]) check(`${arm}: scoped surviving witnesses`, () => {
+    const tx = row.transactions, seeds = row.seedRecords, boundaries = row.selectedBoundaries;
+    const seedEligible = (id) => {
+      const seed = seeds[id];
+      assert(seed && seed.id === id);
+      if (seed.name !== "Promise" || !seed.boundaryContextMatches || seed.boundaryId === null) return false;
+      if (seed.boundaryFrameMatches) return true;
+      const parentId = seed.parentSeedIds.at(-1);
+      if (parentId === undefined) return false;
+      assert(parentId < id, "seed ancestry must be acyclic");
+      return seeds[parentId].boundaryId === seed.boundaryId && seedEligible(parentId);
+    };
+    const counts = { seedPublications: 0, committedOutputs: 0, publishedCompilerReads: 0, scopedDeclineEvents: 0, verifiedDeclineRollbacks: 0 };
+
+    for (const witness of row.witnessRecords) {
+      const seed = seeds[witness.seedId];
+      assert(seed);
+      assert.equal(witness.seedName, seed.name);
+      assert.equal(witness.boundaryId, seed.boundaryId);
+      assert.deepEqual(witness.parentSeedIds, seed.parentSeedIds);
+      for (const ancestor of witness.ancestorOutcomes) {
+        assert(tx[ancestor.id] && tx[ancestor.id].id === ancestor.id);
+        assert.equal(ancestor.status, tx[ancestor.id].status);
+      }
+      for (const id of seed.transactionIds) assert(witness.ancestorOutcomes.some((entry) => entry.id === id));
+      if (witness.ownTransactionId !== null) {
+        const own = tx[witness.ownTransactionId];
+        assert(own); assert.equal(witness.ownOutcome, own.status);
+        for (const id of own.parentIds) assert(witness.ancestorOutcomes.some((entry) => entry.id === id));
+      }
+      // Attachment and physical membership remain observer evidence, not an
+      // independent reconstruction of object identity by this comparator.
+      const evidence = row.finalModuleEvidence;
+      assert.equal(evidence.returnedBinaryHash, row.binaryHash);
+      const matching = evidence.emissions.filter((entry) => entry.completed && entry.binaryHash === row.binaryHash);
+      assert.deepEqual(evidence.matchingEmissionIds, matching.map((entry) => entry.id));
+      const attachment = witness.moduleAttachment;
+      assert(["ATTACHED", "UNKNOWN"].includes(attachment.status));
+      const attached = attachment.status === "ATTACHED";
+      if (attached) {
+        assert.equal(matching.length, 1);
+        assert.equal(attachment.emissionId, matching[0].id);
+        assert.equal(attachment.handoffVerified, true);
+        assert(Number.isInteger(attachment.bodyEmissionId) && attachment.bodyEmissionId >= 0);
+        assert(Number.isInteger(attachment.callerFunctionOrdinal) && attachment.callerFunctionOrdinal >= 0 &&
+          attachment.callerFunctionOrdinal < matching[0].functionCount);
+      } else {
+        assert.equal(witness.publicationReachable, false);
+        assert.equal(witness.anchorsReachable, false);
+      }
+      const completed = seed.boundaryId !== null && boundaries[seed.boundaryId]?.completed === true;
+      const scope = attached && seedEligible(seed.id) && completed && seed.completed &&
+        seed.publication && witness.publicationReachable &&
+        witness.ancestorOutcomes.every((entry) => entry.status === "committed");
+      assert.equal(witness.publicationPrefixValidated, seed.publication);
+      assert.equal(witness.sourceScopeSurvives, scope);
+      assert.equal(witness.scopeReasons.length === 0, scope);
+      const output = scope && witness.anchorCount > 0 && witness.anchorsReachable;
+      assert.equal(witness.emittedAnchorsSurvive, output);
+      if (witness.anchorCount === 0) assert.equal(witness.anchorsReachable, false);
+      let expected;
+      switch (witness.kind) {
+        case "seed":
+          expected = { kind: "seed", publicationObserved: scope, outputSurvival: "NOT_APPLICABLE" };
+          if (scope) counts.seedPublications++;
+          break;
+        case "commit":
+          expected = { kind: "commit", callbackCommitted: witness.ownOutcome === "committed",
+            committedOutputSurvives: witness.ownOutcome === "committed" && output };
+          if (expected.committedOutputSurvives) counts.committedOutputs++;
+          break;
+        case "compiler-reentry":
+          expected = { kind: "compiler-reentry", publishedReadSurvives: output && witness.samePublishedGlobal === true, compilerOrderOnly: true };
+          if (expected.publishedReadSurvives) counts.publishedCompilerReads++;
+          break;
+        case "decline":
+          expected = { kind: "decline", callbackDeclined: witness.ownOutcome === "declined",
+            scopedDeclineObserved: scope && witness.ownOutcome === "declined",
+            outputSurvival: "NOT_APPLICABLE", rollbackVerified: "UNOBSERVED" };
+          if (expected.scopedDeclineObserved) counts.scopedDeclineEvents++;
+          break;
+        default: assert.fail("unknown witness kind");
+      }
+      assert.deepEqual(witness.proposition, expected);
+    }
+    assert.deepEqual(counts, row.scopedEvidence);
+    assert.equal(row.rollbackProof.status, "UNOBSERVED");
+    const outputPositive = (w) => w.proposition.kind === "commit" ? w.proposition.committedOutputSurvives :
+      w.proposition.kind === "compiler-reentry" ? w.proposition.publishedReadSurvives : false;
+    const contract = row.observerContract;
+    assert.deepEqual(contract.failures, []);
+    assert.equal(contract.positiveCount, row.witnessRecords.filter((w) => outputPositive(w) && w.anchorCount > 0).length);
+    assert(contract.positiveCount > 0, "real nonempty output positive required");
+    assert.deepEqual(contract.rows.map((entry) => entry.label), [
+      "real-nonempty-positive", "orphan-caller-held-body-retained",
+      "same-name-distinct-allocation", "all-bodies-detached-held-metadata-retained",
+      "missing-final-emission", "nonempty-positive-repeated", "actual-committed-callback-empty-output",
+    ]);
+    for (const entry of contract.rows) {
+      assert.equal(entry.passed, true);
+      assert.equal(outputPositive(entry.actual), entry.expectedOutputSurvival);
+      assert(outputPositive(row.witnessRecords[entry.witnessIndex]), "real output positive required");
+    }
+    const [positive, orphan, replacement, detached, missing, repeated, empty] = contract.rows;
+    assert.deepEqual(positive.actual, row.witnessRecords[positive.witnessIndex]);
+    assert.deepEqual(repeated.actual, positive.actual);
+    assert(positive.actual.anchorCount > 0);
+    for (const entry of [orphan, replacement, detached]) assert.equal(entry.oldHeldBodyReachable, true);
+    for (const entry of [orphan, replacement, missing]) assert.equal(entry.actual.moduleAttachment.status, "UNKNOWN");
+    assert.equal(detached.actual.moduleAttachment.status, "ATTACHED");
+    assert.equal(detached.actual.publicationReachable, false);
+    assert.equal(detached.actual.anchorsReachable, false);
+    assert.equal(empty.actual.proposition.kind, "commit");
+    assert.equal(empty.actual.proposition.callbackCommitted, true);
+    assert.equal(empty.actual.proposition.committedOutputSurvives, false);
+    assert.equal(empty.actual.anchorCount, 0);
+    assert.equal(empty.actual.emittedAnchorsSurvive, false);
+    assert.deepEqual(contract.kindControls.map((entry) => entry.label), [
+      "real-empty-anchor-seed-publication", "orphan-seed-publication", "real-scoped-decline",
+      "real-decline-with-rolled-back-ancestor",
+    ]);
+    for (const entry of contract.kindControls) assert.equal(entry.status, "OBSERVED", entry.label + " remains unobserved");
+    const [seed, orphanSeed, decline, rolledBack] = contract.kindControls;
+    for (const entry of [seed, decline, rolledBack]) assert.deepEqual(entry.actual, row.witnessRecords[entry.witnessIndex]);
+    assert.equal(seed.actual.anchorCount, 0);
+    assert.deepEqual(seed.actual.proposition, { kind: "seed", publicationObserved: true, outputSurvival: "NOT_APPLICABLE" });
+    assert.equal(seed.actual.emittedAnchorsSurvive, false);
+    assert.equal(orphanSeed.actual.proposition.publicationObserved, false);
+    assert.equal(orphanSeed.actual.moduleAttachment.status, "UNKNOWN");
+    assert.equal(decline.actual.proposition.scopedDeclineObserved, true);
+    assert.equal(decline.actual.proposition.rollbackVerified, "UNOBSERVED");
+    assert.equal(rolledBack.actual.proposition.callbackDeclined, true);
+    assert.equal(rolledBack.actual.proposition.scopedDeclineObserved, false);
+    assert.deepEqual(rolledBack.actual.scopeReasons, ["enclosing transaction not committed"]);
+    assert(rolledBack.actual.ancestorOutcomes.every((entry) =>
+      ["committed", "declined", "rolled-back"].includes(entry.status)));
+    assert(rolledBack.actual.ancestorOutcomes.some((entry) => ["declined", "rolled-back"].includes(entry.status)));
+  });
+  compareCheck("strict post-attachment/drive correspondence", () => {
+    // Only verified source arm/basis and separately retained transient R data
+    // differ by design. All diagnostics, outcomes, seed events, state and read
+    // evidence remain compared, even if success is true.
+    const residual = ({ arm, basis, transientEvidence, ...rest }) => {
+      const { [drivePath]: drive, [protocolPath]: protocol, ...shared } = basis;
+      return { ...rest, basis: shared };
+    };
+    assert.deepEqual(residual(b), residual(c));
+    for (const suffix of ["source.ts", "native.js", "wat", "wasm", "observer-contract.json", ...b.snapshots, ...b.probes, ...b.finalModuleEvidence.emissions.map((entry) => entry.snapshot)])
+      assert.deepEqual(read(bDir, `${id}.${suffix}`), read(cDir, `${id}.${suffix}`), `${id}: raw ${suffix}`);
+  });
+  const coverage = [b, c].map((row) => ({ arm: row.arm, failures: row.coverageFailures, scopedEvidence: row.scopedEvidence, compilationWideDiagnostics: row.compilationWideDiagnostics, runtimeReentry: row.runtimeReentry, rollbackProof: row.rollbackProof }));
+  // Never infer complete coverage from matching failures or from a source
+  // comment. Runtime evidence is deliberately absent in this uninstrumented v1.
+  const coveragePassed = coverage.every((item) => item.failures.length === 0 &&
+    ["seedPublications", "committedOutputs", "publishedCompilerReads", "scopedDeclineEvents", "verifiedDeclineRollbacks"]
+      .every((name) => Number.isInteger(item.scopedEvidence[name]) && item.scopedEvidence[name] > 0) &&
+    item.rollbackProof.status === "VERIFIED" && item.runtimeReentry.status === "OBSERVED");
+  rows.push({ id, correspondencePassed: correspondenceFailures.length === 0, correspondenceFailures,
+    observerValid: failures.length === 0, failures, coveragePassed, coverage });
+}
+console.log(JSON.stringify({ denominator: 5,
+  correspondencePassed: rows.filter((row) => row.correspondencePassed).length,
+  observerValid: rows.filter((row) => row.observerValid).length,
+  coveragePassed: rows.filter((row) => row.coveragePassed).length,
+  overallAccepted: rows.every((row) => row.correspondencePassed && row.observerValid && row.coveragePassed), rows }, null, 2));
+if (!rows.every((row) => row.correspondencePassed && row.observerValid && row.coveragePassed)) process.exitCode = 1;

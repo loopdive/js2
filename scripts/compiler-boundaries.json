@@ -1785,6 +1785,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/vector-storage-copy-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/shared/contracts/ir-preparation-failure.ts",
       "state": "clean",
       "layer": "foundation"
