@@ -3281,6 +3281,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/builtin-constructor-prepared.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate immediate constructor materialization from binding-safe delayed IR consumption and provider closure."
+    },
+    {
       "path": "src/codegen/builtin-static-globals.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
