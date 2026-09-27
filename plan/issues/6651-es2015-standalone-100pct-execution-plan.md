@@ -272,6 +272,24 @@ loc-budget-allow:
   #     `null` answer.
   - src/codegen/expressions/eval-inline.ts
   - src/codegen/index.ts
+  # 2026-09-27 — lane B20 (a `yield` nested inside ANOTHER yield's operand:
+  # `yield [...yield]`, `yield yield`; receipt at the end of this file).
+  # `src/codegen/generators-native.ts` +124 (path already listed below, restated
+  # here per the stranded-grant rule). All of it is inside
+  # `buildNativeGeneratorPlan`'s closure and cannot move to a subsystem module:
+  # the three new helpers read and WRITE that function's locals — `curId`,
+  # `spillSet`, `elemIsAny`, `emitYield`, `attachContinuationReplacements`,
+  # `continuationSpillName` — and the whole point of the chain lowering is the
+  # ORDER in which it mutates the state cursor (attach the replacement map to the
+  # state BEFORE the next `emitYield` finishes it, because `finishState`
+  # snapshots that list). Written behind a seam, that ordering becomes invisible
+  # at the site that depends on it. ~55 of the 124 lines are comment: the arm
+  # this fixes had a written rationale that was simply silent about a nested
+  # yield, and the replacement is a NEW order-preservation argument (nothing of
+  # the operand is owed before the spine suspensions), which has to be readable
+  # beside the rule that admits the shape — the negative control in
+  # `tests/issue-6651-b20-nested-yield-operand.test.ts` exists for exactly the
+  # case that argument excludes.
   # 2026-09-26 — lane C1 (§15.7 own `constructor`). Two god-files, +12 and +10.
   #   - `src/codegen/object-ops.ts` +12: 6 comment lines and one 4-line `if` that
   #     adds `"constructor"` to the two own-key sets. The RULE and all of its
@@ -15453,3 +15471,243 @@ frontmatter; `tryLengthAndNameReads` itself is net **+0**.
   both are priced in place so the next lane does not re-derive them.
 - The branch carries the VR1 predecessor commit (`772ddd4421`) as a merge, because
   target A was defined against it. Nothing else was taken from it.
+
+## Lane B20 receipt — fresh ES2015 standalone census, then `yield [...yield]` (2026-09-27)
+
+### Part 1 — the census (measured, not inherited)
+
+Artifacts, both **downloaded fresh 2026-09-27 07:10–07:11 UTC** (the fetch
+reported `downloaded … 48,735 entries` on each — a real download, not a
+cache-fallback):
+
+- `loopdive/js2wasm-baselines` `test262-standalone-current.jsonl` via
+  `ensureStandaloneBaselineJsonl({force:true})` — 22,386,236 bytes, 48,735 rows.
+- Edition index `website/public/benchmarks/results/test262-file-editions.json`
+  (53,575 files) — joined on the `test/`-stripped path.
+- Scope filter: `scope !== "proposal"` and `scope_official !== false`
+  (the official standard + Annex B corpus).
+
+**ES2015 standalone: 11,023 pass / 11,704 (94.18 %) — 681 non-pass**
+(592 `fail`, 89 `compile_error`). That is 30 rows better than the dispatch
+brief's 10,993 and 892 better than the committed floor of 10,131 (stale, as the
+brief said).
+
+**681 rows over 306 distinct error signatures. 228 of those signatures are
+singletons** — so the brief's "believed to be near-singletons" is confirmed:
+75 % of the remaining signatures carry exactly one row, and the whole tail below
+the top-16 is 342 rows over 290 signatures (1.2 rows/signature).
+
+Top signatures by row count:
+
+| rows | signature |
+| ---: | --- |
+| 62 | `Test262Error: Expected a TypeError to be thrown but no exception was thrown at all` (55 bare + 7 with a trailing `(Testing with …)` suffix) |
+| 53 | `TypeError: Cannot access property on null or undefined at #:#` |
+| 18 | `standalone target emitted host imports: env::__gen_*` |
+| 17 | `Test262Error: Expected SameValue(«#», «#») to be true` |
+| 16 | `Codegen error: native generator lowering … only sequential numeric yields (#680)` |
+| 15 | `TypeError: called value is not a function` |
+| 15 | `Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all` |
+| 13 | `Test262Error: Expected a Test262Error but got a TypeError` |
+| 12 | `TypeError: Cannot access property on null or undefined` (no position) |
+| 12 | `TypeError: value is not iterable` |
+| 9 | `TypeError: Cannot convert undefined or null to object` |
+| 9 | `Test262Error: Expected true but got false` |
+| 8 | `Test262Error: Expected SameValue(«undefined», «#») to be true` |
+| 8 | `Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true` |
+| 7 | `Test262Error: Expected SameValue(«null», «[object Object]») to be true` |
+| 7 | `Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all` |
+
+**Two of the three biggest buckets are NOT clusters — do not dispatch on them.**
+
+- The 62-row `Expected a TypeError` bucket spans 40+ unrelated causes (revoked
+  proxies, detached buffers, `[[Construct]]`-less builtins, frozen template
+  objects, class `prototype` setters, for-of destructuring…). Its size is an
+  artifact of `assert.throws(TypeError, …)` being test262's most common idiom.
+- The 53-row `Cannot access property on null or undefined at #:#` bucket is
+  **35 cross-realm rows** (`proto-from-ctor-realm`, `*/cross-realm.js`,
+  `*-realm.js`) plus 18 unrelated residuals. The realm half is the out-of-scope
+  set; `realm` appears in **76** of the 681 paths overall.
+
+Filename families worth knowing (measured, not estimated):
+
+| rows | family |
+| ---: | --- |
+| 76 | any path containing `realm` (out of scope) |
+| 35 | `proto-from-ctor-realm*` |
+| 24 | Proxy-of-Proxy `trap-is-{undefined,missing,null}-target-is-proxy` |
+| 16 | **`yield-spread-arr-{single,multiple}`** ← this lane |
+| 11 | `subclass/builtin-objects/*/regular-subclassing.js` (11 different builtins) |
+| 8 | `invoked-as-{func,method,accessor}` |
+
+Path distribution of the 681: `language/statements/class` 67 ·
+`built-ins/Array/prototype` 36 · `language/expressions/object` 31 ·
+`language/expressions/generators` 22 · `built-ins/TypedArray/prototype` 22 ·
+`built-ins/Iterator/prototype` 21 · `built-ins/Function/prototype` 18 ·
+`language/expressions/class` 17 · `language/expressions/super` 15 ·
+`language/statements/for-of` 15 · (then a long tail of ≤14).
+
+Census scripts are in `.tmp/` (not committed): `census.py`, `grp.py`, `fam.py`,
+`show.py`, `ed.py`.
+
+### Part 2 — the fix: a `yield` nested inside another yield's operand
+
+**Rows targeted**: the 16-row `yield-spread-arr-*` family
+(`yield [...yield]` / `yield [...yield yield]` across generator declarations,
+named/anonymous generator expressions, object-literal generator methods, and
+class generator methods static + instance, in both statement and expression
+class forms).
+
+**Root cause** (`src/codegen/generators-native.ts`, `buildNativeGeneratorPlan`):
+`lowerStatements` arm 1 matched `yield <operand>;` **without looking at whether
+`<operand>` itself suspends**, and handed it to `emitYield`, which makes the
+operand the state's `{kind:"yield"}` terminator expression. The nested `yield`
+inside that expression is then compiled by the ORDINARY expression compiler in
+the resume function — where `fctx.isGenerator` is unset, so
+`compileYieldExpression` takes its first branch, reports "yield expression
+outside of generator function" into a channel that does **not** fail the compile,
+and emits nothing. The nested suspension was **silently dropped**: the generator
+had one `.next()` too few and the operand saw `undefined`.
+
+Proved directly, not inferred: a temporary `console.error` at
+`compileYieldExpression`'s entry printed
+`reached: "yield" fn= __gen_resume_g buf= undefined isGen= undefined` for
+`function* g(){ yield [yield]; }` under `--target wasi`, and a value-shape probe
+showed the FIRST `.next()` already returning the array
+(`a.value` is an Array, `a.done === false`) instead of suspending at the inner
+yield. That is why the rows report `value is not iterable` (standalone,
+`[...undefined]`) and `null is not iterable` (host).
+
+**Fix**: `lowerYieldOperandChain` + `leftSpineYields` + `chainReplacements`. The
+operand's nested yields are admitted only when they sit on its **leftmost
+evaluation spine** — i.e. nothing observable in the operand is owed before any of
+them. Each spine yield suspends in its own state spilling `.next(v)`'s value;
+the successor state carries a replacement map so the next suspension's operand
+(and finally the outer yield's operand) reads the resumed value from its spill.
+The outer yield then suspends normally with the rebuilt operand. Two ordering
+facts are load-bearing and are commented at the site: the map must be attached
+**before** the next `emitYield` finishes that state (`finishState` snapshots it),
+and the operand is legitimately deferred past the suspensions **only** because
+the spine rule guarantees nothing of it ran yet.
+
+A third piece was required: the chain's `sent` spills are resume bindings, and
+the spill-typing loop **bails the whole plan** on any resume binding under the
+boxed-any carrier (the #2864 F1 `carrierIsAny` guard, whose hazard is the #2151
+any-receiver dispatch). These spills are the one resume binding that never
+becomes a member receiver — the value is read straight back into the next
+suspension's operand — so `chainSentSpillNames` pins them at `externref` ahead
+of that guard.
+
+Shapes the spine rule **refuses**, now with the honest #680 refusal instead of a
+wrong answer: a yield behind observable work in the operand (`yield [h(), yield]`
+owes `h()` before the suspension), a yield in a later array element, `yield*`
+anywhere in the chain, a try/finally crossing, and any carrier other than
+boxed-any. The negative control in the regression test pins the first of these.
+
+**Measurement.** Adapter keys, verified to differ between sides and to reproduce
+byte-exactly on restore:
+
+| tree | adapter key |
+| --- | --- |
+| base (`origin/main` @ `46c10411d6`) | `229dd26a78e7173f` |
+| fixed | `1ed289fe96539cc1` |
+
+Belt: **861 rows**, `TEST262_TARGET=standalone`, `Chunk 1/1: 861 tests` on both
+sides — the whole generator neighbourhood
+(`language/{statements,expressions}/generators`, `language/expressions/yield`,
+all four class `gen-method`/`gen-method-static` dirs, object-literal `gen-*`
+methods, `built-ins/Generator{Function,Prototype}`).
+
+| | base | fixed |
+| --- | ---: | ---: |
+| pass | 779 | **794** |
+| fail | 82 | **67** |
+
+**GAINED (15) — every one ES2015-tagged and `fail` in the published standalone
+baseline:**
+
+```
+test/language/expressions/class/gen-method-static/yield-spread-arr-multiple.js
+test/language/expressions/class/gen-method-static/yield-spread-arr-single.js
+test/language/expressions/generators/named-yield-spread-arr-multiple.js
+test/language/expressions/generators/named-yield-spread-arr-single.js
+test/language/expressions/generators/yield-as-yield-operand.js
+test/language/expressions/generators/yield-spread-arr-multiple.js
+test/language/expressions/generators/yield-spread-arr-single.js
+test/language/expressions/object/method-definition/gen-yield-spread-arr-multiple.js
+test/language/expressions/object/method-definition/gen-yield-spread-arr-single.js
+test/language/expressions/yield/rhs-yield.js
+test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js
+test/language/statements/class/gen-method-static/yield-spread-arr-single.js
+test/language/statements/generators/yield-as-yield-operand.js
+test/language/statements/generators/yield-spread-arr-multiple.js
+test/language/statements/generators/yield-spread-arr-single.js
+```
+
+**LOST: none.** (Empty `comm -13` between the two sorted fail sets.)
+
+Three of the 15 were outside the 16-row manifest and are the same cause —
+`yield-as-yield-operand.js` ×2 and `yield/rhs-yield.js` (`yield yield`), found
+only because the belt was run as a per-row set diff rather than a count.
+
+**Residual: 4 of the 16 manifest rows still fail**, and NOT for this cause —
+the non-static class `gen-method` variants
+(`language/{statements,expressions}/class/gen-method/yield-spread-arr-{single,multiple}.js`).
+They do `var gen = C.prototype.gen; var iter = gen();` — a detached prototype
+method called with `this === undefined` — and fail with the identical
+`Cannot access property on null or undefined at 354:12` / `364:12` they failed
+with on the base tree. That is a second, independent gap; it is left out
+deliberately.
+
+### Diagnoses DISPROVED
+
+- **"Fix it unconditionally, host is wrong the same way."** Measured, not
+  assumed: `TEST262_TARGET` unset, same 16 rows, `Chunk 1/1: 16 tests` — **16/16
+  fail on the host both before and after**, byte-identical signatures
+  (`null is not iterable [in C_gen() ← …]`). The host lane is a *different*
+  cause and out of a single lane's reach: `function-body.ts` compiles a
+  JS-host-target generator by **eagerly** running the whole body into a
+  `__gen_create_buffer` array, and in that model `compileYieldExpression`
+  returns `ref.null.extern` for every yield by construction ("In the eager
+  generator model, yield always receives undefined from .next()"). No
+  resume-value fix is possible there without a real state machine. The
+  continuation machinery that *is* a state machine is gated
+  standalone/WASI-only by design (`continuationYieldsMayCarryOperands =
+  noJsHostTarget(ctx)`). So the fix is correctly host-free-target-scoped, and
+  the host rows stay failing — 0 host regressions, 0 host gains.
+- **"This is the #680 `sequential numeric yields` bucket."** No. Those 16 rows
+  were `fail`, not `compile_error`: the planner *accepted* the shape and
+  miscompiled it. The #680 bucket is a separate 16 rows in the census.
+- **"The existing `lowerContinuationRoot` array-literal arm already covers
+  `[...yield]`."** It does not, twice over: arm 1 of `lowerStatements` matches
+  `yield X;` first so the continuation path is never reached for it, and that arm
+  returns `not-applicable` on a `SpreadElement` element anyway.
+- **"`continuationYields` / `buildContinuationReplacements` can validate the
+  chain."** They cannot: `continuationYieldOf` rejects any yield whose operand
+  contains a yield (`nodeContainsYield(operand) → null`), which is every
+  non-innermost member of the chain. Hence the dedicated `chainReplacements`.
+- **"A temp variable is the same shape."**
+  `const t = yield; yield [...t];` has **no native plan at all** on base
+  (the #680 refusal) and still has none after — untouched, by design.
+
+### Deliberately left out
+
+- The 4 detached-`this` class `gen-method` rows above (independent cause).
+- The 76 `realm` rows and the `iterator-chunking` edition-tag fix (ruled out of
+  scope for this issue).
+- The host lane's eager-buffer generator model (architectural; see the disproof).
+- Widening the spine rule to capture observable prefix operands
+  (`yield [h(), yield]`). The capture machinery exists
+  (`captureContinuationOperand`) but only types at the f64 carrier, and this
+  family needs boxed-any; that pairing is a separate slice.
+
+### Files
+
+- `src/codegen/generators-native.ts` (+124, granted in this file's frontmatter)
+- `tests/issue-6651-b20-nested-yield-operand.test.ts` (new, 5 cases incl. the
+  negative control; verified **5/5 pass on the fixed tree, 5/5 FAIL on the
+  reverted tree**)
+
+Gates run bare, all exit 0: `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check-host-import-policy`, `typecheck`.
