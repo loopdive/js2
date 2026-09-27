@@ -207,6 +207,59 @@ across many editions. A path filter only narrows discovered files and cannot
 restore undiscovered paths. Keep that runner change separate from #4016's
 coercion implementation and test its discovery/completeness contract directly.
 
+## Post-checkpoint registry follow-up: transferred to dedicated #6715
+
+The next concrete semantic candidate is the host post-`ToPrimitive` Symbol
+invalid-Wasm boundary, not either stale `@@split` refusal pin. A historical
+environment-gated trace observed a late real host `"number"` string import
+change `numImportGlobals` from `0` to `1` while cached
+`ctx.undefinedGlobalIdx` remained `11`; after the insertion that slot resolved
+to `__symbol_counter:i32`. This matches the observed
+`global.get i32; extern.convert_any` validation failure. The trace did not
+identify the final canonical-undefined emitter, so it is evidence of the
+stale cache mechanism, not a complete emitted-route proof.
+
+`ensureAnyValueType` stores the absolute `__undefined` global index, while
+`canonicalUndefinedExternInstrs` later emits it. The established
+`fixupModuleGlobalIndices` path shifts body instructions and many comparable
+cached indices after a late import global, but not this cache. The proposed
+narrow repair is therefore a threshold/delta update for
+`ctx.undefinedGlobalIdx` in that existing function, with no IR, context-layout,
+body-rebuild, or general relocation rewrite.
+
+This work is now tracked by
+[#6715 — standalone: shift the cached undefined singleton global index after a late host import](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6715-standalone-undefined-global-index-late-import-shift),
+not by #4016. Its planning reservation was released after the dedicated
+pre-dispatch check and re-claimed for a separate managed worktree/branch. The
+new owner must still prove the late-import/canonical-undefined case directly
+and pair the existing host post-`ToPrimitive` Symbol-limit fixture (including
+construction, hint, and separator-abruptness controls) against the same base.
+The #4016 draft retains this evidence as provenance but makes no registry-fix
+claim.
+
+## 2026-09-28 quality handoff: compiler-boundary inventory
+
+The draft PR's completed `quality` job reports an actual compiler-boundary
+inventory failure, not an allowance issue: `string-split-coercion.ts` has one
+unclassified module boundary and two unclassified target boundaries. The
+relevant artifact is `compiler-boundaries-36355885419-1` (artifact id
+`10944515410`). Lint, format, and typecheck completed successfully; the
+aggregate log's omitted Biome diagnostics are not a separate failure. Classify
+or register the new split-coercion boundary through the repository's existing
+boundary mechanism; do not add an allowance or weaken the inventory. The
+source-only correction registers `src/codegen/string-split-coercion.ts` as
+`unmigrated` `mixed-needs-split` debt with `backend-wasmgc` as its eventual
+destination. That is the correct layer because the helper combines legacy
+codegen context/local/helper provisioning with Wasm instruction and native
+runtime emission—not merely because its two importers carry that label. The
+record resolves the missing module and its two target records without adding a
+layer, changing an allowed edge, or claiming a completed quality run. Tests,
+hooks, and registry edits were not part of that source-only correction. The
+scoped inventory check exited 0 with `errors: []`, zero untracked modules, and
+the expected `inventory-valid-architecture-incomplete` status; it is the only
+local validation required before normal commit/push hooks. Registry work is
+separately owned by #6715.
+
 ## Next ES2015 candidate: ownership unresolved
 
 The current #6651 SN1 receipt recommends a separate OrdinaryToPrimitive slice

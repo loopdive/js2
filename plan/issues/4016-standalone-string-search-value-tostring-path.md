@@ -233,6 +233,101 @@ above still red. Its receipt is
 failure prevents a ready-for-merge conclusion; a draft checkpoint may carry
 the work without masking or weakening any of those assertions.
 
+### 2026-09-28 proposed follow-up: stale standalone `undefined` global cache
+
+This section remains source-proof provenance for the published checkpoint.
+The implementation is now split into
+[#6715 — standalone: shift the cached undefined singleton global index after a late host import](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6715-standalone-undefined-global-index-late-import-shift),
+which has its own managed worktree, dedicated ownership record, and future PR.
+No registry source belongs in this #4016 branch.
+
+The earlier temporary, environment-gated host trace is a concrete but bounded
+mechanism receipt. Immediately before `prepareHostRuntimeToPrimitive` inserted
+the real host `"number"` string global, `numImportGlobals` was `0` and the
+cached `undefinedGlobalIdx` was `11`. Immediately afterward,
+`numImportGlobals` was `1`, while that cache still held `11`; slot 11 then
+named `__symbol_counter:i32`. That type mismatch matches the retained host
+failure (`global.get i32; extern.convert_any`). The trace did **not** print the
+particular `canonicalUndefinedExternInstrs` body that later reaches Wasm
+validation, so it proves a stale absolute cache rather than every link of the
+failing emitted route. Its temporary tracing edits were removed byte-exactly;
+the historical trace file named earlier in this issue is not a replacement for
+a new paired measurement.
+
+Current source inspection establishes why this is a credible narrow repair:
+
+- `ensureAnyValueType` in `src/codegen/any-helpers.ts` records
+  `ctx.undefinedGlobalIdx` as the absolute
+  `ctx.numImportGlobals + ctx.mod.globals.length` slot for `__undefined`.
+  `canonicalUndefinedExternInstrs` later bakes
+  `global.get(ctx.undefinedGlobalIdx); extern.convert_any`.
+- `addHostStringConstantGlobal` in `src/codegen/registry/imports.ts` inserts
+  an import global and invokes `fixupModuleGlobalIndices` when module globals
+  already exist.
+- `fixupModuleGlobalIndices` shifts emitted `global.get`/`global.set`
+  instructions and comparable cached module-global indices
+  (`newTargetGlobalIdx`, `holeGlobalIdx`, the Symbol registry globals, and
+  others), but currently omits `undefinedGlobalIdx`.
+
+The dedicated #6715 candidate change is one guarded cache update in
+`fixupModuleGlobalIndices`: when the cached
+`undefinedGlobalIdx` is at or beyond the same `threshold`, add the same
+`delta`. It must not rewrite the global-index walker, rebuild helper bodies,
+add a source-order workaround, alter `context/types.ts`, or touch IR/layout
+code. Existing emitted bodies remain the responsibility of the established
+walker; this slice only keeps the later cache lookup synchronized with it.
+
+Fresh regression plan, after a coordinated execution slot:
+
+1. Add a focused codegen regression that reserves `__undefined`, inserts a
+   late host string import, then emits canonical undefined. It must prove that
+   the later `global.get` names an `anyref`-compatible `__undefined` slot, not
+   the adjacent `__symbol_counter:i32` slot, and that the module instantiates.
+2. Re-run the existing host post-`ToPrimitive` Symbol-limit control together
+   with its positive undescribed-Symbol construction control. It must invoke
+   the Number hint once, reject with a JS-visible `TypeError`, and not reach
+   `extern.convert_any` validation; the separator must remain uncoerced after
+   that abrupt completion.
+3. Pair the changed fixtures against a clean common base and retain the
+   existing host dynamic-undefined/raw-null and standalone native-Symbol
+   controls. Record exact source/fixture hashes and all transitions; a green
+   compile alone is not sufficient evidence.
+
+This is the next real semantic candidate among the five focused residuals.
+The direct-object receiver needs broader dynamic return-carrier/member-dispatch
+work, the descriptor failure belongs to the existing descriptor-runtime
+boundary, and the two historical `@@split` refusal pins are stale after B6
+protocol dispatch and need positive semantic replacements rather than a
+cosmetic expectation update.
+
+### 2026-09-28 compiler-boundary inventory registration
+
+The draft PR's completed `quality` job found one separate mechanical blocker:
+`src/codegen/string-split-coercion.ts` was absent from
+`scripts/compiler-boundaries.json`. The checker consequently reported one
+unclassified module and two unclassified targets—exactly the two imports from
+the already-classified `string-search-value.ts` and `string-proto-split.ts`.
+
+The registration is not merely copied from its neighbours. This helper accepts
+the legacy `CodegenContext`/`FunctionContext`, stages compiler-originated
+values, allocates locals and defined helpers, and provisions native runtime
+imports while also consuming Wasm instruction types and an IR integer-coercion
+emitter. It therefore genuinely spans AST/context-driven generation and the
+physical WasmGC runtime seam: existing migration policy classifies that shape
+as `unmigrated` `mixed-needs-split` debt with `backend-wasmgc` as its eventual
+destination. The new record uses exactly that established layer, owner, and
+next-boundary policy. It does not add a layer, relax an edge, or change source
+semantics.
+
+The CI artifact is `compiler-boundaries-36355885419-1` (id `10944515410`).
+Lint, format, and typecheck completed successfully; omitted Biome diagnostic
+text in the aggregate job log is not a second failure. The registration still
+needs the ordinary quality rerun when the coordinated execution slot returns.
+The scoped static inventory check exited 0 with `errors: []`, zero untracked
+modules, and the expected `inventory-valid-architecture-incomplete` status; it
+is the only local validation required before normal commit/push hooks, not a
+compiler or conformance claim.
+
 ## 2026-09-20 reopened: observable split coercion order
 
 The original refusal-removal slice completed on 2026-08-02. A remaining
