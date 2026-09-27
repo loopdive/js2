@@ -575,6 +575,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // Synthetic operand spills have no VariableDeclaration for the historical
   // type resolver, so retain their already validated frame representation.
   const continuationSpillTypes = new Map<string, ValType>();
+  // (#6651 B20) `sent`-value spills minted for a NESTED-yield chain
+  // (`yield [...yield]`). They are resume bindings, so the #2864 any-carrier
+  // bail in the spill-typing loop would reject them; they are also the one
+  // resume binding whose value is never a member RECEIVER — it is read straight
+  // back into the next suspension's operand — so their type is pinned here.
+  const chainSentSpillNames = new Set<string>();
   // (#2170) `yield*` delegation sites, allocated in source order; index into
   // this array is the terminator's `siteIndex`.
   const delegationSites: { innerName: string }[] = [];
@@ -841,6 +847,16 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // Statement that CONTAINS a yield somewhere — must be modeled.
       // 1) `yield expr;` as an expression statement.
       if (ts.isExpressionStatement(stmt) && ts.isYieldExpression(stmt.expression)) {
+        // (#6651 B20) …including one whose OPERAND itself suspends
+        // (`yield [...yield]`). That must be sequenced as a chain; handing it
+        // straight to `emitYield` made the nested yield the terminator
+        // expression's problem, and it was silently dropped.
+        const yieldOperand = stmt.expression.expression;
+        if (yieldOperand && !stmt.expression.asteriskToken && containsAnyYield(yieldOperand)) {
+          const chained = lowerYieldOperandChain(stmt.expression, undefined, unwind);
+          if (chained === "lowered") continue;
+          return fail();
+        }
         if (!emitYield(stmt.expression, undefined, unwind)) return false;
         continue;
       }
@@ -1808,6 +1824,106 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     return finishExpressionContinuation(host, captures, [[yieldExpr, sentSpill]]);
   }
 
+  /**
+   * (#6651 B20) The nested yields of a yield's OPERAND, in evaluation order,
+   * when every one of them is reached before anything OBSERVABLE in that operand
+   * runs — i.e. they sit on the operand's leftmost evaluation spine.
+   *
+   * `yield [...yield yield]` (test262's `yield-spread-arr-*` family) is the
+   * motivating shape: the bare `yield` runs first, then `yield <sent>`, and only
+   * then is the array built and re-yielded. Because nothing of the operand is
+   * owed before any of those suspensions, the whole operand can be deferred to
+   * the state that follows the last one without moving observable work across a
+   * resume boundary — which is what makes this order-preserving.
+   *
+   * `null` = not this shape. A yield sitting behind observable work (a later
+   * array element, a call argument, a member base) is rejected rather than
+   * reordered; `[]` = no nested yield at all.
+   */
+  function leftSpineYields(expr: ts.Expression): ts.YieldExpression[] | null {
+    const inner = unwrapContinuationWrapper(expr);
+    if (ts.isYieldExpression(inner)) {
+      // A delegating `yield*` has its own terminator kinds; not folded in here.
+      if (inner.asteriskToken) return null;
+      if (!inner.expression) return [inner];
+      const nested = leftSpineYields(inner.expression);
+      if (nested === null || !yieldValueOk(inner.expression)) return null;
+      return [...nested, inner];
+    }
+    if (!containsAnyYield(inner)) return [];
+    if (ts.isArrayLiteralExpression(inner)) {
+      const first = inner.elements[0];
+      // An elision evaluates nothing, but it also means the yield is in a LATER
+      // element, i.e. behind this element's position — reject.
+      if (first === undefined || ts.isOmittedExpression(first)) return null;
+      // Later elements are evaluated AFTER every suspension (in the final
+      // state, in source order), so they may be arbitrary — but they must not
+      // themselves suspend, which this model could not sequence.
+      for (const element of inner.elements.slice(1)) if (containsAnyYield(element)) return null;
+      return leftSpineYields(ts.isSpreadElement(first) ? first.expression : first);
+    }
+    return null;
+  }
+
+  /** Replacement entries for an already-suspended nested-yield chain. */
+  function chainReplacements(
+    bindings: readonly ContinuationYieldBinding[],
+  ): NativeGeneratorExpressionReplacement[] | null {
+    const out: NativeGeneratorExpressionReplacement[] = [];
+    const seen = new Set<ts.Expression>();
+    for (const [yieldExpr, spillName] of bindings) {
+      if (seen.has(yieldExpr) || !spillSet.has(spillName)) return null;
+      seen.add(yieldExpr);
+      out.push({ kind: "yield", expression: yieldExpr, spillName });
+    }
+    return out.length > 0 ? out : null;
+  }
+
+  /**
+   * (#6651 B20) `yield <operand containing a nested yield>;`.
+   *
+   * Each spine yield suspends in its own state, spilling `.next(v)`'s value;
+   * the state that follows it carries a replacement map so the NEXT suspension's
+   * operand (and finally the outer yield's operand) reads the resumed value from
+   * its spill instead of re-entering the yield. The outer yield then suspends
+   * normally with the rebuilt operand.
+   *
+   * Before this, `lowerStatements` arm 1 accepted `yield X` without looking at
+   * whether X itself suspends: `emitYield` made X the state's terminator
+   * expression, and the nested yield inside it reached `compileYieldExpression`
+   * in the resume function — where `fctx.isGenerator` is unset, so it reported
+   * into a non-fatal channel and emitted nothing. The nested suspension was
+   * silently DROPPED (one `.next()` too few, operand `undefined`), which is the
+   * `value is not iterable` / `null is not iterable` those 16 rows reported.
+   */
+  function lowerYieldOperandChain(
+    outerYield: ts.YieldExpression,
+    bindSentTo: string | undefined,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
+    if (!continuationYieldsMayCarryOperands || outerYield.asteriskToken) return "not-applicable";
+    const operand = outerYield.expression;
+    if (!operand || !containsAnyYield(operand)) return "not-applicable";
+    const chain = leftSpineYields(operand);
+    if (chain === null || chain.length === 0) return "failed";
+    // The chain's sent values are arbitrary JS values (an array, in the
+    // motivating family), so only the boxed-any carrier can hold them; a
+    // try/finally crossing would need the region machinery's replay model.
+    if (!elemIsAny || unwind.length !== 0) return "failed";
+    const bindings: ContinuationYieldBinding[] = [];
+    for (const nested of chain) {
+      const sentSpill = continuationSpillName("sent");
+      chainSentSpillNames.add(sentSpill);
+      if (!emitYield(nested, sentSpill, unwind)) return "failed";
+      bindings.push([nested, sentSpill]);
+      // Attach BEFORE the next `emitYield` finishes this state: `finishState`
+      // snapshots the state's replacement list.
+      const replacements = chainReplacements(bindings);
+      if (!replacements || !attachContinuationReplacements(curId, replacements)) return "failed";
+    }
+    return emitYield(outerYield, bindSentTo, unwind) ? "lowered" : "failed";
+  }
+
   function flattenCommaExpression(expr: ts.Expression, terms: ts.Expression[]): void {
     const inner = unwrapContinuationWrapper(expr);
     if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken) {
@@ -2748,6 +2864,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // are delegated), independent of the OUTER's carrier.
     if (delegationBindingNames.has(name)) {
       spillTypes.set(name, elemIsAny ? { kind: "externref" } : { kind: "f64" });
+      continue;
+    }
+    // (#6651 B20) A nested-yield chain's `sent` spill. It IS a resume binding,
+    // but the value is read straight back into the next suspension's operand and
+    // never becomes a member receiver, so the any-carrier bail just below (whose
+    // hazard is exactly the #2151 any-receiver dispatch) does not apply to it.
+    if (chainSentSpillNames.has(name)) {
+      spillTypes.set(name, { kind: "externref" });
       continue;
     }
     if (resumeBindingNames.has(name)) {
