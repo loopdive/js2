@@ -4,7 +4,7 @@ title: "ES2015 standalone promise — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-21
+updated: 2026-09-27
 loc-budget-allow:
   # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
   # metadata carrier. Each grant lives in the module that already OWNS the
@@ -127,6 +127,43 @@ pr: 5292
 ---
 
 # #5197 — promise r2: cluster and fix the residual promise-bucket failures
+
+## 2026-09-27: original vector acceptance replay and repair plan
+
+The exact twelve September 15 sources replayed against published `dc1a9f02ba`
+(production repair `61d206221b`): four pass and eight fail. All twelve native
+reference checks pass. The immutable JSONL receipt is consumed directly by
+`tests/issue-5197-observable-vector-original-review.test.ts`, with its SHA-256
+and twelve-case denominator enforced. Original sources and expectations remain
+unchanged; historical wrong answers are never accepted as expected results.
+
+An experiment routed already-admitted observable all/race vector values through
+the existing iterator drive, using the already-evaluated vector local. It also
+passed only four of twelve. `iterator-native.ts::buildVecFamilyArms` copies
+numeric carriers into fresh externref vectors, so this route cannot provide
+live source-array reads. Shrink/regrow results differed between the two wrong
+implementations; the complete values remain recorded rather than conflated.
+The unsuccessful production patch was preserved, then removed. The byte-frozen
+legacy adapter remains untouched.
+
+The next prerequisite is a real live vector iterator: retain the original
+carrier, read current length and semantic indexed values on each step, honor
+holes/prototypes and iterator overrides, and latch completion. Reuse the
+existing drive's growable aggregate storage and stable per-element closures
+only after that dependency is proven. Do not substitute raw reads, copying,
+changed expectations or an optimistic fixed-length claim.
+
+`plan/agent-context/5883-original-vector-pair-20260927.json` preserves both
+complete logs, all 24 rows, the exact replay runner with hash, and the removed
+experimental patch. The runner remains an uncommitted diagnostic in `tests/`
+until its semantic failures are repaired; the JSON contains its full source
+so the failing acceptance checks are reviewable and recoverable now.
+
+Acceptance requires the original twelve, original protocol controls, dynamic
+drive controls, synchronous/deferred completion, inherited/hole reads, growth,
+shrink/regrowth, overridden iteration and abrupt-completion order. A passing
+twelve-case replay alone cannot remove the hold. No gate/fixture weakening or
+old-compiler retirement is authorized by this repair.
 
 ## 2026-09-13 plan refinement: retain the original resolve assignment
 
