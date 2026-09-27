@@ -1,0 +1,2258 @@
+diff --git a/src/codegen/promise-combinator-drive.ts b/src/codegen/promise-combinator-drive.ts
+index ee61edf8ad..2a868e54ad 100644
+--- a/src/codegen/promise-combinator-drive.ts
++++ b/src/codegen/promise-combinator-drive.ts
+@@ -92,6 +92,19 @@ import {
+ } from "./promise-combinator-observable-protocol.js";
+ import { ensureCombinatorFunctions, type NativeCombinator } from "./promise-combinators.js";
+ 
++import {
++  beginCapturedFrame, capturedSourceBinding, authorizeCapturedRender,
++  attachRenderedCapturedDrive, abortCapturedFrame, type CapturedFrameConstruction,
++} from "./staging-bindings.js";
++import {
++  allocateCapturedRole, retainCapturedCall, prepareCapturedObservablePrologue,
++  prepareCapturedObservableElement,
++} from "./promise-combinator-observable-protocol.js";
++import {
++  renderCapturedDrive, resolveCapturedDriveBindings,
++  type CapturedLocal, type CapturedDriveLocals, type PreparedCapturedDriveRender,
++} from "./promise-captured-drive-render.js";
++
+ const EXTERNREF: ValType = { kind: "externref" };
+ const I32: ValType = { kind: "i32" };
+ 
+@@ -311,6 +324,21 @@ export function emitStandalonePromiseCombinatorDrive(
+   // `allSettled` / `any` keep the legacy drain (their reaction bodies are
+   // index-array based; no measured row needs them driven yet).
+   if (method !== "all" && method !== "race") return undefined;
++  if (captured) {
++    const owner = beginCapturedFrame(ctx, fctx, method, options!.evaluatedVecLocal);
++    try {
++      const binding = capturedSourceBinding(owner);
++      const prepared = prepareCapturedDriveRender(ctx, fctx, method, {
++        binding, index: options!.evaluatedVecLocal, type: binding.type,
++      }, owner);
++      const authorization = authorizeCapturedRender(owner);
++      const resolved = resolveCapturedDriveBindings(prepared, authorization);
++      return attachRenderedCapturedDrive(owner, renderCapturedDrive(prepared, resolved));
++    } catch (error) {
++      try { abortCapturedFrame(owner); } catch { /* cleanup must not mask original failure */ }
++      throw error;
++    }
++  }
+   const resources = prepareImmediateDriveResources(ctx, fctx, method, observableProtocol, captured);
+   if (!resources) return undefined;
+   const frame = emitAttachedDriveFrame(ctx, fctx, resources, arg0, options);
+@@ -323,6 +351,68 @@ export function emitStandalonePromiseCombinatorDrive(
+   return EXTERNREF;
+ }
+ 
++/** Ordered immediate R preparation; no whole-drive emission/replay. Legacy stays above. */
++export function prepareCapturedDriveRender(
++  ctx: CodegenContext, fctx: FunctionContext, method: "all" | "race",
++  source: CapturedLocal, owner: CapturedFrameConstruction,
++): PreparedCapturedDriveRender {
++  const resources = prepareImmediateDriveResources(ctx, fctx, method, true, true);
++  if (!resources?.observable) throw new Error("Captured drive observable preparation unavailable");
++  const { ids, rt, observable, drive, tagIdx, acquireName, stepName, closeName } = resources;
++  const local = (prefix: string, type: ValType) => allocateCapturedRole(fctx, owner, prefix, type);
++  const operand = (funcIdx: number, results: readonly ValType[] = [EXTERNREF]) =>
++    retainCapturedCall(ctx, fctx, owner, funcIdx, results);
++  const L: CapturedDriveLocals = {
++    arg: local("__comb_drive_arg", EXTERNREF),
++    iter: local("__comb_drive_iter", EXTERNREF),
++    done: local("__comb_drive_done", I32),
++    value: local("__comb_drive_value", EXTERNREF),
++    index: local("__comb_drive_index", I32),
++    state: local("__comb_drive_state", { kind: "ref", typeIdx: drive ? drive.stateTypeIdx : ids.stateTypeIdx }),
++    exn: local("__comb_drive_exn", EXTERNREF),
++  };
++  const prologue = prepareCapturedObservablePrologue(ctx, fctx, owner, ids, rt, observable, method);
++  flushLateImportShifts(ctx, fctx);
++  const acquire = operand(ctx.funcMap.get(acquireName)!);
++  const rejectAcquire = operand(rt.rejectFuncIdx);
++  const step = operand(ctx.funcMap.get(stepName)!, [I32, EXTERNREF]);
++  const rejectStep = operand(rt.rejectFuncIdx);
++  const grown = drive ? local("__comb_drive_grown", { kind: "ref_null", typeIdx: ids.arrTypeIdx }) : undefined;
++  const element = prepareCapturedObservableElement(ctx, fctx, owner, method, drive ? {
++    elementCapsTypeIdx: drive.elemCapsTypeIdx,
++    capTypeIdx: drive.resolveCap!.typeIdx,
++    metaTypeIdx: drive.resolveCap!.metaTypeIdx,
++  } : undefined);
++  const close = operand(ctx.funcMap.get(closeName)!);
++  const rejectClose = operand(rt.rejectFuncIdx);
++  const common = {
++    source, drive: L, prologue: prologue.locals, element: element.locals,
++    prologueOperands: prologue.operands, elementOperands: element.operands,
++    control: { acquire, rejectAcquire, step, rejectStep, close, rejectClose },
++    target: { standalone: ctx.standalone, wasi: ctx.wasi }, tagIdx, observableTagIdx: observable.exnTagIdx,
++    arrayTypeIdx: ids.arrTypeIdx, vecTypeIdx: ids.vecTypeIdx,
++    stateTypeIdx: drive ? drive.stateTypeIdx : ids.stateTypeIdx,
++    resolveCallableTypes: prologue.callableTypes,
++  };
++  // Exactly the old AFTER-element checkpoint. Earlier materialized operands
++  // remain shift-covered; do not refresh the original rt scalar snapshots.
++  if (method === "all") {
++    if (!drive || !grown || !element.all || prologue.method !== "all")
++      throw new Error("Incomplete captured all frame");
++    const completion = ensureAsyncDriveRuntime(ctx);
++    const remaining = local("__comb_drive_remaining", I32);
++    const completeFulfill = operand(completion.fulfillFuncIdx);
++    immediateResourceOwners.delete(resources);
++    return { ...common, method, all: {
++      grown, remaining, elementCaps: element.all.elementCaps,
++      elementCapsTypeIdx: drive.elemCapsTypeIdx, resolveClosure: element.all.resolveClosure, completeFulfill,
++    } };
++  }
++  if (prologue.method !== "race") throw new Error("Incomplete captured race frame");
++  immediateResourceOwners.delete(resources);
++  return { ...common, method, race: { fulfill: prologue.fulfill, fulfillClosure: prologue.fulfillClosure } };
++}
++
+ /** Immediate emission only: not canonical provider readiness or pending data. */
+ type ImmediateDriveResources = {
+   readonly ids: CombinatorRuntime;
+@@ -453,7 +543,8 @@ function emitAttachedDriveFrame(
+   // resolve Get happens BEFORE GetIterator, so a throwing `resolve` getter
+   // wins over a throwing `@@iterator` getter (`invoke-resolve-get-error`).
+   const prep: ObservableCombinatorPreparation = observable
+-    ? emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method)
++    ? emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method,
++        captured ? { capturedResolveMatchLeaves: true } : undefined)
+     : emitPlainPreparation(fctx, ids);
+   if (captured) flushLateImportShifts(ctx, fctx);
+   const result = { L, prep };
+diff --git a/src/codegen/promise-combinator-observable-protocol.ts b/src/codegen/promise-combinator-observable-protocol.ts
+index 7d1e40aa80..a3e73eafc9 100644
+--- a/src/codegen/promise-combinator-observable-protocol.ts
++++ b/src/codegen/promise-combinator-observable-protocol.ts
+@@ -14,7 +14,16 @@ import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
+ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+ import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+ import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+-import { buildClosureRefTestArms } from "./closure-classifier.js";
++import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
++import { prepareBuiltinConstructorRegion } from "./builtin-constructor-prepared.js";
++import {
++  allocateCapturedLocal, beginRetainedChild, enterRetainedChild, finishRetainedChild, abortRetainedChild,
++  type CapturedFrameConstruction,
++} from "./staging-bindings.js";
++import type {
++  CapturedLocal, CapturedOperand, CapturedPrologueLocals, CapturedPrologueOperands,
++  CapturedElementLocals, CapturedElementOperands,
++} from "./promise-captured-drive-render.js";
+ import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+ import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+ import { stringConstantExternrefInstrs } from "./native-strings.js";
+@@ -239,6 +248,7 @@ function buildObservableCallableCheckInstrs(
+   valueLocal: number,
+   callableLocal: number,
+   anyLocal: number,
++  freshMatchLeaves = false,
+ ): Instr[] {
+   return [
+     { op: "i32.const", value: 0 },
+@@ -253,10 +263,17 @@ function buildObservableCallableCheckInstrs(
+         { op: "local.get", index: valueLocal },
+         { op: "any.convert_extern" },
+         { op: "local.set", index: anyLocal },
+-        ...buildClosureRefTestArms(ctx, anyLocal, [
++        ...(freshMatchLeaves ? collectClosureBaseWrapperTypeIdxs(ctx).flatMap((typeIdx): Instr[] => [
++          { op: "local.get", index: anyLocal },
++          { op: "ref.test", typeIdx },
++          { op: "if", blockType: { kind: "empty" }, then: [
++            { op: "i32.const", value: 1 },
++            { op: "local.set", index: callableLocal },
++          ] },
++        ]) : buildClosureRefTestArms(ctx, anyLocal, [
+           { op: "i32.const", value: 1 },
+           { op: "local.set", index: callableLocal },
+-        ]),
++        ])),
+       ],
+     },
+   ];
+@@ -290,6 +307,7 @@ export function emitObservableCombinatorPreparation(
+   rt: AsyncDriveRuntimeT,
+   observable: ObservableCombinatorRuntime,
+   method: "all" | "race",
++  options?: { readonly capturedResolveMatchLeaves: true },
+ ): ObservableCombinatorPreparation {
+   const resultLocal = allocLocal(fctx, `__comb_observable_result_${fctx.locals.length}`, {
+     kind: "ref",
+@@ -377,7 +395,7 @@ export function emitObservableCombinatorPreparation(
+       op: "if",
+       blockType: { kind: "empty" },
+       then: [
+-        ...buildObservableCallableCheckInstrs(ctx, resolveLocal, callableLocal, callableAnyLocal),
++        ...buildObservableCallableCheckInstrs(ctx, resolveLocal, callableLocal, callableAnyLocal, options?.capturedResolveMatchLeaves),
+         { op: "local.get", index: callableLocal },
+         { op: "i32.eqz" },
+         {
+@@ -397,6 +415,155 @@ export function emitObservableCombinatorPreparation(
+   return preparation;
+ }
+ 
++/** Real allocation at the historical checkpoint; use the allocator's own map. */
++export function allocateCapturedRole(
++  fctx: FunctionContext, owner: CapturedFrameConstruction, prefix: string, type: ValType,
++): CapturedLocal {
++  const name = `${prefix}_${fctx.locals.length}`;
++  const binding = allocateCapturedLocal(owner, name, type);
++  const index = fctx.localMap.get(name);
++  if (index === undefined) throw new Error("Captured allocator did not publish its local declaration");
++  return { binding, index, type };
++}
++
++/** Own final operand fragments, never an old whole-drive warmup. */
++export function retainCapturedOperands(
++  ctx: CodegenContext, fctx: FunctionContext, owner: CapturedFrameConstruction,
++  result: readonly ValType[], instructions: Instr[],
++): CapturedOperand {
++  const emission = enterRetainedChild(ctx, fctx, beginRetainedChild(owner, result));
++  try {
++    emission.body.push(...instructions);
++    const owned = finishRetainedChild(emission);
++    return { owned };
++  } catch (error) {
++    try { abortRetainedChild(emission); } catch { /* preserve original construction error */ }
++    throw error;
++  }
++}
++
++/** Retain the exact historical operand; diagnostics must not narrow admission. */
++export function retainCapturedCall(
++  ctx: CodegenContext, fctx: FunctionContext, owner: CapturedFrameConstruction,
++  funcIdx: number, results: readonly ValType[],
++): CapturedOperand {
++  return retainCapturedOperands(ctx, fctx, owner, results, [{ op: "call", funcIdx }]);
++}
++
++export type CapturedObservablePreparation = {
++  readonly locals: CapturedPrologueLocals;
++  readonly operands: CapturedPrologueOperands;
++  readonly callableTypes: readonly number[];
++} & (
++  | { readonly method: "all" }
++  | { readonly method: "race"; readonly fulfill: CapturedLocal; readonly fulfillClosure: CapturedOperand }
++);
++
++/** Captured-only effectful preparation; legacy public emitter above is untouched. */
++export function prepareCapturedObservablePrologue(
++  ctx: CodegenContext, fctx: FunctionContext, owner: CapturedFrameConstruction,
++  ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, observable: ObservableCombinatorRuntime,
++  method: "all" | "race",
++): CapturedObservablePreparation {
++  const local = (name: string, type: ValType = EXTERNREF) => allocateCapturedRole(fctx, owner, name, type);
++  const retain = (body: Instr[], result: readonly ValType[] = []) => retainCapturedOperands(ctx, fctx, owner, result, body);
++  const call = (funcIdx: number) => retainCapturedCall(ctx, fctx, owner, funcIdx, [EXTERNREF]);
++  const result = local("__comb_observable_result", { kind: "ref", typeIdx: ids.promiseTypeIdx });
++  const ctor = local("__comb_observable_ctor");
++  const resolve = local("__comb_observable_resolve");
++  const aborted = local("__comb_observable_abrupt", { kind: "i32" });
++  const reason = local("__comb_observable_reason");
++  const callable = local("__comb_observable_callable", { kind: "i32" });
++  const callableAny = local("__comb_observable_callable_any", { kind: "anyref" });
++  const fulfill = method === "race" ? local("__comb_observable_race_fulfill") : undefined;
++  const reject = local("__comb_observable_reject");
++  const capability = retain([
++    { op: "i32.const", value: PROMISE_STATE_PENDING }, { op: "ref.null.extern" }, { op: "ref.null.extern" },
++    closureBagInitInstr(), { op: "struct.new", typeIdx: ids.promiseTypeIdx },
++  ], [{ kind: "ref", typeIdx: ids.promiseTypeIdx }]);
++  const fulfillClosure = method === "race" ? retain(buildPromiseSettleClosureInstrs(
++    observable.settleClosures, ctx.funcMap.get("__promise_resolve_cl")!, [{ op: "local.get", index: result.index }],
++  ), [{ kind: "ref", typeIdx: observable.settleClosures.capTypeIdx }]) : undefined;
++  const rejectClosure = retain(buildPromiseSettleClosureInstrs(
++    observable.settleClosures, ctx.funcMap.get("__promise_reject_cl")!, [{ op: "local.get", index: result.index }],
++  ), [{ kind: "ref", typeIdx: observable.settleClosures.capTypeIdx }]);
++  // Mendel owns entering/finishing this construction. Do not finish it again.
++  const constructorOwned = prepareBuiltinConstructorRegion(ctx, fctx, "Promise", beginRetainedChild(owner, [EXTERNREF]));
++  // Opaque identity only. Russell supplies the actual original instructions
++  // at authorization; no constructor token or private buffer is inspected.
++  const constructor: CapturedOperand = { owned: constructorOwned };
++  const resolveKey = retain(stringConstantExternrefInstrs(ctx, "resolve"), [EXTERNREF]);
++  const getResolve = call(ctx.funcMap.get("__extern_get")!);
++  const rejectGet = call(rt.rejectFuncIdx);
++  const callableTypes = collectClosureBaseWrapperTypeIdxs(ctx);
++  const resolveError = retain(stringConstantExternrefInstrs(ctx, "Promise resolve is not callable"), [EXTERNREF]);
++  const newResolveError = call(ctx.funcMap.get("__new_TypeError")!);
++  const rejectNonCallable = call(rt.rejectFuncIdx);
++  const common = {
++    locals: { result, ctor, resolve, aborted, reason, callable, callableAny, reject }, callableTypes,
++    operands: { capability, rejectClosure, constructor, resolveKey, getResolve, rejectGet,
++      resolveError, newResolveError, rejectNonCallable },
++  };
++  if (method === "race") {
++    if (!fulfill || !fulfillClosure) throw new Error("Missing captured race capability roles");
++    return { ...common, method, fulfill, fulfillClosure };
++  }
++  return { ...common, method };
++}
++
++export interface CapturedElementPreparation {
++  readonly locals: CapturedElementLocals;
++  readonly operands: CapturedElementOperands;
++  readonly all?: { readonly elementCaps: CapturedLocal; readonly resolveClosure: CapturedOperand };
++}
++
++/** Preserve element allocation and actual operand-read order without emitting control flow. */
++export function prepareCapturedObservableElement(
++  ctx: CodegenContext, fctx: FunctionContext, owner: CapturedFrameConstruction,
++  method: "all" | "race",
++  all?: { readonly elementCapsTypeIdx: number; readonly capTypeIdx: number; readonly metaTypeIdx: number },
++): CapturedElementPreparation {
++  const local = (name: string, type: ValType = EXTERNREF) => allocateCapturedRole(fctx, owner, name, type);
++  const retain = (body: Instr[], result: readonly ValType[] = []) => retainCapturedOperands(ctx, fctx, owner, result, body);
++  const call = (name: string, results: readonly ValType[] = [EXTERNREF]) =>
++    retainCapturedCall(ctx, fctx, owner, ctx.funcMap.get(name)!, results);
++  const input = local("__comb_observable_input");
++  const resolveArgs = local("__comb_observable_resolve_args");
++  const thenArgs = local("__comb_observable_then_args");
++  const next = local("__comb_observable_next");
++  const error = local("__comb_observable_error");
++  const then = local("__comb_observable_then");
++  const callable = local("__comb_observable_then_callable", { kind: "i32" });
++  const callableAny = local("__comb_observable_then_any", { kind: "anyref" });
++  const nextAny = local("__comb_observable_next_any", { kind: "anyref" });
++  if ((method === "all") !== (all !== undefined)) throw new Error("Captured element method/layout mismatch");
++  const elementCaps = all ? local("__comb_observable_elem_caps", { kind: "ref", typeIdx: all.elementCapsTypeIdx }) : undefined;
++  const resolveArgsNew = call("__objvec_new");
++  const resolveArgsPush = call("__objvec_push", []);
++  const thenArgsNew = call("__objvec_new");
++  const resolveClosure = all && elementCaps ? retain([
++    { op: "ref.func", funcIdx: ctx.funcMap.get("__combinator_drive_resolve_element")! },
++    { op: "i32.const", value: 1 }, closureBagInitInstr(), { op: "i32.const", value: 0 },
++    { op: "i32.const", value: all.metaTypeIdx }, { op: "local.get", index: elementCaps.index },
++    { op: "i32.const", value: 0 }, { op: "struct.new", typeIdx: all.capTypeIdx }, { op: "extern.convert_any" },
++  ], [EXTERNREF]) : undefined;
++  const thenArgsPushFulfill = call("__objvec_push", []);
++  const thenArgsPushReject = call("__objvec_push", []);
++  const applyResolve = call("__apply_closure");
++  const thenKey = retain(stringConstantExternrefInstrs(ctx, "then"), [EXTERNREF]);
++  const getThen = call("__extern_get");
++  const isCallable = call("__is_callable", [{ kind: "i32" }]);
++  const applyThen = call("__apply_closure");
++  const thenError = retain(stringConstantExternrefInstrs(ctx, "Promise then is not callable"), [EXTERNREF]);
++  const newThenError = call("__new_TypeError");
++  return {
++    locals: { input, resolveArgs, thenArgs, next, error, then, callable, callableAny, nextAny },
++    operands: { resolveArgsNew, resolveArgsPush, thenArgsNew, thenArgsPushFulfill, thenArgsPushReject,
++      applyResolve, thenKey, getThen, isCallable, applyThen, thenError, newThenError },
++    ...(elementCaps && resolveClosure ? { all: { elementCaps, resolveClosure } } : {}),
++  };
++}
++
+ /** Allocate the aggregate state once its (already-evaluated) input count is known. */
+ function emitObservableCombinatorState(
+   fctx: FunctionContext,
+diff --git a/src/codegen/builtin-constructor-prepared.ts b/src/codegen/builtin-constructor-prepared.ts
+index 950832a496..0052b79026 100644
+--- a/src/codegen/builtin-constructor-prepared.ts
++++ b/src/codegen/builtin-constructor-prepared.ts
+@@ -5,6 +5,13 @@ import { allocLocal } from "./context/locals.js";
+ import { ensureObjectRuntime } from "./object-runtime.js";
+ import { pushBuiltinCtorOwnPropSeed } from "./builtin-ctor-own-props.js";
+ import { reserveBuiltinConstructorIdentityGlobal } from "./builtin-static-globals.js";
++import {
++  enterRetainedChild,
++  finishRetainedChild,
++  abortRetainedChild,
++  type AuthenticatedChildConstruction,
++  type OwnedCapturedChild,
++} from "./staging-bindings.js";
+ 
+ /**
+  * Same-stack construction and transfer only. Neither preparation nor its token
+@@ -104,3 +111,25 @@ class PreparedConstructorRead {
+     if (this.#state === "prepared") this.#state = "abandoned";
+   }
+ }
++
++/**
++ * Construct once in the owner's retained child at the historical constructor
++ * checkpoint. The private immediate token is consumed inside that child, never
++ * returned. Only the frame owner may authorize and transfer the resulting child.
++ * No remap, rollback/reuse or finalizer boundary is supported in this R scope.
++ */
++export function prepareBuiltinConstructorRegion(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  name: string,
++  construction: AuthenticatedChildConstruction,
++): OwnedCapturedChild {
++  const emission = enterRetainedChild(ctx, fctx, construction);
++  try {
++    emitPreparedBuiltinConstructorIdentityRead(ctx, fctx, name);
++    return finishRetainedChild(emission);
++  } catch (error) {
++    abortRetainedChild(emission);
++    throw error;
++  }
++}
+diff --git a/src/codegen/staging-bindings.ts b/src/codegen/staging-bindings.ts
+new file mode 100644
+index 0000000000..36b0705043
+--- /dev/null
++++ b/src/codegen/staging-bindings.ts
+@@ -0,0 +1,408 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/** Synchronous R construction only. No source publication, pending activation or remap ledger. */
++import type { Instr, ValType } from "../ir/types.js";
++import type { CodegenContext, FunctionContext } from "./context/types.js";
++import { allocLocal } from "./context/locals.js";
++import { walkChildren } from "./walk-instructions.js";
++
++declare const brand: unique symbol;
++type Handle<K extends string> = Readonly<{ kind: K; [brand]: true }>;
++export type CapturedFrameConstruction = Handle<"captured-frame">;
++export type AuthenticatedChildConstruction = Handle<"captured-child-construction">;
++export type OwnedCapturedChild = Handle<"captured-child">;
++export interface RetainedChildEmission extends Handle<"captured-child-emission"> {
++  readonly body: Instr[];
++}
++export interface FrameLocalBinding extends Handle<"captured-local"> {
++  readonly type: ValType;
++}
++export interface ResolvedFrameLocal {
++  readonly binding: FrameLocalBinding;
++  readonly index: number;
++  readonly type: ValType;
++}
++export interface AuthorizedCapturedChild {
++  readonly identity: OwnedCapturedChild;
++  readonly instructions: readonly Instr[];
++  readonly result: readonly ValType[];
++}
++export interface AuthorizedCapturedRender {
++  readonly identity: object;
++  readonly frameIdentity: object;
++  readonly method: "all" | "race";
++  readonly locals: readonly ResolvedFrameLocal[];
++  readonly children: readonly AuthorizedCapturedChild[];
++}
++export interface CapturedRenderOutput {
++  readonly authorization: AuthorizedCapturedRender;
++  readonly instructions: Instr[];
++  readonly childPlacements: readonly {
++    readonly child: AuthorizedCapturedChild;
++    readonly destination: readonly Instr[];
++    readonly start: number;
++  }[];
++  readonly result: readonly [{ readonly kind: "externref" }];
++}
++type Declaration = FunctionContext["params"][number];
++interface LocalRecord {
++  declaration: Declaration;
++  type: ValType;
++  binding: FrameLocalBinding;
++}
++interface Tree {
++  arrays: Map<readonly Instr[], readonly Instr[]>;
++  instructions: Set<Instr>;
++  ops: Map<Instr, Instr["op"]>;
++  children: Map<Instr, readonly Instr[][]>;
++  locals: Map<Instr, number>;
++}
++interface Child {
++  frame: Frame;
++  parent?: Child;
++  body: Instr[];
++  result: readonly ValType[];
++  state: "new" | "emitting" | "retained" | "revoked";
++  owned?: OwnedCapturedChild;
++  emission?: RetainedChildEmission;
++  previous?: Instr[];
++  tree?: Tree;
++}
++interface Frame {
++  owner: CapturedFrameConstruction;
++  ctx: CodegenContext;
++  fctx: FunctionContext;
++  method: "all" | "race";
++  destination: Instr[];
++  prefix: readonly Instr[];
++  params: FunctionContext["params"];
++  paramCount: number;
++  locals: FunctionContext["locals"];
++  declarations: LocalRecord[];
++  source: FrameLocalBinding;
++  roots: Map<Instr[], boolean>;
++  children: Child[];
++  stack: Child[];
++  state: "preparing" | "authorized" | "attached" | "revoked";
++  authorization?: AuthorizedCapturedRender;
++  renderOperands?: Map<Instr, OperandSnapshot>;
++}
++type OperandSnapshot =
++  | { kind: "identity"; value: unknown }
++  | { kind: "record"; arrayLength?: number; entries: readonly (readonly [string, OperandSnapshot])[] };
++/** Snapshot data operands, stopping at the independently censused executable arrays. */
++function snapshotOperand(value: unknown, childArrays: ReadonlySet<object>, active = new Set<object>()): OperandSnapshot {
++  if (value === null || typeof value !== "object" || childArrays.has(value))
++    return { kind: "identity", value };
++  if (active.has(value)) throw new Error("Cyclic retained operand data");
++  active.add(value);
++  const entries = Object.entries(value).map(([key, entry]) =>
++    [key, snapshotOperand(entry, childArrays, active)] as const);
++  active.delete(value);
++  return { kind: "record", arrayLength: Array.isArray(value) ? value.length : undefined, entries };
++}
++function matchesOperand(value: unknown, saved: OperandSnapshot): boolean {
++  if (saved.kind === "identity") return Object.is(value, saved.value);
++  if (value === null || typeof value !== "object" ||
++      Array.isArray(value) !== (saved.arrayLength !== undefined) ||
++      (Array.isArray(value) && value.length !== saved.arrayLength)) return false;
++  const keys = Object.keys(value);
++  return keys.length === saved.entries.length && saved.entries.every(([key, entry]) =>
++    Object.hasOwn(value, key) && matchesOperand(Reflect.get(value, key), entry));
++}
++// Lexical capabilities only; neither an ownership graph nor a compiler-index map.
++const frames = new WeakMap<CapturedFrameConstruction, Frame>();
++const activeFrames = new WeakMap<FunctionContext, Frame>();
++const constructions = new WeakMap<AuthenticatedChildConstruction, Child>();
++const emissions = new WeakMap<RetainedChildEmission, Child>();
++function handle<K extends string>(kind: K): Handle<K> {
++  return Object.freeze({ kind }) as Handle<K>;
++}
++function copyType(type: ValType): ValType {
++  return Object.freeze({ ...type });
++}
++function sameType(a: ValType, b: ValType): boolean {
++  return Object.keys(a).length === Object.keys(b).length &&
++    Object.entries(a).every(([key, value]) => Reflect.get(b, key) === value);
++}
++function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
++  return a.length === b.length && a.every((x, i) => x === b[i]);
++}
++function liveFrame(owner: CapturedFrameConstruction, preparing = false): Frame {
++  const f = frames.get(owner);
++  if (!f || activeFrames.get(f.fctx) !== f || f.state === "attached" || f.state === "revoked")
++    throw new Error("Unknown or closed captured frame");
++  if (preparing && f.state !== "preparing") throw new Error("Captured preparation is closed");
++  return f;
++}
++function retain(f: Frame, root: Instr[]): void {
++  if (f.roots.has(root)) return;
++  f.roots.set(root, f.ctx.liveBodies.has(root));
++  f.ctx.liveBodies.add(root);
++}
++function release(f: Frame): void {
++  for (const [root, borrowed] of f.roots) if (!borrowed) f.ctx.liveBodies.delete(root);
++  f.roots.clear();
++  activeFrames.delete(f.fctx);
++}
++function checkFrame(f: Frame, growth: boolean): void {
++  if (f.ctx.currentFunc !== f.fctx && !f.ctx.funcStack.includes(f.fctx))
++    throw new Error("Captured frame is not active in its context");
++  const expected = f.stack.length ? f.stack[f.stack.length - 1]!.body : f.destination;
++  if (f.fctx.body !== expected || !sameItems(f.destination, f.prefix))
++    throw new Error("Captured destination/cursor changed");
++  if (f.fctx.params !== f.params || f.fctx.locals !== f.locals)
++    throw new Error("Captured declaration storage replaced");
++  const declarations = [...f.params, ...f.locals];
++  if (f.params.length !== f.paramCount ||
++      declarations.length < f.declarations.length || (!growth && declarations.length !== f.declarations.length))
++    throw new Error("Captured local layout changed");
++  for (let i = 0; i < f.declarations.length; i++) {
++    const old = f.declarations[i]!;
++    if (declarations[i] !== old.declaration || !sameType(declarations[i]!.type, old.type))
++      throw new Error("Captured declaration identity/type changed");
++  }
++  for (const root of f.roots.keys()) if (!f.ctx.liveBodies.has(root))
++    throw new Error("Captured shift root was removed");
++}
++function captureDeclarations(f: Frame): void {
++  for (const declaration of [...f.params, ...f.locals].slice(f.declarations.length)) {
++    const type = copyType(declaration.type);
++    const binding = Object.freeze({ ...handle("captured-local"), type });
++    f.declarations.push({ declaration, type, binding });
++  }
++}
++/** Independent physical census: aliases and cycles are errors, not deduplicated placements. */
++function inspect(root: readonly Instr[], localCount: number, existing = false): Tree {
++  const tree: Tree = { arrays: new Map(), instructions: new Set(), ops: new Map(), children: new Map(), locals: new Map() };
++  const pending = [root];
++  while (pending.length) {
++    const body = pending.pop()!;
++    if (tree.arrays.has(body)) {
++      if (existing) continue;
++      throw new Error("Captured array alias/cycle");
++    }
++    tree.arrays.set(body, [...body]);
++    for (const instruction of body) {
++      if (tree.instructions.has(instruction)) {
++        if (existing) continue;
++        throw new Error("Captured instruction alias");
++      }
++      tree.instructions.add(instruction);
++      tree.ops.set(instruction, instruction.op);
++      const children: Instr[][] = [];
++      walkChildren(instruction, (child) => children.push(child));
++      tree.children.set(instruction, children);
++      pending.push(...children);
++      if (instruction.op === "local.get" || instruction.op === "local.set" || instruction.op === "local.tee") {
++        if (!existing && (!Number.isInteger(instruction.index) || instruction.index < 0 || instruction.index >= localCount))
++          throw new Error("Captured local operand out of range");
++        tree.locals.set(instruction, instruction.index);
++      }
++    }
++  }
++  return tree;
++}
++function checkChild(child: Child, localCount: number): Tree {
++  const actual = inspect(child.body, localCount);
++  const saved = child.tree!;
++  if (actual.arrays.size !== saved.arrays.size || actual.instructions.size !== saved.instructions.size)
++    throw new Error("Retained child structure changed");
++  for (const [array, entries] of saved.arrays) if (!sameItems(array, entries))
++    throw new Error("Retained child sequence changed");
++  for (const [instruction, op] of saved.ops) if (instruction.op !== op)
++    throw new Error("Retained child opcode changed");
++  for (const [instruction, children] of saved.children) if (!sameItems(actual.children.get(instruction) ?? [], children))
++    throw new Error("Retained child nesting changed");
++  for (const [instruction, index] of saved.locals) if (actual.locals.get(instruction) !== index)
++    throw new Error("Retained child local operand changed");
++  return actual;
++}
++
++export function beginCapturedFrame(
++  ctx: CodegenContext, fctx: FunctionContext, method: "all" | "race", sourceLocal: number,
++): CapturedFrameConstruction {
++  if (method !== "all" && method !== "race") throw new Error("Invalid captured method");
++  if (ctx.currentFunc !== fctx && !ctx.funcStack.includes(fctx))
++    throw new Error("Captured frame is not active in its context");
++  if (activeFrames.has(fctx)) throw new Error("Captured frame already active");
++  const declaration = [...fctx.params, ...fctx.locals][sourceLocal];
++  if (!Number.isInteger(sourceLocal) || sourceLocal < 0 || declaration?.type.kind !== "externref")
++    throw new Error("Captured source must be an existing externref local");
++  const owner = handle("captured-frame");
++  const f: Frame = {
++    owner, ctx, fctx, method, destination: fctx.body, prefix: [...fctx.body], params: fctx.params, paramCount: fctx.params.length,
++    locals: fctx.locals, declarations: [], source: Object.freeze({ ...handle("captured-local"), type: copyType(declaration.type) }),
++    roots: new Map(), children: [], stack: [], state: "preparing",
++  };
++  captureDeclarations(f);
++  f.source = f.declarations[sourceLocal]!.binding;
++  retain(f, f.destination);
++  frames.set(owner, f);
++  activeFrames.set(fctx, f);
++  return owner;
++}
++export function capturedSourceBinding(owner: CapturedFrameConstruction): FrameLocalBinding {
++  const f = liveFrame(owner);
++  checkFrame(f, f.state === "preparing");
++  return f.source;
++}
++export function allocateCapturedLocal(owner: CapturedFrameConstruction, name: string, type: ValType): FrameLocalBinding {
++  const f = liveFrame(owner, true);
++  checkFrame(f, true);
++  captureDeclarations(f);
++  const index = allocLocal(f.fctx, name, type);
++  captureDeclarations(f);
++  return f.declarations[index]!.binding;
++}
++export function beginRetainedChild(owner: CapturedFrameConstruction, result: readonly ValType[]): AuthenticatedChildConstruction {
++  const f = liveFrame(owner, true);
++  checkFrame(f, true);
++  captureDeclarations(f);
++  const child: Child = { frame: f, parent: f.stack[f.stack.length - 1],
++    body: [], result: Object.freeze(result.map(copyType)), state: "new" };
++  const construction = handle("captured-child-construction");
++  retain(f, child.body);
++  f.children.push(child);
++  constructions.set(construction, child);
++  return construction;
++}
++export function enterRetainedChild(
++  ctx: CodegenContext, fctx: FunctionContext, construction: AuthenticatedChildConstruction,
++): RetainedChildEmission {
++  const child = constructions.get(construction);
++  if (!child || child.frame.ctx !== ctx || child.frame.fctx !== fctx || child.state !== "new")
++    throw new Error("Foreign or consumed retained child");
++  const f = liveFrame(child.frame.owner, true);
++  checkFrame(f, true);
++  const emission = Object.freeze({ ...handle("captured-child-emission"), body: child.body });
++  child.previous = fctx.body;
++  child.emission = emission;
++  child.state = "emitting";
++  f.stack.push(child);
++  fctx.body = child.body;
++  emissions.set(emission, child);
++  return emission;
++}
++function activeEmission(emission: RetainedChildEmission): Child {
++  const child = emissions.get(emission);
++  if (!child || child.state !== "emitting") throw new Error("Unknown or closed retained emission");
++  const f = liveFrame(child.frame.owner, true);
++  if (f.stack[f.stack.length - 1] !== child) throw new Error("Retained children must close LIFO");
++  return child;
++}
++export function finishRetainedChild(emission: RetainedChildEmission): OwnedCapturedChild {
++  const child = activeEmission(emission);
++  const f = child.frame;
++  checkFrame(f, true);
++  const tree = inspect(child.body, f.params.length + f.locals.length);
++  captureDeclarations(f);
++  child.tree = tree;
++  child.owned = handle("captured-child");
++  child.state = "retained";
++  f.fctx.body = child.previous!;
++  f.stack.pop();
++  return child.owned;
++}
++export function abortRetainedChild(emission: RetainedChildEmission): void {
++  const child = activeEmission(emission);
++  const f = child.frame;
++  f.fctx.body = child.previous!;
++  f.stack.pop();
++  // Creation scope, not completion order, owns descendants. Finished and
++  // never-entered descendants cannot escape a failed producer. Siblings survive.
++  for (const candidate of f.children) {
++    let ancestor: Child | undefined = candidate;
++    while (ancestor && ancestor !== child) ancestor = ancestor.parent;
++    if (!ancestor) continue;
++    candidate.state = "revoked";
++    if (f.roots.get(candidate.body) === false) f.ctx.liveBodies.delete(candidate.body);
++    f.roots.delete(candidate.body);
++  }
++}
++export function authorizeCapturedRender(owner: CapturedFrameConstruction): AuthorizedCapturedRender {
++  const f = liveFrame(owner, true);
++  checkFrame(f, true);
++  if (f.stack.length || f.children.some((c) => c.state === "new" || c.state === "emitting"))
++    throw new Error("Finish retained children before authorization");
++  const count = f.params.length + f.locals.length;
++  const seen = new Set<Instr>();
++  const seenArrays = new Set<readonly Instr[]>();
++  for (const child of f.children.filter((c) => c.state === "retained")) {
++    const tree = checkChild(child, count);
++    for (const array of tree.arrays.keys()) {
++      if (seenArrays.has(array)) throw new Error("Retained children share arrays");
++      seenArrays.add(array);
++    }
++    for (const instruction of tree.instructions) {
++      if (seen.has(instruction)) throw new Error("Retained children share instructions");
++      seen.add(instruction);
++    }
++  }
++  captureDeclarations(f);
++  const authorization: AuthorizedCapturedRender = Object.freeze({
++    identity: Object.freeze({}), frameIdentity: owner, method: f.method,
++    locals: Object.freeze(f.declarations.map((r, index) => Object.freeze({ binding: r.binding, index, type: r.type }))),
++    children: Object.freeze(f.children.filter((c) => c.state === "retained").map((c) => Object.freeze({
++      identity: c.owned!, instructions: Object.freeze([...c.body]), result: c.result,
++    }))),
++  });
++  // Ordinary shifts were permitted during preparation. None may intervene
++  // after authorization. Snapshot all non-child data, never refresh providers
++  // or clone executable subtrees. Object.is preserves NaN and signed zero.
++  const operands = new Map([...seen].map((instruction) => [instruction,
++    snapshotOperand(instruction, seenArrays),
++  ]));
++  f.authorization = authorization;
++  f.renderOperands = operands;
++  f.state = "authorized";
++  return authorization;
++}
++export function attachRenderedCapturedDrive(owner: CapturedFrameConstruction, output: CapturedRenderOutput): { readonly kind: "externref" } {
++  const f = liveFrame(owner);
++  if (f.state !== "authorized" || output.authorization !== f.authorization)
++    throw new Error("Foreign or missing render authorization");
++  checkFrame(f, false);
++  if (output.result.length !== 1 || output.result[0]?.kind !== "externref")
++    throw new Error("Captured drive must produce one externref");
++  const tree = inspect(output.instructions, f.declarations.length);
++  // Existing legacy DAG aliases are not a new source rejection; only overlap
++  // with the newly transferred tree is forbidden.
++  const destinationTree = inspect(f.destination, f.declarations.length, true);
++  for (const instruction of tree.instructions) if (destinationTree.instructions.has(instruction))
++    throw new Error("Rendered instructions alias destination");
++  for (const array of tree.arrays.keys()) if (destinationTree.arrays.has(array))
++    throw new Error("Rendered arrays alias destination");
++  const children = f.authorization!.children;
++  if (output.childPlacements.length !== children.length) throw new Error("Missing or duplicate child placement");
++  const placed = new Set<AuthorizedCapturedChild>();
++  for (const placement of output.childPlacements) {
++    if (!children.includes(placement.child) || placed.has(placement.child)) throw new Error("Foreign or duplicate child placement");
++    if (!tree.arrays.has(placement.destination) || !Number.isInteger(placement.start) || placement.start < 0 ||
++        placement.start + placement.child.instructions.length > placement.destination.length ||
++        !placement.child.instructions.every((instruction, i) => placement.destination[placement.start + i] === instruction))
++      throw new Error("Child is not at its declared physical placement");
++    placed.add(placement.child);
++  }
++  for (const child of f.children.filter((c) => c.state === "retained")) checkChild(child, f.declarations.length);
++  for (const [instruction, operands] of f.renderOperands!) {
++    if (!matchesOperand(instruction, operands))
++      throw new Error("Retained operand changed after authorization");
++  }
++  // All ordinary validation precedes the sole transfer. No callbacks/ensures or copying of leaves.
++  for (const instruction of output.instructions) f.destination.push(instruction);
++  f.state = "attached";
++  release(f);
++  return { kind: "externref" };
++}
++export function abortCapturedFrame(owner: CapturedFrameConstruction): void {
++  // Finally-safe cleanup of our own already-revoked scope does not mask the
++  // original producer/render failure. Successful transfer is not rollbackable.
++  if (frames.get(owner)?.state === "revoked") return;
++  const f = liveFrame(owner);
++  f.fctx.body = f.destination;
++  f.stack.length = 0;
++  for (const child of f.children) child.state = "revoked";
++  f.state = "revoked";
++  release(f);
++  // Deliberately no fake rollback of locals, imports, providers or module state.
++}
+diff --git a/src/codegen/promise-captured-drive-render.ts b/src/codegen/promise-captured-drive-render.ts
+new file mode 100644
+index 0000000000..38adc6834b
+--- /dev/null
++++ b/src/codegen/promise-captured-drive-render.ts
+@@ -0,0 +1,311 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/** Closed-data whole captured drive. No codegen context, allocator or provider imports. */
++import type { Instr, ValType } from "../ir/types.js";
++import { buildTargetTaggedTry } from "../ir/try-table.js";
++import type {
++  AuthorizedCapturedChild, AuthorizedCapturedRender, CapturedRenderOutput,
++  FrameLocalBinding, OwnedCapturedChild,
++} from "./staging-bindings.js";
++
++export interface CapturedLocal {
++  readonly binding: FrameLocalBinding;
++  /** Actual allocator assignment at preparation; no remap may intervene in R. */
++  readonly index: number;
++  readonly type: ValType;
++}
++export interface CapturedOperand {
++  readonly owned: OwnedCapturedChild;
++}
++export interface CapturedDriveLocals {
++  arg: CapturedLocal; iter: CapturedLocal; done: CapturedLocal; value: CapturedLocal;
++  index: CapturedLocal; state: CapturedLocal; exn: CapturedLocal;
++}
++export interface CapturedPrologueLocals {
++  result: CapturedLocal; ctor: CapturedLocal; resolve: CapturedLocal; aborted: CapturedLocal;
++  reason: CapturedLocal; callable: CapturedLocal; callableAny: CapturedLocal; reject: CapturedLocal;
++}
++export interface CapturedElementLocals {
++  input: CapturedLocal; resolveArgs: CapturedLocal; thenArgs: CapturedLocal; next: CapturedLocal;
++  error: CapturedLocal; then: CapturedLocal; callable: CapturedLocal;
++  callableAny: CapturedLocal; nextAny: CapturedLocal;
++}
++export interface CapturedPrologueOperands {
++  capability: CapturedOperand; rejectClosure: CapturedOperand; constructor: CapturedOperand;
++  resolveKey: CapturedOperand; getResolve: CapturedOperand; rejectGet: CapturedOperand;
++  resolveError: CapturedOperand; newResolveError: CapturedOperand; rejectNonCallable: CapturedOperand;
++}
++export interface CapturedElementOperands {
++  resolveArgsNew: CapturedOperand; resolveArgsPush: CapturedOperand;
++  thenArgsNew: CapturedOperand; thenArgsPushFulfill: CapturedOperand; thenArgsPushReject: CapturedOperand;
++  applyResolve: CapturedOperand; thenKey: CapturedOperand; getThen: CapturedOperand;
++  isCallable: CapturedOperand; applyThen: CapturedOperand;
++  thenError: CapturedOperand; newThenError: CapturedOperand;
++}
++export interface CapturedControlOperands {
++  acquire: CapturedOperand; rejectAcquire: CapturedOperand; step: CapturedOperand;
++  rejectStep: CapturedOperand; close: CapturedOperand; rejectClose: CapturedOperand;
++}
++interface PreparedCommon {
++  readonly source: CapturedLocal;
++  readonly drive: CapturedDriveLocals;
++  readonly prologue: CapturedPrologueLocals;
++  readonly element: CapturedElementLocals;
++  readonly prologueOperands: CapturedPrologueOperands;
++  readonly elementOperands: CapturedElementOperands;
++  readonly control: CapturedControlOperands;
++  readonly target: { readonly standalone: boolean; readonly wasi: boolean };
++  readonly tagIdx: number;
++  readonly observableTagIdx: number;
++  readonly arrayTypeIdx: number;
++  readonly vecTypeIdx: number;
++  readonly stateTypeIdx: number;
++  readonly resolveCallableTypes: readonly number[];
++}
++export type PreparedCapturedDriveRender =
++  | (PreparedCommon & { readonly method: "all"; readonly all: {
++      readonly grown: CapturedLocal; readonly elementCaps: CapturedLocal; readonly remaining: CapturedLocal;
++      readonly elementCapsTypeIdx: number; readonly resolveClosure: CapturedOperand;
++      readonly completeFulfill: CapturedOperand;
++    } })
++  | (PreparedCommon & { readonly method: "race"; readonly race: {
++      readonly fulfill: CapturedLocal; readonly fulfillClosure: CapturedOperand;
++    } });
++
++type Indices<T> = { readonly [K in keyof T]: number };
++type Children<T> = { readonly [K in keyof T]: AuthorizedCapturedChild };
++interface ResolvedCommon {
++  readonly authorization: AuthorizedCapturedRender;
++  readonly source: number;
++  readonly drive: Indices<CapturedDriveLocals>;
++  readonly prologue: Indices<CapturedPrologueLocals>;
++  readonly element: Indices<CapturedElementLocals>;
++  readonly prologueOperands: Children<CapturedPrologueOperands>;
++  readonly elementOperands: Children<CapturedElementOperands>;
++  readonly control: Children<CapturedControlOperands>;
++}
++export type ResolvedCapturedDriveBindings =
++  | (ResolvedCommon & { readonly method: "all"; readonly all: {
++      readonly grown: number; readonly elementCaps: number; readonly remaining: number;
++      readonly resolveClosure: AuthorizedCapturedChild; readonly completeFulfill: AuthorizedCapturedChild;
++    } })
++  | (ResolvedCommon & { readonly method: "race"; readonly race: {
++      readonly fulfill: number; readonly fulfillClosure: AuthorizedCapturedChild;
++    } });
++
++/** Finite data projection AFTER the owner authenticates, BEFORE pure rendering. */
++export function resolveCapturedDriveBindings(
++  prepared: PreparedCapturedDriveRender,
++  authorization: AuthorizedCapturedRender,
++): ResolvedCapturedDriveBindings {
++  if (prepared.method !== authorization.method) throw new Error("Captured drive method mismatch");
++  const local = (role: CapturedLocal): number => {
++    const matches = authorization.locals.filter((value) => value.binding === role.binding);
++    if (matches.length !== 1 || matches[0]!.index !== role.index ||
++      JSON.stringify(matches[0]!.type) !== JSON.stringify(role.type))
++      throw new Error("Captured drive local declaration/type changed");
++    return matches[0]!.index;
++  };
++  const child = (role: CapturedOperand): AuthorizedCapturedChild => {
++    const matches = authorization.children.filter((value) => value.identity === role.owned);
++    if (matches.length !== 1 || matches[0]!.instructions.length === 0)
++      throw new Error("Missing or ambiguous captured operand child");
++    return matches[0]!;
++  };
++  const locals = <T extends object>(roles: T): Indices<T> =>
++    Object.fromEntries(Object.entries(roles).map(([key, value]) => [key, local(value as CapturedLocal)])) as Indices<T>;
++  const children = <T extends object>(roles: T): Children<T> =>
++    Object.fromEntries(Object.entries(roles).map(([key, value]) => [key, child(value as CapturedOperand)])) as Children<T>;
++  const common: ResolvedCommon = {
++    authorization, source: local(prepared.source), drive: locals(prepared.drive),
++    prologue: locals(prepared.prologue), element: locals(prepared.element),
++    prologueOperands: children(prepared.prologueOperands), elementOperands: children(prepared.elementOperands),
++    control: children(prepared.control),
++  };
++  return prepared.method === "all"
++    ? { ...common, method: "all", all: {
++        grown: local(prepared.all.grown), elementCaps: local(prepared.all.elementCaps),
++        remaining: local(prepared.all.remaining), resolveClosure: child(prepared.all.resolveClosure),
++        completeFulfill: child(prepared.all.completeFulfill),
++      } }
++    : { ...common, method: "race", race: {
++        fulfill: local(prepared.race.fulfill), fulfillClosure: child(prepared.race.fulfillClosure),
++      } };
++}
++
++/** WHOLE algorithm. Semantic allocations/registration and child authority are absent. */
++export function renderCapturedDrive(
++  p: PreparedCapturedDriveRender,
++  r: ResolvedCapturedDriveBindings,
++): CapturedRenderOutput {
++  if (p.method !== r.method || r.authorization.method !== r.method)
++    throw new Error("Captured renderer method mismatch");
++  const L = r.drive, P = r.prologue, E = r.element;
++  const placements: Array<{ child: AuthorizedCapturedChild; destination: readonly Instr[]; start: number }> = [];
++  const put = (destination: Instr[], child: AuthorizedCapturedChild): void => {
++    placements.push({ child, destination, start: destination.length });
++    destination.push(...child.instructions);
++  };
++  const get = (index: number): Instr => ({ op: "local.get", index });
++  const set = (index: number): Instr => ({ op: "local.set", index });
++  const c = (value: number): Instr => ({ op: "i32.const", value });
++  const reject = (reason: number, call: AuthorizedCapturedChild): Instr[] => {
++    const body = [get(P.result), get(reason)];
++    put(body, call);
++    body.push({ op: "drop" }, c(1), set(P.aborted));
++    return body;
++  };
++  const caught = (reason: number, call: AuthorizedCapturedChild): Instr[] => [set(reason), ...reject(reason, call)];
++  const tagged = (body: Instr[], handler: Instr[], tagIdx = p.observableTagIdx): Instr =>
++    buildTargetTaggedTry(p.target, { kind: "empty" }, body, [{ tagIdx, body: handler }]);
++  const body: Instr[] = [get(r.source), set(L.arg)];
++  put(body, r.prologueOperands.capability);
++  body.push(set(P.result), c(0), set(P.aborted));
++  if (r.method === "race") {
++    put(body, r.race.fulfillClosure);
++    body.push({ op: "extern.convert_any" }, set(r.race.fulfill));
++  }
++  put(body, r.prologueOperands.rejectClosure);
++  body.push({ op: "extern.convert_any" }, set(P.reject));
++  put(body, r.prologueOperands.constructor);
++  body.push(set(P.ctor));
++  const getResolve: Instr[] = [get(P.ctor)];
++  put(getResolve, r.prologueOperands.resolveKey);
++  put(getResolve, r.prologueOperands.getResolve);
++  getResolve.push(set(P.resolve));
++  body.push(tagged(getResolve, caught(P.reason, r.prologueOperands.rejectGet)));
++  const callableArms: Instr[] = [];
++  for (const typeIdx of p.resolveCallableTypes) callableArms.push(
++    get(P.callableAny), { op: "ref.test", typeIdx },
++    { op: "if", blockType: { kind: "empty" }, then: [c(1), set(P.callable)] },
++  );
++  const badResolve: Instr[] = [get(P.result)];
++  put(badResolve, r.prologueOperands.resolveError);
++  put(badResolve, r.prologueOperands.newResolveError);
++  put(badResolve, r.prologueOperands.rejectNonCallable);
++  badResolve.push({ op: "drop" }, c(1), set(P.aborted));
++  body.push(get(P.aborted), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: [
++    c(0), set(P.callable), get(P.resolve), { op: "ref.is_null" },
++    { op: "if", blockType: { kind: "empty" }, then: [], else: [
++      get(P.resolve), { op: "any.convert_extern" }, set(P.callableAny), ...callableArms,
++    ] },
++    get(P.callable), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: badResolve },
++  ] });
++  const acquire: Instr[] = [get(L.arg)];
++  put(acquire, r.control.acquire);
++  acquire.push(set(L.iter), c(0), set(L.done));
++  body.push(c(1), set(L.done), get(P.aborted), { op: "i32.eqz" }, {
++    op: "if", blockType: { kind: "empty" }, then: [tagged(acquire, caught(L.exn, r.control.rejectAcquire), p.tagIdx)],
++  });
++  body.push(c(0), set(L.index), get(P.result), c(0), { op: "array.new_default", typeIdx: p.arrayTypeIdx },
++    c(0), c(p.method === "all" ? 1 : 0), { op: "struct.new", typeIdx: p.stateTypeIdx }, set(L.state));
++  const step: Instr[] = [get(L.iter)];
++  put(step, r.control.step);
++  step.push(set(L.value), set(L.done));
++  const loop: Instr[] = [
++    get(P.aborted), { op: "br_if", depth: 1 }, get(L.done), { op: "br_if", depth: 1 }, c(1), set(L.done),
++    tagged(step, caught(L.exn, r.control.rejectStep), p.tagIdx),
++    get(P.aborted), { op: "br_if", depth: 1 }, get(L.done), { op: "br_if", depth: 1 },
++  ];
++  if (r.method === "all") appendSlot(loop, p, L, r.all.grown);
++  loop.push(get(L.value), set(E.input));
++  const saveThrow = (): Instr[] => [set(E.error), get(E.error), set(L.exn), c(1), set(P.aborted)];
++  const normalize: Instr[] = [];
++  put(normalize, r.elementOperands.resolveArgsNew);
++  normalize.push(set(E.resolveArgs), get(E.resolveArgs), get(E.input));
++  put(normalize, r.elementOperands.resolveArgsPush);
++  put(normalize, r.elementOperands.thenArgsNew);
++  normalize.push(set(E.thenArgs), get(E.thenArgs));
++  if (r.method === "all" && p.method === "all") {
++    normalize.push(get(L.state), get(L.index), { op: "struct.new", typeIdx: p.all.elementCapsTypeIdx }, set(r.all.elementCaps));
++    put(normalize, r.all.resolveClosure);
++  } else if (r.method === "race") normalize.push(get(r.race.fulfill));
++  put(normalize, r.elementOperands.thenArgsPushFulfill);
++  normalize.push(get(E.thenArgs), get(P.reject));
++  put(normalize, r.elementOperands.thenArgsPushReject);
++  normalize.push(get(P.resolve), get(P.ctor), get(E.resolveArgs));
++  put(normalize, r.elementOperands.applyResolve);
++  normalize.push(set(E.next));
++  const invoke: Instr[] = [get(E.next)];
++  put(invoke, r.elementOperands.thenKey);
++  put(invoke, r.elementOperands.getThen);
++  invoke.push(set(E.then), get(E.then));
++  put(invoke, r.elementOperands.isCallable);
++  invoke.push(set(E.callable), get(E.callable));
++  const callThen: Instr[] = [get(E.then), get(E.next), get(E.thenArgs)];
++  put(callThen, r.elementOperands.applyThen);
++  callThen.push({ op: "drop" });
++  const badThen: Instr[] = [];
++  put(badThen, r.elementOperands.thenError);
++  put(badThen, r.elementOperands.newThenError);
++  badThen.push(...saveThrow());
++  invoke.push({ op: "if", blockType: { kind: "empty" }, then: callThen, else: badThen });
++  const afterNormalize: Instr[] = [];
++  if (p.method === "all") afterNormalize.push(get(L.state), get(L.state),
++    { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 3 }, c(1), { op: "i32.add" },
++    { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: 3 });
++  afterNormalize.push(tagged(invoke, saveThrow()));
++  const pipeline: Instr[] = [tagged(normalize, saveThrow()), get(P.aborted), { op: "i32.eqz" },
++    { op: "if", blockType: { kind: "empty" }, then: afterNormalize }];
++  loop.push(get(P.aborted), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: pipeline });
++  const close: Instr[] = [get(L.iter), get(L.exn)];
++  put(close, r.control.close);
++  close.push(set(L.exn), ...reject(L.exn, r.control.rejectClose));
++  loop.push(get(P.aborted), { op: "if", blockType: { kind: "empty" }, then: close },
++    get(L.index), c(1), { op: "i32.add" }, set(L.index), { op: "br", depth: 0 });
++  body.push({ op: "block", blockType: { kind: "empty" }, body: [{ op: "loop", blockType: { kind: "empty" }, body: loop }] });
++  if (r.method === "all") {
++    const fulfill: Instr[] = [get(P.result), get(L.state),
++      { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 2 }, get(L.state),
++      { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 1 },
++      { op: "struct.new", typeIdx: p.vecTypeIdx }, { op: "extern.convert_any" }];
++    put(fulfill, r.all.completeFulfill);
++    fulfill.push({ op: "drop" });
++    body.push(get(P.aborted), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: [
++      get(L.state), get(L.state), { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 3 },
++      c(1), { op: "i32.sub" }, { op: "local.tee", index: r.all.remaining },
++      { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: 3 }, get(r.all.remaining),
++      { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: fulfill },
++    ] });
++  }
++  body.push(get(P.result), { op: "extern.convert_any" });
++  // Some small temporary lists above were spread into final lists. Resolve
++  // placements against actual output arrays, using ORIGINAL instruction identity.
++  // No child is cloned or consumed here; owner independently preflights this claim.
++  const childPlacements = locatePlacements(body, placements.map((entry) => entry.child));
++  return { authorization: r.authorization, instructions: body, childPlacements, result: [{ kind: "externref" }] };
++}
++
++function appendSlot(body: Instr[], p: PreparedCapturedDriveRender, L: Indices<CapturedDriveLocals>, grown: number): void {
++  const get = (index: number): Instr => ({ op: "local.get", index });
++  body.push(get(L.index), get(L.state), { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 1 },
++    { op: "array.len" }, { op: "i32.ge_u" }, { op: "if", blockType: { kind: "empty" }, then: [
++      get(L.index), { op: "i32.const", value: 1 }, { op: "i32.add" }, { op: "i32.const", value: 2 },
++      { op: "i32.mul" }, { op: "array.new_default", typeIdx: p.arrayTypeIdx }, { op: "local.set", index: grown },
++      get(grown), { op: "i32.const", value: 0 }, get(L.state), { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 1 },
++      { op: "i32.const", value: 0 }, get(L.state), { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: 1 },
++      { op: "array.len" }, { op: "array.copy", dstTypeIdx: p.arrayTypeIdx, srcTypeIdx: p.arrayTypeIdx },
++      get(L.state), get(grown), { op: "ref.as_non_null" }, { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: 1 },
++    ] }, get(L.state), get(L.index), { op: "i32.const", value: 1 }, { op: "i32.add" },
++    { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: 2 });
++}
++
++function locatePlacements(root: Instr[], expected: readonly AuthorizedCapturedChild[]): CapturedRenderOutput["childPlacements"] {
++  const arrays: Instr[][] = [];
++  const visit = (body: Instr[]): void => {
++    arrays.push(body);
++    for (const i of body) {
++      if (i.op === "block" || i.op === "loop" || i.op === "try_table") visit(i.body);
++      else if (i.op === "if") { visit(i.then); if (i.else) visit(i.else); }
++      else if (i.op === "try") { visit(i.body); for (const c of i.catches ?? []) visit(c.body); if (i.catchAll) visit(i.catchAll); }
++    }
++  };
++  visit(root);
++  return expected.map((child) => {
++    const found: Array<{ child: AuthorizedCapturedChild; destination: Instr[]; start: number }> = [];
++    for (const destination of arrays) for (let start = 0; start < destination.length; start++)
++      if (child.instructions.every((instruction, index) => destination[start + index] === instruction))
++        found.push({ child, destination, start });
++    if (found.length !== 1) throw new Error("Captured renderer child placement is not unique");
++    return found[0]!;
++  });
++}
+diff --git a/tests/issue-5883-staging-bindings.test.ts b/tests/issue-5883-staging-bindings.test.ts
+new file mode 100644
+index 0000000000..6c90aad3e5
+--- /dev/null
++++ b/tests/issue-5883-staging-bindings.test.ts
+@@ -0,0 +1,450 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++// Source-only R lexical controls. No compiler/context initialization required.
++import { describe, expect, it } from "vitest";
++import type { Instr } from "../src/ir/types.js";
++import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
++import { allocLocal, snapshotLocals, restoreLocals } from "../src/codegen/context/locals.js";
++import {
++  beginCapturedFrame, capturedSourceBinding, allocateCapturedLocal, beginRetainedChild,
++  enterRetainedChild, finishRetainedChild, abortRetainedChild, authorizeCapturedRender,
++  attachRenderedCapturedDrive, abortCapturedFrame, type CapturedRenderOutput,
++} from "../src/codegen/staging-bindings.js";
++
++function fixture(method: "all" | "race" = "all") {
++  // Any semantic ctx API access is a defect in this adapter.
++  const liveBodies = new Set<Instr[]>();
++  const contextState: { liveBodies: Set<Instr[]>; currentFunc?: FunctionContext; funcStack: FunctionContext[] } = { liveBodies, funcStack: [] };
++  const ctx = new Proxy(contextState, {
++    get(target, key) {
++      if (key === "liveBodies") return target.liveBodies;
++      if (key === "currentFunc") return target.currentFunc;
++      if (key === "funcStack") return target.funcStack;
++      throw new Error(`Unexpected ctx access: ${String(key)}`);
++    },
++  }) as unknown as CodegenContext;
++  const fctx: FunctionContext = {
++    name: "R", params: [], locals: [{ name: "source", type: { kind: "externref" } }],
++    localMap: new Map([["source", 0]]), returnType: { kind: "externref" }, body: [],
++    blockDepth: 0, breakStack: [], continueStack: [], labelMap: new Map(), savedBodies: [],
++  };
++  const destination = fctx.body;
++  contextState.currentFunc = fctx;
++  const owner = beginCapturedFrame(ctx, fctx, method, 0);
++  return { ctx, fctx, owner, destination, liveBodies, contextState };
++}
++function child(f: ReturnType<typeof fixture>, instructions: Instr[] = [{ op: "local.get", index: 0 }]) {
++  const construction = beginRetainedChild(f.owner, [{ kind: "externref" }]);
++  const emission = enterRetainedChild(f.ctx, f.fctx, construction);
++  emission.body.push(...instructions);
++  const owned = finishRetainedChild(emission);
++  return { construction, emission, owned };
++}
++function prepared(f: ReturnType<typeof fixture>) {
++  const c = child(f);
++  const authorization = authorizeCapturedRender(f.owner);
++  const view = authorization.children[0]!;
++  const instructions = [...view.instructions];
++  const output: CapturedRenderOutput = {
++    authorization, instructions, childPlacements: [{ child: view, destination: instructions, start: 0 }],
++    result: [{ kind: "externref" }],
++  };
++  return { c, authorization, view, output };
++}
++function rejected(f: ReturnType<typeof fixture>, action: () => unknown) {
++  const before = [...f.destination], locals = [...f.fctx.locals], roots = [...f.liveBodies];
++  const cursor = f.fctx.body;
++  expect(action).toThrow();
++  expect(f.destination).toEqual(before);
++  expect(f.fctx.locals).toEqual(locals);
++  expect([...f.liveBodies]).toEqual(roots);
++  expect(f.fctx.body).toBe(cursor);
++}
++
++describe("R synchronous bindings and retained children", () => {
++  it.each(["all", "race"] as const)("transfers original child identity once for %s, source index zero", (method) => {
++    const f = fixture(method);
++    const source = capturedSourceBinding(f.owner);
++    const p = prepared(f);
++    expect(p.authorization.locals[0]).toMatchObject({ binding: source, index: 0 });
++    expect(p.authorization.method).toBe(method);
++    expect(attachRenderedCapturedDrive(f.owner, p.output)).toEqual({ kind: "externref" });
++    expect(f.destination[0]).toBe(p.c.emission.body[0]);
++    expect(f.liveBodies.size).toBe(0);
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, p.output));
++  });
++  it("allocates only through the existing allocator and captures nested seed locals", () => {
++    const f = fixture();
++    const scratch = allocateCapturedLocal(f.owner, "__scratch", { kind: "i32" });
++    const construction = beginRetainedChild(f.owner, [{ kind: "externref" }]);
++    const emission = enterRetainedChild(f.ctx, f.fctx, construction);
++    const nested = allocLocal(f.fctx, "__seed", { kind: "externref" });
++    emission.body.push({ op: "local.get", index: nested });
++    finishRetainedChild(emission);
++    const a = authorizeCapturedRender(f.owner);
++    expect(a.locals[1]).toMatchObject({ binding: scratch, index: 1 });
++    expect(a.locals[2]!.index).toBe(nested);
++    expect(f.fctx.localMap.get("__scratch")).toBe(1);
++    abortCapturedFrame(f.owner);
++    expect(f.fctx.locals).toHaveLength(3); // No fake module/local rollback.
++  });
++  it("refuses duplicate frame claim without changing retained roots", () => {
++    const f = fixture();
++    rejected(f, () => beginCapturedFrame(f.ctx, f.fctx, "race", 0));
++    abortCapturedFrame(f.owner);
++  });
++  it("refuses foreign ctx/frame and forged child construction before cursor mutation", () => {
++    const f = fixture(), other = fixture();
++    const c = beginRetainedChild(f.owner, []);
++    rejected(f, () => enterRetainedChild(other.ctx, f.fctx, c));
++    rejected(other, () => enterRetainedChild(f.ctx, other.fctx, c));
++    rejected(f, () => enterRetainedChild(f.ctx, f.fctx, { ...c }));
++    abortCapturedFrame(f.owner); abortCapturedFrame(other.owner);
++  });
++  it("requires all children settled before authorization", () => {
++    const f = fixture();
++    const c = beginRetainedChild(f.owner, []);
++    rejected(f, () => authorizeCapturedRender(f.owner));
++    const e = enterRetainedChild(f.ctx, f.fctx, c);
++    rejected(f, () => authorizeCapturedRender(f.owner));
++    abortRetainedChild(e);
++    expect(authorizeCapturedRender(f.owner).children).toEqual([]);
++    abortCapturedFrame(f.owner);
++  });
++  it("restores nested cursors in LIFO order and revokes aborted children", () => {
++    const f = fixture();
++    const outer = enterRetainedChild(f.ctx, f.fctx, beginRetainedChild(f.owner, []));
++    const inner = enterRetainedChild(f.ctx, f.fctx, beginRetainedChild(f.owner, []));
++    rejected(f, () => finishRetainedChild(outer));
++    abortRetainedChild(inner);
++    expect(f.fctx.body).toBe(outer.body);
++    rejected(f, () => finishRetainedChild(inner));
++    abortCapturedFrame(f.owner);
++    expect(f.fctx.body).toBe(f.destination);
++    expect(f.liveBodies.size).toBe(0);
++  });
++  it("contained seed rollback completes before child admission", () => {
++    const f = fixture();
++    const e = enterRetainedChild(f.ctx, f.fctx, beginRetainedChild(f.owner, [{ kind: "externref" }]));
++    const snap = snapshotLocals(f.fctx);
++    const old = allocLocal(f.fctx, "__seed", { kind: "i32" });
++    e.body.push({ op: "local.get", index: old });
++    e.body.length = 0;
++    restoreLocals(f.fctx, snap);
++    const replacement = allocLocal(f.fctx, "__seed", { kind: "externref" });
++    e.body.push({ op: "local.get", index: replacement });
++    finishRetainedChild(e);
++    expect(authorizeCapturedRender(f.owner).locals[replacement]!.type).toEqual({ kind: "externref" });
++    abortCapturedFrame(f.owner);
++  });
++  it("rejects same-count declaration replacement after retention", () => {
++    const f = fixture(); child(f);
++    const old = f.fctx.locals[0]!;
++    f.fctx.locals[0] = { ...old };
++    rejected(f, () => authorizeCapturedRender(f.owner));
++    f.fctx.locals[0] = old;
++    authorizeCapturedRender(f.owner);
++    abortCapturedFrame(f.owner);
++  });
++  it.each(["type", "params", "locals", "destination", "append"] as const)("rejects %s drift before transfer", (kind) => {
++    const f = fixture(), p = prepared(f);
++    if (kind === "type") f.fctx.locals[0]!.type = { kind: "i32" };
++    if (kind === "params") f.fctx.params.push({ name: "new", type: { kind: "externref" } });
++    if (kind === "locals") f.fctx.locals = [...f.fctx.locals];
++    if (kind === "destination") f.fctx.body = [];
++    if (kind === "append") f.destination.push({ op: "nop" });
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, p.output));
++    abortCapturedFrame(f.owner);
++  });
++  it.each(["missing", "duplicate", "wrong-start", "foreign-array", "forged-child"] as const)("refuses %s placement without consuming valid output", (kind) => {
++    const f = fixture(), p = prepared(f);
++    const placement = p.output.childPlacements[0]!;
++    const bad = { ...p.output, childPlacements: kind === "missing" ? [] : kind === "duplicate" ? [placement, placement] : [{
++      ...placement,
++      start: kind === "wrong-start" ? 1 : 0,
++      destination: kind === "foreign-array" ? [...p.output.instructions] : p.output.instructions,
++      child: kind === "forged-child" ? { ...p.view } : p.view,
++    }] };
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, bad));
++    attachRenderedCapturedDrive(f.owner, p.output);
++  });
++  it("rejects copied authorization but permits the untouched authorized output", () => {
++    const f = fixture(), p = prepared(f);
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, { ...p.output, authorization: { ...p.authorization } }));
++    attachRenderedCapturedDrive(f.owner, p.output);
++  });
++  it("rejects duplicate physical instruction placement", () => {
++    const f = fixture(), p = prepared(f);
++    const instructions = [...p.output.instructions, ...p.output.instructions];
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, { ...p.output, instructions,
++      childPlacements: [{ child: p.view, destination: instructions, start: 0 }] }));
++    attachRenderedCapturedDrive(f.owner, p.output);
++  });
++  it("permits actual child insertion under a real container, without adding a synthetic label", () => {
++    const f = fixture(), p = prepared(f);
++    const instructions: Instr[] = [{ op: "block", blockType: { kind: "val", type: { kind: "externref" } }, body: p.output.instructions }];
++    attachRenderedCapturedDrive(f.owner, { ...p.output, instructions });
++    expect(f.destination[0]).toBe(instructions[0]);
++  });
++  it("rejects changed retained local operands", () => {
++    const f = fixture(); allocateCapturedLocal(f.owner, "other", { kind: "externref" });
++    const p = prepared(f), instruction = p.c.emission.body[0]!;
++    if (instruction.op !== "local.get") throw new Error("fixture");
++    instruction.index = 1;
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, p.output));
++    instruction.index = 0;
++    attachRenderedCapturedDrive(f.owner, p.output);
++  });
++  it("ordinary pre-authorization function/global shifts preserve exact materialized identities", () => {
++    const f = fixture();
++    const call: Instr = { op: "call", funcIdx: 0 }, global: Instr = { op: "global.get", index: 0 };
++    child(f, [call, global]);
++    call.funcIdx = 3; global.index = 2;
++    const a = authorizeCapturedRender(f.owner);
++    expect(a.children[0]!.instructions[0]).toBe(call);
++    expect(a.children[0]!.instructions[1]).toBe(global);
++    expect(call.funcIdx).toBe(3);
++    abortCapturedFrame(f.owner);
++  });
++  it("render failure revokes authorization and preserves borrowed roots without pretending rollback", () => {
++    const f = fixture();
++    // A different frame's destination already borrowed by an outer scope.
++    abortCapturedFrame(f.owner);
++    f.liveBodies.add(f.destination);
++    const owner = beginCapturedFrame(f.ctx, f.fctx, "all", 0);
++    const g = { ...f, owner }, p = prepared(g);
++    abortCapturedFrame(owner);
++    expect([...f.liveBodies]).toEqual([f.destination]);
++    expect(f.destination).toEqual([]);
++    rejected(g, () => attachRenderedCapturedDrive(owner, p.output));
++  });
++  it("does not reject an existing legacy destination DAG solely for its aliases", () => {
++    const f = fixture(); abortCapturedFrame(f.owner);
++    const old: Instr = { op: "nop" }; f.destination.push(old, old);
++    const owner = beginCapturedFrame(f.ctx, f.fctx, "all", 0), g = { ...f, owner }, p = prepared(g);
++    attachRenderedCapturedDrive(owner, p.output);
++    expect(f.destination.slice(0, 2)).toEqual([old, old]);
++  });
++  it("rejects unrelated ctx/frame pairing before retaining any roots", () => {
++    const f = fixture(), other = fixture();
++    abortCapturedFrame(f.owner);
++    rejected(f, () => beginCapturedFrame(other.ctx, f.fctx, "all", 0));
++    abortCapturedFrame(other.owner);
++  });
++  it("rejects a frame removed from the actual context before transfer", () => {
++    const f = fixture(), p = prepared(f);
++    f.contextState.currentFunc = undefined;
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, p.output));
++    abortCapturedFrame(f.owner);
++  });
++  it("closes preparation and issues authorization once", () => {
++    const f = fixture(), p = prepared(f);
++    rejected(f, () => authorizeCapturedRender(f.owner));
++    rejected(f, () => allocateCapturedLocal(f.owner, "late", { kind: "i32" }));
++    rejected(f, () => beginRetainedChild(f.owner, []));
++    attachRenderedCapturedDrive(f.owner, p.output);
++  });
++  it("walks catches and rejects a cyclic output without consuming the authorization", () => {
++    const f = fixture(), p = prepared(f);
++    const cycle: Instr[] = [];
++    cycle.push({ op: "block", blockType: { kind: "empty" }, body: cycle });
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, { ...p.output, instructions: cycle }));
++    const instructions: Instr[] = [{ op: "try", blockType: { kind: "empty" }, body: [],
++      catches: [], catchAll: p.output.instructions }];
++    attachRenderedCapturedDrive(f.owner, { ...p.output, instructions });
++  });
++  it("rejects output aliasing the already existing destination", () => {
++    const f = fixture(); abortCapturedFrame(f.owner);
++    const old: Instr = { op: "nop" }; f.destination.push(old);
++    const owner = beginCapturedFrame(f.ctx, f.fctx, "all", 0), g = { ...f, owner }, p = prepared(g);
++    const instructions = [...p.output.instructions, old];
++    rejected(g, () => attachRenderedCapturedDrive(owner, { ...p.output, instructions,
++      childPlacements: [{ child: p.view, destination: instructions, start: 0 }] }));
++    attachRenderedCapturedDrive(owner, p.output);
++  });
++  it("post-authorization scalar changes refuse transfer instead of silently refreshing", () => {
++    const f = fixture();
++    const call: Instr = { op: "call", funcIdx: 0 };
++    child(f, [call]);
++    const authorization = authorizeCapturedRender(f.owner), view = authorization.children[0]!;
++    const instructions = [...view.instructions];
++    const output: CapturedRenderOutput = { authorization, instructions,
++      childPlacements: [{ child: view, destination: instructions, start: 0 }], result: [{ kind: "externref" }] };
++    call.funcIdx = 1;
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, output));
++    abortCapturedFrame(f.owner);
++    expect(() => abortCapturedFrame(f.owner)).not.toThrow();
++  });
++  it.each([-1, 0.5, 1])("rejects absent/noninteger source %s before root registration", (index) => {
++    const f = fixture(); abortCapturedFrame(f.owner);
++    rejected(f, () => beginCapturedFrame(f.ctx, f.fctx, "all", index));
++  });
++  it("rejects a non-externref source declaration", () => {
++    const f = fixture(); abortCapturedFrame(f.owner);
++    f.fctx.locals[0]!.type = { kind: "i32" };
++    rejected(f, () => beginCapturedFrame(f.ctx, f.fctx, "all", 0));
++  });
++  it("rejects shared empty nested arrays independently of instruction aliases", () => {
++    const f = fixture(), p = prepared(f), empty: Instr[] = [];
++    const instructions: Instr[] = [...p.output.instructions,
++      { op: "block", blockType: { kind: "empty" }, body: empty },
++      { op: "block", blockType: { kind: "empty" }, body: empty }];
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, { ...p.output, instructions,
++      childPlacements: [{ child: p.view, destination: instructions, start: 0 }] }));
++    attachRenderedCapturedDrive(f.owner, p.output);
++  });
++  it("a lost retained root rejects authorization before closing preparation", () => {
++    const f = fixture(), c = child(f);
++    f.liveBodies.delete(c.emission.body);
++    rejected(f, () => authorizeCapturedRender(f.owner));
++    f.liveBodies.add(c.emission.body);
++    authorizeCapturedRender(f.owner);
++    abortCapturedFrame(f.owner);
++  });
++});
++
++// Additive Hume-review controls; the original 38 cases above remain unchanged.
++function outputForChildren(f: ReturnType<typeof fixture>): CapturedRenderOutput {
++  const authorization = authorizeCapturedRender(f.owner);
++  const instructions: Instr[] = [];
++  const childPlacements = authorization.children.map((view) => {
++    const start = instructions.length;
++    instructions.push(...view.instructions);
++    return { child: view, destination: instructions, start };
++  });
++  return { authorization, instructions, childPlacements, result: [{ kind: "externref" }] };
++}
++function structuredChild(f: ReturnType<typeof fixture>) {
++  const block: Extract<Instr, { op: "block" }> = {
++    op: "block", blockType: { kind: "val", type: { kind: "externref" } }, body: [{ op: "nop" }],
++  };
++  const tagged: Extract<Instr, { op: "try" }> = {
++    op: "try", blockType: { kind: "empty" }, body: [], catches: [{ tagIdx: 2, body: [{ op: "nop" }] }],
++  };
++  const table: Extract<Instr, { op: "try_table" }> = {
++    op: "try_table", blockType: { kind: "empty" }, body: [], catches: [{ kind: "catch", tagIdx: 3, depth: 0 }],
++  };
++  const branch: Extract<Instr, { op: "br_table" }> = { op: "br_table", targets: [0, 1], defaultDepth: 2 };
++  child(f, [block, tagged, table, branch]);
++  return { block, tagged, table, branch };
++}
++describe("R lexical adapter review corrections (source-only until next grant)", () => {
++  it("accepts unchanged structured operands and preserves executable identities", () => {
++    const f = fixture(), s = structuredChild(f), output = outputForChildren(f);
++    const catchBody = s.tagged.catches[0]!.body;
++    attachRenderedCapturedDrive(f.owner, output);
++    expect(f.destination[0]).toBe(s.block);
++    expect(f.destination[1]).toBe(s.tagged);
++    expect(s.tagged.catches[0]!.body).toBe(catchBody);
++    expect(f.destination[2]).toBe(s.table);
++  });
++  it.each(["block", "nested-type", "catch-tag", "table-tag", "table-kind", "table-depth", "branch-target"] as const)(
++    "rejects changed %s data before transfer, then accepts restoration", (kind) => {
++      const f = fixture(), s = structuredChild(f), output = outputForChildren(f);
++      const blockType = s.block.blockType;
++      if (blockType.kind !== "val") throw new Error("fixture");
++      const valueType = blockType.type;
++      if (kind === "block") s.block.blockType = { kind: "empty" };
++      if (kind === "nested-type") blockType.type = { kind: "i32" };
++      if (kind === "catch-tag") s.tagged.catches[0]!.tagIdx = 5;
++      if (kind === "table-tag") s.table.catches[0]!.tagIdx = 5;
++      if (kind === "table-kind") s.table.catches[0]!.kind = "catch_ref";
++      if (kind === "table-depth") s.table.catches[0]!.depth = 1;
++      if (kind === "branch-target") s.branch.targets[0] = 2;
++      rejected(f, () => attachRenderedCapturedDrive(f.owner, output));
++      s.block.blockType = blockType;
++      blockType.type = valueType;
++      s.tagged.catches[0]!.tagIdx = 2;
++      s.table.catches[0]!.tagIdx = 3;
++      s.table.catches[0]!.kind = "catch";
++      s.table.catches[0]!.depth = 0;
++      s.branch.targets[0] = 0;
++      attachRenderedCapturedDrive(f.owner, output);
++      expect(f.destination[0]).toBe(s.block);
++    },
++  );
++  it.each([NaN, -0])("accepts an unchanged f64 scalar %s", (value) => {
++    const f = fixture(), instruction: Instr = { op: "f64.const", value };
++    child(f, [instruction]);
++    attachRenderedCapturedDrive(f.owner, outputForChildren(f));
++    expect(f.destination[0]).toBe(instruction);
++    expect(Object.is(instruction.value, value)).toBe(true);
++  });
++  it("rejects negative-to-positive-zero drift and accepts restored negative zero", () => {
++    const f = fixture(), instruction: Instr = { op: "f64.const", value: -0 };
++    child(f, [instruction]);
++    const output = outputForChildren(f);
++    instruction.value = +0;
++    rejected(f, () => attachRenderedCapturedDrive(f.owner, output));
++    instruction.value = -0;
++    attachRenderedCapturedDrive(f.owner, output);
++    expect(Object.is(instruction.value, -0)).toBe(true);
++  });
++  it.each(["retained", "unentered"] as const)("outer abort revokes %s descendant, preserving sibling and borrowed root", (state) => {
++    const f = fixture();
++    abortCapturedFrame(f.owner);
++    f.liveBodies.add(f.destination);
++    const g = { ...f, owner: beginCapturedFrame(f.ctx, f.fctx, "all", 0) };
++    const sibling = child(g);
++    const outer = enterRetainedChild(g.ctx, g.fctx, beginRetainedChild(g.owner, []));
++    const inner = beginRetainedChild(g.owner, []);
++    if (state === "retained") {
++      const emission = enterRetainedChild(g.ctx, g.fctx, inner);
++      emission.body.push({ op: "nop" });
++      finishRetainedChild(emission);
++    }
++    abortRetainedChild(outer);
++    expect(g.fctx.body).toBe(g.destination);
++    expect([...g.liveBodies]).toEqual([g.destination, sibling.emission.body]);
++    rejected(g, () => enterRetainedChild(g.ctx, g.fctx, inner));
++    const output = outputForChildren(g);
++    expect(output.authorization.children.map((c) => c.identity)).toEqual([sibling.owned]);
++    attachRenderedCapturedDrive(g.owner, output);
++    expect([...g.liveBodies]).toEqual([g.destination]);
++  });
++  it("outer abort revokes grandchildren even after their parent has finished", () => {
++    const f = fixture();
++    const outer = enterRetainedChild(f.ctx, f.fctx, beginRetainedChild(f.owner, []));
++    const middle = enterRetainedChild(f.ctx, f.fctx, beginRetainedChild(f.owner, []));
++    const grandchild = beginRetainedChild(f.owner, []);
++    finishRetainedChild(middle);
++    abortRetainedChild(outer);
++    expect([...f.liveBodies]).toEqual([f.destination]);
++    rejected(f, () => enterRetainedChild(f.ctx, f.fctx, grandchild));
++    expect(authorizeCapturedRender(f.owner).children).toEqual([]);
++    abortCapturedFrame(f.owner);
++  });
++  it("does not reuse failed-region bindings after actual caller-owned rollback and slot reuse", () => {
++    const f = fixture(), snap = snapshotLocals(f.fctx);
++    const outer = enterRetainedChild(f.ctx, f.fctx, beginRetainedChild(f.owner, []));
++    const binding = allocateCapturedLocal(f.owner, "failed", { kind: "externref" });
++    const declaration = f.fctx.locals[1];
++    abortRetainedChild(outer);
++    expect(f.fctx.locals[1]).toBe(declaration); // Adapter did not roll back locals.
++    restoreLocals(f.fctx, snap);
++    allocLocal(f.fctx, "replacement", { kind: "externref" });
++    expect(f.fctx.locals[1]).not.toBe(declaration);
++    rejected(f, () => authorizeCapturedRender(f.owner));
++    abortCapturedFrame(f.owner);
++    const owner = beginCapturedFrame(f.ctx, f.fctx, "all", 0);
++    expect(authorizeCapturedRender(owner).locals[1]!.binding).not.toBe(binding);
++    abortCapturedFrame(owner);
++  });
++  it.each([false, true])("frame abort restores replaced cursor with borrowed destination=%s and no open child", (borrowed) => {
++    const f = fixture(); abortCapturedFrame(f.owner);
++    const prefix: Instr = { op: "nop" };
++    f.destination.push(prefix);
++    if (borrowed) f.liveBodies.add(f.destination);
++    const g = { ...f, owner: beginCapturedFrame(f.ctx, f.fctx, "all", 0) };
++    const p = prepared(g), replacement: Instr[] = [{ op: "nop" }];
++    f.fctx.body = replacement;
++    rejected(g, () => attachRenderedCapturedDrive(g.owner, p.output));
++    abortCapturedFrame(g.owner);
++    expect(f.fctx.body).toBe(f.destination);
++    expect(f.destination).toEqual([prefix]);
++    expect(f.destination[0]).toBe(prefix);
++    expect([...f.liveBodies]).toEqual(borrowed ? [f.destination] : []);
++    expect(replacement).toHaveLength(1);
++    expect(() => abortCapturedFrame(g.owner)).not.toThrow();
++    expect(f.fctx.body).toBe(f.destination);
++  });
++});
+diff --git a/tests/issue-5883-constructor-region.test.ts b/tests/issue-5883-constructor-region.test.ts
+new file mode 100644
+index 0000000000..56fd703238
+--- /dev/null
++++ b/tests/issue-5883-constructor-region.test.ts
+@@ -0,0 +1,92 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { beforeEach, expect, it, vi } from "vitest";
++import type { Instr } from "../src/ir/types.js";
++import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
++import type { AuthenticatedChildConstruction } from "../src/codegen/staging-bindings.js";
++const hooks = vi.hoisted(() => ({
++  enter: vi.fn(), finish: vi.fn(), abort: vi.fn(), seed: vi.fn(),
++}));
++vi.mock("../src/codegen/staging-bindings.js", () => ({
++  enterRetainedChild: hooks.enter,
++  finishRetainedChild: hooks.finish,
++  abortRetainedChild: hooks.abort,
++}));
++vi.mock("../src/codegen/object-runtime.js", () => ({ ensureObjectRuntime: vi.fn() }));
++vi.mock("../src/codegen/builtin-static-globals.js", () => ({
++  reserveBuiltinConstructorIdentityGlobal: () => 3,
++}));
++vi.mock("../src/codegen/context/locals.js", () => ({
++  allocLocal: (frame: FunctionContext, name: string) => {
++    frame.locals.push({ name, type: { kind: "externref" } });
++    return frame.locals.length - 1;
++  },
++}));
++vi.mock("../src/codegen/builtin-ctor-own-props.js", () => ({ pushBuiltinCtorOwnPropSeed: hooks.seed }));
++import { prepareBuiltinConstructorRegion } from "../src/codegen/builtin-constructor-prepared.js";
++
++beforeEach(() => { vi.resetAllMocks(); });
++
++function fixture() {
++  const destination: Instr[] = [{ op: "nop" }];
++  const child: Instr[] = [];
++  const ctx = { funcMap: new Map([["__new_plain_object", 7]]), liveBodies: new Set([destination, child]) } as unknown as CodegenContext;
++  const frame = { body: destination, locals: [] } as unknown as FunctionContext;
++  // Test-only stand-ins for owner handles: this suite checks delegation, not authentication.
++  const construction = {} as AuthenticatedChildConstruction;
++  const emission = { body: child };
++  const owned = Object.freeze({});
++  hooks.enter.mockImplementation(() => { frame.body = child; return emission; });
++  hooks.finish.mockImplementation(() => { frame.body = destination; return owned; });
++  hooks.abort.mockImplementation(() => { frame.body = destination; });
++  return { ctx, frame, destination, child, construction, emission, owned };
++}
++
++it("returns the owner's child after one real constructor construction", () => {
++  const f = fixture();
++  let init: Instr[] | undefined;
++  hooks.seed.mockImplementation((_ctx, frame: FunctionContext) => {
++    init = frame.body;
++    expect(init).toEqual([
++      { op: "call", funcIdx: 7 }, { op: "local.set", index: 0 },
++      { op: "local.get", index: 0 }, { op: "global.set", index: 3 },
++    ]);
++  });
++  expect(prepareBuiltinConstructorRegion(f.ctx, f.frame, "Promise", f.construction)).toBe(f.owned);
++  expect(hooks.enter).toHaveBeenCalledExactlyOnceWith(f.ctx, f.frame, f.construction);
++  expect(hooks.finish).toHaveBeenCalledExactlyOnceWith(f.emission);
++  expect(hooks.abort).not.toHaveBeenCalled();
++  expect(hooks.seed).toHaveBeenCalledExactlyOnceWith(f.ctx, f.frame, "Promise", 0);
++  const guard = f.child[2];
++  if (guard?.op !== "if") throw new Error("Missing constructor guard");
++  expect(guard.then).toBe(init);
++  expect(f.child[0]).toEqual({ op: "global.get", index: 3 });
++  expect(f.child[3]).toEqual({ op: "global.get", index: 3 });
++  expect(f.frame.body).toBe(f.destination);
++  expect(f.destination).toEqual([{ op: "nop" }]);
++  expect([...f.ctx.liveBodies]).toEqual([f.destination, f.child]);
++});
++
++it.each(["seed", "finish"] as const)("aborts owner emission on %s failure without replacing the error", (phase) => {
++  const f = fixture();
++  const error = new Error(phase);
++  hooks[phase].mockImplementation(() => { throw error; });
++  let caught: unknown;
++  try { prepareBuiltinConstructorRegion(f.ctx, f.frame, "Promise", f.construction); }
++  catch (failure) { caught = failure; }
++  expect(caught).toBe(error);
++  expect(hooks.abort).toHaveBeenCalledExactlyOnceWith(f.emission);
++  if (phase === "seed") expect(hooks.finish).not.toHaveBeenCalled();
++  expect(f.frame.body).toBe(f.destination);
++  expect(f.destination).toEqual([{ op: "nop" }]);
++});
++
++it("does not construct or abort an emission when owner entry rejects", () => {
++  const f = fixture();
++  const error = new Error("foreign child");
++  hooks.enter.mockImplementation(() => { throw error; });
++  expect(() => prepareBuiltinConstructorRegion(f.ctx, f.frame, "Promise", f.construction)).toThrow(error);
++  expect(hooks.seed).not.toHaveBeenCalled();
++  expect(hooks.finish).not.toHaveBeenCalled();
++  expect(hooks.abort).not.toHaveBeenCalled();
++  expect(f.frame.body).toBe(f.destination);
++});
+diff --git a/tests/issue-5883-constructor-region-real.test.ts b/tests/issue-5883-constructor-region-real.test.ts
+new file mode 100644
+index 0000000000..463f6205fe
+--- /dev/null
++++ b/tests/issue-5883-constructor-region-real.test.ts
+@@ -0,0 +1,112 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { afterEach, beforeEach, expect, it, vi } from "vitest";
++import type { Instr } from "../src/ir/types.js";
++import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
++const providers = vi.hoisted(() => ({ seed: vi.fn() }));
++vi.mock("../src/codegen/object-runtime.js", () => ({ ensureObjectRuntime: vi.fn() }));
++vi.mock("../src/codegen/builtin-static-globals.js", () => ({
++  reserveBuiltinConstructorIdentityGlobal: () => 3,
++}));
++vi.mock("../src/codegen/builtin-ctor-own-props.js", () => ({
++  pushBuiltinCtorOwnPropSeed: providers.seed,
++}));
++// Real adapter, real local allocator, real constructor builder. Spies below
++// observe real finish results; no adapter implementation is replaced.
++import * as staging from "../src/codegen/staging-bindings.js";
++import { prepareBuiltinConstructorRegion } from "../src/codegen/builtin-constructor-prepared.js";
++
++beforeEach(() => { providers.seed.mockReset(); });
++afterEach(() => { vi.restoreAllMocks(); });
++
++function fixture(borrowed: boolean) {
++  const sentinel: Instr = { op: "nop" };
++  const destination: Instr[] = [sentinel];
++  const unrelated: Instr[] = [{ op: "nop" }];
++  const frame = {
++    body: destination,
++    params: [{ name: "source", type: { kind: "externref" } }],
++    locals: [],
++    localMap: new Map([["source", 0]]),
++  } as unknown as FunctionContext;
++  const roots = new Set<Instr[]>([unrelated]);
++  if (borrowed) roots.add(destination);
++  const originalRoots = [...roots];
++  const ctx = {
++    currentFunc: frame, funcStack: [], liveBodies: roots,
++    funcMap: new Map([["__new_plain_object", 7]]),
++  } as unknown as CodegenContext;
++  const owner = staging.beginCapturedFrame(ctx, frame, "all", 0);
++  const beforeChild = new Set(roots);
++  const construction = staging.beginRetainedChild(owner, [{ kind: "externref" }]);
++  const added = [...roots].filter((root) => !beforeChild.has(root));
++  expect(added).toHaveLength(1);
++  const childRoot = added[0]!;
++  return { ctx, frame, destination, sentinel, unrelated, originalRoots, owner, construction, childRoot };
++}
++
++it.each([false, true])("real adapter preserves the seed error and cleans owned roots (borrowed=%s)", (borrowed) => {
++  const f = fixture(borrowed);
++  const error = new Error("seed sentinel");
++  let init: Instr[] | undefined;
++  providers.seed.mockImplementation(() => {
++    init = f.frame.body;
++    expect(f.ctx.liveBodies.has(init)).toBe(true);
++    expect(f.ctx.liveBodies.has(f.childRoot)).toBe(true);
++    throw error;
++  });
++  let caught: unknown;
++  try { prepareBuiltinConstructorRegion(f.ctx, f.frame, "Promise", f.construction); }
++  catch (failure) { caught = failure; }
++  expect(caught).toBe(error);
++  expect(f.frame.body).toBe(f.destination);
++  expect(f.destination).toEqual([f.sentinel]);
++  expect(f.destination[0]).toBe(f.sentinel);
++  expect(init).toBeDefined();
++  expect(f.ctx.liveBodies.has(init!)).toBe(false);
++  expect(f.ctx.liveBodies.has(f.childRoot)).toBe(false);
++  expect(f.ctx.liveBodies.has(f.destination)).toBe(true);
++  expect(f.ctx.liveBodies.has(f.unrelated)).toBe(true);
++  expect(() => staging.abortCapturedFrame(f.owner)).not.toThrow();
++  expect(() => staging.abortCapturedFrame(f.owner)).not.toThrow();
++  expect([...f.ctx.liveBodies]).toEqual(f.originalRoots);
++  expect(f.frame.body).toBe(f.destination);
++  // Cleanup owns roots, not a fictional rollback of constructor local effects.
++  expect(f.frame.locals).toHaveLength(1);
++});
++
++it.each(["invalid-local", "lost-root"] as const)("real finish %s error survives constructor cleanup by identity", (mode) => {
++  const f = fixture(true);
++  const finish = vi.spyOn(staging, "finishRetainedChild");
++  let init: Instr[] | undefined;
++  providers.seed.mockImplementation(() => {
++    init = f.frame.body;
++    if (mode === "invalid-local") {
++      f.frame.body.push({ op: "local.get", index: f.frame.params.length + f.frame.locals.length });
++    } else {
++      expect(f.ctx.liveBodies.delete(f.childRoot)).toBe(true);
++    }
++  });
++  let caught: unknown;
++  try { prepareBuiltinConstructorRegion(f.ctx, f.frame, "Promise", f.construction); }
++  catch (failure) { caught = failure; }
++  expect(finish).toHaveBeenCalledTimes(1);
++  const actualFinish = finish.mock.results[0];
++  expect(actualFinish?.type).toBe("throw");
++  expect(caught).toBe(actualFinish?.value);
++  expect(caught).toBeInstanceOf(Error);
++  expect((caught as Error).message).toBe(mode === "invalid-local"
++    ? "Captured local operand out of range" : "Captured shift root was removed");
++  expect(f.frame.body).toBe(f.destination);
++  expect(f.destination).toEqual([f.sentinel]);
++  expect(f.destination[0]).toBe(f.sentinel);
++  expect(init).toBeDefined();
++  expect(f.ctx.liveBodies.has(init!)).toBe(false);
++  expect(f.ctx.liveBodies.has(f.childRoot)).toBe(false);
++  expect([...f.ctx.liveBodies]).toEqual([f.unrelated, f.destination]);
++  expect(() => staging.abortCapturedFrame(f.owner)).not.toThrow();
++  expect(() => staging.abortCapturedFrame(f.owner)).not.toThrow();
++  expect(f.frame.body).toBe(f.destination);
++  expect(f.destination[0]).toBe(f.sentinel);
++  expect([...f.ctx.liveBodies]).toEqual(f.originalRoots);
++  expect(f.frame.locals).toHaveLength(1);
++});
+diff --git a/tests/issue-5883-staging-bindings-real-shifts.test.ts b/tests/issue-5883-staging-bindings-real-shifts.test.ts
+new file mode 100644
+index 0000000000..ff9b96c295
+--- /dev/null
++++ b/tests/issue-5883-staging-bindings-real-shifts.test.ts
+@@ -0,0 +1,193 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++// SOURCE-ONLY until a dedicated compiler-slot grant. No mocked shift/context APIs.
++import { describe, expect, it } from "vitest";
++import { ts } from "../src/ts-api.js";
++import { createEmptyModule, type Instr } from "../src/ir/types.js";
++// Use the normal codegen entrypoint so delegate registration is not bypassed.
++import { createCodegenContext } from "../src/codegen/index.js";
++import type { FunctionContext } from "../src/codegen/context/types.js";
++import { allocLocal } from "../src/codegen/context/locals.js";
++import { addFuncType } from "../src/codegen/registry/types.js";
++import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
++import { absoluteFuncIndex } from "../src/emit/resolve-layout.js";
++import { addHostStringConstantGlobal, nextModuleGlobalIdx } from "../src/codegen/registry/imports.js";
++import { ensureLateImport, flushLateImportShifts } from "../src/codegen/expressions/late-imports.js";
++import {
++  beginCapturedFrame, beginRetainedChild, enterRetainedChild, finishRetainedChild,
++  authorizeCapturedRender, attachRenderedCapturedDrive, abortCapturedFrame,
++  type CapturedRenderOutput,
++} from "../src/codegen/staging-bindings.js";
++
++function fixture(aliases: boolean) {
++  // A real checker and fully initialized context, not a cast/Proxy/dummy checker.
++  // No source compilation or Wasm emission is needed for this walker instrument.
++  const program = ts.createProgram([], { noLib: true, noEmit: true });
++  const ctx = createCodegenContext(createEmptyModule(), program.getTypeChecker(), {
++    standalone: false, wasi: false, nativeStrings: true, strictNoHostImports: false,
++  });
++  expect(ctx.targetProfile.semanticProviders).toBe("host-assisted");
++  expect(ctx.nativeStrings).toBe(true);
++  const fctx: FunctionContext = {
++    name: "R_real_shift_frame", params: [], locals: [], localMap: new Map(),
++    returnType: { kind: "externref" }, body: [], blockDepth: 0,
++    breakStack: [], continueStack: [], labelMap: new Map(), savedBodies: [],
++  };
++  ctx.currentFunc = fctx;
++  const source = allocLocal(fctx, "source", { kind: "externref" });
++  expect(source).toBe(0);
++  const destination = fctx.body;
++  ctx.liveBodies.add(destination); // Borrowed from the surrounding frame owner.
++
++  const anchor = ensureLateImport(ctx, "__R_shift_anchor", [], [{ kind: "externref" }]);
++  if (anchor === undefined) throw new Error("Anchor import was refused");
++  flushLateImportShifts(ctx, fctx);
++  expect(ctx.pendingLateImportShift).toBeNull();
++  const stable = mintDefinedFunc(ctx);
++  pushDefinedFunc(ctx, stable, {
++    name: "R_shift_callee", typeIdx: addFuncType(ctx, [], [{ kind: "externref" }]),
++    locals: [], body: [{ op: "ref.null.extern" }], exported: false,
++  });
++  const globalName = "R_shift_global";
++  const globalIndex = nextModuleGlobalIdx(ctx);
++  ctx.mod.globals.push({ name: globalName, type: { kind: "externref" }, mutable: true,
++    init: [{ op: "ref.null.extern" }] });
++  ctx.moduleGlobals.set(globalName, globalIndex);
++
++  // Deliberately exercise the historical LIVE operand range, alongside a real
++  // stable-handle control. Stable handles alone would make shift tests vacuous.
++  const earlierFunctionScalar = absoluteFuncIndex(ctx.mod, stable);
++  const earlierGlobalScalar = globalIndex;
++  const liveCall: Extract<Instr, { op: "call" }> = { op: "call", funcIdx: earlierFunctionScalar };
++  const stableCall: Extract<Instr, { op: "call" }> = { op: "call", funcIdx: stable };
++  const anchorCall: Extract<Instr, { op: "call" }> = { op: "call", funcIdx: anchor };
++  const globalGet: Extract<Instr, { op: "global.get" }> = { op: "global.get", index: earlierGlobalScalar };
++  const nested: Instr[] = [anchorCall, { op: "drop" }, liveCall, { op: "drop" },
++    stableCall, { op: "drop" }, globalGet, { op: "drop" }, { op: "local.get", index: source }];
++  const block: Instr = { op: "block", blockType: { kind: "val", type: { kind: "externref" } }, body: nested };
++  const owner = beginCapturedFrame(ctx, fctx, "all", source);
++  const emission = enterRetainedChild(ctx, fctx, beginRetainedChild(owner, [{ kind: "externref" }]));
++  emission.body.push(block);
++  finishRetainedChild(emission);
++  expect(fctx.body).toBe(destination);
++  expect(destination).toEqual([]);
++  expect(ctx.mod.functions.some((fn) => fn.body === emission.body)).toBe(false);
++  expect(ctx.liveBodies.has(emission.body)).toBe(true);
++
++  // Positive duplicate-visit control: distinct borrowed arrays share leaves;
++  // one also exposes the nested child array. These are old traversal roots,
++  // not duplicate placements in the new output tree.
++  const saved: Instr[] = [liveCall, globalGet];
++  const parent: Instr[] = [block];
++  if (aliases) {
++    fctx.savedBodies.push(saved);
++    ctx.parentBodiesStack.push(parent);
++  } else {
++    expect(fctx.savedBodies).toEqual([]);
++    expect(ctx.parentBodiesStack).toEqual([]);
++  }
++  return { ctx, fctx, owner, destination, emission, nested, block, liveCall, stableCall, anchorCall,
++    globalGet, earlierFunctionScalar, earlierGlobalScalar, stable, anchor, globalName, saved, parent };
++}
++
++function importFunctionBatch(f: ReturnType<typeof fixture>) {
++  const before = f.ctx.numImportFuncs;
++  const first = ensureLateImport(f.ctx, "__R_shift_late_one", [], []);
++  const second = ensureLateImport(f.ctx, "__R_shift_late_two", [], []);
++  expect(first).toBe(before);
++  expect(second).toBe(before + 1);
++  expect(f.ctx.numImportFuncs).toBe(before + 2);
++  expect(f.ctx.pendingLateImportShift).toEqual({ importsBefore: before });
++  expect(f.ctx.mod.imports.filter((i) => i.desc.kind === "func")).toHaveLength(before + 2);
++  // Registration really was deferred; do not manually write the operands/latch.
++  expect(f.liveCall.funcIdx).toBe(f.earlierFunctionScalar);
++  flushLateImportShifts(f.ctx, f.fctx);
++  expect(f.ctx.pendingLateImportShift).toBeNull();
++  expect(f.liveCall.funcIdx).toBe(f.earlierFunctionScalar + 2);
++  expect(f.stableCall.funcIdx).toBe(f.stable);
++  expect(f.anchorCall.funcIdx).toBe(f.anchor);
++  flushLateImportShifts(f.ctx, f.fctx); // Settled batch must not shift twice.
++  expect(f.liveCall.funcIdx).toBe(f.earlierFunctionScalar + 2);
++}
++
++function importGlobal(f: ReturnType<typeof fixture>) {
++  const before = f.ctx.numImportGlobals;
++  const index = addHostStringConstantGlobal(f.ctx, "R real global shift");
++  expect(index).toBe(before);
++  expect(f.ctx.numImportGlobals).toBe(before + 1);
++  expect(f.ctx.mod.imports.some((i) => i.module === "string_constants" &&
++    i.name === "R real global shift" && i.desc.kind === "global")).toBe(true);
++  expect(f.globalGet.index).toBe(f.earlierGlobalScalar + 1);
++  expect(f.ctx.moduleGlobals.get(f.globalName)).toBe(f.earlierGlobalScalar + 1);
++  expect(addHostStringConstantGlobal(f.ctx, "R real global shift")).toBe(index);
++  expect(f.ctx.numImportGlobals).toBe(before + 1);
++  expect(f.globalGet.index).toBe(f.earlierGlobalScalar + 1);
++}
++
++function authorize(f: ReturnType<typeof fixture>): CapturedRenderOutput {
++  const authorization = authorizeCapturedRender(f.owner);
++  expect(authorization.children).toHaveLength(1);
++  const child = authorization.children[0]!;
++  const instructions = [...child.instructions];
++  expect(instructions[0]).toBe(f.block);
++  return { authorization, instructions,
++    childPlacements: [{ child, destination: instructions, start: 0 }], result: [{ kind: "externref" }] };
++}
++
++function assertTransferred(f: ReturnType<typeof fixture>, output: CapturedRenderOutput, aliases: boolean) {
++  attachRenderedCapturedDrive(f.owner, output);
++  expect(f.destination).toHaveLength(1);
++  expect(f.destination[0]).toBe(f.block);
++  expect(f.emission.body[0]).toBe(f.block);
++  expect(f.nested[2]).toBe(f.liveCall);
++  expect(f.nested[6]).toBe(f.globalGet);
++  expect([...f.ctx.liveBodies]).toEqual([f.destination]);
++  expect(f.fctx.savedBodies).toEqual(aliases ? [f.saved] : []);
++  expect(f.ctx.parentBodiesStack).toEqual(aliases ? [f.parent] : []);
++  expect(f.ctx.errors).toEqual([]);
++}
++
++describe("R real import walkers (authored instrument, not renderer equivalence)", () => {
++  it.each([false, true])("actual deferred function batch shifts retained child once, aliases=%s", (aliases) => {
++    const f = fixture(aliases);
++    importFunctionBatch(f);
++    // Distinct historical roles: materialized leaf shifted, earlier scalar did
++    // not, a genuinely later lookup sees the current layout. Do NOT refresh it.
++    const laterLookup = absoluteFuncIndex(f.ctx.mod, f.stable);
++    expect(laterLookup).toBe(f.earlierFunctionScalar + 2);
++    expect(f.liveCall.funcIdx).toBe(laterLookup);
++    const poisonedLateBake: Instr = { op: "call", funcIdx: f.earlierFunctionScalar };
++    expect(poisonedLateBake.funcIdx).not.toBe(laterLookup);
++    // This intentionally poisoned bake is NOT attached or repaired. It exposes
++    // the scalar/materialized distinction, not an approved production repair.
++    assertTransferred(f, authorize(f), aliases);
++  });
++
++  it.each([false, true])("actual string-global insertion shifts retained child once, aliases=%s", (aliases) => {
++    const f = fixture(aliases);
++    importGlobal(f);
++    expect(f.liveCall.funcIdx).toBe(f.earlierFunctionScalar); // Other index space unchanged.
++    const laterLookup = f.ctx.moduleGlobals.get(f.globalName);
++    expect(laterLookup).toBe(f.earlierGlobalScalar + 1);
++    const poisonedLateBake: Instr = { op: "global.get", index: f.earlierGlobalScalar };
++    expect(poisonedLateBake.index).not.toBe(laterLookup);
++    assertTransferred(f, authorize(f), aliases);
++  });
++
++  it.each(["function", "global"] as const)("actual %s shift after authorization rejects without refresh/rollback", (kind) => {
++    const f = fixture(false), output = authorize(f);
++    if (kind === "function") importFunctionBatch(f);
++    else importGlobal(f);
++    const roots = [...f.ctx.liveBodies], imports = [...f.ctx.mod.imports], locals = [...f.fctx.locals];
++    expect(() => attachRenderedCapturedDrive(f.owner, output)).toThrow("Retained operand changed after authorization");
++    expect(f.destination).toEqual([]);
++    expect(f.fctx.body).toBe(f.destination);
++    expect([...f.ctx.liveBodies]).toEqual(roots);
++    expect(f.fctx.locals).toEqual(locals);
++    expect(f.ctx.mod.imports).toEqual(imports);
++    abortCapturedFrame(f.owner);
++    expect([...f.ctx.liveBodies]).toEqual([f.destination]);
++    expect(f.ctx.mod.imports).toEqual(imports); // Cleanup is not module rollback.
++    expect(f.liveCall.funcIdx).toBe(f.earlierFunctionScalar + (kind === "function" ? 2 : 0));
++    expect(f.globalGet.index).toBe(f.earlierGlobalScalar + (kind === "global" ? 1 : 0));
++  });
++});
+diff --git a/tests/issue-5883-captured-match-leaves.test.ts b/tests/issue-5883-captured-match-leaves.test.ts
+new file mode 100644
+index 0000000000..7bf5d1dfeb
+--- /dev/null
++++ b/tests/issue-5883-captured-match-leaves.test.ts
+@@ -0,0 +1,61 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import "../src/index.js";
++import { afterEach, expect, it, vi } from "vitest";
++import { emitObservableCombinatorPreparation, type CombinatorRuntime, type ObservableCombinatorRuntime } from "../src/codegen/promise-combinator-observable-protocol.js";
++import * as constructors from "../src/codegen/builtin-static-globals.js";
++import * as strings from "../src/codegen/native-strings.js";
++import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
++import type { Instr } from "../src/ir/types.js";
++import type { ensureAsyncDriveRuntime } from "../src/codegen/async-scheduler.js";
++afterEach(() => vi.restoreAllMocks());
++
++// Structural unit only: real prologue/classifier, mocked unrelated constructor/string work.
++for (const count of [0, 1, 3]) for (const method of ["all", "race"] as const) {
++  it(`${method}: ${count} roots preserve ordered values, freshen only match leaves`, () => {
++    vi.spyOn(constructors, "emitBuiltinConstructorIdentity").mockImplementation((_ctx, fctx) => {
++      fctx.body.push({ op: "ref.null.extern" }); return { kind: "externref" };
++    });
++    vi.spyOn(strings, "stringConstantExternrefInstrs").mockImplementation(() => [{ op: "ref.null.extern" }]);
++    const ctx = {
++      standalone: false, wasi: false, boundFnTypeIdx: -1,
++      mod: { types: Array.from({ length: count }, () => ({ kind: "struct", fields: [] })) },
++      // Deliberately reversed insertion order: never sort roots in B.
++      closureInfoByTypeIdx: new Map(Array.from({ length: count }, (_, i) => [count - 1 - i, {}])),
++      funcMap: new Map([["__promise_resolve_cl", 11], ["__promise_reject_cl", 12], ["__extern_get", 13], ["__new_TypeError", 14]]),
++    } as unknown as CodegenContext;
++    const freshFrame = () => ({ params: [], locals: [], localMap: new Map(), body: [], savedBodies: [] }) as unknown as FunctionContext;
++    const oldFrame = freshFrame(), fresh = freshFrame();
++    const ids = { promiseTypeIdx: 20 } as CombinatorRuntime;
++    const rt = { rejectFuncIdx: 21 } as ReturnType<typeof ensureAsyncDriveRuntime>;
++    const protocol = { exnTagIdx: 0, settleClosures: { capPromiseFieldIdx: 5, capTypeIdx: 22, capMetaTypeIdx: 23 } } as ObservableCombinatorRuntime;
++    emitObservableCombinatorPreparation(ctx, oldFrame, ids, rt, protocol, method);
++    emitObservableCombinatorPreparation(ctx, fresh, ids, rt, protocol, method, { capturedResolveMatchLeaves: true });
++    expect(fresh.locals).toEqual(oldFrame.locals);
++    expect([...fresh.localMap]).toEqual([...oldFrame.localMap]);
++    expect(JSON.stringify(fresh.body)).toBe(JSON.stringify(oldFrame.body));
++    function arms(body: Instr[]): { typeIdx: number; leaves: Instr[] }[] {
++      const result: { typeIdx: number; leaves: Instr[] }[] = [];
++      const visit = (list: Instr[]) => {
++        for (let i = 0; i < list.length; i++) {
++          const instr = list[i]!, next = list[i + 1];
++          if (instr.op === "ref.test" && next?.op === "if") result.push({ typeIdx: instr.typeIdx, leaves: next.then });
++          if (instr.op === "if") { visit(instr.then); if (instr.else) visit(instr.else); }
++          else if (instr.op === "try") { visit(instr.body); for (const c of instr.catches ?? []) visit(c.body); }
++          else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") visit(instr.body);
++        }
++      };
++      visit(body); return result;
++    }
++    const before = arms(oldFrame.body), after = arms(fresh.body);
++    expect(after.map((arm) => arm.typeIdx)).toEqual(Array.from({ length: count }, (_, i) => count - 1 - i));
++    expect(before).toHaveLength(count);
++    expect(new Set(after.flatMap((arm) => arm.leaves)).size).toBe(count * 2);
++    expect(new Set(before.flatMap((arm) => arm.leaves)).size).toBe(count ? 2 : 0);
++    for (let i = 0; i < count; i++) expect(after[i]!.leaves).toEqual(before[i]!.leaves);
++    // Neither the default branch nor the shared classifier was changed.
++    const legacyAgain = freshFrame();
++    emitObservableCombinatorPreparation(ctx, legacyAgain, ids, rt, protocol, method);
++    expect(JSON.stringify(legacyAgain.body)).toBe(JSON.stringify(oldFrame.body));
++    expect(new Set(arms(legacyAgain.body).flatMap((arm) => arm.leaves)).size).toBe(count ? 2 : 0);
++  });
++}
+diff --git a/tests/issue-5883-whole-captured-drive-render.test.ts b/tests/issue-5883-whole-captured-drive-render.test.ts
+new file mode 100644
+index 0000000000..4a91b9eb38
+--- /dev/null
++++ b/tests/issue-5883-whole-captured-drive-render.test.ts
+@@ -0,0 +1,168 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { afterEach, expect, it, vi } from "vitest";
++import { compile } from "../src/index.js";
++import * as renderer from "../src/codegen/promise-captured-drive-render.js";
++import * as binding from "../src/codegen/staging-bindings.js";
++import * as locals from "../src/codegen/context/locals.js";
++import * as shared from "../src/codegen/shared.js";
++import * as strings from "../src/codegen/native-strings.js";
++import * as scheduler from "../src/codegen/async-scheduler.js";
++import * as observable from "../src/codegen/promise-combinator-observable-protocol.js";
++import * as constructor from "../src/codegen/builtin-constructor-prepared.js";
++import * as imports from "../src/codegen/registry/imports.js";
++import * as functions from "../src/codegen/func-space.js";
++import type { Instr } from "../src/ir/types.js";
++import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
++
++afterEach(() => vi.restoreAllMocks());
++
++for (const method of ["all", "race"] as const) {
++  it(`real captured ${method}: whole render has no preparation effects`, async () => {
++    const realRender = renderer.renderCapturedDrive;
++    let hits = 0;
++    vi.spyOn(renderer, "renderCapturedDrive").mockImplementation((prepared, resolved) => {
++      hits++;
++      expect(prepared.method).toBe(method);
++      expect(resolved.authorization.method).toBe(method);
++      expect(resolved.authorization.children.length).toBeGreaterThan(20);
++      const poison = () => { throw new Error("effectful API reached inside pure whole renderer"); };
++      const traps = [
++        vi.spyOn(locals, "allocLocal").mockImplementation(poison),
++        vi.spyOn(binding, "allocateCapturedLocal").mockImplementation(poison),
++        vi.spyOn(binding, "beginRetainedChild").mockImplementation(poison),
++        vi.spyOn(binding, "authorizeCapturedRender").mockImplementation(poison),
++        vi.spyOn(shared, "compileExpression").mockImplementation(poison),
++        vi.spyOn(shared, "flushLateImportShifts").mockImplementation(poison),
++        vi.spyOn(strings, "stringConstantExternrefInstrs").mockImplementation(poison),
++        vi.spyOn(scheduler, "ensureAsyncDriveRuntime").mockImplementation(poison),
++        vi.spyOn(observable, "ensureObservableCombinatorRuntime").mockImplementation(poison),
++        vi.spyOn(constructor, "prepareBuiltinConstructorRegion").mockImplementation(poison),
++        vi.spyOn(imports, "ensureExnTag").mockImplementation(poison),
++      ];
++      try {
++        // Required negative data controls, checked BEFORE touching any child.
++        expect(() => renderer.resolveCapturedDriveBindings(prepared, {
++          ...resolved.authorization, method: method === "all" ? "race" : "all",
++        })).toThrow("method mismatch");
++        expect(() => renderer.resolveCapturedDriveBindings(prepared, {
++          ...resolved.authorization, children: [],
++        })).toThrow("captured operand child");
++        expect(() => renderer.resolveCapturedDriveBindings({
++          ...prepared, source: { ...prepared.source, index: prepared.source.index + 1 },
++        }, resolved.authorization)).toThrow("local declaration/type changed");
++        expect(() => renderer.resolveCapturedDriveBindings({
++          ...prepared, source: { ...prepared.source, type: { kind: "i32" } },
++        }, resolved.authorization)).toThrow("local declaration/type changed");
++        const output = realRender(prepared, resolved);
++        expect(output.authorization).toBe(resolved.authorization);
++        expect(output.result).toEqual([{ kind: "externref" }]);
++        expect(output.childPlacements).toHaveLength(resolved.authorization.children.length);
++        expect(output.instructions[0]).toEqual({ op: "local.get", index: prepared.source.index });
++        expect(output.instructions.at(-1)).toEqual({ op: "extern.convert_any" });
++        expect(output.instructions.some((i) => i.op === "block" && i.body.some((j) => j.op === "loop"))).toBe(true);
++        return output;
++      } finally { for (const trap of traps.reverse()) trap.mockRestore(); }
++    });
++    const source = `declare function __drain_microtasks(): void;
++export function test(): number {
++  let answer=-100; const input:any[]=[1,2];
++  (Promise as any).resolve=function(value:any):any {return {then:function(ok:any):void {ok(value);}};};
++  Promise.${method}(input).then(function(value:any):void {answer=${method === "all" ? "value[0]*10+value[1]" : "value"};});
++  __drain_microtasks(); return answer;
++}`;
++    const result = await compile(source, {
++      fileName: `5883-whole-render-${method}.ts`, target: "standalone", nativeStrings: true, optimize: false,
++    });
++    console.log(JSON.stringify({ kind: "whole-render", method, source, hits, success: result.success, errors: result.errors }));
++    expect(hits).toBe(1);
++    expect(result.success, JSON.stringify(result.errors)).toBe(true);
++    const module = await WebAssembly.compile(new Uint8Array(result.binary));
++    expect(WebAssembly.Module.imports(module)).toEqual([]);
++    const instance = await WebAssembly.instantiate(module, {});
++    const actual = (instance.exports.test as () => number)();
++    console.log(JSON.stringify({ kind: "whole-render-result", method, actual }));
++    expect(actual).toBe(method === "all" ? 12 : 1);
++  }, 120000);
++}
++
++/** Small real-owner fixture: physical transfer tests, NOT runtime/provider proof. */
++function ownerFixture() {
++  const frame = {
++    name: "physical-test", params: [{ name: "source", type: { kind: "externref" } }],
++    locals: [], localMap: new Map([["source", 0]]), body: [], savedBodies: [],
++  } as unknown as FunctionContext;
++  const ctx = { currentFunc: frame, funcStack: [], liveBodies: new Set<Instr[]>() } as unknown as CodegenContext;
++  const owner = binding.beginCapturedFrame(ctx, frame, "race", 0);
++  const emission = binding.enterRetainedChild(ctx, frame, binding.beginRetainedChild(owner, [{ kind: "externref" }]));
++  emission.body.push({ op: "local.get", index: 0 });
++  binding.finishRetainedChild(emission);
++  const authorization = binding.authorizeCapturedRender(owner);
++  const child = authorization.children[0]!;
++  const instructions = [...child.instructions];
++  const output: binding.CapturedRenderOutput = {
++    authorization, instructions, childPlacements: [{ child, destination: instructions, start: 0 }],
++    result: [{ kind: "externref" }],
++  };
++  return { frame, ctx, owner, output };
++}
++
++it("accepts genuine source index zero and consumes only the successful transfer", () => {
++  const { frame, ctx, owner, output } = ownerFixture();
++  expect(binding.attachRenderedCapturedDrive(owner, output)).toEqual({ kind: "externref" });
++  expect(frame.body[0]).toBe(output.instructions[0]);
++  expect(ctx.liveBodies.size).toBe(0);
++  expect(() => binding.attachRenderedCapturedDrive(owner, output)).toThrow();
++  expect(frame.body).toHaveLength(1);
++});
++
++it("diagnoses missing/wrong ABI without changing historical operand admission", () => {
++  const frame = { name: "abi", params: [{ name: "source", type: { kind: "externref" } }],
++    locals: [], localMap: new Map([["source", 0]]), body: [], savedBodies: [],
++  } as unknown as FunctionContext;
++  const ctx = { currentFunc: frame, funcStack: [], liveBodies: new Set<Instr[]>() } as unknown as CodegenContext;
++  const owner = binding.beginCapturedFrame(ctx, frame, "race", 0);
++  try {
++    const diagnose = (index: number): string => {
++      const signature = index >= 0 ? functions.funcSignatureOf(ctx, index) : undefined;
++      return !signature ? "missing" : signature.params.length || signature.results.length ? "ABI mismatch" : "match";
++    };
++    expect(diagnose(-1)).toBe("missing");
++    const missing = observable.retainCapturedCall(ctx, frame, owner, -1, []);
++    // Signature fault injection only; not a fabricated provider readiness test.
++    const signature = vi.spyOn(functions, "funcSignatureOf").mockReturnValue({
++      kind: "func", params: [{ kind: "i32" }], results: [],
++    });
++    try {
++      expect(diagnose(0)).toBe("ABI mismatch");
++      expect(signature).toHaveBeenCalledWith(ctx, 0);
++    } finally { signature.mockRestore(); }
++    const wrong = observable.retainCapturedCall(ctx, frame, owner, 0, []);
++    const authorized = binding.authorizeCapturedRender(owner);
++    expect(authorized.children.find((c) => c.identity === missing.owned)?.instructions).toEqual([{ op: "call", funcIdx: -1 }]);
++    expect(authorized.children.find((c) => c.identity === wrong.owned)?.instructions).toEqual([{ op: "call", funcIdx: 0 }]);
++    expect(frame.body).toEqual([]);
++  } finally { binding.abortCapturedFrame(owner); }
++});
++
++for (const failure of ["missing", "duplicate", "unreachable", "fractional", "foreign", "alias"] as const) {
++  it(`rejects ${failure} child placement before destination mutation`, () => {
++    const { frame, ctx, owner, output } = ownerFixture();
++    const placement = output.childPlacements[0]!;
++    const broken: binding.CapturedRenderOutput = {
++      ...output,
++      ...(failure === "alias" ? { instructions: [...output.instructions, ...output.instructions] } : {}),
++      childPlacements: failure === "missing" ? [] : failure === "duplicate" ? [placement, placement] : [{
++        ...placement,
++        ...(failure === "unreachable" ? { destination: [...output.instructions] } : {}),
++        ...(failure === "fractional" ? { start: 0.5 } : {}),
++        ...(failure === "foreign" ? { child: { ...placement.child, identity: {} as binding.OwnedCapturedChild } } : {}),
++      }],
++    };
++    try {
++      expect(() => binding.attachRenderedCapturedDrive(owner, broken)).toThrow();
++      expect(frame.body).toEqual([]);
++    } finally { binding.abortCapturedFrame(owner); }
++    expect(ctx.liveBodies.size).toBe(0);
++    expect(() => binding.attachRenderedCapturedDrive(owner, output)).toThrow();
++  });
++}
+diff --git a/scripts/compiler-boundaries.json b/scripts/compiler-boundaries.json
+--- a/scripts/compiler-boundaries.json
++++ b/scripts/compiler-boundaries.json
+@@ -7924,1 +7924,9 @@
++      "path": "src/codegen/promise-captured-drive-render.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate closed captured-drive rendering from physical instruction, type and local identities; canonical provider closure and delayed publication remain unproven."
++    },
++    {
+       "path": "src/codegen/promise-combinator-drive.ts",
+@@ -13415,1 +13423,9 @@
++      "path": "src/codegen/staging-bindings.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate synchronous captured-frame ownership from physical locals and retained instruction trees; delayed publication and provider closure remain unproven."
++    },
++    {
+       "path": "src/codegen/staging-census.ts",

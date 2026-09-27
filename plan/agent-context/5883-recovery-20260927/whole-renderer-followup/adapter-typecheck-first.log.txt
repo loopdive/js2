@@ -1,0 +1,1 @@
+tests/issue-5883-staging-bindings-real-shifts.test.ts(26,5): error TS2353: Object literal may only specify known properties, and 'target' does not exist in type 'CodegenOptions'.

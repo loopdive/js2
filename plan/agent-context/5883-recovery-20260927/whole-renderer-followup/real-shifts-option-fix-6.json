@@ -1,0 +1,94 @@
+{
+  "numTotalTestSuites": 2,
+  "numPassedTestSuites": 2,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 6,
+  "numPassedTests": 6,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1790495485694,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual deferred function batch shifts retained child once, aliases=false",
+          "status": "passed",
+          "title": "actual deferred function batch shifts retained child once, aliases=false",
+          "duration": 13.612957999999708,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual deferred function batch shifts retained child once, aliases=true",
+          "status": "passed",
+          "title": "actual deferred function batch shifts retained child once, aliases=true",
+          "duration": 2.287958000000799,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual string-global insertion shifts retained child once, aliases=false",
+          "status": "passed",
+          "title": "actual string-global insertion shifts retained child once, aliases=false",
+          "duration": 4.481999999999971,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual string-global insertion shifts retained child once, aliases=true",
+          "status": "passed",
+          "title": "actual string-global insertion shifts retained child once, aliases=true",
+          "duration": 3.011500000000524,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual function shift after authorization rejects without refresh/rollback",
+          "status": "passed",
+          "title": "actual function shift after authorization rejects without refresh/rollback",
+          "duration": 2.735791999999492,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual global shift after authorization rejects without refresh/rollback",
+          "status": "passed",
+          "title": "actual global shift after authorization rejects without refresh/rollback",
+          "duration": 1.535249999998996,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495496783,
+      "endTime": 1790495496810.5352,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-staging-bindings-real-shifts.test.ts"
+    }
+  ]
+}
