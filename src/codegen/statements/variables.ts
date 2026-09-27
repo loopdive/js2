@@ -3,6 +3,7 @@
  * Variable declaration statement lowering.
  */
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -90,6 +91,7 @@ import {
   tryEmitPromiseSubclassClassExpressionValue,
 } from "../expressions/promise-subclass.js";
 import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
+import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
 import { inferStandaloneRegExpMatchResultType } from "../regexp-standalone.js";
 
 /**
@@ -163,6 +165,7 @@ export function transferredArrayLikeResultNeedsExternref(
   initializer: ts.Expression | undefined,
 ): boolean {
   if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
+  if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
   if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
@@ -2335,7 +2338,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           const sigParamWasmTypes: ValType[] = [];
           for (let i = 0; i < sigParamCount; i++) {
             const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-            sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+            sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
           }
 
           let matchedClosureInfo:

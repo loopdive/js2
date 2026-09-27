@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
-import type { Import, Instr, ValType } from "../../ir/types.js";
+import { registerWideBigIntTypes } from "../bigint-wide.js";
+import type { Import, Instr, ValType, WasmFunction } from "../../ir/types.js";
 import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
 import {
   buildBoxNumberBody,
@@ -13,6 +14,7 @@ import type { CodegenContext, ExternClassInfo } from "../context/types.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
 import { addFuncType } from "./types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { addImport, ensureExnTag } from "./physical-imports.js";
 export { addImport, ensureExnTag } from "./physical-imports.js";
 // #808 — dependencies of the import-collection/registration functions moved
@@ -216,7 +218,11 @@ export function addStringConstantGlobal(ctx: CodegenContext, value: string): voi
  * prohibitively expensive for finalize-time producers such as
  * `__struct_field_names` (one CSV per visible struct shape).
  */
-export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<string>): void {
+export function addStringConstantGlobals(
+  ctx: CodegenContext,
+  values: Iterable<string>,
+  opts?: { deferFixup?: boolean },
+): void {
   const pending: string[] = [];
   const seen = new Set<string>();
   for (const value of values) {
@@ -265,9 +271,86 @@ export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<s
     ctx.mod.stringPool.push(value);
   }
   const addedImportGlobals = ctx.numImportGlobals - oldNumImportGlobals;
-  if (hasModuleGlobals && addedImportGlobals > 0) {
+  if (hasModuleGlobals && addedImportGlobals > 0 && !opts?.deferFixup) {
     fixupModuleGlobalIndices(ctx, oldNumImportGlobals, addedImportGlobals);
   }
+}
+
+/** A `global.get` whose string-constant import is registered at the end of bodies. */
+type DeferredStringConstantGet = Instr & { op: "global.get"; index: number; deferredStringConst?: string };
+
+/**
+ * (#1058) Emit `global.get` of a string-constant import whose registration may
+ * be deferred to the end of the body phase.
+ *
+ * Every string registered after module globals exist rewalks the whole module
+ * (`fixupModuleGlobalIndices`). Throw sites embed their source position in the
+ * message (`Cannot access property on null or undefined at L:C`), so a large
+ * program mints one string per guarded access: the TypeScript parser graph
+ * adds ~11,500 of them, and the rewalks were a third of its compile time.
+ *
+ * While `ctx.deferredStringConstants` is active the read is emitted against a
+ * PLACEHOLDER — an existing string-constant import, so every body-time type
+ * query still sees an immutable externref global, and it lies below the
+ * import/module threshold, so no shift ever moves it. The instr carries its
+ * value; `resolveDeferredStringConstants` registers all pending values in one
+ * batch and patches the marked reads in the same walk that shifts module
+ * globals. That walk has exactly the coverage the eager path relied on, and a
+ * marked read survives cloning because the marker is an own property.
+ */
+export function deferrableStringConstantGlobalGet(ctx: CodegenContext, value: string): Instr[] | undefined {
+  const pending = ctx.deferredStringConstants;
+  if (!pending || ctx.nativeStrings || ctx.strictNoHostImports || ctx.stringGlobalMap.has(value)) return undefined;
+  let placeholder: number | undefined;
+  for (const idx of ctx.stringGlobalMap.values()) {
+    if (idx >= 0 && idx < ctx.numImportGlobals) {
+      placeholder = idx;
+      break;
+    }
+  }
+  if (placeholder === undefined) return undefined;
+  pending.add(value);
+  const get: DeferredStringConstantGet = { op: "global.get", index: placeholder, deferredStringConst: value };
+  return [get];
+}
+
+/**
+ * (#1058) Register a string constant whose every read goes through
+ * `stringConstantExternrefInstrs`. During the body phase the import joins the
+ * end-of-bodies batch instead of rewalking the module now; property-name
+ * constants were half of the TypeScript checker's compile time that way.
+ */
+export function registerLateReadStringConstant(ctx: CodegenContext, value: string): void {
+  const pending = ctx.deferredStringConstants;
+  if (pending && !ctx.nativeStrings && !ctx.strictNoHostImports && !ctx.stringGlobalMap.has(value)) {
+    pending.add(value);
+    return;
+  }
+  addStringConstantGlobal(ctx, value);
+}
+
+/** Read a string constant still waiting in the batch, or undefined if it is not. */
+export function pendingStringConstantGlobalGet(ctx: CodegenContext, value: string): Instr[] | undefined {
+  if (!ctx.deferredStringConstants?.has(value) || ctx.stringGlobalMap.has(value)) return undefined;
+  const deferred = deferrableStringConstantGlobalGet(ctx, value);
+  if (deferred) return deferred;
+  addStringConstantGlobal(ctx, value);
+  return undefined;
+}
+
+/** Start deferring throw-message string constants (see `deferrableStringConstantGlobalGet`). */
+export function beginDeferredStringConstants(ctx: CodegenContext): void {
+  ctx.deferredStringConstants ??= new Set();
+}
+
+/** Register every deferred string constant and patch its placeholder reads. */
+export function resolveDeferredStringConstants(ctx: CodegenContext): void {
+  const pending = ctx.deferredStringConstants;
+  ctx.deferredStringConstants = undefined;
+  if (!pending || pending.size === 0) return;
+  const oldNumImportGlobals = ctx.numImportGlobals;
+  addStringConstantGlobals(ctx, pending, { deferFixup: true });
+  fixupModuleGlobalIndices(ctx, oldNumImportGlobals, ctx.numImportGlobals - oldNumImportGlobals, true);
 }
 
 /**
@@ -370,7 +453,7 @@ export function exportedExnTagIndex(
  * Fix up module-global absolute indices in all compiled function bodies when
  * new import globals are inserted after module globals already exist.
  */
-function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta: number): void {
+function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta: number, patchDeferred = false): void {
   // Dedupe per-call: an instr (or nested array node) reachable from multiple
   // top-level bodies must only be shifted once per fixup call. The `shifted`
   // Set below dedupes top-level Instr[] arrays, but nested arrays (if.then,
@@ -446,6 +529,14 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     // overhead on arrays this small and this numerous. Semantics unchanged.
     for (let i = 0; i < instrs.length; i++) {
       const instr = instrs[i]!;
+      const deferred = patchDeferred ? (instr as DeferredStringConstantGet).deferredStringConst : undefined;
+      if (deferred !== undefined) {
+        // The resolved import index is already final; never shift it.
+        (instr as DeferredStringConstantGet).index = ctx.stringGlobalMap.get(deferred)!;
+        (instr as DeferredStringConstantGet).deferredStringConst = undefined;
+        visitedInstrs.add(instr as object);
+        continue;
+      }
       if ((instr.op === "global.get" || instr.op === "global.set") && instr.index >= threshold) {
         if (!visitedInstrs.has(instr as object)) {
           visitedInstrs.add(instr as object);
@@ -1173,6 +1264,23 @@ export function addUnionImports(ctx: CodegenContext): void {
 }
 
 /**
+ * Append a native union helper at the next defined slot and record it in `funcMap`.
+ *
+ * (#6687) `__box_number` gets a STABLE (#1916 S3) handle instead of a live index: callers bake it
+ * into bodies that no late-import shifter reaches while a JS-environment late import lands — a
+ * class async-generator method's param prologue during its `__async_resume_f*` compile — where a
+ * live index went stale-low (`call` into `__num_ryu_to_buf`, invalid Wasm). Same physical slot,
+ * resolved at emit, so the binary is byte-identical wherever the live index was already correct.
+ */
+function pushNativeUnionHelper(ctx: CodegenContext, fn: WasmFunction): void {
+  const stable = fn.name === "__box_number";
+  const funcIdx = stable ? mintDefinedFunc(ctx) : ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.funcMap.set(fn.name, funcIdx);
+  if (stable) pushDefinedFunc(ctx, funcIdx, fn);
+  else ctx.mod.functions.push(fn);
+}
+
+/**
  * Wasm-native implementation of the union helper functions (#1180).
  *
  * Used under `--target wasi`, where the standard `env::*` host imports
@@ -1258,7 +1366,10 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     kind: "struct",
     name: "$BigInt",
     fields: [{ name: "value", type: { kind: "i64", bigint: true }, mutable: false }],
+    // (#6656) Open: `$BigIntWide` (a value past i64) is its subtype.
+    superTypeIdx: -1,
   });
+  registerWideBigIntTypes(ctx, bigIntStructIdx);
   ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;
   ctx.nativeBoxBooleanTypeIdx = boxBoolStructIdx;
   ctx.nativeBigIntTypeIdx = bigIntStructIdx;
@@ -1312,21 +1423,13 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   if (s1Active) ensureAnyValueType(ctx);
   const s1AnyValIdx = s1Active ? ctx.anyValueTypeIdx : -1;
 
-  /**
-   * Synthesize a native helper function. The funcIdx is allocated as
-   * `numImportFuncs + mod.functions.length` to match how every other
-   * synthesized function (e.g. `__toUint32` from #1094) gets its slot.
-   */
+  /** Synthesize a native helper at the next defined slot — see {@link pushNativeUnionHelper}. */
   const registerNative = (
     name: string,
     typeIdx: number,
     body: Instr[],
     locals: { name: string; type: ValType }[] = [],
-  ): void => {
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-    ctx.funcMap.set(name, funcIdx);
-    ctx.mod.functions.push({ name, typeIdx, locals, body, exported: false });
-  };
+  ): void => pushNativeUnionHelper(ctx, { name, typeIdx, locals, body, exported: false });
 
   const throwNativeError = (errorName: "TypeError" | "RangeError" | "SyntaxError", message: string): Instr[] => {
     emitWasiErrorConstructor(ctx, errorName, 1);

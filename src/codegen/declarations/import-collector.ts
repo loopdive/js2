@@ -48,6 +48,7 @@ import {
 } from "../index.js";
 import { isPlainNamedMethodDeclaration, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
+import { registerBigIntToStringDemand } from "../bigint-string-context.js";
 import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeBigIntFormat } from "../bigint-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
@@ -57,14 +58,16 @@ import { addImport, addStringConstantGlobal } from "../registry/imports.js";
 import { addFuncType, getOrRegisterTemplateVecType } from "../registry/types.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "../uri-encoding-native.js";
 import type { ValType } from "../../ir/types.js";
-import type { CodegenContext } from "../context/types.js";
+import { type CodegenContext, hostFreeEnvironment } from "../context/types.js";
 import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { isConsoleValueIdentifier } from "../standalone-console-object.js";
 
 /** Accumulated state for the single-pass collector */
 export interface UnifiedCollectorState {
   // -- collectConsoleImports --
   consoleNeededByMethod: Map<string, Set<"number" | "bool" | "string" | "externref">>;
+  consoleValueRead: boolean; // (#6671) the console object's methods need the sink too
   // -- collectPrimitiveMethodImports --
   primitiveNeeded: Set<string>;
   // -- collectStringLiterals --
@@ -182,6 +185,7 @@ const HOST_PROMISE_SOURCE_METHOD_NAMES = new Set(["allKeyed", "allSettledKeyed",
 export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedCollectorState {
   return {
     consoleNeededByMethod: new Map(),
+    consoleValueRead: false,
     primitiveNeeded: new Set(),
     stringLiterals: new Set(),
     hasTypeofExprForStrings: false,
@@ -460,6 +464,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   }
 
   // ── collectConsoleImports ──
+  if (ctx.standalone && !state.consoleValueRead) state.consoleValueRead = isConsoleValueIdentifier(node); // (#6671)
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
@@ -725,6 +730,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       if (isNumberType(spanType) || isBooleanType(spanType) || isBigIntType(spanType) || isAnyOrUnknown) {
         state.primitiveNeeded.add("number_toString");
       }
+      registerBigIntToStringDemand(ctx, state.primitiveNeeded, isBigIntType(spanType));
     }
   }
   // String(expr) and new String(expr) need number_toString for ToString.
@@ -734,9 +740,11 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     node.expression.text === "String" &&
     (node.arguments?.length ?? 0) >= 1
   ) {
-    if (ctx.oracle.typeFactOf(node.arguments![0]!).kind !== "string") {
+    const stringArgFact = ctx.oracle.typeFactOf(node.arguments![0]!);
+    if (stringArgFact.kind !== "string") {
       state.primitiveNeeded.add("number_toString");
     }
+    registerBigIntToStringDemand(ctx, state.primitiveNeeded, stringArgFact.kind === "bigint");
   }
   // String + non-string concatenation
   if (
@@ -751,6 +759,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (!isStringType(leftType) && isStringType(rightType)) {
       state.primitiveNeeded.add("number_toString");
     }
+    const concatBigInt =
+      (isStringType(leftType) && isBigIntType(rightType)) || (isBigIntType(leftType) && isStringType(rightType));
+    registerBigIntToStringDemand(ctx, state.primitiveNeeded, concatBigInt);
     if (
       node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken &&
       (leftType.flags & ts.TypeFlags.Any) !== 0 &&
@@ -1559,12 +1570,12 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // mints the in-module GC string sink (`__stdout_acc` + `__stdout_append`) and
   // finalize emits the `__stdout_prepare`/`__stdout_char` readout exports. The
   // sink stays 100% host-free (WasmGC in-module), so the #2961 import-leak gate
-  // still rejects genuine host imports.
-  if (ctx.standalone && state.consoleNeededByMethod.size > 0) {
+  // still rejects genuine host imports. (#6685) Keyed on the environment: a JS one keeps `console_*` below.
+  if (ctx.standalone && hostFreeEnvironment(ctx) && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
     ctx.usesStandaloneConsoleSink = true;
   }
 
-  if (!ctx.wasi && !ctx.standalone) {
+  if (!hostFreeEnvironment(ctx)) {
     const CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
     for (const method of CONSOLE_METHODS) {
       const needed = state.consoleNeededByMethod.get(method);

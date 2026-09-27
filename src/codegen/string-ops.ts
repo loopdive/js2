@@ -1,4 +1,5 @@
 import { isBigIntType, isBooleanType, isStringType, isSymbolType, isVoidType } from "../checker/type-mapper.js";
+import { widenJsDefaultGuessSymbolSlot } from "./js-default-param-type-guess.js";
 import type { Instr, ValType } from "../ir/types.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -13,6 +14,7 @@ import {
   isAnyValue,
   undefinedSingletonActive,
 } from "./any-helpers.js";
+import { bigIntToStringIdx } from "./bigint-string-context.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
 import { callableToStringLiteral } from "./callable-to-string.js";
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "./ta-dyn-proto-methods.js"; // (#5194 r3-2) dyn-view search helpers
@@ -65,6 +67,7 @@ import {
   tryCompileStandaloneStringSplit,
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
+import { tryCompileStandaloneDynamicStringRegExpCall } from "./string-regexp-dynamic.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
@@ -87,7 +90,17 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-import { publishTaggedTemplateArguments, resetTaggedTemplateArguments } from "./tagged-template-arguments.js";
+import {
+  emitObjectLiteralMethodThisInstall,
+  emitStandaloneReceiverCapture,
+  finishObjectLiteralMethodCall,
+  planTaggedTemplateReceiverBind,
+} from "./object-literal-method-receiver.js"; // (#6651) §13.2.8 member-expression tag
+import {
+  publishTagCallArguments,
+  publishTaggedTemplateArguments,
+  resetTaggedTemplateArguments,
+} from "./tagged-template-arguments.js";
 import {
   coerceType,
   emitGuardedRefCast,
@@ -95,6 +108,7 @@ import {
   pushParamSentinel,
   tryStructToString,
 } from "./type-coercion.js";
+import { STRING_ARRAY_SHARED_METHODS } from "./array-slice-native.js"; // (#6683)
 
 /**
  * (#2176) Type of a value expression for stringification decisions, preferring
@@ -340,6 +354,14 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
     return true;
   }
 
+  // (#6656) A bigint-branded i64 has an EXACT formatter; the f64 route below
+  // rounds above 2^53. Declines when the brand is absent — bigint-string-context.ts.
+  const opBigIntToStr = bigIntToStringIdx(ctx, opType);
+  if (opBigIntToStr !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: opBigIntToStr });
+    emitNativeStringRefFromExternref(ctx, fctx);
+    return true;
+  }
   if ((opType.kind === "f64" || opType.kind === "i32" || opType.kind === "i64") && toStrIdx !== undefined) {
     if (opType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
     else if (opType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
@@ -885,6 +907,10 @@ export function compileNativeTemplateExpression(
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       emitNativeStringRefFromExternref(ctx, fctx);
+    } else if (spanType && bigIntToStringIdx(ctx, spanType) !== undefined) {
+      // (#6656) exact bigint formatter — see bigint-string-context.ts.
+      fctx.body.push({ op: "call", funcIdx: bigIntToStringIdx(ctx, spanType)! });
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i64" && toStrIdx !== undefined) {
       // (#3912) native-formatter box — see the f64 arm above.
       fctx.body.push({ op: "f64.convert_i64_s" });
@@ -1080,6 +1106,9 @@ function compileStringRaw(
     } else if (subType && subType.kind === "i32" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    } else if (subType && bigIntToStringIdx(ctx, subType) !== undefined) {
+      // (#6656) exact bigint formatter — see bigint-string-context.ts.
+      fctx.body.push({ op: "call", funcIdx: bigIntToStringIdx(ctx, subType)! });
     } else if (subType && subType.kind === "i64" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i64_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
@@ -1523,6 +1552,14 @@ export function compileTaggedTemplateExpression(
   // then find a matching registered closure by signature. This handles cases like
   // getTag()`hello`, (function(s){ return s; })`hello`, etc.
   {
+    // (#6651) §13.2.8 — `` obj.fn`x` `` is a method call, so its `this` is
+    // `obj`. Admission, refusals and rationale all live with the sibling call
+    // shapes in object-literal-method-receiver.ts.
+    const ttRecvBind = planTaggedTemplateReceiverBind(ctx, fctx, expr.tag, substitutions);
+    if (ttRecvBind) {
+      const recvExpr = (expr.tag as ts.PropertyAccessExpression).expression;
+      emitStandaloneReceiverCapture(fctx, compileExpression(ctx, fctx, recvExpr, { kind: "externref" }), ttRecvBind);
+    }
     // First, try to resolve the tag expression's type and find a matching closure
     const tagTsType = ctx.checker.getTypeAtLocation(expr.tag);
     const callSigs = tagTsType.getCallSignatures?.();
@@ -1538,7 +1575,7 @@ export function compileTaggedTemplateExpression(
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
         const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-        sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
       }
 
       for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
@@ -1615,13 +1652,18 @@ export function compileTaggedTemplateExpression(
       // signature shape the tag expression resolves to, never proof of which
       // function runs. Publish the surplus substitutions unconditionally and
       // clear the globals after the call.
-      const publishedMatchedClosure = publishTaggedTemplateArguments(
+      const publishedMatchedClosure = publishTagCallArguments(
         ctx,
         fctx,
         substitutions,
         matchedClosureInfo.paramTypes.length,
         Math.max(0, closureMaxSubs),
+        stringsLocal,
       );
+
+      // The receiver install goes AFTER the arguments, immediately before the
+      // call — see the ordering note in object-literal-method-receiver.ts.
+      if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
 
       // Push funcref from closure struct field 0 and call_ref
       fctx.body.push({ op: "local.get", index: closureLocal });
@@ -1639,7 +1681,7 @@ export function compileTaggedTemplateExpression(
       });
       if (publishedMatchedClosure) resetTaggedTemplateArguments(ctx, fctx);
 
-      return matchedClosureInfo.returnType ?? VOID_RESULT;
+      return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, matchedClosureInfo.returnType ?? VOID_RESULT);
     }
 
     // No matching closure found — try compiling the tag as a general expression
@@ -1672,13 +1714,16 @@ export function compileTaggedTemplateExpression(
             pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
           }
           // (#5338) Same dynamic-callee reasoning as the signature-matched arm.
-          const publishedDynClosure = publishTaggedTemplateArguments(
+          const publishedDynClosure = publishTagCallArguments(
             ctx,
             fctx,
             substitutions,
             closureInfo.paramTypes.length,
             Math.max(0, closureMaxSubs),
+            stringsLocal,
           );
+
+          if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
 
           fctx.body.push({ op: "local.get", index: closureLocal });
           fctx.body.push({
@@ -1691,7 +1736,7 @@ export function compileTaggedTemplateExpression(
           fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
           if (publishedDynClosure) resetTaggedTemplateArguments(ctx, fctx);
 
-          return closureInfo.returnType ?? VOID_RESULT;
+          return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, closureInfo.returnType ?? VOID_RESULT);
         }
       }
 
@@ -1732,13 +1777,14 @@ export function compileTaggedTemplateExpression(
         }
 
         // Call __tagged_template(tag, strings, subs)
+        if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
         fctx.body.push({ op: "local.get", index: tagLocal });
         fctx.body.push({ op: "local.get", index: stringsLocal });
         fctx.body.push({ op: "extern.convert_any" }); // template vec struct -> externref
         fctx.body.push({ op: "local.get", index: subsArrLocal });
         fctx.body.push({ op: "call", funcIdx: ttIdx });
 
-        return { kind: "externref" };
+        return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, { kind: "externref" } as ValType);
       }
     }
   }
@@ -2190,9 +2236,14 @@ export function compileStringBinaryOp(
     leftType &&
     (leftType.kind === "f64" || leftType.kind === "i32" || leftType.kind === "i64")
   ) {
+    const leftBigIntToStr = bigIntToStringIdx(ctx, leftType);
     if (leftType.kind === "i32" && (isBooleanType(leftTsType) || (leftType as { boolean?: true }).boolean)) {
       // Boolean → "true"/"false" via conditional select of string constants
       emitBoolToString(ctx, fctx);
+    } else if (leftBigIntToStr !== undefined) {
+      // (#6656) exact bigint formatter. A bigint is never the #6423 undefined
+      // sentinel, so the sentinel-aware wrapper is deliberately skipped.
+      fctx.body.push({ op: "call", funcIdx: leftBigIntToStr });
     } else {
       if (leftType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       else if (leftType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
@@ -2267,8 +2318,12 @@ export function compileStringBinaryOp(
     rightType &&
     (rightType.kind === "f64" || rightType.kind === "i32" || rightType.kind === "i64")
   ) {
+    const rightBigIntToStr = bigIntToStringIdx(ctx, rightType);
     if (rightType.kind === "i32" && (isBooleanType(rightTsType) || (rightType as { boolean?: true }).boolean)) {
       emitBoolToString(ctx, fctx);
+    } else if (rightBigIntToStr !== undefined) {
+      // (#6656) exact bigint formatter — see the symmetric left-operand branch.
+      fctx.body.push({ op: "call", funcIdx: rightBigIntToStr });
     } else {
       if (rightType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       else if (rightType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
@@ -3960,6 +4015,11 @@ export function compileNativeStringMethodCall(
       (method === "replace" || method === "replaceAll" || method === "split") &&
       expr.arguments.length > 0 &&
       !firstArgIsStringLike;
+    // (#6662/#6665) An unclassifiable replace/replaceAll/match/search/split search value dispatches at runtime.
+    const dynamic =
+      (alwaysRegExp || symbolProtocolArgForm) &&
+      tryCompileStandaloneDynamicStringRegExpCall(ctx, fctx, expr, method, emitReceiver);
+    if (dynamic) return dynamic;
     if (alwaysRegExp || symbolProtocolArgForm) {
       reportError(
         ctx,
@@ -4196,9 +4256,12 @@ export function compileGuardedNativeStringMethodCall(
   // Scoped to names the source actually defines, so the unboxed native result
   // type survives for every other name — notably acorn's `charCodeAt`/`slice`/
   // `substr` tokenizer hot set, whose whole point (#3673) is to avoid boxing.
+  // (#6683) Except `slice`/`at` in standalone: an array receiver answered null
+  // here (moment's `config._a.slice(0)`), so they widen to the dispatcher's vec
+  // arm (array-slice-native.ts). Measured: acorn standalone-dynamic unchanged.
   if (
     elseInstrs === undefined &&
-    ctx.userMethodNames?.has(method) === true &&
+    (ctx.userMethodNames?.has(method) === true || (ctx.standalone && STRING_ARRAY_SHARED_METHODS.has(method))) &&
     (ctx.standalone || ctx.wasi) &&
     !expr.arguments.some((a) => ts.isSpreadElement(a))
   ) {
@@ -4304,6 +4367,13 @@ export function compileGuardedNativeStringMethodCall(
     then: thenInstrs,
     else: elseInstrs,
   });
+  // (#5383) The three predicate methods answer a BOOLEAN. A bare i32 whose
+  // static type is `any` is boxed as a NUMBER, so `monthCode.endsWith("L")`
+  // reached `assert.sameValue(…, false)` as «0» (4 Temporal `no-leap-months`
+  // rows). The brand makes `coerceType` box it with `__box_boolean`.
+  if (resultType.kind === "i32" && (method === "includes" || method === "startsWith" || method === "endsWith")) {
+    return { kind: "i32", boolean: true };
+  }
   return resultType;
 }
 

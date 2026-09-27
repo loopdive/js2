@@ -112,12 +112,12 @@ describe("#1917 coercionPlan — numeric / box-unbox table", () => {
 });
 
 describe("#1917 coercion-engine — end-to-end behavior is preserved (regression guard)", () => {
-  async function run(src: string, standalone: boolean): Promise<unknown> {
+  async function run(src: string, standalone: boolean, args: unknown[] = []): Promise<unknown> {
     const r = await compile(src, standalone ? { fileName: "t.ts", target: "standalone" } : { fileName: "t.ts" });
     expect(r.success, r.success ? "" : `CE: ${r.errors?.[0]?.message}`).toBe(true);
     const importObj = standalone ? {} : (r.importObject ?? {});
     const { instance } = await WebAssembly.instantiate(r.binary, importObj as WebAssembly.Imports);
-    return (instance.exports as { test(): unknown }).test();
+    return (instance.exports as { test(...args: unknown[]): unknown }).test(...args);
   }
 
   const anyTernary = `export function test(): number {
@@ -131,10 +131,29 @@ describe("#1917 coercion-engine — end-to-end behavior is preserved (regression
   const n: number = v;
   return n * 2;
 }`;
+  const dynamicRawToNumber = `export function test(raw: any): number {
+  return raw | 0;
+}`;
+  const dynamicRawToNumberBeforeDate = `export function test(raw: any): number {
+  const n = raw | 0;
+  const later = Date.now();
+  return n * 10 + (later >= 0 ? 3 : 4);
+}`;
 
   it("any-valued ternary coerced to number (host)", async () => expect(await run(anyTernary, false)).toBe(6));
   it("any-valued ternary coerced to number (standalone)", async () => expect(await run(anyTernary, true)).toBe(6));
   it("any assigned in if/else then used as number (host)", async () => expect(await run(anyIfAssign, false)).toBe(20));
   it("any assigned in if/else then used as number (standalone)", async () =>
     expect(await run(anyIfAssign, true)).toBe(20));
+
+  it("converts a runtime any parameter through the raw ToNumber provider", async () => {
+    expect(await run(dynamicRawToNumber, false, ["12"])).toBe(12);
+  });
+
+  it("keeps raw ToNumber valid before a later host builtin provision", async () => {
+    // The dynamic parameter prevents literal folding. `Date.now` is compiled
+    // later in the same body, so this remains independent of split's staged
+    // direct arm and avoids conflating numeric coercion with descriptor reads.
+    expect(await run(dynamicRawToNumberBeforeDate, false, ["12"])).toBe(123);
+  });
 });

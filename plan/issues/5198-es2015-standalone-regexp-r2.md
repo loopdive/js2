@@ -22,6 +22,8 @@ loc-budget-allow:
   - src/codegen/statements/variables.ts
   - src/codegen/context/types.ts
   - src/codegen/type-coercion.ts
+  - src/codegen/tonumber-fast-paths.ts
+  - tests/issue-5198-toprimitive-object-carrier.test.ts
 func-budget-allow:
   - src/codegen/native-regex.ts::ensureRegexSearch
   - src/codegen/native-regex.ts::ensureRegexReplace
@@ -33,6 +35,73 @@ func-budget-allow:
 ---
 
 # #5198 — regexp r2: cluster and fix the residual regexp-bucket failures
+
+## 2026-09-20 wrap-up handoff — Annex B compile syntax
+
+This section records an unfinished implementation, subsequently published as
+draft [PR #6014](https://github.com/loopdive/js2/pull/6014), head
+`5cc07c7dd33eea2830cfac7fdcb5faf8eb27dea2`. This handoff PR changes
+documentation only and does not mark the RegExp umbrella complete.
+
+- Current candidate worktree:
+  `/Users/thomas/Code/js2/.codex-worktrees/codex-5198-annexb-syntax-on-main-20260920`,
+  branch `codex/5198-annexb-syntax-on-main-20260920`, based on
+  `ac76d8c6cd63864e04de4592a5179050ff1b1f91`. The older
+  `codex-4444-annexb-regexp-compile-audit-20260920` worktree is preserved.
+- Only the 50-line direct `RegExp.prototype.compile` syntax guard was
+  reconciled onto the newer source, alongside the complete 12-control test
+  and an appended issue plan. The incoming global-match changes were retained;
+  the direct compile function itself was unchanged upstream. No IR, layout,
+  or `expressions.ts` change was made.
+- Production file SHA256:
+  `243d13a6230714cfee2420fb64e1b6f7c68c208be1f90b3537671a8700b462f9`.
+  `tests/issue-5198-regexp-compile-syntax.test.ts` SHA256:
+  `872287be75fd47de8b0fdb9b6e27c32802af44a279237212b416b5b4d65cf871`.
+- Current ac76 candidate compact run: **8P/4F**. Both lanes retain failures
+  for shadowed `undefined` and abrupt receivers. The standalone abrupt case
+  refuses a RegExp value not created by the backend; the other three return
+  wrong values. Invalid-pattern state preservation, receiver evaluation, and
+  valid-but-unsupported poison controls pass. Candidate log:
+  `.tmp/5198-annexb-compile-syntax-candidate-ac76-rerun-20260920.log`.
+  An earlier missing-dependency attempt ran no tests and is setup evidence only.
+- The new clean-ac76 baseline fixture is prepared but **not run**. Historical
+  f352 comparisons were compact **6P/6F to 8P/4F** and four originals
+  **2P/2F to 4P/0F**; do not substitute those for a current paired comparison.
+- The exact 20-file goal subset is frozen at
+  `.tmp/5198-annexb-compile-es2015-20.txt`, SHA256
+  `67d0af1ee37b488d35ff76dd543c02021f58b7092e4d65a95529cce8536ebef3`.
+  It is the verified directory intersection of the frozen 11,778-file ES2015
+  manifest (SHA256 `f2fdd4e4544a44608f0b53d89d343526cfa9c9044ca263e860da949dc1a2f59f`)
+  with corpus `b363f29d3c43c626dc852744ad64a0b48a003693`; all paths exist.
+
+On resume: first complete the byte-identical current compact A/B, then run
+`tests/issue-4439.test.ts` and the frozen original paths with the maintained
+isolated standalone runner. The current poison suite, original-four rerun,
+and full20 A/B remain unrun. Preserve all raw failures; obtain ownership
+clearance before any `expressions.ts` fix for shadowed undefined. Do not touch
+the separate old strict-nonglobal #5198 worktree whose extraction awaits
+approval. Before marking the checkpoint ready, finish the missing validation
+and repair the residuals; never claim focused checks establish 100% ES2015
+conformance. Checkpoint publication used the repository-sanctioned fast
+pre-commit mode after the full hook reproduced the recorded 8P/4F result.
+Mandatory pre-push typecheck, lint, formatting, oracle/coercion ratchets,
+numeric-local regression tests (18/18), and issue integrity passed. The raw
+expectations were not weakened. Publication readback was draft and behind main.
+
+Completed adjacent work is already in upstream PRs #6007, #6008, #6009, and
+#6010. The validated dynamic capture-index slice is in ready PR
+[#6012](https://github.com/loopdive/js2/pull/6012), head
+`58cd381ff24e580c55f9c2449aba74b591a75e24`; its local gates passed, with
+69 semantic fixture passes, four explicit expected failures, and two original
+Test262 preservation passes. The subsequent user-requested shepherd read
+confirmed it clean and mergeable, with all active CI checks successful and no
+unresolved review threads. A subagent performed that one-shot audit, but this environment has no webhook
+subscription tool; no polling, enqueueing, or merging is scheduled.
+
+The last complete goal census remains **10,377/11,778** at `f3520ca177`.
+These subsequent focused fixes are not a replacement full census. All local
+test processes were terminal at wrap-up; implementation work stops here until
+requested again.
 
 ## 2026-09-20 global `@@match` plain-array result-shape follow-up
 
@@ -1668,6 +1737,176 @@ value-copy object. No type-wide marker, raw-present-gated cache, or
 shared-source-spelling policy is acceptable: aliases and already-observed
 references must remain stable after a numeric overwrite or `exec` writeback.
 
+### 2026-09-20 narrow `$Object` ToNumber repair plan
+
+This is a prerequisite for the remaining dynamic `lastIndex` / custom-`exec`
+controls, not a claim that any additional RegExp Test262 row has passed. The
+standalone receipt's direct `marker.valueOf()` and saved-method call both pass,
+but `Number(marker)` returns `0`. The receiver is deliberately the small
+CS1a carrier shape:
+
+```ts
+const marker: any = { valueOf: function () { return 7; } };
+Number(marker);
+```
+
+The explicit `any` context selects the open runtime `$Object` builder
+(`literals.ts::objectLiteralTakesStandaloneAnyObjectPath`), and the CS1a slot
+rule preserves it as `ref $Object` (`statements/variables.ts`,
+`objectLiteralIsStandaloneAnyObjectCarrier`). `coerceType`'s `ref -> f64`
+arm, however, only enters its ToPrimitive lowering when
+`typeIdxToStructName` names a nominal struct. `$Object` is published through
+`ctx.objectRuntimeTypes.objectTypeIdx` but deliberately has no such name-map
+entry, so the current arm falls through to `drop; f64.const 0` without a
+`Get(valueOf)`.
+
+ECMA-262 [ToNumber](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-tonumber)
+requires an Object operand to first perform
+[ToPrimitive(argument, number)](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-toprimitive).
+Absent an exotic `@@toPrimitive`,
+[OrdinaryToPrimitive](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-ordinarytoprimitive)
+uses `valueOf` before `toString`, calls each with the original receiver, returns
+the first primitive result, and propagates an abrupt completion unchanged.
+
+#### Narrow implementation contract
+
+1. In `src/codegen/type-coercion.ts::coerceType`, retain the existing
+   native-string arm unchanged. Immediately after it, before the
+   `__insideValueOfCoercion` flag is set and before the nominal
+   `typeIdxToStructName` lookup, recognize exactly
+   `typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx`.
+2. For that one runtime type in standalone with the numeric hint, call a new
+   narrowly exported `emitStandaloneObjectToNumber(ctx, fctx, hint)` from the
+   existing `tonumber-fast-paths.ts` module and return only when it accepts the
+   already-present struct ref. It must prove/prepare every dependency before
+   emitting `extern.convert_any`, so an unavailable provider falls through with
+   the original stack untouched. With fused ToNumber enabled it invokes the
+   existing native `__to_number`; with fusion disabled it emits the same
+   `__to_primitive` path followed by the existing `symbolThrowArm` and only then
+   `__unbox_number`, using a fresh externref scratch local rather than the
+   fused helper's fixed local 2. `emitToPrimitiveHostCall(..., "f64", ...)`
+   alone is insufficient: it sends a Symbol primitive straight to
+   `__unbox_number`, whose deliberate result is NaN for property-key probing,
+   while ToNumber must throw TypeError.
+3. Do not add a nominal name-map entry, generic any boxing, runtime map
+   registration, a host import, or a new acceptance/refusal gate. The runtime
+   `__to_primitive`, fused `__to_number`, union helpers, and Symbol throw
+   machinery are native dependencies already owned by the standalone route.
+   This must be confirmed with the zero-host-import receipt, not assumed from
+   source spelling. The raw `$Object` branch must not invoke the SMI-only
+   fast-path when fusion is disabled: that representation cannot be i31, and
+   that fast path's existing slow arm owns a fused-helper-specific local-index
+   contract.
+4. The branch deliberately precedes the re-entrancy bookkeeping, so it has no
+   cleanup state to restore. It delegates all observable method order,
+   `@@toPrimitive` precedence, receiver identity, and abrupt completion
+   handling to the current `$Object` `__to_primitive` helper rather than
+   replaying any AST expression.
+
+The only production files intended for this repair are
+`src/codegen/type-coercion.ts` and the existing
+`src/codegen/tonumber-fast-paths.ts` provider module; this issue document and
+one focused regression test are the accompanying evidence. The branch is not a
+generic `ref -> f64` change: native strings, nominal structs, vectors, classes,
+unrelated refs, and the host compatibility lane retain their existing paths.
+
+#### Required receipt and controls
+
+Before source mutation, compile the exact standalone carrier source with
+`emitWat: true`, map WAT numeric call targets by import count plus defined
+function ordinal, and record both the runtime result and the producer/consumer
+mapping. Named-string searches alone are invalid evidence because WAT prints
+numeric call targets. The pre-change receipt must show that the `Number` body
+does not reach `__to_primitive`; the post-change receipt must map it to
+`__to_primitive`, then its `$Object` `__extern_get` / callable dispatch, and
+must show no `env` imports.
+
+The focused source matrix must separately assert:
+
+1. `valueOf -> 7` returns `7`, invokes only `valueOf`, and retains the
+   original `$Object` receiver;
+2. `valueOf -> "8"`, `true`, `null`, and `undefined` produce respectively
+   `8`, `1`, `0`, and `NaN` after the existing number frontier;
+3. an object result from `valueOf` continues once to `toString`, whereas a
+   primitive `valueOf` result does not call `toString`;
+4. an own `@@toPrimitive` has precedence and observes the literal hint
+   `"number"` where the admitted carrier representation supports it;
+5. a thrown object from `valueOf` is caught as the same object and does not
+   execute `toString`; and
+6. both methods returning objects throw the existing catchable `TypeError`; and
+7. a `Symbol` returned from either `valueOf` or `@@toPrimitive` throws the
+   existing catchable `TypeError`, both with default tuned flags and with
+   `JS2WASM_FUSED_TONUMBER=0`.
+
+Fresh-main receipt correction (2026-09-20): the original one-function source
+was compiled verbatim against both the recovery candidate and fresh
+`35e040c08ed10f793faf26bb0f0eac55be662627`. Both returned bitmask `3` (direct
+and saved method calls pass; `Number` fails), with zero imports. Its emitted
+`marker` local is `(ref null 77)`, the runtime `$Object` type, rather than the
+generic `externref` produced by a multi-export control that reuses a growable
+binding name. With `optimize: false`, the `try_table` producer for `coerced`
+is already `f64.const 0`; source inspection identifies the pre-peephole cause
+as this arm's `drop; pushDefaultValue(..., f64)`. Earlier `__to_number` calls
+in the same emitted function belong to the direct/saved-call bookkeeping and
+are not evidence that the `Number(marker)` expression reached that helper.
+
+The focused regression must also sequence one raw `$Object` coercion and one
+unrelated closed/nominal-object coercion in the same compilation under distinct
+binding names. That proves this branch neither changes the latter producer nor
+leaves `__insideValueOfCoercion` set for later lowering.
+
+Run those controls in standalone with `WebAssembly.Module.imports(...) === []`,
+then preserve an unrelated ref/numeric coercion control plus host and WASI
+compile/instantiation controls. The host/WASI cases are non-claims for the
+CS1a `$Object` branch itself (that carrier is standalone-only); they establish
+that the exact type-index predicate neither changes their producer selection
+nor introduces a host dependency. The original raw-lastIndex/custom-exec
+receipt remains a downstream integration control, not a substitute for this
+isolated ToNumber proof.
+
+#### Deferred independent FUSED-off SMI validation defect
+
+This is a separate compiler-validation defect recorded here pending allocation
+of its own indexed issue. It is **not** part of the narrow raw-`$Object`
+repair, does not relax its controls, and must not be presented as a RegExp
+protocol gain.
+
+With the exact one-function receipt above compiled in standalone mode on Node
+`v24.19.0`, `emitWat: true`, `optimize: false`,
+`JS2WASM_FUSED_TONUMBER=0`, and default SMI settings, both fresh
+`35e040c08ed10f793faf26bb0f0eac55be662627` and this repair candidate fail
+before execution with the same error:
+
+```text
+CompileError: WebAssembly.Module(): Compiling function #52:"directNumberTrace"
+failed: any.convert_extern[0] expected type externref, found local.tee of type
+(ref null 77) @+56305
+```
+
+The repair candidate changes the `Number(marker)` body from `f64.const 0` to
+the intended `$Object` `__to_primitive`, Symbol guard, and `__unbox_number`
+sequence, but the validation error is identical on the clean baseline. It is
+therefore an independent existing path. With
+`JS2WASM_SMI_FASTPATH=0`, the candidate's unfused focused matrix passes on the
+same Node runtime.
+
+The source cause is confined to
+`src/codegen/tonumber-fast-paths.ts::tryEmitFastToNumber`: its SMI-enabled,
+FUSED-off slow arm calls `slowChainInstrs`, which uses
+`symbolThrowArm(ctx)`'s fixed local `2`. That local is valid only in the fused
+helper, where it is the preallocated `externref` primitive. In an ordinary
+function it can be an application local such as `(ref null 77)`, so the arm
+emits `local.tee 2; any.convert_extern` against the wrong type.
+
+The bounded follow-up is to retain the fused helper's default local contract,
+but build the FUSED-off slow arm after its existing `tmp: externref` is
+allocated and pass that index through `slowChainInstrs` to `symbolThrowArm`.
+It must retain the Symbol-to-Number TypeError path, leave the `!smi && !fused`
+decline byte-identical, preserve detached-IR dynamic ToNumber lowering, and
+add no imports or generic-boxing changes. Until that separately scoped repair
+exists, the focused raw-`$Object` test scopes `JS2WASM_SMI_FASTPATH=0` only for
+its FUSED-off control; default-fused coverage retains normal SMI settings.
+
 For each delivery, run its exact rows and controls through fresh isolated host
 and standalone `run-test262-paths.mts` invocations. The exact ES2015
 `built-ins/RegExp/prototype/**` corpus is the 238-row intersection of the same
@@ -1693,3 +1932,17 @@ repository-hook evidence remains required before publication.
 ## References
 
 - #5142 (wave-1 plan), PRs #5179, #5213; #5200 (strict-rerun isolation).
+
+## 2026-09-24 — Annex B `compile` literal syntax check re-landed from draft PR #6014
+
+The narrow static syntax check from draft PR #6014 (Codex) was ported onto
+current main unchanged: when both `RegExp.prototype.compile` arguments are
+side-effect-free primitive literals (or `void 0`), an invalid pattern/flags
+pair throws SyntaxError after receiver and argument evaluation and before any
+receiver mutation. Standalone rows gained (measured by the triage run on
+2026-09-24, fail on main, pass with the change): `annexB/built-ins/RegExp/prototype/compile/pattern-string-invalid.js`,
+`pattern-string-invalid-u.js`, `duplicate-named-capturing-groups-syntax.js`.
+Its two unfixed cases stay open here rather than pinned as failing tests: a
+shadowed `undefined` parameter passed as flags, and an abrupt receiver before
+an invalid literal.
+

@@ -161,6 +161,23 @@ function classifyBuiltin(name: string): HostImportPolicy {
 }
 
 /**
+ * #6707: `env.__exn` is the one `WebAssembly.Tag` the JS embedder hands to
+ * every module of a linked graph (`sharedExceptionTag`, package linker) so a
+ * provider's throw is catchable in its consumer. It is instance/link wiring,
+ * not an ECMAScript semantic fallback; a host-free build keeps a module-local
+ * tag, so the native fallback is real. Environment-shaped, so it classifies
+ * identically with or without the native regime.
+ *
+ * Keyed on the non-`func` kind as well as the name: the import manifest records
+ * a wasm `tag` import as `kind: "global"` with an untyped `builtin` intent, and
+ * both the compile-time publication gate and the native-first runtime adapter
+ * gate classify that manifest descriptor, so this is the one place both see.
+ */
+function isSharedExceptionTag(descriptor: ImportDescriptor): boolean {
+  return descriptor.module === "env" && descriptor.kind !== "func" && descriptor.name === "__exn";
+}
+
+/**
  * Classify an emitted `env` import by its typed intent. The exhaustive switch
  * makes a new intent a compile error until policy is chosen; name-based
  * `builtin` fallbacks may still return `unknown`, which is deliberately loud.
@@ -171,6 +188,15 @@ export function classifyHostImport(descriptor: ImportDescriptor, environment?: C
   }
   if (environment === "none" && isDomCapabilityImportDescriptor(descriptor)) {
     return policy("platform-capability", "dom", 4576, false, "explicit bounded DOM subtree capability");
+  }
+  if (isSharedExceptionTag(descriptor)) {
+    return policy(
+      "instance-lifecycle",
+      "shared-exception-tag",
+      5226,
+      true,
+      "linker-owned shared exception tag; a host-free build keeps a module-local tag",
+    );
   }
   const intent = descriptor.intent;
   switch (intent.type) {

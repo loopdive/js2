@@ -29,6 +29,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
 
 const I31_HEAP_TYPE = -20;
 
@@ -145,16 +146,8 @@ function bigintArm(ctx: CodegenContext): Instr[] {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 2 },
-            { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-            { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-            { op: "local.get", index: 3 },
-            { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-            { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-            { op: "i64.eq" },
-            { op: "return" },
-          ],
+          // (#6656) exact for a value past i64, not just its low 64 bits.
+          then: [...bigIntCarrierEqInstrs(ctx, 2, 3), { op: "return" }],
         },
         { op: "i32.const", value: 0 },
         { op: "return" },

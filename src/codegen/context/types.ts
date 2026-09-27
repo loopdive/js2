@@ -176,6 +176,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
+  runtimeEvalProvider?: boolean; // see CompileOptions.runtimeEvalProvider (#6676)
   /**
    * (#4035) Host-bridge export policy — see `CompileOptions.hostBridge`.
    * `"auto"` (default) resolves to `"always"` for js-host and `"off"` for
@@ -1689,6 +1690,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   stringGlobalMap: Map<string, number>;
   /** Host-string globals needed beside native-string literals at JS boundaries. */
   hostStringGlobalMap: Map<string, number>;
+  /**
+   * (#1058) Throw-message strings whose import registration is deferred to the
+   * end of the body phase; undefined when deferral is inactive. See
+   * `deferrableStringConstantGlobalGet` in registry/imports.ts.
+   */
+  deferredStringConstants?: Set<string>;
+  /** (#1058) Outlined dynamic-call ladders: shape key → helper function name. */
+  outlinedDynamicCallHelpers?: Map<string, string>;
   /** Number of imported globals (string constants) */
   numImportGlobals: number;
   /** Whether wasm:js-string imports have been registered */
@@ -2521,6 +2530,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arrayToPrimitiveReserved?: boolean;
   /**
+   * (#6651 TA1) True once a `toLocaleString` join reserved the
+   * `__num_to_locale_string` placeholder (num-to-locale-string.ts). Filled by
+   * `fillNumberToLocaleString` at finalize rather than at the call site, because
+   * whether the element Invoke may consult the `Number.prototype` brand
+   * companion depends on the `nativeProtoSeedersByBrandOffset` registry, which is
+   * only complete after `ensureObjectRuntime` flushes its pending seeders.
+   */
+  numToLocaleStringReserved?: boolean;
+  /**
+   * (#6651 TA1) True once an `any`-receiver `.toLocaleString()` call site
+   * reserved the `__ta_to_locale_string` placeholder — §23.2.3.29 over a
+   * `$__ta_dyn_view`, the spelling test262's `testWithTypedArrayConstructors`
+   * produces. Same finalize-fill reason as `numToLocaleStringReserved`.
+   */
+  taToLocaleStringReserved?: boolean;
+  /**
    * (#2638) True once `__to_primitive` has reserved the `__class_to_primitive`
    * driver — standalone routing of a nominal CLASS-instance struct (neither
    * `$Object` nor `$Vec`) through the per-struct `__call_valueOf`/`__call_toString`
@@ -2776,6 +2801,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standaloneRuntimeKeyClassProtos: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
+
+  /**
+   * (#6656 slice 3) Functions whose wasm RESULT was proven to be a
+   * bigint-branded i64 even though TypeScript types their return `number` — a
+   * BigInt kernel in untyped JS (`function mul(a, b) { return a * b; }`).
+   * `typeof` folds from the static type, so without this record
+   * `typeof mul(6n, 7n)` answered the constant `"number"` for a call that
+   * returns a real BigInt.
+   */
+  bigIntKernelFunctions: Set<string>;
   /** Rest parameter info per function (functions with ...rest syntax) */
   funcRestParams: Map<string, RestParamInfo>;
   /**
@@ -3786,6 +3821,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /**
+   * (#6651 cluster C) `__new_<Error>` bodies whose message operand still needs
+   * the §20.5.1.1 step-3 `undefined` test woven in at FINALIZE — the
+   * `$AnyValue` carrier the test reads is not reserved when those
+   * constructors are emitted. Drained by `fillErrorCtorUndefinedMessage`.
+   */
+  errorCtorMessageSlots?: { funcIdx: number; argCount: number }[];
+  /**
    * Extra properties for empty object variables.
    *
    * (#3364) Keyed by a PER-DECLARATION key (`widenedVarKey`, name + decl start
@@ -4013,6 +4055,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   nativeBoxNumberTypeIdx: number;
   nativeBoxBooleanTypeIdx: number;
   nativeBigIntTypeIdx: number;
+  /** (#6656) `$BigIntWide` (subtype of `$BigInt`) and its limb array; see bigint-wide.ts. */
+  nativeBigIntWideTypeIdx?: number;
+  nativeBigIntLimbsTypeIdx?: number;
   /** Cache for function reference wrappers: signature key → ClosureInfo */
   funcRefWrapperCache: Map<string, ClosureInfo>;
   /** #3371: constructible ordinary-function wrapper subtypes, keyed by signature. */
@@ -4198,6 +4243,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   nativeGlobalThisSeedBuilding?: boolean;
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
+  runtimeEvalProviderAbsent?: boolean; // (#6676) standalone, no runtime-eval provider linked
   /** Private externref-array carrier used only by reified JS-host direct eval. */
   hostRuntimeEvalVecTypeIdx?: number;
   /** (#2141 S1) Honest generic `any` boxing regime flag — see the
@@ -4853,3 +4899,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
 }
 
 export type { SourcePos };
+
+/**
+ * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
+ * question only (`targetProfile.environment !== "javascript"`); which
+ * ECMAScript implementation lowers the module is `ctx.standalone`. Console
+ * sinks and other environment-shaped arms key on this, never on the regime.
+ */
+export function hostFreeEnvironment(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.environment !== "javascript";
+}
+
+/**
+ * (#5385 S2, #6686) Does the module keep the JS VALUE bridge (string marshal,
+ * admitted-object MOP, callbacks)? `"required"` = JS embedder + bridge on; the
+ * host-free `hostBridge: "always"` projection (`"enabled"`) may not import it.
+ */
+export function jsValueBoundary(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.hostValueInterop === "required";
+}

@@ -61,6 +61,15 @@ export interface CompileTargetProfile {
   readonly hostValueInterop: HostValueInteropPolicy;
   readonly strictEnvImportGate: boolean;
   readonly nativeStringsRequiredByPolicy: boolean;
+  /**
+   * (#5385) Whether codegen lowers with the native semantic REGIME — the
+   * `ctx.standalone` provider arms — rather than the host-assisted one. True
+   * for the standalone target and for an explicitly selected native-first
+   * policy in a JavaScript environment. This answers "which ECMAScript
+   * implementation runs?"; `environment` / `hostValueInterop` still answer
+   * "who instantiates it and does it keep the JS value bridge?".
+   */
+  readonly nativeRegime: boolean;
   readonly ambientPlatform?: AmbientPlatform;
 }
 
@@ -113,6 +122,20 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           ? "required"
           : "off";
 
+  // (#5385 S5) The JS-environment arm is ON by default for an explicitly
+  // selected native-first policy: measured on nightly 36305955119 (2026-09-27,
+  // main @ 7443ab4826) the regime lane passes 35,384 / 48,735 test262 rows
+  // against 34,099 for the host-assisted lane and 35,237 for standalone, with
+  // the JS boundary suites green (#6685/#6686/#6687/#6689). `JS2WASM_NATIVE_REGIME_JS=0`
+  // is the one-release kill switch that restores the pre-S5 per-family reroute.
+  const nativeRegime =
+    target === "standalone" ||
+    (target === "gc" &&
+      environment === "javascript" &&
+      capabilityPolicy === "ambient-js" &&
+      semanticProviderSelection === "native-first" &&
+      process.env.JS2WASM_NATIVE_REGIME_JS !== "0");
+
   return Object.freeze({
     target,
     backend,
@@ -121,6 +144,7 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     semanticProviders,
     hostValueInterop,
     strictEnvImportGate,
+    nativeRegime,
     nativeStringsRequiredByPolicy:
       target === "standalone" || target === "wasi" || strictEnvImportGate || semanticProviders === "native-first",
     ambientPlatform: input.ambientPlatform ?? ambientPlatformOf(input),

@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { classConstructorIsOwnKey } from "./class-ctor-own-key.js"; // (#6651 C1) §15.7 own `constructor`
 import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { ts } from "../ts-api.js";
@@ -20,8 +21,9 @@ import {
 } from "./closures.js";
 import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
-import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
+import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`; (#6651 F4) helper-returned
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
@@ -32,7 +34,7 @@ import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r7) a pre-grow creates holes
-import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import type { InnerResult } from "./shared.js";
@@ -1115,8 +1117,21 @@ export function compileObjectDefineProperty(
   // lose the struct-accessor compiled-getter wiring).
   if (ctx.standalone) {
     const isProxyReceiver = (() => {
+      // (#6651 F3) The callee test is "does this `new` MAKE a proxy", not "is it
+      // spelled `Proxy`". `var p = new OProxy(t, h)` (`OProxy` =
+      // `$262.createRealm().global.Proxy`) mints a real `$Proxy` — the construct
+      // driver's carrier-identity arm does it — so `Object.defineProperty(p, …)`
+      // has to take the same dispatch route the literal spelling takes. On base
+      // it took the inline `__defineProperty_value` store instead and the define
+      // trap ran ZERO times (probed: `trapruns[A]` for four proxies, only the
+      // literal spelling). The §19.1.2.4-step-1 null hazard the surrounding
+      // comment guards against cannot reach this widening: the receiver's
+      // declaration is a `new`, which never evaluates to null or a primitive.
+      // Unshadowed `new Proxy(…)` is subsumed — the predicate answers
+      // `text === "Proxy"` for an un-aliased binding — and an alias hop is
+      // admitted only under its own single-assignment proof.
       const isNewProxy = (e: ts.Expression): boolean =>
-        ts.isNewExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Proxy";
+        ts.isNewExpression(e) && tracesToProxyConstructorValue(ctx, e.expression);
       // (#6494 S2) `Proxy.revocable(t, h)` returns `{proxy, revoke}`, so a
       // `<r>.proxy` READ is as provably a proxy as `new Proxy(...)` is — and it
       // is the ONLY spelling the revocation tests use. Without it a revoked
@@ -1152,8 +1167,23 @@ export function compileObjectDefineProperty(
         const init = declInitializerOf(recv);
         return init !== undefined && isProxyRevocableCall(init);
       };
-      const isProxyExpr = (e: ts.Expression): boolean =>
-        isNewProxy(unwrapTransparentExpression(e)) || isRevocableProxyRead(e);
+      // (#6651 F4) …and the third spelling F3 named as invisible to BOTH
+      // admissions: a proxy returned by a helper. `function mk(){ return new
+      // Proxy(t,h); } Object.defineProperty(mk(), …)` — and its one-hop twin
+      // `var m = mk()` — ran ZERO define-trap calls on this branch's base,
+      // because no predicate here traced a function's RETURN value. The hop
+      // (single statement, `return <expr>`, callee binding proven
+      // single-assignment) lives in `proxy-value-provenance.ts` so the read,
+      // write, construct and define sites all ask one question.
+      const isProxyExpr = (raw: ts.Expression): boolean => {
+        const e = unwrapTransparentExpression(raw);
+        if (isNewProxy(e) || isRevocableProxyRead(raw)) return true;
+        const returned = singleReturnExpressionOfCall(ctx, e);
+        return (
+          returned !== undefined &&
+          (isNewProxy(unwrapTransparentExpression(returned)) || isRevocableProxyRead(returned))
+        );
+      };
       if (isProxyExpr(objArg)) return true;
       const objInit = declInitializerOf(objArg);
       return objInit !== undefined && isProxyExpr(objInit);
@@ -1607,7 +1637,12 @@ export function compileObjectDefineProperty(
   // `emitExternDefinePropertyNoValue` → `__defineProperty_accessor` path). Splitting
   // on this bit fixes the `const o:any` accessor-get bug without regressing the
   // statically struct-typed (class-instance) accessor path.
-  const receiverIsStaticStruct = structName !== undefined;
+  // (#1691) JS host: a checker-struct binding whose physical slot is externref
+  // (an object literal with callable fields lowered to a host object) must take
+  // the runtime accessor path — a compiled `${struct}_get_<p>` is invisible to
+  // host [[Get]] and so to the iterator-protocol helpers.
+  const receiverIsStaticStruct =
+    structName !== undefined && (ctx.standalone || ctx.wasi || !bindingSlotIsExternref(ctx, fctx, objArg));
   // #4504: `C.prototype` is an inherited-descriptor owner, never the
   // instance's physical struct.  The historical static-struct accessor path
   // recorded `${C}_p` in `classAccessorSet`, which later made the closed-field
@@ -1703,7 +1738,13 @@ export function compileObjectDefineProperty(
     valueExpr === undefined || fields === undefined || fieldIdx < 0
       ? true
       : valueRepresentableInField(ctx, valueExpr, fields[fieldIdx]!.type);
+  // Array length is an exotic descriptor, not an ordinary struct field.
+  // Keep the runtime identity/descriptor checks in the existing vec overlay;
+  // a direct field store bypasses both deletion and non-configurable stops.
+  const needsArrayLengthDescriptor =
+    ctx.standalone && propName === "length" && structTypeIdx !== undefined && getVecInfo(ctx, structTypeIdx) !== null;
   const useStruct =
+    !needsArrayLengthDescriptor &&
     !_anyFlagDynamic &&
     !priorRuntimeDefine &&
     structTypeIdx !== undefined &&
@@ -3190,7 +3231,9 @@ function emitExternDefinePropertyNoValue(
   // a known struct field: the sidecar is the only store that compiled reads can
   // consult for `get: identifierRef` / `set: identifierRef` descriptors.
   const structProperty = resolveKnownStructProperty(ctx, objArg, propArg);
-  const isKnownStructField = structProperty.isKnown;
+  // (#6472) A TS-struct receiver that COMPILED to externref (host plain object)
+  // must reach `__defineProperty_value`; the compile-time-only path drops flags.
+  const isKnownStructField = structProperty.isKnown && objType.kind !== "externref";
   if ((forceRuntime || !isKnownStructField || isAccessorDesc) && propLocal !== undefined) {
     markRuntimeDefinedProperty(ctx, objArg, propArg);
     const propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
@@ -3201,7 +3244,12 @@ function emitExternDefinePropertyNoValue(
       const varName = ts.isIdentifier(objArg) ? integrityVarKey(ctx, objArg) : undefined; // (#3403) per-declaration key
       if (varName) {
         const key = `${varName}:${propName}`;
-        const existingFlags = ctx.definedPropertyFlags.get(key);
+        // (#6472) an existing literal field starts as a default data property
+        const existingFlags =
+          ctx.definedPropertyFlags.get(key) ??
+          (objType.kind === "externref" && structProperty.isKnown && !ctx.widenedDefinePropertyKeys.has(key)
+            ? PROP_FLAGS_DEFAULT_DATA
+            : undefined);
         const newFlags = applyDescriptorFlags(
           existingFlags,
           descWritable,
@@ -5220,6 +5268,17 @@ export function compilePropertyIntrospection(
     tsProps.add(prop.name);
   }
 
+  // (#6651 C1) §15.7 puts an own `constructor` on `C.prototype`
+  // (MakeConstructor) and on the class OBJECT when the body declares
+  // `static constructor(){}`. Neither is a declared class element, so the walk
+  // above cannot yield either and this fold answered a constant `false` — while
+  // standalone's prototype `$Object` (#3976) genuinely carried the property.
+  // Rule and evidence live in class-ctor-own-key.ts.
+  if (classConstructorIsOwnKey(ctx, receiverType, isPrototypeReceiver, isConstructorReceiver)) {
+    tsProps.add("constructor");
+    nonEnumerableTsProps.add("constructor");
+  }
+
   // Add synthetic own properties for callable types (functions/constructors).
   // ES spec: all functions have own "length" and "name" properties.
   // Non-arrow functions also have "prototype" as an own property.
@@ -5490,4 +5549,13 @@ export function compilePropertyIntrospection(
   }
   fctx.body.push({ op: "i32.const", value: 0 });
   return { kind: "i32", boolean: true };
+}
+
+/** (#1691) True when `expr` names a local / module global whose wasm slot is externref. */
+function bindingSlotIsExternref(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const localIdx = fctx.localMap.get(expr.text);
+  if (localIdx !== undefined) return getLocalType(fctx, localIdx)?.kind === "externref";
+  const globalIdx = ctx.moduleGlobals.get(expr.text);
+  return globalIdx !== undefined && ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
 }

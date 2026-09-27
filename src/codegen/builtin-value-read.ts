@@ -17,6 +17,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { numberIsPredicateOps } from "./number-is-predicate-ops.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { emitStandaloneDateNowValue } from "./standalone-clock-capability.js";
 import { addUnionImports, TYPED_ARRAY_NAMES, typedArrayPackedSignedness } from "./index.js";
 import {
   coerceType,
@@ -1286,6 +1287,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     }
+    // (#6681) `Date.now` as a VALUE (lodash-es `_shortOut`): the direct call's
+    // own lowering, as `() -> f64` — the checker's `() => number` call ABI.
+    case "Date.now":
+      paramTypes = [];
+      returnType = { kind: "f64" };
+      break;
     default: {
       // (#2984 Phase 3) Any OTHER standard builtin static method — the
       // `BUILTIN_STATIC_METHOD_ARITY` membership is the complete own
@@ -1733,6 +1740,8 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           ],
         },
       );
+    } else if (key === "Date.now") {
+      emitStandaloneDateNowValue(ctx, closureFctx);
     } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
       // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
       // upstream module mints the `Math_<fn>` kernel late itself, so it needs

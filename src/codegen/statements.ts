@@ -119,7 +119,10 @@ function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.S
       anyCtx.__traceStmtFiles = new Map();
     }
     const files = anyCtx.__traceStmtFiles!;
-    if (!files.has(pos.file)) files.set(pos.file, files.size);
+    if (!files.has(pos.file)) {
+      files.set(pos.file, files.size);
+      console.error(`TRACE-FILE ${files.size - 1} = ${pos.file}`);
+    }
     fctx.body.push({ op: "f64.const", value: files.get(pos.file)! * 1e6 + pos.line });
     fctx.body.push({ op: "global.set", index: anyCtx.__traceStmtGlobalIdx });
   }

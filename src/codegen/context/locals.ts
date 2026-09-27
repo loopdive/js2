@@ -102,6 +102,13 @@ export interface LocalsSnapshot {
   readonly directEvalActivationEntries: ReadonlyArray<readonly [string, number]> | null;
   /** Hidden direct-eval state-pool local allocated by a speculative route. */
   readonly directEvalStatePoolLocal: number | null;
+  /**
+   * (#5383) `emitGuardedRefCast`'s pre-cast anyref slot (`__lastGuardedCastBackup`),
+   * which `emitNullCheckThrow` reads. Same family: a rolled-back probe left it
+   * naming a truncated slot, re-allocated as externref, so the committed null
+   * guard baked `local.get <externref>; ref.test <struct>` — invalid wasm.
+   */
+  readonly guardedCastBackup: number | undefined;
 }
 
 export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
@@ -119,6 +126,7 @@ export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
       ? Array.from(fctx.directEvalActivationBindings.entries())
       : null,
     directEvalStatePoolLocal: fctx.directEvalActivationStatePoolLocal ?? null,
+    guardedCastBackup: (fctx as { __lastGuardedCastBackup?: number }).__lastGuardedCastBackup,
   };
 }
 
@@ -221,6 +229,7 @@ export function restoreLocals(fctx: FunctionContext, snap: LocalsSnapshot): void
     }
   }
   fctx.directEvalActivationStatePoolLocal = snap.directEvalStatePoolLocal ?? undefined;
+  (fctx as { __lastGuardedCastBackup?: number }).__lastGuardedCastBackup = snap.guardedCastBackup;
   // Prune any temp-free-list entries that now point past the truncated vector.
   if (fctx.tempFreeList) {
     const maxValid = fctx.params.length + snap.localsLen;
@@ -270,6 +279,18 @@ export function getLocalType(fctx: FunctionContext, index: number): ValType | un
   if (index < fctx.params.length) return fctx.params[index]!.type;
   const localIdx = index - fctx.params.length;
   return fctx.locals[localIdx]?.type;
+}
+
+/**
+ * (#5383) The local named `name`, unless its slot is an i64 — the raw
+ * `local.get` fast path of `typeof x === "…"` feeds an externref helper, and a
+ * JS parameter typed from `2n` call sites is a bigint-branded i64 that must box
+ * as a BigInt (the caller's general path does), not be re-boxed as a NUMBER by
+ * the stack fix-up.
+ */
+export function externrefCompatibleLocal(fctx: FunctionContext, name: string): number | undefined {
+  const index = fctx.localMap.get(name);
+  return index === undefined || getLocalType(fctx, index)?.kind === "i64" ? undefined : index;
 }
 
 /**

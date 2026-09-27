@@ -43,7 +43,7 @@
  * `fillTaDynViewMopArms` (dyn-view arms must keep the front slot).
  * Standalone only (`ctx.externGetIdxReserved`); host output untouched.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import {
   ARGUMENTS_LENGTH_ABSENT_FIELD,
@@ -53,9 +53,11 @@ import {
   buildArgumentsLengthReviveCall,
 } from "./arguments-length-brand.js"; // (#4658)
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
+import { buildArrayLikeToLengthFromExternref } from "./object-runtime-enumeration.js"; // (#6651 cluster H)
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
+import { buildVecLengthHoleFill } from "./vec-length-hole-fill.js";
 
 /** `key == "length"` over an externref key (param `keyParam`); i32 on stack. */
 function keyIsLengthInstrs(
@@ -210,10 +212,21 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
             { op: "local.get", index: lAny },
             { op: "ref.cast", typeIdx },
             { op: "struct.get", typeIdx, fieldIdx: 1 },
-            { op: "array.len" },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [{ op: "i32.const", value: 0 }],
+              else: [
+                { op: "local.get", index: lAny },
+                { op: "ref.cast", typeIdx },
+                { op: "struct.get", typeIdx, fieldIdx: 1 },
+                { op: "array.len" },
+              ],
+            },
             { op: "local.tee", index: lCap },
             { op: "local.get", index: lNew },
-            { op: "i32.lt_s" },
+            { op: "i32.lt_u" },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -222,16 +235,23 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                 { op: "local.get", index: lNew },
                 { op: "array.new_default", typeIdx: arrTypeIdx },
                 { op: "local.set", index: lNewData },
-                // array.copy(newData, 0, vec.data, 0, cap)
-                { op: "local.get", index: lNewData },
-                { op: "ref.cast", typeIdx: arrTypeIdx },
-                { op: "i32.const", value: 0 },
-                { op: "local.get", index: lAny },
-                { op: "ref.cast", typeIdx },
-                { op: "struct.get", typeIdx, fieldIdx: 1 },
-                { op: "i32.const", value: 0 },
                 { op: "local.get", index: lCap },
-                { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // array.copy(newData, 0, vec.data, 0, cap)
+                    { op: "local.get", index: lNewData },
+                    { op: "ref.cast", typeIdx: arrTypeIdx },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.get", index: lAny },
+                    { op: "ref.cast", typeIdx },
+                    { op: "struct.get", typeIdx, fieldIdx: 1 },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.get", index: lCap },
+                    { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+                  ],
+                },
                 // vec.data = newData
                 { op: "local.get", index: lAny },
                 { op: "ref.cast", typeIdx },
@@ -244,6 +264,20 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
         },
       );
     }
+
+    const fillArms = buildVecLengthHoleFill(
+      ctx,
+      (name, type) => {
+        const index = 3 + setFn.locals.length;
+        setFn.locals.push({ name, type });
+        return index;
+      },
+      lAny,
+      lNew,
+      "both",
+      true,
+      true,
+    );
 
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
@@ -290,6 +324,7 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                   { op: "f64.const", value: 16777216 },
                   { op: "f64.le" },
                   { op: "if", blockType: { kind: "empty" }, then: growArms },
+                  ...fillArms,
                   // vec.length = newLen
                   { op: "local.get", index: lAny },
                   { op: "ref.cast", typeIdx: vecBaseIdx },
@@ -356,4 +391,72 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
     ];
     fn.body.splice(0, 0, ...arm);
   }
+
+  // ── 3. `__extern_length`: an arguments object's OWN ordinary `length` ─────
+  spliceArgumentsExternLengthArm(ctx, findFn("__extern_length"));
+}
+
+/**
+ * (#6651 cluster H) §10.4.4 — an arguments exotic object's `length` is an
+ * ORDINARY data property, NOT the Array-exotic index-domain length the shared
+ * `$__vec_base` prefix carries. `args.length = 6` (arm 1 above, and
+ * `member-set-dispatch.ts`'s `argumentsLengthSetArm`) therefore records the
+ * value in the `$__arguments_vec` override fields and deliberately leaves the
+ * physical backing alone.
+ *
+ * `__extern_length` — the array-like length every generic spec loop reads
+ * (`Array.prototype.concat`'s §23.1.3.1 walk, `Array.from`, the borrowed HOFs)
+ * — read field 0 regardless, so it answered the PHYSICAL count for an arguments
+ * object whose own `length` says something else. Measured on the branch base,
+ * standalone: after `args.length = 6` on a 3-argument `arguments`,
+ * `[].concat(args)` produced a THREE-element result where §23.1.3.1 wants six
+ * (three values + three holes) — test262 `built-ins/Array/prototype/concat/
+ * Array.prototype.concat_{sloppy-arguments,sloppy-arguments-with-dupes,
+ * strict-arguments}.js`.
+ *
+ * The conversion is the shared §7.1.20 `ToLength(ToNumber(v))` the `$Object`
+ * array-like arm uses, not a bare unbox: the stored value is an arbitrary JS
+ * value (propertyHelper writes the string `"unlikelyValue"` through this very
+ * path), and ToLength of a non-numeric one is 0 — never a fallback to the
+ * physical count.
+ *
+ * The override bit is set ONLY by an explicit write/define, so an untouched
+ * arguments object keeps the physical answer, and a module that never brands
+ * one is byte-identical: the arm is not emitted at all.
+ */
+function spliceArgumentsExternLengthArm(ctx: CodegenContext, lenFn: WasmFunction | undefined): void {
+  const argumentsTypeIdx = ctx.structMap.get("__arguments_vec");
+  if (!lenFn || argumentsTypeIdx === undefined) return;
+  const castArguments: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "ref.cast", typeIdx: argumentsTypeIdx },
+  ];
+  const arm: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: argumentsTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...castArguments,
+        { op: "struct.get", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_LENGTH_OVERRIDE_FIELD },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...castArguments,
+            { op: "struct.get", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_LENGTH_VALUE_FIELD },
+            ...buildArrayLikeToLengthFromExternref(ctx, ctx.symbolTypeIdx),
+            { op: "return" },
+          ],
+        },
+      ],
+    },
+  ];
+  // `__extern_length`'s 3-instr preamble leaves the receiver in local 1
+  // (`any`); locals 2..4 are the scratch the shared ToLength builder uses.
+  // Splicing at 3 keeps that preamble first — the discipline
+  // `fillExternArrayLikeStructArms` (#3169) follows — and lands this arm AHEAD
+  // of the `$__vec_base` field-0 arm, which an arguments vec matches too.
+  lenFn.body.splice(3, 0, ...arm);
 }

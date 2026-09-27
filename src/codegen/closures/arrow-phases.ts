@@ -272,6 +272,62 @@ function isEnclosingParameterBinding(fctx: FunctionContext, name: string): boole
   return localIdx !== undefined && localIdx < fctx.params.length;
 }
 
+function isNodeWithin(node: ts.Node, container: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (current === container) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether the closure's `name` references are the same-named mapped function
+ * declaration (so the name is a function reference, not a capture).
+ *
+ * (#6673) A name referenced ONLY from inside a nested closure has no shallow
+ * binding declaration, which used to count as "the function declaration".
+ * lodash's `mixin` shadows the top-level `function chain` with `var chain` and
+ * reads it only from the prototype-method closure nested in its `arrayEach`
+ * callback: the callback never captured `chain`, and the inner closure
+ * materialized the outer `chain` function value from `runInContext`'s local
+ * indexes. Resolve through nested scopes before calling it a function.
+ */
+function bindsMappedFunctionDeclaration(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+  shallowDeclaration: ts.Declaration | undefined,
+  mappedFunctionDeclaration: ts.Declaration | undefined,
+): boolean {
+  if (shallowDeclaration !== undefined) return shallowDeclaration === mappedFunctionDeclaration;
+  if (mappedFunctionDeclaration === undefined) return true;
+  const nested = referencedBindingDeclaration(ctx, arrow, name, true);
+  return nested === undefined || nested === mappedFunctionDeclaration;
+}
+
+/**
+ * (#6673) A lifted frame's hidden leading capture parameter that carries a
+ * capturing function DECLARATION's own binding is not a user parameter: the
+ * closure still invokes that declaration directly, so it must inherit the
+ * declaration's captures (lodash `baseMerge`'s `baseFor` callback doing
+ * `new Stack` — `Stack` is forwarded into `baseMerge` as a capture cell, and
+ * without this the callback read `Stack`'s `ListCache` from the owner frame's
+ * local index). Proven by slot provenance (the name still resolves to the
+ * frozen capture slot, not a same-named user parameter) and by the checker
+ * resolving the closure's reference to the declaration that owns the capture
+ * list.
+ */
+function isForwardedDeclarationCapture(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): boolean {
+  const slot = fctx.liftedCaptureSlots?.get(name);
+  if (slot === undefined || fctx.localMap.get(name) !== slot) return false;
+  const owner = ctx.funcMapOwnerDecl.get(name);
+  return owner !== undefined && referencedBindingDeclaration(ctx, arrow, name) === owner;
+}
+
 /**
  * Whether an inner closure is nested below a function parameter binding with
  * this spelling.  The checker can temporarily resolve a nested reference to
@@ -357,14 +413,18 @@ function referencedBindingDeclaration(
   ctx: CodegenContext,
   closure: ts.ArrowFunction | ts.FunctionExpression,
   name: string,
+  throughNestedScopes = false,
 ): ts.Declaration | undefined {
   let declaration: ts.Declaration | undefined;
   let ambiguous = false;
   const visit = (node: ts.Node): void => {
     if (ambiguous) return;
-    if (node !== closure && ts.isFunctionLike(node)) return;
+    if (node !== closure && ts.isFunctionLike(node) && !throughNestedScopes) return;
     if (ts.isIdentifier(node) && node.text === name && isCaptureValueReference(node)) {
       const resolved = ctx.oracle.valueDeclarationOf(node);
+      // (#6673) Through nested scopes, a reference bound INSIDE this closure
+      // (a nested scope's own shadowing binding) is not a free reference.
+      if (throughNestedScopes && resolved && isNodeWithin(resolved, closure)) return;
       if (!resolved || (declaration !== undefined && declaration !== resolved)) {
         ambiguous = true;
         return;
@@ -570,7 +630,7 @@ export function planClosureCaptures(
     ctx.nestedFuncCaptures,
     referencedNames,
     ownLocals,
-    (name) => isEnclosingParameterBinding(fctx, name),
+    (name) => isEnclosingParameterBinding(fctx, name) && !isForwardedDeclarationCapture(ctx, fctx, arrow, name),
   );
 
   // Detect which captured variables are written inside the closure body
@@ -754,7 +814,7 @@ export function planClosureCaptures(
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       !hasEnclosingParam &&
-      (bindingDeclaration === undefined || bindingDeclaration === mappedFunctionDeclaration) &&
+      bindsMappedFunctionDeclaration(ctx, arrow, name, bindingDeclaration, mappedFunctionDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) || !closureObservesBindingValue(arrow, name))
     ) {

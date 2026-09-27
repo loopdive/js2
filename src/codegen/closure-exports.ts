@@ -11,6 +11,7 @@ import { ts } from "../ts-api.js";
 import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
 import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
@@ -48,7 +49,7 @@ import {
 } from "./program-abi-planning.js";
 import { recordClosureArgcDispatcher, recordClosureFreeArgcDispatcher } from "./compiler-support-abi.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
-import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
+import { definedFuncAt, definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import {
   STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
   STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC,
@@ -360,6 +361,23 @@ function directClosureHostBridgeOrdinal(arity: number): number | undefined {
 
 function methodClosureHostBridgeOrdinal(arity: number): number | undefined {
   return arity >= 0 && arity <= 5 ? CLOSURE_HOST_BRIDGE_ORDINAL.methodCall0 + arity : undefined;
+}
+
+/**
+ * The closure host-bridge manifest is a FIXED 18-bit physical export family
+ * (`closureHostBridgeDefinition`): method dispatchers have slots for arities
+ * 0..8 and no more. An above-cap dispatcher (#6655) has no host caller — it
+ * exists solely so the in-module `__apply_closure` ladder has an arm to `call`
+ * for a 9+-formal closure — so it is published as an ORDINARY internal
+ * function instead of widening the published ABI. Same `funcMap` registration,
+ * no export, no manifest bit.
+ */
+const CLOSURE_METHOD_CALL_PUBLISHED_MAX_ARITY = 8;
+
+function publishInternalClosureMethodDispatcher(ctx: CodegenContext, func: WasmFunction): number {
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, func);
+  return funcIdx;
 }
 
 /**
@@ -753,8 +771,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // results (for example a reducer state read back from a combined object).
   // Host-free targets have no facade and must not acquire a host import.
   const needsHostFacadeUnwrap =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does
     entries.some((entry) => {
       const funcTypeDef = mod.types[entry.funcTypeIdx];
       return (
@@ -1015,14 +1032,12 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // thrown TypeError into an uncatchable `illegal cast` that way. Such an arm
     // simply does not match an under-applied call: fall through to the next arm
     // / the fallback, which is exactly what happened before the host learned to
-    // widen.
-    const padSafe = (padParamType: ValType | undefined): boolean =>
-      padParamType === undefined || padParamType.kind === "externref" || padParamType.kind === "ref_null";
+    // widen. See `closurePadSafe`.
     let requiredArgs = 0;
     for (let i = 0; i < entry.closureArity; i++) {
       const padParamType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      if (!padSafe(padParamType)) requiredArgs = i + 1;
+      if (!closurePadSafe(padParamType)) requiredArgs = i + 1;
     }
     const argcAdmits: Instr[] =
       requiredArgs === 0
@@ -1078,6 +1093,19 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     directClosureHostBridgeOrdinal(arity),
   );
   emitClosureCallArgcWrapper(ctx, arity, callFnFuncIdx, hostArgcGlobalIdx);
+}
+
+/**
+ * (#6491) Can a closure formal of this Wasm type receive the `undefined` pad of
+ * a widened under-applied call without trapping? A non-nullable ref cannot; an
+ * externref, a nullable ref (converted to `ref.null`), or an unconverted param
+ * can. (#1058) So can numeric formals: an f64 pad becomes the missing-argument
+ * sentinel (a default initializer then runs) and an i32 pad truncates to 0.
+ */
+function closurePadSafe(padParamType: ValType | undefined): boolean {
+  if (padParamType === undefined) return true;
+  const kind = padParamType.kind;
+  return kind === "externref" || kind === "ref_null" || kind === "f64" || kind === "i32";
 }
 
 /**
@@ -1344,6 +1372,43 @@ function methodHostCallableFallback(ctx: CodegenContext, arity: number): Instr[]
 }
 
 /**
+ * (#6655) The module's HIGHEST closure host-arity above `floor`, or `undefined`
+ * when every closure fits inside the contiguous `0..floor` dispatcher range.
+ *
+ * `__apply_closure`'s ladder had arms for `0..8` only, and the widened
+ * selector `n = max(argc, __closure_arity(fn))` rises to the callee's declared
+ * formal count — so a dynamic call to a 9+-formal function matched no arm and
+ * hit the bridge's arity-overflow `unreachable` instead of running.
+ *
+ * ONE dispatcher covers every above-cap arity, not one per arity.
+ * `emitClosureMethodCallExportN(N)` admits every closure whose host arity is
+ * `<= N` and calls each through its own funcref type with exactly that many
+ * arguments, so `__call_fn_method_<top>` invoked with `top` values (the bridge
+ * pads past `argc` with undefined) dispatches a 12-formal callee just as
+ * correctly as a 14-formal one. Minting per-arity was measurably wasteful: the
+ * `PlainDateTime/from/argument-string-offset.js` consumer declares 12 AND 14,
+ * and two full dispatcher ladders pushed its compile from ~25 s to 39.5 s —
+ * past the runner's 30 s budget, turning the fix into a `compilation timeout`.
+ */
+export function topHighClosureMethodCallArity(ctx: CodegenContext, floor: number): number | undefined {
+  // Only the in-module `__apply_closure` ladder calls an above-cap dispatcher,
+  // and that bridge is reserved on the standalone/wasi lanes alone. On the
+  // host/gc lane it would be unreachable bytes: measured +21,274 B on the
+  // `@js-temporal/polyfill` host provider (1,726,098 → 1,747,372) for code
+  // nothing can reach. Gate on the bridge itself so the host lane stays
+  // byte-identical.
+  if (ctx.applyClosureReserved !== true) return undefined;
+  let top: number | undefined;
+  for (const info of ctx.closureInfoByTypeIdx.values()) {
+    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
+    if (info.nativeProtoVariadic === true) continue;
+    const arity = closureHostArity(info);
+    if (arity > floor && (top === undefined || arity > top)) top = arity;
+  }
+  return top;
+}
+
+/**
  * Emit `__call_fn_method_<arity>` export (#1636-S1): call an N-arg WasmGC
  * closure from JS with a host-supplied `this`-value. Signature is
  * `(thisVal: externref, closure: externref, arg0..arg<arity-1>) -> externref`.
@@ -1357,7 +1422,7 @@ function methodHostCallableFallback(ctx: CodegenContext, arity: number): Instr[]
  *
  * Returns early when no closures of arity ≤ N exist (no export emitted).
  */
-export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number): void {
+export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number, minHostArity = 0): void {
   const mod = ctx.mod;
   const exportName = `__call_fn_method_${arity}`;
 
@@ -1382,13 +1447,26 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   const entries: ClosureDispatchEntry[] = [];
   const restEntries: ClosureDispatchEntry[] = [];
   // (#3992) Every native-proto METHOD closure of this arity — see the collector.
-  const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
+  // (#6655) An above-cap dispatcher carries no native-prototype receivers: it
+  // is reached only from `__apply_closure`'s `n > 8` arm, and a native proto
+  // method is claimed by its own front guard long before that. Measured 181
+  // such arms at arity 14 on a Temporal consumer — pure compile time, and one
+  // more chance to mis-claim a callee.
+  const nativeProtoReceiverEntries = minHostArity > 0 ? [] : collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
     if (info.nativeProtoVariadic === true) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
+    // (#6655) An above-cap dispatcher carries ONLY the above-cap closures. It
+    // is reached solely from `__apply_closure`'s `8 < n <= top` arm, where a
+    // callee of ordinary arity cannot be selected — and a full ladder at
+    // arity 14 duplicates every arm `__call_fn_method_8` already has, at 14
+    // argument slots each, which is pure compile time on the corpus's largest
+    // modules. `minHostArity` is 0 (and therefore inert) for every ordinary
+    // dispatcher.
+    if (hostArity < minHostArity) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
     if (typeDef.superTypeIdx === -1 && baseWrapperIdx === undefined) {
@@ -1435,8 +1513,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   // TypeScript's `isNodeArray` predicate can observe them. Keep this in exact
   // parity with emitClosureCallExportN's argument bridge above.
   const needsHostFacadeUnwrap =
-    !ctx.standalone &&
-    !ctx.wasi &&
+    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does
     entries.some((entry) => {
       const funcTypeDef = mod.types[entry.funcTypeIdx];
       return (
@@ -1695,9 +1772,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     for (let i = 0; i < entry.closureArity; i++) {
       const padParamType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      const padIsSafe =
-        padParamType === undefined || padParamType.kind === "externref" || padParamType.kind === "ref_null";
-      if (!padIsSafe) methodRequiredArgs = i + 1;
+      if (!closurePadSafe(padParamType)) methodRequiredArgs = i + 1;
       // Mirror the conversion EXACTLY, or the gate declines an arm the cast
       // would have accepted: the ref path runs only under
       // `needsExternToAnyForClosureParam`, and the vec-materializer route
@@ -1858,27 +1933,27 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   body.push({ op: "global.set", index: currentThisGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
 
-  const funcIdx = publishClosureHostBridge(
-    ctx,
-    {
-      name: exportName,
-      typeIdx: exportFuncTypeIdx,
-      locals: [
-        { name: "__any", type: { kind: "anyref" } },
-        { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
-        { name: "__funcref", type: { kind: "funcref" } },
-        { name: "__prev_this", type: { kind: "externref" } },
-        { name: "__result", type: { kind: "externref" } },
-        // (#3673 round 10) declared arity read off the root wrapper for the
-        // arity-bucketed signature dispatch (-1 = not root-readable).
-        { name: "__declared_arity", type: { kind: "i32" } },
-        { name: "__fallback_args", type: { kind: "externref" } },
-      ],
-      body,
-      exported: true,
-    } as WasmFunction,
-    methodClosureHostBridgeOrdinal(arity),
-  );
+  const internalOnly = arity > CLOSURE_METHOD_CALL_PUBLISHED_MAX_ARITY;
+  const dispatcherFunc = {
+    name: exportName,
+    typeIdx: exportFuncTypeIdx,
+    locals: [
+      { name: "__any", type: { kind: "anyref" } },
+      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
+      { name: "__funcref", type: { kind: "funcref" } },
+      { name: "__prev_this", type: { kind: "externref" } },
+      { name: "__result", type: { kind: "externref" } },
+      // (#3673 round 10) declared arity read off the root wrapper for the
+      // arity-bucketed signature dispatch (-1 = not root-readable).
+      { name: "__declared_arity", type: { kind: "i32" } },
+      { name: "__fallback_args", type: { kind: "externref" } },
+    ],
+    body,
+    exported: !internalOnly,
+  } as WasmFunction;
+  const funcIdx = internalOnly
+    ? publishInternalClosureMethodDispatcher(ctx, dispatcherFunc)
+    : publishClosureHostBridge(ctx, dispatcherFunc, methodClosureHostBridgeOrdinal(arity));
 
   // (#1719 CPR) Register in funcMap so the in-Wasm `__drive_proto_iterator`
   // driver (filled in post-processing) can resolve `__call_fn_method_0` by name

@@ -75,12 +75,19 @@ import {
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
+import {
+  bothOperandsAreBigIntCarriers,
+  emitTypeDisjointStrictEq,
+  tryCompileBigIntCarrierArithmetic,
+} from "./bigint-carrier-operands.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383) host-free any op bigint
 import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
+import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -828,13 +835,13 @@ export function compileBinaryExpression(
     }
   }
 
-  // Comma operator: (a, b) — evaluate a, drop its value, evaluate b
+  // Comma: discard a, then evaluate b with the expected result carrier.
   if (op === ts.SyntaxKind.CommaToken) {
     const leftType = compileExpression(ctx, fctx, expr.left);
     if (leftType) {
       fctx.body.push({ op: "drop" });
     }
-    const rightType = compileExpression(ctx, fctx, expr.right);
+    const rightType = compileExpression(ctx, fctx, expr.right, expectedType);
     // `compileExpression` intentionally exposes a successfully-emitted void
     // expression as `null`.  Propagate the inner VOID_RESULT sentinel here so
     // the transactional wrapper around the comma expression commits both
@@ -1077,8 +1084,14 @@ export function compileBinaryExpression(
         // write. Fields whose annotation admits `null` are excluded inside the
         // predicate — there `ref.null` is ambiguous.
         if (isStrictEqOp || isStrictNeqOp) {
+          // (#1058) A `let` declared without an initializer, or reset with
+          // `undefined!`, holds `undefined` in its null ref too. `=== null`
+          // keeps its test, so both strict arms stay runtime `ref.is_null`.
           const nullRepresentsUndefined =
-            nonNullUnionHasUndefined || isNullableNativeString || isUninitialisedFieldSlot;
+            nonNullUnionHasUndefined ||
+            isNullableNativeString ||
+            isUninitialisedFieldSlot ||
+            (nullSideIsUndefinedId && readsUndefinedHoldingVariable(ctx, nonNullExpr));
           const nullRepresentsNull =
             nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString && !isUninitialisedFieldSlot);
           const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
@@ -1855,13 +1868,7 @@ export function compileBinaryExpression(
           if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
           return { kind: "i32" };
         }
-        // Compile both sides for side effects, then drop them
-        const lt = compileExpression(ctx, fctx, expr.left);
-        if (lt) fctx.body.push({ op: "drop" });
-        const rt = compileExpression(ctx, fctx, expr.right);
-        if (rt) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: isStrictNeq ? 1 : 0 });
-        return { kind: "i32" };
+        return emitTypeDisjointStrictEq(ctx, fctx, expr, isStrictNeq);
       }
 
       // Loose equality and comparisons: convert both operands to f64, then compare
@@ -2075,6 +2082,13 @@ export function compileBinaryExpression(
       if (!noJsHost3481 && ctx.anyValueTypeIdx < 0 && nonBigIntIsObjectish && hostBinopCode !== undefined) {
         return emitHostBigIntOperation(ctx, fctx, expr, hostBinopCode);
       }
+      // (#5383) …and its host-free twin for an `any`/`unknown` operand.
+      const native = noJsHost3481
+        ? emitStandaloneAnyBigIntBinary(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType, hostBinopCode, () =>
+            compileI64BinaryOp(ctx, fctx, op, expr),
+          )
+        : undefined;
+      if (native !== undefined) return native;
       // Compile both sides for side effects, drop their values, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);
       if (lt) fctx.body.push({ op: "drop" });
@@ -2502,8 +2516,12 @@ export function compileBinaryExpression(
   //   `hasI32LocalOperand`     — relational only, both sides proven i32
   //   `arithI32WithToInt32Wrap`— an enclosing ToInt32 makes the wrap observable-equal
   //   `bitwiseI32`             — the op itself is ToInt32-defined
-  const numericHint: ValType | undefined =
-    isNumericOp || bothStaticNumberEq
+  // (#6656 slice 3) An f64 hint rounds a proven bigint-carrier pair past 2^53 —
+  // see `bigint-carrier-operands.ts` for why the brand is the proof.
+  const bigIntCarrierPair = (isNumericOp || bothStaticNumberEq) && bothOperandsAreBigIntCarriers(ctx, fctx, expr);
+  const numericHint: ValType | undefined = bigIntCarrierPair
+    ? { kind: "i64" }
+    : isNumericOp || bothStaticNumberEq
       ? {
           kind:
             (bothNativeI32 || hasI32LocalOperand || arithI32WithToInt32Wrap || bitwiseI32) && !isDivOrPow
@@ -2626,6 +2644,10 @@ function compileAnyBinaryDispatch(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): InnerResult {
+  // (#6656 slice 3) `any + any` is `any`, never `number`, so a bigint pair
+  // reaching this dispatch would be boxed through `__any_box_f64` and rounded.
+  const bigIntArith = tryCompileBigIntCarrierArithmetic(ctx, fctx, expr, op);
+  if (bigIntArith !== undefined) return bigIntArith;
   // (#1917 Step E3) Equality (`==`/`===`/`!=`/`!==`) is the dispatch layer the
   // coercion engine owns: `emitStrictEq`/`emitLooseEq` select the helper, box
   // both operands, emit the call, and negate for `!=`/`!==`. This is a

@@ -15,6 +15,16 @@ goal: spec-completeness
 parent: 1665
 assignee: ttraenkler/codex-es6-yieldstar-throw
 related: [1042, 1665, 2170, 2173, 3711]
+# 2026-09-24 (#1691 host port): the host lane reuses the existing protocol
+# delegation state machine; growth is the host import swap + admission gates.
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+  - src/codegen/object-ops.ts
+func-budget-allow:
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
+  - src/codegen/generators-native.ts::ensureNativeGeneratorResumeFunction
+  - src/codegen/generators-native.ts::registerNativeGenerator
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
 ---
 # #1691 — yield* does not delegate throw()/return() to the inner iterator
 
@@ -231,3 +241,64 @@ bounded protocol-completion slice.
   rewrite, runner exemption, or host-oracle dependency is introduced.
 - The upstream PR uses the exact Description/CLA template and remains draft
   until the scoped fix is complete, current-main based, CI-green, and mergeable.
+
+## Progress 2026-09-24 — JS-host lane port (branch `yieldstar-host`)
+
+Standalone already passes all 13 rows on main (#4689's protocol delegation arm,
+`emitGenericDelegationState` over the native `__gen_delegate_start/step`
+runtime). The JS-host lane still failed all 13 (linked and honest oracle): every
+host `function*` containing `yield*` was excluded from native routing
+(`bodyHasHostUnsupportedYieldShape`) and fell to the eager `__gen_yield_star`
+drain, which never sees `throw()`.
+
+Why this shape, not #5063's: the stale draft (#5063) added a separate
+`__iterator_throw` abrupt arm to the old non-protocol state. Main has since
+grown a complete protocol state machine (unwind walk, try-region routing,
+return completion) — so the host port reuses that emitter and swaps only the
+two runtime calls. Reusing the native `__gen_delegate_*` runtime itself in the
+host lane was tried first and rejected: it drags in the native-strings stdlib
+(`__str_trimStart needs string.len …`) and fails to compile.
+
+- `generators-native.ts`: host `yield*` admitted; a generic-iterable delegate
+  takes the protocol arm in both lanes. Native-gen and numeric-vec delegates
+  still bail the host generator back to the eager path (unchanged host
+  behaviour). The #3050 host try-region bail is lifted only for protocol
+  delegates. `nativeDelegates` (the native helper/`executing` reservation) is
+  gated to standalone/WASI. The emitter calls `__iterator_strict` +
+  `__gen_yield_star_step` in the host lane and yields a plain carrier value
+  (`done: 0`) instead of the raw result (`done: -1`).
+- `runtime/strict-iterator-host.ts`: `yieldStarStep` — one §14.4.14 step 7
+  resumption (next/throw/return) with the same status ABI as the native step.
+- `object-ops.ts`: a checker-struct `Object.defineProperty` receiver whose
+  physical slot is externref (host) takes the runtime accessor path, so a
+  `throw`/`return` getter is visible to the host protocol (ported from #5063,
+  narrowed to the JS host).
+
+Measured (`scripts/run-test262-paths.mts --isolate`, same box, base = pristine
+`git archive` of the fork point):
+
+| Slice | before | after |
+| --- | --- | --- |
+| 13 `star-rhs-iter-thrw-*` host (honest) | 0/13 | 12/13 |
+| same, `TEST262_ORACLE_MODE=linked` | 0/13 | 12/13 |
+| same, standalone | 13/13 | 13/13 |
+| host control: `expressions/yield`, `statements/generators`, `expressions/generators` (237) | 135 | 164 (+29, 0 lost) |
+
+Standalone output is byte-identical: sha256 of all 237 control rows compiled
+`--target standalone` matches base exactly. A string delegate in a numeric
+host generator (`yield* 'abc'`) keeps the eager path — the f64 carrier would
+unbox the strings to NaN (caught as the one loss in the first control run).
+
+Follow-up (same day, PR #6096 CI): (1) generators NESTED inside a function keep
+the eager path when they contain `yield*` — a host for-of over a nested native
+generator already fails on main (`[object Object] is not iterable`, reproduced
+with no `yield*` at all), so admitting them regressed 3 host equivalence tests
+in `generator-yield-delegation.test.ts`. (2) The `__gen_yield_star_step`
+adapter now lives in `runtime/strict-iterator-host.ts` (`yieldStarStepImport`),
+keeping `runtime.ts` / `resolveImport` at net zero lines for the #4401
+host-import-policy budget.
+
+Residual: `star-rhs-iter-thrw-res-done-no-value.js` stays red in host — the
+host step reads IteratorValue eagerly for a not-done result, because the host
+result struct cannot re-yield the delegate's own result object (standalone
+does this with the `done: -1` raw-result sentinel and consumer-side unwrap).

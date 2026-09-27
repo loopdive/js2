@@ -137,7 +137,7 @@ import {
   reserveNativeGeneratorProtocolLookup,
   nativeGeneratorProtocolReadPrefix,
 } from "./generators-native-protocol.js";
-import { buildVecOrClosurePropSetMissArm } from "./vec-props.js";
+import { buildVecOrClosurePropMethodCallElseArm, buildVecOrClosurePropSetMissArm } from "./vec-props.js";
 
 /** `(externref v) -> i32` — 1 iff `v` is an instance of a user-declared shape. */
 export const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
@@ -313,6 +313,79 @@ export function buildInstancePropGetArm(ctx: CodegenContext, scratchLocal: numbe
           op: "if",
           blockType: { kind: "empty" },
           then: [{ op: "local.get", index: scratchLocal }, { op: "return" }],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#6692) `__extern_method_call`'s instance consult — the CALL twin of
+ * {@link buildInstancePropGetArm}:
+ * `if (carrier(recv) && __instance_prop_get(recv, name) != null)
+ *    return __apply_closure(<that value>, recv, args)`, else FALL THROUGH.
+ *
+ * A computed write on a class instance (`this[m] = (a) => …`, hono's verb
+ * installer) lands in the instance's bag, and `var f = o.go; f(5)` already
+ * answered through `__extern_get`'s arm above. The CALL form never looked:
+ * a `$ClassName` struct is neither `$Object`, vec nor closure carrier, so it
+ * reached the terminal proto miss and threw "not a function".
+ *
+ * The bag read is side-effect free (lookup-only, never `ensure`), so it is
+ * repeated on a hit rather than cached — the arm needs no local and splices
+ * stack-neutrally at the head of the non-`$Object` branch. A miss (including
+ * every non-carrier) falls through to the unchanged chain. Params
+ * `(0 = recv, 1 = name, 2 = args)`; `calleeGuard` is the #4221 factory.
+ */
+export function buildInstanceOrVecOrClosurePropMethodCallElseArm(
+  ctx: CodegenContext,
+  externGetIdx: number,
+  applyClosureIdx: number,
+  calleeGuard: () => Instr[],
+): Instr[] {
+  return [
+    ...buildInstancePropMethodCallArm(ctx, applyClosureIdx, calleeGuard),
+    ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, calleeGuard),
+  ];
+}
+
+function buildInstancePropMethodCallArm(
+  ctx: CodegenContext,
+  applyClosureIdx: number,
+  calleeGuard: () => Instr[],
+): Instr[] {
+  const isIdx = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER);
+  const getIdx = ctx.funcMap.get(INSTANCE_PROP_GET);
+  if (isIdx === undefined || getIdx === undefined) return [];
+  // A factory: a shared `Instr` object would be double-remapped by finalize.
+  const bagRead = (): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: getIdx },
+  ];
+  const nullishToNull = ctx.funcMap.get("__nullish_to_null");
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: isIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...bagRead(),
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...bagRead(),
+            ...(nullishToNull !== undefined ? ([{ op: "call", funcIdx: nullishToNull }] satisfies Instr[]) : []),
+            ...calleeGuard(),
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: applyClosureIdx },
+            { op: "return" },
+          ],
         },
       ],
     },

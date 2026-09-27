@@ -27,15 +27,14 @@
  * array needs a per-vec-type `ref.test` ladder. Rather than write that ladder
  * twice more, both sites call THIS, and the rule lives in one place.
  *
- * ## Scope: the f64 carrier only, and that is exact
+ * ## Scope: numeric and opted-in reference Array carriers
  *
  * f64 is the carrier with a distinguishable absence marker (`HOLE_F64_BITS`, a
  * signaling NaN payload JS arithmetic cannot produce — `value-tags.ts`). Other
  * element kinds get nothing here: packed/byte/i32 carriers back typed arrays
- * and tuples, which have no holes by construction, and the externref carrier's
- * `$Hole` singleton is minted only in modules that already use array holes, so
- * forcing it here would mint a type — and shift every type index — in modules
- * that do not.
+ * and tuples. Reference callers opt in only when the pre-scan armed hole-aware
+ * reads. This compile-time emitter can reserve the Hole singleton; finalize-only
+ * dynamic length filling must instead use its already registered global.
  *
  * Call this BEFORE the `length` store: it needs the OLD length to know which
  * region the store is about to orphan.
@@ -48,7 +47,7 @@ import { HOLE_F64_BITS } from "./value-tags.js";
 import { holeSentinelInstrs } from "./array-holes.js";
 
 /**
- * Emit, for every f64-backed vec type, a guarded fill of
+ * Emit, for every admitted vec type, a guarded fill of
  * `[min(oldLen, newLen), array.len(data))` with the absence marker.
  *
  * `vecLocal` may be typed as any vec (concrete or `$__vec_base`) — the ladder
@@ -65,9 +64,8 @@ export function emitVecLengthHoleFill(
   //
   // Opt-in, and only sound when `ctx.usesArrayHoles` is already true: `$Hole`
   // is minted on demand, so asking for it in a module that has none would mint
-  // a type and shift every type index after it (the #2043 hazard). The two
-  // pre-existing callers keep the f64-only behaviour they were measured with;
-  // the `defineProperty(arr, "<index>", …)` pre-grow needs the wider set
+  // a type and shift every type index after it (the #2043 hazard). Length
+  // mutation and `defineProperty(arr, "<index>", …)` pre-grow need the wider set
   // because an EMPTY array literal (`var arr = []`, the receiver shape of
   // `15.2.3.6-4-{201,203,216,…}`) has no element-type evidence and is minted on
   // the externref carrier, where a default slot reads back as `null` — which
@@ -75,6 +73,30 @@ export function emitVecLengthHoleFill(
   // for an index the pre-grow had just invented.
   includeExternref = false,
 ): void {
+  fctx.body.push(
+    ...buildVecLengthHoleFill(
+      ctx,
+      (name, type) => allocLocal(fctx, `${name}_${fctx.locals.length}`, type),
+      vecLocal,
+      newLenLocal,
+      mode,
+      includeExternref,
+      false,
+    ),
+  );
+}
+
+/** Shared compile/finalize builder. Finalization may only read an existing Hole global. */
+export function buildVecLengthHoleFill(
+  ctx: CodegenContext,
+  local: (name: string, type: ValType) => number,
+  vecLocal: number,
+  newLenLocal: number,
+  mode: "shrink-only" | "both",
+  includeExternref: boolean,
+  finalized: boolean,
+): Instr[] {
+  const body: Instr[] = [];
   const f64Vecs: number[] = [];
   const externrefVecs: number[] = [];
   for (const vecTypeIdx of ctx.vecTypeMap.values()) {
@@ -87,17 +109,22 @@ export function emitVecLengthHoleFill(
     else if (elem === "externref" || elem === "ref_extern") externrefVecs.push(vecTypeIdx);
   }
   const holeVecs = includeExternref && ctx.usesArrayHoles ? [...f64Vecs, ...externrefVecs] : f64Vecs;
-  if (holeVecs.length === 0) return;
+  if (holeVecs.length === 0) return body;
 
-  const startLocal = allocLocal(fctx, `__vlhf_start_${fctx.locals.length}`, { kind: "i32" });
+  const startLocal = local("__vlhf_start", { kind: "i32" });
 
   for (const vecTypeIdx of holeVecs) {
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     const isExternrefCarrier = externrefVecs.includes(vecTypeIdx);
+    if (isExternrefCarrier && finalized && ctx.holeGlobalIdx === undefined) {
+      throw new Error("dynamic array length fill requires a pre-reserved Hole global");
+    }
     const markerInstrs: Instr[] = isExternrefCarrier
-      ? holeSentinelInstrs(ctx)
+      ? finalized
+        ? [{ op: "global.get", index: ctx.holeGlobalIdx! }, { op: "extern.convert_any" }]
+        : holeSentinelInstrs(ctx)
       : [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }];
-    const dataLocal = allocLocal(fctx, `__vlhf_data_${fctx.locals.length}`, {
+    const dataLocal = local(`__vlhf_data_${vecTypeIdx}`, {
       kind: "ref_null",
       typeIdx: arrTypeIdx,
     });
@@ -144,7 +171,7 @@ export function emitVecLengthHoleFill(
             { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
             { op: "local.tee", index: startLocal },
             { op: "local.get", index: newLenLocal },
-            { op: "i32.gt_s" },
+            { op: "i32.gt_u" },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -165,15 +192,16 @@ export function emitVecLengthHoleFill(
             { op: "ref.cast", typeIdx: vecTypeIdx },
             { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
             { op: "local.get", index: newLenLocal },
-            { op: "i32.gt_s" },
+            { op: "i32.gt_u" },
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: newLenLocal }, { op: "local.set", index: startLocal }, ...fillBody],
             },
           ];
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
-    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then });
+    body.push({ op: "local.get", index: vecLocal });
+    body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+    body.push({ op: "if", blockType: { kind: "empty" }, then });
   }
+  return body;
 }

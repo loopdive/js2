@@ -255,10 +255,9 @@ describe("#6648 capture-result numeric reads", () => {
     expect(ex.staticNegativeAndFractional()).toBe(1);
   });
 
-  // Triad-pinned residual: standalone dynamic string-key reads decline the
-  // dynamic vec reader before capture metadata can be consulted. Direct
-  // metadata reads below remain the #6648-preserved behavior.
-  it.fails("RESIDUAL: dynamic capture metadata keys do not yet reach the metadata reader", () => {
+  // #6009's landed dynamic-string reader reaches physical capture metadata.
+  // Keep this strict so the earlier residual pin cannot silently become stale.
+  it("preserves dynamic capture metadata keys", () => {
     expect(ex.dynamicMetadata()).toBe(1);
   });
 

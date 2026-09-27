@@ -65,6 +65,7 @@ import {
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   buildArgumentsToPrimitiveArm,
@@ -78,6 +79,7 @@ import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; //
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
 import { lazyStrFlattenEnabled, redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
+import { buildHashBucketDispatch } from "./hash-bucket-dispatch.js"; // (#6698) bounded nesting
 import {
   ensureAnyToStringHelper,
   ensureNativeStringBoundaryBridge,
@@ -86,6 +88,7 @@ import {
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
+import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -128,10 +131,11 @@ import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispat
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
-import { buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
+import { buildVecNumericKeyGetArm, buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
 // splices the declared-field write-through prologue onto `__extern_set`.
 import {
+  buildInstanceOrVecOrClosurePropMethodCallElseArm, // (#6692)
   buildInstanceOrVecOrClosurePropSetMissArm,
   buildInstancePropGetArm,
   reserveInstanceProps,
@@ -154,7 +158,6 @@ import {
 // arms (vec test first, unchanged closure arm as fallthrough).
 import {
   buildVecOrClosurePropGetMissArm,
-  buildVecOrClosurePropMethodCallElseArm,
   buildVecOrClosurePropSetMissArm,
   reserveVecPropHelpers,
 } from "./vec-props.js";
@@ -178,6 +181,7 @@ import {
   reserveProtoIndexStore,
 } from "./proto-index-store.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
+import { reserveVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3) own-method prefix to the vec arm
 import { excludeArgumentsArrayCarrier, holeTestInstrs } from "./array-holes.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
@@ -258,6 +262,7 @@ import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enu
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   emitStandaloneLinkBoundaryTerminals,
+  peerNullMethodResultInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
 } from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
@@ -3064,6 +3069,22 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ name: "o", type: objRef }],
       body,
     );
+    // (#6651 I4) `Object(sym)` — §7.1.18 ToObject, Table 13 Symbol row. The
+    // Symbol wrapper is the same `[[PrimitiveValue]]` `$Object` as every other
+    // wrapper, and the call site (emitObjectCoercion, calls-guards.ts) hands it
+    // an ALREADY-boxed value: the `$Symbol` carrier externref minted by
+    // `__box_symbol` (#2866). So the builder body is instruction-for-
+    // instruction `__new_String`'s — `emitWrapperBuildTail(0, 1)` and nothing
+    // else; neither builder inspects the value it wraps.
+    //
+    // Registered as an ALIAS onto that funcIdx rather than as a second copy.
+    // `ensureObjectRuntime` is an all-or-nothing block, so a duplicate function
+    // would grow EVERY standalone module (the #4034 unconditional-pull-in
+    // lesson) to serve the rare `Object(sym)`. The distinct name still keeps
+    // the call site readable and lets a future Symbol-specific wrapper (an own
+    // `@@toStringTag`, say) become a real function without touching callers.
+    const newStringIdx = ctx.funcMap.get("__new_String");
+    if (newStringIdx !== undefined) ctx.funcMap.set("__new_Symbol", newStringIdx);
   }
 
   // __new_Boolean(f64) -> externref : ToBoolean(arg) — the call sites coerce the
@@ -3444,21 +3465,26 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     { op: "local.set", index: 9 },
                   ] satisfies Instr[])
                 : ([
+                    // (#6689) TEST before the cast, as `__extern_get` does
+                    // (#4639): `foo.prototype = new Array(…)` leaves a vec in
+                    // the store. A non-`$Object` (or null) ends the explicit
+                    // walk; the companion tail still runs, a miss inserts own.
                     { op: "local.get", index: 0 },
                     { op: "call", funcIdx: fnctorProtoStartIdx },
                     { op: "local.tee", index: 10 },
-                    { op: "ref.is_null" },
+                    { op: "any.convert_extern" },
+                    { op: "ref.test", typeIdx: objectTypeIdx },
                     {
                       op: "if",
                       blockType: { kind: "empty" },
                       then: [
-                        { op: "ref.null", typeIdx: objectTypeIdx },
-                        { op: "local.set", index: 9 },
-                      ],
-                      else: [
                         { op: "local.get", index: 10 },
                         { op: "any.convert_extern" },
                         { op: "ref.cast", typeIdx: objectTypeIdx },
+                        { op: "local.set", index: 9 },
+                      ],
+                      else: [
+                        { op: "ref.null", typeIdx: objectTypeIdx },
                         { op: "local.set", index: 9 },
                       ],
                     },
@@ -5038,6 +5064,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
     const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
     const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
+    // (#6651 E3) …and the OWN-property OrdinaryToPrimitive step in front of it:
+    // §7.1.1 step 2 (`@@toPrimitive`) and §7.1.1.1's valueOf/toString cascade
+    // never ran for a vec carrier, so an own method on an Array or a TypedArray
+    // view was invisible. Same reserve/fill discipline; the filled body tails
+    // into `__array_to_primitive_string`, so this is strictly a prefix.
+    const vecOwnToPrimIdx = arrayLikeReduce ? reserveVecOwnToPrimitive(ctx) : -1;
     // (#2638) Standalone CLASS-instance → primitive. A nominal class struct is
     // neither `$Object` nor `$Vec`, so the `ref.test objectTypeIdx` arm below
     // misses it and ToPrimitive returns the struct unchanged → `__unbox_number`
@@ -5462,7 +5494,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: arrayToPrimIdx }, { op: "return" }],
+                  then: [
+                    { op: "local.get", index: 0 },
+                    // (#6651 E3) the own-method prefix; its own tail is
+                    // `__array_to_primitive_string`, so the join is unchanged.
+                    ...(vecOwnToPrimIdx >= 0
+                      ? ([
+                          { op: "local.get", index: 1 },
+                          { op: "call", funcIdx: vecOwnToPrimIdx },
+                        ] satisfies Instr[])
+                      : ([{ op: "call", funcIdx: arrayToPrimIdx }] satisfies Instr[])),
+                    { op: "return" },
+                  ],
                 },
                 // (#2638) A nominal CLASS instance is neither `$Object` nor `$Vec`.
                 // Route it through `__class_to_primitive(obj, stringHint)`, which
@@ -6738,12 +6781,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   blockType: { kind: "empty" },
                   then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
                 },
+                // (#5383) …or a peer method that returned `null` (see helper).
+                ...(boundaryObjectCallIdx === undefined
+                  ? peerNullMethodResultInstrs(ctx, peerMemberGetIdx, peerGetPrototypeOfIdx, boundaryCallResultLocal)
+                  : []),
               ] satisfies Instr[])
             : []),
           ...(reverseMethodCallIdx !== undefined && boundaryCallResultLocal !== undefined
             ? reverseMethodCallArmInstrs(reversePeerHops, boundaryCallResultLocal)
             : []),
-          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, resolvedMethodGuard),
+          ...buildInstanceOrVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, resolvedMethodGuard),
         ],
       },
     ];
@@ -6888,16 +6935,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
  * function as its target. The target itself stays the same externref identity.
  */
 export function ensureNativeProxyRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off" &&
-    !ctx.strictNoHostImports
-  ) {
+  ensureBoundaryCallableKind(ctx);
+  return ensureObjectRuntime(ctx);
+}
+
+/** (#6686) Admitted-object callable classifier for `__is_callable`/`typeof` (adds an import). */
+export function ensureBoundaryCallableKind(ctx: CodegenContext): void {
+  if (ctx.targetProfile.semanticProviders === "native-first" && jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
     ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, null);
   }
-  return ensureObjectRuntime(ctx);
 }
 
 /**
@@ -7513,6 +7560,27 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // ever reserved under standalone/wasi (all reserveApplyClosure call sites).
   const APPLY_CLOSURE_MAX_ARITY = 8;
 
+  // (#6655) …and ONE arm above that cap, at the module's top declared arity,
+  // when index.ts minted a dispatcher there (`topHighClosureMethodCallArity`).
+  // Without it a dynamic call to a 9+-formal function — test262's own
+  // `TemporalHelpers.assertPlainDateTime` has 14 formals,
+  // `createDurationPropertyBagObserver` 11 — widened `n` past the last arm and
+  // fell into the arity-overflow `unreachable` below, trapping instead of
+  // calling. One arm suffices for EVERY above-cap arity because
+  // `__call_fn_method_<top>` admits every closure of host arity <= top and
+  // invokes each through its own funcref type with exactly that many of the
+  // supplied values.
+  //
+  // Reading the registry rather than raising the constant is what keeps a
+  // module whose closures top out at 8 byte-identical: nothing was minted, so
+  // there is no arm and the overflow bound stays 8.
+  let applyClosureTopArity = APPLY_CLOSURE_MAX_ARITY;
+  for (const name of ctx.funcMap.keys()) {
+    if (!name.startsWith("__call_fn_method_")) continue;
+    const arity = Number(name.slice("__call_fn_method_".length));
+    if (Number.isInteger(arity) && arity > applyClosureTopArity) applyClosureTopArity = arity;
+  }
+
   const argcGlobalIdx = ensureArgcGlobal(ctx);
 
   const locals: { name: string; type: ValType }[] = [{ name: "n", type: { kind: "i32" } }];
@@ -7637,6 +7705,37 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   // if n==0 .. n==APPLY_CLOSURE_MAX_ARITY else undefined. Nest as if/else chain.
   let dispatch: Instr[] = armUnsupported;
+  // (#6655) One arm for EVERY above-cap selector, guarded by `n > 8` alone and
+  // deliberately NOT bounded above by `top`. Two independent reasons:
+  //
+  //  - the top dispatcher serves every above-cap arity anyway (it invokes each
+  //    admitted closure through its own funcref type), so an equality or
+  //    window test buys nothing; and
+  //  - `n` can legitimately exceed every LOCAL arity. Under
+  //    `canonicalRuntimeTypes` the inline `__closure_arity` probe reads the
+  //    declared formal count off the shared canonical wrapper root, so it
+  //    answers for values this module never compiled. A `8 < n <= top` window
+  //    let exactly those selectors skip the arm — measured: with `top` at 14
+  //    and the window in place, `TemporalHelpers.assertPlainDateTime` was
+  //    never entered and the row passed VACUOUSLY (a deliberately wrong
+  //    expected value still passed).
+  //
+  // An unmatched callee is not lost: the dispatcher's own terminal is the
+  // linked-peer apply on the standalone lane, the same destination the
+  // fall-through `armUnsupported` has.
+  if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
+    dispatch = [
+      { op: "local.get", index: 3 },
+      { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: buildArm(applyClosureTopArity),
+        else: dispatch,
+      },
+    ];
+  }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
     dispatch = [
       { op: "local.get", index: 3 },
@@ -7693,14 +7792,22 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...widen,
-    // The fixed closure ABI ends at eight positional values. The special
-    // native/proxy/cross-module front guards are prepended below and therefore
-    // still run first; a compiled closure above the cap must fail loudly rather
-    // than falling through to the undefined sentinel.
+    // A compiled closure above the module's TOP dispatcher arity must fail
+    // loudly rather than falling through to the undefined sentinel (#1058).
+    // The bound is the top minted arity, not a fixed eight (#6655): with the
+    // ladder reaching the module's real maximum, a local closure can no longer
+    // trip this, and the trap keeps its original meaning — "this callee is
+    // beyond anything this module can dispatch".
+    //
+    // Deliberately NOT retired. Retiring it makes the three #6655 Temporal
+    // rows PASS VACUOUSLY (measured: a shadow copy of
+    // `overflow-default-constrain.js` with a deliberately wrong expected day
+    // also passes, i.e. the assertion never runs) — a silent wrong answer in
+    // place of a loud one. See the issue for where that call really goes.
     ...(widen.length > 0
       ? ([
           { op: "local.get", index: declaredArityLocal },
-          { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
+          { op: "i32.const", value: applyClosureTopArity },
           { op: "i32.gt_s" },
           {
             op: "if",
@@ -8573,6 +8680,12 @@ export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType)
   // behaviour to those paths.
   if (elemType.kind === "ref" || elemType.kind === "ref_null") {
     const ti = (elemType as { typeIdx: number }).typeIdx;
+    // (#6651 G3) A tagged `$AnyValue` element is a BOX, not the JS value: project
+    // it by tag (`__any_to_extern`) so a vec reader hands on the value the
+    // element read (`any-value-element-read.ts`) does. `extern.convert_any` of
+    // the box leaked it — `ToNumber` and the `===` identity arm do not know it.
+    const anyToExtern = ti >= 0 && ti === ctx.anyValueTypeIdx ? ctx.funcMap.get("__any_to_extern") : undefined;
+    if (anyToExtern !== undefined) return [{ op: "call", funcIdx: anyToExtern }];
     // (#3244) GENERALISED from the string-only arm this replaces. A homogeneous
     // reference-element array — `[{ x: 777 }]` (element = object STRUCT ref) or a
     // nested `[[10, 20, 30]]` (element = inner `__vec_<k>` STRUCT ref) — compiles
@@ -8862,6 +8975,78 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
     fn.locals.push({ name: "__f64hole_get_v", type: { kind: "f64" } });
   }
   const vecArms: Instr[] = [];
+
+  // A non-global RegExp exec/match result is a nullable-native-string vec
+  // subtype. Its null backing slots mean an unmatched capture, which is JS
+  // undefined rather than JS null. Keep that distinction at this exact
+  // physical read only: __extern_get_idx's later overlay prologue returns
+  // deleted/accessor/companion values before this arm, including a user-owned
+  // null descriptor value.
+  const registeredMatchVecTypeIdx = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+  const registeredMatchVecArrTypeIdx =
+    registeredMatchVecTypeIdx === undefined ? -1 : getArrTypeIdxFromVec(ctx, registeredMatchVecTypeIdx);
+  const registeredMatchVecArrDef =
+    registeredMatchVecArrTypeIdx >= 0 ? ctx.mod.types[registeredMatchVecArrTypeIdx] : undefined;
+  const matchVec =
+    registeredMatchVecTypeIdx !== undefined &&
+    registeredMatchVecArrDef?.kind === "array" &&
+    registeredMatchVecArrDef.element.kind === "ref_null" &&
+    registeredMatchVecArrDef.element.typeIdx === ctx.anyStrTypeIdx
+      ? { typeIdx: registeredMatchVecTypeIdx, arrTypeIdx: registeredMatchVecArrTypeIdx }
+      : undefined;
+  if (matchVec !== undefined) {
+    const matchRaw = 2 + fn.locals.length;
+    fn.locals.push({ name: "__regexp_match_capture_raw", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } });
+    const matchUndefined = canonicalUndefinedExternInstrs(ctx);
+    vecArms.push(
+      { op: "local.get", index: 2 },
+      { op: "ref.test", typeIdx: matchVec.typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // i = trunc_sat(idx) ; if i < 0 → existing indexed miss
+          { op: "local.get", index: 1 },
+          { op: "i32.trunc_sat_f64_s" },
+          { op: "local.tee", index: 4 },
+          { op: "i32.const", value: 0 },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...idxMiss(), { op: "return" }],
+          },
+          // Logical length and physical backing capacity retain the generic
+          // vec reader's guards; a grown sparse tail remains a normal miss.
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: matchVec.typeIdx },
+          { op: "struct.get", typeIdx: matchVec.typeIdx, fieldIdx: 0 },
+          { op: "i32.ge_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...idxMiss(), { op: "return" }],
+          },
+          ...backedBoundsGuard(2, 4, matchVec.typeIdx, matchVec.arrTypeIdx, idxMiss),
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: matchVec.typeIdx },
+          { op: "struct.get", typeIdx: matchVec.typeIdx, fieldIdx: 1 },
+          { op: "local.get", index: 4 },
+          { op: "array.get", typeIdx: matchVec.arrTypeIdx },
+          { op: "local.tee", index: matchRaw },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: matchUndefined,
+            else: [{ op: "local.get", index: matchRaw }, { op: "extern.convert_any" }],
+          },
+          { op: "return" },
+        ],
+      },
+    );
+  }
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const readBox = packedElemReadBox(elemType);
     if (readBox === null) continue; // unsupported element kind — leave to null fallback
@@ -10011,6 +10196,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  const boxBigIntIdx = ctx.funcMap.get("__box_bigint"); // (#5383) a bigint-branded i64 slot boxes as a BigInt
   const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
   const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
@@ -10068,6 +10254,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
         field.type.kind === "ref" ||
         field.type.kind === "ref_null" ||
         (field.type.kind === "f64" && boxNumberIdx !== undefined) ||
+        (field.type.kind === "i64" && (field.type.bigint ? boxBigIntIdx : boxNumberIdx) !== undefined) ||
         (field.type.kind === "i32" &&
           (field.jsBoolean || field.type.boolean
             ? boxBooleanIdx !== undefined
@@ -10273,6 +10460,9 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       if (entry.jsBoolean) read.push({ op: "call", funcIdx: boxBooleanIdx! });
       else if (entry.fieldType.symbol === true) read.push({ op: "call", funcIdx: boxSymbolIdx! });
       else read.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx! });
+    } else if (entry.fieldType.kind === "i64") {
+      if (entry.fieldType.bigint) read.push({ op: "call", funcIdx: boxBigIntIdx! });
+      else read.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx! });
     } else if (entry.fieldType.kind !== "externref" && entry.fieldType.kind !== "ref_extern") {
       read.push({ op: "extern.convert_any" });
     }
@@ -10454,34 +10644,14 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       }
       bucket.push([fieldName, entries]);
     }
-    const orderedBuckets = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
-    const bucketCount = orderedBuckets.length;
-    // br_table depth map: bucket ordinal j breaks out of the j-th nested
-    // block (landing on that bucket's probes); an empty slot takes depth
-    // `bucketCount` — the wrapper block — skipping every arm (a miss).
-    const targets: number[] = new Array<number>(tableSize).fill(bucketCount);
-    orderedBuckets.forEach(([slot], ordinal) => {
-      targets[slot] = ordinal;
-    });
-    let dispatchTree: Instr[] = [
-      { op: "local.get", index: fkeyHashLocal },
-      { op: "i32.const", value: tableMask },
-      { op: "i32.and" },
-      { op: "br_table", targets, defaultDepth: bucketCount },
-    ];
-    for (let ordinal = 0; ordinal < bucketCount; ordinal++) {
-      const probes: Instr[] = [];
-      for (const [fieldName, entries] of orderedBuckets[ordinal]![1])
-        probes.push(...buildNameProbe(fieldName, entries));
-      dispatchTree = [
-        { op: "block", blockType: { kind: "empty" }, body: dispatchTree },
-        ...probes,
-        // Probes exhausted without a hit: skip the outer buckets' probes. The
-        // last bucket falls through to the wrapper block end naturally.
-        ...(ordinal === bucketCount - 1 ? [] : ([{ op: "br", depth: bucketCount - 1 - ordinal }] satisfies Instr[])),
-      ];
-    }
-    stringKeyArms.push({ op: "block", blockType: { kind: "empty" }, body: dispatchTree });
+    // (#6698) Occupied slots in ascending order; the dispatch bounds its own
+    // block nesting (one flat ladder up to 256 buckets, two levels past it).
+    const orderedBuckets = [...buckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(
+        ([slot, names]) => [slot, names.flatMap(([fieldName, entries]) => buildNameProbe(fieldName, entries))] as const,
+      );
+    stringKeyArms.push(buildHashBucketDispatch(fkeyHashLocal, tableMask, orderedBuckets));
   }
   const numericKeyArms: Instr[] = [];
   const i31NumericKeyArms: Instr[] = [];
@@ -11322,10 +11492,21 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // ── __extern_get: "length" → box(len); numeric index → __extern_get_idx ──
   const getFn = findFn("__extern_get");
   if (getFn && externGetIdxIdx !== undefined) {
-    // params: 0=obj 1=key ; append locals: gAny(anyref) gN(f64)
+    const registeredMatchVecTypeIdx = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+    const objIndexOfKeyIdx = ctx.funcMap.get("__obj_index_of_key");
+    const captureNumeric =
+      registeredMatchVecTypeIdx !== undefined && objIndexOfKeyIdx !== undefined
+        ? { typeIdx: registeredMatchVecTypeIdx, indexOfKeyIdx: objIndexOfKeyIdx }
+        : undefined;
+    // params: 0=obj 1=key ; append locals: gAny(anyref) gN(f64) gI(i32)
     const gAny = 2 + getFn.locals.length;
     const gN = gAny + 1;
-    getFn.locals.push({ name: "__vec_any", type: { kind: "anyref" } }, { name: "__vec_n", type: { kind: "f64" } });
+    const gI = captureNumeric === undefined ? -1 : gN + 1;
+    getFn.locals.push(
+      { name: "__vec_any", type: { kind: "anyref" } },
+      { name: "__vec_n", type: { kind: "f64" } },
+      ...(captureNumeric === undefined ? [] : ([{ name: "__regexp_match_key_i", type: { kind: "i32" } }] as const)),
+    );
     const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
     const lenArm = keyIsLength();
     const numericArm: Instr[] =
@@ -11348,6 +11529,43 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             },
           ]
         : [];
+    // A capture result uses an exact canonical index parser before the broad
+    // StringToNumber vec arm. A recognized index delegates to __extern_get_idx
+    // so overlays, deletes, accessors, and prototype misses retain their one
+    // existing reader. A rejected spelling deliberately falls through to the
+    // ordinary named-property path instead of being coerced by __str_to_number.
+    const captureOrGenericNumericArm: Instr[] =
+      captureNumeric === undefined
+        ? numericArm
+        : [
+            { op: "local.get", index: gAny },
+            { op: "ref.test", typeIdx: captureNumeric.typeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                { op: "call", funcIdx: captureNumeric.indexOfKeyIdx },
+                { op: "local.tee", index: gI },
+                { op: "i32.const", value: 0 },
+                { op: "i32.ge_s" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "local.get", index: gI },
+                    { op: "f64.convert_i32_s" },
+                    { op: "call", funcIdx: externGetIdxIdx },
+                    { op: "return" },
+                  ],
+                },
+              ],
+              else: numericArm,
+            },
+          ];
     const lenBody: Instr[] =
       lenArm && boxNumberIdx !== undefined
         ? [
@@ -11433,8 +11651,19 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...lenBody, ...ctorBody, ...numericArm],
+            then: [...lenBody, ...ctorBody, ...captureOrGenericNumericArm],
           },
+          // (#6651 H3) …and the NUMERIC-key half, the GET twin of the #6485
+          // arm `__extern_has` got above. A read site whose key type is
+          // statically non-numeric (`string|symbol`) keeps `__extern_get` and
+          // boxes the key, so a runtime Number never reached any of the index
+          // delegations behind the `$AnyString` test. vec-numeric-key-presence.ts.
+          ...buildVecNumericKeyGetArm(ctx, {
+            objParam: 0,
+            keyParam: 1,
+            numLocal: gN,
+            getIdxIdx: externGetIdxIdx,
+          }),
           // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
           // body — its non-$Object miss arm consults the #3537 expando side
           // table (`__vec_prop_get`), which itself answers the undefined-miss
@@ -12936,4 +13165,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__new_Boolean",
   // (#4631) BigInt wrapper — same [[PrimitiveValue]] slot pattern.
   "__new_BigInt",
+  // (#6651 I4) Symbol wrapper — same slot pattern, aliased onto __new_String's
+  // builder (the value arrives already boxed as a `$Symbol` carrier).
+  "__new_Symbol",
 ]);

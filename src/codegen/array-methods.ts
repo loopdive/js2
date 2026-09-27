@@ -68,6 +68,7 @@ import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterato
 import { ensureRegexMatchFlatVecType, REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js"; // (#4556 bucket A)
+import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "./array-subclass-receiver.js"; // (#2917)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import {
   compileArrowAsClosure,
@@ -88,7 +89,8 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
-import { flatMapSpeciesResult } from "./array-flatmap.js";
+import { flatMapReturnIsDynamic, flatMapSpeciesResult } from "./array-flatmap.js";
+import { compileArrayFlatNativeCall, emitFlattenDepth1Extern } from "./array-flat-native.js"; // (#2717)
 // (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
 import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
 import { nullableElemParamOverrideFor } from "./array-hof-nullable-elem-param.js"; // (#6602)
@@ -129,6 +131,8 @@ import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // 
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
 import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
+import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js"; // (#6651 E6) join/toLocaleString
+import { reserveNumberToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1) numeric element Invoke
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -1192,6 +1196,9 @@ function inferExpressionWasmType(
   expr: ts.Expression,
   allowProbe = true,
 ): ValType | undefined {
+  // (#2917) A receiver pre-spilled by array-subclass-receiver.ts reads its local.
+  const spilled = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
+  if (spilled !== undefined) return getLocalType(fctx, spilled);
   if (ts.isIdentifier(expr)) {
     const name = expr.text;
     const localIdx = fctx.localMap.get(name);
@@ -1580,6 +1587,21 @@ function emitDynViewSpeciesMethodTwoArm(
   const receiverExpr = propAccess.expression;
   if (!ts.isIdentifier(receiverExpr)) return undefined;
   const name = receiverExpr.text;
+  // (#6651 E-S4) §23.2.3.26 step 4 / §23.2.3.30 step 7 run `? ToIntegerOrInfinity`
+  // on the window arguments, and §7.1.4 step 3 makes a Symbol there a TypeError.
+  // Both arms below compile those args in `{kind:"f64"}` context, where a Symbol
+  // (an i32 id) coerces SILENTLY to 0 — `sample.subarray(Symbol())` returned a
+  // view instead of throwing (`{slice,subarray}/return-abrupt-from-*-symbol.js`).
+  // Same static-type question and same evaluation order as the `fill`/
+  // `copyWithin` gate; `map`/`filter` are excluded because their position 0 is
+  // the callback, not an index.
+  if (
+    (methodName === "slice" || methodName === "subarray") &&
+    emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [0, 1])
+  ) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "externref" };
+  }
   const dynIdx = getOrRegisterTaDynViewType(ctx);
 
   const rt = compileExpression(ctx, fctx, receiverExpr);
@@ -2058,7 +2080,20 @@ export function compileArrayMethodCall(
   const arrInfo =
     (receiverType === undefined ? null : resolveArrayInfo(ctx, receiverType)) ??
     resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, receiverType === undefined));
-  if (!arrInfo) return undefined;
+  if (!arrInfo) {
+    // (#2917) A standalone `class X extends Array` receiver is a real vec typed
+    // externref — lower it as one (array-subclass-receiver.ts).
+    if (receiverType === undefined || !isStandaloneArraySubclass(ctx, receiverType.getSymbol()?.name)) {
+      return undefined;
+    }
+    return withArraySubclassReceiverAsVec(
+      ctx,
+      fctx,
+      receiverExpr,
+      () => compileExpression(ctx, fctx, receiverExpr),
+      () => compileArrayMethodCall(ctx, fctx, propAccess, callExpr, undefined, methodName, expectedType, true),
+    );
+  }
 
   // A native-string join over a closure-producing array expression must
   // compile that receiver exactly once. The ordinary actual-type probe below
@@ -2106,7 +2141,7 @@ export function compileArrayMethodCall(
   if (receiverExpr && !skipReceiverProbeForNativeJoin) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
-    if (ts.isIdentifier(receiverExpr)) {
+    if (ts.isIdentifier(receiverExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(receiverExpr)) {
       const name = receiverExpr.text;
       const localIdx = fctx.localMap.get(name);
       if (localIdx !== undefined) {
@@ -5560,6 +5595,13 @@ function compileArrayJoinExternNative(
   fctx.body.push({ op: "call", funcIdx: externLenIdx });
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: lenTmp });
+  // (#6651 E6) §23.2.3.18/.32 ValidateTypedArray on a dyn view: a detached
+  // buffer throws BEFORE the separator's ToString (`join/detached-buffer.js`
+  // hands in an object whose `toString` throws). After the argument is
+  // EVALUATED (§13.3.6), before it is coerced; stack-neutral, empty when the
+  // module has no dyn view.
+  const detachedGuard = (): Instr[] =>
+    taDynDetachedGuardPrologue(ctx, fctx, localized ? "toLocaleString" : "join", recvTmp);
 
   // Separator: explicit arg (coerced to a native string) or the spec default
   // ",". (#4655) `toLocaleString`'s arguments are the reserved locales/options,
@@ -5572,6 +5614,7 @@ function compileArrayJoinExternNative(
     // TypeError, else ToString) instead of trapping on `ref.cast $AnyString`.
     const coerce = ts.isStringLiteral(sepArg) ? null : buildJoinSeparatorToString(ctx, fctx, anyStrTypeIdx);
     const argType = compileExpression(ctx, fctx, sepArg, { kind: "externref" });
+    fctx.body.push(...detachedGuard());
     if (argType === null) {
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
     } else if (coerce !== null) {
@@ -5581,7 +5624,7 @@ function compileArrayJoinExternNative(
       fctx.body.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
     }
   } else {
-    fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    fctx.body.push(...detachedGuard(), ...nativeStringLiteralInstrs(ctx, ","));
   }
   fctx.body.push({ op: "local.set", index: sepTmp });
 
@@ -5824,8 +5867,18 @@ function compileArrayJoinNative(
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
   } else if (isNumeric && numToStrIdx !== undefined) {
     if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" });
+    // (#6651 TA1) §23.1.3.32 step 6.c.i on a NUMBER element — the arm #4655
+    // deliberately left out, which is the one `%TypedArray%.prototype
+    // .toLocaleString` (§23.2.3.29) lands in (a dyn view arrives here with
+    // `elemType.kind === "i8"`). Same `(f64) -> externref` ABI as
+    // `number_toString`, so the tail below is reused verbatim; `undefined`
+    // (no `Number.prototype.toLocaleString` override in this module) keeps
+    // these bytes unchanged. See num-to-locale-string.ts.
+    const localizedNumIdx = isLocalizedJoin(propAccess)
+      ? reserveNumberToLocaleString(ctx, fctx, propAccess)
+      : undefined;
     const numToStrChain: Instr[] = [
-      { op: "call", funcIdx: numToStrIdx },
+      { op: "call", funcIdx: localizedNumIdx ?? numToStrIdx },
       // number_toString returns the native string boxed as externref.
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
@@ -8927,7 +8980,7 @@ function compileArraySort(
       typeIdx: vecTypeIdx,
     });
     compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "local.tee", index: vecTmp0 });
+    fctx.body.push({ op: "local.set", index: vecTmp0 }); // #6680: not a tee — nothing here consumes the receiver
     emitReceiverNullGuard(ctx, fctx, vecTmp0, propAccess.expression);
     fctx.body.push({ op: "local.get", index: vecTmp0 });
     fctx.body.push({ op: "ref.as_non_null" });
@@ -9529,7 +9582,9 @@ function compileTypedArraySet(
   let externGetIdx: number | undefined;
   let unwrapForWasmIdx: number | undefined;
   let srcExtern: number | undefined;
-  if (dstCarrier?.kind === "externref") {
+  // Host-free targets have no facade: the externref IS the vec (#6659).
+  const unwrapHostFacade = dstCarrier?.kind === "externref" && !ctx.standalone && !ctx.wasi;
+  if (unwrapHostFacade) {
     unwrapForWasmIdx = ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
   if (!srcArrInfo) {
@@ -9543,7 +9598,7 @@ function compileTypedArraySet(
     );
   }
   flushLateImportShifts(ctx, fctx);
-  if (dstCarrier?.kind === "externref" && unwrapForWasmIdx === undefined) return null;
+  if (unwrapHostFacade && unwrapForWasmIdx === undefined) return null;
   if (!srcArrInfo && (externLenIdx === undefined || externGetIdx === undefined)) return null;
 
   const dstVec = allocLocal(fctx, `__ta_set_dvec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -9561,9 +9616,9 @@ function compileTypedArraySet(
   // Receiver -> vec ref, extract length (field 0) + data array (field 1).
   if (dstCarrier?.kind === "externref") {
     compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
-    fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
+    if (unwrapHostFacade) fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: unwrapHostFacade ? "ref.cast" : "ref.cast_null", typeIdx: vecTypeIdx }); // null → TypeError guard
   } else {
     compileExpression(ctx, fctx, propAccess.expression);
   }
@@ -10571,12 +10626,17 @@ function tryCompileFlatMapNative(
   elemType: ValType,
 ): ValType | null {
   if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
+  if (flatMapReturnIsDynamic(ctx, callExpr.arguments[0]!)) {
+    // (#2717) scalar-or-array returns: the recursive helper's per-element IsArray.
+    return compileArrayFlatNativeCall(ctx, fctx, "flatMap", propAccess.expression, callExpr.arguments) ?? null;
+  }
 
   const mapType = compileArrayMap(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
   const speciesResult = flatMapSpeciesResult(ctx, mapType, callExpr.arguments[0]!);
   if (speciesResult) return speciesResult;
   if (!mapType || (mapType.kind !== "ref" && mapType.kind !== "ref_null")) {
-    // map couldn't type its result; the caller's unreachable keeps the body valid.
+    // map couldn't type its result (or a custom species widened it and the
+    // callback may return arrays); the caller's unreachable keeps the body valid.
     return null;
   }
   const mapVecTypeIdx = (mapType as { typeIdx?: number }).typeIdx;
@@ -10604,10 +10664,11 @@ function tryCompileFlatMapNative(
     );
   }
 
-  // Dynamic element (externref/anyref) — could be an array at runtime; a native
-  // depth-1 flatten would need per-element runtime IsArray. Out of scope → drop
-  // the map result and refuse loudly.
+  // Dynamic element (externref/anyref) — could be an array at runtime, so the
+  // (#2717) native FlattenIntoArray decides per element on a runtime IsArray.
   if (mapElemType && (mapElemType.kind === "externref" || mapElemType.kind === "anyref")) {
+    fctx.body.push({ op: "extern.convert_any" });
+    if (emitFlattenDepth1Extern(ctx, fctx)) return { kind: "externref" };
     fctx.body.push({ op: "drop" });
     return null;
   }
@@ -10640,6 +10701,9 @@ function compileArrayFlat(
     // receivers (the larger recursive/heterogeneous arm stays a #2717 follow-up).
     const native = tryCompileArrayFlatNativeDepth1(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
     if (native) return native;
+    // (#2717) Any depth / element kind: the native recursive FlattenIntoArray.
+    const generic = compileArrayFlatNativeCall(ctx, fctx, "flat", propAccess.expression, callExpr.arguments);
+    if (generic) return generic;
     reportError(
       ctx,
       callExpr,

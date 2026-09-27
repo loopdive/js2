@@ -796,6 +796,9 @@ function buildCodegenOptions(
         `target: "${options.target}" does not use that cell bridge.`,
     );
   }
+  if (options.runtimeEvalProvider === false && options.target !== "standalone") {
+    throw new Error('Compile option runtimeEvalProvider: false requires target: "standalone".');
+  }
   if (options.standaloneGlobalThisImport !== undefined) {
     if (options.target !== "standalone") {
       throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
@@ -830,6 +833,7 @@ function buildCodegenOptions(
     standalone: targetProfile.target === "standalone",
     standaloneGlobalThisImport: options.standaloneGlobalThisImport,
     directEval: options.directEval,
+    runtimeEvalProvider: options.runtimeEvalProvider,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,
     unionAnyRep: options.unionAnyRep,

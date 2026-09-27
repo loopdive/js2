@@ -42,7 +42,7 @@
  */
 
 import type { CodegenContext } from "../context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import type { Instr, ValType } from "../../ir/types.js";
 
 import { BUILTIN_TYPE_TAGS } from "../builtin-tags.js";
@@ -61,6 +61,7 @@ import { usesNativeJsErrors } from "../js-errors.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
 import { registerEmitWasiErrorConstructor } from "./error-constructor-delegates.js";
+import { buildErrorSubclassProtoChainArm } from "../error-subclass-proto-chain.js";
 
 // (#2962) `getOrRegisterErrorStructType` moved to registry/types.ts so
 // native-strings.ts can import it without an import cycle (this module imports
@@ -314,6 +315,117 @@ function emitErrorStructConstructor(
     body,
     exported: false,
   });
+  // (#6651 cluster C) §20.5.1.1 step 3 — `undefined` defines no `message`.
+  // Recorded, PATCHED AT FINALIZE: `$AnyValue` (the carrier the `undefined`
+  // singleton lives in) is not reserved yet at this point — the standalone
+  // scaffold emits `__new_TypeError` very early — so the test has to be woven
+  // in once the type table is complete. WAT-verified: built here, the guard
+  // silently degraded to the bare `local.get 0` it was meant to replace.
+  (ctx.errorCtorMessageSlots ??= []).push({ funcIdx, argCount });
+}
+
+/**
+ * (#6651 cluster C) Map an `undefined` message argument back to a NULL field.
+ *
+ * ## The defect, measured on this branch's base (standalone, `.tmp/w6651C/e2.ts`)
+ *
+ * | probe | base | node |
+ * | --- | --- | --- |
+ * | `new TypeError().hasOwnProperty("message")` | false | false |
+ * | `class Err extends TypeError {}; new Err().hasOwnProperty("message")` | **true** | false |
+ *
+ * The two disagree because they reach `__new_TypeError` differently. A direct
+ * `new TypeError()` is lowered with `argCount === 0`, so the builder stores
+ * `ref.null.extern` in field 1 and every own-property surface
+ * (`fillErrorStructMessageOwnPropArms`) correctly reports absence. The derived
+ * subclass goes through a fixed-arity forwarder — `Err_new : (externref) ->
+ * externref` — and `new Err()` pads slot 0 with the canonical `undefined`
+ * singleton (`global.get $undefined`, WAT-verified). That is a NON-null
+ * externref, so the same field said "present".
+ *
+ * Which is why the fix belongs here and not in the forwarder: passing
+ * `undefined` to `super()` is exactly what the default derived constructor
+ * does (§15.7.14 — `constructor(...args) { super(...args) }` with zero args),
+ * so the value is right and the CONSTRUCTOR is the step that must ignore it.
+ * §20.5.1.1 step 3: *"If message is not undefined, then … CreateNonEnumerable
+ * DataPropertyOrThrow(O, "message", msg)"*.
+ *
+ * ## Narrowing
+ *
+ * Only the tag-1 `$AnyValue` box — the one canonical `undefined` — is mapped to
+ * null. A `$BoxedNumber` carrying the UNDEF_F64 sentinel is NOT tested for:
+ * that arm exists in `buildIsUndefinedExternBody` for values that have crossed
+ * an f64 slot, which a message argument has not, and testing it would cost a
+ * second branch in every error construction for a shape no row produces.
+ * Absent-not-wrong: an unrecognised carrier keeps today's behaviour exactly.
+ *
+ * Returns `undefined` — so the caller emits the byte-identical old body — when
+ * the module has no `$AnyValue` type (host/gc lane, or a native-first module
+ * that never reserved it).
+ */
+/**
+ * (#6651 cluster C) FINALIZE pass — weave the §20.5.1.1 step-3 `undefined`
+ * test into every `__new_<Error>` body recorded by
+ * {@link emitErrorStructConstructor}. Byte-identical (does nothing) when the
+ * module reserved no `$AnyValue` type or emitted no error constructor.
+ */
+export function fillErrorCtorUndefinedMessage(ctx: CodegenContext): void {
+  const pending = ctx.errorCtorMessageSlots;
+  if (pending === undefined || pending.length === 0) return;
+  for (const { funcIdx, argCount } of pending) {
+    const fn = definedFuncAt(ctx, funcIdx);
+    if (fn === undefined) continue;
+    const slot = buildUndefinedAwareMessageSlot(ctx, argCount, fn.locals.length);
+    if (slot === undefined) continue;
+    // The body is exactly `[i32.const tag, local.get 0, …]` — index 1 is the
+    // message operand. Refuse rather than guess if it is not.
+    const at = fn.body[1];
+    if (at === undefined || at.op !== "local.get" || at.index !== 0) continue;
+    fn.locals.push(...slot.locals);
+    fn.body.splice(1, 1, ...slot.instrs);
+  }
+  ctx.errorCtorMessageSlots = [];
+}
+
+function buildUndefinedAwareMessageSlot(
+  ctx: CodegenContext,
+  argCount: number,
+  existingLocalCount: number,
+): { instrs: Instr[]; locals: { name: string; type: ValType }[] } | undefined {
+  if (argCount <= 0) return undefined;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
+  if (ctx.anyValueTypeIdx < 0) return undefined;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  // APPENDED after the params and any existing locals, so every index already
+  // baked into the body keeps its meaning.
+  const scratch = argCount + existingLocalCount;
+  return {
+    locals: [{ name: "__errmsg_any", type: { kind: "anyref" } }],
+    instrs: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: scratch },
+      { op: "ref.test", typeIdx: anyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [
+          { op: "local.get", index: scratch },
+          { op: "ref.cast", typeIdx: anyTypeIdx },
+          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [{ op: "ref.null.extern" }],
+            else: [{ op: "local.get", index: 0 }],
+          },
+        ],
+        else: [{ op: "local.get", index: 0 }],
+      },
+    ],
+  };
 }
 
 /**
@@ -558,6 +670,26 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
       then: [...errRef(), { op: "struct.get", typeIdx: errTypeIdx, fieldIdx }, { op: "return" }],
     },
   ];
+  // Same, but a NULL field falls through to the ordinary body (prototype-chain
+  // walk) instead of answering `null`.
+  const nullableFieldArm = (lit: string, fieldIdx: number): Instr[] => [
+    ...keyEquals(lit),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...errRef(),
+        { op: "struct.get", typeIdx: errTypeIdx, fieldIdx },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          else: [...errRef(), { op: "struct.get", typeIdx: errTypeIdx, fieldIdx }, { op: "return" }],
+          then: [],
+        },
+      ],
+    },
+  ];
 
   // (#3614) `<user-fnctor error instance>.constructor` → the SAME cached
   // closure singleton the bare identifier resolves to.
@@ -702,6 +834,14 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
     );
   }
 
+  // (#6651 cluster C) An `$Error_struct` instance of a USER subclass inherits
+  // from that subclass's prototype carrier — an edge that did not exist. The
+  // measurement and the narrowing live with the mechanism, in
+  // `error-subclass-proto-chain.ts`.
+  const protoChain = buildErrorSubclassProtoChainArm(ctx, errTypeIdx, errRef, fkeyL + 1, fkeyL + 2);
+  const subclassProtoArms: Instr[] = protoChain?.instrs ?? [];
+  if (protoChain !== undefined) fn.locals.push(...protoChain.locals);
+
   const arm: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
@@ -743,7 +883,15 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
             { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
             { op: "call", funcIdx: strFlattenIdx },
             { op: "local.set", index: fkeyL },
-            ...fieldArm("message", 1),
+            // (#6651 cluster C) `message` answers the field only when the
+            // constructor actually DEFINED it (§20.5.1.1 step 3 — a non-null
+            // field). `new Err()` on `class Err extends TypeError {}` has no
+            // own `message`, so the read must continue down the prototype
+            // chain and find `Err.prototype.message`; answering the null field
+            // here returned JS `null` and stopped the walk. The own-property
+            // surfaces (`fillErrorStructMessageOwnPropArms`) use the same
+            // non-null test, so presence and value stay in agreement.
+            ...nullableFieldArm("message", 1),
             ...fieldArm("name", 2),
             ...fieldArm("stack", 3),
             ...keyEquals("constructor"),
@@ -761,6 +909,7 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
                 { op: "if", blockType: { kind: "empty" }, then: [...userCtorArms, ...ctorArms] },
               ],
             },
+            ...subclassProtoArms,
           ],
         },
         // No match → fall through to the original body → standard miss.

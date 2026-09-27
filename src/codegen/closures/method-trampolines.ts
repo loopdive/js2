@@ -1168,9 +1168,28 @@ export function ensureFuncClosureSingleton(
   // answer) is left untouched. See `parkedAsyncDeclarationWrapsPromise`.
   const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(ctx, ownerDeclaration, sig.results);
   const nativeGeneratorResultBridge = nativeGeneratorFunctionValueNeedsResultBridge(ctx, sig.results);
-  const results: ValType[] = eagerAsyncPromiseWrap
-    ? [{ kind: "externref" }]
-    : nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
+  // (#6647) When `eval` is reachable, a top-level function DECLARATION gets a
+  // live global binding, and `compileIdentifierCall` routes every call of it
+  // through the generic dynamic dispatcher instead of a direct `call`. That
+  // dispatcher can only produce an `externref`, so a wrapper whose funcref
+  // type returns a CONCRETE struct (an object/array literal result) has no
+  // arm it can match and the call answers `null` — measured: `function g(){
+  // return {a:1}; } g()` is `null` under the linked standalone Temporal
+  // provider, while `g.apply(undefined, [])` and `new g()` are correct.
+  // Promote the WRAPPER's result the same way the parked-async and
+  // native-generator bridges above already do; the declaration's own signature
+  // and every direct call site are untouched.
+  const liveGlobalBindingResultBridge =
+    !eagerAsyncPromiseWrap &&
+    !nativeGeneratorResultBridge &&
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.runtimeEvalGlobalFunctionBindings === true &&
+    sig.results.length === 1 &&
+    (sig.results[0]!.kind === "ref" || sig.results[0]!.kind === "ref_null");
+  const results: ValType[] =
+    eagerAsyncPromiseWrap || liveGlobalBindingResultBridge
+      ? [{ kind: "externref" }]
+      : nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
@@ -1270,7 +1289,9 @@ export function ensureFuncClosureSingleton(
     // A direct native-generator call yields its private state struct.  Its
     // first-class function value is JavaScript-visible, so the wrapper's
     // checker-facing callable ABI returns the exported externref carrier.
-    if (nativeGeneratorResultBridge) trampolineBody.push({ op: "extern.convert_any" });
+    if (nativeGeneratorResultBridge || liveGlobalBindingResultBridge) {
+      trampolineBody.push({ op: "extern.convert_any" });
+    }
     // (#4630) Settle the void async completion into the promoted `externref`
     // result. `finalizeMethodTrampolines` rebuilds this body from the (possibly
     // re-resolved) callee signature, but it can also decline to rebuild, so the

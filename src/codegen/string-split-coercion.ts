@@ -11,14 +11,19 @@
 import type { Instr } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { buildIsUndefinedExternBody, undefinedSingletonActive } from "./any-helpers.js";
-import { ensureExternrefToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
+import {
+  prepareHostRuntimeToPrimitive,
+  prepareRuntimeToPrimitive,
+  prepareRuntimeToNumber,
+  runtimeHostToPrimitiveInstrs,
+  runtimeToNumberInstrs,
+  runtimeToPrimitiveInstrs,
+} from "./coercion-engine.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { addHostStringConstantGlobal, addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
@@ -31,8 +36,8 @@ const SYMBOL_TO_NUMBER_MESSAGE = "Cannot convert a Symbol value to a number";
 
 /** Current provider indices resolved at an emission boundary. */
 export interface StagedSplitLimitProviders {
-  readonly toPrimitiveIdx: number;
-  readonly unboxIdx: number;
+  readonly toPrimitive: Instr[];
+  readonly toNumber: Instr[];
   readonly isUndefinedIdx: number | undefined;
   /** Native standalone `$Symbol` type for the post-ToPrimitive ToNumber guard. */
   readonly symbolTypeIdx: number | undefined;
@@ -46,10 +51,9 @@ export interface StagedSplitLimitProviders {
  * safely satisfy.
  */
 export interface HostStagedSplitLimitProviders {
-  readonly toPrimitiveIdx: number;
-  readonly unboxIdx: number;
+  readonly toPrimitive: Instr[];
+  readonly toNumber: Instr[];
   readonly isUndefinedIdx: number;
-  readonly numberHintGlobalIdx: number;
 }
 
 const HOST_EXACT_UNDEFINED_HELPER = "__split_host_exact_undefined";
@@ -124,14 +128,8 @@ function emitSplitIsUndefined(
  */
 export function prepareStagedSplitLimitCoercion(ctx: CodegenContext, fctx: FunctionContext): boolean {
   ensureObjectRuntime(ctx);
-  const available =
-    ensureExternrefToNumberProvider(ctx, fctx) !== undefined && getToPrimitiveProvider(ctx) !== undefined;
+  const available = prepareRuntimeToNumber(ctx, fctx) && prepareRuntimeToPrimitive(ctx, fctx, "number");
   if (!available) return false;
-
-  // The raw-runtime ToPrimitive call below needs this global. Register it
-  // before a direct caller stages user operands, because a host-mode global
-  // import repairs already-emitted indices.
-  addStringConstantGlobal(ctx, "number");
 
   // `__unbox_number` intentionally answers NaN for an unrecognised carrier:
   // it is also the non-throwing numeric-key probe for ordinary property
@@ -168,21 +166,10 @@ export function prepareHostStagedSplitLimitCoercion(ctx: CodegenContext, fctx: F
     return false;
   }
 
-  const toPrimitiveIdx = ensureLateImport(
-    ctx,
-    "__to_primitive",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const toPrimitiveReady = prepareHostRuntimeToPrimitive(ctx, fctx, "number");
+  const toNumberReady = prepareRuntimeToNumber(ctx, fctx);
   const hostUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-  const numberHintGlobalIdx = addHostStringConstantGlobal(ctx, "number");
-  if (
-    toPrimitiveIdx === undefined ||
-    unboxIdx === undefined ||
-    hostUndefinedIdx === undefined ||
-    numberHintGlobalIdx === undefined
-  ) {
+  if (!toPrimitiveReady || !toNumberReady || hostUndefinedIdx === undefined) {
     return false;
   }
 
@@ -203,20 +190,20 @@ export function captureStagedSplitLimitProviders(
   ctx: CodegenContext,
   requireExactUndefined = false,
 ): StagedSplitLimitProviders | undefined {
-  const toPrimitiveIdx = getToPrimitiveProvider(ctx);
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "number");
+  const toNumber = runtimeToNumberInstrs(ctx);
   const isUndefinedIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
   const needsStandaloneSymbolGuard = ctx.standalone;
   const symbolTypeIdx = needsStandaloneSymbolGuard ? ctx.symbolTypeIdx : undefined;
   if (
-    toPrimitiveIdx === undefined ||
-    unboxIdx === undefined ||
+    toPrimitive === null ||
+    toNumber === null ||
     (requireExactUndefined && isUndefinedIdx === undefined) ||
     (needsStandaloneSymbolGuard && (symbolTypeIdx === undefined || symbolTypeIdx < 0))
   ) {
     return undefined;
   }
-  return { toPrimitiveIdx, unboxIdx, isUndefinedIdx, symbolTypeIdx };
+  return { toPrimitive, toNumber, isUndefinedIdx, symbolTypeIdx };
 }
 
 /**
@@ -251,19 +238,13 @@ function standaloneSymbolToNumberGuardInstrs(
 
 /** Resolve the host-only direct-arm handles after arbitrary staged operands. */
 export function captureHostStagedSplitLimitProviders(ctx: CodegenContext): HostStagedSplitLimitProviders | undefined {
-  const toPrimitiveIdx = ctx.funcMap.get("__to_primitive");
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
+  const toPrimitive = runtimeHostToPrimitiveInstrs(ctx, "number");
+  const toNumber = runtimeToNumberInstrs(ctx);
   const isUndefinedIdx = ctx.funcMap.get(HOST_EXACT_UNDEFINED_HELPER);
-  const numberHintGlobalIdx = ctx.hostStringGlobalMap.get("number");
-  if (
-    toPrimitiveIdx === undefined ||
-    unboxIdx === undefined ||
-    isUndefinedIdx === undefined ||
-    numberHintGlobalIdx === undefined
-  ) {
+  if (toPrimitive === null || toNumber === null || isUndefinedIdx === undefined) {
     return undefined;
   }
-  return { toPrimitiveIdx, unboxIdx, isUndefinedIdx, numberHintGlobalIdx };
+  return { toPrimitive, toNumber, isUndefinedIdx };
 }
 
 /** §7.1.7 ToUint32 for an f64 already produced by ToNumber. */
@@ -306,10 +287,9 @@ export function emitStagedSplitLimitFromExternref(
     then: [{ op: "i32.const", value: SPLIT_NO_LIMIT }],
     else: [
       { op: "local.get", index: limitExternLocal },
-      ...stringConstantExternrefInstrs(ctx, "number"),
-      { op: "call", funcIdx: providers.toPrimitiveIdx },
+      ...providers.toPrimitive,
       ...standaloneSymbolToNumberGuardInstrs(ctx, fctx, providers.symbolTypeIdx, localStem),
-      { op: "call", funcIdx: providers.unboxIdx },
+      ...providers.toNumber,
       { op: "local.set", index: numberLocal },
       ...exactToUint32Instrs(fctx, numberLocal, localStem),
     ],
@@ -341,9 +321,8 @@ export function emitHostStagedSplitLimitFromExternref(
     then: [{ op: "i32.const", value: SPLIT_NO_LIMIT }],
     else: [
       { op: "local.get", index: limitExternLocal },
-      { op: "global.get", index: providers.numberHintGlobalIdx },
-      { op: "call", funcIdx: providers.toPrimitiveIdx },
-      { op: "call", funcIdx: providers.unboxIdx },
+      ...providers.toPrimitive,
+      ...providers.toNumber,
       { op: "local.set", index: numberLocal },
       ...exactToUint32Instrs(fctx, numberLocal, localStem),
     ],

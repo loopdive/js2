@@ -125,6 +125,21 @@ export const CARRIER_BAG_GOPD = "__carrier_bag_gopd";
 /** `(externref obj, externref vec, i32 includeNonEnum) -> i32` — 1 iff a bag existed. */
 export const CARRIER_BAG_PUSH_KEYS = "__carrier_bag_push_keys";
 
+/**
+ * (#6651 H4) Bit 1 of the third parameter of `__carrier_bag_push_keys` and
+ * `__vec_overlay_push_keys`: "push only SYMBOL keys". Bit 0 keeps its existing
+ * `includeNonEnum` meaning, so every existing caller (which passes a bare 0/1)
+ * is bit-for-bit unchanged and neither native's SIGNATURE moves — an important
+ * property here, because both are reserved with a baked `call <idx>` before
+ * they are filled, and a signature change would invalidate those.
+ *
+ * Why a mode bit rather than a second pair of natives: the symbol walk is the
+ * SAME walk — same ordered `$PropMap`, same tombstone/marker/dedupe filters, in
+ * the same §10.1.11 sequence order — differing only in which key kind it keeps.
+ * Two copies would be two places for the next filter fix to have to land.
+ */
+export const KEY_MODE_SYMBOLS_ONLY = 2;
+
 const EXT: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 
@@ -249,14 +264,14 @@ export function buildBagGopdFallback(ctx: CodegenContext, tmp: number, keyLocal 
  */
 export function buildBagPushKeys(
   ctx: CodegenContext,
-  args: { vecLocal: number; includeNonEnum: boolean; objLocal?: number },
+  args: { vecLocal: number; includeNonEnum: boolean; objLocal?: number; symbolsOnly?: boolean },
 ): Instr[] {
   const idx = ctx.funcMap.get(CARRIER_BAG_PUSH_KEYS);
   if (idx === undefined) return [];
   return [
     { op: "local.get", index: args.objLocal ?? 0 },
     { op: "local.get", index: args.vecLocal },
-    { op: "i32.const", value: args.includeNonEnum ? 1 : 0 },
+    { op: "i32.const", value: (args.includeNonEnum ? 1 : 0) | (args.symbolsOnly ? KEY_MODE_SYMBOLS_ONLY : 0) },
     { op: "call", funcIdx: idx },
     { op: "drop" },
   ];
@@ -379,7 +394,7 @@ export function buildBuiltinFnSetRefusalArm(ctx: CodegenContext): Instr[] {
  * 2 = the scan block, 3 = the marker `if` this is nested in, 4 = the key loop —
  * so `br 4` is "continue the key loop", and the caller's index is stepped first.
  */
-function buildBagKeyDedupeSkip(d: {
+export function buildBagKeyDedupeSkip(d: {
   externLengthIdx: number | undefined;
   externGetIdxIdx: number | undefined;
   strictEqIdx: number | undefined;
@@ -388,6 +403,21 @@ function buildBagKeyDedupeSkip(d: {
   seenILocal: number;
   seenNLocal: number;
   outerIndexLocal: number;
+  /**
+   * (#6651 H4) Branch depth of the "skip this entry" target, counted from the
+   * innermost emitted `if`. Default 4 = the bag walk's own key LOOP, which is a
+   * `loop` label, so branching there RE-ENTERS the iteration — which is why
+   * `stepIndex` then has to advance the cursor by hand or the walk spins.
+   *
+   * The overlay walk needs a different number AND the opposite step behaviour:
+   * its target is an enclosing `if`/`block`, so leaving it falls through to the
+   * loop's own increment and a manual step would skip an entry. Getting that
+   * pairing wrong is silent — an infinite loop or a dropped key, never a
+   * validation error — so the two knobs travel together.
+   */
+  continueDepth?: number;
+  /** Advance `outerIndexLocal` before branching. See {@link continueDepth}. */
+  stepIndex?: boolean;
 }): Instr[] {
   const { externLengthIdx, externGetIdxIdx, strictEqIdx } = d;
   if (externLengthIdx === undefined || externGetIdxIdx === undefined || strictEqIdx === undefined) return [];
@@ -420,11 +450,15 @@ function buildBagKeyDedupeSkip(d: {
               op: "if",
               blockType: { kind: "empty" },
               then: [
-                { op: "local.get", index: d.outerIndexLocal },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: d.outerIndexLocal },
-                { op: "br", depth: 4 },
+                ...((d.stepIndex ?? true)
+                  ? ([
+                      { op: "local.get", index: d.outerIndexLocal },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: d.outerIndexLocal },
+                    ] satisfies Instr[])
+                  : []),
+                { op: "br", depth: d.continueDepth ?? 4 },
               ],
             },
             { op: "local.get", index: d.seenILocal },
@@ -448,6 +482,9 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const objOrderedIdx = ctx.funcMap.get("__obj_ordered");
   const objOrderedAllIdx = ctx.funcMap.get("__obj_ordered_all");
+  // (#6651 H4) Optional: registered only in a module whose type space has a
+  // `$Symbol`. Absent ⇒ no symbol key can exist ⇒ the fallback walk finds none.
+  const objOrderedSymbolsIdx = ctx.funcMap.get("__obj_ordered_symbols");
   const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (
@@ -609,124 +646,242 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   // COMPACTED `$PropMap` in OrdinaryOwnPropertyKeys order, with tombstones
   // already dropped and trailing nulls — so this is the same loop
   // `__object_keys` runs: break at the first null, push `entry.key`.
-  {
-    const BAG = 3;
-    const ARR = 4;
-    const CAP = 5;
-    const I = 6;
-    const E = 7;
-    const V = 8; // (#4194) marker-test scratch
-    const KEY = 9; // (#5268 review R2-1) the bag key, held across the de-dup scan
-    const SEEN_I = 10;
-    const SEEN_N = 11;
-    const orderedCall = (idx: number): Instr[] => [
-      { op: "local.get", index: BAG },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "call", funcIdx: idx },
-      { op: "local.set", index: ARR },
-    ];
-    setFn(
-      CARRIER_BAG_PUSH_KEYS,
-      [
-        { name: "bag", type: EXT },
-        { name: "arr", type: { kind: "ref_null", typeIdx: propMapTypeIdx } },
-        { name: "cap", type: I32 },
-        { name: "i", type: I32 },
-        { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
-        { name: "v", type: { kind: "anyref" } },
-        { name: "key", type: EXT },
-        { name: "seenI", type: I32 },
-        { name: "seenN", type: I32 },
-      ],
-      [
-        ...loadBag(BAG, [{ op: "i32.const", value: 0 }, { op: "return" }]),
-        { op: "local.get", index: 2 },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: orderedCall(objOrderedAllIdx),
-          else: orderedCall(objOrderedIdx),
-        },
-        { op: "local.get", index: ARR },
-        { op: "ref.as_non_null" },
-        { op: "array.len" },
-        { op: "local.set", index: CAP },
-        { op: "i32.const", value: 0 },
-        { op: "local.set", index: I },
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: I },
-                { op: "local.get", index: CAP },
-                { op: "i32.ge_s" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: ARR },
-                { op: "ref.as_non_null" },
-                { op: "local.get", index: I },
-                { op: "array.get", typeIdx: propMapTypeIdx },
-                { op: "local.tee", index: E },
-                { op: "ref.is_null" },
-                { op: "br_if", depth: 1 },
-                // (#4194) skip the #4098 tombstone marker — a deleted declared
-                // field must not reappear as an own key of the bag.
-                ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: E },
-                    { op: "ref.as_non_null" },
-                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                    { op: "extern.convert_any" },
-                    { op: "local.set", index: KEY },
-                    // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a
-                    // key LIST, and a list has no duplicates. The caller has
-                    // already pushed the carrier's STATIC own keys, so a bag
-                    // entry that merely re-describes one of them — which is what
-                    // `Object.defineProperty(o, <existing key>, …)` records,
-                    // because a closed struct field has no attribute slots —
-                    // must not be listed a second time.
-                    //
-                    // Measured before this guard, on this tree AND on
-                    // `origin/main`: `Reflect.defineProperty({a:1,b:2}, "a", d)`
-                    // made `Reflect.ownKeys(o)` read `a,b,a` and
-                    // `getOwnPropertyNames(o).length` 3. A second define of the
-                    // same key did NOT grow it again, which is what identifies
-                    // the defect as this MERGE rather than the bag insert (the
-                    // bag itself de-duplicates).
-                    ...buildBagKeyDedupeSkip({
-                      externLengthIdx,
-                      externGetIdxIdx,
-                      strictEqIdx,
-                      vecParam: 1,
-                      keyLocal: KEY,
-                      seenILocal: SEEN_I,
-                      seenNLocal: SEEN_N,
-                      outerIndexLocal: I,
-                    }),
-                    { op: "local.get", index: 1 }, // vec
-                    { op: "local.get", index: KEY },
-                    { op: "call", funcIdx: objVecPushIdx },
-                  ],
-                },
-                { op: "local.get", index: I },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: I },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        { op: "i32.const", value: 1 },
-      ],
-    );
-  }
+  fillCarrierBagPushKeys({
+    ctx,
+    setFn,
+    loadBag,
+    objectTypeIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    objOrderedIdx,
+    objOrderedAllIdx,
+    objOrderedSymbolsIdx,
+    objVecPushIdx,
+    externLengthIdx,
+    externGetIdxIdx,
+    strictEqIdx,
+  });
+}
+
+/**
+ * (#6651 H4) `__carrier_bag_push_keys`' body, lifted out of
+ * {@link fillCarrierBagVisibility} VERBATIM.
+ *
+ * The move is mechanical, and was verified as such rather than asserted: the
+ * 34-module byte-identity corpus is sha-identical on BOTH lanes across the
+ * extraction, so the 1,732-row neighbourhood sweep measured on the
+ * pre-extraction tree still applies to this one.
+ *
+ * Why it moved at all: adding the key-KIND mode took the host function from
+ * 291 to 352 lines, past the #3400 / R-FUNC 300-line budget. Splitting is that
+ * gate's first-choice remedy and a `func-budget-allow:` grant only its
+ * fallback, and this block was already the one self-contained `setFn` in the
+ * function — so the split costs nothing but a parameter object.
+ */
+function fillCarrierBagPushKeys(d: {
+  ctx: CodegenContext;
+  setFn: (name: string, locals: { name: string; type: ValType }[], body: Instr[]) => void;
+  loadBag: (bagLocal: number, miss: Instr[]) => Instr[];
+  objectTypeIdx: number;
+  propMapTypeIdx: number;
+  propEntryTypeIdx: number;
+  objOrderedIdx: number;
+  objOrderedAllIdx: number;
+  objOrderedSymbolsIdx: number | undefined;
+  objVecPushIdx: number;
+  externLengthIdx: number | undefined;
+  externGetIdxIdx: number | undefined;
+  strictEqIdx: number | undefined;
+}): void {
+  const {
+    ctx,
+    setFn,
+    loadBag,
+    objectTypeIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    objOrderedIdx,
+    objOrderedAllIdx,
+    objOrderedSymbolsIdx,
+    objVecPushIdx,
+    externLengthIdx,
+    externGetIdxIdx,
+    strictEqIdx,
+  } = d;
+  const BAG = 3;
+  const ARR = 4;
+  const CAP = 5;
+  const I = 6;
+  const E = 7;
+  const V = 8; // (#4194) marker-test scratch
+  const KEY = 9; // (#5268 review R2-1) the bag key, held across the de-dup scan
+  const SEEN_I = 10;
+  const SEEN_N = 11;
+  const orderedCall = (idx: number): Instr[] => [
+    { op: "local.get", index: BAG },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "call", funcIdx: idx },
+    { op: "local.set", index: ARR },
+  ];
+  /**
+   * (#6651 H4) `i32`: 1 iff this entry's key kind matches the requested mode.
+   * DEFAULT mode answers a constant 1 — so the emitted condition for every
+   * pre-existing caller folds to the old unconditional one and the string-key
+   * surfaces (`__getOwnPropertyNames`, `__object_keys`) are byte-unchanged.
+   *
+   * The test is `ref.test $Symbol` on `$PropEntry.key` (an `anyref` that holds
+   * either an `$AnyString` or a `$Symbol`, per the #2866 key channel). A
+   * POSITIVE test, not `!ref.test $AnyString`: a module with no `$Symbol` type
+   * registered has no symbol keys at all, and that case then falls out as a
+   * constant 0 instead of needing a separate guard.
+   */
+  const bagKeyKindKeep: Instr[] = [
+    { op: "local.get", index: 2 },
+    { op: "i32.const", value: KEY_MODE_SYMBOLS_ONLY },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then:
+        ctx.symbolTypeIdx >= 0
+          ? [
+              { op: "local.get", index: E },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+              { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+            ]
+          : [{ op: "i32.const", value: 0 }],
+      else: [{ op: "i32.const", value: 1 }],
+    },
+  ];
+  setFn(
+    CARRIER_BAG_PUSH_KEYS,
+    [
+      { name: "bag", type: EXT },
+      { name: "arr", type: { kind: "ref_null", typeIdx: propMapTypeIdx } },
+      { name: "cap", type: I32 },
+      { name: "i", type: I32 },
+      { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+      { name: "v", type: { kind: "anyref" } },
+      { name: "key", type: EXT },
+      { name: "seenI", type: I32 },
+      { name: "seenN", type: I32 },
+    ],
+    [
+      ...loadBag(BAG, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+      // (#6651 H4) Key KIND selects the walker; enumerability only refines the
+      // string one. `__obj_ordered` / `__obj_ordered_all` walk STRING keys —
+      // a symbol entry is not in either sequence, so the symbols-only mode
+      // needs `__obj_ordered_symbols` (#2866 slice 3) rather than a filter
+      // over the string walk. Measured the wrong way round first: a
+      // symbols-only screen over `__obj_ordered_all` pushed nothing at all.
+      { op: "local.get", index: 2 },
+      { op: "i32.const", value: KEY_MODE_SYMBOLS_ONLY },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: orderedCall(objOrderedSymbolsIdx ?? objOrderedAllIdx),
+        else: [
+          { op: "local.get", index: 2 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: orderedCall(objOrderedAllIdx),
+            else: orderedCall(objOrderedIdx),
+          },
+        ],
+      },
+      { op: "local.get", index: ARR },
+      { op: "ref.as_non_null" },
+      { op: "array.len" },
+      { op: "local.set", index: CAP },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: I },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: I },
+              { op: "local.get", index: CAP },
+              { op: "i32.ge_s" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: ARR },
+              { op: "ref.as_non_null" },
+              { op: "local.get", index: I },
+              { op: "array.get", typeIdx: propMapTypeIdx },
+              { op: "local.tee", index: E },
+              { op: "ref.is_null" },
+              { op: "br_if", depth: 1 },
+              // (#4194) skip the #4098 tombstone marker — a deleted declared
+              // field must not reappear as an own key of the bag.
+              ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),
+              { op: "i32.eqz" },
+              // (#6651 H4) …AND the key-kind screen. Folded into the marker
+              // `if`'s condition rather than added as a `br_if` or an extra
+              // wrapping `if` on purpose: `buildBagKeyDedupeSkip` below bakes
+              // LITERAL branch depths (0=its own if … 4=the key loop), so one
+              // more enclosing block would silently retarget its `br 4` and
+              // turn the de-dup `continue` into something else. Widening this
+              // condition leaves every depth exactly where it was.
+              ...bagKeyKindKeep,
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: E },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                  { op: "extern.convert_any" },
+                  { op: "local.set", index: KEY },
+                  // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a
+                  // key LIST, and a list has no duplicates. The caller has
+                  // already pushed the carrier's STATIC own keys, so a bag
+                  // entry that merely re-describes one of them — which is what
+                  // `Object.defineProperty(o, <existing key>, …)` records,
+                  // because a closed struct field has no attribute slots —
+                  // must not be listed a second time.
+                  //
+                  // Measured before this guard, on this tree AND on
+                  // `origin/main`: `Reflect.defineProperty({a:1,b:2}, "a", d)`
+                  // made `Reflect.ownKeys(o)` read `a,b,a` and
+                  // `getOwnPropertyNames(o).length` 3. A second define of the
+                  // same key did NOT grow it again, which is what identifies
+                  // the defect as this MERGE rather than the bag insert (the
+                  // bag itself de-duplicates).
+                  ...buildBagKeyDedupeSkip({
+                    externLengthIdx,
+                    externGetIdxIdx,
+                    strictEqIdx,
+                    vecParam: 1,
+                    keyLocal: KEY,
+                    seenILocal: SEEN_I,
+                    seenNLocal: SEEN_N,
+                    outerIndexLocal: I,
+                  }),
+                  { op: "local.get", index: 1 }, // vec
+                  { op: "local.get", index: KEY },
+                  { op: "call", funcIdx: objVecPushIdx },
+                ],
+              },
+              { op: "local.get", index: I },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: I },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      { op: "i32.const", value: 1 },
+    ],
+  );
 }

@@ -6,6 +6,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { addFuncType, getOrRegisterVecType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureNativeIteratorRuntime, externIsObjectInstrs } from "./iterator-native.js";
+import { carrierIsAny } from "./generators-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
@@ -136,8 +137,40 @@ export function ensureNativeDelegatedResultHelpers(ctx: CodegenContext): void {
   flushLateImportShifts(ctx, ctx.currentFunc);
 }
 
-function resultType(ctx: CodegenContext): number | undefined {
-  return [...ctx.nativeGenerators.values()].find((info) => info.nativeDelegates)?.resultTypeIdx;
+/**
+ * Every distinct native-generator result-struct type in the module, with the
+ * CARRIER its `value` field holds.
+ *
+ * (#6651 A2) This used to answer with the resultTypeIdx of the FIRST delegating
+ * generator and nothing else, which was wrong in two ways that only a
+ * non-any-carrier delegate exposes:
+ *
+ *  - reading `value` (field 0) out of an `f64`-carrier struct leaves an f64
+ *    where the helper's `externref -> externref` signature says externref, and
+ *    the whole MODULE fails validation (`"__gen_result_unwrap" failed: type
+ *    error in fallthru[0] (expected externref, got f64)`);
+ *  - a module with an f64 struct AND an any struct could only see through one
+ *    of them, so the other's results reached the `done`/`value` property
+ *    getters as an opaque struct and silently read `undefined` — measured as
+ *    `for (const x of <native gen>) yield x * 2` producing NaN.
+ *
+ * Both are fixed by enumerating the types and boxing a non-externref carrier at
+ * the extraction. `undefSentinel` is deliberate: an f64 carrier encodes `yield;`
+ * as NaN, and that has to come back out as the canonical `undefined`.
+ */
+function resultTypes(ctx: CodegenContext): { typeIdx: number; carrier: ValType }[] {
+  const seen = new Map<number, ValType>();
+  for (const info of ctx.nativeGenerators.values()) {
+    // Scoped to DELEGATING generators, exactly as before: a module with none
+    // keeps the identity body, so every generator module that does not delegate
+    // stays byte-identical (verified by SHA over an 854-row sweep).
+    if (!info.nativeDelegates) continue;
+    if (!seen.has(info.resultTypeIdx)) seen.set(info.resultTypeIdx, info.elemValType);
+  }
+  return [...seen].map(([typeIdx, elem]) => ({
+    typeIdx,
+    carrier: carrierIsAny(elem) ? ER : elem,
+  }));
 }
 
 /** Property reads preserve accessor timing; primitive results are validated by the caller. */
@@ -377,38 +410,58 @@ export function fillNativeDelegationRuntime(ctx: CodegenContext): void {
     fn.body = built.body;
     fn.locals = built.locals;
   }
-  const typeIdx = resultType(ctx);
   const fn = definedFuncAt(ctx, ctx.funcMap.get("__gen_result_unwrap")!)!;
-  fn.body =
-    typeIdx === undefined
-      ? [load(0)]
-      : [
+  const unwrapFctx: FunctionContext = {
+    name: "__gen_result_unwrap",
+    params: [{ name: "result", type: ER }],
+    locals: [],
+    localMap: new Map([["result", 0]]),
+    returnType: ER,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Innermost-out: each known result-struct type gets one `ref.test` arm, and an
+  // unrecognized value passes straight through (the receiver may be an ordinary
+  // JS-shaped `{done, value}` object, which the property getters handle).
+  let unwrapBody: Instr[] = [load(0)];
+  for (const { typeIdx, carrier } of resultTypes(ctx)) {
+    const saved = unwrapFctx.body;
+    unwrapFctx.body = [
+      load(0),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx },
+      { op: "struct.get", typeIdx, fieldIdx: 0 },
+    ];
+    if (carrier.kind !== "externref") {
+      coerceType(ctx, unwrapFctx, carrier.kind === "f64" ? { kind: "f64", undefSentinel: true } : carrier, ER);
+    }
+    const extract = unwrapFctx.body;
+    unwrapFctx.body = saved;
+    unwrapBody = [
+      load(0),
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      branch(
+        [
           load(0),
           { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx },
-          branch(
-            [
-              load(0),
-              { op: "any.convert_extern" },
-              { op: "ref.cast", typeIdx },
-              { op: "struct.get", typeIdx, fieldIdx: 1 },
-              num(-1),
-              { op: "i32.eq" },
-              branch(
-                [
-                  load(0),
-                  { op: "any.convert_extern" },
-                  { op: "ref.cast", typeIdx },
-                  { op: "struct.get", typeIdx, fieldIdx: 0 },
-                ],
-                [load(0)],
-                ER,
-              ),
-            ],
-            [load(0)],
-            ER,
-          ),
-        ];
+          { op: "ref.cast", typeIdx },
+          { op: "struct.get", typeIdx, fieldIdx: 1 },
+          num(-1),
+          { op: "i32.eq" },
+          branch(extract, [load(0)], ER),
+        ],
+        unwrapBody,
+        ER,
+      ),
+    ];
+  }
+  fn.body = unwrapBody;
+  fn.locals = unwrapFctx.locals;
   const iteration = definedFuncAt(ctx, ctx.funcMap.get("__gen_delegate_iter_result")!)!;
   iteration.body = [
     load(0),

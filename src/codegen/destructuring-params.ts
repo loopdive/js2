@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
+import { paramTypeIsJsDefaultGuess } from "./js-default-param-type-guess.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
@@ -63,7 +64,12 @@ import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
-import { coerceTupleBindingElement, emitExhaustedTupleRest } from "./tuple-rest.js";
+import {
+  coerceTupleBindingElement,
+  emitExhaustedTupleElement,
+  emitExhaustedTupleRest,
+  patternBindsRestAtAnyDepth,
+} from "./tuple-rest.js";
 // (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
 // imports `destructureParamArray` from here. ESM resolves the cycle because the
 // references are used only at call time (inside
@@ -815,7 +821,7 @@ export function widenUndefinedDefaultParamSlot(param: ts.ParameterDeclaration, w
   if (param.type !== undefined) return wasmType;
   if (param.dotDotDotToken !== undefined) return wasmType;
   if (param.initializer === undefined) return wasmType;
-  if (!isNullOrUndefinedLiteral(param.initializer)) return wasmType;
+  if (!isNullOrUndefinedLiteral(param.initializer) && !paramTypeIsJsDefaultGuess(param)) return wasmType;
   if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
   return { kind: "externref" };
 }
@@ -1801,6 +1807,14 @@ function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContex
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
 }
 
+/** (#6651 C4) The recursion `emitExhaustedTupleElement` needs for a nested pattern over an externref local. */
+function nestedExternrefDestructurer(ctx: CodegenContext, fctx: FunctionContext, opts: DestructureOpts) {
+  return (tmp: number, p: ts.BindingPattern): void =>
+    ts.isObjectBindingPattern(p)
+      ? destructureParamObject(ctx, fctx, tmp, p, { kind: "externref" }, opts)
+      : destructureParamArray(ctx, fctx, tmp, p, { kind: "externref" }, opts);
+}
+
 /**
  * Destructure a function parameter that is an ArrayBindingPattern.
  * The parameter value (a vec struct ref) is at param index `paramIdx`.
@@ -2420,6 +2434,10 @@ export function destructureParamArray(
       for (let i = 0; i < pattern.elements.length; i++) {
         const element = pattern.elements[i]!;
         if (ts.isOmittedExpression(element)) continue;
+        if (i >= tupleDef.fields.length && ts.isBindingElement(element) && !element.dotDotDotToken) {
+          emitExhaustedTupleElement(ctx, fctx, element, isDecl, nestedExternrefDestructurer(ctx, fctx, opts));
+          continue;
+        }
         if (emitExhaustedTupleRest(ctx, fctx, element, i >= tupleDef.fields.length)) break;
 
         const fieldType = tupleDef.fields[i]!.type;
@@ -2429,11 +2447,22 @@ export function destructureParamArray(
           ts.isBindingElement(element) &&
           (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name))
         ) {
+          // (#6651 GEN1) A rest-bearing sub-pattern goes to the recursion as
+          // `externref`, not as the tuple FIELD's type, so this arm agrees with
+          // the sibling generic arm on the one local slot the rest binding gets
+          // — see `patternBindsRestAtAnyDepth` for the orphaned-slot defect.
+          const restBearing = fieldType.kind !== "externref" && patternBindsRestAtAnyDepth(element.name);
           const tmpLocal = allocLocal(fctx, `__dparam_${fctx.locals.length}`, fieldType);
           fctx.body.push({ op: "local.get", index: paramIdx });
           fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: i });
           fctx.body.push({ op: "local.set", index: tmpLocal });
           // Handle default initializer for tuple destructuring (#794)
+          //
+          // The default check stays on the FIELD's own type: a missing tuple
+          // element rides the field as a wasm null, which §13.3.3.6 step 5 says
+          // fires the default, while `__extern_is_undefined` (the externref
+          // check) deliberately answers `false` for a null externref because
+          // there that encodes JS `null`. Only the RECURSION below is re-typed.
           if (element.initializer) {
             (ctx as any)._arrayLiteralForceVec = true;
             try {
@@ -2442,10 +2471,19 @@ export function destructureParamArray(
               (ctx as any)._arrayLiteralForceVec = false;
             }
           }
+          let nestedLocal = tmpLocal;
+          let nestedType = fieldType;
+          if (restBearing) {
+            nestedType = { kind: "externref" };
+            nestedLocal = allocLocal(fctx, `__dparam_rest_ext_${fctx.locals.length}`, nestedType);
+            fctx.body.push({ op: "local.get", index: tmpLocal });
+            coerceType(ctx, fctx, fieldType, nestedType);
+            fctx.body.push({ op: "local.set", index: nestedLocal });
+          }
           if (ts.isObjectBindingPattern(element.name)) {
-            destructureParamObject(ctx, fctx, tmpLocal, element.name, fieldType, opts);
+            destructureParamObject(ctx, fctx, nestedLocal, element.name, nestedType, opts);
           } else {
-            destructureParamArray(ctx, fctx, tmpLocal, element.name, fieldType, opts);
+            destructureParamArray(ctx, fctx, nestedLocal, element.name, nestedType, opts);
           }
           continue;
         }

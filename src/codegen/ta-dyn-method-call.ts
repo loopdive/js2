@@ -80,6 +80,12 @@ export const TA_DYN_METHOD_CALL_NAMES: readonly string[] = [
   "map",
   "filter",
   "toLocaleString",
+  // (#6651 RS1) `subarray` reaches the ladder only for the receiver shapes the
+  // call-site two-arm declines (a non-identifier receiver, e.g. test262's
+  // `new TA(4).subarray(2)`), which answered null. See
+  // `ensureTaDynSubarrayHelper` for the two residuals that stay with the
+  // two-arm (SpeciesConstructor and the §7.1.4 Symbol-index throw).
+  "subarray",
 ];
 
 /**

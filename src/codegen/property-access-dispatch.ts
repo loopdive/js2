@@ -35,7 +35,7 @@ import {
 } from "../checker/type-mapper.js";
 import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
-import { isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
+import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
@@ -81,8 +81,9 @@ import {
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-method-shadow.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
-import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
-import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
+import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
+import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
+import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import {
@@ -94,6 +95,7 @@ import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constr
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
+import { tryEmitRegExpOwnConstructorRead } from "./regexp-split-protocol.js";
 import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import {
@@ -103,8 +105,10 @@ import {
 import {
   emitNativeGlobalThisObject,
   emitTypedArrayIntrinsicCtorObject,
+  ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
 } from "./array-object-proto.js";
+import { emitTaStaticFromOfInheritedValue, isTaStaticFromOfMember } from "./ta-static-from-of-body.js";
 import {
   buildInt8ArrayCarrierMatch,
   dvDetachedThrowInstrs,
@@ -544,6 +548,9 @@ export function tryConstructorPrototypeIdentity(
       (isBuiltinConstructorIdentityName(builtinName) || isWasiErrorName(builtinName)) &&
       isExternalDeclaredClass(objType, ctx.checker)
     ) {
+      // (#6651 B5) An own `constructor` on a RegExp instance wins over the fold.
+      const ownCtor = tryEmitRegExpOwnConstructorRead(ctx, fctx, expr, builtinName);
+      if (ownCtor !== undefined) return ownCtor;
       // Evaluate the receiver for spec side effects before returning its identity.
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {
@@ -1464,6 +1471,14 @@ export function tryNativeErrorMemberRead(
           : { kind: "externref" };
 
       if (isErrorLhs) {
+        // (#6651 cluster C, C2) `message` is the one field that can legitimately
+        // be ABSENT (§20.5.1.1 step 3), so a null field must continue down the
+        // prototype chain instead of answering. Measurement and the `name` /
+        // `stack` exclusion: error-message-proto-read.ts.
+        if (propName === "message") {
+          emitErrorMessageReadWithProtoFallback(ctx, fctx, structIdx, fieldIdx, propName, resultType);
+          return resultType;
+        }
         // Static Error type — the value is always an `$Error` struct, so cast
         // unconditionally (a runtime non-Error would mean a miscompile elsewhere).
         fctx.body.push({ op: "ref.cast", typeIdx: structIdx });
@@ -1822,7 +1837,7 @@ export function tryGlobalThisAndProcessRead(
     } else {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx! });
     }
-    addStringConstantGlobal(ctx, propName);
+    registerLateReadStringConstant(ctx, propName);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
     fctx.body.push({ op: "call", funcIdx: getIdx });
     if (ctx.runtimeEvalGlobalFunctionBindings === true) {
@@ -1961,6 +1976,12 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
         if (protoBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, protoBrand)) {
           return { kind: "externref" };
         }
+      }
+      // (#6651 E5) `Int32Array.from` / `.of` — the INHERITED `%TypedArray%` singleton.
+      if (TYPED_ARRAY_NAMES.has(builtinName) && isTaStaticFromOfMember(propName)) {
+        const brand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+        const inherited = emitTaStaticFromOfInheritedValue(ctx, fctx, brand, propName);
+        if (inherited !== undefined) return inherited;
       }
       const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
       if (closure) {
@@ -2877,6 +2898,63 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
 }
 
 /**
+ * (#6651 B18) Is this function-typed value's type symbol the `get` / `set` slot
+ * of the `PropertyDescriptor` interface — i.e. did the value come out of a
+ * §6.2.6 property descriptor?
+ *
+ * If so its `.name` is NOT statically knowable, and the §20.2.4.2 `.name` fold
+ * in `tryLengthAndNameReads` must decline: `lib.es5.d.ts` declares the slots as
+ * `get?(): any` / `set?(v: any): void`, so the type symbol is named after the
+ * DECLARATION SLOT while §6.2.6 puts whatever function was installed in it.
+ * Publishing the slot name made
+ *
+ *     var getter = Object.getOwnPropertyDescriptor(Array, Symbol.species).get;
+ *     return getter && getter.name;     // → "get", want "get [Symbol.species]"
+ *
+ * — verbatim `test/built-ins/Symbol/species/builtin-getter-name.js` — and it
+ * renamed user accessors too (`{ get: function realGet() {} }` read back as
+ * `"get"`). It is the same defect as the `__computed` decline beside it: a type
+ * symbol whose name is a checker/declaration artefact rather than the function's.
+ *
+ * Why it hid: the slots are OPTIONAL, so the plain `desc.get.name` spelling keeps
+ * the union `(() => any) | undefined` and the fold's union exclusion already
+ * declined it. Only where control flow narrowed the `undefined` away did the fold
+ * fire — i.e. exactly the guarded spellings real code writes (`g && g.name`,
+ * `g ? g.name : x`). That is why the RECORDED diagnosis for the row (a runtime
+ * gOPD synthesising an anonymous getter, split by static vs parameter RECEIVER)
+ * is wrong in both halves: measured 2026-09-27, a STATIC receiver under the same
+ * guard was equally wrong, a PARAMETER receiver without a guard was already
+ * right, and the two descriptor reads return the identical function object.
+ *
+ * Declining costs only the fold: the read falls through to the ordinary property
+ * path, which answers from the closure's own `$fnmeta` host-free and from
+ * `__extern_get(v, "name")` on the JS host — both measured correct, which is why
+ * this is unconditional rather than `ctx.standalone`-gated.
+ */
+function symbolIsPropertyDescriptorAccessorSlot(symbol: ts.Symbol | undefined): boolean {
+  if (symbol === undefined) return false;
+  if (symbol.name !== "get" && symbol.name !== "set") return false;
+  for (const declaration of symbol.declarations ?? []) {
+    if (!ts.isMethodSignature(declaration) && !ts.isPropertySignature(declaration)) continue;
+    const owner = declaration.parent;
+    if (ts.isInterfaceDeclaration(owner) && owner.name.text === "PropertyDescriptor") return true;
+  }
+  return false;
+}
+
+/**
+ * The enumerated set of type symbols whose NAME is a declaration/checker
+ * artefact rather than the function value's own `.name`, so the §20.2.4.2
+ * `.name` fold has no static answer and must fall through to the runtime read:
+ * TypeScript's `__computed` placeholder for a symbol-keyed member (#5149
+ * cluster B) and a §6.2.6 descriptor's accessor slot (#6651 B18, above).
+ */
+function nameFoldTypeSymbolIsDeclarationArtefact(objType: ts.Type): boolean {
+  const symbol = objType.getSymbol();
+  return symbol?.name === "__computed" || symbolIsPropertyDescriptorAccessorSlot(symbol);
+}
+
+/**
  * (#5149 cluster B) Does SOME object literal in this file define `recv.<key>`
  * with a COVERED function initializer — `{ xId: (0, function () {}) }` — rather
  * than an anonymous function definition?
@@ -3189,7 +3267,7 @@ export function tryLengthAndNameReads(
       // worse than the miss it replaced. There is no static answer here (the
       // key is a runtime symbol), so fall through to the ordinary property read
       // and let the closure's own `$fnmeta` name it.
-      if (hasFuncSig && objType.getSymbol()?.name === "__computed") {
+      if (hasFuncSig && nameFoldTypeSymbolIsDeclarationArtefact(objType)) {
         // no static fold — the runtime read below answers it
       } else if (hasFuncSig && !objType.isUnion()) {
         // Resolve the function name from the type symbol or the expression.
@@ -4186,7 +4264,7 @@ export function finalizeStructAndDynamicMemberGet(
         const receiver = compileExpression(ctx, fctx, expr.expression);
         if (!receiver) return null;
         if (receiver.kind !== "externref") coerceType(ctx, fctx, receiver, { kind: "externref" });
-        addStringConstantGlobal(ctx, propName);
+        registerLateReadStringConstant(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx });
         const expected = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(expr));
@@ -4540,7 +4618,7 @@ export function finalizeStructAndDynamicMemberGet(
           });
 
           // If proto is non-null, call __extern_get(proto, propName)
-          addStringConstantGlobal(ctx, propName);
+          registerLateReadStringConstant(ctx, propName);
 
           fctx.body.push({ op: "local.get", index: protoLocal });
           fctx.body.push({ op: "ref.is_null" });
@@ -4587,7 +4665,7 @@ export function finalizeStructAndDynamicMemberGet(
           if (recvType && recvType.kind !== "externref") {
             coerceType(ctx, fctx, recvType, { kind: "externref" });
           }
-          addStringConstantGlobal(ctx, propName);
+          registerLateReadStringConstant(ctx, propName);
           fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
           fctx.body.push({ op: "call", funcIdx: getIdx });
           if (ctx.runtimeEvalGlobalFunctionBindings === true) {
@@ -4864,7 +4942,10 @@ export function finalizeStructAndDynamicMemberGet(
         openObjectReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
-        foreignReturnReceiver;
+        foreignReturnReceiver ||
+        // (#5383) …and for any read in a module on a standalone link, whose
+        // receiver may be the peer's object (see the predicate).
+        dynamicReadCrossesStandaloneLink(ctx);
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",
@@ -5100,7 +5181,7 @@ export function finalizeStructAndDynamicMemberGet(
 
           // Build the __extern_get fallback instructions
           const externGetFallback: Instr[] = [{ op: "local.get", index: objTmp }];
-          addStringConstantGlobal(ctx, propName);
+          registerLateReadStringConstant(ctx, propName);
           externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
           externGetFallback.push({ op: "call", funcIdx: getIdx });
           if (ctx.runtimeEvalGlobalFunctionBindings === true) {
@@ -5367,7 +5448,7 @@ export function finalizeStructAndDynamicMemberGet(
         if (structExprType && (structExprType.kind === "ref" || structExprType.kind === "ref_null")) {
           fctx.body.push({ op: "extern.convert_any" });
         }
-        addStringConstantGlobal(ctx, propName);
+        registerLateReadStringConstant(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
         if (ctx.runtimeEvalGlobalFunctionBindings === true) {

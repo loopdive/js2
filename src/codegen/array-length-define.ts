@@ -334,7 +334,7 @@ export function maybeEmitVecLengthDefine(
     // `__vec_has_own_index` does not read a stale/default value as a present
     // element (`15.2.3.6-4-159`). Runs BEFORE the store: it needs the old
     // length to know which region this store is about to orphan.
-    emitVecLengthHoleFill(ctx, fctx, vecLocal, newLenLocal);
+    emitVecLengthHoleFill(ctx, fctx, vecLocal, newLenLocal, "both", true);
 
     // vec.length = newLen
     fctx.body.push({ op: "local.get", index: vecLocal });

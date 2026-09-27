@@ -204,8 +204,11 @@ describe("#4016 — the refusal is NARROWED, not removed", () => {
   });
 });
 
-describe("#4016 S2 — direct split stages values before coercion", () => {
-  it("evaluates every operand before receiver, limit, and separator coercion", async () => {
+// S2v3 keeps the raw-v1 boundary visible while correcting only the borrowed
+// nullish call's TypeScript overload selection; the runtime operand remains
+// unchanged.
+describe("#4016 S2v3 — direct and borrowed split stage values before coercion", () => {
+  it("keeps the raw-v1 direct-object no-method boundary as TypeError after call evaluation", async () => {
     const src = `
       export function f(): number {
         let order = 0;
@@ -218,12 +221,111 @@ describe("#4016 S2 — direct split stages values before coercion", () => {
         function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
         function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
         function extra(): number { order = order * 10 + 4; return 0; }
+        try {
+          // @ts-expect-error split ignores supplied arguments after \`limit\`
+          receiver().split(separator() as any, limit() as any, extra());
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError ? order : -1;
+        }
+      }`;
+    // raw-v1 treated `receiverValue` as if it had inherited `.split`. It does
+    // not: calling the non-callable undefined member throws after all operands
+    // have evaluated.
+    expect(await runStandalone(src)).toBe(1234);
+  });
+
+  it("stages a valid direct primitive receiver before limit and separator coercion", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        function receiver(): string { order = order * 10 + 1; return "a,b"; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
         // @ts-expect-error split ignores supplied arguments after \`limit\`
         const result = receiver().split(separator() as any, limit() as any, extra());
         return order * 10 + result.length;
       }`;
-    // Evaluation: receiver, separator, limit, extra; coercion: receiver, limit, separator.
+    // Evaluation: receiver, separator, limit, extra; coercion: limit, separator.
+    expect(await runStandalone(src)).toBe(1234672);
+  });
+
+  it("stages a borrowed receiver before its receiver, limit, and separator coercions", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = { [Symbol.toPrimitive]() { order = order * 10 + 5; return "a,b"; } };
+        function receiver(): typeof receiverValue { order = order * 10 + 1; return receiverValue; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
+        const result = String.prototype.split.call(receiver(), separator() as any, limit() as any, extra());
+        return order * 10 + result.length;
+      }`;
     expect(await runStandalone(src)).toBe(12345672);
+  });
+
+  it("evaluates borrowed-call arguments before rejecting a nullish receiver", async () => {
+    const src = `
+      export function f(): number {
+        let calls = 0;
+        function separator(): string { calls = calls + 1; return ","; }
+        try {
+          // Cast only the separator to avoid TypeScript selecting the
+          // incompatible @@split overload; the raw nullish receiver remains
+          // the runtime boundary under test.
+          String.prototype.split.call(null as unknown as string, separator() as any);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError && calls === 1 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("propagates borrowed receiver ToPrimitive abrupt completion before limit and separator coercion", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = { [Symbol.toPrimitive]() { order = order * 10 + 5; throw 29; } };
+        function receiver(): typeof receiverValue { order = order * 10 + 1; return receiverValue; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
+        try {
+          String.prototype.split.call(receiver(), separator() as any, limit() as any, extra());
+          return 0;
+        } catch (e) {
+          return e === 29 && order === 12345 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("propagates a borrowed trailing argument abrupt completion before receiver coercion", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = { [Symbol.toPrimitive]() { order = order * 10 + 5; throw 29; } };
+        function receiver(): typeof receiverValue { order = order * 10 + 1; return receiverValue; }
+        function separator(): string { order = order * 10 + 2; return ","; }
+        function limit(): number { order = order * 10 + 3; return 2; }
+        function extra(): number { order = order * 10 + 4; throw 31; }
+        try {
+          String.prototype.split.call(receiver(), separator() as any, limit(), extra());
+          return 0;
+        } catch (e) {
+          return e === 31 && order === 1234 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
   });
 
   it("propagates the limit's abrupt completion before separator ToString", async () => {

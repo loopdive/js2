@@ -2,7 +2,7 @@
 id: 4016
 title: "standalone: String.prototype search-value methods refuse the spec's plain-ToString path"
 status: in-progress
-sprint: 78
+sprint: current
 priority: high
 horizon: l
 feasibility: hard
@@ -10,14 +10,172 @@ reasoning_effort: max
 goal: standalone-gap
 assignee: ttraenkler/M-regexp
 created: 2026-08-01
-updated: 2026-09-20
+updated: 2026-09-27
 oracle-ratchet-allow: []
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/string-ops.ts
+  - src/codegen/expressions/calls.ts
 func-budget-allow:
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  - src/codegen/expressions/calls.ts::emitReflectiveNativeProtoClosureCall
 ---
+
+## 2026-09-27 recovery state
+
+The saved implementation checkpoint
+`1fb196048b26b9a686eaf5a4719cc646a1d1353a` is being reconciled with upstream
+`44c2fb086278cd6d0b24efdaa061112452f901f1` in the persistent isolated
+worktree `codex-4016-resume-20260927`. The old `/private/tmp` candidate and
+baseline worktrees lost their Git links and their `.tmp/4016` receipts; the
+cause is unverified. Path references below therefore label historical evidence
+only, not files available for inspection or fresh measurements.
+
+The raw-v1 fixture survives as Git blob
+`6a182414d4cdb4c5b1511e055740314d75734497`. Its 42-row comparison remains
+historical attribution, not a valid conformance denominator: one direct-object
+receiver had no `.split` method. A versioned replacement must retain that row
+as a separately Node-verified TypeError/order control and add valid direct,
+borrowed, nullish, and abrupt-receiver controls before any new A/B claim.
+
+The reconciliation keeps upstream's B6 reflective `separator[@@split]`
+dispatch and the checkpoint's staged direct coercion path. The latter cannot
+ship until its raw provider lookups move through a canonical shared coercion
+engine API rather than a local vocabulary-only workaround. `registry/imports.ts`,
+IR, context layout, and the separately owned undefined-global cache defect stay
+out of scope. Fresh validation must use the maintained whole-assembly runner
+with an explicit complete shard and recorded canonical verdict/callback counts;
+the old single-file report is not conformance evidence.
+
+### 2026-09-27 S2v3 paired control receipt and next narrow repair
+
+The corrected S2v3 fixture retains raw-v1's direct-object boundary as a
+Node-verified `TypeError`/`1234` observation, adds valid direct and borrowed
+receiver cases, and applies only a TypeScript-overload cast to the borrowed
+nullish separator (not to the receiver or runtime lowering). The current
+fixture and the independent coercion-engine control were copied byte-for-byte
+to a clean `44c2fb086278cd6d0b24efdaa061112452f901f1` baseline:
+
+- `tests/issue-4016-standalone-search-value-tostring.test.ts` SHA-256
+  `bb1612b4994bd598c7c1288a774ff3a3c41dcf20e4d93f88c31f84a116181e99`;
+- `tests/issue-1917-coercion-plan.test.ts` SHA-256
+  `86ecdb405346d7186842d26e0cd89587fe94e13cf5b358413128e4a3a994f437`.
+
+With Node 24.19.0, one Vitest fork, and a 2 GiB worker cap, that exact
+62-control pair is **48 pass / 14 fail** on clean base and **55 pass / 7
+fail** on the resumed candidate: seven fail-to-pass transitions and no
+pass-to-fail transition. The durable logs are
+`.tmp/4016/focused-engine-s2v3-baseline-44c2-2gb-20260927.log` (SHA-256
+`dd865472c638d1d086eb45a6ad711d74f2623357ab00bd619eab1620d33d6ca7`) and
+`.tmp/4016/focused-engine-s2v3-candidate-2gb-20260927.log` (SHA-256
+`a323dd1ba4e12c9fc74fa7e4d8a80ace97a7ca6d2d8c5e416b4493803fe4709f`).
+These are focused compiler controls, not Test262 or whole-assembly evidence.
+
+The seven observed gains are valid direct primitive staging; supplied
+`undefined`/raw-`null` distinction; host bare-Symbol rejection; native
+Symbol-limit rejection; suppressing separator coercion after a native
+Symbol-limit; zero-limit Symbol-separator rejection; and finite `ToUint32`
+modulo reduction. The remaining seven candidate failures stay ordinary red
+assertions: two protocol-refusal pins, the raw-v1 TypeError identity/order
+boundary, borrowed extra-argument order, borrowed abrupt completion, the
+host post-primitive Symbol invalid-Wasm boundary, and the descriptor-before-
+split host `TypeError` boundary. In particular, invalid-Wasm is a worsening
+of an already failing result, not a pass loss or a success claim.
+
+The shared coercion engine now preflights `ToPrimitive`/`ToNumber` providers
+before arbitrary operands and rebuilds calls from post-staging handles. Its
+`ensureExternrefToNumberProvider` return is fail-closed on a missing
+post-flush `funcMap` entry; no fallback to a stale provisional index remains.
+The accompanying non-split controls pass both arms for a runtime `any`
+parameter and the same coercion before a later `Date.now` host builtin. They
+are practical coverage of the raw provider contract, not proof by themselves
+that every late-shift route was exercised.
+
+Source review isolates the borrowed extra-argument failures to
+`src/codegen/expressions/calls.ts::emitReflectiveNativeProtoClosureCall`:
+its fixed ABI loop evaluates only `i < paramTypes.length`; surplus evaluation
+exists only for `String.prototype.normalize`. Under the task-local ownership
+clearance, extend that exact surplus loop to **standalone/WASI native
+`String.prototype.split` only**. It must evaluate and drop trailing real
+arguments after fixed raw slots but before `call_ref`, therefore before the
+split closure coerces its receiver/limit/separator. Preserve the existing
+padding policy, normalization behavior, direct split path, and every other
+native method. Add an abrupt-extra control alongside the existing ordinary and
+receiver-abrupt borrowed controls. This is a narrow source repair, not a
+generic variadic-method change; the declared `calls.ts` LOC/function budget is
+for that hunk only.
+
+### 2026-09-27 S2v3b borrowed-argument repair and complete neighborhood receipt
+
+The approved split-only surplus-argument hunk is now present in
+`emitReflectiveNativeProtoClosureCall`. It applies only to standalone/WASI
+native `String.prototype.split`, evaluates each real surplus argument after
+the fixed raw slots and before `call_ref`, and leaves normalization, padding,
+direct calls, and all other native methods unchanged. The S2v3 fixture gained
+one independently executable abrupt-surplus control; the exact fixture
+SHA-256 is
+`92bd8d30a494c17e6d1e04c07c0498a51a61311a619303a48c1f5f2c7fc46efc`.
+
+On Node 24.19.0 with one Vitest fork and a 2 GiB worker cap, the exact
+63-control base/candidate pair is **48 pass / 15 fail → 58 pass / 5 fail**:
+ten fail-to-pass transitions and no pass-to-fail transition. The current
+receipts are
+`.tmp/4016/focused-engine-s2v3b-baseline-44c2-2gb-20260927.log` (SHA-256
+`34ee407d35504e68be7f1bc6fba10caa721adc2cc6ad8eaecfab56748af2d3ba`) and
+`.tmp/4016/focused-engine-s2v3b-candidate-1fb196-2gb-20260927.log` (SHA-256
+`71fbbc3152e5489880b4067d468c6b19bbcb676e2635c1a3516a4d6c0f6737e9`).
+The three new gains are the existing ordinary borrowed surplus effect, the
+existing borrowed receiver-abrupt order, and the new surplus-abrupt boundary.
+They are focused compiler controls, not Test262 credit.
+
+The maintained whole-assembly runner then executed the frozen 121-path
+neighborhood manifest
+`plan/agent-context/4016-split-neighborhood-20260927.txt` (SHA-256
+`c01cf3440ad4c618e876013c31cc82894431bdcf1a2fa1e096f21954eebb734a`) as
+one explicit standalone dynamic shard (`index=0`, `total=1`), QuickJS runtime
+evaluation, pool size one, and the same 2 GiB caps. Both sides have complete
+evidence: 121 registered paths, 121 canonical verdicts, 121 callbacks started
+and settled, and zero exclusions. Completeness validation passed against the
+same exact manifest on both sides.
+
+- Base (`44c2fb086278cd6d0b24efdaa061112452f901f1`): **119 pass / 2 fail**;
+  JSONL SHA-256 `9054587670af81949d2a0cb670fe1616cb148f2e3d7e362f5555dbd9ba35cc7e`.
+- Candidate (`1fb196048b26b9a686eaf5a4719cc646a1d1353a` plus the uncommitted
+  resumed source): **120 pass / 1 fail**; JSONL SHA-256
+  `bd5182d347d1e19b583f401246d19f83af93c368c61df7646a88085d6bda82e0`.
+- The sole row transition is unclassified/untagged
+  `test/built-ins/String/prototype/split/separator-undef-limit-zero.js`,
+  **fail → pass**. The remaining failure is Annex B ES2027
+  `custom-splitter-emulates-undefined.js`, unchanged on both sides.
+
+The 121-row manifest contains only 12 paths in the frozen ES2015 index. All
+12 are **pass → pass**. Therefore this whole-assembly receipt proves no loss
+inside the included ES2015 intersection, but it does **not** credit an ES2015
+pass gain; do not present the unclassified row as an ES2015 completion.
+
+Five ordinary focused red controls remain deliberately visible. Two are
+historical refusal pins that fail on both arms and need semantic replacement
+for upstream B6 rather than an expected-failure conversion. The others are:
+
+1. raw-v1 direct-object member-call identity/order, where a statically native
+   `receiver(): string` carrier turns the object into native `AnyString` null
+   before split; `RequireObjectCoercible` must stay before arguments for real
+   nullish receivers. The broader dynamic member-dispatch/return-carrier seam
+   is outside this hunk (`src/index.ts:12641`,
+   `control-flow.ts:545`, `type-coercion.ts:116,2724,2847`, and
+   `call-receiver-method.ts:3331`);
+2. host post-`ToPrimitive` Symbol, which still becomes invalid Wasm through the
+   separately owned shifted `undefinedGlobalIdx` cache; and
+3. the descriptor-before-split host `TypeError` boundary.
+
+Do not move the ROC boundary after argument evaluation to make the first row
+green, and do not patch the registry/global-cache or descriptor machinery in
+this branch. The normal changed-root-test hook runs this ordinary-red fixture
+and therefore currently fails; a finished/merge-ready PR is not defensible.
+At most this state can be a clearly labelled draft checkpoint using the
+repository-sanctioned slow-precommit policy, with the raw receipts and these
+unresolved boundaries retained. No test is skipped, expected-failed, or moved
+to obtain that status.
 
 ## 2026-09-20 reopened: observable split coercion order
 

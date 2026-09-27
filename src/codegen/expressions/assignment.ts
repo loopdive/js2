@@ -8,6 +8,7 @@ import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js
 import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#6651 F4)
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
@@ -63,12 +64,14 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
+import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
+import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -99,6 +102,7 @@ import { ensureObjectProtoProtoSetNative } from "../object-proto-proto-accessor.
 import { hasExplicitNullObjectPrototype } from "../object-proto-name-in.js"; // (#5268 review F4)
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
 import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
+import { targetReceiverIsPrototypeAccess } from "../class-proto-toplevel-write.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
@@ -898,7 +902,7 @@ export function emitDynamicWithIdentifierWrite(
       }
       return;
     }
-    emitDynamicWithSet(ctx, fctx, res.scope, id.text, rhsLocalIdx, hasLocal, () => {
+    emitDynamicWithSet(ctx, fctx, res.scope, id.text, id, rhsLocalIdx, hasLocal, () => {
       const saved = fctx.withScopes;
       fctx.withScopes = scopes.slice(0, matchedIdx);
       try {
@@ -1978,6 +1982,16 @@ function tryEmitArrayProtoIteratorAssignDrive(
   return true;
 }
 
+/**
+ * (#6651 G3) A struct the positional array-pattern readers may treat as a
+ * TUPLE: fields named `_0.._n`, or a registered (possibly empty) tuple type.
+ */
+function isTupleShapedStruct(ctx: CodegenContext, typeIdx: number, fields: readonly { name?: string }[]): boolean {
+  if (fields.length > 0) return fields.every((f, idx) => f.name === `_${idx}`);
+  for (const t of ctx.tupleTypeMap.values()) if (t === typeIdx) return true;
+  return false;
+}
+
 function compileArrayDestructuringAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2047,6 +2061,15 @@ function compileArrayDestructuringAssignment(
   // Detect whether RHS is a tuple struct (fields $_0, $_1, ...) or vec struct ({length, data})
   const isVecStruct =
     typeDef.fields.length === 2 && typeDef.fields[0]?.name === "length" && typeDef.fields[1]?.name === "data";
+
+  // (#6651 G3) Any other struct — an object literal carrying `@@iterator`, a
+  // class instance, a native string — is an arbitrary iterable, not a tuple:
+  // §13.15.5.2 calls GetIterator on it. Reading its fields positionally bound
+  // `[a, b] = { [Symbol.iterator]() {…}, next() {…} }` to the struct's FIELDS.
+  if (!isVecStruct && !isTupleShapedStruct(ctx, typeIdx, typeDef.fields)) {
+    fctx.body.push({ op: "extern.convert_any" });
+    return compileExternrefArrayDestructuringAssignment(ctx, fctx, target, { kind: "externref" }, true);
+  }
 
   let arrTypeIdx = -1;
   let arrDef: { kind: string; element: ValType } | undefined;
@@ -2522,7 +2545,14 @@ function compileExternrefArrayDestructuringAssignment(
   fctx: FunctionContext,
   target: ts.ArrayLiteralExpression,
   resultType: ValType,
+  // (#6651 G3) The source is a WasmGC struct iterable. The host's lenient
+  // `__array_from_iter_n` cannot see a compiled `@@iterator` method (it answers
+  // `[]`), so the host lane takes the strict GetIterator twin the binding lane
+  // uses (#3643), whose struct arm needs the `__call_@@iterator` export that
+  // registering `__iterator` demands. Standalone keeps its native drain.
+  structIterable = false,
 ): InnerResult {
+  const hostStrictIter = structIterable && !ctx.standalone && !ctx.wasi;
   // Store externref in temp local
   const tmpLocal = allocLocal(fctx, `__ext_arr_destruct_${fctx.locals.length}`, resultType);
   fctx.body.push({ op: "local.set", index: tmpLocal });
@@ -2535,6 +2565,19 @@ function compileExternrefArrayDestructuringAssignment(
   // GetIterator so they always throw on null/undefined.
   if (resultType.kind === "externref") {
     emitExternrefAssignDestructureGuard(ctx, fctx, tmpLocal);
+  }
+
+  // (#6651 cluster G, G1) A pattern with a MEMBER target makes the
+  // DestructuringAssignmentTarget reference evaluation OBSERVABLE, and
+  // §13.15.5.5 evaluates it BEFORE the iterator is stepped. The
+  // `__array_from_iter_n` materialisation below is a complete drain up front,
+  // so that ordering — and the §13.15.5.2 step 5 IteratorClose that depends on
+  // it — cannot be expressed here. Hand those patterns to the lazy drive; it
+  // refuses (emitting nothing) for every shape it does not model, so the
+  // all-identifier common case stays on the path below, byte-identical.
+  if (resultType.kind === "externref" && tryEmitSpecOrderedArrayAssignDrive(ctx, fctx, target, tmpLocal)) {
+    fctx.body.push({ op: "local.get", index: tmpLocal });
+    return resultType;
   }
 
   // #1454: Spec §13.15.5.2 ArrayAssignmentPattern requires GetIterator(value)
@@ -2558,9 +2601,10 @@ function compileExternrefArrayDestructuringAssignment(
   // immediately (§13.15.5.2), so the empty-pattern gate is gone.
   if (resultType.kind === "externref") {
     const matStepCount = patternIteratorStepCount(target.elements);
+    if (hostStrictIter) ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
     const matIterIdx = ensureLateImport(
       ctx,
-      "__array_from_iter_n",
+      hostStrictIter ? "__array_from_iter_n_strict" : "__array_from_iter_n",
       [{ kind: "externref" }, { kind: "f64" }],
       [{ kind: "externref" }],
     );
@@ -3125,7 +3169,7 @@ function emitExternrefObjectPatternWrites(
 }
 
 /** Destructure an object from a local variable (used for nested patterns) */
-function emitObjectDestructureFromLocal(
+export function emitObjectDestructureFromLocal(
   ctx: CodegenContext,
   fctx: FunctionContext,
   pattern: ts.ObjectLiteralExpression,
@@ -3372,6 +3416,18 @@ function emitArrayDestructureFromLocal(
   // throw the spec-required TypeError (#1225). Without this, nested patterns
   // like `[[ _ ]] = [null]` would silently drop the destructuring.
   if (!isVecStruct && !isTupleStruct) {
+    // (#6651 G3) A non-tuple struct is an arbitrary iterable — drive it
+    // through the externref GetIterator path, like the top-level pattern.
+    if (!isTupleShapedStruct(ctx, srcTypeIdx, srcDef.fields)) {
+      const extLocal = allocLocal(fctx, `__nested_iter_src_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.get", index: srcLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "local.set", index: extLocal });
+      fctx.body.push({ op: "local.get", index: extLocal });
+      compileExternrefArrayDestructuringAssignment(ctx, fctx, pattern, { kind: "externref" }, true);
+      fctx.body.push({ op: "drop" });
+      return;
+    }
     if (needsNullGuard) {
       const throwInstrs = buildDestructureNullThrow(ctx, fctx);
       fctx.body.push({ op: "local.get", index: srcLocal });
@@ -3950,8 +4006,10 @@ function tryEmitPinnedStructMemberSet(
     getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
   ) {
     fctx.body.push({ op: "extern.convert_any" });
+    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
+    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -4143,6 +4201,33 @@ function compilePropertyAssignment(
     ? ctx.classDeclarationMap.get(foreignStaticPrivateClassName)!
     : target.expression;
   const objType = ctx.checker.getTypeAtLocation(objTypeNode);
+
+  // (#6651 F4) The WRITE twin of the read arm in `property-access.ts`. Same
+  // cause: `new Proxy([1,2,3],{})` is statically `number[]`, so `p.length = 0`
+  // took the §10.4.2.4 ArraySetLength vec arm below and wrote field 0 of a
+  // `$Proxy` struct — measured on base, the backing array was untouched AND a
+  // `set` trap installed on the proxy ran ZERO times. `forceRuntimeSet` routes
+  // it to `__extern_set`, whose `$Proxy` front-guard enters §10.5.9 [[Set]];
+  // for a trap-absent proxy that forwards to the target's ordinary set, which
+  // is the array arm again — now with the right receiver.
+  //
+  // `__proto__` is EXCLUDED, and that exclusion is measured, not defensive:
+  // §B.2.2.1 makes `o.__proto__ = v` an accessor call that performs
+  // `[[SetPrototypeOf]]`, not an ordinary [[Set]], and the arm that owns it
+  // already carries the proxy front-guard (`object-proto-proto-accessor.ts` →
+  // `__object_setPrototypeOf`). Routing it here instead turned
+  // `built-ins/Object/prototype/__proto__/set-abrupt.js` from PASS to FAIL in
+  // the 487-row control — the `setPrototypeOf` trap stopped running, so the
+  // throw it is supposed to propagate never happened. That row is the only
+  // thing this whole slice regressed, and it is the reason for this clause.
+  if (
+    ctx.standalone &&
+    !ts.isPrivateIdentifier(target.name) &&
+    target.name.text !== "__proto__" &&
+    tracesToProxyValue(ctx, target.expression)
+  ) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
+  }
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
@@ -4797,8 +4882,19 @@ function compilePropertyAssignment(
       // the receiver here is `$__vec_base`, whose only field is `length`, so
       // reaching the data array needs the per-vec-type ladder that
       // `vec-length-hole-fill.ts` owns for all three length-store sites.
-      emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only");
-      const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
+      // Overlay validation owns deletion when present. Filling before it can
+      // erase elements even when a non-writable length rejects the shrink.
+      let selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target);
+      if (selectedStore === null) {
+        const savedBody = fctx.body;
+        fctx.body = [];
+        try {
+          emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only", true);
+          selectedStore = [...fctx.body, ...lengthStore];
+        } finally {
+          fctx.body = savedBody;
+        }
+      }
       if (receiverProvenVec) {
         for (const instr of selectedStore) fctx.body.push(instr);
       } else {
@@ -4999,7 +5095,11 @@ function compilePropertyAssignment(
   // side-slot path. In JS-host mode the backing is the actual host instance
   // returned by `super(...)`; use ordinary [[Set]] instead of casting it to the
   // vestigial bookkeeping struct registered for the user class.
-  if (ctx.classExternrefBackedSet.has(typeName)) {
+  // (#6651 cluster C, C2) …but NOT when the receiver is `<C>.prototype`: the
+  // checker types it as the INSTANCE type, so this arm would cast a PROTOTYPE
+  // object to `$Error_struct` and TRAP. See class-proto-toplevel-write.ts.
+  const receiverIsClassPrototype = targetReceiverIsPrototypeAccess(target);
+  if (ctx.classExternrefBackedSet.has(typeName) && !receiverIsClassPrototype) {
     if (ctx.standalone) {
       const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
       if (ownWrite !== undefined) return ownWrite;
@@ -5218,6 +5318,7 @@ function compilePropertyAssignmentExternSet(
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
   } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
+    boxNullRefAsUndefined(ctx, fctx, value, valResult);
   }
   let assignmentResultLocal: number | undefined;
   if (wrapRuntimeEvalCallable) {
@@ -5289,6 +5390,11 @@ function compileExternPropertySet(
   const resolvedInfo = findExternInfoForMember(ctx, className, propName, "property");
   const propOwner = resolvedInfo ?? ctx.externClasses.get(className);
   if (!propOwner) return null;
+  // (#6651 B5) Without a JS host an INHERITED `Object` member write
+  // (`re.constructor = f` — the §22.2.6.14 SpeciesConstructor idiom) must not
+  // bind the `Object_set_<name>` host import; the caller's `__extern_set`
+  // fallback is the native ordinary [[Set]].
+  if (noJsHost(ctx) && propOwner.importPrefix === "Object") return null;
 
   // Check if the import exists BEFORE compiling object+value to avoid dangling stack values
   const importName = `${propOwner.importPrefix}_set_${propName}`;
@@ -5898,10 +6004,25 @@ function compileElementAssignment(
     // `x[object] = value` preserves coercion order and reaches either the
     // numeric element or the vec expando/prototype path selected by the
     // runtime (`S15.4_A1.1_T9`).
+    // (#6651 E3) A SYMBOL key is the one dynamic key shape a TypedArray view
+    // must take this route for. §10.4.5.5 step 1 only diverts a key that is a
+    // String whose CanonicalNumericIndexString is not undefined; a Symbol is
+    // neither, so `view[Symbol.toPrimitive] = f` is an ORDINARY named set.
+    // The TA exclusion above sent it to the numeric element lane instead,
+    // where the write is DROPPED — not misdirected: measured on this slice's
+    // base (`.tmp/6651/p4.js`, `.tmp/6651/t1.mts`), `f64[S]`, `i8[S]` and
+    // `u8[S]` all read back `undefined` afterwards, the STRING-keyed
+    // `i8.str = 6` landed, and element 0 of a pre-filled view was left
+    // untouched. Narrow by construction — a non-symbol key on a view keeps the
+    // numeric lane exactly as before.
+    const symbolTypedElementKey =
+      vecElementTypedArrayName(ctx, target.expression) !== undefined &&
+      ctx.oracle.staticJsTypeOf(target.argumentExpression) === "symbol";
     if (
-      vecElementTypedArrayName(ctx, target.expression) === undefined &&
-      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
-      isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression)
+      symbolTypedElementKey ||
+      (vecElementTypedArrayName(ctx, target.expression) === undefined &&
+        !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
+        isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression))
     ) {
       fctx.body.push({ op: "local.get", index: vecLocal });
       return compileExternSetFallback(ctx, fctx, target, value, arrType);

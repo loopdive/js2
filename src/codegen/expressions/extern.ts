@@ -964,8 +964,13 @@ function compileSpreadCallArgs(
     if (argIdx < expr.arguments.length) {
       const restArg = expr.arguments[argIdx]!;
       if (ts.isSpreadElement(restArg)) {
-        // The spread source is already a vec struct — pass directly
-        compileExpression(ctx, fctx, restArg.expression);
+        // The spread source is already a vec struct — pass directly, projected
+        // onto the rest vec when its element type differs (#1058: TypeScript's
+        // `addRelatedInfo(diag, ...relatedInformation)` otherwise hit a bare
+        // `ref.cast` between two unrelated vec types and trapped).
+        const restType = paramTypes?.[paramOffset + restInfo.restIndex];
+        const spreadType = compileExpression(ctx, fctx, restArg.expression, restType);
+        if (spreadType && restType && !valTypesMatch(spreadType, restType)) coerceType(ctx, fctx, spreadType, restType);
       } else {
         // Single non-spread arg as rest — wrap in vec struct { 1, [val] }
         fctx.body.push({ op: "i32.const", value: 1 });

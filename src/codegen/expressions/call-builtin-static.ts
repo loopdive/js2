@@ -23,10 +23,13 @@ import {
   emitArrayIteratorPrototypeSingleton,
   emitIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
-  emitGeneratorFunctionPrototypeSingleton,
   emitTypedArrayIntrinsicCtorObject,
   isWiredTypedArrayViewName,
 } from "../array-object-proto.js";
+import {
+  emitGeneratorFunctionPrototypeSingleton,
+  isStaticSyncGeneratorFunctionValue,
+} from "../generator-function-intrinsic.js";
 import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import {
@@ -148,6 +151,8 @@ import { resolveStructName } from "./misc.js";
 import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
+import { isStandaloneArraySubclass } from "../array-subclass-receiver.js"; // (#2917)
+import { emitArrayRootedProtoParent } from "../vec-proto-link.js"; // (#2917)
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -1314,7 +1319,15 @@ export function compileBuiltinStaticCall(
               } else {
                 fctx.body.push({ op: "array.get", typeIdx: srcArrIdx });
               }
-              if (!valTypesMatch(srcStore, storeWasm)) coerceType(ctx, fctx, srcStore, storeWasm);
+              // (#6651 E5) An externref element is ToNumber'd FIRST (§23.2.2.1's
+              // Set runs ToNumber, i.e. ToPrimitive/valueOf): a direct externref→i32
+              // coercion is `__unbox_number`, which reads an object as NaN → 0.
+              let elemT = srcStore;
+              if (srcStore.kind === "externref" && storeWasm.kind !== "f64") {
+                coerceType(ctx, fctx, srcStore, { kind: "f64" });
+                elemT = { kind: "f64" };
+              }
+              if (!valTypesMatch(elemT, storeWasm)) coerceType(ctx, fctx, elemT, storeWasm);
               fctx.body.push({ op: "array.set", typeIdx: taArrTypeIdx });
               // i++
               fctx.body.push({ op: "local.get", index: iTmp });
@@ -2412,6 +2425,8 @@ export function compileBuiltinStaticCall(
       if (parentClassName && emitLazyProtoGet(ctx, fctx, parentClassName)) {
         return { kind: "externref" };
       }
+      // (#2917) `class J extends Array`: J.prototype's [[Prototype]] is Array.prototype.
+      if (emitArrayRootedProtoParent(ctx, fctx, childClassName)) return { kind: "externref" };
       // Base class with no parent: return null (Object.prototype not modeled)
       fctx.body.push({ op: "ref.null.extern" });
       return { kind: "externref" };
@@ -2426,6 +2441,16 @@ export function compileBuiltinStaticCall(
     // Same shape for `async function*`. Tests rely on this:
     //   var GeneratorPrototype = Object.getPrototypeOf(g).prototype;
     //   GeneratorPrototype.next.call(non_gen);  // → TypeError
+    //
+    // (#6651 A3) The same answer for a sync generator function EXPRESSION —
+    // `Object.getPrototypeOf(function*() {})`, the spelling every
+    // `built-ins/GeneratorFunction/**` row uses — and for a provably unchanged
+    // object-literal generator METHOD (`o.m`, see the predicate). Neither
+    // operand evaluation is observable, so neither is compiled.
+    if ((ctx.standalone || ctx.wasi) && isStaticSyncGeneratorFunctionValue(ctx, arg0)) {
+      const t = emitGeneratorFunctionPrototypeSingleton(ctx, fctx);
+      if (t) return t;
+    }
     if (ts.isIdentifier(arg0)) {
       const argName = arg0.text;
       const isGen = ctx.generatorFunctions.has(argName);
@@ -3034,7 +3059,12 @@ export function compileBuiltinStaticCall(
     // host import and already passes) — gated on ctx.standalone so host
     // bytes stay identical.
     const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
-    const structName = isScriptGlobalThisReceiver ? undefined : resolveStructName(ctx, arg0TsType);
+    // (#2917) A standalone Array subclass's struct is vestigial — the instance
+    // is a vec — so the struct fold answered `undefined` for `length`/indices.
+    const structName =
+      isScriptGlobalThisReceiver || isStandaloneArraySubclass(ctx, arg0TsType.getSymbol()?.name)
+        ? undefined
+        : resolveStructName(ctx, arg0TsType);
     const literalKeyText = (e: ts.Expression): string | undefined => {
       if (ts.isStringLiteral(e)) return e.text;
       if (!ctx.standalone) return undefined;
@@ -3922,8 +3952,8 @@ export function compileBuiltinStaticCall(
     // ToObject THROWS for it, while `Object()` answers a fresh plain object, so
     // that case stays with the native's own guard.
     const targetTag = ctx.standalone ? ctx.oracle.staticJsTypeOf(targetArg) : "mixed";
-    const targetIsPrimitive =
-      targetTag === "number" || targetTag === "string" || targetTag === "boolean" || targetTag === "bigint";
+    // (#6651 SY1) `symbol` is Table 13's FIFTH wrapper row — `emitObjectCoercion` grew its Symbol arm in slice I4, this gate did not.
+    const targetIsPrimitive = ["number", "string", "boolean", "bigint", "symbol"].includes(targetTag);
     if (targetIsPrimitive) {
       emitObjectCoercion(ctx, fctx, [targetArg]);
     } else {

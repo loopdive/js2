@@ -51,6 +51,11 @@ if [ "$TEST262_SEMANTIC_PROVIDERS" != "auto" ]; then
   RESULT_PREFIX="${RESULT_PREFIX}-${TEST262_SEMANTIC_PROVIDERS}"
 fi
 export TEST262_SEMANTIC_PROVIDERS
+# (#5385) The native-first lane measures the native semantic regime in the JS
+# environment (see CompileTargetProfile.nativeRegime); opt-in mirrors CI.
+if [ "$TEST262_SEMANTIC_PROVIDERS" = "native-first" ]; then
+  export JS2WASM_NATIVE_REGIME_JS="${JS2WASM_NATIVE_REGIME_JS:-1}"
+fi
 
 forwarded_args=()
 for arg in "$@"; do
@@ -238,6 +243,12 @@ else
     else
       echo "Temporal provider (standalone): OFF (set JS2WASM_TEST262_TEMPORAL_STANDALONE=1 to link)"
     fi
+  elif [ "$TEST262_SEMANTIC_PROVIDERS" = "native-first" ]; then
+    # (#6706) The native-first lane links a provider compiled under the native
+    # regime, stamped separately. Soft, like standalone: no stamp means the rows
+    # run unlinked (announced) — never against the host-semantics provider.
+    node scripts/prewarm-temporal-provider.mjs --target host --semantic-providers native-first ||
+      echo "Temporal provider (native-first): UNAVAILABLE — those rows run unlinked"
   else
     node scripts/prewarm-temporal-provider.mjs --target host
   fi
@@ -262,7 +273,8 @@ fi
 # quickjs prebuild makes a missing/mis-keyed quickjs cache harder to diagnose
 # and wastes minutes, while the selector is deliberately forbidden from
 # falling back between engines.
-if [ "$TEST262_TARGET" = "standalone" ]; then
+# (#5385) The native-first JS-environment lane links the same provider.
+if [ "$TEST262_TARGET" = "standalone" ] || [ "$TEST262_SEMANTIC_PROVIDERS" = "native-first" ]; then
   echo "Eval engine selection: $EVAL_ENGINE"
   case "$EVAL_ENGINE" in
     quickjs)
