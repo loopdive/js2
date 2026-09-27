@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Open/dynamic routes are deliberate controls, not evidence of closed-field
+// layout preservation. The two closed-field cases remain in this population.
+const cases: [string, string][] = [
+  [
+    "dynamic dot write",
+    'function put(o){o.v=18446744073709551617n;return String(o.v);} function test(){return put({})==="18446744073709551617"?1:-1;}',
+  ],
+  [
+    "dynamic computed write",
+    'function put(o,k){o[k]=-18446744073709551617n;return String(o[k]);} function test(){return put({},"v")==="-18446744073709551617"?1:-1;}',
+  ],
+  [
+    "Reflect.set value",
+    'function test(){const o={};const ok=Reflect.set(o,"v",18446744073709551617n);return ok&&String(Reflect.get(o,"v"))==="18446744073709551617"?1:-1;}',
+  ],
+  [
+    "Reflect.set assignment trace",
+    'function test(){let trace=0;const o={};function receiver(){trace=trace*10+1;return o;}function key(){trace=trace*10+2;return "v";}const ok=Reflect.set(receiver(),key(),(trace=trace*10+3,18446744073709551617n));return ok&&trace===123&&String(Reflect.get(o,"v"))==="18446744073709551617"?1:-1;}',
+  ],
+  [
+    "closed field direct write",
+    'function test(){const o={v:0n};o.v=18446744073709551617n;return String(o.v)==="18446744073709551617"?1:-1;}',
+  ],
+  [
+    "closed descriptor value",
+    'function test(){const o={};Reflect.defineProperty(o,"v",{value:18446744073709551617n});return String(Reflect.get(o,"v"))==="18446744073709551617"?1:-1;}',
+  ],
+  ["dynamic number control", "function put(o){o.v=1.5;return o.v;} function test(){return put({})===1.5?1:-1;}"],
+  [
+    "throwing receiver stops later arguments",
+    'function test(){let count=0;const reason={};function receiver(){throw reason;}try{Reflect.set(receiver(),(count++,"v"),18446744073709551617n);return -1;}catch(e){return e===reason&&count===0?1:-2;}}',
+  ],
+];
+
+for (const [name, program] of cases) {
+  it(name, async () => {
+    const source = `${program}\nexport { test };`;
+    const native = runInNewContext(`${program}\ntest();`, {}, { timeout: 5000 });
+    const sha256 = createHash("sha256").update(source).digest("hex");
+    const result = await compile(source, {
+      fileName: "5883-reference-write.js",
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      target: "standalone",
+      nativeStrings: true,
+    });
+    console.log(JSON.stringify({ name, source, sha256, native, success: result.success, errors: result.errors }));
+    expect(native).toBe(1);
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const module = new WebAssembly.Module(result.binary);
+    const imports = WebAssembly.Module.imports(module);
+    expect(imports).toEqual([]);
+    const instance = new WebAssembly.Instance(module, {});
+    const actual = (instance.exports.test as () => number)();
+    console.log(JSON.stringify({ name, sha256, native, actual, imports }));
+    expect(actual).toBe(1);
+  });
+}
