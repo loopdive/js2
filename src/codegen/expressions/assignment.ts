@@ -4882,8 +4882,19 @@ function compilePropertyAssignment(
       // the receiver here is `$__vec_base`, whose only field is `length`, so
       // reaching the data array needs the per-vec-type ladder that
       // `vec-length-hole-fill.ts` owns for all three length-store sites.
-      emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only");
-      const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
+      // Overlay validation owns deletion when present. Filling before it can
+      // erase elements even when a non-writable length rejects the shrink.
+      let selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target);
+      if (selectedStore === null) {
+        const savedBody = fctx.body;
+        fctx.body = [];
+        try {
+          emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only", true);
+          selectedStore = [...fctx.body, ...lengthStore];
+        } finally {
+          fctx.body = savedBody;
+        }
+      }
       if (receiverProvenVec) {
         for (const instr of selectedStore) fctx.body.push(instr);
       } else {

@@ -98,8 +98,12 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       !ctx.usesArrayHoles &&
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left) &&
-      node.left.name.text === "length"
+      ((ts.isPropertyAccessExpression(node.left) && node.left.name.text === "length") ||
+        // A runtime bracket key may be "length". Reserve hole-aware reads
+        // before function emission; finalization must not mint a Hole type.
+        (ts.isElementAccessExpression(node.left) &&
+          (!ts.isStringLiteralLike(node.left.argumentExpression) || node.left.argumentExpression.text === "length") &&
+          !ts.isNumericLiteral(node.left.argumentExpression)))
     ) {
       ctx.usesArrayHoles = true;
     }

@@ -1,10 +1,11 @@
 ---
 id: 6679
 title: "fixups: a `return_call`'s ref-null retype walks backwards across `global.set` and turns the bare-call receiver reset into a struct null (lodash `baseUpdate` invalid Wasm)"
-status: ready
+status: done
+completed: 2026-09-26
 sprint: Backlog
 created: 2026-09-24
-updated: 2026-09-24
+updated: 2026-09-26
 priority: medium
 horizon: s
 feasibility: easy
@@ -60,3 +61,23 @@ stop. With that change lodash's `baseUpdate` validates and the lane moves on to
 - A reduced fixture (tail call whose argument is a bare call of a parameter,
   callee has a ref-typed param) validates in both lanes.
 - lodash's standalone-dynamic lane moves past the `baseUpdate` validator error.
+
+## Implementation Plan
+
+Executed 2026-09-26 under [#6703](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6703-lodash-standalone-optimization-error-invalid-raw-module):
+
+1. `locateOperandProducers` (`src/codegen/call-arg-producers.ts`) records a
+   `return_call`'s operands from `callTargetFuncType` and then stops (a tail
+   call is a terminator; `instrPopsPushes` still refuses it). Both consumers
+   (`fixups.ts` via `locateCallArgProducers`, `cross-hierarchy-operands.ts`
+   via `requiredOperandTypes`) already handled `return_call`.
+2. Reduced fixture: `return sink(xs ×8, updater(xs.length))` with eight
+   `number[]` params — the backward walk retyped the receiver reset to
+   `ref.null $vec`.
+
+## Resolution
+
+- `tests/issue-6703-lodash-raw-module-validity.test.ts` (tail-call cases +
+  a `locateCallArgProducers` unit case): fail on parent, pass with the fix.
+- lodash `baseUpdate` and the five closure `struct.new` operand-2 errors
+  (`cond`, `__closure_109/319/902/1016`) are gone from the raw module.

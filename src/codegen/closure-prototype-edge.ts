@@ -331,6 +331,80 @@ export function fillClosurePrototypeEdge(ctx: CodegenContext): void {
 }
 
 /**
+ * (#6651 SP1) `__defineProperty_value` flag word for §20.2.4.2's mandatory
+ * `prototype` own property: `{writable: true, enumerable: false,
+ * configurable: false}`, with the host encoding's "all three attributes and the
+ * value are specified" mask. The SAME constant `closure-props.ts`'s
+ * `buildFnctorPrototypeWriteArm` uses for `f.prototype = v`, so the descriptor a
+ * lazy vivify installs and the one an explicit write installs cannot drift.
+ */
+const PROTOTYPE_OWN_FLAGS = 0xb9;
+
+/**
+ * (#6651 SP1) Build the lazy §10.2.5 MakeConstructor tail for the `prototype`
+ * GET arm, or `undefined` when this module cannot host it.
+ *
+ * Returns a FACTORY for the same reason `consultEdge` is one: an `Instr` object
+ * reached from two body positions is remapped twice by the finalize index walks.
+ *
+ * Declines — leaving the arm byte-identical to its pre-#6651 shape — when the
+ * module has no constructible closure wrapper type (nothing to vivify for), or
+ * when any of the three natives it needs is unregistered. `__closure_bag_ensure`
+ * and `__new_plain_object` are the same two the bag machinery itself uses, and
+ * `__defineProperty_value` is the descriptor-exact writer, so a vivified
+ * `prototype` is indistinguishable from one the program wrote itself.
+ */
+function lazyMakeConstructorInstrs(
+  ctx: CodegenContext,
+  slots: { recvSlot: number; keySlot: number; bagSlot: number; protoSlot: number },
+): (() => Instr[]) | undefined {
+  const constructibleTypeIdxs = [...ctx.constructibleClosureTypeIdxs].sort((a, b) => a - b);
+  if (constructibleTypeIdxs.length === 0) return undefined;
+  const bagEnsureIdx = ctx.funcMap.get("__closure_bag_ensure");
+  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  if (bagEnsureIdx === undefined || newPlainObjectIdx === undefined || defineValueIdx === undefined) return undefined;
+
+  const { recvSlot, keySlot, bagSlot, protoSlot } = slots;
+  return () => {
+    // `ref.test`-or chain over the exact [[Construct]]-implementing wrapper
+    // identities. An arrow / concise method / bound function is not in the set,
+    // so it never reaches the vivify and keeps answering `undefined`.
+    const isConstructible: Instr[] = [];
+    for (const typeIdx of constructibleTypeIdxs) {
+      isConstructible.push(
+        { op: "local.get", index: recvSlot },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx },
+      );
+      if (isConstructible.length > 3) isConstructible.push({ op: "i32.or" });
+    }
+    return [
+      ...isConstructible,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: recvSlot },
+          { op: "call", funcIdx: bagEnsureIdx },
+          { op: "local.set", index: bagSlot },
+          { op: "call", funcIdx: newPlainObjectIdx },
+          { op: "local.set", index: protoSlot },
+          { op: "local.get", index: bagSlot },
+          { op: "local.get", index: keySlot }, // proven `ref.eq` to "prototype" above
+          { op: "local.get", index: protoSlot },
+          { op: "f64.const", value: PROTOTYPE_OWN_FLAGS },
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" }, // the helper returns its target
+          { op: "local.get", index: protoSlot },
+          { op: "return" },
+        ],
+      },
+    ];
+  };
+}
+
+/**
  * (#2660 M3, half b) The `prototype` arm for `__closure_prop_get` — the dynamic
  * MOP read of `f["prototype"]` / `f.prototype` on a FUNCTION VALUE.
  *
@@ -357,37 +431,92 @@ export function fillClosurePrototypeEdge(ctx: CodegenContext): void {
  * the interned literal (a rope, a runtime-built string) misses and keeps the
  * pre-existing answer — the same deliberate limitation `fillClosureMethodCall`
  * documents for its method-name matching.
+ *
+ * ## (#6651 SP1) The LAZY §10.2.5 half — a function with no compile-time edge
+ *
+ * The edge above is keyed by a compile-time NAME (`ctx.fnctorPrototypeObject` /
+ * `ctx.protoGlobals`), so it answers only for a function the compiler could name.
+ * An ANONYMOUS function expression written straight into a property —
+ *
+ *     sample.constructor[Symbol.species] = function (count) { … };
+ *
+ * — never gets a fnctor prototype global, so `Get(S, "prototype")` answered
+ * `undefined` and everything downstream of §10.2.5 MakeConstructor failed:
+ * `__native_construct_<N>` (#3981) opens with
+ * `if (proto == null) proto = __extern_get(callee, "prototype")` and then
+ * `__object_create(proto)`, so the constructed `this` came back with NO
+ * `[[Prototype]]` link, and `ctorThis instanceof S` was false. That is the whole
+ * of the `TypedArray/prototype/{filter,map,slice,subarray}/
+ * speciesctor-get-species-custom-ctor-invocation.js` family.
+ *
+ * So on a miss, MakeConstructor is performed LAZILY: mint one fresh `$Object`
+ * and define it as the closure's own `prototype` (writable, non-enumerable,
+ * non-configurable — §10.2.5 step 5 via §20.2.4.2). Storing it in the bag is what
+ * makes the operation idempotent: every later read hits the `hasOwn` guard above
+ * and answers the SAME object, which is the identity `instanceof`,
+ * `Object.getPrototypeOf(new S())` and `__native_construct_<N>` must agree on.
+ *
+ * Three properties keep this from answering a wrong `prototype`:
+ *
+ *  - It runs only after BOTH the own-bag check and the compile-time edge have
+ *    declined, so it can never displace an explicit `f.prototype = …` (including
+ *    `= undefined`) nor a named fnctor's / class's real prototype object.
+ *  - It is gated on a `ref.test` against `ctx.constructibleClosureTypeIdxs`
+ *    (#3371) — the exact wrapper identities that implement [[Construct]]. An
+ *    ARROW, a concise method and a bound function are absent from that set, so
+ *    §15.3's "an arrow has no `prototype`" keeps answering `undefined` by
+ *    construction rather than by an ad-hoc exclusion.
+ *  - It mints no string constant and no function at fill time (the #4221
+ *    hazard): the key it defines under is the receiver's own `keySlot`, already
+ *    proven `ref.eq` to the interned `"prototype"` literal by the guard above.
+ *
+ * The `constructor` back-ref (§10.2.5 step 4) is deliberately NOT installed here:
+ * it would need a second interned literal minted at FILL time. `S.prototype.
+ * constructor` therefore stays absent for an anonymous property-held function —
+ * the same answer as before this arm, so no behaviour regresses, and the
+ * named-fnctor spelling still gets it from `fnctor-prototype.ts`.
  */
 export function closurePrototypeEdgeGetArm(
   ctx: CodegenContext,
   slots: { recvSlot: number; keySlot: number; bagSlot: number; protoSlot: number },
 ): Instr[] {
-  if (!hasClosurePrototypeEdges(ctx)) return [];
-  const protoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
   const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
   const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
   const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
-  if (protoOfIdx === undefined || bagLookupIdx === undefined || hasOwnIdx === undefined) return [];
+  if (bagLookupIdx === undefined || hasOwnIdx === undefined) return [];
   if (!ctx.nativeStrings || nativeStrTypeIdx < 0) return [];
 
   const { recvSlot, keySlot, bagSlot, protoSlot } = slots;
+  const hasEdges = hasClosurePrototypeEdges(ctx);
+  const protoOfIdx = hasEdges ? ctx.funcMap.get(CLOSURE_PROTO_OF) : undefined;
+  const vivify = lazyMakeConstructorInstrs(ctx, slots);
+  if (protoOfIdx === undefined && vivify === undefined) return [];
 
   // A FACTORY, not a shared array: the same `Instr` object appearing at two
   // points in one body is double-remapped by the finalize index walks
   // (`reference_shared_instr_object_dce_double_remap`), which is how a correct
   // instruction sequence turns into a call to the wrong function.
-  /** The edge consult itself — reached only when the bag holds no own entry. */
+  /**
+   * The edge consult itself — reached only when the bag holds no own entry.
+   * On a miss it falls through to the lazy §10.2.5 vivify (#6651 SP1), which
+   * returns when (and only when) the receiver is a constructible closure.
+   */
   const consultEdge = (): Instr[] => [
-    { op: "local.get", index: recvSlot },
-    { op: "call", funcIdx: protoOfIdx },
-    { op: "local.tee", index: protoSlot },
-    { op: "ref.is_null" },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: protoSlot }, { op: "return" }],
-    },
+    ...(protoOfIdx === undefined
+      ? []
+      : ([
+          { op: "local.get", index: recvSlot },
+          { op: "call", funcIdx: protoOfIdx },
+          { op: "local.tee", index: protoSlot },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: protoSlot }, { op: "return" }],
+          },
+        ] satisfies Instr[])),
+    ...(vivify?.() ?? []),
   ];
 
   /** `bag == null || !__hasOwnProperty(bag, "prototype")` ⇒ consult the edge. */

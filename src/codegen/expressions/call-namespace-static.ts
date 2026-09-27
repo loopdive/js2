@@ -130,6 +130,7 @@ import {
   emitIterableArg,
   emitJsonReplacerAllowList,
   isDynamicCombinatorArgEligible,
+  isGlobalBuiltinIdentifier,
   resolvePromiseSubclassThisArg,
   tryEmitJsonParsePrimitive,
   tryEmitJsonStringifyPrimitive,
@@ -147,6 +148,45 @@ function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {
     current = current.expression;
   }
   return current;
+}
+
+/**
+ * (#6651 SN1) Is `value` provably the result of §7.1.18 ToObject, i.e. a call to
+ * the global `Object`?
+ *
+ * ToObject always answers an Object, so `Object(v)` is provably NOT a Symbol for
+ * EVERY `v` — including `Object(Symbol())`, a Symbol WRAPPER, which is the one
+ * shape §20.4.2.6 step 1 must reject while looking most symbol-like.
+ * `ObjectConstructor` is declared `(value: any): any`, so `staticJsTypeOf`
+ * reports `"mixed"` for it and the #5269 A-6 non-symbol gate let it through to
+ * the i32 symbol-id lane, where `Symbol.keyFor` answered `undefined` instead of
+ * throwing (measured on base).
+ *
+ * This is a SPEC fact about the CALLEE, not a guess about the operand, which is
+ * what makes it sound to act on under a `"mixed"` static type — the rest of that
+ * bucket (a union, a narrowed `any`) keeps its existing coercion. The one-hop
+ * binding is read because the row spells `var subject = Object(Symbol('s'))`.
+ */
+function isProvablyToObjectResult(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
+  const strip = (node: ts.Expression | undefined): ts.Expression | undefined => {
+    let cur = node;
+    while (
+      cur !== undefined &&
+      (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur))
+    ) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
+  let node = strip(value);
+  if (node !== undefined && ts.isIdentifier(node)) node = strip(ctx.oracle.variableInitializerOf(node));
+  return (
+    node !== undefined &&
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "Object" &&
+    isGlobalBuiltinIdentifier(ctx, fctx, node.expression)
+  );
 }
 
 function pristineIteratorPrototypeKind(
@@ -703,12 +743,12 @@ export function compileNamespaceStaticCall(
         // (#5269 A-6) §20.4.2.6 step 1: `If sym is not a Symbol, throw a
         // TypeError`. Without it the argument was coerced to the i32 id lane —
         // `Symbol.keyFor(null)` / `('')` / `({})` answered `undefined` instead
-        // of throwing. Only a STATICALLY-proven non-symbol throws; `"mixed"`
-        // (a union, a narrowed `any`) keeps the existing coercion, so nothing
-        // that works today changes.
+        // of throwing. Only a STATICALLY-proven non-symbol throws; `"mixed"` (a
+        // union, a narrowed `any`) keeps the existing coercion — except for ONE
+        // provable hole in it (#6651 SN1): see `isProvablyToObjectResult`.
         const keyForArg = expr.arguments[0]!;
         const argTag = ctx.oracle.staticJsTypeOf(keyForArg);
-        if (argTag !== "symbol" && argTag !== "mixed") {
+        if (argTag !== "symbol" && (argTag !== "mixed" || isProvablyToObjectResult(ctx, fctx, keyForArg))) {
           // The argument still evaluates (its side effects are observable
           // before the throw, §20.4.2.6 runs after ArgumentListEvaluation).
           const evaluated = compileExpression(ctx, fctx, keyForArg);

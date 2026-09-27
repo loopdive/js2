@@ -3466,21 +3466,26 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     { op: "local.set", index: 9 },
                   ] satisfies Instr[])
                 : ([
+                    // (#6689) TEST before the cast, as `__extern_get` does
+                    // (#4639): `foo.prototype = new Array(…)` leaves a vec in
+                    // the store. A non-`$Object` (or null) ends the explicit
+                    // walk; the companion tail still runs, a miss inserts own.
                     { op: "local.get", index: 0 },
                     { op: "call", funcIdx: fnctorProtoStartIdx },
                     { op: "local.tee", index: 10 },
-                    { op: "ref.is_null" },
+                    { op: "any.convert_extern" },
+                    { op: "ref.test", typeIdx: objectTypeIdx },
                     {
                       op: "if",
                       blockType: { kind: "empty" },
                       then: [
-                        { op: "ref.null", typeIdx: objectTypeIdx },
-                        { op: "local.set", index: 9 },
-                      ],
-                      else: [
                         { op: "local.get", index: 10 },
                         { op: "any.convert_extern" },
                         { op: "ref.cast", typeIdx: objectTypeIdx },
+                        { op: "local.set", index: 9 },
+                      ],
+                      else: [
+                        { op: "ref.null", typeIdx: objectTypeIdx },
                         { op: "local.set", index: 9 },
                       ],
                     },

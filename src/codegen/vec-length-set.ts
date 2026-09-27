@@ -57,6 +57,7 @@ import { buildArrayLikeToLengthFromExternref } from "./object-runtime-enumeratio
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
+import { buildVecLengthHoleFill } from "./vec-length-hole-fill.js";
 
 /** `key == "length"` over an externref key (param `keyParam`); i32 on stack. */
 function keyIsLengthInstrs(
@@ -211,10 +212,21 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
             { op: "local.get", index: lAny },
             { op: "ref.cast", typeIdx },
             { op: "struct.get", typeIdx, fieldIdx: 1 },
-            { op: "array.len" },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [{ op: "i32.const", value: 0 }],
+              else: [
+                { op: "local.get", index: lAny },
+                { op: "ref.cast", typeIdx },
+                { op: "struct.get", typeIdx, fieldIdx: 1 },
+                { op: "array.len" },
+              ],
+            },
             { op: "local.tee", index: lCap },
             { op: "local.get", index: lNew },
-            { op: "i32.lt_s" },
+            { op: "i32.lt_u" },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -223,16 +235,23 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                 { op: "local.get", index: lNew },
                 { op: "array.new_default", typeIdx: arrTypeIdx },
                 { op: "local.set", index: lNewData },
-                // array.copy(newData, 0, vec.data, 0, cap)
-                { op: "local.get", index: lNewData },
-                { op: "ref.cast", typeIdx: arrTypeIdx },
-                { op: "i32.const", value: 0 },
-                { op: "local.get", index: lAny },
-                { op: "ref.cast", typeIdx },
-                { op: "struct.get", typeIdx, fieldIdx: 1 },
-                { op: "i32.const", value: 0 },
                 { op: "local.get", index: lCap },
-                { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // array.copy(newData, 0, vec.data, 0, cap)
+                    { op: "local.get", index: lNewData },
+                    { op: "ref.cast", typeIdx: arrTypeIdx },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.get", index: lAny },
+                    { op: "ref.cast", typeIdx },
+                    { op: "struct.get", typeIdx, fieldIdx: 1 },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.get", index: lCap },
+                    { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+                  ],
+                },
                 // vec.data = newData
                 { op: "local.get", index: lAny },
                 { op: "ref.cast", typeIdx },
@@ -245,6 +264,20 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
         },
       );
     }
+
+    const fillArms = buildVecLengthHoleFill(
+      ctx,
+      (name, type) => {
+        const index = 3 + setFn.locals.length;
+        setFn.locals.push({ name, type });
+        return index;
+      },
+      lAny,
+      lNew,
+      "both",
+      true,
+      true,
+    );
 
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
@@ -291,6 +324,7 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                   { op: "f64.const", value: 16777216 },
                   { op: "f64.le" },
                   { op: "if", blockType: { kind: "empty" }, then: growArms },
+                  ...fillArms,
                   // vec.length = newLen
                   { op: "local.get", index: lAny },
                   { op: "ref.cast", typeIdx: vecBaseIdx },

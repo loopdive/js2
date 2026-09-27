@@ -20,6 +20,7 @@ import {
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { fixedSourceFunctionCallHandle } from "../source-function-call.js";
 import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
+import { compileStringConversionArgument } from "../string-conversion-argument.js";
 import { emitBigIntCtorCarrier } from "../bigint-wide-parse.js";
 import { emitI64ToStringCall } from "../bigint-string-context.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
@@ -1456,8 +1457,7 @@ function compileBoundIdentifierCall(
         if (reToStr !== undefined && reToStr !== null) return reToStr;
       }
 
-      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(strArg0) === "bigint";
-      const argType = compileExpression(ctx, fctx, strArg0, hostBigIntArg ? { kind: "externref" } : undefined);
+      const argType = compileStringConversionArgument(ctx, fctx, strArg0);
 
       if (argType === null) {
         // String(void-expr) → "undefined"

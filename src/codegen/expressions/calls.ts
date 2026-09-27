@@ -317,6 +317,7 @@ import {
   ensureObjectNativeProtoGlue,
   ensurePromiseNativeProtoGlue,
   ensureStringNativeProtoGlue,
+  ensureSymbolNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
   emitTypedArrayIntrinsicCtorObject,
   emitArrayIteratorPrototypeSingleton,
@@ -1375,6 +1376,20 @@ function tryEmitNativeProtoReflectiveCall(
   // `finally` here would turn today's wrong-but-non-throwing answer into a trap.
   else if (brand === undefined && ifaceName === "Promise" && (member === "then" || member === "catch")) {
     brand = ensurePromiseNativeProtoGlue(ctx);
+  }
+  // (#6651 SN1) …and the same one-member-at-a-time discipline for `Symbol`.
+  // §20.4.3.2 `valueOf` / §20.4.3.3 `toString` both have native standalone
+  // bodies (`symbol-proto-valueof.ts` #4776, `symbol-proto-tostring.ts` #5269
+  // B-c) whose `thisSymbolValue` prologue performs the brand check, but only the
+  // VALUE-ERASED spelling (`var m = Symbol.prototype.toString; m.call(s)`)
+  // reached them. The DIRECT spelling fell past this resolver to the #1888
+  // Slice 3/4 borrowed-method tail, which has no `Symbol` arm and so
+  // refuse-louds and answers `undefined` — measured on base:
+  // `Symbol.prototype.toString.call(Symbol('66'))` === undefined,
+  // `Symbol.prototype.valueOf.call(s)` !== s, while the `.apply` twin and the
+  // value-erased twin both already answered correctly.
+  else if (brand === undefined && ifaceName === "Symbol" && wrapperWiredMember) {
+    brand = ensureSymbolNativeProtoGlue(ctx);
   }
   if (brand === undefined) return undefined;
 

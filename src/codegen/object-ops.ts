@@ -1739,7 +1739,13 @@ export function compileObjectDefineProperty(
     valueExpr === undefined || fields === undefined || fieldIdx < 0
       ? true
       : valueRepresentableInField(ctx, valueExpr, fields[fieldIdx]!.type);
+  // Array length is an exotic descriptor, not an ordinary struct field.
+  // Keep the runtime identity/descriptor checks in the existing vec overlay;
+  // a direct field store bypasses both deletion and non-configurable stops.
+  const needsArrayLengthDescriptor =
+    ctx.standalone && propName === "length" && structTypeIdx !== undefined && getVecInfo(ctx, structTypeIdx) !== null;
   const useStruct =
+    !needsArrayLengthDescriptor &&
     !_anyFlagDynamic &&
     !priorRuntimeDefine &&
     structTypeIdx !== undefined &&
