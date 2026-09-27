@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-27T07:43:33.949Z",
-  "baseline_generated_at": "2026-09-27T07:43:33.949Z",
-  "baseline_sha": "bf0c9217909c751fdbd101af062ef4e9a1fdf34e",
+  "timestamp": "2026-09-27T09:03:27.942Z",
+  "baseline_generated_at": "2026-09-27T09:03:27.942Z",
+  "baseline_sha": "45626a53b3133bb5900be9d4df1753aaf8ea72a5",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 40908,
+    "pass": 40912,
     "fail": 4928,
-    "compile_error": 2358,
-    "compile_timeout": 20,
+    "compile_error": 2359,
+    "compile_timeout": 15,
     "skip": 18,
-    "compilable": 45836,
-    "host_free_pass": 40908,
+    "compilable": 45840,
+    "host_free_pass": 40912,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 39869,
+        "pass": 39873,
         "fail": 4900,
-        "compile_error": 2339,
-        "compile_timeout": 20,
+        "compile_error": 2340,
+        "compile_timeout": 15,
         "skip": 18,
-        "compilable": 44769,
-        "host_free_pass": 39869,
+        "compilable": 44773,
+        "host_free_pass": 39873,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 40908,
+        "pass": 40912,
         "fail": 4928,
-        "compile_error": 2358,
-        "compile_timeout": 20,
+        "compile_error": 2359,
+        "compile_timeout": 15,
         "skip": 18,
-        "compilable": 45836,
-        "host_free_pass": 40908,
+        "compilable": 45840,
+        "host_free_pass": 40912,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 41143,
+        "pass": 41147,
         "fail": 4944,
-        "compile_error": 2514,
-        "compile_timeout": 20,
+        "compile_error": 2515,
+        "compile_timeout": 15,
         "skip": 114,
-        "compilable": 46087,
-        "host_free_pass": 41143,
+        "compilable": 46091,
+        "host_free_pass": 41147,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 40908,
+    "pass": 40912,
     "fail": 4928,
-    "compile_error": 2358,
-    "compile_timeout": 20,
+    "compile_error": 2359,
+    "compile_timeout": 15,
     "skip": 18,
-    "compilable": 45836,
-    "host_free_pass": 40908,
+    "compilable": 45840,
+    "host_free_pass": 40912,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 41143,
+    "pass": 41147,
     "fail": 4944,
-    "compile_error": 2514,
-    "compile_timeout": 20,
+    "compile_error": 2515,
+    "compile_timeout": 15,
     "skip": 114,
-    "compilable": 46087,
-    "host_free_pass": 41143,
+    "compilable": 46091,
+    "host_free_pass": 41147,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 38607,
+    "pass": 38611,
     "fail": 4809,
-    "compile_error": 2267,
-    "compile_timeout": 20,
+    "compile_error": 2268,
+    "compile_timeout": 15,
     "skip": 18,
-    "compilable": 43416,
-    "host_free_pass": 38607,
+    "compilable": 43420,
+    "host_free_pass": 38611,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 39869,
+      "pass": 39873,
       "fail": 4900,
-      "compile_error": 2339,
-      "compile_timeout": 20,
+      "compile_error": 2340,
+      "compile_timeout": 15,
       "skip": 18,
-      "compilable": 44769,
-      "host_free_pass": 39869,
+      "compilable": 44773,
+      "host_free_pass": 39873,
       "stale": 0
     }
   },
@@ -781,13 +781,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4490,
+      "pass": 4494,
       "fail": 102,
       "compile_error": 3,
-      "compile_timeout": 8,
+      "compile_timeout": 4,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4490
+      "host_free_pass": 4494
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1042,
       "fail": 393,
-      "compile_error": 10,
-      "compile_timeout": 1,
+      "compile_error": 11,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1042
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 3,
     "null_deref": 12,
     "oob": 7,
-    "other": 1606,
+    "other": 1607,
     "promise_error": 44,
     "range_error": 32,
     "runtime_error": 133,
@@ -1221,8 +1221,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 7478,
-    "classified": 7478,
+    "total_non_pass_non_skip": 7474,
+    "classified": 7474,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1272,14 +1272,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 113,
+        "count": 109,
         "statuses": {
           "pass": 0,
           "fail": 102,
           "compile_error": 3,
-          "compile_timeout": 8,
+          "compile_timeout": 4,
           "skip": 0,
-          "total": 113,
+          "total": 109,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1291,7 +1291,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 113
+          "ES2026": 109
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/add/add-large-subseconds.js",
@@ -1337,8 +1337,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
+          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1978,19 +1978,19 @@
         "statuses": {
           "pass": 0,
           "fail": 1387,
-          "compile_error": 190,
-          "compile_timeout": 12,
+          "compile_error": 191,
+          "compile_timeout": 11,
           "skip": 0,
           "total": 1589,
           "host_free_pass": 0
         },
         "error_categories": {
-          "null_deref": 4,
           "assertion_fail": 992,
+          "null_deref": 4,
           "illegal_cast": 176,
           "type_error": 202,
           "host_import_leak": 179,
-          "other": 15,
+          "other": 16,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2010,15 +2010,15 @@
           "ES2025": 4
         },
         "sample_files": [
-          "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js",
+          "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js",
           "test/built-ins/TypedArray/prototype/at/index-non-numeric-argument-tointeger-invalid.js",
           "test/built-ins/TypedArray/prototype/with/negative-index-resize-to-out-of-bounds.js"
         ],
         "sample_signatures": [
-          "null_deref:dereferencing a null pointer [in __closure_140() ← testWithAllTypedArrayConstructors ← __fn_tramp_testWithAllTypedArrayConstructors_cached ← __call_fn_method_4]",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
+          "null_deref:dereferencing a null pointer [in __closure_140() ← testWithAllTypedArrayConstructors ← __fn_tramp_testWithAllTypedArrayConstructors_cached ← __call_fn_method_4]",
           "assertion_fail:Test262Error: value assigned to receiver[#] Expected SameValue(«[object Object]», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Expected a RangeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)"
