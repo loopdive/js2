@@ -49,7 +49,11 @@ import {
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
 import { emitRuntimeEvalFunctionPrototypeSeed } from "../runtime-eval-construct.js"; // (#4438) §20.2.1.1
-import { currentDirectEvalLexicalBindingNames, reifyCurrentDirectEvalBindings } from "../direct-eval-environment.js";
+import {
+  currentDirectEvalLexicalBindingNames,
+  enclosingLexicalDeclaredNames,
+  reifyCurrentDirectEvalBindings,
+} from "../direct-eval-environment.js";
 import { noteStaticFunctionOwner, recordStaticFunctionSelfName } from "../static-function-self-names.js";
 import { emitRefusedDynamicFunction, isRuntimeEvalProviderAbsent } from "./standalone-dynamic-code.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
@@ -556,8 +560,16 @@ function foldedEvalTypeofBeforeLexicalDeclaration(sourceFile: ts.SourceFile): bo
   return found;
 }
 
-function foldedEvalLowerLexicalCollision(varNames: ReadonlySet<string>, fctx: FunctionContext): string | undefined {
-  const lexicalNames = currentDirectEvalLexicalBindingNames(fctx);
+function foldedEvalLowerLexicalCollision(
+  varNames: ReadonlySet<string>,
+  fctx: FunctionContext,
+  // (#6651 SG1) Only the EMPTY cell-identity answer is ambiguous between "no
+  // lexical bindings" and "this lowering never got the pre-pass" — see
+  // `enclosingLexicalDeclaredNames`, which answers both alike.
+  evalCall?: ts.CallExpression,
+): string | undefined {
+  const reified = currentDirectEvalLexicalBindingNames(fctx);
+  const lexicalNames = reified.size > 0 || !evalCall ? reified : enclosingLexicalDeclaredNames(evalCall);
   if (lexicalNames.size === 0) return undefined;
   for (const name of varNames) {
     if (lexicalNames.has(name)) return name;
@@ -1089,7 +1101,8 @@ export function tryStaticEvalInline(
   // way to the caller's VariableEnvironment (§EvalDeclarationInstantiation).
   if (directEval && !evalIsStrict) {
     const varNames = declarationNames.varNames;
-    const collision = foldedEvalParameterCollision(expr, varNames) ?? foldedEvalLowerLexicalCollision(varNames, fctx);
+    const collision =
+      foldedEvalParameterCollision(expr, varNames) ?? foldedEvalLowerLexicalCollision(varNames, fctx, expr);
     if (collision !== undefined) {
       emitThrowJsError(ctx, fctx, "SyntaxError", `Identifier '${collision}' has already been declared`);
       return { kind: "externref" };
@@ -1099,7 +1112,8 @@ export function tryStaticEvalInline(
     // ordinary foreign-AST lowering cannot see the caller record, so let the
     // provider perform the cancellation instead of emitting a false error or
     // overwriting the lexical cell.
-    if (foldedEvalLowerLexicalCollision(declarationNames.blockFunctionNames, fctx) !== undefined) return undefined;
+    if (foldedEvalLowerLexicalCollision(declarationNames.blockFunctionNames, fctx, expr) !== undefined)
+      return undefined;
   }
 
   // Strict eval declarations require a private VariableEnvironment and lexical

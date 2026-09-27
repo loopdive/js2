@@ -8394,7 +8394,7 @@ export function pushTaDynMethodPreamble(
  * helper's emitted bytes are untouched. `idxF64Scratch` / `lenF64` are caller
  * locals; `lenF64` must already hold `f64(len)`.
  */
-function pushTaDynRelativeIndex(
+export function pushTaDynRelativeIndex(
   ctx: CodegenContext,
   fctx: FunctionContext,
   paramIdx: number,

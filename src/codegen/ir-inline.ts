@@ -680,6 +680,62 @@ function relocate(body: Instr[], base: number, depth: number): Instr[] {
 }
 
 /**
+ * (#6694) Relocated locals are zeroed once per CALLER frame, not per call, so a
+ * site inside a loop gets stack-neutral resets (they may precede the argument
+ * spills) for every defaultable declared callee local the body may read before
+ * writing. A local is written first on every path only when its first
+ * textual access is a top-level `local.set`/`local.tee`: all before it is
+ * straight-line, and a branch past it leaves the wrapper. `ref` locals have no
+ * default and validation already demands a write before their first read.
+ */
+function localResets(body: Instr[], nParams: number, locals: readonly LocalDef[], base: number): Instr[] {
+  const first = new Map<number, boolean>(); // local -> first access is a top-level write
+  const walk = (b: Instr[], depth: number): void => {
+    for (const i of b) {
+      if ((i.op === "local.get" || i.op === "local.set" || i.op === "local.tee") && !first.has(i.index))
+        first.set(i.index, depth === 0 && i.op !== "local.get");
+      for (const child of childBodies(i)) walk(child, depth + 1);
+    }
+  };
+  walk(body, 0);
+  const out: Instr[] = [];
+  locals.forEach((l, i) => {
+    const zero = first.get(nParams + i) === false ? zeroOf(l.type) : null;
+    if (zero) out.push(zero, { op: "local.set", index: base + nParams + i });
+  });
+  return out;
+}
+
+/** The Wasm default of a local's type, or null when it has none. */
+function zeroOf(t: ValType): Instr | null {
+  switch (t.kind) {
+    case "i32":
+    case "i8":
+    case "i16":
+      return { op: "i32.const", value: 0 };
+    case "i64":
+      return { op: "i64.const", value: 0n };
+    case "f32":
+      return { op: "f32.const", value: 0 };
+    case "f64":
+      return { op: "f64.const", value: 0 };
+    case "v128":
+      return { op: "v128.const", bytes: new Uint8Array(16) };
+    case "ref_null":
+      return { op: "ref.null", typeIdx: t.typeIdx };
+    case "externref":
+      return { op: "ref.null.extern" };
+    case "funcref":
+      return { op: "ref.null.func" };
+    case "eqref":
+    case "anyref":
+      return { op: "ref.null.eq" };
+    default:
+      return null;
+  }
+}
+
+/**
  * Drop the executed-call census increment from an inlined COPY. The census
  * counts function ENTRIES; a copy that carried the increment would report the
  * inlined executions as if the call still happened, which is precisely the
@@ -1342,7 +1398,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         const source = specBody ?? calleeBody.map(cloneInstr);
         const relocated = relocate(stripCensusPrefix(source), base, 0);
 
-        const seq: Instr[] = [];
+        const seq: Instr[] = loopDepth > 0 ? localResets(source, nParams, calleeView.locals, base) : []; // #6694
         for (let p = nParams - 1; p >= 0; p--) seq.push({ op: "local.set", index: base + p });
         if (counterGlobalIdx >= 0) {
           seq.push(

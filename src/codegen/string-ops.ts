@@ -108,6 +108,7 @@ import {
   pushParamSentinel,
   tryStructToString,
 } from "./type-coercion.js";
+import { STRING_ARRAY_SHARED_METHODS } from "./array-slice-native.js"; // (#6683)
 
 /**
  * (#2176) Type of a value expression for stringification decisions, preferring
@@ -4250,9 +4251,12 @@ export function compileGuardedNativeStringMethodCall(
   // Scoped to names the source actually defines, so the unboxed native result
   // type survives for every other name — notably acorn's `charCodeAt`/`slice`/
   // `substr` tokenizer hot set, whose whole point (#3673) is to avoid boxing.
+  // (#6683) Except `slice`/`at` in standalone: an array receiver answered null
+  // here (moment's `config._a.slice(0)`), so they widen to the dispatcher's vec
+  // arm (array-slice-native.ts). Measured: acorn standalone-dynamic unchanged.
   if (
     elseInstrs === undefined &&
-    ctx.userMethodNames?.has(method) === true &&
+    (ctx.userMethodNames?.has(method) === true || (ctx.standalone && STRING_ARRAY_SHARED_METHODS.has(method))) &&
     (ctx.standalone || ctx.wasi) &&
     !expr.arguments.some((a) => ts.isSpreadElement(a))
   ) {

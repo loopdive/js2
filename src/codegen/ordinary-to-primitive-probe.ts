@@ -238,6 +238,28 @@ export function buildOrdinaryToPrimitiveProbe(
             ],
           },
         ],
+        // (#6651 RS1) SHADOWED-TO-NULLISH is not ABSENT. `stopWhenFirstAbsent`
+        // is right for a member the receiver genuinely does not have — `Get`
+        // then finds `Object.prototype.toString`, a primitive, and `valueOf` is
+        // unreachable (S9.8_A5_T1 #13). It is WRONG when the receiver OWNS the
+        // member with a nullish value: `{toString: undefined, valueOf(){…}}`
+        // makes `Get(O,"toString")` undefined, §7.1.1.1 step 5's IsCallable
+        // check skips it, and step 5 proceeds to `valueOf`. Measured on this
+        // branch's base: `Number.prototype.toLocaleString = () => ({toString:
+        // undefined, valueOf(){return "hacks"}}); [42,0].toLocaleString()`
+        // answered `"[object Object],[object Object]"`. The `$Object` arm of
+        // `__to_primitive` already draws this distinction with the same
+        // predicate (`tryOrdinaryMethod`'s `__extern_has` guard); only the
+        // nested probe conflated the two states.
+        else:
+          nested && i + 1 < order.length && hasOwnIdx !== undefined
+            ? [
+                ...recv(),
+                ...stringConstantExternrefInstrs(ctx, name),
+                { op: "call", funcIdx: hasOwnIdx },
+                { op: "if", blockType: { kind: "empty" }, then: probe(i + 1) },
+              ]
+            : [],
       },
     ];
     // (#2917) Provider-owned receiver → the owner resolves and invokes. Its

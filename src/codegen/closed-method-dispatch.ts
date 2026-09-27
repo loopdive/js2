@@ -81,6 +81,7 @@ import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxing
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
+import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#6693) JS call arity
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -568,6 +569,8 @@ type MethodEntry = {
   optionalParams: OptionalParamInfo[];
   /** Host dynamic calls follow JavaScript's missing-argument semantics. */
   hostDynamic: boolean;
+  /** (#6693) Standalone stand-ins for omitted formals, by param index. */
+  absentPads: Map<number, Instr[]> | null;
 };
 
 /**
@@ -622,15 +625,18 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
       if (!opt.hasExpressionDefault) return true; // constant default, or `?` with none
       return type?.kind === "f64"; // the one lane with an absence sentinel
     };
+    let absentPads: Map<number, Instr[]> | null = null;
     if (exactArity !== null) {
-      if (paramTypes.length < exactArity) continue;
-      if (!hostDynamic && paramTypes.slice(exactArity).some((type, i) => !canSynthesizeOmitted(exactArity + i, type))) {
-        continue;
-      }
+      const covered =
+        paramTypes.length >= exactArity &&
+        (hostDynamic || paramTypes.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
+      // (#6693) Standalone JS call arity: pad omitted formals, drop extras.
+      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, paramTypes, optionalParams, exactArity);
+      if (!covered && !absentPads) continue;
     }
     if (funcType.params.length < 1) continue;
     const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
-    entries.push({ structName, typeIdx, funcIdx, paramTypes, resultType, optionalParams, hostDynamic });
+    entries.push({ structName, typeIdx, funcIdx, paramTypes, resultType, optionalParams, hostDynamic, absentPads });
   }
   return entries;
 }
@@ -703,7 +709,10 @@ function buildEntryArm(
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
       const opt = entry.optionalParams.find((candidate) => candidate.index === a);
-      if (entry.hostDynamic) {
+      const pad = entry.absentPads?.get(a);
+      if (pad) {
+        arm.push(...pad);
+      } else if (entry.hostDynamic) {
         if (want.kind === "externref" && ci.undefinedIdx !== undefined) {
           arm.push({ op: "call", funcIdx: ci.undefinedIdx });
         } else if (want.kind === "f64") {
@@ -1511,6 +1520,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         current = [
           { op: "local.get", index: anyLocalIdx },
           { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
+          ...arraySubclassOwnMethodShadowTest(ctx, methodName), // (#6683)
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },

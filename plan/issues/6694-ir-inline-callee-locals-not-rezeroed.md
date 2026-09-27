@@ -1,10 +1,11 @@
 ---
 id: 6694
 title: "ir-inline: an inlined callee's declared locals are not re-zeroed, so a copy inside the caller's loop sees the previous iteration's values"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-09-26
 updated: 2026-09-26
+completed: 2026-09-26
 priority: medium
 horizon: s
 feasibility: easy
@@ -51,3 +52,40 @@ Binaryen drop dead stores. Measure the size delta on the playground corpus.
 
 - A unit test with a hand-built callee that reads a zero-default local, inlined
   at a loop call site, gives the same answer as the non-inlined call.
+
+## Implementation Plan
+
+Executed as written below.
+
+1. In the `inlineUserFunctions` rewrite (`src/codegen/ir-inline.ts`), seed the
+   splice sequence with `localResets(...)` (stack-neutral, so it may precede
+   the reverse-order argument spills) only when the site's wasm `loopDepth > 0`
+   (outside a loop the fresh locals are zeroed by the caller's frame entry and
+   the copy runs at most once per frame).
+2. `localResets(body, nParams, locals, base)`: one pre-order walk of the
+   (possibly specialised) callee body records, per callee local, whether its
+   FIRST textual access is a top-level (depth 0) `local.set`/`local.tee`. That
+   is the only shape proven written-before-read on every path: everything before
+   it is straight-line, and a branch past it leaves the wrapper block. Every
+   declared local whose first access is anything else gets `<zero>; local.set
+   base+nParams+i`. Locals never accessed get nothing. Non-defaultable `ref`
+   / `ref_extern` locals are skipped (Wasm validation already requires a write
+   before their first read).
+3. `zeroOf(t)` gives the Wasm default per `ValType` (`f64.const 0`, not the
+   destructuring sNaN sentinel `defaultValueInstrs` uses).
+4. Regression test with a hand-built module (`i32`/`f64`/`i64`/`funcref`
+   locals), plus two controls pinning that no reset is emitted when the local is
+   written first or the site is outside a loop.
+
+## Resolution
+
+Fixed in `src/codegen/ir-inline.ts` (`localResets` / `zeroOf`, called from the
+rewrite). `tests/issue-6694-ir-inline-callee-locals-rezero.test.ts`: 4 of 6
+fail on the parent (`expected 15 to be 5`), 6/6 pass with the fix.
+
+Size delta on the playground corpus (26 compiles, gc + standalone, default
+options): +588 bytes on 1,178,188 (+0.05 %), 7 of 26 binaries changed. The
+resets land on runtime helpers whose first write sits inside a nested block
+(`__is_truthy`'s `$f64_temp`, `__str_concat_*`'s `output`/`offset`,
+`__vec_from_extern_*`, async state-machine temps) — conservative, and dead
+stores for Binaryen under `-O`.

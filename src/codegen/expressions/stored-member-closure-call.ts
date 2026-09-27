@@ -83,6 +83,7 @@ import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
+import { tryEmitClassInstanceMemberCall } from "./class-instance-member-call.js";
 
 /**
  * `fillApplyClosure` dispatches arities 0..8 and answers the undefined sentinel
@@ -121,6 +122,11 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
   // unrecognised shape.
   const nullishCallee = tryEmitNullishIdentifierCalleeTypeError(ctx, fctx, expr);
   if (nullishCallee !== undefined) return nullishCallee;
+
+  // (#6692) A user-class instance member no static arm resolved — e.g. one a
+  // computed `this[m] = …` installed into the instance's expando bag.
+  const classMember = tryEmitClassInstanceMemberCall(ctx, fctx, expr);
+  if (classMember !== undefined) return classMember;
 
   // Graceful fallback: compile the callee expression and all arguments for side
   // effects, then push `ref.null.extern`. This avoids hard compile errors for

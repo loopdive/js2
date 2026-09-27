@@ -51,12 +51,14 @@ describe("#2151 Slice 5 — mixed-spread any-receiver method dispatch (standalon
     expect(value).toBe(16);
   });
 
-  it("empty dynamic spread: trailing numeric param reads 0 (missing-arg semantics)", async () => {
+  it("empty dynamic spread: trailing numeric param reads undefined (missing-arg semantics)", async () => {
     const { value } = await runStandalone(`export function test(): number {
       const o: any = { m(a: number, b: number) { return a * 10 + b; } };
       const xs: number[] = [];
       return o.m(5, ...xs) as number; }`);
-    expect(value).toBe(50); // a=5, b missing → 0
+    // a=5, b missing → undefined, so `50 + undefined` is NaN (what Node answers).
+    // Pinned 50 until #6693 gave the fixed-arity dispatcher JS call arity.
+    expect(value).toBeNaN();
   });
 
   it("spread source from a function-returned array: o.m(1, ...mk())", async () => {

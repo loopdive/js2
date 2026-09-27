@@ -107,3 +107,78 @@ export function pushZeroArgCallPad(ctx: CodegenContext, fctx: FunctionContext, f
   for (const p of extra) pushDefaultValue(fctx, p, ctx);
   return true;
 }
+
+/**
+ * (#6693) JavaScript call arity for the standalone by-name method dispatcher
+ * `__call_m_<name>_<argc>`.
+ *
+ * The dispatcher admitted a class/object-literal method as an arm only when the
+ * call site's argument count covered every formal that has no default/`?`
+ * marker, and never when the call passed MORE arguments than the method
+ * declares. Both are ordinary JavaScript (§10.2.1: an omitted argument IS
+ * `undefined`; an extra one is evaluated and ignored), so an untyped receiver
+ * — marked's `this.parser.parseInline(e)` against `parseInline(e, t = this.renderer)`
+ * — found no arm, fell to the open-`$Object` fallback and threw
+ * `called value is not a function`.
+ *
+ * Standalone only (`null` on every other lane, so they keep their bytes).
+ * Returns the operands to push for each omitted formal the dispatcher's
+ * existing arm builder cannot already synthesize (an empty map when it can
+ * synthesize all of them, or when the call over-applies), or `null` when the
+ * method must stay out of the dispatcher:
+ *
+ * - it reads `arguments` (the arm does not publish the call's real argument
+ *   list, so `arguments.length` would be wrong);
+ * - it over-applies a rest-parameter method (the arm does not pack extras);
+ * - an omitted formal is the rest parameter, or has a type no `undefined`
+ *   stand-in exists for (a non-nullable GC ref, an `i32` expression default
+ *   whose prologue needs the caller's argc).
+ *
+ * The stand-ins match what each callee prologue tests (closures.ts
+ * `emitParamDefaultCheckInline`): `undefined` for `externref`, `null` for a
+ * nullable ref, the f64 absence sentinel for `f64`.
+ */
+export function standaloneDispatchArityPads(
+  ctx: CodegenContext,
+  fullName: string,
+  paramTypes: readonly ValType[],
+  optionalParams: readonly { index: number; hasExpressionDefault?: boolean; constantDefault?: unknown }[],
+  argc: number,
+): Map<number, Instr[]> | null {
+  if (!ctx.standalone || ctx.funcUsesArguments.has(fullName)) return null;
+  const rest = ctx.funcRestParams.get(fullName);
+  const pads = new Map<number, Instr[]>();
+  if (paramTypes.length <= argc) return rest ? null : pads;
+  for (let i = argc; i < paramTypes.length; i++) {
+    if (rest && rest.restIndex === i) return null;
+    const type = paramTypes[i]!;
+    const opt = optionalParams.find((o) => o.index === i);
+    // Already expressed by the arm builder: `?`, a constant default, or an
+    // f64 expression default (the sentinel lane).
+    if (opt && (!opt.hasExpressionDefault || type.kind === "f64")) continue;
+    const pad = absentArgInstrs(ctx, type, !!opt);
+    if (!pad) return null;
+    pads.set(i, pad);
+  }
+  return pads;
+}
+
+/** `undefined` as the given Wasm param type; `null` when none can be invented. */
+function absentArgInstrs(ctx: CodegenContext, type: ValType, hasExpressionDefault: boolean): Instr[] | null {
+  switch (type.kind) {
+    case "externref":
+      return canonicalUndefinedExternInstrs(ctx);
+    case "ref_null":
+      return [{ op: "ref.null", typeIdx: (type as { typeIdx: number }).typeIdx }];
+    case "anyref":
+    case "eqref":
+      return hasExpressionDefault ? null : [{ op: "ref.null.eq" }];
+    case "f64":
+      // The absence sentinel: reads as NaN arithmetically and boxes to `undefined`.
+      return [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }];
+    case "i32":
+      return hasExpressionDefault ? null : [{ op: "i32.const", value: 0 }];
+    default:
+      return null;
+  }
+}

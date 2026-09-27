@@ -24,6 +24,7 @@ import {
   emitTaDynViewValidate,
   makeTaDynHelperFctx,
   pushTaDynMethodPreamble,
+  pushTaDynRelativeIndex,
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { getArrTypeIdxFromVec } from "./index.js";
@@ -60,12 +61,197 @@ export function ensureTaDynProtoMethodHelper(ctx: CodegenContext, method: string
   if (!noJsHost(ctx)) return undefined;
   if (SEARCH_METHODS.has(method)) return ensureTaDynSearchHelper(ctx, method);
   if (ITERATOR_METHODS.has(method)) return ensureTaDynIteratorHelper(ctx, method);
+  if (method === "subarray") return ensureTaDynSubarrayHelper(ctx);
   return undefined;
 }
 
 /** Does a native dyn-view helper exist (or can it be minted) for `method`? */
 export function hasTaDynProtoMethodHelper(method: string): boolean {
-  return SEARCH_METHODS.has(method) || ITERATOR_METHODS.has(method);
+  return SEARCH_METHODS.has(method) || ITERATOR_METHODS.has(method) || method === "subarray";
+}
+
+/**
+ * (#6651 RS1) §23.2.3.30 `%TypedArray%.prototype.subarray` over a
+ * `$__ta_dyn_view`, for the receiver shapes the CALL-SITE two-arm cannot serve.
+ *
+ * ## Why a ladder helper when a two-arm already exists
+ *
+ * `array-methods.ts::emitDynViewSpeciesMethodTwoArm` already implements the
+ * species-aware version, and it stays the path for every receiver it can take.
+ * Its gate requires the receiver to be a plain IDENTIFIER, and that requirement
+ * is not incidental: three of its four members (`map`/`filter`/`slice`) work by
+ * temporarily rebinding that identifier in `fctx.localMap` to the materialized
+ * f64 vec and RE-COMPILING the same call AST, which has nothing to rebind when
+ * the receiver is an expression. So
+ *
+ * ```js
+ * new TA(4).subarray(2)        // test262's spelling — a NewExpression receiver
+ * ```
+ *
+ * declined the two-arm and fell through to the generic externref path, which
+ * answers **null**. Measured on this branch's base, standalone, `TA` arriving as
+ * a parameter: `var a = new TA(4); a.subarray(2)` → a length-2 view (the two-arm
+ * fires), while `new TA(4).subarray(2)` and `(new TA(4)).subarray(2)` → `null`.
+ *
+ * That null is what the three `TypedArrayConstructors/internals/OwnPropertyKeys/*`
+ * rows actually fail on. Their reported error is
+ * `TypeError: Reflect.ownKeys called on non-object` and the plan file recorded
+ * the cause as `emitNativeReflectTargetGuard` refusing a dyn view plus a missing
+ * integer-index enumeration — **two fixes for three rows**. Re-probed here:
+ * `Reflect.ownKeys(new TA([42,42,42]))` already answers `["0","1","2"]`, and with
+ * two string expandos already answers `["0","1","2","test262","ecma262"]` in
+ * creation order. The `non-object` receiver is `sample3 = new TA(4).subarray(2)`,
+ * i.e. `Reflect.ownKeys(null)`. One fix, and it is not in `Reflect`.
+ *
+ * ## Shape
+ *
+ * `subarray` is the one member of the species four that the two-arm serves
+ * WITHOUT the identifier rebind — it copies nothing, it just re-windows the
+ * backing buffer — so the helper is the same arithmetic against the same fields:
+ * `length = max(end - begin, 0)`, `buf` shared by reference, `byteOffset`
+ * advanced by `begin * elementSize`, `kind` inherited. §23.2.4.4 is deliberately
+ * NOT run (see `TA_DYN_VALIDATE_METHOD_NAMES`: `subarray/detached-buffer.js`
+ * asserts it does not throw), and `expando`/`constructProto` start null because
+ * the new view is a fresh object with no own non-index properties.
+ *
+ * ## Two documented residuals, both "still absent", never "now wrong"
+ *
+ * - **No SpeciesConstructor.** The helper builds the intrinsic view directly.
+ *   Rows that install `@@species` and call `subarray` use the identifier
+ *   spelling, so they keep the two-arm's species path; a non-identifier receiver
+ *   went from `null` to the default-species answer.
+ * - **No `emitSymbolIndexArgThrow`.** That §7.1.4 guard lives at the call site,
+ *   where the static type of the argument is known; here a Symbol index coerces
+ *   through the shared f64 path. Same reasoning: the rows that measure it
+ *   (`subarray/return-abrupt-from-*-symbol.js`) use an identifier receiver.
+ */
+function ensureTaDynSubarrayHelper(ctx: CodegenContext): number | undefined {
+  const helperName = "__ta_dyn_subarray";
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  if (dynIdx < 0) return undefined;
+  const byteVecIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
+  if (byteVecIdx < 0) return undefined;
+
+  const fctx = makeTaDynHelperFctx(helperName, [
+    { name: "recv", type: { kind: "externref" } },
+    { name: "begin", type: { kind: "externref" } },
+    { name: "end", type: { kind: "externref" } },
+    { name: "unused", type: { kind: "externref" } },
+    { name: "argc", type: { kind: "i32" } },
+  ]);
+
+  // Dependencies first, while a late import can still shift indices.
+  ensureObjectRuntime(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+
+  const params: ValType[] = [
+    { kind: "externref" },
+    { kind: "externref" },
+    { kind: "externref" },
+    { kind: "externref" },
+    { kind: "i32" },
+  ];
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], "$ta_dyn_subarray_type");
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(helperName, funcIdx);
+
+  const dvLocal = allocLocal(fctx, "dv", { kind: "ref", typeIdx: dynIdx });
+  const kindLocal = allocLocal(fctx, "kind", { kind: "i32" });
+  const esLocal = allocLocal(fctx, "es", { kind: "i32" });
+  const lenLocal = allocLocal(fctx, "len", { kind: "i32" });
+  const lenF64 = allocLocal(fctx, "lenF64", { kind: "f64" });
+  const scratch = allocLocal(fctx, "scratch", { kind: "f64" });
+  const beginLocal = allocLocal(fctx, "beginIdx", { kind: "i32" });
+  const endLocal = allocLocal(fctx, "endIdx", { kind: "i32" });
+  const countLocal = allocLocal(fctx, "count", { kind: "i32" });
+
+  pushTaDynMethodPreamble(ctx, fctx, dynIdx, dvLocal, kindLocal, esLocal, lenLocal);
+  fctx.body.push({ op: "local.get", index: lenLocal }, { op: "f64.convert_i32_s" }, { op: "local.set", index: lenF64 });
+
+  // step 4-5: relativeStart = ToIntegerOrInfinity(start), clamped into [0, len].
+  // An ABSENT argument is `0` (§23.2.3.30 step 4 reads the omitted parameter as
+  // undefined → ToIntegerOrInfinity → 0), which is what the shared resolver
+  // answers for a null/undefined externref, so no `argc` arm is needed here.
+  pushTaDynRelativeIndex(ctx, fctx, 1, beginLocal, scratch, lenF64);
+
+  // step 6-7: `end` UNDEFINED (absent or explicit) means `len`, NOT 0 — the one
+  // place the two arguments differ, and the reason `argc` is in the ABI.
+  const endAbsent: Instr[] = [
+    { op: "local.get", index: lenLocal },
+    { op: "local.set", index: endLocal },
+  ];
+  const resolveEnd: Instr[] = [];
+  {
+    const saved = fctx.body;
+    fctx.body = resolveEnd;
+    pushTaDynRelativeIndex(ctx, fctx, 2, endLocal, scratch, lenF64);
+    fctx.body = saved;
+  }
+  fctx.body.push(
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.lt_s" },
+    ...(nullishToNullIdx === undefined
+      ? ([] satisfies Instr[])
+      : ([
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: nullishToNullIdx },
+          { op: "ref.is_null" },
+          { op: "i32.or" },
+        ] satisfies Instr[])),
+    { op: "if", blockType: { kind: "empty" }, then: endAbsent, else: resolveEnd },
+  );
+
+  // step 8: newLength = max(end - begin, 0)
+  fctx.body.push(
+    { op: "local.get", index: endLocal },
+    { op: "local.get", index: beginLocal },
+    { op: "i32.sub" },
+    { op: "local.set", index: countLocal },
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: countLocal },
+      ],
+    },
+  );
+
+  // view = { length: count, buf: <shared>, byteOffset: off + begin*es, kind,
+  //          expando: null, constructProto: null }
+  fctx.body.push(
+    { op: "local.get", index: countLocal },
+    { op: "local.get", index: dvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "local.get", index: dvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+    { op: "local.get", index: beginLocal },
+    { op: "local.get", index: esLocal },
+    { op: "i32.mul" },
+    { op: "i32.add" },
+    { op: "local.get", index: kindLocal },
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: dynIdx },
+    { op: "extern.convert_any" },
+  );
+
+  pushDefinedFunc(ctx, funcIdx, {
+    name: helperName,
+    typeIdx,
+    locals: fctx.locals,
+    body: fctx.body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 /**
