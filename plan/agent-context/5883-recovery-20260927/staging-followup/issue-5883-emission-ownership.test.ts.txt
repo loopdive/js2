@@ -1,0 +1,304 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// Metadata foundation only; authored source-only, no compiler or activation.
+import { describe, expect, it } from "vitest";
+import { EmissionOwnership, type EmissionProvenance } from "../src/codegen/context/emission-ownership.js";
+
+const provenance = (unitId: string, ast?: object): EmissionProvenance => ({ sourceId: "source.ts", unitId, ast });
+
+describe("context-local emission ownership", () => {
+  it("seals empty metadata without inventing a root", () => {
+    expect(new EmissionOwnership().sealSourcePublication()).toStrictEqual({
+      publications: [],
+      bodies: [],
+      regions: [],
+      occurrences: [],
+      unselectedBodies: [],
+      discardedBodies: [],
+    });
+  });
+
+  it("inner commit remains cancellable by outer rollback", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("root"));
+    const publication = graph.createPublication("function", provenance("root"));
+    const outer = graph.beginTransaction();
+    const inner = graph.beginTransaction();
+    graph.recordOccurrence(body, provenance("rejected"));
+    graph.publishBody(publication, body);
+    graph.commitTransaction(inner);
+    graph.rollbackTransaction(outer);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(publication, body);
+    expect(graph.sealSourcePublication().occurrences).toEqual([]);
+  });
+
+  it("inner rollback removes only its emission when the outer transaction commits", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("root"));
+    const outer = graph.beginTransaction();
+    const keep = graph.recordOccurrence(body, provenance("keep"));
+    const inner = graph.beginTransaction();
+    graph.recordOccurrence(body, provenance("drop"));
+    graph.rollbackTransaction(inner);
+    graph.commitTransaction(outer);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("root")), body);
+    expect(graph.sealSourcePublication().occurrences.map((o) => o.occurrence)).toEqual([keep]);
+  });
+
+  it("outer commit and a retained body alone do not publish demand", () => {
+    const graph = new EmissionOwnership();
+    const tx = graph.beginTransaction();
+    const body = graph.createBodyEpoch(provenance("discovery"));
+    graph.recordOccurrence(body, provenance("discovery"));
+    graph.retainBodyEpoch(body);
+    graph.commitTransaction(tx);
+    const result = graph.sealSourcePublication();
+    expect(result.occurrences).toEqual([]);
+    expect(result.unselectedBodies).toEqual([body]);
+  });
+
+  it("roots only the selected initializer/prepared epoch, not its replacement", () => {
+    const graph = new EmissionOwnership();
+    const slot = graph.createPublication("module-init", provenance("init"));
+    const first = graph.createBodyEpoch(provenance("init"));
+    const second = graph.createBodyEpoch(provenance("init"));
+    graph.recordOccurrence(first, provenance("pass1"));
+    const selected = graph.recordOccurrence(second, provenance("pass2"));
+    graph.retainBodyEpoch(first);
+    graph.retainBodyEpoch(second);
+    graph.publishBody(slot, first);
+    graph.publishBody(slot, second);
+    const result = graph.sealSourcePublication();
+    expect(result.bodies).toEqual([second]);
+    expect(result.unselectedBodies).toEqual([first]);
+    expect(result.occurrences.map((o) => o.occurrence)).toEqual([selected]);
+  });
+
+  it("rollback restores the prior publication binding after replacement and removal", () => {
+    const graph = new EmissionOwnership();
+    const slot = graph.createPublication("function", provenance("f"));
+    const first = graph.createBodyEpoch(provenance("f"));
+    const second = graph.createBodyEpoch(provenance("f"));
+    graph.retainBodyEpoch(first);
+    graph.retainBodyEpoch(second);
+    graph.publishBody(slot, first);
+    const tx = graph.beginTransaction();
+    graph.publishBody(slot, second);
+    graph.unpublishBody(slot);
+    graph.rollbackTransaction(tx);
+    expect(graph.sealSourcePublication().publications[0]?.body).toBe(first);
+  });
+
+  it("an ordinary published function is a pre-DCE root even without a caller", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("neverCalled"));
+    const occurrence = graph.recordOccurrence(body, provenance("neverCalled"));
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("neverCalled")), body);
+    expect(graph.sealSourcePublication().occurrences[0]?.occurrence).toBe(occurrence);
+  });
+
+  it("same AST in separate epochs has distinct occurrences and explicit selection", () => {
+    const graph = new EmissionOwnership();
+    const ast = {};
+    const first = graph.createBodyEpoch(provenance("f", ast));
+    const second = graph.createBodyEpoch(provenance("f", ast));
+    const a = graph.recordOccurrence(first, provenance("f", ast));
+    const b = graph.recordOccurrence(second, provenance("f", ast));
+    expect(a).not.toBe(b);
+    expect(a.id).not.toBe(b.id);
+    graph.retainBodyEpoch(first);
+    graph.retainBodyEpoch(second);
+    graph.publishBody(graph.createPublication("function", provenance("f")), second);
+    const selected = graph.sealSourcePublication().occurrences;
+    expect(selected.map((o) => o.occurrence)).toEqual([b]);
+    expect(selected[0]?.provenance.ast).toBe(ast);
+  });
+
+  it("two visits to one AST within one epoch are not deduplicated", () => {
+    const graph = new EmissionOwnership();
+    const ast = {};
+    const body = graph.createBodyEpoch(provenance("f"));
+    const a = graph.recordOccurrence(body, provenance("f", ast));
+    const b = graph.recordOccurrence(body, provenance("f", ast));
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("f")), body);
+    expect(new Set(graph.sealSourcePublication().occurrences.map((o) => o.occurrence))).toEqual(new Set([a, b]));
+  });
+
+  it("a retained lifted body survives probe rollback and is selected by later exact adoption", () => {
+    const graph = new EmissionOwnership();
+    const parent = graph.createBodyEpoch(provenance("parent"));
+    const probe = graph.beginTransaction();
+    const lifted = graph.createBodyEpoch(provenance("lifted"));
+    const occurrence = graph.recordOccurrence(lifted, provenance("lifted"));
+    graph.retainBodyEpoch(lifted);
+    graph.adoptBody(parent, lifted);
+    graph.rollbackTransaction(probe);
+    // This edge is new. No function/closure registry can implicitly supply it.
+    graph.adoptBody(parent, lifted);
+    graph.retainBodyEpoch(parent);
+    graph.publishBody(graph.createPublication("function", provenance("parent")), parent);
+    const result = graph.sealSourcePublication();
+    expect(result.bodies).toContain(lifted);
+    expect(result.occurrences[0]?.occurrence).toBe(occurrence);
+  });
+
+  it("a retained probe orphan without a new adoption does not select its occurrence", () => {
+    const graph = new EmissionOwnership();
+    const parent = graph.createBodyEpoch(provenance("parent"));
+    const probe = graph.beginTransaction();
+    const orphan = graph.createBodyEpoch(provenance("orphan"));
+    graph.recordOccurrence(orphan, provenance("orphan"));
+    graph.retainBodyEpoch(orphan);
+    graph.adoptBody(parent, orphan);
+    graph.rollbackTransaction(probe);
+    graph.retainBodyEpoch(parent);
+    graph.publishBody(graph.createPublication("function", provenance("parent")), parent);
+    const result = graph.sealSourcePublication();
+    expect(result.occurrences).toEqual([]);
+    expect(result.unselectedBodies).toEqual([orphan]);
+  });
+
+  it("unfinished bodies created by a rolled-back probe are discarded, not reusable", () => {
+    const graph = new EmissionOwnership();
+    const probe = graph.beginTransaction();
+    const unfinished = graph.createBodyEpoch(provenance("unfinished"));
+    graph.recordOccurrence(unfinished, provenance("unfinished"));
+    graph.rollbackTransaction(probe);
+    expect(() => graph.retainBodyEpoch(unfinished)).toThrow("not editable");
+    expect(graph.sealSourcePublication().discardedBodies).toEqual([unfinished]);
+  });
+
+  it("explicit orphan discard prevents later adoption", () => {
+    const graph = new EmissionOwnership();
+    const parent = graph.createBodyEpoch(provenance("parent"));
+    const orphan = graph.createBodyEpoch(provenance("orphan"));
+    graph.retainBodyEpoch(orphan);
+    graph.discardBodyEpoch(orphan);
+    expect(() => graph.adoptBody(parent, orphan)).toThrow("discarded");
+    expect(graph.sealSourcePublication().discardedBodies).toEqual([orphan]);
+  });
+
+  it("selected unfinished/discarded dependencies fail seal instead of silently vanishing", () => {
+    const graph = new EmissionOwnership();
+    const parent = graph.createBodyEpoch(provenance("parent"));
+    const child = graph.createBodyEpoch(provenance("child"));
+    graph.adoptBody(parent, child);
+    graph.retainBodyEpoch(parent);
+    graph.publishBody(graph.createPublication("function", provenance("parent")), parent);
+    expect(() => graph.sealSourcePublication()).toThrow("unfinished or discarded");
+    graph.retainBodyEpoch(child);
+    graph.discardBodyEpoch(child);
+    expect(() => graph.sealSourcePublication()).toThrow("unfinished or discarded");
+  });
+
+  it("requires internal transactions to settle before freezing a preexisting body", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("f"));
+    const tx = graph.beginTransaction();
+    graph.recordOccurrence(body, provenance("tentative"));
+    expect(() => graph.retainBodyEpoch(body)).toThrow("Close internal body transactions");
+    graph.rollbackTransaction(tx);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("f")), body);
+    expect(graph.sealSourcePublication().occurrences).toEqual([]);
+  });
+
+  it("enforces LIFO, single-close transactions and rejects sealing an open scope", () => {
+    const graph = new EmissionOwnership();
+    const outer = graph.beginTransaction();
+    const inner = graph.beginTransaction();
+    expect(() => graph.commitTransaction(outer)).toThrow("LIFO");
+    expect(() => graph.sealSourcePublication()).toThrow("open emission transactions");
+    graph.commitTransaction(inner);
+    expect(() => graph.rollbackTransaction(inner)).toThrow("LIFO");
+    graph.rollbackTransaction(outer);
+  });
+
+  it("region detach/move rollback restores the previous edge without cloning occurrences", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("f"));
+    const region = graph.createRegion(body);
+    const wrapper = graph.createRegion(body);
+    const old = graph.attachRegion(body, region);
+    graph.attachRegion(body, wrapper);
+    const occurrence = graph.recordOccurrence(region, provenance("inside"));
+    const tx = graph.beginTransaction();
+    graph.detachEdge(old);
+    graph.attachRegion(wrapper, region);
+    graph.rollbackTransaction(tx);
+    expect(() => graph.attachRegion(wrapper, region)).toThrow("already has an owner");
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("f")), body);
+    expect(graph.sealSourcePublication().occurrences.map((o) => o.occurrence)).toEqual([occurrence]);
+  });
+
+  it("detached/truncated regions contribute no selected occurrences", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("f"));
+    const region = graph.createRegion(body);
+    const edge = graph.attachRegion(body, region);
+    graph.recordOccurrence(region, provenance("truncated"));
+    graph.detachEdge(edge);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("f")), body);
+    expect(graph.sealSourcePublication().occurrences).toEqual([]);
+  });
+
+  it("walks cyclic adoption and multiple paths exactly once", () => {
+    const graph = new EmissionOwnership();
+    const a = graph.createBodyEpoch(provenance("a"));
+    const b = graph.createBodyEpoch(provenance("b"));
+    const oa = graph.recordOccurrence(a, provenance("a"));
+    const ob = graph.recordOccurrence(b, provenance("b"));
+    graph.adoptBody(a, b);
+    graph.adoptBody(a, b);
+    graph.adoptBody(b, a);
+    graph.retainBodyEpoch(a);
+    graph.retainBodyEpoch(b);
+    graph.publishBody(graph.createPublication("function", provenance("a")), a);
+    const result = graph.sealSourcePublication();
+    expect(new Set(result.bodies)).toEqual(new Set([a, b]));
+    expect(result.bodies).toHaveLength(2);
+    expect(new Set(result.occurrences.map((o) => o.occurrence))).toEqual(new Set([oa, ob]));
+    expect(result.occurrences).toHaveLength(2);
+  });
+
+  it("seals once with frozen output and forbids further metadata mutation", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("f"));
+    graph.recordOccurrence(body, provenance("f"));
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("f")), body);
+    const result = graph.sealSourcePublication();
+    expect(graph.sealSourcePublication()).toBe(result);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.occurrences)).toBe(true);
+    expect(Object.isFrozen(result.occurrences[0])).toBe(true);
+    expect(Object.isFrozen(result.occurrences[0]?.provenance)).toBe(true);
+    expect(() => graph.beginTransaction()).toThrow("sealed");
+    expect(() => graph.createBodyEpoch(provenance("late"))).toThrow("sealed");
+    expect(() => graph.discardBodyEpoch(body)).toThrow("sealed");
+  });
+
+  it("isolates contexts even when ids and AST provenance coincide", () => {
+    const a = new EmissionOwnership();
+    const b = new EmissionOwnership();
+    const ast = {};
+    const ba = a.createBodyEpoch(provenance("f", ast));
+    const bb = b.createBodyEpoch(provenance("f", ast));
+    expect(ba.id).toBe(bb.id);
+    expect(ba).not.toBe(bb);
+    expect(() => b.adoptBody(bb, ba)).toThrow("foreign");
+    const tx = a.beginTransaction();
+    expect(() => b.commitTransaction(tx)).toThrow("LIFO");
+    a.rollbackTransaction(tx);
+    a.recordOccurrence(ba, provenance("f", ast));
+    a.retainBodyEpoch(ba);
+    a.publishBody(a.createPublication("function", provenance("f")), ba);
+    expect(a.sealSourcePublication().occurrences).toHaveLength(1);
+    expect(b.sealSourcePublication().occurrences).toHaveLength(0);
+  });
+});

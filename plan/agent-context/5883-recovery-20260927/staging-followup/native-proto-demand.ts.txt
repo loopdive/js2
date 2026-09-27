@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/** Metadata only. No CodegenContext, provider registration, or Wasm indices. */
+import { EmissionOwnership } from "./context/emission-ownership.js";
+import type { EmissionOccurrence, SelectedBodyManifest } from "./context/emission-ownership.js";
+
+export type NativeProtoDemandReason = "mixed-generator-then" | "observable-vector";
+export type NativeProtoDemandState = "collecting" | "inactive" | "selected-awaiting-registration";
+export interface NativeProtoDemandRecipe {
+  readonly brand: "Promise";
+  readonly requiredMembers: readonly ["then"];
+  readonly reason: NativeProtoDemandReason;
+  readonly occurrence: EmissionOccurrence;
+}
+export interface SelectedNativeProtoDemand {
+  readonly brand: "Promise";
+  /** Full canonical initializer, never a then-only inventory approximation. */
+  readonly initializer: "full-Promise-brand";
+  readonly requiredMembers: readonly ["then"];
+  readonly receiverAwareGet: true;
+  readonly consumers: readonly NativeProtoDemandRecipe[];
+}
+/** Specification for a future registration receipt, NOT proof minted here.
+ * A provider owner must authenticate actual body/installation identities and
+ * all semantic Get dependencies before exposing a frozen ready capability.
+ * CSV membership, reserved function names, refusal bodies and booleans alone
+ * cannot constitute this receipt. This foundation accepts no such receipts.
+ */
+export interface RequiredNativeProtoMemberReceiptContract {
+  readonly brand: "Promise";
+  readonly member: "then";
+  readonly evidence: "installed-canonical-descriptor-and-supported-body";
+  readonly dependencies: readonly [
+    "semantic-receiver-get", "canonical-companion-initializer",
+    "full-callable-predicate", "apply-driver", "native-TypeError",
+  ];
+}
+
+/** One collection per compilation; the supplied arena is the shared owner.
+ * Transition: collecting -> inactive OR selected-awaiting-registration.
+ * Registration -> ready -> frozen belongs to the future provider owner.
+ * There is deliberately no ready setter, registration callback, or fake body.
+ */
+export class NativeProtoDemandCollection {
+  readonly #ownership: EmissionOwnership;
+  #state: NativeProtoDemandState = "collecting";
+  readonly #recipes: NativeProtoDemandRecipe[] = [];
+  #selected: readonly SelectedNativeProtoDemand[] = Object.freeze([]);
+
+  constructor(ownership: EmissionOwnership) {
+    if (!(ownership instanceof EmissionOwnership)) throw new Error("Shared emission ownership required");
+    this.#ownership = ownership;
+  }
+
+  get state(): NativeProtoDemandState { return this.#state; }
+
+  prepare(recipe: NativeProtoDemandRecipe): NativeProtoDemandRecipe {
+    if (this.#state !== "collecting") throw new Error("Native prototype demand collection is closed");
+    if (recipe.brand !== "Promise" || recipe.requiredMembers.length !== 1 || recipe.requiredMembers[0] !== "then")
+      throw new Error("Unsupported native prototype demand");
+    if (recipe.reason !== "mixed-generator-then" && recipe.reason !== "observable-vector")
+      throw new Error("Unknown native prototype demand reason");
+    // Read-only arena query rejects forged/foreign occurrences. Preparation
+    // does not attach edges, complete bodies, publish roots, or seal ownership.
+    this.#ownership.occurrenceMembership(recipe.occurrence);
+    const old = this.#recipes.find(r => r.occurrence === recipe.occurrence && r.reason === recipe.reason);
+    if (old) return old;
+    const prepared = Object.freeze({ ...recipe, requiredMembers: Object.freeze(["then"] as const) });
+    this.#recipes.push(prepared);
+    return prepared;
+  }
+
+  /** Verify independent selected-body census using the SAME shared arena.
+   * Never accept raw seal snapshots, AST nodes, booleans, or caller-created
+   * VerifiedSourceOwnership objects as activation authority.
+   */
+  select(manifest: SelectedBodyManifest): readonly SelectedNativeProtoDemand[] {
+    if (this.#state !== "collecting") throw new Error("Native prototype demand selection is closed");
+    const verified = this.#ownership.sealWithManifest(manifest);
+    const required = new Set(verified.requiredOccurrences);
+    const consumers = this.#recipes.filter(r => required.has(r.occurrence));
+    this.#selected = Object.freeze(consumers.length ? [Object.freeze({
+      brand: "Promise" as const,
+      initializer: "full-Promise-brand" as const,
+      requiredMembers: Object.freeze(["then"] as const),
+      receiverAwareGet: true as const,
+      consumers: Object.freeze(consumers),
+    })] : []);
+    this.#state = consumers.length ? "selected-awaiting-registration" : "inactive";
+    return this.#selected;
+  }
+
+  /** Selected metadata is NOT a ready provider manifest or call admission. */
+  get selected(): readonly SelectedNativeProtoDemand[] { return this.#selected; }
+}
