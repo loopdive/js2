@@ -1,0 +1,1343 @@
+{
+  "base": "7443ab4826fde65b72f875e0af12337a35520932",
+  "node": "v22.23.2",
+  "lane": "original standalone and host controls unchanged; one Vitest worker",
+  "sourceHashes": {
+    "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+    "src/codegen/builtin-constructor-prepared.ts": "6b4640082f99b45d5f45fa7ca073e89cd28644aa1a8556720a1a74fa7a317342",
+    "tests/issue-5883-constructor-prepared.test.ts": "bf5563fb8cb42b360c65f0b9d5efa7a8b18ebdbd2f1584318c8fc83cf230ece3",
+    "tests/issue-2984-ctor-carrier-own-props.test.ts": "95e722141a9061ce68df74e6141a790fccd99f86d507fa9c315e8a87f21fbd35",
+    "tests/issue-3006-builtin-constructor-identity.test.ts": "b832b61dc964ea23eec6b09be8f103f3b6270803af790ada4c4ab8d9a9e1822b",
+    ".tmp/constructor-observer.mts": "5a79039f7277b4e02a8b973b9b11527f75954c729a02b0b5fa5d004d408e6336"
+  },
+  "before": {
+    "lane": "standalone nativeStrings",
+    "records": [
+      {
+        "name": "Promise",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 2,
+        "moduleSha256": "12cbca37af7a8da5fe2d3098082ba5897424e0fcd9d0a5d90d7761a935337cab",
+        "callerSha256": "c62c658df1a80d902d97f4811777bbb4d9fc802729b35cfb8496f7e6a9d386de",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "adb741bf07db0d0e55c8d62a28e1be9c5872a9c7b744450ccb747df713691e1e",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Promise",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 4,
+        "moduleSha256": "12cbca37af7a8da5fe2d3098082ba5897424e0fcd9d0a5d90d7761a935337cab",
+        "callerSha256": "7c4e46bdb225d347e1d9837520c0650c46fa8f213cba6b9bdabfeb27ff93bf6e",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "adb741bf07db0d0e55c8d62a28e1be9c5872a9c7b744450ccb747df713691e1e",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Promise",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 2,
+        "moduleSha256": "8ab0a704388b5fbeb4dbcaf270898941b2f8417c45ab20d96744ebab20198f23",
+        "callerSha256": "3cc4e8c08a85cda122257bff561e651b91a23581e977cc1d18c466557a30cb4e",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "53106c4d3d68d1c914e40d379525739fd050c26da5aa3c86f78c6ad32644a5c7",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Promise",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 4,
+        "moduleSha256": "8ab0a704388b5fbeb4dbcaf270898941b2f8417c45ab20d96744ebab20198f23",
+        "callerSha256": "8478564179343d774db5bf04b58b61f8d095ab8d00ae5032084dc1e69d29385e",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "53106c4d3d68d1c914e40d379525739fd050c26da5aa3c86f78c6ad32644a5c7",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 2,
+        "moduleSha256": "fe0f4179aa0daf70dac7d7e336abc16a9cc1b3c42f1fc084334da80dad432f9c",
+        "callerSha256": "5c8ef9a23b56a6ab8f58e275b56c5048e6c6f9d378ba6c567c2e3dd6f9e54f5e",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "d1a60a8e1b2c21923456679819b763586ac607d87fa82a94aba912c76eec4947",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 4,
+        "moduleSha256": "fe0f4179aa0daf70dac7d7e336abc16a9cc1b3c42f1fc084334da80dad432f9c",
+        "callerSha256": "34a04c38403b259d2e40c74e03ee838e505e7b3a37092f357831548267a6f4ce",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "d1a60a8e1b2c21923456679819b763586ac607d87fa82a94aba912c76eec4947",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 2,
+        "moduleSha256": "b010f22c21f6a074a7fd93f79010a51235ca6ea6e1d0b816d21d72f4286f6ee8",
+        "callerSha256": "fed38ad15d50c0f29d6dda30140de327319c6ddfe4103d86967b4ae3c5b107e1",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "1d1eafefac19becb0278a58083984a0c912fda89f5d047afdd01a69d9937a2ca",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 4,
+        "moduleSha256": "b010f22c21f6a074a7fd93f79010a51235ca6ea6e1d0b816d21d72f4286f6ee8",
+        "callerSha256": "7aa0b7363dbe6f7759669b6b674c2b09d175b39ce31bab655f59f18e19b9e189",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "1d1eafefac19becb0278a58083984a0c912fda89f5d047afdd01a69d9937a2ca",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 2,
+        "moduleSha256": "e90f3c30d6aebf9650999a3d7d223c5c8b0b9cb304ebbbeb6301fd6ce37a0113",
+        "callerSha256": "c01124865d168315832ed7242404fdc598c6fdb9ae49b114a8cc142886883944",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "d549b29a4cd82556654edb8971fcdec31f1cf7b72daf10aaddf6ced23b41af77",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 4,
+        "moduleSha256": "e90f3c30d6aebf9650999a3d7d223c5c8b0b9cb304ebbbeb6301fd6ce37a0113",
+        "callerSha256": "fdd874e3a16626f3aea4f1a500aff2c410b6eee8fb07ca6c6255d7d1267d0f05",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "d549b29a4cd82556654edb8971fcdec31f1cf7b72daf10aaddf6ced23b41af77",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 2,
+        "moduleSha256": "e8f012a30d40b7fba6fba36fe5cf5b7b5ab65f59be6d5eae79f03d60ceed4add",
+        "callerSha256": "6fd9e7fa6d215a36f467e394ec6a6af4a64f50e1b4ed784b4054869ace5aa453",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "8aa53f2bc38c0b54f284f0e86e16b50583a824d9b914a4b1d91c6ac4b701dbdd",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 4,
+        "moduleSha256": "e8f012a30d40b7fba6fba36fe5cf5b7b5ab65f59be6d5eae79f03d60ceed4add",
+        "callerSha256": "dd72d03f4063c9cc8acda73e7d7c8476e398e1a4ee9b5e6c5a836c9cfe54908f",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "8aa53f2bc38c0b54f284f0e86e16b50583a824d9b914a4b1d91c6ac4b701dbdd",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 2,
+        "moduleSha256": "bbf11a1bbab26c3a35cfbd2efd4c48eb9d807b45a4fcf6fcbe840e6bea8a0a20",
+        "callerSha256": "605b465c4253d45fc0da90b22d1bf29d8a75a3dfb1af6897c2213c4f2f7c1f0c",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "6ce4b063494dd30ba8cd08d22edf8a50f9c3f9727c32d5abda37f6d445b88e2f",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 4,
+        "moduleSha256": "bbf11a1bbab26c3a35cfbd2efd4c48eb9d807b45a4fcf6fcbe840e6bea8a0a20",
+        "callerSha256": "e3a37e4f1b6ca1ba66ad9b0835a9cd4d29b8d80b28e5ecf7e63628c73394cc51",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "6ce4b063494dd30ba8cd08d22edf8a50f9c3f9727c32d5abda37f6d445b88e2f",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 2,
+        "moduleSha256": "4fc6fc635f0293c7efce5ed6600f9aa71dc95714b2f96cdd8db5691836cce183",
+        "callerSha256": "8c4a0095e8c82b88253a6c6174a977b57462c78c0fac9a106ef0f3df03d4f1df",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "0aea70bef9362a19aa65fdb426aca9b77486f9352ab2a97fd990035907ba4d1a",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 4,
+        "moduleSha256": "4fc6fc635f0293c7efce5ed6600f9aa71dc95714b2f96cdd8db5691836cce183",
+        "callerSha256": "91d93c50382a710ef01dec08e2a469ea2e2b09779bc8823a4ed14e7899987d47",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "0aea70bef9362a19aa65fdb426aca9b77486f9352ab2a97fd990035907ba4d1a",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 2,
+        "moduleSha256": "df652f7d37d5994b330c3220e582e340a01969dfea43296c451a03baac44abdd",
+        "callerSha256": "4466bafd3a345d85adef07cf6c462d8cb3134c069f0b87675d54e3d901e85610",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "e6b43474e6f152fc6720f76a9ae0b54ca93790022dfe6a9155e6a27d1cd191cb",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 4,
+        "moduleSha256": "df652f7d37d5994b330c3220e582e340a01969dfea43296c451a03baac44abdd",
+        "callerSha256": "051b981b3275f43dd63dc4addedcdb0a0a74303d50a5300176ab88d63ab47416",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "e6b43474e6f152fc6720f76a9ae0b54ca93790022dfe6a9155e6a27d1cd191cb",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 2,
+        "moduleSha256": "d19b6a3bc88062442aea67c88bb4ff7c2037350d5fead7a72580fb2f76a1b3c8",
+        "callerSha256": "205323c67bd0e2b91c2e2f1d884288cd4ee0e1620080a890e311df6065e26718",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "1821fe128687eafcd5cf3dc05c44551926a2c82103796997d61be660ac6471fa",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 4,
+        "moduleSha256": "d19b6a3bc88062442aea67c88bb4ff7c2037350d5fead7a72580fb2f76a1b3c8",
+        "callerSha256": "0bc64987fc0d7461bde77df361a652f16da46bb416fa997d71b3810449dc6a51",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "1821fe128687eafcd5cf3dc05c44551926a2c82103796997d61be660ac6471fa",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 2,
+        "moduleSha256": "a2303e9fb81b81cf4bdbd3a5cc3b496614360686678497a0b4644d7658a1bf8e",
+        "callerSha256": "f435b09820002f7c47ddb22d4dbd836cab4c0117c82dd0b9a1ba0a2499ce9776",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "44441ed775c1cc844509b00892698e971a0362ae0431fe5479d1ae5d99d4233c",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 4,
+        "moduleSha256": "a2303e9fb81b81cf4bdbd3a5cc3b496614360686678497a0b4644d7658a1bf8e",
+        "callerSha256": "5d65df0728a14d9d08f51ffe6cbcc77f73169455c814aca7c4ac4d9102c279a0",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "44441ed775c1cc844509b00892698e971a0362ae0431fe5479d1ae5d99d4233c",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 2,
+        "moduleSha256": "9d6bb0d67b64e78b664ee0613a8b0680e18e7922c5fa5c3a818062f5d8c02f8c",
+        "callerSha256": "b0ce5e8683361e675ba7372517d9bc94911f88c48a44793f62ae539cb5b824ba",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "6224c0bc80dbc7dc4c8d6d4ef5bba24d5bb85cfb1e02330a42e5acf36d3a6176",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 4,
+        "moduleSha256": "9d6bb0d67b64e78b664ee0613a8b0680e18e7922c5fa5c3a818062f5d8c02f8c",
+        "callerSha256": "376955e162a78493f82cb39e6f916521eeebb90b1070d38feff0af9ddfd46938",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "6224c0bc80dbc7dc4c8d6d4ef5bba24d5bb85cfb1e02330a42e5acf36d3a6176",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    ],
+    "scope": "Actual immediate constructor emission, cold/reserved and repeated; not runtime or delayed-retention proof"
+  },
+  "after": {
+    "lane": "standalone nativeStrings",
+    "records": [
+      {
+        "name": "Promise",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 2,
+        "moduleSha256": "12cbca37af7a8da5fe2d3098082ba5897424e0fcd9d0a5d90d7761a935337cab",
+        "callerSha256": "c62c658df1a80d902d97f4811777bbb4d9fc802729b35cfb8496f7e6a9d386de",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "adb741bf07db0d0e55c8d62a28e1be9c5872a9c7b744450ccb747df713691e1e",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Promise",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 4,
+        "moduleSha256": "12cbca37af7a8da5fe2d3098082ba5897424e0fcd9d0a5d90d7761a935337cab",
+        "callerSha256": "7c4e46bdb225d347e1d9837520c0650c46fa8f213cba6b9bdabfeb27ff93bf6e",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "adb741bf07db0d0e55c8d62a28e1be9c5872a9c7b744450ccb747df713691e1e",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Promise",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 2,
+        "moduleSha256": "8ab0a704388b5fbeb4dbcaf270898941b2f8417c45ab20d96744ebab20198f23",
+        "callerSha256": "3cc4e8c08a85cda122257bff561e651b91a23581e977cc1d18c466557a30cb4e",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "53106c4d3d68d1c914e40d379525739fd050c26da5aa3c86f78c6ad32644a5c7",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Promise",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 323,
+        "typeCount": 146,
+        "globalCount": 164,
+        "localCount": 4,
+        "moduleSha256": "8ab0a704388b5fbeb4dbcaf270898941b2f8417c45ab20d96744ebab20198f23",
+        "callerSha256": "8478564179343d774db5bf04b58b61f8d095ab8d00ae5032084dc1e69d29385e",
+        "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+        "constructorMapSha256": "53106c4d3d68d1c914e40d379525739fd050c26da5aa3c86f78c6ad32644a5c7",
+        "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+        "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 2,
+        "moduleSha256": "fe0f4179aa0daf70dac7d7e336abc16a9cc1b3c42f1fc084334da80dad432f9c",
+        "callerSha256": "5c8ef9a23b56a6ab8f58e275b56c5048e6c6f9d378ba6c567c2e3dd6f9e54f5e",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "d1a60a8e1b2c21923456679819b763586ac607d87fa82a94aba912c76eec4947",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 4,
+        "moduleSha256": "fe0f4179aa0daf70dac7d7e336abc16a9cc1b3c42f1fc084334da80dad432f9c",
+        "callerSha256": "34a04c38403b259d2e40c74e03ee838e505e7b3a37092f357831548267a6f4ce",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "d1a60a8e1b2c21923456679819b763586ac607d87fa82a94aba912c76eec4947",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 2,
+        "moduleSha256": "b010f22c21f6a074a7fd93f79010a51235ca6ea6e1d0b816d21d72f4286f6ee8",
+        "callerSha256": "fed38ad15d50c0f29d6dda30140de327319c6ddfe4103d86967b4ae3c5b107e1",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "1d1eafefac19becb0278a58083984a0c912fda89f5d047afdd01a69d9937a2ca",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Object",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 299,
+        "typeCount": 121,
+        "globalCount": 133,
+        "localCount": 4,
+        "moduleSha256": "b010f22c21f6a074a7fd93f79010a51235ca6ea6e1d0b816d21d72f4286f6ee8",
+        "callerSha256": "7aa0b7363dbe6f7759669b6b674c2b09d175b39ce31bab655f59f18e19b9e189",
+        "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+        "constructorMapSha256": "1d1eafefac19becb0278a58083984a0c912fda89f5d047afdd01a69d9937a2ca",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 2,
+        "moduleSha256": "e90f3c30d6aebf9650999a3d7d223c5c8b0b9cb304ebbbeb6301fd6ce37a0113",
+        "callerSha256": "c01124865d168315832ed7242404fdc598c6fdb9ae49b114a8cc142886883944",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "d549b29a4cd82556654edb8971fcdec31f1cf7b72daf10aaddf6ced23b41af77",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 4,
+        "moduleSha256": "e90f3c30d6aebf9650999a3d7d223c5c8b0b9cb304ebbbeb6301fd6ce37a0113",
+        "callerSha256": "fdd874e3a16626f3aea4f1a500aff2c410b6eee8fb07ca6c6255d7d1267d0f05",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "d549b29a4cd82556654edb8971fcdec31f1cf7b72daf10aaddf6ced23b41af77",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 2,
+        "moduleSha256": "e8f012a30d40b7fba6fba36fe5cf5b7b5ab65f59be6d5eae79f03d60ceed4add",
+        "callerSha256": "6fd9e7fa6d215a36f467e394ec6a6af4a64f50e1b4ed784b4054869ace5aa453",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "8aa53f2bc38c0b54f284f0e86e16b50583a824d9b914a4b1d91c6ac4b701dbdd",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Array",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 124,
+        "globalCount": 134,
+        "localCount": 4,
+        "moduleSha256": "e8f012a30d40b7fba6fba36fe5cf5b7b5ab65f59be6d5eae79f03d60ceed4add",
+        "callerSha256": "dd72d03f4063c9cc8acda73e7d7c8476e398e1a4ee9b5e6c5a836c9cfe54908f",
+        "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+        "constructorMapSha256": "8aa53f2bc38c0b54f284f0e86e16b50583a824d9b914a4b1d91c6ac4b701dbdd",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 2,
+        "moduleSha256": "bbf11a1bbab26c3a35cfbd2efd4c48eb9d807b45a4fcf6fcbe840e6bea8a0a20",
+        "callerSha256": "605b465c4253d45fc0da90b22d1bf29d8a75a3dfb1af6897c2213c4f2f7c1f0c",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "6ce4b063494dd30ba8cd08d22edf8a50f9c3f9727c32d5abda37f6d445b88e2f",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 4,
+        "moduleSha256": "bbf11a1bbab26c3a35cfbd2efd4c48eb9d807b45a4fcf6fcbe840e6bea8a0a20",
+        "callerSha256": "e3a37e4f1b6ca1ba66ad9b0835a9cd4d29b8d80b28e5ecf7e63628c73394cc51",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "6ce4b063494dd30ba8cd08d22edf8a50f9c3f9727c32d5abda37f6d445b88e2f",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 2,
+        "moduleSha256": "4fc6fc635f0293c7efce5ed6600f9aa71dc95714b2f96cdd8db5691836cce183",
+        "callerSha256": "8c4a0095e8c82b88253a6c6174a977b57462c78c0fac9a106ef0f3df03d4f1df",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "0aea70bef9362a19aa65fdb426aca9b77486f9352ab2a97fd990035907ba4d1a",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Number",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 305,
+        "typeCount": 133,
+        "globalCount": 155,
+        "localCount": 4,
+        "moduleSha256": "4fc6fc635f0293c7efce5ed6600f9aa71dc95714b2f96cdd8db5691836cce183",
+        "callerSha256": "91d93c50382a710ef01dec08e2a469ea2e2b09779bc8823a4ed14e7899987d47",
+        "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+        "constructorMapSha256": "0aea70bef9362a19aa65fdb426aca9b77486f9352ab2a97fd990035907ba4d1a",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 2,
+        "moduleSha256": "df652f7d37d5994b330c3220e582e340a01969dfea43296c451a03baac44abdd",
+        "callerSha256": "4466bafd3a345d85adef07cf6c462d8cb3134c069f0b87675d54e3d901e85610",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "e6b43474e6f152fc6720f76a9ae0b54ca93790022dfe6a9155e6a27d1cd191cb",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 4,
+        "moduleSha256": "df652f7d37d5994b330c3220e582e340a01969dfea43296c451a03baac44abdd",
+        "callerSha256": "051b981b3275f43dd63dc4addedcdb0a0a74303d50a5300176ab88d63ab47416",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "e6b43474e6f152fc6720f76a9ae0b54ca93790022dfe6a9155e6a27d1cd191cb",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 2,
+        "moduleSha256": "d19b6a3bc88062442aea67c88bb4ff7c2037350d5fead7a72580fb2f76a1b3c8",
+        "callerSha256": "205323c67bd0e2b91c2e2f1d884288cd4ee0e1620080a890e311df6065e26718",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "1821fe128687eafcd5cf3dc05c44551926a2c82103796997d61be660ac6471fa",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Symbol",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 303,
+        "typeCount": 127,
+        "globalCount": 159,
+        "localCount": 4,
+        "moduleSha256": "d19b6a3bc88062442aea67c88bb4ff7c2037350d5fead7a72580fb2f76a1b3c8",
+        "callerSha256": "0bc64987fc0d7461bde77df361a652f16da46bb416fa997d71b3810449dc6a51",
+        "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+        "constructorMapSha256": "1821fe128687eafcd5cf3dc05c44551926a2c82103796997d61be660ac6471fa",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": false,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 2,
+        "moduleSha256": "a2303e9fb81b81cf4bdbd3a5cc3b496614360686678497a0b4644d7658a1bf8e",
+        "callerSha256": "f435b09820002f7c47ddb22d4dbd836cab4c0117c82dd0b9a1ba0a2499ce9776",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "44441ed775c1cc844509b00892698e971a0362ae0431fe5479d1ae5d99d4233c",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": false,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 128,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 4,
+        "moduleSha256": "a2303e9fb81b81cf4bdbd3a5cc3b496614360686678497a0b4644d7658a1bf8e",
+        "callerSha256": "5d65df0728a14d9d08f51ffe6cbcc77f73169455c814aca7c4ac4d9102c279a0",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "44441ed775c1cc844509b00892698e971a0362ae0431fe5479d1ae5d99d4233c",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": true,
+        "occurrence": 1,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 2,
+        "moduleSha256": "9d6bb0d67b64e78b664ee0613a8b0680e18e7922c5fa5c3a818062f5d8c02f8c",
+        "callerSha256": "b0ce5e8683361e675ba7372517d9bc94911f88c48a44793f62ae539cb5b824ba",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "6224c0bc80dbc7dc4c8d6d4ef5bba24d5bb85cfb1e02330a42e5acf36d3a6176",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "Int8Array",
+        "reserved": true,
+        "occurrence": 2,
+        "resultType": {
+          "kind": "externref"
+        },
+        "globalIndex": 0,
+        "functionCount": 300,
+        "typeCount": 121,
+        "globalCount": 137,
+        "localCount": 4,
+        "moduleSha256": "9d6bb0d67b64e78b664ee0613a8b0680e18e7922c5fa5c3a818062f5d8c02f8c",
+        "callerSha256": "376955e162a78493f82cb39e6f916521eeebb90b1070d38feff0af9ddfd46938",
+        "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+        "constructorMapSha256": "6224c0bc80dbc7dc4c8d6d4ef5bba24d5bb85cfb1e02330a42e5acf36d3a6176",
+        "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+        "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+        "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    ],
+    "scope": "Actual immediate constructor emission, cold/reserved and repeated; not runtime or delayed-retention proof"
+  },
+  "baseline": [
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors WeakMap.name — runtime hasOwnProperty + full attribute triple (§20.2.4.2)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors WeakMap.length — NUMERIC value 0 through the runtime descriptor (§20.2.4.1)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors RangeError.length — NUMERIC value 1 (Error-family namespace carrier)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors Map.prototype — OBJECT IDENTITY with the syntactic read, all-false attributes",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors distinct ctors carry distinct prototypes (not a null-null tautology)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors the seeded properties are NON-ENUMERABLE (Object.keys / for-in unchanged)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors GUARD: true NAMESPACES (Math/JSON/Reflect) get no name/length/prototype",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors GUARD: the syntactic folds and #3006 ctor identity are unchanged",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors configurable:true seeded props delete; configurable:false ones survive",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors KNOWN GAP (pre-existing): a dynamic write bypasses the non-writable flag",
+      "status": "failed",
+      "errors": [null]
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors host (gc) lane still compiles the same sources",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) Set.prototype.constructor === Set is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) WeakMap.prototype.constructor === WeakMap is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) WeakRef.prototype.constructor === WeakRef is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) WeakSet.prototype.constructor === WeakSet is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) RegExp.prototype.constructor === RegExp is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) FinalizationRegistry.prototype.constructor === FinalizationRegistry is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) DisposableStack.prototype.constructor === DisposableStack is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) SuppressedError.prototype.constructor === SuppressedError is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) swap-wrong-builtin: Set.prototype.constructor === Map is GENUINELY false",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) swap-wrong-builtin: WeakMap.prototype.constructor === Set is GENUINELY false",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) bare builtin identifiers have distinct genuine identity (Set !== Map, Set === Set)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) instance-form (new WeakMap()).constructor === WeakMap is genuinely true; === Set is false",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) regexp-literal instance .constructor === RegExp is genuinely true; === Set is false; host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) gc/host lane keeps the real Object_get_constructor read (fold is standalone-only)",
+      "status": "passed",
+      "errors": []
+    }
+  ],
+  "candidate": [
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors WeakMap.name — runtime hasOwnProperty + full attribute triple (§20.2.4.2)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors WeakMap.length — NUMERIC value 0 through the runtime descriptor (§20.2.4.1)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors RangeError.length — NUMERIC value 1 (Error-family namespace carrier)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors Map.prototype — OBJECT IDENTITY with the syntactic read, all-false attributes",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors distinct ctors carry distinct prototypes (not a null-null tautology)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors the seeded properties are NON-ENUMERABLE (Object.keys / for-in unchanged)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors GUARD: true NAMESPACES (Math/JSON/Reflect) get no name/length/prototype",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors GUARD: the syntactic folds and #3006 ctor identity are unchanged",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors configurable:true seeded props delete; configurable:false ones survive",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors KNOWN GAP (pre-existing): a dynamic write bypasses the non-writable flag",
+      "status": "failed",
+      "errors": [null]
+    },
+    {
+      "file": "issue-2984-ctor-carrier-own-props.test.ts",
+      "name": "#2984 ctor-carrier own props: runtime descriptor MOP on builtin constructors host (gc) lane still compiles the same sources",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) Set.prototype.constructor === Set is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) WeakMap.prototype.constructor === WeakMap is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) WeakRef.prototype.constructor === WeakRef is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) WeakSet.prototype.constructor === WeakSet is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) RegExp.prototype.constructor === RegExp is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) FinalizationRegistry.prototype.constructor === FinalizationRegistry is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) DisposableStack.prototype.constructor === DisposableStack is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) SuppressedError.prototype.constructor === SuppressedError is GENUINELY true, host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) swap-wrong-builtin: Set.prototype.constructor === Map is GENUINELY false",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) swap-wrong-builtin: WeakMap.prototype.constructor === Set is GENUINELY false",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) bare builtin identifiers have distinct genuine identity (Set !== Map, Set === Set)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) instance-form (new WeakMap()).constructor === WeakMap is genuinely true; === Set is false",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) regexp-literal instance .constructor === RegExp is genuinely true; === Set is false; host-free",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-3006-builtin-constructor-identity.test.ts",
+      "name": "#3006 — genuine reified builtin-constructor identity (standalone) gc/host lane keeps the real Object_get_constructor read (fold is standalone-only)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer constructs once in legacy order and retains the actual seeded subtree",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer does no registration or local allocation after seed completion",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer preserves borrowed outer membership on success",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer restores body and owned memberships on throw (borrowed=false)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer restores body and owned memberships on throw (borrowed=true)",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer materializes a fresh fragment and local for each immediate read",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer preserves outer roots through actual nested constructor preparation",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "file": "issue-5883-constructor-prepared.test.ts",
+      "name": "immediate materialized constructor transfer preserves nonempty destination and original error identity on seed throw",
+      "status": "passed",
+      "errors": []
+    }
+  ],
+  "limitations": [
+    "One existing failure with null exception detail preserved, not exception-value equivalence.",
+    "24 real-provider records use value serialization, not identity graphs or runtime reentry.",
+    "Eight new unit cases mock provider seams.",
+    "Borrowed liveBodies membership preservation is intentional behavior change."
+  ]
+}
