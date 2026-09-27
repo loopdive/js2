@@ -106,6 +106,12 @@ export function collectOpenReceiverCandidates(
   receiverIsClassObject: boolean,
   receiverMemberKind: "instance" | "static",
 ): OpenReceiverCandidateSet | undefined {
+  // (#2917) The caller's ancestor walk leaves `fullName` on the ROOT of the
+  // `extends` chain even when that root is a builtin (`Array`, `Error`, …) that
+  // is not a compiled class. Its other subclasses are unrelated siblings, not
+  // descendants of the receiver — `class P extends Array {}` was dispatching
+  // `p.push()` to `class J extends Array { push() {} }`.
+  if (baseClass !== undefined && !ctx.classSet.has(baseClass)) baseClass = undefined;
   const candidates: VirtualCandidate[] = [];
   const implOf = new Map<string, string>();
   const add = (className: string, implClass: string, funcIdx: number): void => {

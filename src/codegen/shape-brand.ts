@@ -149,7 +149,76 @@ export function markNoBrandSiblingShapes(
   noBrand.add(toIdx);
 }
 
-export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<number>): readonly number[] {
+/**
+ * (#6482) Cross-MODULE shape branding for one side of a separately-linked
+ * project (#2527 / the #3451 linked test262 harness).
+ *
+ * The #2853 pass above only sees collisions INSIDE one module, and WasmGC
+ * canonicalization does not stop at the module edge: the provider's
+ * `__anon_{label,restore}` and the consumer's `__anon_{enumerable,configurable}`
+ * are two `(struct (field externref) (field externref))` declarations, i.e. the
+ * SAME runtime type. Every reader keyed on `ref.test` therefore hits the wrong
+ * shape across the link. Measured 2026-09-17 on the linked harness: the
+ * provider's `__struct_field_names` answers `"label,restore"` for a descriptor
+ * literal the CONSUMER minted, so `verifyProperty`'s own-name scan reports
+ * `Invalid descriptor field: label` (35 rows of the #6482 descriptor bucket).
+ * The #5225 host registry cannot repair it — it prefers `local` precisely
+ * because `local` answered a non-empty name list, and here `local`'s answer is
+ * a canonical-collision false positive that no host-side probe can tell from a
+ * real hit.
+ *
+ * The fix is the #2853 brand chain, with two changes that only apply to a
+ * linked module:
+ *
+ *   1. brand EVERY brandable shape, not just the ones that collide with a
+ *      sibling in this module — a cross-module collision is invisible here;
+ *   2. anchor each side's chain at a DIFFERENT pre-registered runtime type.
+ *
+ * Distinctness across the link follows by the same induction as #2853: if a
+ * provider-branded `P` were canonically equal to a consumer-branded `C`, their
+ * trailing brand fields force `target(P) ≅ target(C)`, and peeling down ends at
+ * `__vec_base ≅ __arr_f64` — an open `sub` STRUCT against an ARRAY type, which
+ * are distinct under every canonicalization rule. Both anchors are eagerly
+ * registered in every context, so neither side needs a new type-table entry
+ * (no index shift, the #2043 hazard class).
+ *
+ * `"consumer"` is the side that imports a provider's bindings
+ * (`ctx.linkedPackageBindings`); `"provider"` is the module those bindings
+ * resolve to. A module in neither role passes `undefined` and keeps the exact
+ * #2853 behaviour — which is what makes the honest single-module test262 lane
+ * byte-identical.
+ */
+export type LinkBrandRole = "provider" | "consumer";
+
+/** Chain anchor per link role. Both are eagerly registered by every context
+ *  (`RUNTIME_RECGROUP_TYPE_NAMES`), and they are canonically distinct from each
+ *  other and from every bare branded shape. */
+const LINK_BRAND_ANCHOR: Record<LinkBrandRole, string> = {
+  provider: "__vec_base",
+  consumer: "__arr_f64",
+};
+
+/**
+ * (#6482) This module's role in a separately-linked project, or `undefined`
+ * when it is an ordinary single-module compile. `linkedPackageBindings` is the
+ * consumer marker (it names the provider exports this module imports);
+ * `exportsConsumedByWasm` is the provider marker (the package linker sets it on
+ * the side whose exports are reached by a direct wasm→wasm call). Both are set
+ * by `src/package-linker.ts` and by `compileHarnessLinkedBody`.
+ */
+export function linkBrandRoleOf(ctx: {
+  linkedPackageBindings: ReadonlyMap<string, unknown>;
+  exportsConsumedByWasm: boolean;
+}): LinkBrandRole | undefined {
+  if (ctx.linkedPackageBindings.size > 0) return "consumer";
+  return ctx.exportsConsumedByWasm ? "provider" : undefined;
+}
+
+export function brandCollidingShapeTypes(
+  mod: WasmModule,
+  noBrand?: ReadonlySet<number>,
+  linkRole?: LinkBrandRole,
+): readonly number[] {
   const types = mod.types;
 
   // ── 1. Collision universe: shallow keys of every struct type ──
@@ -172,10 +241,13 @@ export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<
   // ── 2. Chain anchor: $__vec_base (open `sub` struct — canonically distinct
   //       from every bare shape struct). Pre-registered in every context
   //       (#2083), so it exists at a LOW index; bail out defensively if not. ──
+  //       (#6482) A linked module anchors on its ROLE's type instead, so the
+  //       two sides' chains can never canonicalize together.
+  const anchorName = linkRole === undefined ? "__vec_base" : LINK_BRAND_ANCHOR[linkRole];
   let anchorIdx = -1;
   for (let i = 0; i < types.length; i++) {
     const t = types[i]!;
-    if (t.kind === "struct" && t.name === "__vec_base") {
+    if ((t.kind === "struct" || t.kind === "array") && t.name === anchorName) {
       anchorIdx = i;
       break;
     }
@@ -195,7 +267,9 @@ export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<
     if (i <= anchorIdx) continue; // chain refs must point backward
     if (noBrand?.has(i)) continue; // (#2853 park fix) a trapping sibling downcast targets this shape
     const key = structKeys[i]!;
-    if ((keyCount.get(key) ?? 0) < 2) continue; // collides with nothing → byte-inert
+    // (#6482) A linked module brands unconditionally: the sibling it collides
+    // with may live in the PEER module, where `keyCount` cannot see it.
+    if (linkRole === undefined && (keyCount.get(key) ?? 0) < 2) continue; // collides with nothing → byte-inert
     // Clone the fields array: ctx.structFields shares the original array and
     // must keep enumerating ONLY the real (dispatchable) fields.
     t.fields = [...t.fields, { name: SHAPE_BRAND_FIELD, type: { kind: "ref_null", typeIdx: prev }, mutable: false }];

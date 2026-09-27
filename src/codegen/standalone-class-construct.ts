@@ -187,6 +187,55 @@ function collectCandidates(ctx: CodegenContext): ClassConstructCandidate[] {
   return out;
 }
 
+/**
+ * (#6615) Does ANY class in this module have a constructor formal that lowers
+ * to a ref type — the only formals whose dynamic marshal is a hard `ref.cast`?
+ *
+ * The arming gate for the lenient ref-argument marshal. Without it, every
+ * standalone module with a dynamic `new <value>` site paid for a TypeError
+ * message it could never reach (measured: +232 B on a module whose only class
+ * has `f64` formals). Unlike `collectCandidates` this does NOT require
+ * `classObjectGlobals` — a class-object singleton is materialised lazily, often
+ * after the `new <value>` site that arms the guard has compiled — so it reads
+ * `structMap`, which `collect-declarations` fills before any body runs.
+ */
+export function moduleHasRefTypedConstructFormal(ctx: CodegenContext): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  for (const className of ctx.structMap.keys()) {
+    if (ctx.classBuiltinParentMap.has(className)) continue;
+    const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));
+    if (ctorFuncIdx === undefined) continue;
+    const signature = funcSignatureOf(ctx, ctorFuncIdx);
+    if (!signature) continue;
+    if (signature.params.some((param) => param.kind === "ref" || param.kind === "ref_null")) return true;
+  }
+  return false;
+}
+
+/**
+ * (#6619) Does ANY class in this module have a constructor formal that lowers
+ * to `f64` — the only formals whose dynamic marshal is `__unbox_number`,
+ * which is silently lenient (answers `NaN` for a Symbol/BigInt operand
+ * instead of the §7.1.4 TypeError ToNumber requires)?
+ *
+ * The arming gate for the Symbol/BigInt-checked numeric unbox, mirroring
+ * `moduleHasRefTypedConstructFormal` exactly (same "read `structMap`, not
+ * `classObjectGlobals`" reasoning) so a module with no `f64` construct formal
+ * pays nothing for a TypeError it could never reach.
+ */
+export function moduleHasF64TypedConstructFormal(ctx: CodegenContext): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  for (const className of ctx.structMap.keys()) {
+    if (ctx.classBuiltinParentMap.has(className)) continue;
+    const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));
+    if (ctorFuncIdx === undefined) continue;
+    const signature = funcSignatureOf(ctx, ctorFuncIdx);
+    if (!signature) continue;
+    if (signature.params.some((param) => param.kind === "f64")) return true;
+  }
+  return false;
+}
+
 /** Mint one function at FINALIZE, exactly as the late dispatcher fills do. */
 function mint(ctx: CodegenContext, name: string, params: ValType[], body: Instr[]): number {
   const typeIdx = addFuncType(ctx, params, [EXTERNREF], `$${name}_type`);
@@ -194,6 +243,24 @@ function mint(ctx: CodegenContext, name: string, params: ValType[], body: Instr[
   pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: false } as WasmFunction);
   ctx.funcMap.set(name, funcIdx);
   return funcIdx;
+}
+
+/**
+ * (#6668) The pad for an argument the caller did not pass. An `externref`
+ * formal must receive `undefined`, NOT `ref.null.extern` — in the standalone
+ * value model a null externref is JS `null`, which neither fires the callee's
+ * `__extern_is_undefined` parameter-default check nor reads as `undefined`
+ * (`new PlainYearMonth(2000, 5)` saw `referenceISODay = null` → 0 instead of
+ * the default 1). Only the ALREADY-reserved singleton is used: this runs at
+ * finalize, where reserving a global is unsafe, so a module without one keeps
+ * the zero pad. Typed formals keep their zero; the `__argc` publish below
+ * drives their defaults.
+ */
+function missingArgInstrs(ctx: CodegenContext, want: ValType): Instr[] {
+  if (want.kind === "externref" && ctx.undefinedGlobalIdx !== undefined) {
+    return [{ op: "global.get", index: ctx.undefinedGlobalIdx }, { op: "extern.convert_any" }];
+  }
+  return defaultValueInstrs(want);
 }
 
 function buildTrampolineBody(
@@ -220,7 +287,7 @@ function buildTrampolineBody(
       { op: "i32.const", value: a },
       { op: "local.get", index: 1 },
       { op: "i32.lt_s" },
-      { op: "if", blockType: { kind: "val", type: want }, then: present, else: defaultValueInstrs(want) },
+      { op: "if", blockType: { kind: "val", type: want }, then: present, else: missingArgInstrs(ctx, want) },
     );
   }
   // No-op unless the module uses `new.target` (`ctx.usesNewTarget`).

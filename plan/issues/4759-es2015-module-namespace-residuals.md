@@ -3,7 +3,7 @@ id: 4759
 title: "ES2015 module namespace Test262 residuals"
 status: in_progress
 created: 2026-08-26
-updated: 2026-08-26
+updated: 2026-09-20
 priority: critical
 horizon: m
 feasibility: medium
@@ -151,3 +151,215 @@ execution lanes.
 The clean handoff is to integrate this branch into combined draft PR #5010.
 The remaining module-namespace exotic and escaped-keyword rows above are
 intentionally not folded into this checkpoint.
+
+## FYI original-harness parity continuation (2026-09-20)
+
+### Current evidence and boundary
+
+The frozen authoritative standalone FYI census at project revision
+`f3520ca177960f49c006edc3fd7acce8bebf58d9` (Test262
+`b363f29d3c43c626dc852744ad64a0b48a003693`, test262.fyi
+`beeff8b3d70e65dcdd00270fdb31ab12f041b049`) records 23 rows in
+`language/module-code/namespace/`: 20 failures and three apparent passes. Its
+result document is `/private/tmp/js2-4444-full-es2015-manifest.i16PO6/full-f352.json`
+(SHA-256 `851a8f4e09d048aba2ce76d4c693d16c04efd5477ee36077079934bb00c73d6f`).
+
+Exactly 16 namespace rows stop at `ReferenceError: ns is not defined`, including
+the literal self-import row `language/module-code/namespace/Symbol.iterator.js`.
+The seventeenth corpus-wide occurrence is deliberately outside this namespace
+tree: `built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js`.
+The three namespace passes are not positive controls: each is an expected
+`ReferenceError` shape and can pass vacuously while `ns` is unresolved, as the
+earlier post-link rerun already demonstrated.
+
+The implementation worktree starts from project revision
+`2f6c0f4f57db129c772a476345c28d85010cd175`. The `f3520ca` census is
+historical before-route evidence only; any validation receipt must name its
+candidate revision, Test262/test262.fyi revisions, source-assembly hash, and
+whether the row used the single-source or `compileMulti` graph route. Its
+totals must not be presented as corrected-runner results.
+
+This is a runner assembly gap rather than a new compiler module-linking claim:
+
+- `hasSelfModuleImport` already proves a pinned static self edge in
+  `scripts/test262-fixture-graph.mjs`.
+- The project runner already sends only namespace-tree self imports through
+  `compileMulti` under the entry's pinned virtual key.
+- The FYI reader currently attaches graph transport only when a static or
+  dynamic `_FIXTURE` map is nonempty; its self-import records therefore reach
+  the worker without an entry graph. The worker in turn requires a nonempty
+  `fixtureFiles` map before selecting `compileMulti`.
+
+### Narrow implementation plan
+
+1. In `scripts/test262-fyi-reader.mjs`, compute the existing
+   `hasSelfModuleImport` predicate only for
+   `language/module-code/namespace/` entries and carry an explicit
+   `selfModuleGraph` fact with the pinned entry key. Do not infer the fact from
+   an arbitrary `entryFile`, and do not rewrite the assembled FYI source.
+2. Transport that fact unchanged through `scripts/run-test262-fyi.mjs` to the
+   existing project worker. It must survive an otherwise empty static fixture
+   map.
+3. In `scripts/test262-worker.mjs`, revalidate the transported fact against
+   the canonical namespace entry key, a non-array fixture-file record, and the
+   literal static self edge before
+   selecting the existing `compileMulti` path. Select that path when either a
+   real static fixture graph exists or this namespace-and-self-edge check is
+   true. Keep the current graph options, literal entry, error handling, and
+   deferred initialization behavior; do not promote dynamic fixture metadata
+   into a static graph.
+4. Add focused FYI-runner coverage for the transport/selection boundary,
+   including a forged `selfModuleGraph: true` non-namespace request that must
+   remain single-source, and keep the existing compiler-level self-namespace
+   control in `tests/issue-4759-module-namespace.test.ts`. The production code
+   must not touch module-namespace exotic-object lowering in this slice.
+
+### Acceptance and regressions
+
+- The exact `Symbol.iterator.js` FYI original-harness row must no longer use
+  the unresolved `ns` single-source path. It may expose a separate
+  namespace-exotic residual; this routing correction makes no broader
+  namespace-family claim.
+- `language/module-code/instn-star-props-circular.js`, the existing genuine
+  linked `_FIXTURE` circular-module control from #3491, remains a passing
+  static graph control.
+- The non-namespace Proxy self-import control remains on its existing
+  single-source route and retains its measured behavior.
+- The existing FYI runner dynamic-import preservation control remains
+  single-source; an empty fixture map or dynamic metadata alone must never
+  activate `compileMulti`.
+- A non-namespace request with a forged self-graph transport flag remains
+  single-source even when it names a relative self import; the worker's
+  namespace/pinned-edge revalidation is the authority, not caller metadata.
+- Literal test262.fyi assembly, worker verdict normalization, negative-test
+  matching, and pass/fail classification remain byte-for-byte unchanged.
+
+### Initial candidate receipt
+
+On candidate `2f6c0f4f57db129c772a476345c28d85010cd175`, the maintained FYI
+runner executed the exact one-path manifest (SHA-256
+`7302a3fa02d4b1d5d5e9b951cd006154f8f06a2cf648e08370173a875f311b61`) under
+Node `v25.9.0` / Unicode `17.0`, target `gc`, with the checked Test262 revision
+`b363f29d3c43c626dc852744ad64a0b48a003693` and test262.fyi revision
+`beeff8b3d70e65dcdd00270fdb31ab12f041b049`. The literal assembled source was
+10,592 bytes, SHA-256
+`7594c3ac0d9115482f7333b65d22ef0b6d4d7eed6d8a8027d146c1ca08cc4536`, and the
+reader marked it as the canonical empty `compileMulti` graph
+`./language/module-code/namespace/Symbol.iterator.js`.
+
+The `gc` result document
+`/private/tmp/js2-4759-namespace-symbol-iterator-gc-20260920.json` (SHA-256
+`0ba6ed2dbf36eb73e260e67e81e45648bd01bd45b4c0007bf1273b4f276c77ea`) records
+`1/1` pass with `phase: runtime` and `reachedTest: true`; its terminal log is
+`/private/tmp/js2-4759-namespace-symbol-iterator-gc-20260920.log` (SHA-256
+`95c84dca60fc6f87bdad8ba657465468ce468f68e599922da35fe445a6234bfd`). The
+matched Node 25 `standalone` result is also `1/1` pass at runtime:
+`/private/tmp/js2-4759-namespace-symbol-iterator-standalone-20260920.json`
+(SHA-256 `c77e2ae4589a8519cd75cbd0bcde8a6bc4a1a369997800665788eafd47949c5c`),
+with log
+`/private/tmp/js2-4759-namespace-symbol-iterator-standalone-20260920.log`
+(SHA-256 `0df1b28115eb9d5f75ec7adef24ddc1dd9bb68dda4be2c30caabe94782ca36e4`).
+
+The focused regression also carries a same-source kill-switch: the exact
+assembled record retains its canonical key and empty fixture record but sends
+`selfModuleGraph: false`, which must reproduce the original runtime
+`ns is not defined` failure. This is route-causality evidence, not a clean
+baseline or a substitute for a full namespace remeasurement. The next bounded
+validation must execute that control alongside the enabled record.
+
+These are newly measured route results, not a replacement for the frozen
+`f3520ca` census and not claims about the remaining namespace-exotic rows.
+
+### Next bounded namespace sweep
+
+The next authoritative validation will run all 23 namespace paths selected
+from the frozen `f3520ca` result document, in Node 25 `standalone` mode using
+the maintained original-harness runner. Its frozen manifest is
+`/private/tmp/js2-4759-namespace-f352-23-paths-20260920.txt` (23 paths,
+SHA-256 `00e4af40f0fbd02715bd756ab04bbb6644f5b1cb80c617dbd23229cd31c92c7e`).
+It must report every row separately, including the three historical
+expected-`ReferenceError` passes, and must distinguish new linked
+namespace-exotic residuals from runner setup failures. The sweep is
+blast-radius evidence for this assembly change, not an all-green requirement
+and not permission to alter verdict policy or namespace-exotic lowering.
+
+### 23-path standalone receipt (2026-09-20)
+
+That sweep is terminal at candidate
+`2f6c0f4f57db129c772a476345c28d85010cd175`: 6 pass / 17 fail, under the same
+Node 25 / Unicode 17 contract and pinned Test262/test262.fyi revisions as the
+one-path receipt. Its result document is
+`/private/tmp/js2-4759-namespace-f352-23-standalone-20260920.json` (SHA-256
+`4c45d7dac947fc9d5b278b3bb36c61b7622799fd0bb88e03e65c256f822f9923`); its
+terminal log is
+`/private/tmp/js2-4759-namespace-f352-23-standalone-20260920.log` (SHA-256
+`9eae15a06eb7cbf727ad3e278417aefc4462390a4f0cc6d2c4ab0aebf7818395`).
+
+Against the historical `f3520ca` artifact, six rows move fail-to-pass:
+
+- `internals/get-sym-not-found.js`
+- `internals/has-property-str-not-found.js`
+- `internals/has-property-sym-not-found.js`
+- `internals/prevent-extensions.js`
+- `internals/super-set-to-tdz-binding-with-accessor.js`
+- `Symbol.iterator.js`
+
+Three historical passes move pass-to-fail because their expected
+`ReferenceError` no longer occurs after the namespace binding is linked:
+
+- `internals/get-own-property-str-found-uninit.js`
+- `internals/get-str-found-uninit.js`
+- `internals/super-access-to-tdz-binding.js`
+
+Those three were explicit vacuous controls in the frozen result, not evidence
+of a supported namespace-exotic behavior. They remain failures here because
+the resulting namespace-exotic semantics are still incomplete; no verdict
+rule, allowance, or oracle version is changed to conceal them. The remaining
+14 rows stay non-passing, making 17 current residual paths in total:
+
+- `internals/define-own-property.js`, `internals/delete-exported-init.js`, and
+  `internals/delete-exported-uninit.js` expose non-object Reflect operations.
+- `internals/delete-non-exported.js`, `internals/set.js`, and
+  `internals/super-access-to-tdz-binding.js` miss the required abrupt/TDZ
+  behavior.
+- `internals/get-own-property-str-found-uninit.js`,
+  `internals/get-own-property-sym.js`, `internals/get-str-found-uninit.js`,
+  `internals/get-str-initialize.js`, `internals/get-sym-found.js`,
+  `internals/has-property-str-found-init.js`,
+  `internals/has-property-str-found-uninit.js`, and
+  `internals/has-property-sym-found.js` expose property visibility/value/TDZ
+  residuals.
+- `internals/own-property-keys-binding-types.js` and
+  `internals/own-property-keys-sort.js` retain key-list behavior residuals.
+- `Symbol.toStringTag.js` retains the namespace tag residual.
+
+The `f3520ca` result is historical and this candidate is not its source-base
+replacement; no adjusted full-corpus rate is inferred from this 23-row
+comparison.
+
+### Maintained baseline and oracle scope
+
+This change affects the FYI original-harness transport only when that runner
+explicitly sends `selfModuleGraph: true`. The maintained sharded CI runner
+shares `scripts/test262-worker.mjs`, but it does not send that field; its
+existing nonempty static-fixture path remains the same. Consequently the
+change invalidates the worker cache key but does not change the maintained
+baseline's input assembly or require a baseline artifact refresh. The FYI
+receipt can legitimately differ from its old FYI census because the latter
+used the wrong single-source assembly for this narrow shape.
+
+No scoring, negative matching, vacuity classification, or error normalization
+line changes in the worker. The `ORACLE_VERSION` stays unchanged; neither a
+guard relaxation nor an oracle bump is appropriate merely because the three
+historical expected-ReferenceError passes become visible residual failures.
+
+### Oracle-version disposition
+
+No `ORACLE_VERSION` bump is planned. This changes which compiler graph is
+assembled for a narrowly proven source shape; it does not change verdict
+classification, negative matching, vacuity policy, or result normalization.
+The prior #4759 project-runner graph route likewise did not bump the oracle.
+Verdict code is deliberately left unchanged because it is unnecessary for this
+execution/assembly route; if implementation requires a verdict-policy change,
+the repository's oracle-version requirements apply. Any resulting row changes
+remain ordinary compiler-output deltas to measure against the same oracle.

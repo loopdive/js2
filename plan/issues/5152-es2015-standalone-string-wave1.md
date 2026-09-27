@@ -1,10 +1,10 @@
 ---
 id: 5152
 title: "ES2015 standalone: string conformance wave 1"
-status: in-review
+status: in-progress
 sprint: current
 created: 2026-08-28
-updated: 2026-08-29
+updated: 2026-09-20
 priority: high
 horizon: l
 feasibility: medium
@@ -19,6 +19,8 @@ loc-budget-allow:
   - src/codegen/string-ops.ts
   - src/codegen/regexp-standalone.ts
   - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/object-ops.ts
   - src/codegen/array-object-proto.ts
   - src/codegen/iterator-native.ts
   - src/codegen/case-convert-native.ts
@@ -31,6 +33,12 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/string-isregexp-guard.ts
   - src/codegen/string-proto-tostring.ts
+  # 2026-09-20 Unicode 17 normalization: this is generated, pinned UCD data
+  # (not a hand-maintained god-file). The 3,644 LOC module is the compact
+  # table serialization consumed by the isolated native helper; splitting it
+  # across codegen modules would duplicate generated-data plumbing rather than
+  # reduce the emitted-data surface.
+  - src/codegen/normalize-tables.ts
 coercion-sites-allow:
   # (#5152) §7.2.8 IsRegExp step 3 is literally `ToBoolean(matcher)`, and this
   # site performs it by CALLING the shared native `__is_truthy` helper — the
@@ -38,14 +46,336 @@ coercion-sites-allow:
   # ToString/ToNumber/ToPrimitive matrix is hand-rolled here; the ToString half
   # of the same lane deliberately delegates to `emitStringProtoToStringFlat`.
   - src/codegen/string-isregexp-guard.ts
+  # (#5152) The standalone array-like reader turns its f64 index into the
+  # canonical property key with the existing native `number_toString` helper
+  # before delegating to ordinary `__extern_get` / `__extern_has`. This is not
+  # a new coercion matrix: it shares the runtime's established numeric-string
+  # implementation so bag descriptors at keys such as `"0"` retain ordinary
+  # Get/Has behavior.
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   - src/codegen/case-convert-native.ts::emitNativeCaseConversion
   - src/codegen/case-convert-native.ts::makeStr
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
   - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  # 2026-09-20 Unicode 17 normalization: `ensureStrNormalize` emits one
+  # self-contained Wasm function whose 39 local slots and nested instruction
+  # factories share table globals and late-resolved helper indices. Splitting
+  # this TypeScript builder would re-thread that mutable emission state across
+  # artificial helpers and create index-lifetime/stack-order hazards without
+  # reducing the generated Wasm function. The dedicated module contains the
+  # algorithm; existing dispatchers only demand it.
+  - src/codegen/normalize-native.ts::ensureStrNormalize
 ---
 
 # ES2015 standalone: string conformance wave 1
+
+## 2026-09-20 anonymous-expando deletion follow-up constraints
+
+The reader checkpoint is published separately as upstream PR 5991. Its frozen
+30-path result is 29 pass, one failure; deletion/reassignment remains a distinct
+follow-up in `codex/5152-anon-expando-delete-20260920`.
+
+IR coordination reports no competing claim for the consumer-only bag-deletion
+direction. The writer must prove exact receiver/shape admission, complete
+physical-field inventory, and reservation/fill reachability in an
+anonymous-expando-only module before adding the arm. Existing identity-keyed
+bag presence authenticates a stored descriptor, not those other facts. Keep
+closure/generator/vec/Error and retained-marker class routes first; no new
+layout marker, late helper minting, or producer mutation is authorized.
+
+Additional review finding: the dynamic reader's existing exposed-field loop
+uses a truthiness check that omits an empty-string field name. The deletion
+collision inventory must not copy that condition: distinguish `undefined`
+from `""` and test an empty-name physical override alongside legal `$` and
+`__` user keys. Otherwise deleting a bag override could resurrect a physical
+value. Missing proof must decline rather than claim successful deletion.
+
+Source qualification: `struct-field-exports.ts` assigns shape IDs only to
+colliding anonymous groups with nonempty exposed-name inventories, not every
+anonymous object. Its collector skips empty names; `coldOwnFieldsFor` also
+filters empty and `$`/`__` names. Neither output alone proves a complete
+physical collision inventory. An exact-stamp admission rule must demonstrate
+that the original failing String.raw receiver is actually admitted; if not,
+the writer needs a sound alternative using existing metadata rather than a
+new marker or a silently inactive fix. Cold/split or canonical/subtype shapes
+without complete proof must remain unhandled.
+
+Exact-diff review identified two additional inventory hazards. The fnctor
+field-name helper maps `$constructor` to `constructor` unconditionally, so an
+anonymous user-recorded `$constructor` must retain its raw collision name.
+Also, `literals.ts::_hasRuntimeComputedKey` admits well-known Symbol keys into
+static layouts and `resolveComputedKeyExpression` spells them `@@name`.
+Thus not every Symbol bag entry is necessarily a true expando: deleting an
+overlay of a physical Symbol property can resurrect that property. Until
+symbol-aware physical collision proof exists, decline anonymous candidates
+with reserved `@@` physical names. Add separate physical Symbol.iterator and
+string `"@@iterator"` controls; do not change literal producers to force them
+through the new arm.
+
+## 2026-09-19 original-row candidate checkpoint
+
+The safe closed-struct reader candidate, with the unsound unconditional static
+accessor fallback removed, was run on the three original String.raw failures
+using Node 24 and the maintained standalone path runner with `--isolate`.
+The writer worktree is `codex-5152-string-raw-audit-20260919`, based on
+`4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7`, with uncommitted source changes.
+The measured result is **1 pass / 2 failures**, not completion of this issue:
+
+- `built-ins/String/raw/nextkey-is-symbol-throws.js`: pass.
+- `built-ins/String/raw/template-length-throws.js`: expected exception absent.
+- `built-ins/String/raw/returns-abrupt-from-next-key.js`: strict rerun fails
+  with a read-only-property assignment TypeError.
+
+Evidence: `/private/tmp/js2-5152-raw-three-standalone-candidate-20260919.log`.
+The corresponding import audit in
+`/private/tmp/js2-5152-raw-three-imports-20260919.log` reports `success: true`
+and `imports: []` for all four primary/required-strict artifacts. Each audit
+entry also reports `errors: 1`; severity must be inspected before describing
+diagnostics as clean. The path runner's terminal exit status alone does not
+establish a passing suite; the row counts above are authoritative for this run.
+
+The pinned census used an older compiler (`a3943f63...`), so this checkpoint
+does **not yet claim a same-base original-row gain**. The writer retains the
+compiler lease briefly to check the original Symbol row on untouched
+`4a6cbdf1...` with identical runner settings, then hands the lease to the
+RegExp writer. The remaining static accessor cases need a successful,
+per-instance definition record; compile-time accessor metadata is not proof
+that an accessor was installed on a particular runtime object. The independent
+peer is specifying that lifecycle before widening implementation ownership.
+
+### 2026-09-20 admitted accessor-definition repair
+
+Same-base follow-up: the original Symbol row fails on untouched compiler
+`4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7` with the expected-TypeError-absent
+assertion. Evidence is
+`/private/tmp/js2-5152-raw-symbol-baseline-4a6-20260920.log`, produced by the
+adjacent `.mts` script calling authoritative `runTest262File` in a fresh
+single-row process. The script imports the coordinator worktree compiler and
+remaps missing worktree corpus reads to the shared pinned Test262 checkout;
+this is an explicit harness-path adaptation, not a literal invocation of the
+maintained `--isolate` command. Together with the candidate pass above it
+supports one original-row fail-to-pass transition, subject to completion of
+the remaining regression gates. Its separate compile audit succeeds with no
+imports and one **warning** (`$DONOTEVALUATE` IR fallback/type-index parity),
+not an error-free diagnostic list. The candidate severity audit in
+`/private/tmp/js2-5152-raw-symbol-candidate-errors-20260920.log` reports the
+same warning with successful compilation and no imports. Both follow-up
+processes exited zero; the writer explicitly released the compiler/test lease
+to the RegExp writer and continues accessor-definition source work only.
+
+The independent peer identified an existing identity-keyed carrier bag that
+can hold the missing descriptor; no closure or carrier allocation ABI change
+is needed. The writer is now authorized to extend only the standalone
+anonymous-struct static inline accessor arm in `object-ops.ts`:
+
+1. Preflight runtime helper availability and late import shifts before receiver
+   emission. Keep the existing saved receiver; do not reevaluate its AST.
+2. Build each getter/setter closure exactly once into fresh externref locals.
+   Use those same closure objects for the bag and existing static globals.
+3. Call existing `__defineProperty_accessor` with the saved receiver, key,
+   closures, and descriptor flags. Check rejection, drop its retained result,
+   and publish the globals only after successful definition.
+4. Keep dynamic readers on the bag-first route with the original receiver.
+   Do not reuse `emitExternDefinePropertyNoValue`, which would replay receiver,
+   key, and closure evaluation in this arm.
+5. Verify the original accessor rows, physical-field overrides, undefined
+   accessor results, getter receiver identity, pre-definition/untaken-branch/
+   same-shape isolation through String.raw, and rejected redefinitions. Keep
+   zero-import validation and same-base regression comparisons.
+
+The existing direct typed-property dispatch still consults per-shape globals
+and compile-time accessor metadata. Its lifecycle defect is a separate
+residual, not solved by this dynamic-reader repair; preserve tests/evidence
+and do not advertise general Object.defineProperty conformance. Host lowering
+and IR-owned closure/carrier allocation remain unchanged. Coordinate exact
+`object-ops.ts` hunks with the concurrent RegExp intrinsic descriptor route.
+
+Coordinator source review of the initial mirror found a required correction:
+if `buildAccessorClosure` fails, installing null with the getter/setter-present
+bit silently changes a supplied accessor into an absent function. Do not use
+that fallback. Preflight support before emission or report a hard compilation
+failure after emission; do not produce successful wrong semantics. Likewise,
+the preflighted descriptor helper must not have a silent missing-target arm
+that leaves its five arguments on the stack. These review findings were sent
+to the writer before candidate testing; this mirror has no passing claim yet.
+
+Corrected-mirror follow-up: fresh standalone `--isolate` execution of the
+three original rows now reports **2 pass / 1 fail** in
+`/private/tmp/js2-5152-raw-three-mirror-20260920.log`. Both
+`template-length-throws.js` and `nextkey-is-symbol-throws.js` pass;
+`returns-abrupt-from-next-key.js` still fails its strict rerun with a read-only
+assignment TypeError. The template-length row previously failed on the safe
+reader-only candidate, so this records an additional measured transition in
+that same-base candidate sequence, not a full-suite gain claim. The writer
+corrected the silent closure/helper failure paths; the frozen 30-original
+manifest is the next validation. Full regression/typecheck/publication gates
+remain.
+
+The frozen 30-original candidate run subsequently reported **29 pass / 1
+fail**, with no skip/compile-error entries, in
+`/private/tmp/js2-5152-string-raw-30-standalone-mirror-20260920.log`.
+The run was independently confirmed live (runner PID 64055 with an isolated
+child) before its buffered summary appeared; no duplicate was launched.
+Compare against fresh same-base evidence before calling this a population
+delta from the older pinned census. The one failing original defines a
+configurable getter at raw index `0`, deletes that property, then assigns
+`"a"`; the strict rerun reports generic read-only assignment refusal. The
+next bounded diagnosis should observe the delete result and own descriptor
+after deletion. Its presence in the older host census is not a completion
+exemption. Broader reader/descriptor regression gates and publication remain.
+
+Exact lifecycle diagnostic follow-up
+(`/private/tmp/js2-5152-delete-lifecycle-exact-20260920.log`) compiles
+successfully with `errors: []` and `imports: []`. Its result mask is **43**
+in standalone versus **51** in direct Node: both catch the initial getter
+throw (32), return true from delete (1), and report undefined from the
+post-delete own-descriptor read (2). Standalone then catches assignment (8),
+whereas direct Node completes it (16). These are assertion bits, not row
+counts. This narrows the remaining defect to inconsistent post-delete
+assignment behavior. Do not infer that bag storage was physically removed
+solely from a descriptor API result; the emitted setter/refusal path still
+needs identification before changing shared deletion/setter code. No such
+source expansion has been authorized for this lane yet.
+
+Emitted helper follow-up resolves assignment through `__extern_set_strict`
+(151), `__reflect_set` (150), then `__extern_set` (149). The generated
+`__carrier_bag_delete` (152) lacks an anonymous-instance lookup, while the
+instance setter still consults its identity bag and refuses its getter-only
+descriptor. Evidence:
+`/private/tmp/js2-5152-delete-lifecycle-helper-map-v2-20260920.log`.
+This supersedes the earlier suggestion of a purely static direct-setter defect;
+the post-delete descriptor read alone did not prove that the bag was removed.
+
+IR coordination identified a real shared-file owner: #5753 at
+`cddba56b768f30eb5d9af29d2954dd69e2b534b5` adds class-only deletion with
+retained suppression markers and locals 3/4/5. Preserve that entire protocol;
+do not widen its class predicate or simply delete anonymous physical-field
+overrides, which could resurrect physical data. No known anonymous-expando
+implementation is owned there. A separate narrow true-expando plan must prove
+identity lookup, receiver/key admission, physical-field collision handling,
+and reservation/fill ordering before any deletion source release.
+
+Follow-up deletion implementation plan (2026-09-20, source-reviewed only):
+
+1. Finish and publish the frozen reader/mirror repair independently. Then
+   claim a separate true-expando deletion slice; do not mutate the frozen
+   candidate while its publication gates run.
+2. At FINALIZE enumerate concrete allocated `__anon_` shapes. Match both Wasm
+   type and logical collision stamp using the existing `buildShapeGuardedArm`
+   contract; a type-only match is insufficient for canonicalized shapes.
+3. Look up, never ensure, the receiver's existing closure bag. Retain the
+   current -1/0/1 not-handled/refused/deleted protocol and ordinary `$Object`
+   bag/type/own-entry checks. Delegate successful admission to the existing
+   `__delete_property`, rather than duplicating configurable/count logic.
+4. Screen physical-field collisions before delegation. Reuse
+   `exposedClosedStructFieldName` for public field names, and compare the
+   normalized stored own-entry key, avoiding another user-observable key
+   conversion. A physical collision must remain unhandled in this slice:
+   deleting its overlay alone can resurrect physical data. Uncertain shape
+   metadata also remains unhandled, not claimed-success.
+5. Append any required scratch locals after the actual existing local list;
+   do not reserve fixed indices used by IR's class route. Preserve class
+   predicates, arm order, retained-marker authentication/count repair, builtin
+   function metadata precedence, and generator/vec/Error routes. No late
+   helper/type/import minting or shared instruction-tree aliases.
+6. Required controls: the exact original strict String.raw delete/reassign
+   test; accessor/data true expandos; non-configurable sloppy false and strict
+   TypeError; repeat deletion; missing bag; independent same-shaped objects;
+   physical-field override non-resurrection; class retained-marker regression;
+   function name/length and generator deletion controls. Compare candidate and
+   untouched base using the same runner, then rerun all 30 String.raw originals.
+
+The verified IR task confirms no active anonymous-expando writer or pending
+fix to await. It requests fresh head comparison and narrow proposed hunks
+before shared fill/local changes. This plan is not implementation approval or
+runtime evidence; class and physical-field deletion semantics remain intact.
+
+Fresh integration check: `git ls-remote` on the retained IR fork branch again
+returned `cddba56b768f30eb5d9af29d2954dd69e2b534b5`. Inspection confirms its
+`classArm` replaces `fn.locals` with bag plus class locals 3/4/5. Therefore
+anonymous scratch allocation must occur **after** that replacement; simply
+appending at the start of the fill would lose those locals during composition.
+The narrow insertion/ordering plan has been sent to the verified IR task for
+review. No shared source has been changed by this check.
+
+IR composition review found no ownership conflict, with an additional
+admission requirement: authenticate actual anonymous-literal provenance, not
+the `__anon_` naming heuristic or structural type alone. The earlier plan's
+shape enumeration is only a candidate list, not sufficient proof. Inspect
+existing allocation/provenance records before choosing the guard; do not add
+a context/literal recording field without coordinating those owned seams.
+`isInternalStructFieldName` documents that literal insertion-order metadata
+preserves legal `$`/`__`-prefixed user keys, so a collision filter must not
+silently classify those as hidden fields. Validate the no-class/no-closure/
+no-vec/no-Error demand case to prove helper reservation actually occurs.
+Add accessor non-invocation and Symbol-versus-string key controls. This is
+composition clearance, not approval of an unreviewed implementation.
+
+Reservation/fill source audit: the current single-source pipeline stamps
+shapes at `codegen/index.ts` before `fillObjVecReflectionHelpers`; the
+multi-source pipeline has the same ordering. That reflection fill calls
+`fillCarrierBagDelete`, so final logical shape stamps are available there.
+`reserveCarrierBagDelete` is called while building object deletion, but its
+carrier-demand predicate still needs the anonymous-only runtime control.
+The existing `object-literal-carrier.ts` records AST-to-carrier provenance in a
+private WeakMap, not an enumerable finalizer registry. The strict-method
+allocation recorder deliberately excludes property-only literals, and the
+insertion-order map is absent for empty literals. None can be silently
+substituted for complete literal provenance. Any registry/API extension must
+be explicitly scoped and coordinated; do not broaden a heuristic to hide a
+missing proof.
+
+IR review held the subsequent proposed marker-field/type-mutation design:
+patching shared canonical layouts/all constructors would be a separate
+representation and lifecycle change, not covered by deletion ownership.
+No such implementation is released. The writer is instead auditing whether
+existing per-instance descriptor/bag identity plus own-entry proof and
+physical-key collision decline can safely support true-expando deletion
+without literal-origin proof. Preserve all earlier class and carrier routes;
+do not broaden global carrier predicates. This is an engineering review hold
+on that design, not a goal-wide blocker or request for user permission.
+
+Focused reader fixture follow-up reports **3/5 pass / 2 fail** in
+`/private/tmp/js2-5152-raw-readers-vitest-20260920.log`. Standalone full-mask,
+direct Node, and the explicitly documented host deletion-refusal control pass.
+The larger host accessor matrix and simple native-first positive fail. These
+must be compared with untouched `4a6cbdf1...` under the same fixture/harness
+before labeling them pre-existing or changing the tests. They are unresolved
+validation findings, not successful host parity. This fixture result does not
+alter the original 29/30 standalone row count.
+
+Untouched-base fixture A/B completed at `4a6cbdf1...`, terminal exit 0,
+recorded in `/private/tmp/js2-5152-reader-fixture-base-20260920.log`.
+The host deletion-excluded matrix is 66528 on both base and candidate; its
+earlier positive expectation was overbroad. Native-first is different:
+base returns `"aXb"`, candidate returns `""` on the same simple positive,
+which is a real regression. The standalone mask moves from 129478 on base
+to 131071 on candidate; these remain assertion masks, not test counts.
+
+The source mismatch is identified: `fillClosedStructExternGetArms` runs only
+under `ctx.standalone`, but the new ordinary-reader redirect in
+`fillExternArrayLikeStructArms` checked helper presence alone. Native-first
+therefore redirected physical-field reads into a getter without matching
+closed-field arms. Align the redirect's admission with its producer's
+standalone condition, preserving the existing native-first physical reader.
+The writer is authorized to make that narrow correction and rerun the gates;
+do not count it fixed until the positive passes again.
+
+After that correction, the exact fixture reports **4/5 pass**: native-first
+again returns `"aXb"`; standalone, direct Node, and documented host deletion
+refusal also pass. The only failure is the verified pre-existing host mask
+expectation (66528 versus 131067), which has not yet been changed. Evidence:
+`/private/tmp/js2-5152-raw-readers-vitest-after-nativefirst-gate-20260920.log`.
+TS7 also passed (the sibling
+`js2-5152-typecheck-ts7-after-nativefirst-gate-20260920.log`). The test lease
+was explicitly handed back to RegExp. The host assertion may be renamed and
+documented as a known-base deficit regression snapshot at 66528, not described
+as complete host parity. Full correct Node/standalone masks and the native-first
+positive remain required; the original strict-rerun deletion failure stays open.
 
 LOC-growth allowance rationale (2026-08-28): the clusters below add a runtime
 @@protocol dispatch lane, a reflective `String.prototype[Symbol.iterator]`
@@ -55,7 +385,69 @@ files listed in `loc-budget-allow`. Measured growth is expected and granted
 for this change-set. `src/codegen/case-tables.ts` is GENERATED
 (`scripts/gen-case-tables.mjs`) and grows by the new astral run tables.
 
+Additional allowance rationale (2026-09-20): the bounded standalone
+`String.raw` repair adds ordinary closed-struct reader arms in
+`object-runtime.ts`, extracts their common `ToLength` tail into
+`object-runtime-enumeration.ts`, and mirrors a successfully installed anonymous
+accessor into the already-existing identity bag in `object-ops.ts`. The three
+files are already over the source-size threshold; the allowance is limited to
+these measured, reviewed additions.
+
+Function-growth allowance rationale (2026-09-20): the function gate measured
+only the three owning functions beyond their current thresholds:
+`compileObjectDefineProperty` (1581/1475),
+`fillExternArrayLikeStructArms` (530/425), and
+`fillClosedStructExternGetArms` (534/470). Their added code is respectively
+the one-evaluation successful-accessor bag mirror, the standalone ordinary
+array-like-reader routing, and the descriptor-first closed-struct reader plus
+Symbol boxing. The allowance is restricted to those three measured functions;
+it does not update the shared function baseline or grant unrelated growth.
+
 ## Problem
+
+### Latest frozen reader checkpoint (2026-09-20)
+
+The reader/mirror source checkpoint is committed locally as
+`acbab40d50` (`fix(codegen): preserve closed-struct raw accessors`), with
+Thomas as author and the Codex/Terra Max attribution trailers. Normal
+pre-commit gates passed. Inspection of the commit object found no embedded
+signature, despite an initial writer report calling it signed; signing config
+queries on this host are unset. No signing bypass was observed. Correct the
+report rather than asserting a signature that is absent. The verified 30-path
+manifest is now committed in follow-up `e34ebcbb8e`; its committed bytes match
+SHA-256 `d7d2c223fb766dcc9ed460d3c2ddad520195dfc007db6d3c4f575575ba3e3827`.
+The branch diff contains exactly the three source files, focused test, issue,
+and acceptance manifest. Published upstream as
+https://github.com/loopdive/js2/pull/5991, open and non-draft, at verified
+fork head `e34ebcbb8e1283eddf9f2cc0b91a55eccbbfd97e` on
+`ttraenkler:codex/5152-string-raw-audit-20260919`, base `loopdive/js2:main`.
+Normal push gates passed. The remote accepted the branch despite a later
+local tracking update hitting an existing shared config lock; the lock was
+preserved and the remote SHA verified. Published source stays frozen while
+the follow-up deletion work gets a separate worktree. The independent
+RegExp reviewer also owns initial PR shepherding; a BLOCKED merge-state
+summary is not itself a diagnosed conflict or a claim of merge readiness.
+The independent one-shot PR read confirms `mergeable: MERGEABLE`, checked CLA
+and successful completed checks; smoke, quality, issue/linear tests and
+equivalence shards were still running. No failed check or blocking review was
+found. Keep the completed scoped fix non-draft; do not poll or manually enqueue.
+
+Final focused reader fixture: **5/5 pass**, verified from
+`/private/tmp/js2-5152-raw-readers-vitest-final-20260920.log` (11.81s).
+The host descriptor case is explicitly a known-base deficit snapshot, not a
+claim of complete host conformance. The native-first positive control is green
+after matching the ordinary-reader admission to the standalone getter producer.
+The frozen original 30-path isolated standalone run remains **29 pass / 1 fail**,
+verified from `/private/tmp/js2-5152-string-raw-30-final-20260920.log`.
+The sole failure remains `built-ins/String/raw/returns-abrupt-from-next-key.js`,
+whose strict rerun refuses assignment after anonymous bag deletion. That
+unreleased carrier-deletion seam remains open and is not part of this reader
+checkpoint. These are uncommitted candidate results, not landed census gains.
+
+The writer retains the single compiler/hook lease for remaining validation and
+normal publication gates. RegExp may edit its own isolated native flags getter
+insertion, preserving this lane's user-declared bag prefix; it may not run
+compiler jobs concurrently. No PR or completed-issue claim is implied here.
 
 53 ES2015-bucket test262 tests under `built-ins/String/**` fail on the
 standalone target (re-verified 2026-08-28 on head, branch
@@ -170,6 +562,553 @@ skip list, or `scripts/*baseline*.json`.
 
 ### Step B — normalize (10 tests; 7 without Unicode tables)
 
+Current-main revalidation (2026-09-19): the pinned oracle-14 ES2015 selection
+contains exactly **14 normalize rows: 11 pass / 3 fail**. The three failures
+remain `return-normalized-string.js`,
+`return-normalized-string-from-coerced-form.js`, and
+`return-normalized-string-using-default-parameter.js`. At `4a6cbdf1ee80`,
+`string-ops.ts` explicitly still returns the receiver unchanged after form
+validation; no native normalization helper or generator exists in the checked
+source. Thus Step B.3 remains real unimplemented normalization, not the
+String.raw descriptor issue. Related #1541's proposed opt-in ICU provider is
+historical design, not implemented support or sufficient acceptance for the
+default standalone goal. No normalization implementation claim or test run
+has been started in this continuation.
+
+#### 2026-09-20 read-only triage — complete normalization wave (base `upstream` `200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567`)
+
+This is a source/standards audit only. It preserves the frozen oracle-14
+receipt above (11 pass / 3 fail) and deliberately did not run a compiler,
+Test262, or a data generator. The queued next receipt is the exact three
+remaining originals plus the eleven passing normalize controls, after the
+separate lanes explicitly release the serial compiler/test lease.
+
+**Current-main baseline receipt (2026-09-20).** After checkpointing this plan
+and merging `upstream/main` `62221769a87acdc32759c656702eede64936feb5` into
+local merge head `c47fcc7c081accaea26dfe556e44999043acd43f`, the exact frozen
+14-row manifest at
+`/private/tmp/js2-5152-normalize-paths-20260920.txt` (SHA-256
+`027e4b21d7fd72e77e419c2bd758e30a9498b70eafd2aa344daef2c2856ec76e`) was
+measured with `COMPILER_POOL_SIZE=1`, `JS2WASM_ROW_TIMEOUT_MS=120000`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, Node 24, and
+`scripts/run-test262-paths.mts <manifest> --isolate --standalone`. The durable
+terminal log is `/private/tmp/js2-5152-normalize-baseline-20260920.log`.
+Its authoritative settled denominator is **14 = 11 pass + 3 fail**, with zero
+skip/error rows. The wrapper itself exits zero after reporting verdicts, so
+the counts—not that process status—are the receipt. The only non-passes are
+`return-normalized-string.js` (NFD),
+`return-normalized-string-from-coerced-form.js` (coerced NFC), and
+`return-normalized-string-using-default-parameter.js` (default NFC). Their
+Test262 assertions all observe the unchanged input rather than normalized
+output, confirming the source diagnosis below; all eleven abrupt/type/name/
+length preservation controls retain their baseline verdict.
+
+The retained controls are `form-is-not-valid-throws.js`, `length.js`,
+`name.js`, `normalize.js`, `not-a-constructor.js`,
+`return-abrupt-from-form-as-symbol.js`, `return-abrupt-from-form.js`,
+`return-abrupt-from-this-as-symbol.js`, `return-abrupt-from-this.js`,
+`this-is-null-throws.js`, and `this-is-undefined-throws.js`. They are
+preservation controls, not evidence that the three transform rows are solved.
+
+**Verified current root cause.** `compileNativeStringMethodCall` in
+`src/codegen/string-ops.ts` has a dedicated `method === "normalize"` arm. It
+does receiver/form handling, but after validation leaves `recvLocal` on the
+stack unchanged (or directly returns `emitReceiver()` for no argument). There
+is no `__str_normalize` helper, no normalization-table module, and no
+normalization data generator. This exactly explains all three remaining
+return-value rows:
+
+- `return-normalized-string.js` requires canonical decomposition, canonical
+  ordering, NFC composition, and compatibility behavior across all four forms;
+- `return-normalized-string-from-coerced-form.js` reaches the same transform
+  after `['NFC']`/object-form coercion; and
+- `return-normalized-string-using-default-parameter.js` requires the omitted
+  and explicit-`undefined` default of NFC.
+
+The older Step-B wording is now partly historical: current
+`src/codegen/string-proto-tostring.ts` includes `normalize` in
+`NO_ARG_STRING_MEMBER_HELPER`, mapped to `__str_flatten`, so the reflective
+path has the receiver preamble but still returns the identity and has no slot
+to read its optional form. `STRING_PROTO_METHOD_PARAM_SLOTS` in
+`src/codegen/array-object-proto.ts` likewise has no `normalize` entry. A real
+implementation must replace that no-argument shortcut rather than reuse it.
+Also, the direct static-invalid-form shortcut currently throws before
+`emitReceiver()`. The replacement must materialize/evaluate the receiver
+first for every form spelling, then decide the form, preserving #1823 rather
+than retaining that shortcut.
+
+**Ownership and boundary.** This is a native-string/codegen task, not an IR
+or carrier-layout task. A targeted implementation owns
+`src/codegen/string-ops.ts`; a new lazy
+`src/codegen/normalize-native.ts`; generated
+`src/codegen/normalize-tables.ts`; and a new
+`scripts/gen-normalize-tables.mjs`. The reflective optional-form glue needs a
+narrow `array-object-proto.ts` dispatch/slot change and either a dedicated
+`string-proto-normalize.ts` body or an equivalently isolated helper; it must
+remove only the `normalize: "__str_flatten"` no-argument mapping from
+`string-proto-tostring.ts`. No `src/ir/**` normalization opcode, frontend
+lowering, object runtime, carrier bag, provenance, or layout change was found
+or is needed. The native builder must use the existing append-only
+`mintDefinedFunc`/`pushDefinedFunc`, late-import settlement, and
+`nativeStrHelpers` index-shift discipline; it must add no host import.
+
+**Pinned data contract, not sampled host ICU.** Follow the repository's
+existing Unicode-17 contract in
+`scripts/generate-regexp-string-properties.mjs`; do not silently move to
+Unicode 18. The normalization generator should use versioned Unicode 17.0.0
+UCD URLs, record a SHA-256 for every consumed source in both the generator's
+expected-input manifest and the generated header, and reject a version/hash
+mismatch. Required inputs are:
+
+1. `UnicodeData.txt` for decomposition mappings and Canonical_Combining_Class;
+2. `DerivedNormalizationProps.txt` for
+   `Full_Composition_Exclusion=Yes`; and
+3. `NormalizationTest.txt` as the pinned conformance corpus.
+
+`CompositionExclusions.txt` alone is not enough: UAX #15 identifies
+singletons and non-starter decompositions as exclusions too, while the full
+derived property is the complete machine-readable set. The generator must
+parse a tagged decomposition as compatibility-only and an untagged mapping as
+canonical, recursively pre-expand canonical and compatibility mappings into
+separate compact tables, omit surrogate code points, compress nonzero CCC
+values, safely validate/expand `First`/`Last` UCD ranges rather than silently
+discarding a range record, and build a sorted pairwise composition index from
+canonical pairs only when the composite is not
+`Full_Composition_Exclusion`. Algorithmic Hangul must remain code, not an
+incomplete table. This is the
+[UAX #15](https://www.unicode.org/reports/tr15/) model: full decomposition,
+canonical ordering, then canonical composition for C forms; its conformance
+clause requires `NormalizationTest.txt`.
+
+**2026-09-20 generated-data checkpoint (source-only; not a Wasm receipt).**
+The local generator now pins and verifies the exact Unicode 17.0.0 source
+bytes: `UnicodeData.txt`
+`2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c`,
+`DerivedNormalizationProps.txt`
+`71fd6a206a2c0cdd41feb6b7f656aa31091db45e9cedc926985d718397f9e488`, and
+`NormalizationTest.txt`
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`.
+Its table-backed reference implementation consumes the exact serialized
+key/offset/length/value and CCC/composition arrays that the native helper will
+consume, and passed all 20,034 official rows without consulting host ICU. It
+also asserts the Rule-2 data-side invariant: all generated singleton
+transformation sources (including all 11,172 algorithmic Hangul syllables)
+occur in the 17,086 Part-1 c1 scalars. This is a generator/data invariant,
+not yet compiled-Wasm identity coverage for all other assigned scalars.
+
+The original compatibility index triple encoding would have required one
+17,742-element `array.new_fixed`, beyond the repository's 10,000-element
+engine limit. The generated module instead serializes each decomposition index
+as three parallel arrays (keys, offsets, lengths); the native binary search
+returns the shared entry ordinal. The generator rejects any emitted fixed-array
+slice above 10,000 and the current maximum is the 9,193-element compatibility
+value slice. The native builder repeats that bound defensively. No compiler,
+typecheck, or Wasm validation ran for this checkpoint; validating actual module
+construction and imports remains a required lease-gated acceptance step.
+
+**2026-09-20 conformance-fixture generation checkpoint (historical row-corpus
+artifact; not a Wasm receipt).** The same local, hash-verified UCD inputs first
+generated the test-only `tests/fixtures/normalize-ucd17-conformance.ts`
+alongside the native table module. That predecessor was 2,265,243 bytes and
+contained scalar-only row-major values, five-column offsets, original source
+line numbers, and the Part-1 c1 scalar set; it deliberately contained neither
+JavaScript strings nor host-normalized answers. Its payload SHA-256 was
+`b23dbd3ce6245e1bc3fac3ea084091cc9250f760105223d9adb813c3c2857e49`, and its
+source `NormalizationTest.txt` SHA-256 remains
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`, and it
+declares exactly 20,034 rows / 400,680 required relations. The future harness
+recomputes that payload digest from the loaded arrays before compiling any
+adapter, rather than trusting two duplicated header constants. This generated
+test data needs a measured per-file size/ratchet allowance if repository gates
+require one; no global budget or format rule may be weakened. The Rule-2
+assigned-scalar inventory was deliberately a separately required generated
+artifact, not inferred from this Part-1 data.
+
+**2026-09-20 Rule-2 inventory source-only update (before emitted-Wasm run).** The pinned local
+generator now also derives a compact, sorted inventory from *every*
+`UnicodeData.txt` assignment after validating each `First`/`Last` record's
+fields. It records **735** non-surrogate scalar ranges covering **297,334**
+assigned scalars, including **137,468** `Co` private-use scalars; it separately
+records all **2,048** `Cs` surrogate code points rather than silently treating
+them as scalars. Every Part-1 c1 scalar is checked to lie in the emitted range
+inventory, leaving **280,248** assigned non-surrogate Rule-2 identity inputs.
+The regenerated 2,276,541-byte fixture authenticates that inventory in its
+payload digest
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`.
+A separate root read-only calculation over the pinned `UnicodeData.txt` range
+endpoints independently matched the 297,334 / 137,468 / 2,048 inventory
+counts without invoking the generator, compiler, or test runner.
+
+The corresponding harness has two separately named gates on the one numeric
+emitted-Wasm adapter: all 280,248 Part-1-absent
+assigned scalars in NFC/NFD/NFKC/NFKD (**1,120,992** scalar identity
+relations), and all 2,048 lone UTF-16 surrogate code units in those four forms
+(**8,192** code-unit identity relations). The existing leading/trailing
+surrogate barrier remains a distinct mixed-sequence control. This respects the
+UAX #15 Rule-2 wording about assigned code points while stating the JavaScript
+WTF-16 surrogate boundary with a separate denominator. The prior row-corpus
+receipt below used the predecessor payload (`b23dbd…`) before this range
+inventory was added; it remains historical evidence for the official rows. The
+expanded-fixture terminal receipt immediately below supplies the required
+Rule-2 and surrogate denominators.
+
+**2026-09-20 first emitted-Wasm smoke (failed implementation checkpoint).**
+The first leased Node-24 Vitest run of
+`tests/issue-5152-normalize-native.test.ts` is retained at
+`/private/tmp/js2-5152-normalize-smoke-20260920.log` (terminal exit 1): its
+host-preservation control passed, while the standalone compilation failed
+before Wasm emission. A temporary, restored stack-only diagnostic captured
+the DCE failure at
+`/private/tmp/js2-5152-normalize-smoke-stack-20260920.log`; a second restored
+walker path diagnostic at
+`/private/tmp/js2-5152-normalize-smoke-arm-trace-20260920.log` identified an
+undefined `if.then` in the native Hangul trailing-T branch. The builder had
+emitted an `if` with an `else` but no required `then: Instr[]`, so dead-import
+elimination attempted to walk `undefined`. `normalize-native.ts` now supplies
+the semantically empty `then: []`. That source-only correction has not yet
+been rerun. Therefore this checkpoint establishes neither standalone Wasm
+construction nor any normalization result; the next leased smoke must rerun
+the original direct/reflective and host controls before widening to Test262 or
+the UCD corpus. A separate void-value boundary control covers a
+direct form, reflective form, and direct surplus argument for both
+`VoidExpression` and a real `(): void` call: each must preserve its effect and
+pass canonical `undefined` to the optional form slot where applicable. This is
+a narrow ABI control, not an additional Unicode-algorithm claim.
+
+**2026-09-20 corrected emitted-Wasm smoke receipt.** The same focused Node-24
+Vitest invocation then passed at
+`/private/tmp/js2-5152-normalize-smoke-rerun2-20260920.log` (terminal exit
+0): one file and all three tests passed. The original standalone matrix
+returned mask 31 for NFC, NFD Hangul, NFKC compatibility, omitted reflective
+form, and explicit-null RangeError/`.length`, while asserting an empty Wasm
+import section before instantiation. The separate void-value matrix returned
+mask 63 for direct and reflective `VoidExpression` and real `(): void` form
+calls plus the corresponding ignored surplus arguments. The existing reached
+host control also passed. This establishes the initial emitted helper path and
+the optional-form ABI boundary only; it is not a 14-row Test262 receipt or a
+full Unicode-conformance claim.
+
+**2026-09-20 frozen candidate Test262 receipt.** With production source held
+at the exact seven-file SHA-256 manifest in
+`/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.txt` (worktree
+HEAD `c47fcc7c081accaea26dfe556e44999043acd43f`, Node `v24.19.0`), the exact
+same frozen-14 manifest/options as the baseline were rerun under
+`COMPILER_POOL_SIZE=1`, `JS2WASM_ROW_TIMEOUT_MS=120000`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, Node 24, and
+`scripts/run-test262-paths.mts <manifest> --isolate --standalone`. The durable
+log `/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.log` is
+terminal (runner session 68778, exit 0) and reports **14 pass / 0 non-pass**;
+there are no skip or error rows. Thus all eleven frozen validation/preservation
+controls remain passing and all three baseline transformation rows now pass:
+the exact manifest moves **11 pass / 3 fail → 14 pass / 0 fail**.
+The runner's exit alone is not the claim; its settled 14-row denominator and
+per-row non-pass section are. This is a bounded Test262 gain receipt, not yet
+the UCD corpus or Rule-2 Wasm conformance gate.
+
+**2026-09-20 shared-call-seam preservation A/B.** While the seven normalize
+production files were frozen at the manifest above, the root lane ran the
+shared String parameter-slot/reflective seam controls in this worktree and a
+pristine `62221769` matched-base worktree. Both terminal runs were exactly
+**23 pass / 5 fail / 28 settled**: all five transferred-prototype controls
+passed, 18 of 23 search controls passed, and the identical five historical
+reflective `includes`/`startsWith`/`endsWith` cases threw
+`WebAssembly.Exception` in both candidates. The test source hashes were held
+equal (`b27dc5f1…efd040` and `d3714591…7948d`), and the seven frozen normalize
+production hashes matched. This is no observed regression in the 28 controls,
+not a claim that all 28 pass; the root owns the detailed durable A/B logs.
+
+**2026-09-20 emitted-Wasm UCD row-corpus receipt (historical predecessor;
+Rule 2 then pending).**
+The seven production-file hashes were compared against the frozen-14 manifest
+immediately before this run and matched exactly. The small numeric adapter
+control at `/private/tmp/js2-5152-normalize-ucd17-adapter-control-20260920.log`
+is terminal (Node 24 direct Vitest, exit 0, one selected pass / one filtered):
+it proves native-string global mutation, numeric `String.fromCharCode` ingress,
+numeric output reads, a retained unpaired-surrogate barrier, and a real empty
+`WebAssembly.Module.imports(module)` section. It is a prerequisite control, not
+the corpus claim.
+
+The full adapter receipt at
+`/private/tmp/js2-5152-normalize-ucd17-corpus-20260920.log` is also terminal
+(exit 0, one selected pass / one filtered; 1.692 seconds test time). It
+compiled and instantiated exactly one standalone adapter and asserted
+`imports=[]` before instantiation. Before compilation the harness recomputed
+SHA-256 `b23dbd3ce6245e1bc3fac3ea084091cc9250f760105223d9adb813c3c2857e49`
+from the *loaded* scalar/offset/line/Part-1 arrays, checked their 20,034-row
+shape, and pinned the official source SHA-256
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`.
+It then executed all **400,680** official relationships (20 per row: the full
+NFC/NFD/NFKC/NFKD five-column relation set) through numeric UTF-16 ingress and
+egress. There is no host `String.prototype.normalize()`/ICU comparison in this
+harness. This is positive compiled-Wasm coverage of every official row. At
+this predecessor checkpoint, the separate assigned-scalar Rule-2 identity
+inventory/test was still pending; the expanded receipt follows.
+
+**2026-09-20 expanded emitted-Wasm UCD receipt (Rules 1/2 plus JavaScript
+surrogate boundary).** With the same frozen seven production hashes (verified
+unchanged against `/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.txt`),
+the expanded test file is terminal at
+`/private/tmp/js2-5152-normalize-ucd17-rule2-20260920.log`: Node 24 direct
+Vitest exit 0, **1 test file / 4 tests passed**, 3.676 seconds test time
+(15.21 seconds total process duration). It compiled one full numeric UCD
+adapter and one small ingress prerequisite adapter; each construction asserted
+an empty `WebAssembly.Module.imports(module)` section before instantiation.
+The loaded fixture recomputed payload SHA-256
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`,
+including its assignment inventory, before compilation.
+
+The terminal denominator is deliberately split rather than folded into a
+sampled mask: **400,680** official five-column `NormalizationTest.txt`
+relationships over 20,034 rows; **1,120,992** Rule-2 scalar identities
+(280,248 Part-1-absent assigned non-surrogate scalars × four forms); and
+**8,192** lone-surrogate UTF-16 code-unit identities (2,048 × four forms), in
+addition to the explicit mixed surrogate-barrier adapter control. All numeric
+UTF-16 ingress/egress comparisons are made by the harness; no host ICU or
+`String.prototype.normalize()` result is consulted. This closes the planned
+official-row/Rule-2 corpus acceptance for the pinned Unicode-17 data and
+states the separate JavaScript surrogate boundary explicitly; it does not
+erase the remaining ordinary project gates below.
+
+**2026-09-20 deterministic fixture-layout correction (source-only; runtime
+receipts above remain historical).** Biome skips a source file at its 1 MiB
+limit, so the expanded 2,276,541-byte single fixture could not be called
+lint-covered merely because the repository-wide lint command exited zero while
+its unrelated diagnostics were capped. The pinned generator now deterministically
+emits a wrapper plus four fixed contiguous scalar-value modules instead of a
+single oversized values declaration. The public wrapper API and loaded payload
+remain unchanged: its payload digest is still
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`, and
+the wrapper reassembles all four chunks in order before the existing harness
+hashes it.
+
+The generated module sizes are all strictly below the 1,048,576-byte limit:
+the wrapper is **1,021,416** bytes and the `values-0` through `values-3`
+modules are respectively **322,453**, **333,739**, **319,086**, and
+**282,119** bytes (2,278,813 bytes total). The generator checks this bound
+before writing any generated fixture file, verifies each nonempty chunk and
+their aggregate scalar count, and uses a fixed four-way floor-partition so
+output does not depend on host formatting. It emits `prettier-ignore` only on
+generator-owned numeric arrays; no global formatter or Biome configuration was
+weakened.
+
+Two back-to-back generation runs against the same pinned UCD input produced
+identical SHA-256 manifests at
+`/private/tmp/js2-5152-normalize-generator-split-before-20260920.sha256` and
+`/private/tmp/js2-5152-normalize-generator-split-after-20260920.sha256`.
+The generated table remained
+`c9394e157b7402928a7f27eaaa4fc17a9b217268eb6b3b84e47e5bb1d8dfeeff`; the
+five fixture-module hashes are recorded in the latter manifest. Targeted
+Biome lint over the wrapper and all four chunks is terminal with **5 checked,
+zero errors** at
+`/private/tmp/js2-5152-normalize-ucd17-fixture-biome-20260920.log`; a targeted
+Prettier check over the generator, normalize sources/tests, wrapper, and all
+chunks is terminal at
+`/private/tmp/js2-5152-normalize-prettier-split-20260920.log`. The full
+repository lint command still reports a capped set of unrelated diagnostics,
+so its exit status is not cited as proof of fixture coverage. No compiler,
+Wasm, or Test262 process ran for this layout correction. Consequently the
+earlier Test262, smoke, TS7, and UCD receipts must be rerun against this exact
+generated fixture topology before a final current-tree claim.
+
+**2026-09-20 static normal-gate checkpoint (no compiler/test lease used).**
+Against explicit current main
+`LOC_GATE_BASE=62221769a87acdc32759c656702eede64936feb5`, the LOC and
+function-budget gates are terminal clean over all seven changed codegen files
+at `/private/tmp/js2-5152-normalize-loc-budget-after-allow-20260920.log` and
+`/private/tmp/js2-5152-normalize-func-budget-after-allow-20260920.log`.
+The issue-scoped grants are intentionally exact: generated
+`normalize-tables.ts` is **3,644** LOC of pinned UCD data, while the one
+`ensureStrNormalize` builder is **852** LOC because its one emitted Wasm
+function shares 39 local slots, table globals, and late-resolved helper
+indices. Their frontmatter rationale records why a cosmetic TypeScript split
+would add index/stack-order risk without reducing the emitted helper. No
+baseline file or global ceiling was changed.
+
+The static coercion and oracle ratchets pass with no net growth, and issue
+spec coverage, issue-ID uniqueness against main, done-status integrity,
+`update-issues --check`, and the IR retirement ledger all exit zero (durable
+logs use the `js2-5152-normalize-*-20260920.log` prefix). Full source/test/
+script Prettier verification is terminal at
+`/private/tmp/js2-5152-normalize-format-check-split-retry-20260920.log`.
+The dead-export command itself exits zero but is deliberately **not** called a
+retirement certification: its pre-existing whole-repository modeled-closure
+report remains open on nonliteral imports at `src/optimize.ts:394` and
+`src/runtime/platform-capability-adapter.ts:151`, matching the independently
+paired baseline finding. This slice does not touch either path.
+
+**2026-09-20 Unicode License V3 provenance correction (comment-only data
+refresh; final runtime revalidation terminal).** The pinned `NormalizationTest.txt`
+header identifies Unicode, Inc. and points to the Unicode terms page; the
+[official terms](https://www.unicode.org/copyright.html) identify files under
+`https://www.unicode.org/Public/` as Unicode Data Files and subject them to
+Unicode License V3. Its [license text](https://www.unicode.org/license.txt)
+requires the copyright and permission notice to accompany copies or associated
+documentation. The prior generated data headers named the sources and hashes
+but carried only the project Apache header, so the generator now documents
+that its own implementation remains Apache-2.0 WITH LLVM-exception while it
+emits the complete Unicode License V3 copyright/permission notice into every
+generated derivative-data file: `normalize-tables.ts`, the UCD fixture wrapper,
+and all four value chunks. No implementation source was relabeled and the
+repository-wide license was not changed.
+
+This header-only refresh retains the same pinned sources, table values,
+fixture API, and payload SHA-256
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`
+(20,034 rows, 100,171 offsets, 205,047 scalar values, and 280,248 Rule-2
+scalars), verified by importing the rebuilt wrapper in plain Node without a
+compiler/test harness. Two regeneration passes are byte-identical at
+`/private/tmp/js2-5152-normalize-unicode-notice-{before,after}-20260920.sha256`.
+The full notices keep every fixture module below Biome's limit: wrapper
+**1,023,187** bytes; chunks **324,224**, **335,510**, **320,857**, and
+**283,890** bytes. Targeted Biome (five generated fixture modules) and
+Prettier (generator, tables, wrapper, chunks) both pass at
+`/private/tmp/js2-5152-normalize-ucd17-fixture-biome-notice-20260920.log` and
+`/private/tmp/js2-5152-normalize-prettier-unicode-notice-20260920.log`.
+
+The post-split UCD 4/4, frozen-14 14/0, smoke 3/3, and TS7 receipts preceding
+this paragraph remain historical behavior evidence, not byte-identical
+source-hash receipts after this required comment/provenance refresh. The
+refreshed candidate is frozen in
+`/private/tmp/js2-5152-normalize-unicode-notice-candidate-20260920.sha256`.
+With that candidate held unchanged, final Node-24 receipts are terminal:
+`/private/tmp/js2-5152-normalize-ucd17-unicode-notice-20260920.log` reports
+**4/4** tests passing for the import-free adapter, all **400,680** official
+row relations, **1,120,992** Rule-2 identities, and **8,192** lone-surrogate
+identities; the exact frozen Test262 manifest is **14 pass / 0 non-pass** at
+`/private/tmp/js2-5152-normalize-frozen14-unicode-notice-20260920.log`; the
+focused direct/reflective smoke is **3/3** at
+`/private/tmp/js2-5152-normalize-smoke-unicode-notice-20260920.log`; and
+direct TS7 exits zero with no diagnostics at
+`/private/tmp/js2-5152-normalize-ts7-unicode-notice-20260920.log`. The
+comment-only refresh also reran explicit-main LOC/function budgets successfully
+(`normalize-tables.ts` is now measured at 3,644 LOC under its exact issue
+grant). This establishes the current source/data receipt; normal commit and
+pre-push gates still require authorized publication and must not be bypassed.
+
+**Remaining normalize-slice gates.** The deterministic UCD generation, numeric
+adapter, frozen 14, and expanded UCD corpus receipts above must be repeated if
+production source changes. Before a completed-fix publication claim, rerun the
+existing direct/reflective smoke file after any production edit; then run direct
+TS7 over the current generated fixture and harness, the focused Vitest files,
+`git diff --check`, and unchanged normal
+pre-commit/pre-push gates (lint/format, LOC/function ratchets, oracle/coercion
+ratchets, numeric-local parity, and issue integrity). The 2.26 MB generated
+fixture is now represented by five deterministically generated modules below
+Biome's file-size limit; retain their explicit lint coverage and do not add a
+global exception, baseline change, or gate weakening.
+
+**Native helper design.** `ensureStrNormalize(ctx)` should be demand-driven
+from the direct and reflective call sites, after `ensureNativeStringHelpers`,
+so modules that merely use another string method do not retain the Unicode
+tables. It should install `__str_normalize(s, formMode) -> ref $AnyString` and
+immutable generated-table globals via `array.new_fixed`, as the case-mapping
+helper does. A correct first implementation is intentionally table-driven,
+without an unsafe quick-check fast path:
+
+1. Flatten the WTF-16 `NativeString`, decode valid surrogate pairs to scalar
+   values, and preserve each unpaired surrogate unchanged as a CCC-0 barrier.
+2. Append the selected pre-expanded canonical (NFD/NFC) or compatibility
+   (NFKD/NFKC) decomposition to a growable mutable i32 scalar buffer. Handle
+   Hangul syllable decomposition algorithmically.
+3. Perform stable canonical ordering within each starter-delimited run using
+   the CCC table. The buffer must grow geometrically with `array.new_default`
+   plus `array.copy`, following the existing string/vec builders; no fixed
+   maximum expansion or bounded combining-mark stack is sound.
+4. For NFC/NFKC, run UAX #15 canonical composition with its blocking rule,
+   the generated pair index and algorithmic Hangul L/V/T composition. NFD and
+   NFKD stop after ordering.
+5. Compute the exact UTF-16 output length, allocate the native i16 backing
+   array once, encode scalars (including preserved unpaired units), and return
+   a new flat native string. The output must not be an alias/identity shortcut
+   merely because the input happens to contain non-ASCII text.
+
+The shared call-site form routine should produce a small mode enum only after
+the receiver is evaluated. It must default only absent or `undefined` form to
+NFC (including the standalone undefined singleton), coerce every other form
+once with the existing ToString/Symbol path, reject `null` as the string
+`"null"`, and throw the existing RangeError for values outside the four exact
+names. The reflective body needs one physical optional argument slot while
+leaving `.length === 0`; it must use the same routine and helper after
+RequireObjectCoercible/ToString(this), rather than make a separate identity
+path.
+
+**Validation required before a future implementation claim.** In addition to
+the frozen 14 Test262 rows (all 11 current passes retained and all three
+original failures green), add a focused native test that checks all four forms,
+default/explicit undefined, coercion and Symbol/RangeError/evaluation-order
+semantics, canonical ordering and blocking, composition exclusions (including
+U+0344/U+0958/U+2126), compatibility mappings, Hangul, astral pairs, and
+unpaired-surrogate preservation. It must assert a standalone module has no
+imports. Vendor or generate a hash-pinned Unicode-17
+`NormalizationTest.txt` fixture and execute every official row through the
+compiled native helper in bounded chunks; this is a positive conformance gate,
+not a host-ICU comparison or a three-example fixture. Keep js-host behavior
+unchanged and record any size/ratchet budget for generated data explicitly.
+
+**2026-09-20 emitted-Wasm acceptance design and execution status.** The
+generator/data receipt alone is deliberately insufficient: it validates a
+JavaScript reference over the serialized tables, not the generated Wasm helper.
+The frozen-14 and expanded UCD adapter receipts above have executed this
+design against one frozen production candidate, recording its `HEAD`, relevant
+hash manifest, Node-24 path, and terminal logs. The design has two independent
+parts:
+
+1. **Exact Test262 retention and gain.** Re-run exactly
+   `/private/tmp/js2-5152-normalize-paths-20260920.txt` (SHA-256
+   `027e4b21d7fd72e77e419c2bd758e30a9498b70eafd2aa344daef2c2856ec76e`) with
+   `COMPILER_POOL_SIZE=1`, `JS2WASM_ROW_TIMEOUT_MS=120000`,
+   `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, the installed Node 24, and
+   `scripts/run-test262-paths.mts <manifest> --isolate --standalone`. Treat
+   the settled per-row verdicts as authoritative rather than the wrapper's
+   zero exit: require denominator 14, zero skip/error rows, all eleven
+   retained controls still passing, and the three named transform rows changing
+   from the baseline's fail to pass. This run is intentionally separate from
+   Unicode conformance and must retain the baseline's isolated runner/options.
+
+2. **One compiled numeric UCD adapter, not 20,034 compiled AST fixtures.**
+   Extend the pinned Unicode-17 generator to emit a committed test-only
+   `NormalizationTest.txt` payload: version/source hashes, exact row count,
+   a digest of its serialized payload, and compact flattened scalar sequences
+   with offsets for all five columns. The Vitest harness must verify those
+   metadata/digest values before testing; it must neither fetch UCD data nor
+   call host `String.prototype.normalize()`/ICU as an oracle. First add a tiny
+   standalone adapter-control that proves this compiler supports mutating a
+   module-global native string via numeric exports and that its real Wasm
+   import section is empty. The full adapter is then compiled and instantiated
+   exactly once. It exposes only numeric boundary methods such as
+   `resetInput()`, `appendUnit(unit)`, `run(mode)`, `outputLength()`, and
+   `outputUnit(index)`; `appendUnit` builds the input with native
+   `String.fromCharCode`, and `run(0..3)` selects the four literal forms
+   NFC/NFD/NFKC/NFKD. The host harness encodes each pinned scalar sequence to
+   UTF-16 units itself, feeds and reads units numerically, and compares numeric
+   units itself. No host string bridge or host normalization result is allowed.
+
+   The single instance must check all UAX #15 `NormalizationTest.txt`
+   relationships, not merely one preferred source column: NFC c1/c2/c3 → c2
+   and c4/c5 → c4; NFD c1/c2/c3 → c3 and c4/c5 → c5; NFKC every c1–c5 → c4;
+   NFKD every c1–c5 → c5. That is 20 relations per row, or 400,680 normalizer
+   invocations for the pinned 20,034-row corpus. Chunks may bound host-loop
+   progress and make the first failing row/form/column durable, but they may
+   not recompile a module per row or substitute sampled fixtures. Assert
+   `WebAssembly.Module.imports(new WebAssembly.Module(binary))` is exactly
+   empty before instantiation and report the corpus digest/row denominator.
+
+   UAX #15 Rule 2 also requires identity in every form for assigned scalars not
+   listed in NormalizationTest Part 1. The data-side Part-1 coverage invariant
+   is useful but not a Wasm proof. The generator now emits a reproducible,
+   validated `UnicodeData.txt` assignment inventory after First/Last expansion;
+   the terminal same-adapter gate exercised all 280,248 Part-1-absent scalars
+   in all four forms against their own UTF-16 encodings. A separately named
+   all-2,048-code-unit surrogate lane and the existing mixed barrier control
+   cover the JavaScript WTF-16 boundary. Their separate terminal denominators
+   are recorded above rather than silently folded into the row corpus.
+
+This plan rejects both a three-character patch and an unpinned
+`String.prototype.normalize()`-as-generator oracle. The separate #1541
+ICU4X/opt-in side-module idea remains an alternative product decision, not a
+substitute for the default standalone Unicode-17 conformance implementation
+described here.
+
 1. Rewrite the `normalize` arm in `src/codegen/string-ops.ts` L3563-3598:
    receiver first (keep the #1823 ordering), then if a form arg is present and
    not a statically-valid literal: coerce via `emitArgAsNativeString`
@@ -187,14 +1126,14 @@ skip list, or `scripts/*baseline*.json`.
    the same form validation. Mimic `emitStringSearchNumericMemberBody`
    (L1270+) for the closure ABI. Covers the four `this-*`/`return-abrupt-from-this*` tests.
 3. Actual normalization (3 `return-normalized-string*` tests) — the largest
-   sub-step, land LAST and defer to a wave 2 if it does not fit: a new
-   `scripts/gen-normalize-tables.mjs` (pattern: `scripts/gen-case-tables.mjs`,
-   which already uses Node's ICU as the offline oracle) emitting canonical +
-   compat decomposition tables, a ccc-order table (derivable offline by
-   probing `normalize('NFD')` stability of combining-mark pairs), and the NFC
-   pairwise composition table; plus a `__str_normalize` helper in a new
-   `src/codegen/normalize-native.ts` (module-global tables via
-   `array.new_fixed`, same #3900 pattern as case-convert-native.ts).
+   sub-step, land LAST and defer to a wave 2 if it does not fit. The 2026-09-20
+   audit above supersedes this item's earlier Node-ICU/probe sketch: use pinned
+   Unicode-17 UCD data, full decomposition/CCC/composition-exclusion semantics,
+   Hangul code, and the official `NormalizationTest.txt` corpus rather than
+   sampled host normalization. Implement it through
+   `scripts/gen-normalize-tables.mjs`, generated `normalize-tables.ts`, and
+   `__str_normalize` in `src/codegen/normalize-native.ts`, with immutable
+   module globals via `array.new_fixed`.
 
 ### Step C — `String.prototype[Symbol.iterator]` (5 tests, unblocks A.4)
 
@@ -256,6 +1195,1085 @@ skip list, or `scripts/*baseline*.json`.
    the mapped pair. Pass-1 length counting is unaffected (pairs contribute 2
    before and after). `toLocale{Lower,Upper}Case` route to the same helpers
    (string-ops.ts L3273) so all 4 tests move together.
+
+### 2026-09-19 Step F read-only revalidation plan
+
+The pinned oracle-14 standalone baseline at baselines commit
+`6c51eb29ef12208ac8f53ae99eea900b53f51a76` still fails all three Step F
+originals: `template-length-throws`, `returns-abrupt-from-next-key`, and
+`nextkey-is-symbol-throws`. Current source is upstream
+`4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7`.
+
+Before implementation, audit the current template handoff to `__str_raw` and
+identify the narrowest identity-preserving representation already supported
+by ordinary reads. Do not repeat the historical diagnosis as current proof.
+Read exact originals and trace descriptor lookup, segment coercion, and their
+error order. Produce a bounded source-level correction plan with required
+before/after controls, or identify an exact shared-owner dependency.
+
+The parent issue is reserved without a live owner. Open #5748 changes Boolean
+result annotations in `call-builtin-static.ts`; #5736 removes its old generator
+prototype special case. Their inspected hunks do not change `String.raw`,
+but both must be preserved. Generic literals, closure/class representation,
+and runtime lifetime/layout owners remain reserved by the IR task. This
+assignment is read-only: no production edits, test execution, claim takeover,
+or publication until source ownership and the implementation plan are agreed.
+
+### 2026-09-19 Step F audit outcome and corrected implementation boundary
+
+Read-only Terra audit at `4a6cbdf1ee80` revises the historical diagnosis below:
+the outer template materialization preserves the original nested `raw` struct
+reference. Do not patch that materializer or introduce a raw-copy workaround.
+`string-raw.ts` already performs raw/length/index reads in the right order and
+contains a Symbol TypeError guard. The shared dynamic readers lose the values
+before that guard can act.
+
+The runtime `Object.defineProperty` path stores closed-struct descriptors in an
+identity-keyed carrier bag (`user-declared-structs.ts`, `carrier-bag-define.ts`).
+The later emitted-code audit below found that the statically typed accessor
+path bypasses this runtime storage; the initial audit did not distinguish it.
+In `object-runtime.ts`, `fillExternArrayLikeStructArms` instead reads physical
+length/numeric fields: missing physical length returns zero without consulting
+the bag; accessor-only numeric entries are missed. Both its index boxer and
+`fillClosedStructExternGetArms` number-box non-boolean i32 fields, including
+symbol-branded fields. The named reader also puts physical field arms before
+the bag arm, so switching callers to it alone leaves descriptor precedence
+wrong. These are source-level findings, not a new compiler run; confirm the
+original Symbol field's emitted brand in permitted IR evidence before repair.
+
+Revised implementation plan, pending shared-owner agreement:
+
+1. In `fillClosedStructExternGetArms`, make present carrier-bag descriptors
+   override physical closed fields and box symbol-branded i32 through the
+   existing `__box_symbol` path. Preserve boolean/number distinctions.
+2. In `fillExternArrayLikeStructArms`, route closed-struct length and index
+   reads through ordinary property semantics before ToLength/coercion,
+   preserving getter exceptions and Symbol identity. Reuse the existing
+   Get/ToLength construction in `object-runtime-enumeration.ts` as appropriate;
+   coordinate that file if edits prove necessary. Audit `__extern_has_idx`
+   consistency rather than accidentally making descriptor visibility differ.
+3. Prove the three exact originals plus the existing `tests/issue-3147.test.ts`
+   and `issue-4397-native-semantic-js-host.test.ts` controls in both lanes.
+   Add a getter redefining an existing physical `length`/`"0"` field so a
+   bag-only fix cannot hide incorrect precedence. Retain abrupt ordering,
+   deletion/reassignment/redefinition, nullish/empty-length, substitution, and
+   zero-host-import controls.
+
+No production edits, compiler runs, claims, or commits were made by the audit.
+The coordinator has requested the exact reader/enumeration ownership from the
+IR task before dispatch. The historical Step F materialization remedy below
+is superseded for these three originals by this audit, not silently adopted.
+
+Dispatch release: the IR owner explicitly cleared the two reader functions
+and `object-runtime-enumeration.ts`, including checks against retained and
+unpublished IR trees. Preserve adjacent #5753 tuple-reader import/splice and
+unpublished wrapper-allocation ownership. Complete open-PR hunk locations also
+show #5784 changes wrapper/enumeration-sort/vector/hole/for-in functions and
+#5397 changes Reflect.set/set-vector functions, not these two reader owners.
+The atomic upstream claim `5152:closed-struct-raw-readers` is verified for
+`ttraenkler/codex-5152-raw-readers`, branch
+`codex/5152-string-raw-audit-20260919`. The Terra auditor now implements in its
+own existing worktree. Compiler/test execution waits for the RegExp lane's
+lease handoff; preserve an untouched-base red run before candidate green.
+Independent peer review and full scoped gates remain required before a PR.
+
+The fixed acceptance manifest is
+`plan/agent-context/5152-string-raw-es2015-paths-20260919.txt`: exactly 30
+unique ES2015 String.raw paths in the pinned oracle-14 baseline, all verified
+present in corpus `b363f29d3c43c626dc852744ad64a0b48a003693`. Baseline statuses
+are **27 pass / 3 fail**. SHA-256:
+`d7d2c223fb766dcc9ed460d3c2ddad520195dfc007db6d3c4f575575ba3e3827`.
+Paths are relative to `test262/test` (no `test/` prefix), as required by
+`run-test262-paths.mts`. The initial baseline-style prefix was corrected
+before execution, without changing the selected tests.
+Use this unchanged in fresh isolated standalone and host acceptance runs after
+the focused controls; original successes must not regress. Corpus preparation
+does not constitute a test execution or candidate pass claim.
+The helper's terminal exit code alone is insufficient: inspect all 30 row
+verdicts and require no skipped/missing/error rows, because it reports counts
+without setting a failing exit code for non-pass rows. Use `--isolate` in both
+lanes to prevent shared-intrinsic contamination.
+
+Portable fixture peer review confirmed the zero-import assertion and physical
+field/accessor collision shapes. Before the first red run, replace catch-any
+success counters with exact per-getter Error sentinel identity; retain the
+length-order marker and require replacement-key coercion before the second
+index getter (`"01"`) in the delete/reassign/redefine case. Add full compiled-host
+matrix parity, not just the native-first positive smoke. A Symbol error
+must be a TypeError, but its message must not be standardized by the test.
+RegExp explicitly released the compiler lease with no live process; this lane
+now has permission for the focused untouched-base red run and initial repair
+checkpoint. No result from that run is claimed yet.
+
+Subsequent writer-reported untouched-source result: standalone returns
+**454 / expected 2047** in the tightened portable matrix. Present bits are
+2, 4, 64, 128, and 256; missing bits cover descriptor-only length, physical
+field overrides, getter receiver identity, present-undefined precedence, and
+Symbol rejection. Production diff was empty for this run. The full compiled-host
+matrix instead hits the delete/reassignment sidecar error before its
+final assertions. Preserve that failing sequence; separately named portable
+host subsets must not be presented as full-matrix parity.
+
+Independent coordinator reconciliation of the same 30 originals against the
+host JSONL at pinned baseline `6c51eb29ef12208ac8f53ae99eea900b53f51a76`
+finds **28 pass / 2 fail**, oracle 14, `linked-harness`, 30 unique rows.
+`template-length-throws.js` reports no expected exception;
+`returns-abrupt-from-next-key.js` reports the strict-rerun getter-only
+reassignment failure seen in the portable control. The Symbol original
+passes host. These are existing host nonpasses, not candidate regressions or
+authorization to edit the host sidecar in this bounded reader repair.
+
+First candidate checkpoint is still red: writer reports standalone mask
+**998 / expected 2047**, versus untouched-base 454. The added passing bits
+are Symbol rejection (32) and original getter receiver (512), not a Test262
+pass-rate claim. Descriptor-only length, physical-field descriptor precedence,
+and present-undefined controls still fail. The writer is inspecting emitted
+dispatch/type admission before further changes, within the same reader scope;
+no broad run or original-row gain is claimed. Exact terminal/log metadata is
+requested for the durable implementation record.
+
+Review guard for the next candidate: its proposed `classAccessorSet` /
+`staticAccessorByField` fallback must not treat compile-time registration as
+runtime descriptor presence. Before accepting it, prove reads before a
+definition, untaken definition branches, and another same-shape instance retain
+their actual properties. Shape stamps are sufficient only if emitted runtime
+transitions prove that distinction. The writer is holding that fallback while
+the independent peer checks the exact registration/storage seam; if a missing
+per-instance definition route is the cause, coordinate that source owner
+rather than broadening static metadata into descriptor truth. This is an
+open review concern, not a verified passing implementation.
+
+The subsequent independent audit confirms that concern. In
+`compileObjectDefineProperty`, the static accessor path adds
+`ctx.classAccessorSet` while generating code, synthesizes accessor functions,
+then returns the receiver without invoking the runtime define helper or writing
+a per-instance descriptor presence record. S5C's optional closure global is
+per shape/key, not per receiver, and later definitions overwrite it. `$shape`
+is an immutable layout-collision discriminator, not a runtime mutation stamp.
+Neither can safely prove descriptor presence before definition, in an untaken
+branch, or on another same-shape object. The writer removed the unproven
+fallback entirely, leaving the bag/ordinary-reader and Symbol changes.
+
+This revises the initial reader-only diagnosis for the remaining accessor
+controls: they require an identity-keyed runtime definition record at the
+successful define site, then ordinary reads of that record. Coordinate the
+exact `object-ops.ts` static-accessor seam before any expansion; the RegExp
+writer owns a separate intrinsic-specific route in that file, and closure/
+carrier allocation remains reserved by IR. Temporal/per-instance controls
+and the exact three original standalone rows are the next bounded evidence;
+no widening or new original gain is claimed before those results.
+
+Expanded safe-candidate portable run (Node 24), inspected coordinator log
+`/private/tmp/js2-5152-raw-readers-standalone-candidate-20260919.log`:
+one selected standalone test failed; two host controls were unselected by the
+filter (reported skipped), not run. Writer reports terminal exit 1. The mask
+is **130022 / expected 131071**, missing exactly bits 1, 8, 16, and 1024:
+descriptor-only length, the two physical-field overrides, and present
+undefined. New temporal/per-instance controls pass, but emitted routing may
+select already bag-backed cases; this does not refute the confirmed static
+definition-site gap or justify reinstating static metadata dispatch.
+### Published reader checkpoint evidence retained from PR #5991
+
+The following publication record is retained alongside the earlier diagnostic
+history above. PR #5991 is now merged into upstream `main` at `d5e58586d1`;
+the remaining deletion follow-up is not part of that landed reader fix.
+
+Use this unchanged in fresh isolated standalone and host acceptance runs after
+the focused controls; original successes must not regress. Corpus preparation
+does not constitute a test execution or candidate pass claim.
+
+### 2026-09-19 closed-struct raw-reader implementation evidence and remaining owner seam
+
+The reader slice now makes the ordinary-read boundary explicit, but it is not
+yet a complete fix for every statically lowered `Object.defineProperty`
+accessor. The implemented reader-side changes are deliberately bounded to the
+cleared ownership:
+
+1. `fillClosedStructExternGetArms` checks a user-instance carrier bag by
+   *presence* before any physical field arm, then uses
+   `__reflect_get_receiver(bag, key, originalReceiver)`. This preserves
+   descriptor precedence, makes a present `undefined` distinguishable from a
+   miss, and gives a getter its original raw object as `this`.
+2. `fillExternArrayLikeStructArms` sends user-declared closed structs through
+   ordinary `__extern_get` / `number_toString` / `__extern_has` for length,
+   indexed Get, and indexed Has. Its common `ToLength` tail lives in
+   `object-runtime-enumeration.ts`, so the old `$Object` arm and the new closed
+   receiver arm share coercion and clamping exactly.
+3. Closed i32 values branded as Symbol are boxed through `__box_symbol`, not
+   `__box_number`, before `String.raw` performs its existing ToString guard.
+
+The focused fixture `tests/issue-5152-raw-readers.test.ts` adds exact-sentinel
+controls for getter abrupt completion and order, physical-field overrides,
+receiver identity, present-`undefined`, and static-metadata safety:
+pre-definition, untaken/taken branch, and two same-shape instances. On the
+safe bag-backed candidate the latter six temporal/per-instance controls pass;
+the complete standalone result is `130022 / 131071`, with exactly bits
+`1 + 8 + 16 + 1024` still absent. This is useful negative evidence: the reader
+correctly handles descriptors that reach the bag, but does not fabricate a
+descriptor from static metadata.
+
+The exact remaining source dependency is the static accessor branch in
+`src/codegen/object-ops.ts` (current lines 1760-2096). It executes
+`ctx.classAccessorSet.add(accessorKey)` at lines 1777-1778, where `accessorKey`
+is the compile-time `${structName}_${propName}` name,
+synthesizes a bare `${structName}_get/set_${propName}` function, and returns
+the receiver without an identity-keyed descriptor/bag write. `classAccessorSet`
+is a compile-time `Set` created in `src/codegen/context/create-context.ts`, and
+the optional S5C globals are keyed only by `(structName, propName)`; neither is
+runtime proof that this object was defined, that a branch was taken, or that a
+same-shape peer object owns the descriptor. `$shape` is immutable layout
+identity, not a definition epoch. A reader fallback based on any of those
+metadata carriers is therefore unsound and was intentionally removed.
+
+The required shared-owner repair is narrow: on a *successful runtime*
+definition through that static accessor branch, populate the existing
+per-receiver descriptor/bag substrate observed by `__carrier_bag_has` /
+`__carrier_bag_of`; do not copy the raw object or turn struct/key metadata into
+descriptor truth. The existing runtime accessor applier path in
+`emitExternDefinePropertyNoValue` (`object-ops.ts` from line 3019) and
+`carrier-bag-define.ts` is the relevant established mechanism. Its owner must
+preserve one-time receiver/key/descriptor evaluation, descriptor transition
+validation, and direct static-access behavior while making the successful
+definition observable to dynamic reads. This plan slice does not edit
+`object-ops.ts`, runtime sidecars, or storage machinery.
+
+### 2026-09-20 authorized static-accessor mirror plan
+
+The reader-only boundary above is now extended by a single coordinated source
+slice in `src/codegen/object-ops.ts`, limited to the standalone `__anon_*`
+static-inline accessor branch (the branch that currently starts near line
+1760). Before emitting the receiver body, call `ensureObjectRuntime`, reserve
+the existing `__defineProperty_accessor` target, and flush late-import shifts.
+Retain the already evaluated `objLocal`; materialize the literal key and each
+getter/setter closure exactly once into externref locals. Call the existing
+accessor applier with that saved receiver, key, closures, and the established
+accessor flag encoding (including Get/Set-present bits 8/9); on its successful
+result, drop the applier result and then publish those *same* closure locals to
+the legacy per-struct globals.
+
+This preserves receiver/key/closure single evaluation and lets the existing
+carrier-bag define arm establish per-instance runtime presence. It must not
+call `emitExternDefinePropertyNoValue`, because that helper recompiles those
+operands. It does not add a carrier, sidecar, closure ABI, `String.raw`, or
+reader fallback. The mirror's runtime branch is explicitly standalone-only;
+the measured JS-host descriptor snapshot remains 66528, but no byte-for-byte
+host-output comparison is claimed. Direct typed
+property reads still rely on pre-existing compile-time
+`classAccessorSet`/per-shape globals and are explicitly out of this slice's
+lifecycle guarantee; only dynamic reads such as `String.raw` are claimed.
+
+Fresh Node 24, standalone, isolated original-row evidence on the safe reader
+candidate (all artifacts have an empty Wasm import list):
+
+- `built-ins/String/raw/nextkey-is-symbol-throws.js` — **pass**.
+- `built-ins/String/raw/template-length-throws.js` — **fail**: expected the
+  Test262Error accessor throw, but no exception occurred.
+- `built-ins/String/raw/returns-abrupt-from-next-key.js` — **fail** on the
+  strict rerun: `TypeError: Cannot assign to read only property`.
+
+The isolated runner output is retained at
+`/private/tmp/js2-5152-raw-three-standalone-candidate-20260919.log`; the
+primary/strict compiler import audit is retained at
+`/private/tmp/js2-5152-raw-three-imports-20260919.log` and reports `imports: []`
+for all four emitted variants. This is a real Symbol original-row gain only,
+not a three-row or 30-path pass-rate claim. The known compiled-host baseline
+remains 28 pass / 2 non-pass across the 30-path manifest; it was not rewritten
+or represented as parity by this reader slice.
+
+Same-base safeguard: a fresh Node 24 one-row `runTest262File` execution using
+the untouched `4a6cbdf1` coordinator compiler source returns **fail** for
+`nextkey-is-symbol-throws.js` (the expected TypeError is not thrown), with
+`success: true`, `imports: []`, and one diagnostic. The coordinator worktree
+has no populated corpus checkout, so the temporary audit launcher remapped only
+its `test262/` *readFileSync* corpus reads to the pinned shared corpus; compiler
+and test-runner modules themselves remained the untouched coordinator source.
+This is a fresh authoritative one-row runner invocation, not a claim that a
+literal maintained `--isolate` command was run from that unpopulated checkout.
+The exact diagnostic is a **warning**:
+`IR path failed for $DONOTEVALUATE: function typeIdx parity mismatch: IR=132,
+legacy=50 — keeping legacy body [IR-FALLBACK]`. The current candidate's exact
+Symbol assembly likewise reports `success: true`, `imports: []`, and the same
+single warning. Therefore the evidence establishes a same-base Symbol verdict
+delta but makes no diagnostics-clean claim. Durable logs are
+`/private/tmp/js2-5152-raw-symbol-baseline-4a6-20260920.log` and
+`/private/tmp/js2-5152-raw-symbol-candidate-errors-20260920.log`.
+
+### 2026-09-20 frozen reader/mirror checkpoint, validation boundary, and residual
+
+The source candidate is now deliberately frozen outside gate-fixes. It has four
+cooperating, standalone-only pieces:
+
+1. `fillClosedStructExternGetArms` consults a live carrier-bag descriptor by
+   presence before a physical field, calls `__reflect_get_receiver` with the
+   original receiver, and boxes a symbol-branded i32 with `__box_symbol`.
+2. `fillExternArrayLikeStructArms` routes admitted user shapes' length/index/
+   has-index operations through ordinary `__extern_get`, `number_toString`, and
+   `__extern_has`; `buildArrayLikeToLengthFromExternref` is the common ToLength
+   tail shared with the `$Object` arm.
+3. The static inline accessor path mirrors only a successful standalone
+   `__anon_*` definition into the existing identity bag. It evaluates receiver,
+   key, and closures once; rejects an unliftable supplied getter/setter rather
+   than storing null; applies `__defineProperty_accessor`; and only then
+   publishes the legacy globals. No raw-object copy, static metadata fallback,
+   carrier allocation, or JS-host change is involved.
+4. The ordinary array-like routing is gated by `ctx.standalone`. This restores
+   native-first's pre-existing physical-reader boundary: an initial ungated
+   candidate returned `""` for the native-first `String.raw({raw:{length:2,
+   0:"a",1:"b"}}, "X")` control; the corrected route returns `"aXb"`.
+
+Measured candidate evidence (Node 24, fresh isolated standalone runs) is:
+
+- exact three originals: **2 pass / 1 fail** — `template-length-throws` and
+  `nextkey-is-symbol-throws` pass; only the delete/reassignment half of
+  `returns-abrupt-from-next-key` fails;
+  `/private/tmp/js2-5152-raw-three-final-20260920.log`.
+- immutable 30-path manifest: **29 pass / 1 fail / 0 skip**, with that same
+  one original remaining;
+  `/private/tmp/js2-5152-string-raw-30-final-20260920.log`.
+- the standalone fixture's complete ordinary-reader mask is **131071**, and
+  all generated artifacts in this lane have `imports: []`.
+- the direct Node oracle also returns **131071**. The untouched-`4a6` A/B
+  launcher records the historical standalone mask **129478**, direct Node
+  **131071**, host full-source strict-setter throw, host delete-excluded mask
+  **66528**, and native-first `"aXb"` at
+  `/private/tmp/js2-5152-reader-fixture-base-20260920.log`.
+
+The fixture's JS-host case is intentionally a **baseline snapshot**, not a
+positive compatibility or parity claim. For the source with the known
+delete/reassignment sequence excluded, untouched `4a6` produces **66528**;
+the asserted missing descriptor bits are
+`1/2/8/16/1024/2048/4096/8192/16384/32768`. The full host source still throws
+the pre-existing strict setter error. The focused run after the native-first
+gate was 4/5 solely because this case still expected the standalone mask;
+`tests/issue-5152-raw-readers.test.ts` now asserts the documented 66528
+baseline. Its final direct run is **5/5** at
+`/private/tmp/js2-5152-raw-readers-vitest-after-coercion-local-20260920.log`.
+It must never be reported as full host parity.
+
+The final direct TS7 invocation against the shared installed dependencies
+passed: `/private/tmp/js2-5152-typecheck-ts7-final-20260920.log`.
+The package script itself cannot resolve this isolated worktree's absent local
+`node_modules`; that is a worktree provisioning limitation, not a TS result.
+
+#### Remaining original: anonymous bag deletion, not a reader regression
+
+The last standalone original is a shared delete/set residual. A targeted
+diagnostic gives compiled standalone **43** versus direct Node **51**:
+the first accessor throw and `delete` result are observed, but the subsequent
+assignment is refused. The durable helper map is
+`/private/tmp/js2-5152-delete-lifecycle-helper-map-v2-20260920.log`.
+
+Source/WAT attribution is exact:
+
+- `typeof-delete.ts` sends `delete obj.raw["0"]` to `__delete_property`.
+- `__carrier_bag_delete` is reached, but its finalizer currently has closure,
+  generator, vec, and Error lookup arms only. It has no anonymous-instance
+  arm, returns `-1`, and `__delete_property` takes its historical non-object
+  `return 1` fallback without removing the bag accessor.
+- The later strict assignment follows `assignment.ts` →
+  `__extern_set_strict` → `__reflect_set` → `__extern_set`; the still-live
+  getter-only bag entry produces the shared refusal result and the observed
+  TypeError. `object-runtime-strict-set.ts` is only the correct consumer of
+  that refusal and is not an edit target.
+
+No deletion code is included in this reader/mirror checkpoint. A separately
+owned true-expando follow-up may need `carrier-bag-delete.ts` **and an
+explicitly coordinated provenance-registry/API seam**; neither file set nor
+implementation is authorized by this checkpoint. Its source-reviewed plan is:
+
+1. Publish this frozen reader/mirror repair first. Then authenticate actual
+   anonymous-*literal* provenance; neither the `__anon_` naming convention nor
+   a structural type/shape match is proof that a receiver is eligible. The
+   existing `object-literal-carrier.ts` AST-to-carrier private `WeakMap`,
+   strict-method allocation recorder, and insertion-order map are not a
+   complete enumerable finalizer registry (the latter two omit property-only
+   or empty literals). They must not be silently substituted for that proof or
+   widened without coordinated ownership.
+2. Only after an authenticated registry design exists, enumerate its concrete
+   allocated candidates at FINALIZE and match both Wasm type and logical
+   collision stamp through `buildShapeGuardedArm`; type-only matching is
+   insufficient for canonicalized shapes. The existing pipeline stamps shapes
+   before `fillCarrierBagDelete`, but a candidate list alone remains
+   insufficient admission evidence.
+3. Look up, never ensure, the receiver's existing closure bag. Retain the
+   current `-1/0/1` not-handled/refused/deleted protocol and delegate a
+   successful admission to existing `__delete_property`, rather than copying
+   configurable/count logic or widening `IS_INSTANCE_EXPANDO_CARRIER`.
+4. Before delegation, compare the normalized stored own-entry key after
+   `__obj_find` against the receiver's exposed physical fields using
+   `exposedClosedStructFieldName`; do not re-coerce a user-observable key or
+   use value-undefined as absence. `isInternalStructFieldName` metadata must
+   preserve legal `$`/`__` user keys. A physical collision deliberately remains
+   unhandled: deleting its overlay could resurrect stale physical data.
+5. Preserve #5753's class arm, arm order, retained-marker authentication/count
+   repair, builtin function metadata precedence, and generator/vec/Error
+   routes. That arm replaces `fn.locals` with its own bag plus locals 3/4/5,
+   so any anonymous scratch locals must be appended after that actual
+   replacement. Do not mint late helpers/types/imports or share instruction
+   trees across arms; prove the no-class/no-closure/no-vec/no-Error demand case
+   still reserves the helper when an authenticated anonymous candidate exists.
+6. Required follow-up controls include the exact configurable-accessor
+   delete/reassign original; accessor and data true expandos; non-configurable
+   sloppy false and strict TypeError; repeat delete; missing bag; independent
+   same-shaped objects; physical-override non-resurrection; class retained
+   marker; function name/length and generator routes; accessor non-invocation;
+   and Symbol-versus-string keys. Compare against untouched base with the same
+   runner, then rerun all 30 String.raw originals.
+
+The verified IR task confirms no active anonymous-expando writer or pending
+fix to await. This is a handoff specification, not runtime proof or deletion
+implementation approval; `object-runtime.ts`, `typeof-delete.ts`,
+`object-runtime-strict-set.ts`, class tombstones, and the generic instance
+classifier remain out of the follow-up until an authenticated registry design
+is independently owned and reviewed.
+
+#### 2026-09-20 provenance-marker proposal — held by IR; do not implement
+
+**Status (2026-09-20).** IR explicitly put the marker/layout direction on hold.
+The proposal below is retained as historical investigation, not an approved
+implementation plan: do not add a registry, marker field, ABI receipt, finalizer,
+or allocation patch walk from it. In particular, a FINALIZE-time candidate cannot
+be used to reserve `__carrier_bag_delete` after `__delete_property` has already
+baked its optional call. The existing side-bag route is audited separately below.
+
+The existing `object-literal-carrier.ts` map is useful evidence but cannot be
+the deletion admission itself: it is a private, non-enumerable
+`WeakMap<ObjectLiteralExpression, typeIdx>`, populated by
+`compileObjectLiteralForStruct`. It has no finalizer snapshot, and
+`compileWidenedEmptyObject` emits its own closed `struct.new` without using it.
+Even an iterable copy of that map would prove only that *some* literal used a
+canonical type. It would not distinguish a later copied/manual/nonliteral
+allocation of the same Wasm type. The existing strict-method recorder shows the
+same constraint explicitly: its IR token is construction-site provenance, but
+it deliberately ignores property-only literals and thus cannot be repurposed
+as this registry.
+
+Historical fail-closed seam (rejected for this follow-up; retained for the
+provenance constraint it established):
+
+1. `object-literal-carrier.ts` owns a per-`CodegenContext` allocation registry,
+   held in module-private `WeakMap`s rather than a new shared context field.
+   `recordClosedObjectLiteralAllocation(ctx, structNew, literal, typeIdx)` puts
+   a primitive `objectLiteralAllocationToken` on the actual `struct.new` and
+   records its exact literal/type pair. The companion
+   `requestClosedObjectLiteralDeleteProvenance(ctx, typeIdx)` is demand-only;
+   it records a type requested by the already-existing standalone anonymous
+   accessor-mirror path, not a claim that every instance of that type is a
+   literal.
+2. `literals.ts` is the only producer integration: call that recorder from
+   `pushStrictMethodLiteralAllocation` for every
+   `compileObjectLiteralForStruct` allocation, and from
+   `compileWidenedEmptyObject` immediately before its direct `struct.new`.
+   The latter is required for empty/property-only widened literals. Open
+   `$Object` literals, host/accessor literals, and any construction path that
+   does not carry this exact token stay unadmitted.
+3. `object-ops.ts` adds only one demand registration, inside the existing
+   successful standalone anonymous accessor-mirror branch, after its resolved
+   `structTypeIdx` is available. It must not broaden that branch, use an
+   `__anon_` name as runtime proof, or change receiver/closure evaluation.
+   At finalization the request is intersected with actual recorded literal
+   allocations; a requested type with no such allocation produces no marker,
+   no delete arm, and no new behavior.
+4. `object-literal-carrier.ts` also owns
+   `finalizeClosedObjectLiteralDeleteProvenance(ctx)` and its immutable
+   `closedObjectLiteralDeleteCandidates(ctx)` snapshot. For each demanded type
+   with an exact recorded allocation, finalization appends a compiler-private
+   immutable i32 marker field and patches every `struct.new` of that augmented
+   type: only an instruction whose token resolves to the same literal *and*
+   type receives its nonzero marker; all other allocations receive zero. The
+   marker field index is held in a private side table, never rediscovered by a
+   `$`/`__` name, because those are legal user keys. The patch walk must cover
+   functions, globals, nested instruction arrays, and retained inline bodies;
+   shallow IR clones preserve the primitive token exactly as the existing
+   strict-method mechanism requires.
+5. `index.ts` owns only the two pipeline placements. Invoke this finalizer
+   after `resolveAndRecordShapeStamping` (so its candidate snapshot can carry
+   the final logical shape guard) and before the first
+   `fillObjVecReflectionHelpers`/`fillCarrierBagDelete` consumer in both the
+   single-source and multi-source finalization pipelines. It must not mint late
+   helpers, imports, or types. The marker is appended after any existing shape
+   stamp; the snapshot records the authoritative marker field index plus the
+   existing shape id/index.
+6. `carrier-bag-delete.ts` is a consumer only. It receives the immutable
+   candidate snapshot and adds a lookup-only arm guarded by exact Wasm type,
+   final logical shape (`buildShapeGuardedArm`), and nonzero provenance marker
+   before calling the existing `__closure_bag_lookup`. It retains the current
+   `-1/0/1` protocol and delegates deletion to `__delete_property`. Before
+   delegation, it obtains the existing entry via `__obj_find` and compares that
+   stored normalized key against the candidate's exposed physical fields via
+   `exposedClosedStructFieldName`/`isInternalStructFieldName` and the existing
+   flattened native-string equality path. A physical collision remains
+   **not handled**; no key is re-coerced and no `undefined` value is used as an
+   absence test. Any missing provenance, marker, bag, entry, or shape metadata
+   also remains `-1`.
+
+This historical design correctly identified that type-only provenance is not an
+allocation proof, but it does **not** authorize a type-name or type-only fallback.
+It is superseded for this slice by the receiver-identity-bag audit below. No
+source or test execution has been performed for the held design.
+
+#### 2026-09-20 existing identity-bag audit — marker-free anonymous delete arm
+
+The current runtime already has a per-receiver authentication fact that the
+marker proposal did not use. In standalone/WASI, `ensureObjectRuntime` first
+reserves `__closure_bag_lookup` / `__closure_bag_ensure`, then carrier visibility,
+class tombstones, and instance props; only later does it construct
+`__delete_property`, whose `reserveCarrierBagDelete` call bakes the optional
+carrier-delete call. Thus the needed lookup and delete slots are already stable
+before the caller body exists; no late demand, import, helper, or ABI-layout
+mutation is needed.
+
+`__closure_bag_ensure` records `{ key: eqref receiver identity, bag: $Object }`;
+`__closure_bag_lookup` returns that same bag only after `ref.eq` with the original
+receiver. The native `__defineProperty_accessor` and value twin already route a
+user-instance receiver through `defineCarrierBagSubstitutionArm`, which tests the
+existing instance substrate, creates or reuses this identity-keyed bag before the
+ordinary `$Object` descriptor path validates and applies the definition.
+`__obj_find` then proves a live *own* entry in that exact bag: it skips
+`FLAG_TOMBSTONE`, so neither an absent entry nor a deleted entry is admitted, and
+it never infers absence from the stored value (including `undefined`). The reader
+checkpoint already consumes this same fact: `fillClosedStructExternGetArms` gives
+a live bag descriptor precedence over a physical field and uses
+`__reflect_get_receiver(bag, key, original)` to preserve accessor `this`.
+
+IR confirmed that this is a consumer-only seam with no conflicting producer or
+layout owner. That is ownership clearance, not blanket semantic acceptance; the
+following source admission proof is the implementation boundary. The narrow
+candidate is consumer-only in `carrier-bag-delete.ts`:
+
+1. Build a private list of existing anonymous closed-shape entries carrying the
+   already-established `typeIdx` plus `$shape` id/index when canonicalization
+   requires it. This is a static dispatch list, **not** a new generic carrier
+   predicate and not a claim about literal allocation provenance. The runtime
+   admission remains the exact receiver's live bag entry.
+2. Place its lookup-only arm after the existing closure, native-generator, vec,
+   Error, and #5753 class arms. The class arm retains its own retained-marker
+   repair and locals 3/4/5; any new scratch locals must be appended after that
+   actual replacement. No change may widen `IS_INSTANCE_EXPANDO_CARRIER`,
+   `IS_CLASS_INSTANCE_CARRIER`, or the closure/generator classifiers.
+3. On a type-and-shape hit, call the existing `__closure_bag_lookup`; null or a
+   non-`$Object` bag returns `-1`. Call the existing `__obj_find` and return
+   `-1` for no live entry. This both prevents cross-instance effects and makes a
+   failed/untaken definition inert.
+4. Before delegation, read the **stored** key from that `$PropEntry`, rather
+   than replaying the caller key after lookup. A string entry is flattened and
+   compared through the existing native string equality helper against every
+   exposed physical own-field name of the matched shape. A collision returns
+   `-1`: deleting an overlay while leaving a physical field would resurrect
+   stale storage. A physical `@@…` name is declined wholesale because it can
+   mean a well-known Symbol slot which the string-only comparison cannot prove
+   distinct. Field filtering must use `exposedClosedStructFieldName` plus
+   `isInternalStructFieldName`, so legal user `$`/`__` keys are not silently
+   erased as compiler internals.
+5. Only then delegate to the existing `__delete_property(bag, storedKey)`, preserving
+   its `-1/0/1` protocol, configurability refusal, tombstone/count bookkeeping,
+   and strict-mode caller behavior. There is no copied delete algorithm.
+
+This explains why a nonliteral receiver of an admitted anonymous type can be
+safe without a marker: the bag is keyed to that concrete receiver, and a live
+entry whose stored key is not any physical own field is a true expando regardless
+of which allocation path produced the receiver. A receiver without a bag, without
+a live entry, with a physical collision, or without an exact logical shape remains
+unhandled and retains current behavior. This is deliberately narrower than a
+claim that every `__anon_` allocation is a literal.
+
+**Implemented source admission (revised controls await a fresh test lease).**
+The selector is intentionally a static inventory gate, not a runtime `__anon_`
+name test:
+
+1. It runs only in standalone/WASI and declines every non-undefined
+   `linkBrandRoleOf(ctx)` result, matching the branding finalizer's actual
+   consumer/provider classification rather than duplicating its flags. A linked
+   peer can contribute a canonical twin outside this module's inventory; this
+   slice preserves the old `-1` route rather than relying on an implicit
+   cross-module receipt.
+2. Each candidate must be one exact `__anon_` registry entry: its
+   `structMap`/reverse-map identity is one-to-one, `typeDef.name` agrees with
+   the map key, and `typeDef.fields === ctx.structFields.get(name)`. Missing
+   fields, aliases, a nominal parent/child edge, a `noBrandShapeTypes` entry,
+   or any fnctor cold/layout registration declines the whole candidate.
+3. The candidate must be a bare type after the `__vec_base` shape-brand anchor.
+   This helper is filled after `resolveAndRecordShapeStamping` and before the
+   final `brandCollidingShapeTypes` pass in both compile pipelines. A surviving
+   candidate is therefore either unique or gets the existing trailing nominal
+   brand before encoding; a static `$shape` guard is additionally required when
+   a logical collision stamp exists. The finalizer's own no-brand/supertype/
+   anchor exclusions match this selector, so an unknown canonical or subtype
+   state stays unhandled rather than widening `ref.test`.
+4. Physical inventory walks every recorded field, using `!== undefined`, not
+   truthiness: `""` is physical, and recorded `$…`/`__…` keys remain physical
+   while compiler bookkeeping stays hidden. A recorded `$constructor` carries
+   both its raw spelling and the dynamic reader's exposed `constructor`
+   spelling. A physical `@@…` name declines the entire candidate, because the
+   compiler may use that spelling for a well-known Symbol field. Every admitted
+   comparison literal is preflighted from an already-materialized global/helper;
+   FINALIZE never mints a literal global or oversized helper. The stored
+   `$PropEntry.key` is flattened only after `__obj_find`, then becomes the
+   delegated delete key so this new arm does not add a caller-key coercion
+   replay. This is not a blanket claim that the existing lookup performs only
+   one coercion for every possible external key.
+5. The arm calls lookup only; it never ensures a bag. It records a candidate
+   ordinal only after a non-null identity lookup, retains `-1/0/1`, and invokes
+   the existing `__delete_property` only after a live entry and no physical-key
+   collision. A collision returns `-1`, so it cannot delete an overlay and
+   resurrect a stale slot.
+
+`ensureObjectRuntime` reserves closure-bag helpers unconditionally in the
+standalone/WASI path before it emits `__delete_property`; that emission calls
+`reserveCarrierBagDelete` before its own call site is baked. Thus an
+anonymous-only module already has a reserved helper. The fill gate names the
+anonymous arm independently so a closure/vec/Error arm cannot conceal a
+no-demand failure.
+
+The implementation adds only the private candidate collector, lookup arm, and
+stored-key collision screen in `carrier-bag-delete.ts`; it does not add a
+context field, generic classifier, sidecar, marker, ABI receipt, producer, or
+layout mutation. Its scratch locals are appended from the actual local count.
+The published branch does not yet contain #5753's class retained-marker hunk.
+An actual `cddba56b` composition worktree is still required: its class arm and
+retained-marker path must remain ahead of this arm and retain locals 3/4/5;
+only then may this slice append its locals from the resulting list.
+
+The first focused lease attempt was intentionally treated as fixture
+preflight, not a behavior verdict. Its direct `const first = { ... }` /
+`const second = { ... }` receivers were deliberately promoted by the
+growable-literal pass to open `$Object` carriers after their dynamic
+define/delete operations. The emitted WAT showed both receiver locals as
+`externref`, rather than an `__anon_*` type, so the three observed fixture
+failures could not establish an anonymous-arm defect. That preliminary run
+settled 7/10 tests; it has no durable green/red claim or retained acceptance
+log. The replacement sources bind the nested `raw` value of an outer template,
+matching the original `indexOnly` allocation shape instead of a direct mutable
+receiver literal.
+
+The revised fixture adds an intended WAT admission assertion for the original
+`RAW_READER_SOURCE` index-only receiver: numeric structural producer/store
+(`struct.new` or outer-template `struct.get`, including plain temporary
+transfers) and `ref.test` operands must be mapped back through the explicit
+type table, then tied to the matching `__carrier_bag_delete` arm. This is meant
+to provide a reviewable all-or-nothing physical-literal-materialization proof
+for the target receiver; the source uses pure `selectNativeStringLiteral`
+lookup and declines missing globals/helpers rather than finalizing a new
+literal helper.
+
+The first revised-fixture run was a **diagnostic preflight, not acceptance**:
+Node 24 direct Vitest at
+`/private/tmp/js2-5152-anon-delete-revised12-20260920.log` settled **6 pass /
+6 fail**. The ordinary-reader runtime mask itself still passes, but the
+structural probe found no WAT local named `indexOnly`; compiler locals are
+generated names and its type operands are numeric. A second probe saw WAT
+formatter label `type66`, which is likewise not evidence that the receiver is
+not anonymous. Those assertions need a persisted WAT artifact and a structural
+producer-to-slot-to-helper identity trace, not source-local-name or formatted
+type-name matching.
+
+The same run also exposed a TypeScript-only `PropertyKey` rejection in the
+coercion fixture; its source now casts **only the key** (`firstKey as any` /
+`secondKey as any`) and retains concrete receiver inference, so it has not
+silently selected the open-object path. The strict-delete invalid-Wasm,
+physical-field exception, and Symbol snapshot results are unclassified until
+each is paired against the exact untouched `35e040c` base. No result from that
+preflight is attributed to the anonymous delete helper.
+
+At the next explicit compiler/test lease, run first the exact original
+`built-ins/String/raw/returns-abrupt-from-next-key.js` once on this candidate
+and once on an untouched `35e040c` compiler/harness. Then pair the three
+unclassified fixture cases against that same base before changing their
+expectations. For the structural probe, set `JS2WASM_5152_WAT_DIR` to a
+dedicated temporary directory: the fixture writes each successful `emitWat`
+artifact there before it evaluates its assertions. Preserve that artifact and
+derive the producer-to-slot-to-helper trace from it; a passing
+`RAW_READER_SOURCE` runtime mask alone does not establish closed-carrier
+admission.
+
+Required lease-time controls are: the exact delete/reassign String.raw original;
+the exact `indexOnly` numeric-WAT type/ref-test admission proof; an
+anonymous-only, concretely inferred data-expando module with no user closure/vec
+demand plus receiver-local WAT construction/ref-test evidence; accessor/data
+true expandos; non-configurable sloppy/strict behavior; repeat/missing delete;
+independent same-shaped objects plus a nonliteral allocation; public operator
+and Reflect object-key coercion counts; noBrand/super/alias/layout and
+linked-decline structural probes; and unchanged class retained-marker, fnctor,
+generator, closure, vec, and Error lanes. Physical `length`, `""`, `$…`,
+`__…`, raw `$constructor`, exposed `constructor`, and Symbol.iterator/`@@iterator`
+controls are deliberately labeled **nonconforming baseline snapshots**. Their
+stage and payload must be observed separately before any preservation assertion
+is accepted; they are not a claim that physical descriptor deletion is now
+ordinary-delete complete. The revised 12-test fixture keeps
+`Reflect.deleteProperty` refusal and strict operator throwing as separate
+assertions; its corrected rerun waits for the next compiler/test lease.
+
+#### 2026-09-20 paired residual receipt and fixture-boundary correction
+
+The exact original row has now been run against the same compiler base rather
+than inferred from the earlier fixture:
+
+- candidate, this anonymous-delete worktree:
+  `/private/tmp/js2-5152-return-abrupt-candidate-delete-35e-20260920.log` —
+  **1 pass**;
+- detached untouched `35e040c08ed10f793faf26bb0f0eac55be662627`:
+  `/private/tmp/js2-5152-return-abrupt-base-35e-20260920.log` — **1 fail**,
+  `strict rerun: TypeError: TypeError: Cannot assign to read only property`.
+
+That is one localized original-row gain. It is not a frozen-30 result, a
+whole-issue completion claim, or artifact/import proof: the isolated Test262
+runner reports the row verdict but not the emitted module imports. A later
+candidate rerun will set `JS2WASM_DUMP_WAT_FN=test,__carrier_bag_delete` and
+`JS2WASM_DUMP_TYPES=<durable temporary prefix>` so the exact original's WAT
+can be retained before any producer-to-slot-to-helper assertion is accepted.
+
+The same source fixtures were paired against the candidate and detached 35e
+base through `/private/tmp/js2-5152-delete-fixture-pair-20260920.mts`:
+
+1. Strict non-configurable operator delete reaches the same standalone Wasm
+   validation `CompileError` in both trees (including the reported offset).
+   Direct strict Node returns `1`, so this is an unchanged compiler limitation,
+   not a passing standalone assertion.
+2. The physical-field fixture had equal compilation receipts and empty reported
+   imports, but the original pair driver caught module construction,
+   instantiation, and export invocation in one block. Its
+   `instantiated:false` record is therefore **not** evidence of an
+   instantiation failure and must not be cited as physical-delete behavior.
+3. The Symbol/`@@iterator` fixture invokes and returns `1` in both trees. That
+   is a baseline snapshot, not Symbol-delete conformance.
+
+The focused TypeScript fixture now has an explicit `observeStandalone` helper
+that records `compile`, `module`, `instance`, `invoke`, and `invoke-throw`
+separately, including imports at the point a module is valid. The external
+pair driver has the same staging repair. Positive true-expando tests are kept
+separate from these named baseline limitations; no known limitation is folded
+into an aggregate passing mask. The obsolete WAT checks that guessed a source
+local name or interpreted formatter `typeNN` labels as anonymous-shape proof
+were removed. Opt-in `JS2WASM_5152_WAT_DIR` capture writes WAT before any
+review assertion, and the next run must inspect the artifact structurally
+rather than recreate that label assumption.
+
+The remaining lease-time order is intentionally bounded: capture the exact
+original artifact and verdict; run the repaired focused fixture to classify
+its limitation stages; then run the frozen 30-path standalone String.raw
+manifest unchanged. The #5753 retained-class composition receipt remains a
+separate prerequisite for deletion publication and is not implied by these
+anonymous-only results.
+
+#### 2026-09-20 terminal standalone receipts; publication boundary remains open
+
+The ordered lease-time runs above are terminal on this candidate:
+
+- exact `returns-abrupt-from-next-key.js` with artifact dump: **1 pass**, 0
+  non-pass —
+  `/private/tmp/js2-5152-return-abrupt-candidate-artifact-run-20260920.log`;
+- repaired focused `issue-5152-raw-readers.test.ts`: **12/12 pass** —
+  `/private/tmp/js2-5152-anon-delete-repaired-fixture-20260920.log`;
+- frozen 30-path standalone String.raw manifest: **30 pass**, 0 non-pass,
+  exit 0 —
+  `/private/tmp/js2-5152-string-raw-frozen30-delete-candidate-20260920.log`.
+
+The manifest is exactly the 30 unique corpus paths in
+`plan/agent-context/5152-string-raw-es2015-paths-20260919.txt`, SHA-256
+`d7d2c223fb766dcc9ed460d3c2ddad520195dfc007db6d3c4f575575ba3e3827`.
+The raw30 receipt is a retention gain; it does not close #5152 or the
+physical-delete residual.
+
+The original artifact files are
+`/private/tmp/js2-5152-return-abrupt-candidate-artifact-20260920` (physical
+type listing) and the matching `.wat`. This WAT is an explicitly **filtered
+one-function diagnostic**: it contains only `__carrier_bag_delete`, whose body
+has `anonCandidate` / `anonEntry` and a `ref.test (ref 82)` arm; the type receipt
+identifies `82` as `__anon_1` with its physical `length` field. That is useful
+helper-admission evidence only. It cannot prove original binary imports or the
+exact producer-to-slot-to-anonymous-helper path, because it does not contain a
+named original `test`, `__module_init`, or callback/allocation body. A fresh
+run must retain `WebAssembly.Module.imports` from the actual original binary as
+a separate receipt and capture the relevant module-init/callback bodies before
+that structural claim is accepted. Use `rg -a` when inspecting the saved WAT:
+it contains NUL data. This trace remains a publication gate, not a
+formatter-label substitution.
+
+`/private/tmp/js2-5152-original-artifact-receipt-20260920.mts` is prepared
+for that fresh run. It assembles the original Test262 harness source with the
+same standalone compile options used by `runOriginalHarnessVariant`, writes the
+exact primary/strict source hashes and full WAT, and records both compiler-
+reported and `WebAssembly.Module.imports` manifests.
+
+**Terminal full-artifact receipt.** The diagnostic subsequently ran on the
+candidate and saved
+`/private/tmp/js2-5152-return-abrupt-full-artifact-candidate-run-20260920.log`.
+Both original-harness variants compiled successfully with the same one
+`IR-FALLBACK` warning for `$DONOTEVALUATE`; each records
+`reportedImports: []` and actual `WebAssembly.Module.imports: []`, plus these
+source/binary SHA-256 pairs:
+
+- primary source `82fb5616d323f3403890c1ca8e9371ef786528435cfee40c7049261f5dbfbe42`,
+  binary `822fce6acbb7aca3fb3bdcafde9fb420370cdbdc27b6dc670b74e30f05a39f20`;
+- strict source `f3b572e0884d42b7686acded4302f6daa5cc235cc274f488556536e1d7ab33ad`,
+  binary `0d75c4370653fce936088df345c0fc4937a292bcba209afaff8fdb91782e9b29`.
+
+The full strict WAT and exact assembled strict source are retained as
+`/private/tmp/js2-5152-return-abrupt-full-artifact-candidate-20260920-strict.wat`
+and `.source.js`. They establish the static lowering chain without relying on
+a formatter local name:
+
+1. The exact strict source constructs the only `obj.raw` nested literal at
+   source lines 337–341 and executes `delete obj.raw['0']` at line 354.
+2. The full WAT names type 82 `__anon_1` with its physical `length` field
+   (line 60), and type 83 `__anon_2` with a `raw: (ref null 82)` field
+   (line 61). `__module_init_chunk_0` constructs 82 then 83 and stores the
+   outer value at lines 125193–125196.
+3. That same chunk extracts `struct.get 83 0` to its delete receiver local at
+   lines 125393–125397 and issues `call 170` at lines 125435–125437. Function
+   170 is named `__delete_property`; its full body invokes function 169,
+   `__carrier_bag_delete`, on the applicable non-vector carrier route. The
+   helper includes the anonymous `ref.test (ref 82)` arm.
+
+This is a static producer-to-slot-to-delete-helper receipt for the original
+strict variant, not a runtime branch-trace claim. It removes the earlier
+filtered-WAT ambiguity while retaining the independent row verdict and actual
+import manifests.
+
+The repaired focused file has eight positive checks and four deliberately
+named baseline observations. The latter now record, without changing their
+meaning, strict and coercion validation failures at `module`, the physical
+case's guest `invoke-throw` with an opaque object payload, and the Symbol case's
+`invoke` result `1`. The 12/12 count must never be summarized as 12
+conformance successes. The physical payload is intentionally not claimed to
+be an instantiation error or an ordinary-delete result.
+
+A temporary candidate/base pair of a manually mirrored coercion program has
+the same `module` validation error in both trees, but it is not an exact
+extraction of the revised fixture source. It is diagnostic-only. The retained
+pair driver now has an `exact-coercion` mode that extracts
+`ANONYMOUS_EXPANDO_DELETE_COERCION_SOURCE` from this candidate test file and
+passes that one source path to both compilers. That exact-source candidate/35e
+pair is now terminal:
+
+- candidate:
+  `/private/tmp/js2-5152-delete-pair-candidate-exact-coercion-35e-20260920.log`;
+- untouched 35e:
+  `/private/tmp/js2-5152-delete-pair-base-exact-coercion-35e-20260920.log`.
+
+Both compile successfully with `imports: []` and then fail at the same module
+validation point, with the identical `function #50:"test"`, `fallthru[0]`,
+`expected i32, got (ref null 46)`, and `@+55345` detail. The focused coercion
+observation is therefore regression-cleared as an unchanged baseline
+limitation, while still not counted as a compiled delete-semantics pass.
+
+#### 2026-09-20 frozen #5753 class/anonymous composition receipt
+
+The required composition was performed only in the disposable worktree
+`codex-5152-anon-delete-5753-composition-20260920`, rooted at frozen
+`cddba56b768f30eb5d9af29d2954dd69e2b534b5`. It preserves that checkpoint's
+actual class retained-marker implementation: closure, generator, vec, Error,
+class, then anonymous arm order; class locals 3/4/5; the retained-marker
+branch before the common object lookup; and its existing `classArm` lookup
+claim. The composition appends the anonymous scratch locals only after the
+class replacement (6–9 when the class arm is present), and does not alter the
+class helper or publish a copy of #5753-owned code.
+
+The unchanged frozen class suite plus a disposable one-module joint control
+passed **97/97** in 104.37 seconds:
+`/private/tmp/js2-5152-5753-frozen-composition-20260920.log`. The joint module
+contains both a class expando and two same-shaped nested `{ raw: { length: 1 } }`
+receivers. It validates as a standalone module with no imports and returns the
+direct-Node mask 63. To establish that this is not a vacuous alternate path,
+the exact same compact fixture was run against an untouched detached `cddba56b`
+compiler root. It intentionally failed its 63 assertion with actual **27**:
+`/private/tmp/js2-5152-5753-composition-untouched-cdd-20260920.log`. The
+36-point difference is exactly the two anonymous deletion observations (4 and
+32); class deletion/physical-slot checks (1 and 2), raw `length` (8), and the
+second receiver's pre-delete expando observation (16) remain in the untouched
+result.
+
+This is a frozen source-compatibility and attribution receipt only. Frozen
+`cddba56b` predates the landed reader checkpoint and #5994, so it does not
+substitute for latest-main integration, final frozen raw30 retention, or the
+Array-HOF five-row retention run. The disposable source/test changes are not
+part of this #5152 publication branch.
+
+#### 2026-09-20 synced publication-tree retention
+
+After checkpoint `88bd7169a8` and the clean merge of upstream
+`200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567`, both frozen manifests were rerun
+through the maintained isolated standalone runner on this publication tree:
+
+- String.raw: **30 pass / 0 non-pass** —
+  `/private/tmp/js2-5152-string-raw-frozen30-latest-sync-20260920.log`;
+- Array-HOF subclass regression set: **5 pass / 0 non-pass** —
+  `/private/tmp/js2-5152-array-hof-five-latest-sync-20260920.log`.
+
+These latest-tree receipts retain the two landed reader gains and the Array
+regression repair while the anonymous true-expando deletion slice is present.
+They do not turn the frozen #5753 composition receipt into a current-main
+class integration claim: no #5753-owned source was copied into this branch.
+Physical-field collisions, the strict/coercion baseline validation failures,
+and other explicitly named descriptor-lifecycle limitations remain outside the
+true-expando admission and are not presented as ordinary-delete conformance.
+
+#### 2026-09-20 deletion-slice publication handoff
+
+Before this handoff note, the local deletion-slice source checkpoint was clean
+at `ead8e8520ae132a36e794364349e33d30979bf55`. Its final small source correction
+gives the two conditional instruction fragments in
+`fillCarrierBagDelete` contextual `Instr[]` types; it preserves the reviewed
+operation sequence and lets TS7 validate the nested Wasm `if` rather than
+using a broad cast. Direct TS7 against `tsconfig.ts7.json` exited zero, and
+the post-correction focused reader fixture is **12/12**:
+`/private/tmp/js2-5152-raw-readers-after-ts7-gate-fix-20260920.log`. As above,
+four of those named checks are baseline observations rather than conformance
+passes.
+
+This worktree initially lacked only its local `node_modules/typescript7`
+entry. It now has a missing-only local symlink to the already verified canonical
+dependency at `/Users/thomas/Code/js2/node_modules/typescript7`; no dependency
+tree was overwritten, installed, purged, or committed. That repair lets the
+normal hook's TS7 command resolve from the worktree without changing the
+repository payload.
+
+The normal hooked commit for that type-only correction is `ead8e8520a`. Its
+fast pre-commit gates (Prettier, Biome, LOC budget, and function budget) passed.
+The required normal `git push --set-upstream fork
+codex/5152-anon-expando-delete-20260920` has **not** begun its pre-push hooks
+or updated a remote: the environment denied it before execution as sensitive
+egress because the fork ownership/payload lacked explicit current approval.
+That attempt made no remote change. The user has now explicitly renewed
+authorization to push completed branches to `ttraenkler/js2`, with fallback
+to a feature branch on `loopdive/js2` if the fork push fails. This does not
+authorize pushing `main`. The user also explicitly permits unsigned commits
+for these fixes; normal repository hooks remain required.
+
+The prepared repository-template PR body is retained locally at
+`/private/tmp/js2-5152-pr-body-20260920.md`. With push approval now supplied,
+the remaining sequence is: run the normal pre-push gates and fork
+push with the validated Node 24/pnpm 10 route; verify the remote head; create
+the ready upstream PR with that body; and retain the known-shape residuals and
+the frozen-#5753-versus-current-main distinction. This remains a partial
+true-expando deletion slice, not whole-#5152 completion.
+
+#### Required gates before publishing this reader/mirror checkpoint
+
+When the compiler/test lease is next granted, run (and retain terminal logs
+for) the following against this frozen source before any commit or PR:
+
+1. `git diff --check`; the five-case focused fixture (including direct Node,
+   standalone no-import, host baseline snapshot, and native-first control);
+   then the exact isolated three rows and frozen 30-path standalone manifest.
+2. Existing narrow reader regressions `tests/issue-3147.test.ts` and
+   `tests/issue-4397-native-semantic-js-host.test.ts`, plus a fresh TS7
+   invocation resolved from this worktree's canonical dependency source.
+3. Normal quality gates: format check, lint, LOC/function budgets (adding only
+   a gate-proven function allowance if required), coercion-site/oracle/dead-
+   export ratchets, and the normal hooks. Do not bypass hooks or modify shared
+   baseline files.
+4. Independent peer review after the final diff and before publication. The PR
+   describes **two original improvements and 29/30 standalone manifest rows**,
+   not whole-#5152 completion; it remains draft if any required gate or
+   mergeability condition is unresolved.
+
+#### Terminal reader/mirror gate record (2026-09-20)
+
+All commands below used the worktree's direct installed Node 24/tool binaries
+where applicable; the normal commit/push hooks remain to be run without a
+bypass after the temporary RegExp lease handback.
+
+- Full Git-LFS-aware `git diff --check` passed. The focused fixture passed
+  **5/5** both directly and through the normal changed-root runner (one changed
+  root file). The final focused log is
+  `/private/tmp/js2-5152-raw-readers-vitest-after-coercion-local-20260920.log`.
+- The isolated three-original runner settled **2 pass / 1 fail** and the frozen
+  manifest settled **29 pass / 1 fail / 0 skip**, both with only the documented
+  delete/reassign residual. Logs are
+  `/private/tmp/js2-5152-raw-three-final-20260920.log` and
+  `/private/tmp/js2-5152-string-raw-30-final-20260920.log`.
+- The narrow #3147 regression file passed. #4397's URI escape assertion fails
+  identically on candidate and untouched `4a6`, so it is preserved as a
+  baseline failure, not attributed to this change; logs are
+  `/private/tmp/js2-5152-native-reader-regressions-20260920.log` and
+  `/private/tmp/js2-5152-issue-4397-base-4a6-20260920.log`.
+- TS7, Prettier, and Biome pass at
+  `/private/tmp/js2-5152-typecheck-ts7-final-20260920.log` and
+  `/private/tmp/js2-5152-format-lint-final-20260920.log`. LOC and function
+  ratchets pass using only the measured allowances recorded in this issue;
+  oracle and coercion ratchets pass, with `object-runtime.ts`'s one shared
+  `number_toString` property-key call explicitly allowed.
+- Dead-export preservation, codegen-fallback, stack-balance, host-import, and
+  numeric-local checks pass. The dead-export tool retains its pre-existing
+  strict modeled-closure unknowns for two nonliteral dynamic imports while its
+  preservation contract passes; it is not claimed as retirement certification.
+
+This is a **reader/mirror checkpoint**, not #5152 closure or full JS-host
+parity. No deletion code, shared baseline update, skip-list change, or host
+import is included.
+
+#### 2026-09-20 landed reader receipt — immutable ES2015 baseline
+
+The landed #5991 reader/mirror result was independently remeasured from
+immutable baseline `950cf4b00bf4375742a5b6a6a84a5f39cf46eb7` using compiler
+`d5e58586d1`. The generated JSONL has SHA-256
+`d954ebc1c02232e8d99faa2cde1b2b8b6b30f4f9a4a44ebd34b595b1a3a976b1` and
+contains 48,735 unique oracle-14 / honest / auto rows. Its ES2015 selection is
+10,371 pass / 1,047 fail / 286 compile-error (11,704 total).
+
+Compared with the prior `bb397` receipt, exactly two ES2015 status changes
+exist: `template-length-throws` and `nextkey-is-symbol-throws`, each
+fail-to-pass. No other ES2015 row changed. The raw receipt files are retained
+at `/private/tmp/js2-es2015-baseline-20260920.uTtFjf/`. This records the landed
+reader improvement only; anonymous-expando deletion and the remaining
+`returns-abrupt-from-next-key` lifecycle residual remain pending.
+
+### 2026-09-20 Array HOF subclass regression containment
+
+The fresh full-corpus receipt found five non-ES2015 pass-to-fail rows after the
+reader/mirror checkpoint. They are intentionally tracked here as a regression
+follow-up, not folded into the prior String.raw gain claim. The frozen reduced
+manifest is
+`plan/agent-context/5152-array-subclass-regression-paths-20260920.txt`
+(five unique pinned-corpus paths, SHA-256
+`ab15801cdd5330ca442019ac142583e98fd22a46e56d537dd11cc4100397c0db`):
+
+- `built-ins/Array/prototype/some/15.4.4.17-8-10.js`
+- `built-ins/Array/prototype/forEach/15.4.4.18-8-10.js`
+- `built-ins/Array/prototype/map/15.4.4.19-9-3.js`
+- `built-ins/Array/prototype/filter/15.4.4.20-10-3.js`
+- `built-ins/Array/prototype/every/15.4.4.16-8-10.js`
+
+Fresh Node 24 isolated standalone runs through the runner's own
+`runTest262File` establish the boundary before this follow-up makes a source
+change: untouched `4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7` is **5 pass**
+(`/private/tmp/js2-5152-array-hof-five-base-4a6-20260920.log`), while the
+landed reader checkpoint at
+`35e040c08ed10f793faf26bb0f0eac55be662627` is **5 fail**
+(` /private/tmp/js2-5152-array-hof-five-candidate-35e-20260920.log`). Every
+candidate failure is `illegal cast in __extern_has` through
+`__extern_has_idx ← __hof_*`. The source range from the old baseline compiler
+to the landed reader commit contains only the #5991 reader files and fixture,
+which makes this a strong attribution; the explicit A/B above is the
+authoritative proof.
+
+The affected programs construct a raw function-constructor instance after
+making its live `F.prototype` array-like. #5991 admitted every allocated
+user-declared struct to the new ordinary array-like Get/Has route, then marked
+that type seen before the legacy candidate collector reached
+`fnctorArray.fnctorPrototypeGlobalForStruct`. As a result, the raw fnctor
+entered `__extern_has` rather than its established own-index plus recursive
+prototype route, where the generic helper attempts a `$Object` cast.
+
+The narrow correction preserves the legacy candidate lane only when the
+existing `fnctorPrototypeGlobalForStruct(ctx, structName)` provider returns a
+live prototype global. It does not blacklist all `__fnctor_*` values or user
+classes: descriptor-backed ordinary readers retain their #5991 admission for
+all other eligible types. Required validation is the same frozen five-path
+isolated command after the edit, followed by the frozen 30-path standalone
+String.raw manifest to prove that the two landed original gains remain intact.
+No anonymous-expando deletion source belongs in this follow-up.
+
+Terminal follow-up evidence, again using Node 24 and the runner's isolated
+mode, is **5 pass / 0 non-pass** after the guard at
+`/private/tmp/js2-5152-array-hof-five-after-fnctor-proto-guard-20260920.log`.
+The frozen standalone String.raw manifest then remains **29 pass / 1 fail** at
+`/private/tmp/js2-5152-string-raw-30-after-fnctor-proto-guard-20260920.log`;
+its sole non-pass is the pre-existing
+`built-ins/String/raw/returns-abrupt-from-next-key.js` strict setter/delete
+residual. This follow-up therefore restores the five unrelated Array rows
+without trading away either landed String.raw improvement.
 
 ### Step F — String.raw fidelity (3 tests)
 
@@ -418,3 +2436,43 @@ SPLICED into `src/codegen/case-tables.ts` rather than regenerating the whole
 file, because this container runs Node v22 while the committed BMP tables were
 generated on Node v24 — a blind re-run would have silently downgraded the BMP
 Unicode data (one Latin-Extended run differs).
+
+## 2026-09-20 PR #5999 compiler-boundary inventory repair
+
+The initial ready PR for the completed Unicode 17 normalize slice,
+https://github.com/loopdive/js2/pull/5999, exposed a real CI metadata omission:
+its `quality` job ran
+`node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`
+and failed only because the three new source modules were unclassified. The
+failure named `src/codegen/normalize-native.ts`,
+`src/codegen/normalize-tables.ts`, and
+`src/codegen/string-proto-normalize.ts` as both unclassified modules and
+targets. This is not a normalization algorithm, test, baseline, verifier, or
+CI-policy failure.
+
+The narrow repair adds exactly those three `mixed-needs-split` records to
+`scripts/compiler-boundaries.json`, matching the adjacent native-string and
+string-prototype codegen classifications: destination `backend-wasmgc`, owner
+`3518-coordinator`, and the existing AST/context/physical-resource/native-runtime
+next-boundary wording. It changes neither the inventory verifier nor its
+baseline/allowlist semantics. After the record addition, rerun the exact
+inventory command against `HEAD^1`; only after a green static receipt may this
+metadata-only follow-up be committed and pushed through normal hooks.
+
+That targeted static receipt is terminal: the command exits **0** with
+`status: inventory-valid-architecture-incomplete`, `inventoryValid: true`, and
+an empty `errors` array (the architecture-incomplete label is the repository's
+pre-existing migration-debt state, not a new failure). It inventories 1,470
+source modules with the three entries classified; no compiler, emitted-Wasm,
+or test runner was invoked.
+
+A read-only upstream refresh advanced `upstream/main` from
+`62221769a87acdc32759c656702eede64936feb5` to
+`ea8d7f87ff`. The branch is 3 commits ahead and 9 commits behind that head.
+The incoming commits include #5998 and a Test262 baseline refresh. Their
+changed paths overlap the normalize branch's existing edits in the shared
+string call-site files and this issue document, while upstream does not carry
+the new normalize modules, generator, or fixtures. A read-only `git merge-tree`
+scan produced no textual conflict markers; no merge was performed here, and a
+normal hook-slot sync must still preserve both issue histories and revalidate
+the committed result.

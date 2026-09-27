@@ -29,7 +29,7 @@ import {
   safeStringifyThrown as sharedSafeStringifyThrown,
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
-import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+import { isModuleGoal, isScriptGoal } from "../scripts/test262-module-goal.mjs";
 // (#5353) ONE Temporal gate + ONE cache-dir rule, shared with the sharded lane.
 import {
   temporalCacheDir,
@@ -53,7 +53,7 @@ import {
 } from "../scripts/test262-iterator-binding.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
-import { SANDBOX_GLOBAL_NAMES } from "../scripts/test262-sandbox-globals.mjs";
+import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "../scripts/test262-sandbox-globals.mjs";
 
 // #1310: per-shard global isolation for test262.
 //
@@ -114,6 +114,10 @@ function _buildFreshSandbox(consoleProxy?: Console, exposeDone = true): Record<s
       // Some globals may not be present in this vm realm — leave undefined.
     }
   }
+  // (#6492 r16) The copy loop assigns, which creates ENUMERABLE properties;
+  // §19.2's function-valued globals are non-enumerable and the corpus checks it
+  // (`S15.1.2.2_A9.5` &c.).
+  applySandboxGlobalFunctionAttributes(sandbox);
   // Script global value properties have immutable data descriptors. A plain
   // object sandbox otherwise lets strict writes create `undefined`/`Infinity`
   // and turns Test262's required TypeErrors into false negatives (#3367).
@@ -123,6 +127,21 @@ function _buildFreshSandbox(consoleProxy?: Console, exposeDone = true): Record<s
     Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
     NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
   });
+  // (#6492 r18) `Promise` is the ONE builtin the sandbox must NOT own a
+  // separate copy of. The runtime mints every promise in the HOST realm
+  // (`Promise_new_pending` / `Promise_resolve` / `_wrapThenable`), and moving
+  // that minting into the sandbox was measured at 536 -> 336 on
+  // `built-ins/Promise/` — §27.2.4.7's `nextPromise.constructor === C` fast
+  // path and every `Object.getPrototypeOf(p) === Promise.prototype` assertion
+  // need minting, the capability `C` and the value read to sit in ONE realm.
+  // Meanwhile the compiled `Promise` identifier resolves through the sandbox
+  // (`declared_global`), so a test's `Promise.resolve = fn` landed on a
+  // `Promise` nothing else in the pipeline ever looked at. Sharing the host
+  // intrinsic collapses that split at its source, in the fixture, instead of
+  // threading a realm through the product runtime. Cross-test pollution is
+  // already owned by `_STATIC_SNAPSHOTS` (#1220, which snapshots `Promise` +
+  // its statics for exactly these rows) and by the #1957 realm canary.
+  sandbox.Promise = Promise;
   if (consoleProxy) sandbox.console = consoleProxy;
   // Provide globalThis as the sandbox itself so `ctx.globalThis === ctx`.
   sandbox.globalThis = sandbox;
@@ -163,24 +182,6 @@ function declaresTopLevelDone(body: string): boolean {
 /** A fresh realm for literal-harness execution; never reused across variants. */
 export function createTestSandbox(consoleProxy?: Console, exposeDone = true): Record<string, any> {
   return _buildFreshSandbox(consoleProxy, exposeDone);
-}
-
-/**
- * Test262 property-descriptor rows are allowed to install a new intrinsic
- * property without specifying `configurable: true`. Such a property cannot be
- * removed by the in-process host snapshot, so the sloppy variant would poison
- * the strict rerun before it starts. Run those rows with one coherent fresh
- * VM realm for both the built-in globals and their constructed values.
- *
- * Keep this source classifier deliberately narrow: ordinary product/runtime
- * builds retain the host-realm design, and descriptor checks on user objects
- * do not need a separate intrinsic realm.
- */
-const HOST_INTRINSIC_DEFINE_RE =
-  /\b(?:Object|Reflect)\.(?:defineProperty|defineProperties)\s*\(\s*(?:Object|Array|String|Number|Boolean|Function|RegExp|Map|Set|WeakMap|WeakSet|Promise|Date|ArrayBuffer|DataView|Int8Array|Uint8Array|Uint8ClampedArray|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)(?:\.prototype)?\b/;
-
-function requiresCoherentBuiltinRealm(source: string): boolean {
-  return HOST_INTRINSIC_DEFINE_RE.test(source);
 }
 
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
@@ -3722,7 +3723,7 @@ export function standaloneHostImportError(target: string | undefined, imports: r
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
 const TEST_TIMEOUT_MS = 15000;
 
-export { isModuleGoal };
+export { isModuleGoal, isScriptGoal };
 
 export function buildNegativeCompileSource(source: string, meta: Test262Meta, category: string): string {
   const strippedSource = source.replace(/\/\*---[\s\S]*?---\*\//, "");
@@ -4487,8 +4488,20 @@ async function runOriginalHarnessVariant(
         consoleProxy,
         meta.flags?.includes("async") === true || declaresTopLevelDone(originalSource),
       );
-      const coherentBuiltinRealm = requiresCoherentBuiltinRealm(originalSource);
-      if (coherentBuiltinRealm) markCoherentBuiltinRealm(sandbox);
+      // (#6495) EVERY row gets a coherent builtin realm, so the intrinsics the
+      // compiled module is handed (`__get_builtin`) are the ROW's, not the
+      // worker process's. Until 2026-09-17 this was gated on a source regex
+      // that only matched a literal `Object.defineProperty(Array.prototype, …)`
+      // in the test body — so a row whose intrinsic mutation happens inside the
+      // HARNESS (`verifyProperty` → `isConfigurable` → `delete obj[name]`) was
+      // unprotected, and `__delete_property` removed array iteration from the
+      // test process. Measured before flipping: zero honest-lane rows changed
+      // across 2,102 rows (the 114-row #6482 descriptor bucket, an 818-row
+      // for-in/own-property slice, and a 1,170-row realm-sensitive slice —
+      // Symbol, Reflect, instanceof, bind, Object.prototype.toString,
+      // getPrototypeOf/setPrototypeOf/create, isArray, concat, NativeErrors,
+      // Error, RegExp exec).
+      markCoherentBuiltinRealm(sandbox);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
       }) as any;

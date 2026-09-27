@@ -58,6 +58,34 @@ export function fillObjectProtoSingleton(ctx: CodegenContext): void {
   fn.body = [...instrs];
 }
 
+/**
+ * (#6651 lane R1) Name of the reserve-then-fill twin of
+ * {@link OBJECT_PROTO_SINGLETON} that answers the canonical `%Array.prototype%`
+ * carrier.
+ */
+export const ARRAY_PROTO_SINGLETON = "__array_proto_singleton";
+
+/**
+ * (#6651 lane R1) Fill the `%Array.prototype%` singleton. Identical
+ * reserve-then-fill discipline as {@link fillObjectProtoSingleton}: the `Array`
+ * brand's lazy `$NativeProto` global does not exist while `ensureObjectRuntime`
+ * registers the natives, so the helper is reserved with a `ref.null.extern`
+ * body and filled here, at finalize.
+ *
+ * Identity matters and is the reason this reuses `buildLazyNativeProtoGetInstrs`
+ * rather than minting anything new: a program's own `Array.prototype` read
+ * resolves to the SAME brand global (`emitEs5IntrinsicPrototype`), so
+ * `Object.getPrototypeOf(a) === Array.prototype` is an `===` on one carrier.
+ */
+export function fillArrayProtoSingleton(ctx: CodegenContext): void {
+  if (!ctx.standalone && !ctx.wasi) return;
+  const fn = ctx.mod.functions.find((f) => f.name === ARRAY_PROTO_SINGLETON);
+  if (!fn) return;
+  const instrs = buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Array);
+  if (!instrs) return;
+  fn.body = [...instrs];
+}
+
 /** Everything the prototype-chain block reads from the `ensureObjectRuntime` scope. */
 export interface ObjectPrototypeHelperState {
   registerNative: (
@@ -191,11 +219,166 @@ function fnctorIsPrototypeOfSeed(
   ];
 }
 
+/**
+ * (#6651 lane R1) `__getPrototypeOf`'s non-`$Object` arm for a native ARRAY
+ * carrier — the gap that made `Object.getPrototypeOf(<any-typed array>)` answer
+ * `null` in `--target standalone`.
+ *
+ * A compiled array is a `__vec_<elem>` struct, not an `$Object`, so it has no
+ * `$proto` field and the walk above never started. Every STATICALLY
+ * array-typed receiver is folded to `%Array.prototype%` by
+ * `expressions/object-get-prototype-of.ts` before it ever reaches this helper,
+ * which is why the gap only shows through an `any` binding — and why it looked
+ * like a cross-realm defect: the rows that expose it
+ * (`built-ins/Array/proto-from-ctor-realm-{one,two,zero}.js`) read the
+ * prototype of a `Reflect.construct` result, whose static type is `any`.
+ * Measured on base, with no realm and no `Reflect` in the program at all:
+ *
+ *   function id(x) { return x; }
+ *   Object.getPrototypeOf(id([1]))   // null; node answers Array.prototype
+ *
+ * `__extern_is_array` is the SAME §7.2.2 predicate `Array.isArray` uses
+ * (`fillExternIsArray`, filled at finalize over every module-local carrier
+ * type), so the static and dynamic arms cannot disagree about what an Array is;
+ * in particular the packed byte carriers behind `ArrayBuffer`/`DataView`/
+ * TypedArrays are excluded there and so are excluded here.
+ *
+ * Widens a MISSING answer, never replaces a present one: when the singleton is
+ * still the reserved `ref.null.extern` (a module whose `Array` brand global was
+ * never materialised) the arm falls through to the pre-existing boundary/null
+ * answer rather than publishing a null prototype of its own.
+ *
+ * `protoSlot` is a scratch externref local appended to the helper's list.
+ */
+function arrayGetPrototypeArm(ctx: CodegenContext, protoSlot: number, singletonIdx: number | undefined): Instr[] {
+  const isArrayIdx = ctx.funcMap.get("__extern_is_array");
+  if (isArrayIdx === undefined || singletonIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: isArrayIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "call", funcIdx: singletonIdx },
+        { op: "local.tee", index: protoSlot },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: protoSlot }, { op: "return" }],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#6651 R1) Reserve the `%Array.prototype%` singleton with the pre-fix
+ * `ref.null.extern` body. Standalone/WASI only — in gc/host this answers
+ * `undefined`, {@link arrayGetPrototypeArm} emits nothing, and `__getPrototypeOf`
+ * stays byte-identical.
+ */
+function reserveArrayProtoSingleton(
+  ctx: CodegenContext,
+  registerNative: ObjectPrototypeHelperState["registerNative"],
+): number | undefined {
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+  return registerNative(ARRAY_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }]);
+}
+
+/**
+ * The scratch local {@link arrayGetPrototypeArm} uses, appended AFTER the fnctor
+ * one so that arm's index 2 is untouched.
+ */
+function arrayProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[] {
+  return ctx.funcMap.get("__extern_is_array") === undefined
+    ? []
+    : [{ name: "__arrayProto", type: { kind: "externref" } }];
+}
+
 /** The scratch local both arms above use, appended so existing indices are untouched. */
 function fnctorProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[] {
   return ctx.funcMap.get(FNCTOR_PROTO_START) === undefined
     ? []
     : [{ name: "__fnctorProto", type: { kind: "externref" } }];
+}
+
+/**
+ * (#6622) `__isPrototypeOf`'s seed for a CLASS-INSTANCE candidate — the twin of
+ * {@link fnctorIsPrototypeOfSeed}, tried when the fnctor ladder ALSO declined
+ * (`cur` is still null): a compiled class instance is a closed `$ClassName`
+ * struct with no `$proto` field, so the walk below never started, and
+ * `C.prototype.isPrototypeOf(new C())` — and, composed through `#6620`'s
+ * `emitDynamicInstanceOf`, `instance instanceof C` itself — answered `false`
+ * even though `Object.getPrototypeOf(instance) === C.prototype` (#6617/S30) is
+ * `true`.
+ *
+ * Reuses `__getPrototypeOf` rather than adding a THIRD prototype mechanism
+ * (`plan/issues/6617-standalone-linked-class-instance-prototype.md` R2's own
+ * conclusion): that native already composes the module-local class-instance
+ * dispatcher (`__std_class_instance_proto`), the fnctor ladder, AND — on its
+ * last-resort arm — the wasm→wasm link boundary hop to a PROVIDER-owned class.
+ * One `Get(candidate, "[[Prototype]]")` answer serves both the local and the
+ * linked case, exactly as `Object.getPrototypeOf` already does for the same
+ * receiver shape.
+ *
+ * `candidateSlot` is the RAW externref candidate parameter (the walk's `cur`
+ * itself is not `$Object`, so `struct.get`ing it is unsafe — the untyped
+ * parameter is what `__getPrototypeOf` accepts). Only the FIRST link is seeded,
+ * exactly like the fnctor twin: the remaining chain (`Temporal.Duration`'s own
+ * prototype is an ordinary `$Object`, per #6617 point 1) walks through the
+ * existing loop unmodified.
+ */
+function classInstanceIsPrototypeOfSeed(
+  ctx: CodegenContext,
+  objectTypeIdx: number,
+  curSlot: number,
+  targetSlot: number,
+  protoSlot: number,
+  candidateSlot: number,
+): Instr[] {
+  const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");
+  if (getPrototypeOfIdx === undefined) return [];
+  const compareFirstLink: Instr[] = [
+    { op: "local.get", index: protoSlot },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.tee", index: curSlot },
+    { op: "local.get", index: targetSlot },
+    { op: "ref.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+  ];
+  const seedFromGetPrototypeOf: Instr[] = [
+    { op: "local.get", index: candidateSlot },
+    { op: "call", funcIdx: getPrototypeOfIdx },
+    { op: "local.tee", index: protoSlot },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: protoSlot },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: compareFirstLink },
+      ],
+    },
+  ];
+  return [
+    { op: "local.get", index: curSlot },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: seedFromGetPrototypeOf },
+  ];
+}
+
+/** The scratch local {@link classInstanceIsPrototypeOfSeed} uses. */
+function classInstanceProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[] {
+  return ctx.funcMap.get("__getPrototypeOf") === undefined
+    ? []
+    : [{ name: "__classInstanceProto", type: { kind: "externref" } }];
 }
 
 /**
@@ -386,6 +569,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     ctx.standalone || ctx.wasi
       ? registerNative(OBJECT_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }])
       : undefined;
+  const arrayProtoSingletonIdx = reserveArrayProtoSingleton(ctx, registerNative); // (#6651 R1)
 
   // __getPrototypeOf(externref) -> externref (ES §20.1.2.12):
   //   $Object → extern.convert_any($proto); a null `$proto` means
@@ -453,6 +637,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         then: protoFieldAnswer(),
         else: [
           ...fnctorGetPrototypeArm(ctx, 2, devirtualizeProtoResult()), // (#4643) scratch local 2
+          ...arrayGetPrototypeArm(ctx, 2 + fnctorProtoLocal(ctx).length, arrayProtoSingletonIdx), // (#6651 R1)
           ...boundaryGetPrototypeArm(boundaryObjectGetPrototypeIdx),
         ],
       },
@@ -461,7 +646,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       "__getPrototypeOf",
       [{ kind: "externref" }],
       [{ kind: "externref" }],
-      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx)],
+      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx), ...arrayProtoLocal(ctx)],
       body,
     );
   }
@@ -852,6 +1037,11 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       },
       { op: "local.set", index: 3 },
       ...fnctorIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5), // (#4643) cur=3, target=2, scratch=5
+      // (#6622) Tried only when the fnctor seed ALSO declined (cur still
+      // null): candidate=local 1 is the raw externref param, scratch is the
+      // next local slot after fnctorProtoLocal's (present only when a fnctor
+      // ladder exists, so this index is computed rather than hard-coded).
+      ...classInstanceIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5 + fnctorProtoLocal(ctx).length, 1),
       // walk: cur = cur.$proto ; if cur == null → 0 ; if cur === target → 1
       {
         op: "block",
@@ -899,6 +1089,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         { name: "cur", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
         ...fnctorProtoLocal(ctx), // (#4643) local 5, appended: locals 2..4 keep their indices
+        ...classInstanceProtoLocal(ctx), // (#6622) next slot after fnctorProtoLocal's
       ],
       body,
     );

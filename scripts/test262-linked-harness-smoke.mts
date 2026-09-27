@@ -60,6 +60,7 @@ async function runVerdict(result: CompileResult): Promise<string> {
   try {
     await instantiateTest262Module(result.binary, importObj, {
       linkedModules: result.linkedModules ?? [],
+      runDeferredInit: true,
       linkedRuntime: runtimeBundle,
     });
     return "pass";

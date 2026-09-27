@@ -37,7 +37,7 @@
  * i32_byte vec; we `any.convert_extern` + `ref.cast` to recover the struct.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { ts } from "../ts-api.js"; // (#3177 slice 2) literal-`undefined` length detection
@@ -55,6 +55,7 @@ import {
   TA_CTOR_BRAND,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
+  taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
@@ -331,7 +332,21 @@ export function isViewRefTestInstrs(ctx: CodegenContext, anyLocalIdx: number): I
   // plain `$Vec`s, so the pre-#5150 chain answered `false` for it whenever the
   // static type could not decide — which is always, for a first-class value
   // read. `ref.test` needs no ordering, so a Set keeps the chain duplicate-free.
+  // (#6651 E-S3) Two corrections to the carrier set, both measured on the
+  // `built-ins/ArrayBuffer/isView/*` rows:
+  //  - the DYNAMIC view brand `$__ta_dyn_view` was missing, so every
+  //    `testWithTypedArrayConstructors` sample (`new TA(…)` through an `any`
+  //    constructor) read as NOT a view — `arg-is-typedarray.js` and
+  //    `invoked-as-a-fn.js`. Read, never registered: a module with no dynamic
+  //    view keeps today's chain.
+  //  - `$__vec_i32_byte` is the ARRAYBUFFER's own backing carrier (#5349 says
+  //    so where it brands `i8_byte` `final` to keep the two apart), and an
+  //    ArrayBuffer has no [[ViewedArrayBuffer]] slot, so §25.1.4.1 answers
+  //    false for it — `arg-is-typedarray-buffer.js` asserts exactly that.
   const carriers = new Set<number>([...ctx.vecTypeMap.values(), ...ctx.taViewTypeMap.values(), dvWinTypeIdx]);
+  const bufferVecTypeIdx = ctx.vecTypeMap.get("i32_byte");
+  if (bufferVecTypeIdx !== undefined) carriers.delete(bufferVecTypeIdx);
+  if (ctx.taDynViewTypeIdx >= 0) carriers.add(ctx.taDynViewTypeIdx);
   const out: Instr[] = [];
   let emitted = false;
   for (const vi of carriers) {
@@ -4988,8 +5003,11 @@ export function emitTaCtorBytesPerElement(
   const kindLocal = allocLocal(fctx, `__tac_kind_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) `taCtorIdentityTestInstrs`, not a bare
+  // `ref.test` — a field-less class's compiled root (instance OR class-object
+  // value, #3976) shares `$__ta_ctor`'s exact `{i32, i32}` shape (#6620), so
+  // a bare structural test misclassifies it here too.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -5618,8 +5636,9 @@ export function emitDynamicTaViewConstruct(
   const kindLocal = allocLocal(fctx, `__dtav_kind_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment
+  // — the same brand-VALUE-checked identity test, not a bare `ref.test`.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: ctorAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -5855,8 +5874,11 @@ function emitToIntegerI32FromArgLocal(
  * (#608/#794). Callers must NOT use this on the JS-host lane.
  *
  * Stack: `[] → [externref]` (the constructed view, or null-extern).
+ *
+ * (#5407) Emitted ONCE per argument arity into a shared helper — see
+ * {@link emitTaDynCtorConstructFromLocals}; this is the helper's body.
  */
-export function emitTaDynCtorConstructFromLocals(
+function emitTaDynCtorConstructInline(
   ctx: CodegenContext,
   fctx: FunctionContext,
   descAnyLocal: number,
@@ -5894,8 +5916,8 @@ export function emitTaDynCtorConstructFromLocals(
 
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -6175,9 +6197,26 @@ export function emitTaDynCtorConstructFromLocals(
         if (iterablePrelude) objArm.push(...iterablePrelude);
         else objArm.push(...arrayLikeArm);
 
+        // (#6651 E7) §23.2.5.1 step 6.b: EVERY Object argument — a function
+        // included — consults `@@iterator` and is otherwise array-like. A
+        // callable is no `$Object`, so it fell to the count form below
+        // (ToIndex(fn) = 0) and `new TA(fnWithIterator)` never read the
+        // method (`object-arg/iterator-{not-callable-,}throws.js`). Only
+        // with the iterable prelude armed: it owns `__typeof_function`.
+        const typeofFnIdx = iterablePrelude ? ctx.funcMap.get("__typeof_function") : undefined;
+        const isCallable: Instr[] =
+          typeofFnIdx === undefined
+            ? []
+            : [
+                { op: "local.get", index: a0CandidateLocal },
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: typeofFnIdx },
+                { op: "i32.or" },
+              ];
         chain = trackChain([
           { op: "local.get", index: a0CandidateLocal },
           { op: "ref.test", typeIdx: objTypeIdx },
+          ...isCallable,
           { op: "if", blockType: { kind: "empty" }, then: objArm, else: chain },
         ]);
       }
@@ -6458,8 +6497,8 @@ export function emitTaDynCtorConstructFromLocals(
     for (const link of liveChains) ctx.liveBodies.delete(link);
   }
   fctx.body = savedTa;
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descAnyLocal }]));
   const int8Arm = buildInt8ArrayCarrierMatch(ctx, descAnyLocal, taArm);
   releaseSavedTa();
   releaseTaArm();
@@ -6470,6 +6509,107 @@ export function emitTaDynCtorConstructFromLocals(
     else: int8Arm,
   });
   fctx.body.push({ op: "local.get", index: resultLocal });
+}
+
+/**
+ * The construct above reads at most three arguments (`buffer, byteOffset,
+ * length`) and branches only on how many there are, so one helper per
+ * clamped arity serves every call site.
+ */
+const TA_DYN_CTOR_MAX_READ_ARGS = 3;
+
+/** Whether `index` names a local/param of exactly `kind` in `fctx`. */
+function localIsKind(fctx: FunctionContext, index: number, kind: "externref" | "anyref"): boolean {
+  return getLocalType(fctx, index)?.kind === kind;
+}
+
+/**
+ * (#2872 / #5407) Dynamic TypedArray construction — `new <ctorVal>(…)` over
+ * pre-evaluated locals; semantics are documented on
+ * {@link emitTaDynCtorConstructInline}.
+ *
+ * The construct is ~40 KB of code (every argument-shape arm, the iterator
+ * prelude, the per-kind encode loops). It used to be INLINED at every site, so
+ * a standalone module with typed-array machinery paid that per dynamic `new`
+ * — `new Temporal.PlainDate(…)` in a linked Temporal test262 row cost ~40 KB
+ * per site (PlainDate/limits.js: 7.8 MB, 16 s). It is now emitted once per
+ * clamped arity as `__ta_dyn_ctor_construct_a<k>(desc: anyref, arg0..k-1:
+ * externref) -> externref`, built lazily on first use, and each site passes its
+ * locals to a `call`. The body is the same instruction sequence the site used
+ * to inline, parameterised over the same locals, so the outcome — including
+ * which abrupt completion propagates — is unchanged.
+ *
+ * A site whose locals are not the expected `anyref`/`externref` kinds keeps
+ * the inline form rather than widening them.
+ *
+ * Stack: `[] → [externref]`.
+ */
+export function emitTaDynCtorConstructFromLocals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  descAnyLocal: number,
+  argLocals: readonly number[],
+): void {
+  const arity = Math.min(argLocals.length, TA_DYN_CTOR_MAX_READ_ARGS);
+  const readArgs = argLocals.slice(0, arity);
+  if (!localIsKind(fctx, descAnyLocal, "anyref") || !readArgs.every((a) => localIsKind(fctx, a, "externref"))) {
+    emitTaDynCtorConstructInline(ctx, fctx, descAnyLocal, argLocals);
+    return;
+  }
+  const helperIdx = ensureTaDynCtorConstructHelper(ctx, arity);
+  fctx.body.push({ op: "local.get", index: descAnyLocal });
+  for (const a of readArgs) fctx.body.push({ op: "local.get", index: a });
+  fctx.body.push({ op: "call", funcIdx: helperIdx });
+}
+
+function ensureTaDynCtorConstructHelper(ctx: CodegenContext, arity: number): number {
+  const name = `__ta_dyn_ctor_construct_a${arity}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const params: { name: string; type: ValType }[] = [{ name: "desc", type: { kind: "anyref" } as ValType }];
+  for (let i = 0; i < arity; i++) params.push({ name: `arg${i}`, type: { kind: "externref" } });
+  const typeIdx = addFuncType(
+    ctx,
+    params.map((p) => p.type),
+    [{ kind: "externref" }],
+  );
+  const funcIdx = mintDefinedFunc(ctx);
+  // Registered before the body is built so a nested request resolves here.
+  ctx.funcMap.set(name, funcIdx);
+  const hfctx: FunctionContext = {
+    name,
+    params,
+    locals: [],
+    localMap: new Map(),
+    returnType: { kind: "externref" },
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Not yet in `ctx.mod.functions`: keep the body visible to late-import
+  // index shifts while it is being built.
+  const releaseBody = retainLiveBody(ctx, hfctx.body);
+  try {
+    emitTaDynCtorConstructInline(
+      ctx,
+      hfctx,
+      0,
+      params.slice(1).map((_, i) => i + 1),
+    );
+  } finally {
+    releaseBody();
+  }
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx,
+    locals: hfctx.locals,
+    body: hfctx.body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 /**
@@ -7157,6 +7297,15 @@ export function emitTaDynViewWriteF64Vec(
   });
 }
 
+/** (#6651 E5) A per-element step spliced between the carrier read and ToNumber (see `ensureTaFromArrayLikeMappedHelper`). */
+export interface TaFromArrayLikeMapHook {
+  helperName: string;
+  /** Extra externref params after `(ctor, carrier)`. */
+  extraParams: readonly string[];
+  /** Element externref on the stack in, replacement externref out. */
+  mapElement: (fctx: FunctionContext, iLocal: number) => void;
+}
+
 /**
  * (#3177 slice 5) Mint the shared native `__ta_from_arraylike(ctor, carrier) →
  * externref` — the builder behind the standalone `%TypedArray%.of` /
@@ -7174,9 +7323,9 @@ export function emitTaDynViewWriteF64Vec(
  * noJsHost lane only; every dependency is a native DEFINED function
  * (append-only — no import add / funcIdx shift). Idempotent via funcMap.
  */
-export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undefined {
+export function ensureTaFromArrayLikeHelper(ctx: CodegenContext, mapHook?: TaFromArrayLikeMapHook): number | undefined {
   if (!noJsHost(ctx)) return undefined;
-  const helperName = "__ta_from_arraylike";
+  const helperName = mapHook?.helperName ?? "__ta_from_arraylike";
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
 
@@ -7191,9 +7340,11 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
 
+  const extraParams = (mapHook?.extraParams ?? []).map((name) => ({ name, type: { kind: "externref" } as ValType }));
   const params: ValType[] = [
     { kind: "externref" }, // ctor ($__ta_ctor)
     { kind: "externref" }, // carrier (indexable)
+    ...extraParams.map((p) => p.type),
   ];
   const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
   const funcIdx = mintDefinedFunc(ctx);
@@ -7204,6 +7355,7 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     params: [
       { name: "ctor", type: { kind: "externref" } },
       { name: "carrier", type: { kind: "externref" } },
+      ...extraParams,
     ],
     locals: [],
     localMap: new Map(),
@@ -7236,8 +7388,8 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   fctx.body.push({ op: "local.set", index: ctorAnyLocal });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: ctorAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -7275,6 +7427,32 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     else: [],
   });
 
+  // (#6651 E2) §23.2.4.1 TypedArrayCreate step 1 is `Construct(C, «len»)`, and
+  // §23.2.1 step 1 makes constructing `%TypedArray%` DIRECTLY a TypeError. Both
+  // identity probes above leave `kind` at the -1 sentinel exactly when `C` is
+  // not a CONCRETE view constructor, and since E2 widened `tryEmitTaStaticOfFrom`
+  // to admit the `%TypedArray%` intrinsic carrier that sentinel is now
+  // reachable. Before this it fell through to `pushElemSizeForKind(-1)` and
+  // built a view out of an abstract constructor.
+  //
+  // The PLACEMENT is the load-bearing part, not the throw. §23.2.2.1 orders the
+  // IteratorStep drain (step 5) — or ToObject + LengthOfArrayLike (step 6) —
+  // BEFORE TypedArrayCreate, so the check must sit AFTER the `__extern_length`
+  // read above, not before it. Raised earlier it reported the
+  // abstract-constructor TypeError for `TypedArray.from(<obj whose length
+  // getter throws>)`, where `built-ins/TypedArray/from/arylk-get-length-error.js`
+  // requires the getter's OWN completion — measured on this branch: the getter
+  // ran 0 times with the check in front of the length read, 1 time behind it.
+  fctx.body.push({ op: "local.get", index: kindLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Abstract class TypedArray not directly constructable"),
+    else: [],
+  });
+
   // bl = n * es; arr = new zeroed byte array[bl].
   fctx.body.push({ op: "local.get", index: nLocal });
   fctx.body.push({ op: "local.get", index: esLocal });
@@ -7299,6 +7477,7 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     fctx.body.push({ op: "local.get", index: iLocal });
     fctx.body.push({ op: "f64.convert_i32_s" });
     fctx.body.push({ op: "call", funcIdx: externGetIdxIdx });
+    mapHook?.mapElement(fctx, iLocal); // (#6651 E5) §23.2.2.1 step 7.e.iii / 11.c: map BEFORE this element's Set
     coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
     fctx.body.push({ op: "local.set", index: vLocal });
     fctx.body.push({ op: "local.get", index: iLocal });
@@ -7340,6 +7519,35 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#6651 E6) `fill` / `copyWithin` re-validate AFTER their argument coercions
+ * (ES2024 MakeTypedArrayWithBufferWitnessRecord + IsTypedArrayOutOfBounds): a
+ * `valueOf` that detaches the buffer must surface as a TypeError, not as a
+ * silent no-op over the post-detach length of 0. `extraCond` (i32, may be empty)
+ * narrows it — copyWithin checks only when `count > 0`.
+ */
+function taDynDetachedAfterCoercionThrow(
+  ctx: CodegenContext,
+  dvLocal: number,
+  dynIdx: number,
+  byteVecIdx: number,
+  extraCond: Instr[],
+): Instr[] {
+  return [
+    { op: "local.get", index: dvLocal },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: byteVecIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    ...(extraCond.length > 0 ? [...extraCond, { op: "i32.and" } as Instr] : []),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Cannot perform operation on a detached ArrayBuffer"),
+    },
+  ];
 }
 
 /**
@@ -7551,6 +7759,8 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
       ],
     });
   }
+  // (#6651 E6) §23.2.3.9 steps 13-14: the coercions above may have detached it.
+  fctx.body.push(...taDynDetachedAfterCoercionThrow(ctx, dvLocal, dynIdx, byteVecIdx, []));
 
   // arr = dv.buf.data ; bo = dv.byteOffset ; le = 1.
   fctx.body.push({ op: "local.get", index: dvLocal });
@@ -8184,7 +8394,7 @@ export function pushTaDynMethodPreamble(
  * helper's emitted bytes are untouched. `idxF64Scratch` / `lenF64` are caller
  * locals; `lenF64` must already hold `f64(len)`.
  */
-function pushTaDynRelativeIndex(
+export function pushTaDynRelativeIndex(
   ctx: CodegenContext,
   fctx: FunctionContext,
   paramIdx: number,
@@ -8406,6 +8616,13 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
     fctx.body.push({ op: "select" }); // a<b ? a : b
     fctx.body.push({ op: "local.set", index: countLocal });
   }
+  // (#6651 E6) §23.2.3.6 step 17: count > 0 re-checks the (possibly detached) buffer.
+  const countPositive: Instr[] = [
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+  ];
+  fctx.body.push(...taDynDetachedAfterCoercionThrow(ctx, dvLocal, dynIdx, byteVecIdx, countPositive));
 
   // arr = dv.buf.data ; bo = dv.byteOffset.
   fctx.body.push({ op: "local.get", index: dvLocal });

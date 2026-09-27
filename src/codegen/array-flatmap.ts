@@ -28,6 +28,17 @@ export function flatMapReturnIsDefinitelyNonArray(ctx: CodegenContext, fact: Typ
   return !["array", "tuple", "union", "any", "unknown", "unresolvable"].includes(fact.kind);
 }
 
+/**
+ * (#2717) A callback whose return is statically dynamic (`number | number[]`,
+ * `any`, …) may answer an array OR a scalar per call, so the native `map` +
+ * static-element flatten cannot decide it; the caller routes it to the
+ * recursive `__arrprod_flatMap` helper, which tests IsArray per element.
+ */
+export function flatMapReturnIsDynamic(ctx: CodegenContext, cbArg: ts.Expression): boolean {
+  const kind = flatMapCallbackReturnFact(ctx, cbArg)?.kind;
+  return kind === "union" || kind === "any" || kind === "unknown";
+}
+
 /** Preserve a species-created result only when the callback cannot return an array. */
 export function flatMapSpeciesResult(
   ctx: CodegenContext,

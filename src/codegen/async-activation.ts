@@ -225,6 +225,17 @@ export function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts
   const plan = analyzeAsyncBody(ctx, decl);
   const realSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
   if (!realSuspension && plan.forAwaitPoints.length === 0) return;
+  // (#6504 round 30) The `try`-scoped condition is LOAD-BEARING, not a
+  // conservative placeholder. Dropping it — refusing loudly for every decline
+  // with a real suspension — was measured on the six async slices (linked) and
+  // costs **402 of 2,212 rows**, 396 of them `statements/for-await-of`
+  // destructuring shapes that the engine declines and the sync fallback runs
+  // acceptably today. That is 20x the >= 20-row budget the widening was gated
+  // on, so it is not a tuning question: the declined-with-real-suspension
+  // population is most of the for-await-of corpus, and turning it into compile
+  // errors trades a latent rejection bug for 402 certain failures. Any future
+  // widening has to name a SUBSET (e.g. by decline reason), never the whole
+  // population.
   const hazard = findSuspensionInsideTry(decl);
   if (hazard === null) return;
   if (seen === undefined) hazardReportedByCtx.set(ctx, new WeakSet([decl]));

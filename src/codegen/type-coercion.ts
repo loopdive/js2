@@ -14,7 +14,8 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1)
+import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1 / #6631)
+import { anyValueElemFromExternInstrs } from "./anyvalue-elem-materialize.js"; // (#2717)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
@@ -26,6 +27,7 @@ import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 s
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
   elemGetOp,
@@ -37,10 +39,11 @@ import {
   reserveTypedMemberGetF64DispatchLate,
   unpackedElemType,
 } from "./shared.js";
-import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { emitStandaloneObjectToNumber, tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
+import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -1144,8 +1147,10 @@ export function buildVecFromExternref(
         instrs.push({ op: "struct.new", typeIdx: elemTypeIdx });
         return instrs;
       }
-      // Default: try anyref cast (works for WasmGC structs passed through externref)
-      return [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: elemTypeIdx }];
+      // Default: try anyref cast (works for WasmGC structs passed through externref);
+      // (#2717) a boxed primitive bound for an `$AnyValue` slot is classified instead.
+      const anyValueElem = anyValueElemFromExternInstrs(ctx, fctx, elemTypeIdx);
+      return anyValueElem ?? [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: elemTypeIdx }];
     }
     return [];
   };
@@ -1889,7 +1894,20 @@ function emitSafeStructConversion(
   // Case 3: struct narrowing — destination fields are a subset of source fields
   const narrowInfo = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx);
   if (narrowInfo) {
-    return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
+    const pair = `${fromTypeIdx}>${toTypeIdx}`;
+    let active = narrowingInProgress.get(ctx);
+    if (!active) narrowingInProgress.set(ctx, (active = new Set()));
+    if (active.has(pair)) {
+      fctx.body.push({ op: "call", funcIdx: recursiveStructNarrowHelper(ctx, fromTypeIdx, toTypeIdx, narrowInfo) });
+      if (!toNullable) fctx.body.push({ op: "ref.as_non_null" });
+      return true;
+    }
+    active.add(pair);
+    try {
+      return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
+    } finally {
+      active.delete(pair);
+    }
   }
 
   return false;
@@ -2148,6 +2166,32 @@ function emitVecToVecBody(
       },
     );
     releaseTempLocal(fctx, elemLocal);
+  } else if (
+    needsCoerce &&
+    srcKind === "externref" &&
+    isAnyValue(dstVec.elemType, ctx) &&
+    ensureAnyFromExternHelper(ctx) !== undefined
+  ) {
+    // (#6631) A heterogeneous-primitive-union vec (e.g. `(string | number)[]`
+    // from `["x", 1976]`) widens its raw-externref elements (each boxed by its
+    // OWN static type — `__box_number`/`__box_boolean`/native-string — never a
+    // tagged `$AnyValue`) into this vec's `$AnyValue` element slot. The generic
+    // `coerceType` path below routes through `boxToAny`'s externref arm, whose
+    // `undefinedSingleton` default (`__any_box_extern_s1`) only recovers NULL
+    // and the UNDEF_F64-sentinel `$BoxedNumber`; every other externref —
+    // including a perfectly ordinary boxed number or boolean — falls to the
+    // #1888 tag-5 "string" lie. That made `typeof row[1]` report "string" for
+    // the NUMBER `1976` (and `typeof` on ANY element of such a literal, since
+    // the corruption happens once, at construction, not per-read).
+    //
+    // `ensureAnyFromExternHelper` (the #3055 fix for the `===`/`==` operand
+    // seam) classifies `$BoxedNumber`/i31/`$BoxedBoolean` BEFORE falling back
+    // to tag-5, so it recovers the correct tag for every element this literal
+    // can produce. Scoped to exactly this call site (mirrors #3055's own
+    // per-site substitution) — `boxToAny`'s shared default is untouched, so
+    // the −788/−794 standalone regression that flipping it globally caused
+    // cannot recur here.
+    fctx.body.push({ op: "call", funcIdx: ensureAnyFromExternHelper(ctx)! });
   } else if (needsCoerce) {
     coerceType(ctx, fctx, readElemType, dstVec.elemType);
   }
@@ -2199,6 +2243,47 @@ function emitVecToVecBody(
   releaseTempLocal(fctx, lenLocal);
   releaseTempLocal(fctx, srcLocal);
   return true;
+}
+
+/**
+ * (#1058) Struct pairs whose narrowing body is being emitted. A field that needs
+ * the same pair again (TypeScript's `MappedType.target: MappedType`) calls an
+ * outlined helper instead of inlining the body into itself without end.
+ */
+const narrowingInProgress = new WeakMap<CodegenContext, Set<string>>();
+
+function recursiveStructNarrowHelper(
+  ctx: CodegenContext,
+  fromTypeIdx: number,
+  toTypeIdx: number,
+  info: NonNullable<ReturnType<typeof getStructNarrowInfo>>,
+): number {
+  const name = `__struct_narrow_${fromTypeIdx}_${toTypeIdx}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const param: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
+  const result: ValType = { kind: "ref_null", typeIdx: toTypeIdx };
+  const typeIdx = addFuncType(ctx, [param], [result]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(name, funcIdx);
+  const helper: FunctionContext = {
+    name,
+    params: [{ name: "src", type: param }],
+    locals: [],
+    localMap: new Map(),
+    returnType: result,
+    body: [{ op: "local.get", index: 0 }],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Published before its body is emitted so a late import added while the
+  // fields are coerced shifts this body's calls too.
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: helper.locals, body: helper.body, exported: false });
+  emitStructNarrowBody(ctx, helper, fromTypeIdx, toTypeIdx, info, true, true);
+  return ctx.funcMap.get(name) ?? funcIdx;
 }
 
 /** Emit struct narrowing: extract a subset of fields from a larger struct */
@@ -3140,7 +3225,7 @@ export function coerceType(
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: materializeWithSidecar,
+          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeWithSidecar),
         },
       ];
     } else {
@@ -3241,6 +3326,24 @@ export function coerceType(
   // f64 → externref (box number)
   if (from.kind === "f64" && to.kind === "externref") {
     addUnionImports(ctx);
+    // (#6492 round 6) The sentinel arm below resolves the lane's canonical
+    // `undefined` through `canonicalUndefinedExternInstrs`, which is READ-ONLY
+    // by design and falls back to `ref.null.extern` — JS **`null`** — when
+    // `__get_undefined` is not registered yet. That fallback is not a fallback
+    // here: it changes the VALUE. Measured on the linked test262 lane, where a
+    // body-only compile unit has no other reason to import it,
+    // `for await (let { w: [x, y, z] = [4, 5, 6] } of [{ w: [7, undefined,] }])`
+    // bound `y` to `null` (`typeof y === "object"`) while the honest whole
+    // assembly — whose harness prefix imports `__get_undefined` long before
+    // this site — bound `undefined`.
+    //
+    // It MUST run before `__box_number`'s index is read: registering an import
+    // shifts func indices, and `flushLateImportShifts` remaps already-EMITTED
+    // instructions, not a `funcIdx` already captured in a local. Gated on the
+    // brand so every other f64 box is byte-identical, and `ensureCanonical…`
+    // is itself a no-op on the standalone/native-strings lanes and after the
+    // #1984 index-space freeze.
+    if (from.undefSentinel === true) ensureCanonicalUndefinedExtern(ctx, fctx);
     const funcIdx = ctx.funcMap.get("__box_number");
     // (#2864 wave-2 S1) UNDEF-SENTINEL-BRANDED f64 (`{kind:"f64",
     // undefSentinel:true}`) — an f64 read out of a slot that genuinely holds
@@ -3731,6 +3834,17 @@ export function coerceType(
       }
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "f64.const", value: NaN });
+      return;
+    }
+    // The runtime's open `$Object` carrier is intentionally absent from the
+    // nominal type-name map below, but it remains an ordinary ECMAScript
+    // object. Route only this exact standalone carrier through the native
+    // ToPrimitive/ToNumber helpers before the re-entrancy bookkeeping so a
+    // provider decline leaves both the value stack and guard state untouched.
+    if (
+      typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx &&
+      emitStandaloneObjectToNumber(ctx, fctx, toPrimitiveHint ?? "number")
+    ) {
       return;
     }
     const wasInsideValueOf = (ctx as any).__insideValueOfCoercion ?? false;
@@ -5024,6 +5138,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     const plan = coercionPlan(from, to, {
       boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
       unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+      boxBigIntIdx: ctx.funcMap.get("__box_bigint") ?? null,
     });
     if (plan && !plan.lossy) return plan.instrs;
   }

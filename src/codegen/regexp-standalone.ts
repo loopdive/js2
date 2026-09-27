@@ -17,7 +17,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { undefinedExternInstrs } from "./any-helpers.js";
+import { nullishExternTestInstrs, undefinedExternInstrs } from "./any-helpers.js";
 import { reserveVecOverlayPrime } from "./vec-overlay.js"; // (#3673 round 15)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { reportError } from "./context/errors.js";
@@ -29,13 +29,15 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitGenericFlagsGetterBody } from "./regexp-accessor-get-arm.js"; // (#5198 Slice F)
 import { coerceType } from "./type-coercion.js";
-import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import {
   ensureRegexCaptureArray,
   ensureRegexFlagsStr,
+  ensureRegexMatchFlatVecType,
   ensureRegexMatchAll,
   ensureRegexMatchAllArrays,
   ensureRegexMatchAllVecType,
@@ -50,7 +52,6 @@ import {
   MATCH_VEC_FIELD_GROUPS,
   REGEX_ANCHORED_LITERAL_ALTS_MARKER,
   REGEX_UNSUPPORTED_DYNAMIC_PATTERN,
-  REGEXP_MATCH_VEC_STRUCT,
   regexI32ArrayType,
 } from "./native-regex.js";
 import { buildIndexedAnchoredLiteralAltProgram } from "./regex-anchored-alt-index.js";
@@ -70,6 +71,7 @@ import {
 } from "./regex/bytecode.js";
 import { compilePattern, RepeatTooLargeError } from "./regex/compile.js";
 import { pushRegexI32Array } from "./regex/wasm-array-literal.js";
+import { fullDynamicRegExpAttempt, simpleSubsetFlagGate } from "./regex-runtime/compiler.js";
 import {
   emitNativeProtoIdentityReturnUndefined,
   getBuiltinBrand,
@@ -84,6 +86,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
+import { tryCompileRuntimeReplacer } from "./string-replace-dynamic.js";
 import { tryCompileStandaloneRegExpLegacyStaticRead } from "./regexp-legacy-static.js";
 import {
   resolveAssignedTransferredProtoMember,
@@ -95,6 +98,17 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
+import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
+import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
+import { emitRegExpSymbolSplitBody } from "./regexp-split-protocol.js";
+import { tryCompileRegExpCtorFromObject } from "./regexp-ctor-regexp-like.js";
+import { ensureSpecExternrefToStringProvider, getExternrefToStringProvider } from "./coercion-engine.js";
+import {
+  emitRegExpSymbolProtocolApply,
+  fileMentionsSymbolMatch,
+  fileObservesRegExpExecProtocol,
+} from "./regexp-symbol-protocol-call.js";
+import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,
@@ -990,7 +1004,7 @@ export function staticRegExpGroupMeta(
   }
 }
 
-function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
+export function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
   const full = staticRegExpGroupMeta(ctx, expr);
   if (full !== null) return full.groupNames;
   const pattern = staticRegExpPatternFlags(ctx, expr, 0, true)?.pattern;
@@ -1020,7 +1034,7 @@ export const RE_FIELD_FLAGS = 0;
 export const RE_FIELD_NGROUPS = 1;
 export const RE_FIELD_PROG = 2;
 export const RE_FIELD_CLASS_TABLE = 3;
-const RE_FIELD_SOURCE = 4;
+export const RE_FIELD_SOURCE = 4;
 export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guards
 // (#4439) Exported for the reflective `String.prototype.match` body, which must
 // resolve the `g` flag and reset `lastIndex` at RUNTIME — the borrowed form has
@@ -1032,6 +1046,12 @@ export const RE_FIELD_LASTINDEX = 6;
 // numeric reflection site.
 export const RE_FIELD_LASTINDEX_RAW = 7;
 export const RE_FIELD_LASTINDEX_RAW_PRESENT = 8;
+// (#6651 B6) [[Writable]] of the own `lastIndex` data property, inverted so a
+// fresh carrier's default `0` is the spec's `writable: true` (§22.2.3.3). Set
+// only by `Object.defineProperty(re, "lastIndex", {writable: false})`; read by
+// the runtime `[[Set]]` arms in `regexp-lastindex-carrier.ts`. `$`-prefixed so
+// the closed-struct ladders never expose it as a property.
+export const RE_FIELD_LASTINDEX_NONWRITABLE = 9;
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
@@ -1125,6 +1145,7 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
     { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
     { name: "lastIndexRaw", type: { kind: "externref" } as ValType, mutable: true },
     { name: "lastIndexRawPresent", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "$lastIndexNonWritable", type: { kind: "i32" } as ValType, mutable: true },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -1334,6 +1355,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   const GROUP_ID = 37;
   const GROUP_SEEN = 38;
   const GROUP_TOTAL = 39;
+  const FULL = 40;
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: offLocal },
@@ -1571,6 +1593,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     },
     { op: "local.get", index: INVALID_FLAGS },
     { op: "i32.eqz" },
+    ...simpleSubsetFlagGate(ctx, FBITS), // #6677 — `i`/`u` patterns go to the full compiler
     { op: "local.set", index: SIMPLE },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: PIPES },
@@ -1915,6 +1938,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
           else: !noJsHost(ctx)
             ? throwConstructed(ctx.funcMap.get("__new_TypeError")!, REGEX_UNSUPPORTED_DYNAMIC_PATTERN)
             : [
+                // #6677 — the full-grammar runtime compiler first; only what it
+                // cannot model (null) keeps the poison below.
+                ...fullDynamicRegExpAttempt(
+                  ctx,
+                  structTypeIdx,
+                  flattenIdx,
+                  [PATTERN, FBITS, FULL],
+                  [...throwConstructed(syntaxCtorIdx, invalidMessage)],
+                ),
                 { op: "local.get", index: FBITS },
                 { op: "i32.const", value: 0 }, // nGroups = 0 → POISON
                 { op: "i32.const", value: 0 },
@@ -1935,6 +1967,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 { op: "f64.const", value: 0 }, // lastIndex
                 { op: "ref.null.extern" }, // raw lastIndex
                 { op: "i32.const", value: 0 }, // raw present
+                { op: "i32.const", value: 0 }, // lastIndex writable
                 { op: "struct.new", typeIdx: structTypeIdx },
                 { op: "return" },
               ],
@@ -2429,6 +2462,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "f64.const", value: 0 },
     { op: "ref.null.extern" },
     { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: structTypeIdx },
   ];
 
@@ -2474,6 +2508,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "groupId", type: { kind: "i32" } },
       { name: "groupSeen", type: { kind: "i32" } },
       { name: "groupTotal", type: { kind: "i32" } },
+      // #6677 — result slot of the full-grammar runtime compiler (standalone only).
+      ...(noJsHost(ctx) ? [{ name: "full", type: { kind: "ref_null", typeIdx: structTypeIdx } as ValType }] : []),
     ],
     body,
     exported: false,
@@ -2512,8 +2548,8 @@ function emitStandaloneRegExpStruct(
   fctx.body.push({ op: "i32.const", value: compiled.nScratch });
   // field 6: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
   fctx.body.push({ op: "f64.const", value: 0 });
-  // fields 7/8: no deferred raw value on a fresh object.
-  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 });
+  // fields 7/8: no deferred raw value on a fresh object; field 9: writable.
+  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 }, { op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -2713,6 +2749,9 @@ export function compileStandaloneRegExpConstructor(
   // either may have been overridden, the fold is declined and the clone arm
   // below runs instead, which is what §22.2.3.1's construct path does.
   const identityIsProvable = patternIsRegExp && regExpIdentityBrandIsProvable(patternArg!);
+  // (#6651 B7) An OBJECT-typed pattern: §22.2.4.1 at run time (regexp-ctor-regexp-like.ts).
+  const fromObject = patternIsRegExp ? undefined : tryCompileRegExpCtorFromObject(ctx, fctx, args, node);
+  if (fromObject !== undefined) return fromObject;
   //
   // `staticConstStringValue(...) === undefined` is the THIRD static spelling
   // and the one S15.10.3.1_A1_T3 needs: a never-written `var x;` with no
@@ -2787,6 +2826,7 @@ export function compileStandaloneRegExpConstructor(
         { op: "f64.const", value: 0 },
         { op: "ref.null.extern" },
         { op: "i32.const", value: 0 },
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: structTypeIdx },
       );
     }
@@ -2857,6 +2897,7 @@ export function compileStandaloneRegExpConstructor(
     fctx.body.push(
       { op: "f64.const", value: 0 },
       { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: structTypeIdx },
     );
@@ -3304,7 +3345,26 @@ export function emitRegexSearchCall(
     // 9.e / 15), then restore the match flag for the caller.
     const matchedTmp = allocLocal(fctx, `__re_matched_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.set", index: matchedTmp });
+    // (#6651 B6) The reflective/protocol route has no receiver expression for
+    // the compile-time guard, so it consults the carrier's runtime
+    // [[Writable]] bit: `? Set(R, "lastIndex", e, true)` throws on a
+    // non-writable `lastIndex` (§22.2.7.2 steps 12.a.i.1 / 12.c.i.1 / 16).
+    const runtimeWritableGuard: Instr[] =
+      options.gyLastIndex === "runtime"
+        ? [
+            { op: "local.get", index: regexpLocal },
+            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+                flush: fctx,
+              }),
+            },
+          ]
+        : [];
     const updateLastIndex: Instr[] = [
+      ...runtimeWritableGuard,
       ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, regexpExpr ?? undefined),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedTmp },
@@ -3410,7 +3470,7 @@ function regExpArgType(ctx: CodegenContext, argExpr: ts.Expression): ts.Type {
   return ctx.checker.getTypeAtLocation(argExpr);
 }
 
-function isStringLikeArg(ctx: CodegenContext, argExpr: ts.Expression, preFetchedType?: ts.Type): boolean {
+export function isStringLikeArg(ctx: CodegenContext, argExpr: ts.Expression, preFetchedType?: ts.Type): boolean {
   const argType = preFetchedType ?? regExpArgType(ctx, argExpr);
   return (
     (argType.flags & ts.TypeFlags.StringLike) !== 0 ||
@@ -4162,6 +4222,8 @@ export function tryCompileStandaloneStringMatch(
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
     return undefined;
   }
+  // (#6665) Runtime-only flags: the `string-regexp-dynamic.ts` dispatcher runs the generic @@match body.
+  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpFlags(ctx, argExpr) === null) return undefined;
 
   // String-method operand order: subject = receiver, regex = arg.
   return emitStandaloneRegExpMatchCore(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride);
@@ -4171,8 +4233,9 @@ export function tryCompileStandaloneStringMatch(
  * Operand-explicit core for `@@match` semantics (§22.2.6.8). Shared by
  * `String.prototype.match` (subject is the receiver, regex is the argument) and
  * the `re[Symbol.match](str)` protocol form (regex is the receiver, subject is
- * the argument). Global match collects every [0] substring into a match-vec;
- * non-global returns the single capture array (`.exec`-shaped).
+ * the argument). Global match collects every [0] substring into the plain
+ * native-string vector; non-global returns the single capture array
+ * (`.exec`-shaped).
  */
 function emitStandaloneRegExpMatchCore(
   ctx: CodegenContext,
@@ -4205,7 +4268,7 @@ function emitStandaloneRegExpMatchCore(
       return null;
     }
     const matchAllIdx = ensureRegexMatchAll(ctx);
-    const matchVecTypeIdx = ensureRegexMatchVecType(ctx);
+    const flatVecTypeIdx = ensureRegexMatchFlatVecType(ctx);
     const strTypeIdx = ctx.nativeStrTypeIdx;
 
     const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexExpr);
@@ -4249,7 +4312,7 @@ function emitStandaloneRegExpMatchCore(
       { op: "i32.const", value: 0 },
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
     );
-    return { kind: "ref_null", typeIdx: matchVecTypeIdx };
+    return { kind: "ref_null", typeIdx: flatVecTypeIdx };
   }
 
   // Non-global match = RegExpExec (§22.2.6.8 step 5) — sticky regexps read
@@ -4437,6 +4500,10 @@ export function tryCompileStandaloneStringReplace(
     );
     if (fnReplace !== undefined) return fnReplace;
   }
+
+  // (#6662) An un-provable replacer dispatches at RUNTIME instead of refusing.
+  const dynamic = tryCompileRuntimeReplacer(ctx, fctx, expr, method, reExpr, receiverOverride, propAccess.expression);
+  if (dynamic !== undefined) return dynamic;
 
   // Function replacers require closure dispatch plus capture-argument
   // marshalling, which the host-free RegExp carrier does not implement yet.
@@ -4732,6 +4799,9 @@ export function tryCompileStandaloneStringSplit(
     return null;
   }
   const limitExpr = expr.arguments[1];
+  // (#6665) A runtime-only RegExp: the `string-regexp-dynamic.ts` dispatcher runs the generic @@split body.
+  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpPatternFlags(ctx, reExpr) === null)
+    return undefined;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpSplitCore(
@@ -4900,10 +4970,76 @@ export function tryCompileStandaloneRegExpSymbolCall(
     return undefined;
   }
 
+  // (#6651 B5) `re[Symbol.split](s, lim)` routes through the reified
+  // `RegExp.prototype[@@split]` — the §22.2.6.14 body with SpeciesConstructor
+  // and the splitter walk — under the same whole-file gate as B3's route,
+  // widened by `arraySpeciesDirty` (the module mentions `species` or assigns a
+  // `.constructor`, the only ways SpeciesConstructor can answer anything but
+  // %RegExp%) and by an operand the static core cannot type: a missing or
+  // non-string subject, or a non-number limit. Checked BEFORE the arity test
+  // below, because `re[Symbol.split]()` is legal (S = "undefined").
+  if (symbolMethod === "split" && expr.arguments.length <= 2) {
+    const [subject, limit] = expr.arguments;
+    const observed =
+      ctx.arraySpeciesDirty ||
+      fileObservesRegExpExecProtocol(expr) ||
+      fileMentionsSymbolMatch(expr) ||
+      subject === undefined ||
+      !isStringLikeArg(ctx, subject) ||
+      (limit !== undefined && (regExpArgType(ctx, limit).flags & ts.TypeFlags.NumberLike) === 0);
+    const splitId = getWellKnownSymbolId("split");
+    if (observed && splitId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, splitId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
+  // (#6651 B5) `re[Symbol.replace](s, v)` takes the same route to the reified
+  // §22.2.6.11 body when the program can observe the protocol (B3's whole-file
+  // predicate) or an operand is one the static core cannot type (a missing or
+  // non-string subject, a missing replacement).
+  if (symbolMethod === "replace" && expr.arguments.length <= 2) {
+    const [subject, replacement] = expr.arguments;
+    const observed =
+      fileObservesRegExpExecProtocol(expr) ||
+      subject === undefined ||
+      replacement === undefined ||
+      !isStringLikeArg(ctx, subject);
+    const replaceId = getWellKnownSymbolId("replace");
+    if (observed && replaceId !== undefined) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, expr.arguments, replaceId);
+      if (routed !== undefined) return routed;
+    }
+  }
+
   // arg[0] is the subject string in every form; string-coercion
   // (`re[Symbol.match](42)`) falls through to the host path which does ToString.
   if (expr.arguments.length < 1) return undefined;
   const strExpr = expr.arguments[0]!;
+
+  // (#6651 B3) The DIRECT spelling of the two methods whose generic §22.2.6
+  // body exists (`@@match`, `@@search`) routes through the reified
+  // `RegExp.prototype[@@<id>]` value when the program can OBSERVE the protocol
+  // — i.e. when it mentions `exec` / `RegExp.prototype`, or when the argument
+  // is not string-like and the static core below would decline anyway. The
+  // static core never consults `exec`, so without this route eight rows stay
+  // red despite B2's substrate answering them. See
+  // `regexp-symbol-protocol-call.ts` for the gate's rationale; an `exec`-free
+  // file keeps the static core byte-for-byte.
+  if ((symbolMethod === "search" || symbolMethod === "match") && expr.arguments.length === 1) {
+    const observed = fileObservesRegExpExecProtocol(expr) || !isStringLikeArg(ctx, strExpr);
+    if (observed) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const symbolId = getWellKnownSymbolId(symbolMethod);
+      if (symbolId !== undefined) {
+        const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, [strExpr], symbolId);
+        if (routed !== undefined) return routed;
+      }
+    }
+  }
+
   if (!isStringLikeArg(ctx, strExpr)) return undefined;
 
   // WASI shares only the fail-loud function-replacer contract. Supported
@@ -4965,7 +5101,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
 // ── #1914: RegExp reflection + match-result shape ─────────────────────
 
 /** Flag-boolean getter → bitfield bit (§22.2.6.5–.12, §22.2.6.18/.19). */
-const REGEXP_FLAG_BOOL_PROPS: Record<string, number> = {
+export const REGEXP_FLAG_BOOL_PROPS: Record<string, number> = {
   hasIndices: RE_FLAG_D,
   global: RE_FLAG_G,
   ignoreCase: RE_FLAG_I,
@@ -5153,6 +5289,14 @@ export function tryCompileStandaloneRegExpCompile(
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
+  // Keep this proof deliberately narrower than staticConstStringValue: this
+  // call path must still evaluate arbitrary arguments and perform their
+  // observable ToString coercions. Only primitive literals / void 0 have no
+  // conversion effects, so only they can reuse the constructor's syntax oracle
+  // before RegExpInitialize mutates the receiver. In particular, a binding
+  // named `undefined` is never assumed to be the global undefined value.
+  const staticSyntaxCandidate = staticDirectRegExpCompileSyntaxCandidate(expr.arguments[0], expr.arguments[1]);
+
   // Both operands are evaluated (left-to-right) into externref locals BEFORE
   // any coercion runs, matching the spec's argument-evaluation order.
   const argLocals: number[] = [];
@@ -5172,12 +5316,54 @@ export function tryCompileStandaloneRegExpCompile(
     argLocals.push(local);
   }
 
+  // §B.2.5.1 reaches RegExpInitialize only after receiver and argument
+  // evaluation. A statically-proven invalid primitive pair can throw here,
+  // before the dynamic compiler's valid-but-unsupported poison would be copied
+  // into the existing receiver. Dynamic values and every host-valid pair keep
+  // the established shared in-place path below.
+  if (staticSyntaxCandidate !== null) {
+    const syntaxMessage = hostRegExpSyntaxErrorMessage(staticSyntaxCandidate.pattern, staticSyntaxCandidate.flags);
+    if (syntaxMessage !== null) return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMessage);
+  }
+
   if (!emitRegExpCompileInPlace(ctx, fctx, regexpLocal, structTypeIdx, argLocals[0]!, argLocals[1]!)) {
     return null;
   }
   // Step 6 — return the receiver itself.
   fctx.body.push({ op: "local.get", index: regexpLocal });
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+interface StaticDirectRegExpCompileSyntaxCandidate {
+  pattern: string;
+  flags: string;
+}
+
+/**
+ * Side-effect-free primitive operands whose RegExp syntax can be classified at
+ * compile time without skipping user-visible argument coercion. `undefined`
+ * identifiers intentionally decline: a local parameter/binding may shadow the
+ * global value. `void 0` is the sole accepted explicit undefined spelling.
+ */
+function staticDirectRegExpCompileOperand(expr: ts.Expression | undefined): string | undefined | null {
+  if (expr === undefined) return undefined;
+  const unwrapped = stripStaticWrapper(expr);
+  if (ts.isStringLiteral(unwrapped) || ts.isNoSubstitutionTemplateLiteral(unwrapped)) return unwrapped.text;
+  if (ts.isVoidExpression(unwrapped)) {
+    const operand = stripStaticWrapper(unwrapped.expression);
+    if (ts.isNumericLiteral(operand) && operand.text === "0") return undefined;
+  }
+  return null;
+}
+
+function staticDirectRegExpCompileSyntaxCandidate(
+  patternArg: ts.Expression | undefined,
+  flagsArg: ts.Expression | undefined,
+): StaticDirectRegExpCompileSyntaxCandidate | null {
+  const pattern = staticDirectRegExpCompileOperand(patternArg);
+  const flags = staticDirectRegExpCompileOperand(flagsArg);
+  if (pattern === null || flags === null) return null;
+  return { pattern: pattern ?? "", flags: flags ?? "" };
 }
 
 /**
@@ -5580,6 +5766,41 @@ export function ensureRegExpNativeProtoGlue(ctx: CodegenContext): number | undef
 }
 
 /**
+ * RegExpExec steps 5-6 (§22.2.7.1) for the externref RegExp held in `rxLocal`:
+ * the brand recovery (a catchable TypeError on a non-RegExp) plus
+ * `RegExpBuiltinExec`, leaving an externref match object or null. Shared by the
+ * `@@match` / `@@search` bodies (where `rxLocal` is `this`) and `@@split`
+ * (where it is the constructed SPLITTER).
+ */
+export function emitRegExpBuiltinExecFromLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rxLocal: number,
+  sLocal: number,
+): void {
+  const builtin = recoverRegExpStructFromExternref(ctx, fctx, rxLocal);
+  if (builtin === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return;
+  }
+  const subjLocal = flattenExternrefArgToString(ctx, fctx, sLocal);
+  const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+    gyLastIndex: "runtime",
+    readLastIndex: true,
+    inputOverride: () => {
+      fctx.body.push({ op: "local.get", index: subjLocal });
+      return nativeStringType(ctx);
+    },
+    regexpOverride: { regexpLocal: builtin.regexpLocal, structTypeIdx: builtin.structTypeIdx },
+  });
+  if (emitted === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return;
+  }
+  fctx.body.push({ op: "extern.convert_any" });
+}
+
+/**
  * Emit a RegExp.prototype method/getter closure body. The closure params are:
  *   index 0: the `__fn_wrap` self struct,
  *   index 1: the externref `this` receiver,
@@ -5623,6 +5844,16 @@ function emitRegExpProtoMemberBody(
       emitNativeProtoIdentityReturnUndefined(ctx, fctx, brand, 1, protoResult);
     }
 
+    // (#5198 Slice F / #6651 B4) `flags` is the ONE member of this family that
+    // §22.2.6.4 defines over an arbitrary Object — it reads the other eight
+    // through `[[Get]]` rather than off the receiver's internal slots. Brand
+    // recovery is therefore wrong for it, and only for it: the individual flag
+    // getters keep their brand check (§22.2.6.5-.12 step 2).
+    if (member === "flags") {
+      const generic = emitGenericFlagsGetterBody(ctx, fctx, 1);
+      if (generic !== null) return generic;
+    }
+
     // Brand-recovery prologue: `this` is closure param index 1 (externref). On a
     // genuine non-RegExp `this` (e.g. `get.call({})`) this throws a catchable
     // TypeError (§22.2.6 step 2) — unchanged.
@@ -5651,6 +5882,44 @@ function emitRegExpProtoMemberBody(
       return { kind: "externref" };
     }
     return fieldType;
+  }
+
+  // (#6651 B2) `@@9` = `RegExp.prototype[@@search]`, §22.2.6.12, runs BEFORE the
+  // brand-recovery prologue and does not use it. Its step 2 requires only
+  // `Type(rx) is Object`; the RegExp brand requirement is RegExpExec step 5 and
+  // is reached only when `exec` is not callable, which is what makes
+  // `RegExp.prototype[Symbol.search].call({exec: f}, s)` legal. Emitting the
+  // brand check first answered TypeError for that shape before the user's
+  // `exec` could run — see `regexp-exec-protocol.ts`. The builtin arm below IS
+  // the old prologue, moved to where the spec puts it.
+  // RegExpExec steps 5-6 for a genuine RegExp receiver: the brand recovery that
+  // used to run first, plus `RegExpBuiltinExec`, leaving an externref.
+  const emitBuiltinExec = (rxLocal: number, sLocal: number): void =>
+    emitRegExpBuiltinExecFromLocal(ctx, fctx, rxLocal, sLocal);
+  // (#6651 B5) `@@10` = `RegExp.prototype[@@split]`, §22.2.6.14 — same
+  // placement rule as `@@9`/`@@7`: step 2 is `Type(rx) is Object`, and the
+  // brand requirement lives in RegExpExec step 5 on the SPLITTER, so the
+  // builtin arm recovers the struct from the splitter local, not from `this`.
+  if (member === "@@10" || member === "@@8") {
+    const result =
+      member === "@@10"
+        ? emitRegExpSymbolSplitBody(ctx, fctx, 1, 2, 3, emitBuiltinExec)
+        : emitRegExpSymbolReplaceBody(ctx, fctx, 1, 2, 3, emitBuiltinExec);
+    // A decline emits nothing and falls to the placeholder below, unchanged.
+    if (result !== null) return result;
+  }
+  if (member === "@@9" || member === "@@7") {
+    const protocolResult =
+      member === "@@9"
+        ? emitRegExpSymbolSearchBody(ctx, fctx, 1, 2, emitBuiltinExec)
+        : emitRegExpSymbolMatchBody(ctx, fctx, 1, 2, emitBuiltinExec);
+    if (protocolResult === null) {
+      // Declining leaves the previous answer for this member — the null
+      // placeholder below — rather than a half-emitted body.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    return protocolResult;
   }
 
   // Method bodies. Brand-recovery prologue: `this` is closure param index 1
@@ -5748,10 +6017,14 @@ function emitRegExpCompileInPlace(
 ): boolean {
   ensureNativeStringHelpers(ctx);
   const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-  const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
+  ensureRuntimeToStringIdx(ctx, fctx);
+  // (#6651 B7) steps 4.a/4.b are the SPEC ToString: a Symbol throws a TypeError.
+  ensureObjectRuntime(ctx);
+  ensureSpecExternrefToStringProvider(ctx, fctx);
   const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
   const flagsStrIdx = ensureRegexFlagsStr(ctx);
   flushLateImportShifts(ctx, fctx);
+  const toStringIdx = ctx.funcMap.get("__extern_to_string_spec") ?? getExternrefToStringProvider(ctx);
   if (isUndefIdx === undefined || toStringIdx === undefined) return false;
 
   const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
@@ -5853,6 +6126,17 @@ function emitRegExpCompileInPlace(
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
     );
   }
+  // (#6651 B6) §22.2.3.3.1 step 11 — `? Set(obj, "lastIndex", +0, true)`, AFTER
+  // the matcher was replaced: a non-writable `lastIndex` throws with the new
+  // program already installed (`pattern-regexp-immutable-lastindex`).
+  const readOnlyThrow = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+    flush: fctx,
+  });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+    { op: "if", blockType: { kind: "empty" }, then: readOnlyThrow },
+  );
   fctx.body.push(
     { op: "local.get", index: regexpLocal },
     { op: "f64.const", value: 0 },
@@ -5982,12 +6266,13 @@ export function tryCompileStandaloneRegExpLastIndexWrite(
 /**
  * `.index` / `.input` reads on standalone exec/match results (#1914).
  *
- * The receiver's static TS type (`RegExpExecArray` / `RegExpMatchArray`) is
- * the routing signal; the runtime value is the `$__regexp_match_vec` subtype
- * every standalone exec/match constructs (`__regex_capture_array`). Receivers
- * statically typed as the base nstr vec are `ref.cast` down — construction
- * provenance guarantees the cast succeeds; a null result traps, matching the
- * TypeError a member read on `null` must produce.
+ * A source-proven `exec` result has physical capture metadata, while a global
+ * `@@match` result is an ordinary native-string vector.  Both enter the
+ * canonical `__extern_get` reader at the property boundary: that reader has
+ * the runtime `ref.test`/physical-field arms for capture values and the vec
+ * sidecar/prototype path for plain global vectors.  Returning its `externref`
+ * result deliberately avoids coercing a checker-annotated global `.index`
+ * miss into `NaN`; source inference is never a runtime brand.
  */
 export function tryCompileStandaloneRegExpMatchResultRead(
   ctx: CodegenContext,
@@ -5999,95 +6284,115 @@ export function tryCompileStandaloneRegExpMatchResultRead(
   if (propName !== "index" && propName !== "input" && propName !== "groups" && propName !== "indices") {
     return undefined;
   }
-  const objType = ctx.checker.getTypeAtLocation(expr.expression);
-  const nonNull = objType.getNonNullableType?.() ?? objType;
-  const symName = nonNull.getSymbol()?.name;
-  if (symName !== "RegExpExecArray" && symName !== "RegExpMatchArray") return undefined;
-
-  const recvType = compileExpression(ctx, fctx, expr.expression);
-  if (recvType === null) return null;
-  // The exec/match lowering above registered the struct while compiling the
-  // receiver; absence means the value cannot be a backend match result.
-  const matchVecIdx = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
-  if (matchVecIdx === undefined) {
-    reportStandaloneRegExpUnsupported(
-      ctx,
-      expr.expression,
-      "match-result property reads on values not produced by this standalone backend",
-    );
-    return null;
-  }
-  if (recvType.kind === "externref") {
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: matchVecIdx });
-  } else if (recvType.kind === "ref" || recvType.kind === "ref_null") {
-    if (recvType.typeIdx !== matchVecIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: matchVecIdx });
-    } else if (recvType.kind === "ref_null") {
-      fctx.body.push({ op: "ref.as_non_null" });
-    }
-  } else {
-    reportStandaloneRegExpUnsupported(
-      ctx,
-      expr.expression,
-      "match-result property reads on values not produced by this standalone backend",
-    );
-    return null;
-  }
-
-  if (propName === "index") {
-    fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INDEX });
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    return { kind: "f64" };
-  }
-  if (propName === "groups") {
-    // #2588 — the named-groups result object (externref $Object). Null (≙
-    // `undefined`) for a pattern with no named captures; otherwise `<name>`
-    // reads flow through the standalone open-object property path.
-    fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_GROUPS });
-    return { kind: "externref" };
-  }
-  if (propName === "indices") {
-    // #2589 — the `d`-flag match-indices array (externref $ObjVec). Null (≙
-    // `undefined`) when the pattern lacks the `d` flag; otherwise `[i]`/`[i][j]`
-    // reads are native (no `env::__extern_get`).
-    fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INDICES });
-    return { kind: "externref" };
-  }
-  fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INPUT });
-  return nativeStringType(ctx);
+  const carrier = standaloneMatchResultValueCarrier(ctx, expr.expression);
+  // A binding widened by a later foreign assignment can still hold a native
+  // result at this exact read.  Its initial native producer is enough to admit
+  // the runtime reader, whose own type arms preserve a currently-held capture
+  // result without assuming the TypeScript declaration remains a brand.
+  if (carrier === null && !standaloneMatchResultCandidate(ctx, expr.expression)) return undefined;
+  return emitStandaloneRegExpMatchResultDynamicRead(ctx, fctx, expr.expression, propName);
 }
 
 /**
- * True when `expr` is a standalone backend exec/match call producing a
- * `$__regexp_match_vec` (`re.exec(s)` / `s.match(re)` with a backend-created
- * static RegExp). Mirrors the lowering gates in
- * {@link tryCompileStandaloneRegExpExec} / {@link tryCompileStandaloneStringMatch}.
+ * Read a match-result metadata key through the ordinary externref property
+ * boundary.  `__extern_get` owns the runtime distinction: concrete
+ * `$__regexp_match_vec` values use their physical metadata arms; plain native
+ * vectors use their vec overlay and Array/Object prototype fallback.  Keeping
+ * this helper's result as `externref` is load-bearing for a global result's
+ * absent `index`/`input` — TypeScript calls those members numbers/strings, but
+ * JavaScript must expose the canonical `undefined`, not a coerced `NaN`.
  */
-function isStandaloneMatchResultCall(ctx: CodegenContext, expr: ts.Expression): boolean {
+function emitStandaloneRegExpMatchResultDynamicRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  propName: "index" | "input" | "groups" | "indices",
+): ValType | null {
+  // Lower the receiver first. It can add imports and may register a native
+  // result carrier; no helper index is captured across this emission.
+  const receiverType = compileExpression(ctx, fctx, receiver);
+  if (receiverType === null) return null;
+  if (receiverType.kind !== "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  }
+  const receiverLocal = allocLocal(fctx, `__re_match_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: receiverLocal });
+
+  // Build the native MOP only after receiver lowering, then resolve every
+  // helper below after its own potential late-import work. Its finalizer sees
+  // the complete carrier/type graph before it fills runtime field arms.
+  ensureObjectRuntime(ctx);
+  addStringConstantGlobal(ctx, propName);
+
+  // Build this after receiver lowering: the error constructor may be a late
+  // import, and the builder flushes every earlier call in `fctx.body` before
+  // returning the terminal arm.  No baked helper index survives receiver
+  // compilation unrefreshed.
+  const nullThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `Cannot read properties of null (reading '${propName}')`,
+    { flush: fctx },
+  );
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  if (externGetIdx === undefined) {
+    reportStandaloneRegExpUnsupported(ctx, receiver, "native match-result property lookup without __extern_get");
+    return null;
+  }
+
+  // Under the singleton regime, undefined is non-null and needs the canonical
+  // tag-1 check as well as the legacy null externref guard.
+  const nullish = nullishExternTestInstrs(ctx, receiverLocal) ?? [
+    { op: "local.get", index: receiverLocal } satisfies Instr,
+    { op: "ref.is_null" } satisfies Instr,
+  ];
+  fctx.body.push(
+    ...nullish,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: nullThrow,
+      else: [],
+    },
+    { op: "local.get", index: receiverLocal },
+    ...stringConstantExternrefInstrs(ctx, propName),
+    { op: "call", funcIdx: externGetIdx },
+  );
+  return { kind: "externref" };
+}
+
+type StandaloneMatchResultCarrier = "flat" | "capture" | "mixed";
+
+/** The exact result carrier produced by one native exec/match call. */
+function standaloneMatchResultCallCarrier(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+): Exclude<StandaloneMatchResultCarrier, "mixed"> | null {
   const unwrapped = stripStaticWrapper(expr);
-  if (!ts.isCallExpression(unwrapped)) return false;
+  if (!ts.isCallExpression(unwrapped)) return null;
   if (ts.isPropertyAccessExpression(unwrapped.expression)) {
     const method = unwrapped.expression.name.text;
     if (method === "exec") {
-      return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.expression.expression);
+      return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.expression.expression) ? "capture" : null;
     }
     if (method === "match" && unwrapped.arguments.length === 1) {
-      return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.arguments[0]!);
+      const regexpExpr = unwrapped.arguments[0]!;
+      if (!isKnownBackendCreatedRegExpReceiver(ctx, regexpExpr)) return null;
+      const flags = staticRegExpFlags(ctx, regexpExpr);
+      return flags === null ? null : flags.includes("g") ? "flat" : "capture";
     }
-    return false;
+    return null;
   }
-  // `re[Symbol.match](s)` (#2161) — the symbol-protocol dual of `s.match(re)`:
-  // a non-global match yields the same `$__regexp_match_vec` ref result, so the
-  // declared local must carry that type too (else indexed reads route through
-  // __extern_get_idx and trap). Receiver is the static/backend RegExp.
+  // `re[Symbol.match](s)` is the operand-swapped dual of `s.match(re)`.
   if (ts.isElementAccessExpression(unwrapped.expression)) {
     const elem = unwrapped.expression;
     if (isSymbolMatchKey(elem.argumentExpression) && unwrapped.arguments.length === 1) {
-      return isKnownBackendCreatedRegExpReceiver(ctx, elem.expression);
+      if (!isKnownBackendCreatedRegExpReceiver(ctx, elem.expression)) return null;
+      const flags = staticRegExpFlags(ctx, elem.expression);
+      return flags === null ? null : flags.includes("g") ? "flat" : "capture";
     }
   }
-  return false;
+  return null;
 }
 
 /** True for the computed key `Symbol.match` (the @@match well-known symbol). */
@@ -6107,39 +6412,45 @@ function isNullishLiteral(expr: ts.Expression): boolean {
   return ts.isIdentifier(unwrapped) && unwrapped.text === "undefined";
 }
 
+function mergeStandaloneMatchResultCarrier(
+  left: StandaloneMatchResultCarrier,
+  right: StandaloneMatchResultCarrier,
+): StandaloneMatchResultCarrier {
+  return left === right ? left : "mixed";
+}
+
 /**
- * Module-global type inference for `var m = re.exec(s)` under standalone
- * (#1914). Without this the global widens to externref and indexed reads
- * route through the native `__extern_get_idx`, which only recognises the
- * open-object `$ObjVec` — a typed match-vec read back from externref returns
- * null and the comparison traps in `__str_flatten` (the
- * `null_deref __str_flatten` test262 bucket).
- *
- * Returns `ref_null $__regexp_match_vec` only when the initializer is a
- * backend exec/match call AND every other write to the var in the file is
- * also one (or null/undefined) — any foreign write keeps the externref
- * widening so the precise global type can never reject a store.
+ * Prove a variable's complete source-file write set stays inside native
+ * exec/match values (or nullish), tracking a flat/capture union for a binding
+ * whose writes use both result shapes. This is deliberately stricter than a
+ * checker type: unknown calls, compound writes, destructuring, and loop writes
+ * decline the optimized carrier.
  */
-export function inferStandaloneRegExpMatchGlobalType(
+function standaloneMatchResultBindingCarrier(
   ctx: CodegenContext,
   decl: ts.VariableDeclaration,
-): ValType | null {
-  if (!usesNativeRegExpProvider(ctx) || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
-  if (!decl.initializer || !ts.isIdentifier(decl.name)) return null;
-  if (!isStandaloneMatchResultCall(ctx, decl.initializer)) return null;
-  const sym = ctx.checker.getSymbolAtLocation(decl.name);
-  if (!sym) return null;
+  sym: ts.Symbol,
+  seen: ReadonlySet<ts.Symbol>,
+): StandaloneMatchResultCarrier | null {
+  if (!decl.initializer) return null;
+  const initial = standaloneMatchResultValueCarrier(ctx, decl.initializer, seen);
+  if (initial === null) return null;
 
+  let carrier = initial;
   let foreignWrite = false;
   const visit = (node: ts.Node): void => {
     if (foreignWrite) return;
     if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
       if (assignmentTargetContainsSymbol(ctx, node.left, sym)) {
-        const isPlainIdentTarget = isSameSymbolIdentifier(ctx, node.left, sym);
+        const rhsCarrier = standaloneMatchResultValueCarrier(ctx, node.right, seen);
         const rhsOk =
           node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          (isStandaloneMatchResultCall(ctx, node.right) || isNullishLiteral(node.right));
-        if (!isPlainIdentTarget || !rhsOk) foreignWrite = true;
+          (rhsCarrier !== null || isNullishLiteral(node.right));
+        if (!isSameSymbolIdentifier(ctx, node.left, sym) || !rhsOk) {
+          foreignWrite = true;
+        } else if (rhsCarrier !== null) {
+          carrier = mergeStandaloneMatchResultCarrier(carrier, rhsCarrier);
+        }
       }
     } else if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
@@ -6157,7 +6468,107 @@ export function inferStandaloneRegExpMatchGlobalType(
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(decl.getSourceFile(), visit);
-  if (foreignWrite) return null;
+  return foreignWrite ? null : carrier;
+}
 
-  return { kind: "ref_null", typeIdx: ensureRegexMatchVecType(ctx) };
+/**
+ * Source-proven carrier of one match value or an alias of one. The cycle guard
+ * makes mutually initialized aliases conservative rather than recursively
+ * treating a checker annotation as provenance.
+ */
+function standaloneMatchResultValueCarrier(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+  seen: ReadonlySet<ts.Symbol> = new Set<ts.Symbol>(),
+): StandaloneMatchResultCarrier | null {
+  const direct = standaloneMatchResultCallCarrier(ctx, expr);
+  if (direct !== null) return direct;
+
+  const unwrapped = stripStaticWrapper(expr);
+  if (!ts.isIdentifier(unwrapped)) return null;
+  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+  if (!sym || seen.has(sym)) return null;
+  const decl = sym.getDeclarations()?.find((candidate) => ts.isVariableDeclaration(candidate)) as
+    | ts.VariableDeclaration
+    | undefined;
+  if (!decl) return null;
+  const nextSeen = new Set(seen);
+  nextSeen.add(sym);
+  return standaloneMatchResultBindingCarrier(ctx, decl, sym, nextSeen);
+}
+
+/**
+ * Does this expression originate at a native match producer, ignoring later
+ * writes?  This is only a permission to use the generic runtime reader for a
+ * binding whose full write set was too broad for a concrete Wasm slot.  It is
+ * not a shape proof: `__extern_get` performs the actual runtime dispatch.
+ */
+function standaloneMatchResultCandidate(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+  seen = new Set<ts.Symbol>(),
+): boolean {
+  if (standaloneMatchResultCallCarrier(ctx, expr) !== null) return true;
+  const unwrapped = stripStaticWrapper(expr);
+  if (!ts.isIdentifier(unwrapped)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+  if (!sym || seen.has(sym)) return false;
+  const decl = sym.getDeclarations()?.find((candidate) => ts.isVariableDeclaration(candidate)) as
+    | ts.VariableDeclaration
+    | undefined;
+  if (!decl?.initializer) return false;
+  const nextSeen = new Set(seen);
+  nextSeen.add(sym);
+  return standaloneMatchResultCandidate(ctx, decl.initializer, nextSeen);
+}
+
+function standaloneMatchResultCarrierType(ctx: CodegenContext, carrier: StandaloneMatchResultCarrier): ValType {
+  const typeIdx = carrier === "capture" ? ensureRegexMatchVecType(ctx) : ensureRegexMatchFlatVecType(ctx);
+  return { kind: "ref_null", typeIdx };
+}
+
+/** Resolve one binding's complete, source-proven match-result write set. */
+function standaloneMatchResultDeclarationCarrier(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+): StandaloneMatchResultCarrier | null {
+  if (!decl.initializer || !ts.isIdentifier(decl.name)) return null;
+  const sym = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!sym) return null;
+  return standaloneMatchResultBindingCarrier(ctx, decl, sym, new Set<ts.Symbol>([sym]));
+}
+
+/**
+ * Infer the concrete carrier for a declaration whose complete write set stays
+ * within native match results. A capture-only binding uses the capture subtype;
+ * any global or mixed result uses the shared plain native-string vec so a
+ * later legal global-result store can never ref.cast into the capture subtype.
+ */
+export function inferStandaloneRegExpMatchResultType(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+): ValType | null {
+  if (!usesNativeRegExpProvider(ctx) || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
+  const carrier = standaloneMatchResultDeclarationCarrier(ctx, decl);
+  return carrier === null ? null : standaloneMatchResultCarrierType(ctx, carrier);
+}
+
+/**
+ * Module-global type inference for `var m = re.exec(s)` under standalone
+ * (#1914). Without this the global widens to externref and indexed reads
+ * route through the native `__extern_get_idx`, which only recognises the
+ * open-object `$ObjVec` — a typed match-vec read back from externref returns
+ * null and the comparison traps in `__str_flatten` (the
+ * `null_deref __str_flatten` test262 bucket).
+ *
+ * Returns a capture subtype only when every admissible write is a capture
+ * result; any admissible global result widens the binding to the base vec that
+ * both result carriers share. Foreign writes keep the ordinary externref
+ * widening so the precise carrier can never reject a store.
+ */
+export function inferStandaloneRegExpMatchGlobalType(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+): ValType | null {
+  return inferStandaloneRegExpMatchResultType(ctx, decl);
 }

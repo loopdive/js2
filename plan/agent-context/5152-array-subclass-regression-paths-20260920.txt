@@ -1,0 +1,5 @@
+built-ins/Array/prototype/some/15.4.4.17-8-10.js
+built-ins/Array/prototype/forEach/15.4.4.18-8-10.js
+built-ins/Array/prototype/map/15.4.4.19-9-3.js
+built-ins/Array/prototype/filter/15.4.4.20-10-3.js
+built-ins/Array/prototype/every/15.4.4.16-8-10.js

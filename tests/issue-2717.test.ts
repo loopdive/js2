@@ -16,8 +16,8 @@ import { runTest262File } from "./test262-runner.js";
  *
  * Current standalone/WASI behavior:
  *   - `flat()` (default depth, nested-array receiver) → native, compiles + runs.
- *   - `flat(depth)` with an EXPLICIT depth arg → still refuses loudly (the native
- *     arm is depth-1-only; a variable-depth recursive flatten is a follow-up).
+ *   - `flat(depth)` with an EXPLICIT depth arg → native recursive
+ *     FlattenIntoArray (`array-flat-native.ts`), compiles + runs.
  *   - `flatMap(cb)` with an array-returning / scalar callback → native.
  *   - `flatMap(cb)` whose INLINE callback contains a bare empty array literal
  *     `[]` (e.g. `x => cond ? [] : [x]`) → native, compiles + runs. (#3532 fixed
@@ -33,7 +33,10 @@ import { runTest262File } from "./test262-runner.js";
  */
 
 async function compileStandalone(body: string) {
-  return compile(`export function test(): number { ${body} }`, { fileName: "t.ts", target: "standalone" });
+  return compile(`export function test(): number { ${body} }`, {
+    fileName: "t.ts",
+    target: "standalone",
+  });
 }
 
 function noFlatImports(r: Awaited<ReturnType<typeof compile>>): string[] {
@@ -43,6 +46,7 @@ function noFlatImports(r: Awaited<ReturnType<typeof compile>>): string[] {
 describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", () => {
   const runCases: Array<[string, string, number]> = [
     ["flat() flattens one level", `const a: number[][] = [[1,2],[3,4]]; return a.flat().length;`, 4],
+    ["flat(1) explicit depth", `const a: number[][] = [[1,2],[3,4]]; return a.flat(1).length;`, 4],
     ["flatMap() array callback (length)", `const a: number[] = [1,2,3]; return a.flatMap(x => [x, x*2]).length;`, 6],
     [
       "flatMap() array callback (sum)",
@@ -83,15 +87,17 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
     expect(result.status, `${relativePath}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
   });
 
-  it("keeps a dynamic scalar-or-array callback fail-loud", async () => {
+  it("runs a dynamic scalar-or-array callback through the native recursive flatten", async () => {
+    // (#2717) formerly fail-loud; `array-flat-native.ts` decides IsArray per call.
     const r = await compileStandalone(`
       const a: number[] = [1, 2];
-      const cb: (x: number) => number | number[] = (x) => x;
+      const cb: (x: number) => number | number[] = (x) => (x > 1 ? [x, x] : x);
       return a.flatMap(cb).length;
     `);
-    expect(r.success).toBe(false);
-    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(noFlatImports(r)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(r.binary, (r.importObject ?? {}) as WebAssembly.Imports);
+    expect((instance.exports as { test: () => number }).test()).toBe(3);
   });
 
   it("keeps an Array-subclass callback fail-loud under custom species", async () => {
@@ -146,32 +152,18 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
     expect(noFlatImports(r)).toEqual([]);
   });
 
-  const loudCases: Array<[string, string, RegExp]> = [
-    [
-      "flat(depth) explicit arg",
-      `const a: number[][] = [[1,2],[3,4]]; return a.flat(1).length;`,
-      /flat\(\) is not yet supported in --target standalone/,
-    ],
-    // NOTE (#3532): the empty-array-literal flatMap callback used to be a loud
-    // case here (guarded a-priori). It now compiles + runs correctly — see the
-    // "flatMap() empty-array-literal callback" entry in `runCases` above.
-  ];
-  for (const [label, body, re] of loudCases) {
-    it(`${label} → tracked compile error, never an unsatisfiable __array_flat* import`, async () => {
-      const r = await compileStandalone(body);
-      expect(r.success).toBe(false);
-      expect(r.errors.map((e) => e.message).join("\n")).toMatch(re);
-      // The guard runs BEFORE ensureLateImport, so the unsatisfiable host import
-      // is never registered.
-      expect(noFlatImports(r)).toEqual([]);
-    });
-  }
+  // (#2717) `flat(depth)` with an explicit depth used to be a loud case here;
+  // the native recursive FlattenIntoArray (`array-flat-native.ts`) now serves
+  // it — see the `flat(1) explicit depth` entry in `runCases` above and
+  // `tests/issue-2717-native-flatten.test.ts`.
 });
 
 describe("#2717 — host/gc mode flat/flatMap unchanged", () => {
   async function runHost(body: string): Promise<number> {
     const { buildImports } = await import("../src/runtime.js");
-    const r = await compile(`export function test(): number { ${body} }`, { fileName: "t.ts" });
+    const r = await compile(`export function test(): number { ${body} }`, {
+      fileName: "t.ts",
+    });
     expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
     const built = buildImports(r.imports, {}, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, built as WebAssembly.Imports);

@@ -487,6 +487,41 @@ export function tryCompileObjectProtoProtoAccessorReflectiveCall(
     else if (t.kind !== "externref") coerceType(ctx, fctx, t, EXTERNREF);
   };
 
+  // (#6651 SN1) §B.2.2.1.1 step 2 reads O.[[GetPrototypeOf]](), and an ORDINARY
+  // object's answer is `%Object.prototype%`. `__object_proto_get` re-applies the
+  // two null-encodings that `object-runtime-prototype.ts` documents — but its
+  // "implicit terminal" arm `ref.test`s the receiver against `$Object`, so it
+  // only fires for the OPEN carrier. A receiver the compiler represents as a
+  // CLOSED WasmGC struct (an ordinary object literal) fails that test and the
+  // raw `null` from the walk is handed back: measured on base,
+  // `get.call({})` answered `null` while `get.call(Object.create(proto))` and
+  // `get.call(Object.create(null))` were both already correct — i.e. the one
+  // shape that is MOST obviously an ordinary object was the one that failed.
+  // Promote a literal receiver (and a one-hop variable initializer) to the open
+  // carrier, exactly as the Error.prototype.toString reflective arm in calls.ts
+  // does, so the existing terminal logic sees it. Deliberately narrow: only this
+  // accessor's receiver argument, and only a syntactic object literal — a
+  // primitive receiver's wrapper prototype stays out of scope.
+  {
+    let receiver = expr.arguments[0];
+    while (
+      receiver !== undefined &&
+      (ts.isParenthesizedExpression(receiver) || ts.isAsExpression(receiver) || ts.isNonNullExpression(receiver))
+    ) {
+      receiver = receiver.expression;
+    }
+    if (receiver !== undefined && ts.isObjectLiteralExpression(receiver)) {
+      ctx.dynamicProtoLiteralNodes.add(receiver);
+    }
+    // A one-hop IDENTIFIER receiver is deliberately NOT marked. Its declaration
+    // has already been compiled by the time this arm runs, and `variables.ts` /
+    // `index.ts` decide the binding SLOT type from the same set at declaration
+    // time — so a mark added here would be honoured by `literals.ts` on a later
+    // re-compile of that literal while the slot stayed a closed struct ref,
+    // i.e. invalid Wasm. That case belongs to the `scanForDynamicProto`
+    // pre-scan, and no row in scope spells it.
+  }
+
   pushArg(expr.arguments[0]); // thisArg
   if (accessorName === "set") pushArg(expr.arguments[1]);
   fctx.body.push({ op: "call", funcIdx: resolvedIdx });

@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-05
+updated: 2026-09-24
 priority: high
 feasibility: hard
 model: fable
@@ -25,6 +25,12 @@ loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/stack-balance.ts
   - src/codegen/expressions/operator-assignment.ts
+  # 2026-09-24: checker compile cost — native-strings.ts reads a string
+  # constant still waiting in the end-of-bodies batch (3 lines);
+  # registry/imports.ts and identifiers.ts (listed below) add the batching.
+  - src/codegen/native-strings.ts
+  # 2026-09-23: checker slice — index.ts and property-access.ts each import
+  # the fnctor-name helper so NodeLinks resolves one way for the whole compile.
   - src/codegen/index.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/statements/nested-declarations.ts
@@ -74,7 +80,25 @@ loc-budget-allow:
   # 2026-08-31: projected NodeArray vecs retain their host-backed sidecar/MOP
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
+  # 2026-09-23: the binder symbol-table slice adds small hooks to
+  # call-identifier.ts, property-access.ts, binary-ops.ts, assignment.ts,
+  # expressions.ts and runtime.ts (all listed above); the logic lives in new
+  # subsystem modules (declaration-bound-callee, undefined-holding-variable,
+  # null-ref-undefined-box, unmatched-closure-host-call).
 func-budget-allow:
+  # 2026-09-24: the literal-promotion guard learns to leave a capture cell's
+  # type alone (3 lines).
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  # 2026-09-23: binder slice. compileIdentifierCall's body moves verbatim into
+  # compileBoundIdentifierCall behind the declaration-bound callee wrapper; the
+  # numeric-key switch learns enum keys and an undefined miss.
+  - src/codegen/expressions/call-identifier.ts::compileBoundIdentifierCall
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions.ts::compileExpressionBody
+  # 2026-09-23: the dynamic-call arm ladder moves verbatim out of
+  # tryEmitInlineDynamicCall (which shrinks by the same amount) so a large
+  # ladder can be emitted once as a shared helper instead of per call site.
+  - src/codegen/expressions/calls.ts::buildInlineDynamicDispatch
   # 2026-09-01: the standalone apply bridge rejects a local closure whose live
   # declared arity exceeds its fixed eight-position ABI while preserving the
   # existing full-vector linked/native fallback.
@@ -1572,6 +1596,302 @@ the binder slice must be `const x: number = "str"` producing TS2322; `1 +
 "str"` is valid TypeScript and is not a checker-negative control. Printer
 equivalence should be a separate `createPrinter().printFile` slice before full
 emit and self-hosting.
+
+## Parser on current main: compile time and runtime crashes (2026-09-23)
+
+Measured on the pinned TypeScript 5.9.3 checkout with
+`dogfood:typescript-parser-source` (JS host, consumer-driven barrels).
+
+**Compile time.** Main took about **28 min** and emitted a **70 MB** module.
+Two changes bring that to **~2.4 min** (143,046 ms wall, 1,650 MiB peak RSS) and
+**7.64 MB**:
+
+- *Deferred throw-message strings.* Every positioned `TypeError` message minted
+  during the body phase used to register its own string import and shift every
+  module global mid-body. They are now placeholders registered in one batch and
+  patched in `fixupModuleGlobalIndices`.
+- *Outlined dynamic-call ladders.* A dynamic call site with 16 or more candidate
+  closure types used to inline the whole `ref.test` ladder. It now calls one
+  shared `__dyn_call_N` helper per distinct candidate plan.
+
+**Barrel regression from PR #5963.** Four `issue-1058-barrel-*` tests failed on
+main. The #6491 under-applied-call widening padded formals whose type cannot
+hold `undefined`. `closurePadSafe` now gates it (externref, nullable ref, f64,
+i32 only).
+
+**Runtime crashes, both in the identifier-callee closure ladder
+(`call-identifier.ts`).** The parser calls NodeFactory functions through
+destructured bindings (`const { createNodeArray: factoryCreateNodeArray } =
+factory`), so every call dispatches on the runtime funcref type.
+
+1. `factoryCreateNodeArray(elements)` trapped with `illegal cast`. The generic
+   formal is erased to externref, and the candidate arm cast it straight to its
+   own vec type while the caller held a vec with a different element
+   representation. The arm now uses the reserved `__vec_from_extern_<vec>`
+   materializer.
+2. `factoryCreateVariableDeclaration(...)` and
+   `factoryCreateVariableDeclarationList(...)` ended in the ladder's TypeError
+   terminal. The `NodeFactory` interface declares `x?: T`, which the call site
+   widens to externref. The implementation declares `x: T | undefined` (a
+   nullable ref) or `x = default` (a number), so no candidate had its funcref
+   type. The site now adds that one restored signature and hands the slot over
+   as null or the default sentinel when it is `undefined`, else a cast or unbox.
+
+**Result:** all three parser fingerprints (`builderStatePublic.ts`,
+`corePublic.ts`, `performanceCore.ts`) match exactly. Before, all three
+crashed. Regression tests: `issue-1058-erased-vec-closure-arg`,
+`issue-1058-optional-slot-closure-arg`, `issue-1058-deferred-throw-strings`,
+`issue-1058-outlined-dynamic-call`.
+
+**Known separate gap.** A `T | undefined` struct field holding an absent value
+reads back as `null`, so `d.init === undefined` is false even on a direct call.
+Truthiness checks are unaffected. This does not block the parser fingerprints.
+
+**Next:** rerun the binder probe (const-local = 65,792; duplicate-let =
+131,330).
+
+## Binder oracles pass (2026-09-23)
+
+`dogfood:typescript-binder-source` now matches both oracles:
+const-local = **65,792** and duplicate-let = **131,330**. The run took about
+**155 s** and produced an **8.26 MB** module; peak RSS was **2,280 MiB**.
+
+Before this change, the binder bound no symbols and reported no
+redeclarations. There were six causes:
+
+1. **`undefined`-holding typed variables.** A `let x: T` that has no
+   initializer, or is reset with `x = undefined!`, stores `undefined` as a
+   null ref. `x === undefined` used to fold to `false`, so the binder ran
+   `for (const d of jsDocImports)` over null.
+   - Fix: `undefined-holding-variable.ts` keeps both strict comparisons as a
+     runtime null test.
+2. **Enum-typed table keys.** `forEachChildTable[node.kind]` has a key typed
+   as a numeric enum union. It skipped the static numeric-key switch and
+   missed every entry.
+   - Fix: the switch now accepts number-like unions.
+   - A missing key now reads as `undefined`, where it was `null`. This fixes
+     `fn === undefined` for plain number keys too.
+3. **Same-name functions across modules.** Module-level function expressions
+   in parser.ts's table called visitorPublic's exported `visitNodes` instead
+   of the private one, both by call and by call-site inlining.
+   - Fix: `declaration-bound-callee.ts` binds the checker-resolved
+     declaration's own slot for the call and withholds the name-keyed inline
+     entry.
+4. **`Map.get` returned the host view of a stored struct.** A typed read of
+   that view turned it into null, so `symbolTable.get(name)` never found a
+   symbol.
+   - Fix: the keyed-collection shim in runtime.ts unwraps results.
+5. **Generic rest parameters.** A generic function's call-site-resolved
+   signature never registered its rest parameter, so
+   `addRelatedInfo(diag, ...relatedInformation)` expanded the array
+   positionally.
+   - Fix: `resolved-rest-param.ts` registers it.
+6. **Vec type mismatch at the rest slot.** A spread passed into a rest slot
+   is now projected onto the rest vec type when its element type differs. It
+   used to hit a bare `ref.cast` between unrelated vec types.
+
+Regression tests: `issue-1058-binder-symbol-table` (5 cases),
+`issue-1058-null-ref-undefined-box`, and
+`issue-1058-unmatched-closure-host-call`.
+
+**Known separate gap.** Inside a generic `f<T extends D>(d: T)`, a write such
+as `d.list = []` followed by `d.list.push(...)` does not reach the struct
+field when the caller reads it afterwards. This does not affect the binder
+oracles, because the duplicate path's related-information list is empty.
+
+**Next:** extend the binder workload beyond the two fixtures, then move on to
+the checker.
+
+## Checker slice: first measurements (2026-09-23)
+
+New oracle `dogfood:typescript-checker-source`
+(`tests/dogfood/fixtures/typescript-checker-workload.ts`). It builds a minimal
+`TypeCheckerHost` with `noLib: true` and packs `diagnostics.length * 65536 +
+firstCode`. Native TypeScript (tsx) gives:
+
+| Fixture | Source | Expected |
+| --- | --- | --- |
+| `assign-mismatch.ts` | `const x: number = "str";` | 67,858 (one TS2322) |
+| `assign-ok.ts` | `const x: number = 1;` | 0 |
+| `two-mismatches.ts` | `const a: string = 1; const b: boolean = "s";` | 133,394 (two, first TS2322) |
+
+The graph is 43 source files and 357 module-init statements.
+
+**First run (main):** 1,231 s and 5,040 MiB peak RSS, with two compile errors:
+
+1. `createTypeChecker`: nested `resolveImportSymbolType` "changed its full
+   physical ABI after reservation". Its `links: NodeLinks` parameter was
+   reserved as the `NodeLinks` struct and compiled as externref.
+   - Cause: `interface NodeLinks` (types.ts) shares its name with checker.ts's
+     `function NodeLinks`, which is constructed by `new (NodeLinks as any)()`.
+     `resolveWasmType` treats a type named like a fnctor as a fnctor instance,
+     but it read the name from `funcConstructorMap`. That map only learns a
+     name when codegen reaches the `new` site, so the answer flipped mid-compile.
+   - Fix: `fnctor-instance-names.ts` also consults the escape gate's
+     up-front `new`-site names. `resolveStructName` declines the interface
+     struct for such a name, so member access goes dynamic, the way the value
+     is typed. Regression test: `issue-1058-checker-shapes`.
+2. A stack-balance error in `SyntacticTypeNodeBuilderResolver_shouldRemoveDeclaration`
+   referencing local 412 of 403. It appears to follow from error 1: an
+   inlined 382-parameter nested function whose body was left half-compiled.
+   Rerun needed to confirm.
+
+**Second run (with the fix):** the compile passed the old error but was still
+inside checker.ts bodies at the 3,600 s limit, with an 8,193 MiB peak. The
+first run was fast only because error 1 aborted `createTypeChecker` early.
+
+**Cost driver: captures passed as parameters.** Every nested function in
+`createTypeChecker` is lifted with each captured outer variable as its own
+parameter (`resolveImportSymbolType` has 381 capture parameters plus 4 of its
+own). Every sibling call passes all of them again. A synthetic probe
+(`k` outer locals, `n` nested functions each touching four locals and calling
+the next):
+
+| k × n | compile | module |
+| --- | --- | --- |
+| 50 × 50 | 1.4 s | 90 KB |
+| 100 × 100 | 2.5 s | 355 KB |
+| 200 × 200 | 12.7 s | 1.44 MB |
+| 400 × 400 | 64.5 s | 5.37 MB (923 MiB RSS) |
+
+Size grows with k × n. `createTypeChecker` is roughly 380 × 2,000, with many
+call sites per function. 200 × 200 also overflows the default Node stack
+during compile.
+
+**Next:** lift large capture sets through one shared environment struct (one
+parameter per nested function, field reads and writes in place of per-call
+capture lists), gated on capture count so small closures keep today's ABI.
+
+**Profile first (2026-09-24).** A CPU profile of the 200 × 200 case showed the
+time was not in emitted code but in three analyses that rescanned the whole
+enclosing body for every nested function or capture:
+
+- `analyzeTdzAccessByPos` called `getSymbolsInScope` (copies every symbol in
+  scope) per capture per call site; now `resolveName` (one scope-chain walk).
+  `closureProvablyAfterLetDecl` had the same shape.
+- `findScopedVariableDeclaration` walked the enclosing scope per capture; now
+  one cached name → declaration map per scope (`scopeVariableDeclarations`).
+- `collectOwnerBindingsWrittenAfterDeclaration` rescanned every later statement
+  per nested function; now each later statement's writes are computed once.
+
+| k × n | before | after |
+| --- | --- | --- |
+| 200 × 200 | 12.7 s | 3.9 s |
+| 400 × 400 | 64.5 s | 13.2 s |
+
+Output is byte-identical (same module sizes). The full checker still runs out
+of its 8 GB heap after 56 minutes in `checker.ts` bodies, so the remaining cost
+is elsewhere; the next profile targets the real compile.
+
+**Real checker compile profile (2026-09-24, 15–20 min samples).** Half of the
+time went to `shiftGlobalIndices`: each new string-constant import renumbers
+every module global in every compiled body. The hot producers were the
+`x is not defined` TDZ messages (one per captured name) and property names
+(`finalizeStructAndDynamicMemberGet`, the member get/set dispatch
+reservations, exact-shape field gets). Those now join the end-of-bodies batch
+the throw messages already used (`registerLateReadStringConstant`;
+`stringConstantExternrefInstrs` reads a pending value through the batch
+placeholder). The next two hotspots were quadratic lookups:
+`ProgramAbiSourceCallableRegistry.unitForFunction` scanned every source unit
+per function-value read (now memoized, invalidated per observed function), and
+`emitEagerNestedCallCaptureBoxes` searched every referenced callee's capture
+list per capture (now one map per call).
+
+With those fixes the compile gets much further per minute: it reached about
+12.5 GB RSS within 20 minutes (the old run reached 8 GB after 56) and was
+OOM-killed there. Memory is now the limit. The measured cause was not the
+capture ABI; see the next section.
+
+## Checker compile: memory (2026-09-24)
+
+After the compile-speed fixes (#6061, #6066) the full checker compile ran out of
+memory instead of time: it reached about 12.5 GB RSS within 20 minutes and was
+killed. A heap sample at 6 GB put about 4 GB under
+`emitMemoizedNestedFnClosure` / `materializeHoistedFunctionValueBinding`
+(`src/codegen/closures/funcref-as-closure.ts`).
+
+Cause: filling the value of an inner function that captures other inner
+functions filled each captured function inside its own closure-build branch,
+and each of those did the same for its captures. One use site emitted a copy
+per dependency path. A 12-function chain produced a 112 KB module; 16 functions
+ran out of memory.
+
+Fix: the captured values are filled before the build branch, straight-line
+with the use site, and a value already published earlier in the same body
+array is not published again. The checker compile then finishes in about 23
+minutes at about 6 GB peak RSS. Regression test:
+`tests/issue-1058-hoisted-fn-value-chain.test.ts`.
+
+Next blocker, reached for the first time: `nested function checkArrayLiteral
+changed capture noIterationTypes's physical ABI after reservation`. At phase-0
+reservation the capture was a plain externref; when `checkArrayLiteral` is
+compiled the declaring frame has a box registered for `noIterationTypes` while
+its `localMap` slot is still the raw externref local.
+
+### Next two checker errors (2026-09-24)
+
+`noIterationTypes` ABI change: an earlier sibling's mutable capture had already
+boxed the outer binding, so its `localMap` slot held the capture cell. The
+#5148 literal-promotion step in `compileNestedFunctionDeclarationInScope` read
+that ref-typed slot as a stale literal type and rewrote it, so the later
+sibling's reserved capture plan no longer matched. The step now skips a slot
+whose type is the binding's own capture cell.
+
+Recursive struct narrowing: passing a struct where a narrower struct type is
+expected copies the shared fields. When a field holds the struct's own type
+(the checker's `MappedType.target`), that copy inlined the same conversion
+into itself until the compiler's stack overflowed. A repeated
+`from>to` pair now calls an outlined `__struct_narrow_<from>_<to>` helper,
+which recurses at runtime. Test:
+`tests/issue-1058-recursive-struct-narrowing.test.ts`.
+
+Next blocker: `stack-balance invariant (entry):
+'SyntacticTypeNodeBuilderResolver_shouldRemoveDeclaration' references local
+284, but only 3 params + 18 locals are declared` (an object-literal method
+inside `createNodeBuilder`, checker.ts line 6238).
+
+### Handoff (2026-09-24)
+
+State: parser, binder and checker-slice oracles pass. The full checker
+(`createTypeChecker`) compile runs about 23 minutes at about 6 GB peak RSS and
+now stops at the `shouldRemoveDeclaration` error above. The checker oracles
+(`pnpm run dogfood:typescript-checker-source`: `assign-mismatch=67858`,
+`assign-ok=0`, `two-mismatches=133394`) have not run yet; printer/emitter and
+self-hosting come after.
+
+Next step: find which instruction in that method's body references local 284.
+The error message embeds the whole body as JSON. Local 284 is far past the
+method's 21 slots, so it is most likely an index from an enclosing frame
+(`createNodeBuilder` or `createTypeChecker`) emitted into the method. Suspects
+are the captured-function value for `checkComputedPropertyName` and the
+`__tdz_box_checker` local the method declares. A small repro (an interface-typed
+object literal inside a nested builder whose method calls a capturing outer
+helper, with `context as X` casts) compiles and runs correctly, so the trigger
+needs something more from the real file.
+
+Driver used for the full compile (keep it under `.tmp/`, not committed):
+
+```ts
+import { writeFileSync } from "node:fs";
+import { compileProject } from "../src/index.ts";
+const r: any = await compileProject("tests/dogfood/fixtures/typescript-checker-workload.ts", {
+  allowJs: true, skipSemanticDiagnostics: true, target: "gc", platform: "node", emitWat: false,
+  resolve: { consumerDrivenBarrels: true },
+} as any);
+const errs = (r.errors ?? []).filter((e: any) => e.severity !== "warning");
+writeFileSync(".tmp/checker-errors.json", JSON.stringify(errs, null, 1));
+if (r.binary?.length) writeFileSync(".tmp/checker.wasm", r.binary);
+```
+
+Run it with `node --max-old-space-size=11000 --stack-size=8000 --import tsx`.
+Profile the same run with `--inspect-brk` and a CDP client (CPU profile or
+heap sampling). Keep the shell's working directory outside the nested
+TypeScript checkout under `tests/dogfood/.npm-upstream-suites/typescript`,
+because the repo's hooks break when run from there.
+
+Known and not addressed: two `tests/issue-2976.test.ts` cases fail on main
+(the V8 capability protocol case and the reassigned-capture case) and are
+unchanged by this work.
 
 ## Acceptance criteria
 

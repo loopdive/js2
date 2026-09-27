@@ -31,6 +31,16 @@ import {
 import type { PhysicalModuleReservations } from "../wasm/physical/module-reservations.js";
 import { assertNativePromiseResourcePlanFor } from "../backend/wasmgc/resources/native-promises.js";
 import {
+  collectNativePromiseSourceCensus,
+  type NativePromiseSourceCensus,
+  type NativePromiseInventoryObligation,
+} from "./program/native-promise-inventory.js";
+import {
+  observeNativeStringValueProducer,
+  type NativeCarrierProducerObservation,
+} from "../backend/wasmgc/resources/native-promise-inventory.js";
+import type { NativeStringValueReservationInput } from "../backend/wasmgc/program/native-string-values.js";
+import {
   declareNativeDelayCombinatorResources,
   reserveNativeDelayCombinatorResources,
   nativeDelayCombinatorReservationInventory,
@@ -79,6 +89,59 @@ export function planNativePromiseResources(
     target: options.target,
     configuration,
   });
+}
+
+export type NativePromiseInventoryPreflight =
+  | { readonly kind: "not-required" }
+  | {
+      readonly kind: "unavailable";
+      readonly source: NativePromiseSourceCensus;
+      readonly observations: readonly NativeCarrierProducerObservation[];
+      readonly obligations: readonly NativePromiseInventoryObligation[];
+    };
+
+/** Account for real inputs without certifying the still-incomplete native group. */
+export function planNativePromiseInventoryPreflight(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+  nativeStrings: NativeStringValueReservationInput | undefined,
+  configuration: NativePromiseConfiguration | undefined,
+): NativePromiseInventoryPreflight {
+  if (
+    !program ||
+    !Array.isArray(program.runtime) ||
+    !program.runtime.includes(projection) ||
+    projection.backend !== options.backend ||
+    projection.target !== options.target
+  ) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native Promise inventory: selected projection does not belong to the requested program/backend/target",
+    );
+  }
+  const source = collectNativePromiseSourceCensus(program, projection, options);
+  // Descriptive census checks do not authenticate the whole prepared program.
+  // This live coordinator must authenticate even the no-demand return path.
+  assertPreparedIrProgram(program);
+  if (!source.required) return { kind: "not-required" };
+  const observations = nativeStrings ? [observeNativeStringValueProducer(source, nativeStrings)] : [];
+  const obligations: NativePromiseInventoryObligation[] = [];
+  const noteObligation = (code: NativePromiseInventoryObligation["code"], detail: string): void => {
+    obligations.push({ code, unitId: source.anchorUnitId, detail });
+  };
+  if (configuration) planNativePromiseResources(program, options, projection, configuration);
+  else noteObligation("missing-runtime-configuration", "selected native Promise runtime configuration is unavailable");
+  if (!nativeStrings) noteObligation("producer-declaration", "native string/value producer input is unavailable");
+  noteObligation(
+    "producer-declaration",
+    "complete native Promise, closure, vector, formatter, frame and boundary producer observations are unavailable",
+  );
+  noteObligation("source-carrier-association", "complete source-to-native-carrier associations are unavailable");
+  noteObligation("dispatch-evidence", "native property lookup and callable dispatch owner evidence is unavailable");
+  noteObligation("construction-contract", "independent native producer construction contracts are unavailable");
+  noteObligation("complete-composition", "complete native Promise inventory composition has not been issued");
+  return { kind: "unavailable", source, observations, obligations };
 }
 
 function delayCombinatorInvalid(detail: string): never {

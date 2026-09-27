@@ -132,15 +132,23 @@ describe("#3952 shapes measured BROKEN when admitted — the bail is kept delibe
     expect(await importCount(src)).toBeGreaterThan(0);
   });
 
-  it("generator FUNCTION-EXPRESSION host keeps the host path for closure defaults", async () => {
-    // Control that justifies this one: the same lane already traps on an element
-    // default with a plain NUMERIC value, so its defect is closure-INDEPENDENT
-    // and pre-existing. Admitting here would swap a loud leak for a runtime trap.
+  it("generator FUNCTION-EXPRESSION host now LOWERS closure defaults natively (#6651 A2)", async () => {
+    // REWRITTEN 2026-09-21. This case used to assert the opposite, on this
+    // recorded control: "the same lane already traps on an element default with
+    // a plain NUMERIC value, so its defect is closure-INDEPENDENT and
+    // pre-existing". That control was re-run and does not reproduce — the
+    // numeric case is the `guards` describe-block below, and all four
+    // `fnexpr-num-{obj,ary}-{susp,nosusp}` cells of #6651's round-2 matrix pass
+    // on the isolated standalone runner. With the justification gone, the
+    // blanket `ts.isFunctionExpression(decl)` bail went with it, and the
+    // assertion follows the measurement: host-free AND the right value, so a
+    // regression here cannot hide as a leak-free wrong answer.
     const src = callAfterSuspend(
       `const g = function* ({ f = () => 41 }: { f?: () => number } = {}) { yield 0; yield f() + 1; };`,
       `g()`,
     );
-    expect(await importCount(src)).toBeGreaterThan(0);
+    expect(await importCount(src)).toBe(0);
+    expect(await runStandalone(src)).toBe(42);
   });
 });
 

@@ -927,6 +927,166 @@ function _installIteratorHelperPolyfills(): void {
     });
   }
 
+  // (#6492 round 4c) Iterator Chunking — `chunks` / `windows`.
+  //
+  // No shipping engine provides these: checked 2026-09-17 on the container's
+  // Node 22.22 AND on Node 25.9 (`npx -y node@25`, which is the version CI
+  // pins in `.github/actions/setup-node-pnpm`) — `Iterator.prototype.chunks`
+  // and `.windows` are `undefined` in both, and `Iterator`'s only own static
+  // there is `from`. That matters twice over: it is why these two rows cannot
+  // be satisfied by deferring to a host, and it is why a measurement taken
+  // here is representative of CI (round 4b predicted the opposite and was
+  // wrong).
+  //
+  // Argument validation order is load-bearing and is the proposal's, not the
+  // convenient one: the receiver's Object-ness is checked first, then
+  // `chunkSize` is validated WITHOUT coercion (a non-Number or non-integral
+  // Number is a TypeError; a valid Number outside [1, 2^32-1] is a RangeError),
+  // and only then does GetIteratorDirect read `next` — exactly ONCE, cached for
+  // every later step. `argument-effect-order.js` observes each of those
+  // boundaries through a `get next` accessor, and `chunkSize-no-coercion.js`
+  // observes the missing `valueOf` call.
+  function _chunkingSize(receiver: any, size: any, name: string): number {
+    if (!_isObject(receiver)) {
+      throw new TypeError("Iterator.prototype." + name + " called on a non-object");
+    }
+    if (typeof size !== "number" || !Number.isInteger(size)) {
+      throw new TypeError("Iterator.prototype." + name + ": " + name + "Size must be an integral Number");
+    }
+    // `Object.is` rather than `<`: -0 is out of range and compares as 0 >= 1
+    // being false anyway, but writing the bound explicitly keeps the 1-based
+    // interval readable against the spec text.
+    if (!(size >= 1) || size > 4294967295) {
+      throw new RangeError("Iterator.prototype." + name + ": " + name + "Size is out of range");
+    }
+    return size;
+  }
+
+  /**
+   * One underlying step for a chunking helper. Returns `null` when the
+   * underlying iterator is done, otherwise the yielded value.
+   *
+   * The result must be an Object (`next-method-returns-non-object.js` — the
+   * row this round exists for), and `done` is read before `value` so a test
+   * whose `done` getter throws never reaches `value`.
+   */
+  function _chunkingStep(nextMethod: any, iterated: any): { value: any } | null {
+    const result = nextMethod.call(iterated);
+    if (!_isObject(result)) {
+      throw new TypeError("Iterator helper: iterator result is not an object");
+    }
+    if (result.done) return null;
+    return { value: result.value };
+  }
+
+  // Install on BOTH prototypes when the host supplies its own `%Iterator%`.
+  // `Iproto` is then the HOST's `Iterator.prototype` — the object the harness
+  // shim's `Iterator.prototype` read reaches — while a COMPILED iterator (a
+  // generator instance) walks js2's own `compilerIteratorProto`. The existing
+  // helpers never had to care because the host already provides `map`/`filter`/…
+  // on both sides of that split; `chunks`/`windows` exist on neither, so
+  // installing on one alone leaves the other half of the corpus reporting
+  // "chunks is not a function" (measured: 31 of 78 rows).
+  const chunkingTargets: any[] = Iproto === compilerIteratorProto ? [Iproto] : [Iproto, compilerIteratorProto];
+
+  for (const target of chunkingTargets) {
+    if (typeof target.chunks !== "function") {
+      _installBuiltinMethod(target, "chunks", 1, function (this: any, chunkSize: any) {
+        const size = _chunkingSize(this, chunkSize, "chunks");
+        const iterated = this;
+        // GetIteratorDirect reads `next` EXACTLY once (`get-next-method-only-once.js`);
+        // a non-callable one throws from `.call` at the first step, as the spec has it.
+        const nextMethod = iterated.next;
+        let buffer: any[] = [];
+        let done = false;
+        return _makeHelperIterator(
+          function next() {
+            if (done) return { value: undefined, done: true };
+            for (;;) {
+              const step = _chunkingStep(nextMethod, iterated);
+              if (step === null) {
+                done = true;
+                // A trailing partial chunk is yielded before completing.
+                if (buffer.length > 0) {
+                  const partial = buffer;
+                  buffer = [];
+                  return { value: partial, done: false };
+                }
+                return { value: undefined, done: true };
+              }
+              buffer.push(step.value);
+              if (buffer.length === size) {
+                const full = buffer;
+                buffer = [];
+                return { value: full, done: false };
+              }
+            }
+          },
+          function returnFn() {
+            done = true;
+            buffer = [];
+            _closeIterator(iterated);
+            return { value: undefined, done: true };
+          },
+        );
+      });
+    }
+
+    if (typeof target.windows !== "function") {
+      _installBuiltinMethod(target, "windows", 1, function (this: any, windowSize: any, undersized: any) {
+        const size = _chunkingSize(this, windowSize, "windows");
+        // `windows(windowSize [, undersized])`: `undefined` means "only-full",
+        // and anything other than the two string modes is a TypeError — NOT a
+        // coercion (`undersized-invalid.js` passes `0`, `true`, `{}`, a Symbol).
+        const allowPartial = undersized === "allow-partial";
+        if (undersized !== undefined && !allowPartial && undersized !== "only-full") {
+          throw new TypeError('Iterator.prototype.windows: undersized must be "only-full" or "allow-partial"');
+        }
+        const iterated = this;
+        // GetIteratorDirect reads `next` EXACTLY once (`get-next-method-only-once.js`);
+        // a non-callable one throws from `.call` at the first step, as the spec has it.
+        const nextMethod = iterated.next;
+        const buffer: any[] = [];
+        let done = false;
+        return _makeHelperIterator(
+          function next() {
+            if (done) return { value: undefined, done: true };
+            for (;;) {
+              const step = _chunkingStep(nextMethod, iterated);
+              if (step === null) {
+                done = true;
+                // Unlike `chunks`, a short tail yields NOTHING under the
+                // default "only-full" mode — a window is only a window at full
+                // width. "allow-partial" yields the (non-empty, short) buffer
+                // once instead.
+                if (allowPartial && buffer.length > 0 && buffer.length < size) {
+                  const partial = buffer.slice();
+                  buffer.length = 0;
+                  return { value: partial, done: false };
+                }
+                return { value: undefined, done: true };
+              }
+              buffer.push(step.value);
+              if (buffer.length === size) {
+                // Copy out, then slide by one so the next full buffer is the
+                // next window rather than a fresh chunk.
+                const window = buffer.slice();
+                buffer.shift();
+                return { value: window, done: false };
+              }
+            }
+          },
+          function returnFn() {
+            done = true;
+            buffer.length = 0;
+            _closeIterator(iterated);
+            return { value: undefined, done: true };
+          },
+        );
+      });
+    }
+  }
+
   if (typeof Iproto.toArray !== "function") {
     _installBuiltinMethod(Iproto, "toArray", 0, function (this: any) {
       const iter = _requireIteratorReceiver(this, "toArray");

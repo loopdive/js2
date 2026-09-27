@@ -101,7 +101,21 @@ export function compileInternalCallArgument(
   // like the identifier-held array arm below; the dispatcher's host fallback
   // already wraps raw vec arguments before invoking JavaScript.
   if (ts.isArrayLiteralExpression(carrier)) {
-    const actualType = compileExpression(ctx, fctx, expression);
+    // (#3643) An unannotated binding-pattern parameter (`function f([a, b = 9])`)
+    // is widened to externref (#862), but TypeScript still gives the argument
+    // literal the pattern's contextual TUPLE type. A tuple struct behind an
+    // externref is opaque to the callee's destructure (it recognises only vec
+    // carriers, then falls back to host GetIterator, which throws). Build the
+    // vec carrier instead, as the standalone arm above already does.
+    const flags = ctx as unknown as { _arrayLiteralForceVec?: boolean };
+    const previousForceVec = flags._arrayLiteralForceVec;
+    flags._arrayLiteralForceVec = true;
+    let actualType: ValType | null;
+    try {
+      actualType = compileExpression(ctx, fctx, expression);
+    } finally {
+      flags._arrayLiteralForceVec = previousForceVec;
+    }
     if (
       actualType &&
       (actualType.kind === "ref" || actualType.kind === "ref_null") &&

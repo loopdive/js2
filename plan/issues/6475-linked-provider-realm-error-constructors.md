@@ -1,10 +1,11 @@
 ---
 id: 6475
 title: "Linked provider rebuilds its own env, so it resolves different error constructors than the consumer's realm"
-status: ready
+status: done
 sprint: current
 created: 2026-09-14
-updated: 2026-09-14
+updated: 2026-09-15
+completed: 2026-09-15
 priority: high
 horizon: l
 feasibility: hard
@@ -65,12 +66,30 @@ per-instance ADAPTER state kept provider-owned.
 
 ## Acceptance criteria
 
-- [ ] A native error thrown in a linked consumer satisfies
-      `assert.throws(<NativeError>, …)` evaluated in the provider.
-- [ ] The per-instance adapter state the current precedence protects is still
-      provider-owned (name the test that covers it).
-- [ ] The Temporal provider lane (#5353) shows no verdict change.
-- [ ] The ~32 rows in the #3451 slice-3 sample flip to agreement.
+- [x] A native error thrown in a linked consumer satisfies
+      `assert.throws(<NativeError>, …)` evaluated in the provider — all four of
+      `TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`, in
+      `tests/issue-6475-linked-provider-realm.test.ts`, against a real second
+      realm (`vm.createContext` over the runner's own `SANDBOX_GLOBAL_NAMES`).
+      The same file asserts the repro still FAILS without `linkedHost`, with
+      the issue's exact message.
+- [x] The per-instance adapter state the current precedence protects is still
+      provider-owned — the guarding assertions are the #3451 substrate ones
+      (`tests/issue-3451-linked-harness-substrate.test.ts`: "assert.throws
+      (Test262Error, …)", "e instanceof Test262Error", "callback identity");
+      they are re-run WITH the host context in the new file's
+      "provider-owned adapter state survives the host context" case, and the
+      substrate file itself is unchanged and green.
+- [x] The Temporal provider lane (#5353) shows no verdict change —
+      `tests/issue-5353-sharded-temporal-lane.test.ts`,
+      `tests/issue-5248-test262-temporal-wiring.test.ts` and
+      `tests/issue-5225-consumer-literal-seam.test.ts` all green (35 tests with
+      the two #3451 files). Scope note: that is the lane's own test coverage,
+      not a Temporal test262 corpus run.
+- [x] The ~32 rows in the #3451 slice-3 sample flip to agreement — re-measured
+      2026-09-15, real worker, both lanes at this commit: **0** rows in this
+      class, total differences 109/404 → 21/399 (#3451, "Re-measured
+      2026-09-15").
 
 ## Implementation Plan (2026-09-14, Fable lane; implementation: Opus) — shared with #6476
 

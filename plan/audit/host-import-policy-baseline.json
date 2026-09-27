@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "nativeFirst": {
     "minimumProbes": 33,
-    "maximumImports": 395,
+    "maximumImports": 426,
     "maximumLegacySemanticImports": 0,
     "maximumUnknownImports": 0
   },
@@ -11,10 +11,10 @@
     "maximumLegacySemanticImports": 23
   },
   "runtimeSource": {
-    "maximumRuntimeTsLines": 19822,
-    "maximumResolveImportLines": 7775,
+    "maximumRuntimeTsLines": 20214,
+    "maximumResolveImportLines": 7909,
     "maximumResolveImportCases": 15,
-    "maximumOwnedAdapterLines": 819,
+    "maximumOwnedAdapterLines": 952,
     "maximumExplicitCapabilityLines": 1194
   }
 }

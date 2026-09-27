@@ -104,6 +104,7 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitStandaloneIntrinsicFunctionValue } from "./expressions/eval-inline.js";
+import { isRuntimeEvalProviderAbsent } from "./expressions/standalone-dynamic-code.js"; // (#6683)
 import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { objectCoercionPreservesFunction } from "./object-ctor-primitive-receiver.js";
@@ -147,6 +148,14 @@ import { compileExpression } from "./shared.js";
  * IS one, because it must equal a bare `Function` read.
  */
 export function moduleReadsBareFunctionValue(ctx: CodegenContext): boolean {
+  // (#6683) With no provider linked (`runtimeEvalProvider: false`) there is no
+  // provider `%Function%` to agree with, and routing through it imports
+  // `js2wasm:runtime-eval` into a module promised zero imports (moment's
+  // `input instanceof Function`, reached from `Object.prototype.toString`'s
+  // `@@toStringTag` read during module init). Every `%Function%` read takes
+  // this predicate, so all of them fall to the self-contained carrier together
+  // and `fn.constructor === Function` still compares one reference.
+  if (isRuntimeEvalProviderAbsent(ctx)) return false;
   const sites = ctx.runtimeEvalBoundaryPlan?.sites;
   if (sites === undefined) return false;
   return sites.some((site) => site.kind === "intrinsic-value" && site.intrinsicName === "Function");

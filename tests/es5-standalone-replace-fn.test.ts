@@ -202,16 +202,12 @@ describe("#4224 standalone replace — replacement/search gate asymmetry", () =>
     expect(out).toBe("xbx:1");
   });
 
-  it("an object SEARCH value still refuses (it could carry @@replace)", async () => {
-    const r = await compile(
-      `
-        const searchValue: any = {};
-        searchValue[Symbol.replace] = function (): string { return "hit"; };
-        export function f(): string { return "".replace(searchValue, "x"); }
-      `,
-      { fileName: "issue-4224-cstm.ts", target: "standalone" },
-    );
-    expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /#1474/.test(e.message))).toBe(true);
+  it("an object SEARCH value dispatches its own @@replace (#6662; was a #1474 refusal)", async () => {
+    const out = await standaloneString(`
+      const searchValue: any = {};
+      searchValue[Symbol.replace] = function (): string { return "hit"; };
+      const __r: string = "".replace(searchValue, "x");
+    `);
+    expect(out).toBe("hit");
   });
 });

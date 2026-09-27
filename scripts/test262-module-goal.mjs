@@ -48,3 +48,28 @@ export function isModuleGoal(pathOrCategory, metaOrFlags, source) {
   if (hasModuleFlag(metaOrFlags)) return true;
   return hasModuleSyntax(source, normalizedTest262Path(pathOrCategory) || "test.js");
 }
+
+/**
+ * (#6491 round 3) Classify a Test262 source as explicitly **Script** goal.
+ *
+ * NOT `!isModuleGoal(...)`, and the difference is the whole point. `isModuleGoal`
+ * falls back to SYNTAX (`ts.isExternalModule`) when the metadata is silent, so
+ * for `language/global-code/export.js` — a Script test whose body is
+ * `export default null;` precisely because that is illegal in a Script — the
+ * syntax fallback answers "module" and its negation answers "not a Script".
+ * That is backwards for exactly the rows the Script-goal rules exist to catch.
+ *
+ * So this reads metadata ONLY: a test is Script goal when it carries no
+ * `flags: [module]`, does not live under a module-only path, and is not `raw`
+ * (a raw test has no harness and is deliberately left alone). Silence in the
+ * metadata is meaningful here — test262 marks module tests explicitly — which
+ * is what makes this a fact rather than the guess `!moduleGoal` would be for a
+ * product compile.
+ */
+export function isScriptGoal(pathOrCategory, metaOrFlags) {
+  if (hasAuthoritativeModulePath(pathOrCategory)) return false;
+  if (hasModuleFlag(metaOrFlags)) return false;
+  const flags = metaOrFlags?.flags ?? metaOrFlags;
+  const raw = Array.isArray(flags) ? flags.includes("raw") : flags instanceof Set ? flags.has("raw") : false;
+  return !raw;
+}

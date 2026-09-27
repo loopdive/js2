@@ -27,6 +27,8 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   fnctorConstructor: 19,
   moduleImportAlias: 20,
   moduleExportAlias: 21,
+  // (#6491) free-function twin of `closureArgcDispatcher`.
+  closureFreeArgcDispatcher: 22,
 } as const);
 
 /** True iff every callable role has a distinct structural ordinal. */

@@ -44,8 +44,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { isNativeGeneratorResultStruct } from "./generators-native.js";
-import { reserveMemberSetDispatch } from "./member-set-dispatch.js";
-import { findAlternateStructsForField } from "./property-access.js";
+import { memberSetCandidates, reserveMemberSetDispatch } from "./member-set-dispatch.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
@@ -213,7 +212,7 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
     const buildDelegate = (): Instr[] => structuredClone(delegate) as Instr[];
 
     // The SAME list, in the SAME order, as `fillMemberSetDispatch`.
-    const candidates = findAlternateStructsForField(ctx, propName, -1).filter((c) => c.mutable);
+    const candidates = memberSetCandidates(ctx, propName);
     const buildChain = (idx: number): Instr[] => {
       if (idx >= candidates.length) return buildDelegate();
       const cand = candidates[idx]!;

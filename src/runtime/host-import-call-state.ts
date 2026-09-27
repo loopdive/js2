@@ -34,9 +34,43 @@ function isFastLeafHostImport(imp: HostImportCallDescriptor): boolean {
   }
 }
 
+/**
+ * (#6492 round 6) The "last host exception" latch is PROCESS-WIDE, not
+ * per-import-object.
+ *
+ * A wasm `catch_all` cannot see the thrown JS value; it recovers it by calling
+ * the `caught_exception` import, which reads this latch. The latch is written
+ * by the wrapper below — i.e. by the host import of the module whose call
+ * threw. Within one module that is the same import object, which is why a
+ * per-object latch worked for the entire single-module history of this
+ * compiler.
+ *
+ * In a LINKED graph it is two different import objects. The provider calls a
+ * consumer closure, the consumer's `__throw_reference_error` (or any other
+ * throwing host import) raises a real JS error, and that error propagates
+ * wasm→wasm as a JS exception. The provider's `catch_all` then asked ITS OWN
+ * latch, which nothing had written, and got `undefined` — so the harness's
+ * `assert.throws` reported "Thrown value was not an object!" for a throw whose
+ * value the CONSUMER catches perfectly well (measured: `typeof e === "object"`,
+ * `[object Error]`, `name === "ReferenceError"`).
+ *
+ * A wasm-thrown error is unaffected either way: it travels in the shared
+ * `env.__exn` tag (#5226) and the catching module reads the payload from the
+ * tag, never from this latch — which is exactly why
+ * `assert.throws(ReferenceError, function () { throw new ReferenceError("x"); })`
+ * passed while the host-thrown twin did not.
+ *
+ * Making it process-wide is last-write-wins, the same discipline it already
+ * had: a `catch_all` reads immediately after the throw that reached it, and
+ * nothing clears the latch in either design, so a reader that could see a
+ * stale value before can still see exactly the same stale value now. The only
+ * behaviour that changes is the cross-module read, which previously could not
+ * be right at all.
+ */
+let lastCaughtException: any = undefined;
+
 /** The existing caught object, shared crossing depth and diagnostic counters for one import object. */
 export function createHostImportCallState(): HostImportCallState {
-  let lastCaughtException: any = undefined;
   const envImportNames: string[] = [];
   let importCounts: Uint32Array | undefined;
   const MAX_HOST_RECURSION_DEPTH = 512;

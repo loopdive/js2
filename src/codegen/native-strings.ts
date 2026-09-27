@@ -27,10 +27,12 @@ import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-cor
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { pendingStringConstantGlobalGet } from "./registry/imports.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
   addFuncType,
@@ -68,6 +70,8 @@ export function stringConstantExternrefInstrs(ctx: CodegenContext, value: string
     instrs.push({ op: "extern.convert_any" });
     return instrs;
   }
+  const pending = pendingStringConstantGlobalGet(ctx, value);
+  if (pending) return pending;
   const strIdx = ctx.stringGlobalMap.get(value);
   if (strIdx === undefined || strIdx < 0) {
     // Defensive: caller forgot to register, or sentinel. Push undefined.
@@ -1677,7 +1681,7 @@ export function ensureStrToCharVecHelper(ctx: CodegenContext): { funcIdx: number
  * exists so that decision has a name to hang on.
  */
 export function hostStringBridgeUsable(ctx: CodegenContext): boolean {
-  return !ctx.wasi && !ctx.standalone && !ctx.strictNoHostImports;
+  return !hostFreeEnvironment(ctx) && !ctx.strictNoHostImports; // (#6685) environment, not regime
 }
 
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
@@ -1893,7 +1897,8 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
  * string values while object and array results remain live views.
  */
 export function ensureNativeStringBoundaryBridge(ctx: CodegenContext): void {
-  if (!hostStringBridgeUsable(ctx) || ctx.targetProfile.hostValueInterop === "off") return;
+  // (#6686) boundary question, not provider: the regime in a JS env marshals too
+  if (!jsValueBoundary(ctx) || ctx.strictNoHostImports) return;
   ensureNativeStringExternBridge(ctx);
   if (!ctx.funcMap.has("__str_is_native")) {
     const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);

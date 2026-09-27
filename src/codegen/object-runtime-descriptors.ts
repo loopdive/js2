@@ -168,6 +168,9 @@ export interface ObjectDescriptorHelperState {
   OBJ_FLAG_SEALED: number;
   OBJ_FLAG_FROZEN: number;
   WRAPPER_PRIMITIVE_KEY: string;
+  // (#6624) The standalone link-boundary peer's `__js2wasm_link_is_extensible`
+  // funcIdx, or undefined off the standalone lane / with no linked provider.
+  peerIsExtensibleIdx?: number;
 }
 
 /**
@@ -233,6 +236,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
     WRAPPER_PRIMITIVE_KEY,
+    peerIsExtensibleIdx,
   } = s;
 
   // ── (#3251 S1) Array-descriptor overlay entry points ─────────────────────
@@ -3571,6 +3575,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     OBJ_FLAG_NONEXTENSIBLE,
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
+    peerIsExtensibleIdx,
   });
 
   // Register at the original minting point so every subsequent function index

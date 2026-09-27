@@ -168,6 +168,15 @@ export interface NumericPropertyAnalysisHost {
    * only when it can add something.
    */
   readonly provenNumericCallReturn?: (call: ts.CallExpression) => boolean;
+  /**
+   * (#5383) The module sits on a standalone wasm↔wasm link, so a property READ
+   * may land on the PEER's object, whose writes this analysis never saw. The
+   * name-keyed verdicts are closed-world facts; they must not prove a read
+   * numeric or string (`var t = options.roundingIncrement` got an f64 slot, and
+   * the consumer's `2n` / `"2"` arrived as the number 2). Self-reads while
+   * judging a write keep their induction (the slot itself is local).
+   */
+  readonly openWorldPropertyReads?: boolean;
 }
 
 type FunctionLike = ts.FunctionLikeDeclaration & { body: ts.ConciseBody };
@@ -292,6 +301,40 @@ const STRING_STRING_METHODS: ReadonlySet<string> = new Set([
 
 /** Global functions whose result is always a number. */
 const NUMERIC_GLOBAL_CALLS: ReadonlySet<string> = new Set(["parseInt", "parseFloat", "Number"]);
+
+/**
+ * (#6627) Well-known ES global NAMESPACE objects — never a same-named user
+ * INSTANCE the `numericFunctions` name-keyed heuristic below is meant for.
+ *
+ * `<recv>.m(…)` with a bare-identifier `recv` falls through to
+ * `sets.numericFunctions.has(m)` — "every visible function named `m` anywhere
+ * in the program returns a number" (#4122) — which is sound for a genuine
+ * user instance (`p.inc()`) but not for a static namespace call: `Reflect.get`
+ * is not "some class's `get` method", it is THE global `Reflect.get`, whose
+ * own return is never a plain number. Missing this exclusion created a
+ * self-reinforcing fixpoint: an object-literal Proxy trap named exactly `get`
+ * (`get(target,key,receiver){ return Reflect.get(...); }`, the shape
+ * `TemporalHelpers.propertyBagObserver` and countless other Proxy handlers
+ * use) starts `numericFunctions` with "get" seeded true; `Reflect.get(...)`'s
+ * own return then asks `numericFunctions.has("get")`, which is STILL true
+ * (the trap's own body hasn't been decided yet), so it answers `true`, which
+ * is exactly what keeps the trap's own return numeric — "get" never gets
+ * removed by its own single disqualifying use. `Math`/`Date` already get a
+ * narrow explicit exemption above; this generalises it to the whole
+ * namespace-call family instead of special-casing each new namespace.
+ */
+const NON_INSTANCE_GLOBAL_NAMESPACES: ReadonlySet<string> = new Set([
+  "Reflect",
+  "JSON",
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Symbol",
+  "Promise",
+  "Proxy",
+  "Intl",
+]);
 
 function unwrap(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -880,6 +923,8 @@ function makeProver(
    * itself and a string-valued TokenType slot gets promoted to f64.
    */
   let excludedName: string | undefined;
+  /** May a read of `name` use the name-keyed verdicts? See `openWorldPropertyReads`. */
+  const closedRead = (name: string): boolean => host.openWorldPropertyReads !== true || name === selfName;
   /** Re-entrancy guard for the slot recursion in {@link isString}. */
   const stringSlotsInFlight = new Set<Slot>();
 
@@ -889,7 +934,9 @@ function makeProver(
     if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value) || ts.isTemplateExpression(value)) {
       return true;
     }
-    if (ts.isPropertyAccessExpression(value) && stringProperties.has(value.name.text)) return true;
+    if (ts.isPropertyAccessExpression(value) && closedRead(value.name.text) && stringProperties.has(value.name.text)) {
+      return true;
+    }
     if (ts.isIdentifier(value)) {
       const slot = facts.scopes.resolve(value, value.text);
       // A local whose every definition is a string (`var s = this.source`).
@@ -1037,13 +1084,13 @@ function makeProver(
       ) {
         return true;
       }
-      if (value.name.text === excludedName) return false;
+      if (value.name.text === excludedName || !closedRead(value.name.text)) return false;
       return value.name.text === selfName || sets.numericProperties.has(value.name.text);
     }
     if (ts.isElementAccessExpression(value)) {
       const key = value.argumentExpression && unwrap(value.argumentExpression);
       if (key && ts.isStringLiteral(key)) {
-        if (key.text === excludedName) return false;
+        if (key.text === excludedName || !closedRead(key.text)) return false;
         return key.text === selfName || sets.numericProperties.has(key.text);
       }
       return false;
@@ -1078,7 +1125,12 @@ function makeProver(
         // exists for `this.m()`, whose receiver is equally unconstrained at
         // runtime. Restricted to a bare identifier receiver so member chains
         // (`a.b.inc()`) and call results (`f().inc()`) keep the old answer.
-        if (ts.isIdentifier(recv)) return sets.numericFunctions.has(callee.name.text);
+        //
+        // (#6627) EXCEPT a well-known global namespace — `Reflect.get(...)` is
+        // never "some class's `get` method"; see `NON_INSTANCE_GLOBAL_NAMESPACES`.
+        if (ts.isIdentifier(recv) && !NON_INSTANCE_GLOBAL_NAMESPACES.has(recv.text)) {
+          return sets.numericFunctions.has(callee.name.text);
+        }
       }
       return false;
     }
@@ -1260,6 +1312,33 @@ function noVerdicts(): PropertyKindVerdicts {
   };
 }
 
+/**
+ * (#2917) Mirror of the #4530 / #2917 opaque-argument rule in
+ * `inferParamTypeFromCallSites`: an argument this fixpoint cannot prove, whose
+ * value is a dynamic member/call result (directly, or through a local whose
+ * definition is one, or a destructured / uninitialised local), vetoes the
+ * parameter instead of contributing "no evidence". The ABI side already keeps
+ * such a parameter on `externref`; if this side still called it numeric, a read
+ * of the parameter (e.g. `return cmp < 0 ? r1 : r2`) would be promoted to f64
+ * and run ToNumber on the object — the JSBI "Convert … using `toNumber`" throw.
+ * Identifiers bound to other parameters (and unresolved names) stay trusted,
+ * exactly as on the ABI side. Only consulted when the def is NOT proven.
+ */
+function isOpaqueArgShape(arg: ts.Expression, scopes: ScopeTable, host: NumericPropertyAnalysisHost): boolean {
+  const value = unwrap(arg);
+  if (!ts.isIdentifier(value)) return true;
+  const slot = scopes.resolve(value, value.text);
+  if (!slot || slot.isParam) return false;
+  return slot.defs.some((def) => {
+    if (def.forcedNumeric === true) return false;
+    if (def.expr === undefined) return true;
+    const source = unwrap(def.expr);
+    if (ts.isIdentifier(source)) return false;
+    const kind = host.oracle?.typeFactOf(source).kind;
+    return kind === "any" || kind === "unknown" || kind === "unresolvable";
+  });
+}
+
 export function analyzeNumericPropertyNames(
   host: NumericPropertyAnalysisHost,
   sourceFiles: readonly ts.SourceFile[],
@@ -1285,7 +1364,9 @@ export function analyzeNumericPropertyNames(
     if (parameter.initializer) parameter.slot.defs.push({ expr: parameter.initializer });
     for (const call of facts.calls.get(parameter.owner) ?? []) {
       const arg = call.args[parameter.index];
-      parameter.slot.defs.push(arg ? { expr: arg, dynamicConflict: call.recursive } : {});
+      parameter.slot.defs.push(
+        arg ? { expr: arg, dynamicConflict: call.recursive || isOpaqueArgShape(arg, scopes, host) } : {},
+      );
     }
     if (parameter.slot.defs.length === before) parameter.slot.defs.push({});
   }

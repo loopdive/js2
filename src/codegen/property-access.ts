@@ -21,7 +21,15 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
+import { tryEmitAnyValueArrayUndefinedOobGet } from "./any-value-element-read.js"; // (#6651 G3)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
+import { isConstructedFnctorName } from "./fnctor-instance-names.js"; // (#1058)
+import {
+  PROXY_READ_DECLINE,
+  tryProxyReceiverElementRead,
+  tryProxyReceiverPropertyRead,
+} from "./proxy-receiver-generic-read.js"; // (#6651 F4)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -35,6 +43,12 @@ import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dy
 import { recordStandaloneDynamicPrototypeRead } from "./standalone-class-prototype-read.js"; // (#6457)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
+import {
+  ensureIterRecPrototypeHelper,
+  iteratorPrototypeKindOfSymbolName,
+  pushIteratorFamilyNextValue,
+  resolveIteratorFamilyNextClosure,
+} from "./iterator-proto-next.js"; // (#6484 S2)
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
 import { sidecarKeyCoversReceiver } from "./sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -57,6 +71,7 @@ import {
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
+import { throwMessageExternrefInstrs } from "./js-errors.js";
 import {
   buildThrowJsErrorInstrs,
   classifyPrivateMember,
@@ -231,12 +246,14 @@ import {
   typedArrayViewSignedness,
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
 import {
+  arrayIndexConstantKey,
   elementAccessTypedArrayName,
   emitDynamicVecElementGet,
   emitDynamicStringVecElementGet,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
+  isDynamicStringVecKey,
   isDynamicPropertyKeyExpression,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
@@ -998,8 +1015,22 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
   const exactClassExpression = exactClassExpressionTypeName(ctx, tsType);
   if (exactClassExpression) return exactClassExpression;
   const name = tsType.symbol?.name;
+  // (#6634) A named interface with a known CLASS implementer has no single
+  // valid struct carrier — see `interface-class-implementer.ts`. Decline
+  // struct resolution entirely so callers (the call-site devirtualization
+  // guesses in `call-receiver-method.ts` chief among them) fall through to
+  // the dynamic/externref dispatch paths instead of hardcoding to whichever
+  // OTHER implementer's struct happens to be registered under this name or
+  // under `tsType`'s anonTypeMap entry (the literal-vs-class confusion this
+  // guards against never applies to a class's OWN type, hence
+  // `!ctx.classSet.has(name)`).
+  if (name && !ctx.classSet.has(name) && interfaceHasClassImplementer(ctx, name)) {
+    return undefined;
+  }
   if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
-    return name;
+    // (#1058) An interface named like a constructed function holds fnctor
+    // instances (resolveWasmType types it that way), not its own struct.
+    return !ctx.classSet.has(name) && isConstructedFnctorName(ctx, name) ? undefined : name;
   }
   // Check class expression name mapping (e.g. "__class" → "Point")
   if (name) {
@@ -1423,9 +1454,9 @@ export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node, flush?
   // Register the literal: in legacy mode this adds a `string_constants` global
   // import; in nativeStrings mode it just records the value with sentinel -1
   // so call sites can materialize it inline (#1174).
-  addStringConstantGlobal(ctx, message);
+  const messageInstrs = throwMessageExternrefInstrs(ctx, message);
   const tagIdx = ensureExnTag(ctx);
-  return [...stringConstantExternrefInstrs(ctx, message), { op: "throw", tagIdx }];
+  return [...messageInstrs, { op: "throw", tagIdx }];
 }
 
 /**
@@ -1627,6 +1658,8 @@ export function findAlternateStructsForField(
     // `findFnctorResidStructsForField` — hiding a carrier from the arms is
     // correct; hiding it from the vote is the #4217 `generator` defect.
     if (typeName.endsWith("__resid") || isFnctorLayoutStructName(typeName)) continue;
+    // (#6651 B6) A RegExp's `lastIndex` is two slots (f64 + deferred raw); a field arm sees only the f64.
+    if (propName === "lastIndex" && typeName === "__StandaloneRegExp") continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);
@@ -3987,12 +4020,45 @@ export function compilePropertyAccess(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
+  // (#6651 F4) proxy receiver → generic `__extern_get`; proxy-receiver-generic-read.ts
+  const __f4p = tryProxyReceiverPropertyRead(ctx, fctx, expr, propName);
+  if (__f4p !== PROXY_READ_DECLINE) return __f4p;
+
   recordDynamicClassAccessorRead(ctx, resolveWasmType(ctx, objType), propName);
   // (#6457) The standalone twin, for `prototype` only: a dynamic receiver has no
   // class to resolve the name against, so this read lowers to
   // `__extern_get(recv, "prototype")` and needs the same per-class demand a
   // computed key raises. See `standalone-class-prototype-read.ts`.
   recordStandaloneDynamicPrototypeRead(ctx, resolveWasmType(ctx, objType), propName);
+
+  // (#6484 S2) `iterator.next` as a VALUE — the shape every
+  // `*IteratorPrototype/next/*` row uses (`iterator.next.call(false)`). The
+  // receiver's carrier is either an eager `$Vec` (`map.entries()`) or a live
+  // `$__IterRec`; neither carries own properties, and `__extern_get` answers
+  // the miss on both, so `iterator.next` read as `undefined`. Answer off the
+  // FAMILY the checker names instead — which is also the object identity
+  // `Object.getPrototypeOf(iterator).next` reports. Registering the helper
+  // BEFORE the receiver is compiled keeps any late import out of the middle of
+  // this body (the #2043 shift discipline).
+  if ((ctx.standalone || ctx.wasi) && propName === "next") {
+    const iterKind = iteratorPrototypeKindOfSymbolName(objType.getSymbol()?.name);
+    if (iterKind !== undefined) {
+      // Resolve BOTH helpers before a single instruction of the receiver is
+      // emitted: either can add a late import, and a shift under a
+      // half-written body is the #2043 hazard.
+      ensureIterRecPrototypeHelper(ctx);
+      const nextClosure = resolveIteratorFamilyNextClosure(ctx, iterKind);
+      flushLateImportShifts(ctx, fctx);
+      if (nextClosure) {
+        // `iterator` is still evaluated for its side effects and dropped; the
+        // VALUE of `.next` does not depend on the receiver.
+        const recvType = compileExpression(ctx, fctx, expr.expression);
+        if (recvType) fctx.body.push({ op: "drop" });
+        pushIteratorFamilyNextValue(ctx, fctx, nextClosure);
+        return { kind: "externref" };
+      }
+    }
+  }
 
   // A JavaScript binding initialized from `new RegExp(...)` is commonly
   // widened to `any`, so its `.constructor` read cannot reach the later
@@ -4926,8 +4992,19 @@ export function compileOptionalElementAccess(
   // unlike the optional-CALL arm (#2051 call-arm, deferred) — there is no
   // late-import index-shift hazard from pulling in the box helper after the read.
   // Boxes into a plain externref, NOT AnyValue, so the #1888 tag-5 ABI is intact.
+  // (#6504 round 32) …and the same widening when the chain's static type IS
+  // `undefined` (or a union containing it) rather than a NULLABLE PRIMITIVE.
+  // `undefined?.[0]` types as exactly `undefined`, which `isNullablePrimitiveType`
+  // rejects because it is not a union of a primitive with null/undefined — so
+  // `resultType` stayed f64 and the short-circuit arm emitted `f64.const 0`.
+  // Measured: `assert.sameValue(undefined?.[0], undefined)` failed with
+  // `SameValue(«0», «undefined»)`, and so did `null?.[0]`. A short-circuit
+  // always produces `undefined` (§13.3.9), so any result representation that
+  // cannot hold `undefined` has to widen.
+  const resultTypeAdmitsUndefined = (tsResultType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
   const widenToUndefinedExternref =
-    (resultType.kind === "f64" || resultType.kind === "i32") && isNullablePrimitiveType(tsResultType);
+    (resultType.kind === "f64" || resultType.kind === "i32") &&
+    (isNullablePrimitiveType(tsResultType) || resultTypeAdmitsUndefined);
   if (widenToUndefinedExternref) {
     resultType = { kind: "externref" };
   }
@@ -4938,21 +5015,47 @@ export function compileOptionalElementAccess(
   // index expression.
   if (objType.kind !== "ref" && objType.kind !== "ref_null" && objType.kind !== "externref") {
     fctx.body.push({ op: "drop" });
-    if (resultType.kind === "f64") {
-      fctx.body.push({ op: "f64.const", value: 0 });
-    } else if (resultType.kind === "i32") {
-      fctx.body.push({ op: "i32.const", value: 0 });
-    } else {
-      // (#2051) externref result (incl. the nullable-primitive widening above) →
-      // host `undefined` so `=== undefined` / `typeof` / `+` read it correctly.
-      emitUndefined(ctx, fctx);
-    }
-    return resultType;
+    // (#6504 round 32) This branch ALWAYS short-circuits — there is no non-null
+    // path whose type it has to agree with — so the value is `undefined` by
+    // §13.3.9, full stop. It used to emit `f64.const 0` / `i32.const 0` whenever
+    // the chain's static type collapsed to a number, which made
+    // `undefined?.[0]` compare EQUAL TO ZERO:
+    // `assert.sameValue(undefined?.[0], undefined)` failed with
+    // `SameValue(«0», «undefined»)`. The nullable-primitive widening above does
+    // not catch it, because a chain typed exactly `undefined` is not a NULLABLE
+    // primitive — it is not a union at all.
+    //
+    // Returning externref is also strictly better for a numeric consumer:
+    // `undefined?.[0] + 1` now coerces undefined -> NaN (spec) instead of
+    // reading 0 and computing 1.
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
   }
 
   const tmp = allocLocal(fctx, `__optelem_${fctx.locals.length}`, objType);
+  // (#6504 round 32) The nullish test must catch BOTH representations. `?.`
+  // short-circuits on `null` OR `undefined` (§13.3.9), but `ref.is_null` only
+  // sees a wasm null — a host `undefined` externref is NOT null, so
+  // `undefined?.[0]` fell through to the else arm and performed a real element
+  // read on `undefined`, yielding `0`. Measured:
+  // `assert.sameValue(undefined?.[0], undefined)` failed with
+  // `SameValue(«0», «undefined»)`, and so did `null?.[0]`.
+  //
+  // The import is registered BEFORE the else arm is built, so its index cannot
+  // shift a call the else arm has already baked (the #2051 note above).
+  const externIsUndefinedIdx =
+    objType.kind === "externref"
+      ? ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }])
+      : undefined;
+  if (externIsUndefinedIdx !== undefined) flushLateImportShifts(ctx, fctx);
+
   fctx.body.push({ op: "local.tee", index: tmp });
   fctx.body.push({ op: "ref.is_null" });
+  if (externIsUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: tmp });
+    fctx.body.push({ op: "call", funcIdx: externIsUndefinedIdx });
+    fctx.body.push({ op: "i32.or" });
+  }
 
   const savedBody = fctx.body;
   fctx.savedBodies.push(savedBody);
@@ -5018,6 +5121,10 @@ export function compileElementAccess(
 
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;
+
+  // (#6651 F4) the computed twin; proxy-receiver-generic-read.ts
+  const __f4e = tryProxyReceiverElementRead(ctx, fctx, expr);
+  if (__f4e !== PROXY_READ_DECLINE) return __f4e;
 
   // (#4491) `this["p"]` / `globalThis["p"]` on a `var`-declared script global —
   // the bracket twin of the #4500 Slice A dot arm.
@@ -5474,6 +5581,34 @@ export function compileElementAccessBody(
   // its args). Keeping the unboxed f64/i32 in numeric context avoids that.
   expectedType?: ValType,
 ): ValType | null {
+  // (#6635) A bare `anyref` receiver — e.g. the return value of `Map`/
+  // `WeakMap.prototype.get()` (`tryCompileNativeMapMethodCall` reports
+  // `{kind:"anyref"}`), used directly as the object of a COMPUTED member
+  // read with no intervening local (`someMap.get(k)[computedKey]`). Unlike
+  // the dot-property twin (`compilePropertyAccess`), `compileElementAccess`
+  // compiles the object sub-expression with no expected-type hint (see its
+  // `compileExpression(ctx, fctx, expr.expression)` call), so the value never
+  // gets coerced to externref and no arm below matched `anyref` — it fell to
+  // the generic non-ref/non-externref fallback's `reportError` + `return
+  // null`. That `null` is NOT a compile failure: the #1919 speculative
+  // wrapper in `expressions.ts` treats a `null` inner result as a probe miss,
+  // silently rolls back the diagnostic + partial body, and substitutes a
+  // TS-static-type-derived DEFAULT value instead — which for an `any`/
+  // unresolvable computed-member type is a bare `ref.null`, observably JS
+  // `null`, not `undefined`. This is the exact mechanism behind test262's
+  // `Temporal/PlainDate/from` `SameValue(«null», «undefined»)` failures
+  // (#5383): the real polyfill bundle's calendar dispatch chain
+  // (`Qt(this).isoToDate(n, {[t]:true})[t]`) resolves `Qt` through a
+  // Map-backed registry, so the final `[t]` read is exactly this shape.
+  // Converting the already-on-stack anyref to externref here (matching the
+  // conversion the dot-property path gets for free via its expectedType
+  // hint) lets the existing, already-correct externref element-read pipeline
+  // below handle it — including its own `undefined`-vs-`null` semantics,
+  // which is what `__extern_get` on a genuine JS dictionary value produces.
+  if (objType.kind === "anyref") {
+    fctx.body.push({ op: "extern.convert_any" });
+    objType = { kind: "externref" };
+  }
   // Externref element access: obj[key] → host import __extern_get(obj, externref) → externref
   if (objType.kind === "externref") {
     // (#5223) The bracket twin of the dot-read registration. `a["g"]` reaches
@@ -6194,7 +6329,13 @@ export function compileElementAccessBody(
         const keyIsStringy =
           (keyType.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) !== 0 &&
           (keyType.flags & NUMERIC_KEY_FLAGS) === 0;
-        const keySwitchEligible = (keyType.flags & PERMISSIVE_KEY_FLAGS) !== 0 && !keyIsStringy;
+        // (#1058) A numeric enum type (`SyntaxKind`) is a UNION of number-literal
+        // members, so the NumberLiteral bit sits only on each member. The
+        // TypeScript parser's `forEachChildTable[node.kind]` is that shape.
+        const keyIsNumericEnumUnion =
+          keyType.isUnion() && keyType.types.every((part) => (part.flags & ts.TypeFlags.NumberLike) !== 0);
+        const keySwitchEligible =
+          ((keyType.flags & PERMISSIVE_KEY_FLAGS) !== 0 || keyIsNumericEnumUnion) && !keyIsStringy;
         // Only take the static key-switch when EVERY field is numeric-named and
         // every value has one uniform reference representation. JS-host object
         // literals use externref; standalone Acorn's string-valued tables use
@@ -6222,9 +6363,14 @@ export function compileElementAccessBody(
             uniformReferenceFieldType.kind === "ref"
               ? { kind: "ref_null", typeIdx: uniformReferenceFieldType.typeIdx }
               : uniformReferenceFieldType;
+          // (#1058) A missing key reads as `undefined`, as `__extern_get` would
+          // answer; `ref.null.extern` is JS `null`, so `fn === undefined` missed
+          // it and the caller invoked null. Emit it in place, then lift it out.
+          const missingKeyStart = fctx.body.length;
+          if (resultType.kind === "externref") emitUndefined(ctx, fctx);
           let chain: Instr[] =
             resultType.kind === "externref"
-              ? [{ op: "ref.null.extern" }]
+              ? fctx.body.splice(missingKeyStart)
               : [{ op: "ref.null", typeIdx: resultType.typeIdx }];
           for (let i = numericFields.length - 1; i >= 0; i--) {
             const { f, idx } = numericFields[i]!;
@@ -6347,6 +6493,24 @@ export function compileElementAccessBody(
     }
 
     const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
+    // A capture result has physical `index` / `input` fields in addition to its
+    // ordinary vec prefix. In standalone, the generic dynamic-string vec route
+    // below intentionally declines, so these keys must use the existing
+    // externref `__extern_get` dispatch before the numeric element fallback.
+    // Reuse the helper rather than duplicating its receiver/key staging: it
+    // evaluates both exactly once and resolves the import after nested emission.
+    // A literal canonical array index such as `m["1"]` retains the existing
+    // positional read. `arrayIndexConstantKey` deliberately declines mutable
+    // identifier initializers, so dynamic string keys still reach __extern_get.
+    if (
+      isRegexMatchVec &&
+      arrayIndexConstantKey(ctx, fctx, expr.argumentExpression) === undefined &&
+      isDynamicStringVecKey(ctx, expr.argumentExpression)
+    ) {
+      return emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+    }
     // Dynamic object-like keys must be canonicalized with ToPropertyKey before
     // the receiver-specific runtime dispatch. This is the read twin of the
     // assignment fallback above: numeric results (for example an object's
@@ -6407,7 +6571,18 @@ export function compileElementAccessBody(
     // elements use the dedicated reference-array widen below.
     const numericHint = expectedType?.kind === "f64" || expectedType?.kind === "i32";
     const taClass = classifyTypedArrayType(ctx.checker.getTypeAtLocation(expr.expression), ctx.checker);
-    const oobUndefined = !numericHint && taClass === "other" && !isRegexMatchVec;
+    // `$__regexp_match_vec` carries physical `index` / `input` metadata, but
+    // its `{length,data}` prefix remains an ordinary nullable native-string
+    // array for a numeric element read. The constant non-array numeric-key
+    // route above has already handled literal `m[-1]`, `m[1.5]`, and other
+    // compile-time named numeric properties through the expando reader. A
+    // number-typed variable retains the established direct-i32 lowering; this
+    // change only gives its positional element result the existing
+    // boxed-or-undefined boundary, and does not claim a general runtime
+    // canonical-numeric-property implementation.
+    const numericRegexMatchElementRead =
+      isRegexMatchVec && isNumericIndexExpression(ctx, expr.argumentExpression, fctx);
+    const oobUndefined = !numericHint && taClass === "other" && (!isRegexMatchVec || numericRegexMatchElementRead);
     // (#2798 — hybrid audit Row 9) A genuine typed-array VIEW OOB element read
     // returns JS `undefined` (the view length is the bound). Mutually exclusive
     // with the plain-array F1 arm above (`taClass !== "other"` vs `=== "other"`).
@@ -6517,6 +6692,9 @@ export function compileElementAccessBody(
       emitPlainArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, f1BoxType, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (shouldWidenReferenceArrayOob(oobUndefined, expr, arrDef.element)) {
+      // (#6651 G3) An `$AnyValue` element keeps its box (see the module).
+      const anyRead = tryEmitAnyValueArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
+      if (anyRead) return anyRead;
       emitReferenceArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (oobUndefinedTypedArray) {
@@ -6626,6 +6804,8 @@ export function compileElementAccessBody(
     emitPlainArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element, f1BoxTypeArr);
     return { kind: "externref" };
   } else if (shouldWidenReferenceArrayOob(oobUndefinedArr, expr, typeDef.element)) {
+    const anyRead = tryEmitAnyValueArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element); // (#6651 G3)
+    if (anyRead) return anyRead;
     emitReferenceArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element);
     return { kind: "externref" };
   } else if (oobUndefinedTypedArrayArr) {

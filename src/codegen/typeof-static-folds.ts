@@ -3,7 +3,7 @@ import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isGlobalObjectExpr } from "./global-environment.js";
-import { skipTransparentExpressions } from "./shared.js";
+import { compileExpression, skipTransparentExpressions } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
 
 function isUnshadowedRealmGlobal(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
@@ -64,23 +64,61 @@ export function tryCompileBuiltinMemberTypeof(
   return tryCompileMathMemberTypeof(ctx, fctx, operand) ?? tryCompileFunctionPrototypeTypeof(ctx, fctx, operand);
 }
 
-/** Static `typeof globalThis`/top-level-this fold, or undefined to decline. */
-export function tryCompileRealmGlobalTypeof(
+/**
+ * (#6656 slice 3) Is this operand a call to a function the compiler proved
+ * returns a BigInt — `function mul(a, b) { return a * b; }` over bigint
+ * arguments?
+ *
+ * WHY IT IS NEEDED. Every `typeof` fold below answers from the STATIC type,
+ * and TypeScript types such a kernel's return `number`: its parameters are
+ * plain `any` in untyped JS, so `a * b` is a numeric multiplication as far as
+ * the checker is concerned. The wasm result is a bigint-branded i64, so the
+ * fold answered the constant "number" for a value that is a BigInt.
+ * `ctx.bigIntKernelFunctions` is the codegen-side record of that proof.
+ */
+function bigIntKernelCallee(ctx: CodegenContext, operand: ts.Expression): ts.CallExpression | undefined {
+  const bare = skipTransparentExpressions(operand);
+  if (!ts.isCallExpression(bare) || !ts.isIdentifier(bare.expression)) return undefined;
+  return ctx.bigIntKernelFunctions.has(bare.expression.text) ? bare : undefined;
+}
+
+/**
+ * Compile the call for its side effects and discard the value — the call still
+ * has to RUN even though its typeof is a constant, exactly as the other
+ * constant-answer folds in this module do.
+ */
+function dropBigIntKernelCall(ctx: CodegenContext, fctx: FunctionContext, call: ts.CallExpression): void {
+  const called = compileExpression(ctx, fctx, call);
+  if (called) fctx.body.push({ op: "drop" });
+}
+
+/** Static `typeof` fold — a proven BigInt kernel call, then the realm global. */
+export function tryCompileStaticTypeofFold(
   ctx: CodegenContext,
   fctx: FunctionContext,
   operand: ts.Expression,
 ): ValType | null | undefined {
+  const bigIntCall = bigIntKernelCallee(ctx, operand);
+  if (bigIntCall) {
+    dropBigIntKernelCall(ctx, fctx, bigIntCall);
+    return compileStringLiteral(ctx, fctx, "bigint");
+  }
   return isUnshadowedRealmGlobal(ctx, fctx, operand) ? compileStringLiteral(ctx, fctx, "object") : undefined;
 }
 
-/** Static realm-global typeof comparison, or undefined to decline. */
-export function tryCompileRealmGlobalTypeofComparison(
+/** Static `typeof` comparison fold — BigInt kernel call, then the realm global. */
+export function tryCompileStaticTypeofComparisonFold(
   ctx: CodegenContext,
   fctx: FunctionContext,
   operand: ts.Expression,
   expected: string,
   isEq: boolean,
 ): ValType | undefined {
+  const bigIntCall = bigIntKernelCallee(ctx, operand);
+  if (bigIntCall) {
+    dropBigIntKernelCall(ctx, fctx, bigIntCall);
+    return emitStaticTypeofComparison(fctx, "bigint", expected, isEq);
+  }
   if (!isUnshadowedRealmGlobal(ctx, fctx, operand)) return undefined;
   return emitStaticTypeofComparison(fctx, "object", expected, isEq);
 }

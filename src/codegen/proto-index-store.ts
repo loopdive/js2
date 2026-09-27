@@ -137,6 +137,7 @@ const PROMISE_OFF = builtinBrandOffsetOf("Promise")!;
 const STRING_OFF = builtinBrandOffsetOf("String")!;
 const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
 const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
+const SYMBOL_OFF = builtinBrandOffsetOf("Symbol")!;
 const SET_OFF = builtinBrandOffsetOf("Set")!;
 const MAP_OFF = builtinBrandOffsetOf("Map")!;
 const WEAKMAP_OFF = builtinBrandOffsetOf("WeakMap")!;
@@ -1552,6 +1553,27 @@ function fillBrandOffBody(ctx: CodegenContext): void {
                       ...slotValue(),
                       { op: "ref.test", typeIdx: boxBool },
                       { op: "if", blockType: { kind: "empty" }, then: ret(BOOLEAN_OFF) },
+                    ] satisfies Instr[])
+                  : []),
+                // (#6651 H5) …and the SYMBOL wrapper (`Object(sym)`, built by #6651
+                // I4). A `[[PrimitiveValue]]` slot holding the `$Symbol` carrier
+                // (#2866) makes the wrapper a Symbol object, so §10.4.3's rule —
+                // the receiver's implicit chain starts at its OWN wrapper
+                // prototype — names Symbol.prototype. That is what lets
+                // `Object(Symbol.toPrimitive)[Symbol.toPrimitive]` reach the
+                // seeded `@@3` companion entry: this consult is key-AGNOSTIC
+                // (`__protoidx_get_k` hands the key straight to `__obj_find`), so
+                // a boxed-symbol key resolves here where the string-key
+                // inherited-method arm cannot look at all.
+                //
+                // Gated on the carrier ALREADY being registered. The fill never
+                // calls `ensureSymbolCarrier`, so a module with no symbols emits
+                // the exact previous body — the demand gate, not a flag.
+                ...(ctx.symbolTypeIdx >= 0
+                  ? ([
+                      ...slotValue(),
+                      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+                      { op: "if", blockType: { kind: "empty" }, then: ret(SYMBOL_OFF) },
                     ] satisfies Instr[])
                   : []),
               ],

@@ -979,7 +979,12 @@ function compileSpreadCallArgs(
     } finally {
       carrierContext._arrayLiteralForceVec = previousForceVec;
     }
-    const expected: ValType = { kind: "ref", typeIdx: restInfo.vecTypeIdx };
+    // The declared ABI includes any receiver/capture prefix. Materialize a
+    // fresh rest array above, then preserve the declared-slot projection.
+    const expected: ValType = paramTypes?.[paramOffset + restInfo.restIndex] ?? {
+      kind: "ref",
+      typeIdx: restInfo.vecTypeIdx,
+    };
     if (actual && !valTypesMatch(actual, expected)) coerceType(ctx, fctx, actual, expected);
     return;
   }

@@ -601,6 +601,207 @@ export function tryEmitOrdinaryConstructWithNewTarget(
 }
 
 /**
+ * Is `name` ever WRITTEN after its declaration?
+ *
+ * `isRebound` cannot answer this for a `var`/`let`/`const` binding: it counts
+ * the binding's own `VariableDeclaration` as a rebind, which is right for the
+ * function-declaration callers above (a variable of the same name shadows the
+ * function) and wrong here, where the declaration IS the thing being trusted.
+ * This scan looks only at writes, and refuses on any construct whose write set
+ * is not enumerable (`with`, direct `eval`, a destructuring or loop target).
+ */
+function isWrittenAfterDeclaration(source: ts.SourceFile, name: string): boolean {
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    if (ts.isBinaryExpression(node)) {
+      const op = node.operatorToken.kind;
+      if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment && mentions(node.left, name)) {
+        written = true;
+      }
+    } else if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && mentions(node.initializer, name)) {
+      written = true;
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      written = true;
+    } else if (ts.isBindingElement(node) && node.name !== undefined && isNamed(node.name, name)) {
+      written = true;
+    } else if (ts.isWithStatement(node)) {
+      written = true;
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
+      written = true;
+    }
+    if (!written) forEachChild(node, visit);
+  };
+  visit(source);
+  return written;
+}
+
+/** `new Proxy(<anything>)`, with `Proxy` not shadowed or reassigned in the file. */
+function isNewProxyExpression(value: ts.Expression): boolean {
+  if (!ts.isNewExpression(value)) return false;
+  if (!ts.isIdentifier(value.expression) || value.expression.text !== "Proxy") return false;
+  return !isRebound(value.getSourceFile(), "Proxy");
+}
+
+/**
+ * Does `target` provably denote a Proxy exotic object?
+ *
+ * Deliberately narrow, and narrow in the same way as
+ * `isUnreassignedOrdinaryFunction`: the literal `new Proxy(…)` expression, or a
+ * single-declaration binding whose initializer is one and which the file never
+ * rewrites. Anything else keeps the pre-existing lowering, so the arm below can
+ * only ever fire where the callee IS a proxy — which is what lets it skip the
+ * general construct-then-patch-prototype fallback with its carrier-specific
+ * arms.
+ */
+function isUnreassignedProxyValue(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (isNewProxyExpression(target)) return true;
+  if (!ts.isIdentifier(target)) return false;
+  const declarations = ctx.oracle.declarationsOf(target);
+  if (declarations.length !== 1) return false;
+  if (!ts.isVariableDeclaration(declarations[0]!)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(target);
+  if (initializer === undefined || !isNewProxyExpression(initializer)) return false;
+  return !isWrittenAfterDeclaration(target.getSourceFile(), target.text);
+}
+
+/**
+ * (#6651 RF1) `Construct(proxy, args, NewTarget)` — §10.5.13 with an ARBITRARY
+ * NewTarget.
+ *
+ * The general `Reflect.construct` lowering performs the ordinary
+ * `new target(...)` and then patches the result's prototype to
+ * `NewTarget.prototype`. For a proxy target that is observably wrong in a way
+ * no prototype patch can repair: the `construct` trap takes newTarget as its
+ * THIRD argument, and the ordinary lowering hands it the proxy itself
+ * (`native-construct.ts`: "Ordinary `new proxy(...)` uses the proxy itself as
+ * NewTarget" — correct for `new P()`, wrong for `Reflect.construct(P, a, NT)`).
+ * With the trap absent the driver forwards to `[[ProxyTarget]]` and derives
+ * newTarget afresh from the INNER proxy, so a nested proxy loses it twice.
+ *
+ * This arm calls `__proxy_construct_chain`, which walks the [[ProxyTarget]]
+ * chain with the caller's newTarget held INVARIANT, and falls back to the
+ * ordinary [[Construct]] driver on `__proxy_ultimate_target` only when no proxy
+ * in the chain trapped — the same shape `tryEmitOrdinaryConstructWithNewTarget`
+ * uses, so `Object.getPrototypeOf(result)` still answers `NewTarget.prototype`.
+ *
+ * Standalone only: the JS-host lane delegates [[Construct]] to the host, which
+ * already threads newTarget. Returns false (emitting nothing) when the site
+ * does not qualify.
+ */
+export function tryEmitProxyConstructWithNewTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetArg: ts.Expression,
+  args: readonly ts.Expression[],
+  /** The once-evaluated NewTarget value; `undefined` when the site has none. */
+  ntLocal: number | undefined,
+): boolean {
+  if (ntLocal === undefined) return false;
+  if (!ctx.standalone) return false;
+  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return false;
+  if (args.some((a) => ts.isSpreadElement(a))) return false;
+  let target = targetArg;
+  while (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isNonNullExpression(target) ||
+    ts.isTypeAssertionExpression(target)
+  ) {
+    target = target.expression;
+  }
+  if (!isUnreassignedProxyValue(ctx, target)) return false;
+
+  // Every index this arm bakes must be read AFTER the late-import registration
+  // that can shift them, and every precondition must be checked BEFORE the
+  // first byte is emitted — a bail-out mid-emission would leave the caller's
+  // fallback to evaluate the callee and arguments a second time.
+  prepareRuntimeNewTargetProto(ctx, fctx);
+  const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
+  const chainIdx = ctx.funcMap.get("__proxy_construct_chain");
+  const ultimateIdx = ctx.funcMap.get("__proxy_ultimate_target");
+  const vecNewIdx = ctx.funcMap.get("__objvec_new");
+  const vecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (chainIdx === undefined || ultimateIdx === undefined) return false;
+  if (vecNewIdx === undefined || vecPushIdx === undefined) return false;
+  if (ctx.funcMap.get("__extern_get") === undefined) return false;
+
+  const calleeTy = compileExpression(ctx, fctx, target, EXTERNREF);
+  if (calleeTy && calleeTy.kind !== "externref") coerceType(ctx, fctx, calleeTy, EXTERNREF);
+  else if (calleeTy === null) fctx.body.push({ op: "ref.null.extern" });
+  const calleeLocal = allocLocal(fctx, `__pc_callee_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  const argLocals: number[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const argTy = compileExpression(ctx, fctx, args[i]!, EXTERNREF);
+    if (argTy && argTy.kind !== "externref") coerceType(ctx, fctx, argTy, EXTERNREF);
+    else if (argTy === null) fctx.body.push({ op: "ref.null.extern" });
+    const argLocal = allocLocal(fctx, `__pc_arg${i}_${fctx.locals.length}`, EXTERNREF);
+    fctx.body.push({ op: "local.set", index: argLocal });
+    argLocals.push(argLocal);
+  }
+
+  // §10.5.13 step 8 builds the argumentsList array the trap receives.
+  const argsVecLocal = allocLocal(fctx, `__pc_args_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "call", funcIdx: vecNewIdx }, { op: "local.set", index: argsVecLocal });
+  for (const argLocal of argLocals) {
+    fctx.body.push(
+      { op: "local.get", index: argsVecLocal },
+      { op: "local.get", index: argLocal },
+      { op: "call", funcIdx: vecPushIdx },
+    );
+  }
+
+  const resultLocal = allocLocal(fctx, `__pc_result_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: argsVecLocal },
+    { op: "local.get", index: ntLocal },
+    { op: "call", funcIdx: chainIdx },
+    { op: "local.set", index: resultLocal },
+  );
+
+  // No trap anywhere in the chain → ordinary Construct(ultimate target, args,
+  // NewTarget), built from `? Get(NewTarget, "prototype")` exactly as the
+  // ordinary-function arm does. The prototype read happens only on this arm, so
+  // a NewTarget with a `prototype` GETTER is not read when a trap answered.
+  const fallback: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = fallback;
+  fctx.body.push({ op: "local.get", index: calleeLocal }, { op: "call", funcIdx: ultimateIdx });
+  const ultimateLocal = allocLocal(fctx, `__pc_ultimate_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: ultimateLocal });
+  emitRuntimeNewTargetPrototype(ctx, fctx, ntLocal);
+  const protoLocal = allocLocal(fctx, `__pc_proto_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: protoLocal });
+  fctx.body.push({ op: "local.get", index: ultimateLocal }, { op: "local.get", index: protoLocal });
+  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
+  fctx.body.push({
+    op: "call",
+    funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx,
+  });
+  fctx.body = savedBody;
+
+  fctx.body.push(
+    { op: "local.get", index: resultLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: fallback,
+      else: [{ op: "local.get", index: resultLocal }],
+    },
+  );
+  return true;
+}
+
+/**
  * Builtin constructors whose instance carrier has NO settable prototype link,
  * while `Object.getPrototypeOf` on it answers correctly — so a prototype the
  * runtime path fetches is silently discarded and the caller reads the intrinsic

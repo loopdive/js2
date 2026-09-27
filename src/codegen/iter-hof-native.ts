@@ -778,6 +778,33 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
         },
       );
     }
+    // (#6484 S2) A `$__IterRec` → the RECORD is the handle (pass-through), the
+    // same shape as the three arms above. Needed because of the S2 carrier
+    // migration: `arr[Symbol.iterator]()` used to answer a snapshot `$Vec`,
+    // which the ladder arm below admitted, and now answers a live record, which
+    // nothing here admitted — so `iter.reduce(cb, init)` fell to the null
+    // sentinel and silently returned `undefined` WITHOUT calling `cb` once
+    // (measured 2026-09-16: `calls=3` on the base tree, `calls=0` after the
+    // migration; it cost `built-ins/Iterator/prototype/reduce/
+    // reducer-memo-can-be-any-type.js`). `__iter_hof_next` / `_close` delegate
+    // to `__iterator_next` / `__iterator_return`, both of which take exactly
+    // this record, so the pass-through is the whole fix.
+    //
+    // It is also MORE correct than what it restores: stepping the record
+    // consumes the iterator, which is what §27.1.4 helpers do, where the old
+    // snapshot-vec route re-read a frozen copy and left the cursor untouched.
+    const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+    if (iterRecTypeIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: ANY },
+        { op: "ref.test", typeIdx: iterRecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: 0 }, { op: "return" }],
+        },
+      );
+    }
     // Driven generator frame → the frame IS the handle (pass-through).
     for (const p of producers) {
       arms.push(

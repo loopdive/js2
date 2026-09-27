@@ -402,8 +402,23 @@ export function buildIntegrityPredicate(args: {
     FLAG_ACCESSOR: number;
     FLAG_TOMBSTONE: number;
   };
+  /**
+   * (#6624) Standalone link-boundary peer funcIdx consulted in place of the
+   * bare `terminalResult` constant, on a carrier-bag miss. `undefined` for
+   * every predicate but `__object_isExtensible` on the standalone lane with a
+   * linked provider present — everywhere else this reproduces the previous
+   * body byte-for-byte.
+   */
+  peerFallbackIdx?: number;
 }): { locals: { name: string; type: ValType }[]; body: Instr[] } {
-  const { objectTypeIdx, flagBit, invert, terminalResult, integrityBagIdx, levelWalk } = args;
+  const { objectTypeIdx, flagBit, invert, terminalResult, integrityBagIdx, levelWalk, peerFallbackIdx } = args;
+  const terminalInstrs: Instr[] =
+    peerFallbackIdx === undefined
+      ? [{ op: "i32.const", value: terminalResult }]
+      : [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: peerFallbackIdx },
+        ];
   const decodeBit = (localIdx: number): Instr[] => decodeIntegrityFlag(objectTypeIdx, localIdx, flagBit, invert);
   // Scratch locals for the walk are APPENDED after `any`/`bag`, so no already
   // baked local index moves.
@@ -434,7 +449,7 @@ export function buildIntegrityPredicate(args: {
         ];
   const elseArm: Instr[] =
     integrityBagIdx === undefined
-      ? [{ op: "i32.const", value: terminalResult }]
+      ? terminalInstrs
       : [
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: integrityBagIdx },
@@ -445,7 +460,7 @@ export function buildIntegrityPredicate(args: {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
             then: decode(2),
-            else: [{ op: "i32.const", value: terminalResult }],
+            else: terminalInstrs,
           },
         ];
   const locals: { name: string; type: ValType }[] = [{ name: "any", type: { kind: "anyref" } }];
@@ -555,6 +570,16 @@ export function buildObjectIntegrityPredicates(args: {
   OBJ_FLAG_NONEXTENSIBLE: number;
   OBJ_FLAG_SEALED: number;
   OBJ_FLAG_FROZEN: number;
+  /**
+   * (#6624) The standalone link-boundary peer's `__js2wasm_link_is_extensible`
+   * funcIdx. When present, the general (non-`_obj`) `__object_isExtensible`
+   * consults it instead of the non-object terminal on a carrier-bag miss —
+   * the owning module's answer for a value ITS ladder cannot decode, exactly
+   * the `getPrototypeOf` boundary's shape (#6617). Never widens `isFrozen`/
+   * `isSealed`: those have no reported defect and no boundary terminal exists
+   * for them.
+   */
+  peerIsExtensibleIdx?: number;
 }): number | undefined {
   const {
     ctx,
@@ -570,6 +595,7 @@ export function buildObjectIntegrityPredicates(args: {
     OBJ_FLAG_NONEXTENSIBLE,
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
+    peerIsExtensibleIdx,
   } = args;
   const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
   // `isFrozen`/`isSealed` are COMPUTED (§7.3.15 TestIntegrityLevel); the stored
@@ -593,6 +619,7 @@ export function buildObjectIntegrityPredicates(args: {
     invert: boolean,
     terminalResult: number,
     levelWalk?: ReturnType<typeof levelWalkFor>,
+    peerFallbackIdx?: number,
   ): void => {
     const { locals, body } = buildIntegrityPredicate({
       objectTypeIdx,
@@ -601,6 +628,7 @@ export function buildObjectIntegrityPredicates(args: {
       terminalResult,
       integrityBagIdx,
       levelWalk,
+      peerFallbackIdx,
     });
     registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
   };
@@ -608,7 +636,7 @@ export function buildObjectIntegrityPredicates(args: {
   // §20.5.2.12: isExtensible on a non-object returns FALSE.
   emit("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1, levelWalkFor(true));
   emit("__object_isSealed", OBJ_FLAG_SEALED, false, 1, levelWalkFor(false));
-  emit("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0);
+  emit("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0, undefined, peerIsExtensibleIdx);
   // Known-object variants: same body, terminal fallback flipped to the ORDINARY
   // OBJECT rule. Standalone/wasi only — host already answers these correctly.
   if (integrityBagIdx !== undefined) {

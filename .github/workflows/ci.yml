@@ -768,6 +768,13 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The pinned suite's single fork peaks above vitest.config.ts's 512 MB
+      # default heap on main itself (OOM ~20 s in, before any assertion),
+      # which marks unrelated PRs unstable and keeps them out of the queue.
+      # 1 GB matches the single-fork peak noted below and the other CI
+      # vitest jobs (test262-sharded.yml, refresh-baseline.yml).
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
     steps:
       - uses: actions/checkout@v5
         with:

@@ -5,6 +5,14 @@
 import type { TypeOracle } from "../checker/oracle.js";
 import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 import { isPromiseType } from "../checker/type-mapper.js";
+import {
+  emitSpilledCallAwaitedOperand,
+  emitSpilledCallPreSuspend,
+  emitSpilledCallResume,
+  planSpilledCallAwait,
+  spilledCallLaneSupported,
+  type SpilledCallPlan,
+} from "./async-spilled-call.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { lowerAwaitingStatementByHoisting } from "./async-await-hoist.js";
@@ -520,6 +528,15 @@ export interface LinearAwaitSegment {
    * `false` — a throw in it must not re-run it).
    */
   readonly leadInTry: readonly boolean[];
+  /**
+   * (#6504) This await sits in a CALL ARGUMENT and is resumed by the spill
+   * continuation rather than by recompiling the containing statement: the
+   * callee/receiver/preceding arguments are evaluated before the suspension
+   * into frame spills, and the resume state calls the spilled callee. The
+   * containing statement is consumed here and MUST NOT also be pushed into the
+   * next segment's lead.
+   */
+  readonly spilledCall?: SpilledCallPlan;
 }
 
 /**
@@ -674,7 +691,7 @@ function replaySafeNestedCallAwait(
 export function planLinearAwaits(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
-  opts?: { allowReturnInTry?: boolean; checker?: ts.TypeChecker },
+  opts?: { allowReturnInTry?: boolean; checker?: ts.TypeChecker; allowSpilledCall?: boolean },
 ): LinearAwaitPlan | null {
   if (plan.awaitPoints.length === 0) return null;
   const body = fn.body;
@@ -735,6 +752,7 @@ export function planLinearAwaits(
     sawReturnAwait: false,
     allowReturnInTry: opts?.allowReturnInTry === true,
     checker: opts?.checker,
+    allowSpilledCall: opts?.allowSpilledCall === true,
   };
   if (!lowerLinearStatements(body.statements, st, awaitSet)) return null;
 
@@ -810,6 +828,8 @@ interface LowerState {
   allowReturnInTry: boolean;
   /** TypeScript identity proof used by bounded continuation recompilation. */
   checker?: ts.TypeChecker;
+  /** (#6504) Admit the call-argument spill continuation (host lane only). */
+  allowSpilledCall?: boolean;
 }
 
 /**
@@ -988,6 +1008,29 @@ function lowerLinearStatements(
       resetLead();
       pushLead(stmt);
       continue;
+    }
+    // (#6504) `o.m(await x)` / `f(a, await x, b)` — the replay arm above cannot
+    // take these (it would re-read the callee after the suspension), and
+    // declining drops to the legacy pass-through that compiles `await` as a
+    // NO-OP. The spill continuation evaluates callee/receiver/preceding
+    // arguments BEFORE the suspension and calls the spilled callee on resume,
+    // so the statement is fully consumed here and is NOT pushed into the next
+    // lead.
+    if (st.allowSpilledCall === true) {
+      const spilledCall = planSpilledCallAwait(stmt, awaitNode);
+      if (spilledCall !== null) {
+        st.segments.push({
+          leadStmts,
+          awaitedExpr: awaitNode.expression,
+          resumeBinding: { name: `__async_call_sent@${spilledCall.key}`, type: undefined },
+          isReturnAwait: false,
+          awaitInTry,
+          leadInTry,
+          spilledCall,
+        });
+        resetLead();
+        continue;
+      }
     }
     return false; // await sits in a non-canonical position within this statement
   }
@@ -1242,6 +1285,14 @@ export function linearPlanToCfg(linear: LinearAwaitPlan): AsyncCfgPlan {
   for (let k = 0; k < N; k++) {
     const seg = linear.segments[k]!;
     const prev = k > 0 ? linear.segments[k - 1]! : null;
+    // (#6504) The spill halves ride the two hooks the CFG carrier already has:
+    // `emit` runs after this state's leads and before the terminator evaluates
+    // the awaited operand — the exact point JS evaluates the callee reference
+    // and the preceding arguments; `postDeliverEmit` on the RESUME state runs
+    // after the settled value is bound and before that state's leads, which are
+    // the statements following the call.
+    const spilled = seg.spilledCall;
+    const prevSpilled = prev?.spilledCall;
     states.push({
       id: k,
       resumeFrom: prev ? { binding: prev.resumeBinding, handler: prev.awaitInTry ? 1 : 0 } : null,
@@ -1249,21 +1300,53 @@ export function linearPlanToCfg(linear: LinearAwaitPlan): AsyncCfgPlan {
         stmt,
         handler: seg.leadInTry[i] ? 1 : 0,
       })),
+      ...(spilled === undefined
+        ? {}
+        : {
+            emit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+              emitSpilledCallPreSuspend(ctx, fctx, spilled);
+            },
+          }),
+      ...(prevSpilled === undefined || prev?.resumeBinding == null
+        ? {}
+        : {
+            postDeliverEmit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+              emitSpilledCallResume(ctx, fctx, prevSpilled, prev.resumeBinding!.name);
+            },
+          }),
       terminator: {
         kind: "suspend",
-        awaited: seg.awaitedExpr,
+        // (#6504 round 31) A short-circuiting optional-chain base makes the
+        // awaited operand conditional: the nullish test is decided from the
+        // pre-suspension spill so `undefined?.[await P]` never evaluates `P`.
+        // Every other plan passes the operand node through unchanged.
+        awaited:
+          spilled?.shortCircuitBase == null
+            ? seg.awaitedExpr
+            : {
+                emit: (ctx: CodegenContext, fctx: FunctionContext): ValType =>
+                  emitSpilledCallAwaitedOperand(ctx, fctx, spilled, seg.awaitedExpr),
+              },
         resumeState: k + 1,
         handler: seg.awaitInTry ? 1 : 0,
       },
     });
   }
   const last = linear.segments[N - 1]!;
+  const lastSpilled = last.spilledCall;
   states.push({
     id: N,
     resumeFrom: {
       binding: last.resumeBinding,
       handler: last.awaitInTry ? 1 : 0,
     },
+    ...(lastSpilled === undefined || last.resumeBinding === null
+      ? {}
+      : {
+          postDeliverEmit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+            emitSpilledCallResume(ctx, fctx, lastSpilled, last.resumeBinding!.name);
+          },
+        }),
     lead: last.isReturnAwait
       ? []
       : linear.tail.map((stmt, i) => ({
@@ -1329,10 +1412,14 @@ export function planAsyncCfg(
   const linear = planLinearAwaits(fn, plan, {
     allowReturnInTry: opts.allowReturnInTry === true,
     checker: ctx.checker,
+    // (#6504) Derived from `ctx` at every site rather than plumbed through
+    // options, so the claim predicate, the spill computation and the plan
+    // builder cannot disagree about which shapes exist.
+    allowSpilledCall: spilledCallLaneSupported(ctx),
   });
   if (linear !== null) return linearPlanToCfg(linear);
   if (opts.allowLoops) {
-    const whileCfg = planWhileLoopCfg(fn, plan);
+    const whileCfg = planWhileLoopCfg(fn, plan, ctx.checker);
     if (whileCfg !== null) return whileCfg;
     // (#2906 slice 3d-ii) `for await (const x of g())` where `g` is a host-free
     // async GENERATOR — the async-iterator CONSUMER, tried before the 3b array
@@ -1347,7 +1434,7 @@ export function planAsyncCfg(
   }
   // (#2906 3c) Bounded try/catch-around-await — catch region as states.
   if (opts.allowTryCatch) {
-    const tryCatchCfg = planTryCatchCfg(fn, plan, isHostAsyncLane(ctx));
+    const tryCatchCfg = planTryCatchCfg(fn, plan, isHostAsyncLane(ctx), ctx.checker);
     if (tryCatchCfg !== null) return tryCatchCfg;
   }
   return null;
@@ -1372,6 +1459,7 @@ export function planAsyncCfg(
 function analyzeWhileAsync(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
+  checker?: ts.TypeChecker,
 ): {
   pre: ts.Statement[];
   cond: ts.Expression;
@@ -1415,6 +1503,10 @@ function analyzeWhileAsync(
     usedFinally: false,
     sawReturnAwait: false,
     allowReturnInTry: false,
+    // (#6492 round 28) Same threading gap the try/catch analysis had: this
+    // `LowerState` is the THIRD builder, and without the checker every shape
+    // predicate keyed on it is dead for `while`-with-await bodies too.
+    checker,
   };
   if (!lowerLinearStatements(bodyStmts, st, awaitSet)) return null;
   if (st.segments.length === 0) return null; // no canonical await in the body
@@ -1469,8 +1561,12 @@ function loopBodyHasUnsupportedControl(loopBody: ts.Statement): boolean {
  *    cont    tail leads     → goto(head)                    (the back-edge)
  *    exit    post leads     → settleUndefined
  */
-function planWhileLoopCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): AsyncCfgPlan | null {
-  const shape = analyzeWhileAsync(fn, plan);
+function planWhileLoopCfg(
+  fn: ts.FunctionLikeDeclaration,
+  plan: AsyncCpsPlan,
+  checker?: ts.TypeChecker,
+): AsyncCfgPlan | null {
+  const shape = analyzeWhileAsync(fn, plan, checker);
   if (shape === null) return null;
   const { pre, cond, segments, tail, post } = shape;
   const m = segments.length;
@@ -1539,8 +1635,12 @@ function planWhileLoopCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): A
 export function loopAsyncSpillInfo(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
+  checker?: ts.TypeChecker,
 ): { names: string[]; segments: readonly LinearAwaitSegment[] } | null {
-  const shape = analyzeWhileAsync(fn, plan);
+  // The checker MUST match `planWhileLoopCfg`'s: this function computes the
+  // spill set for the plan that one builds, and a shape admitted by one but not
+  // the other is a frame whose live values have no field.
+  const shape = analyzeWhileAsync(fn, plan, checker);
   if (shape === null) return null;
   const ownLocals = new Set<string>();
   collectAllDeclaredNames(fn, ownLocals);
@@ -1592,6 +1692,7 @@ export interface TryCatchChunk {
 function lowerChunk(
   statements: readonly ts.Statement[],
   awaitSet: ReadonlySet<ts.AwaitExpression>,
+  checker?: ts.TypeChecker,
 ): TryCatchChunk | null {
   const st: LowerState = {
     segments: [],
@@ -1602,6 +1703,14 @@ function lowerChunk(
     usedFinally: false,
     sawReturnAwait: false,
     allowReturnInTry: false,
+    // (#6492 round 28 / #6503) Thread the checker into the TRY/CATCH analysis's
+    // own `LowerState`. Without it `replaySafeNestedCallAwait`'s first line
+    // (`checker === undefined`) rejected every candidate in this path — the
+    // largest single decline bucket (31 of 71 events over 2,212 async rows),
+    // and not a shape rejection at all. `planLinearAwaits` already receives
+    // `ctx.checker` at all four of its call sites; this path is the SECOND
+    // chance `asyncFnNeedsHostDrive` gives a body and simply never carried it.
+    checker,
   };
   if (!lowerLinearStatements(statements, st, awaitSet)) return null;
   // A try/finally INSIDE a chunk would claim a colliding handler id — bounded
@@ -1748,6 +1857,7 @@ function lowerRegionBody(
   awaitSet: ReadonlySet<ts.AwaitExpression>,
   depth: number,
   hoist: boolean,
+  checker?: ts.TypeChecker,
 ): RegionBody | null {
   const items: Array<RegionBody["items"][number]> = [];
   let cursor = 0;
@@ -1765,7 +1875,7 @@ function lowerRegionBody(
       // before. Non-host lanes keep the multi-declarator-only arm.
       const hoistedBody = lowerAwaitingStatementByHoisting(stmt, awaitSet, hoist);
       if (hoistedBody === null) continue;
-      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       items.push({ kind: "chunk", chunk: pre }, ...hoistedBody.items);
       if (hoistedBody.hoisted === true) hoisted = true;
@@ -1786,10 +1896,10 @@ function lowerRegionBody(
       if (!ts.isIdentifier(binding) && !ts.isObjectBindingPattern(binding) && !ts.isArrayBindingPattern(binding)) {
         return null;
       }
-      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       const bodyStatements = ts.isBlock(stmt.statement) ? stmt.statement.statements : [stmt.statement];
-      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist);
+      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist, checker);
       if (loopBody === null || bodySegCount(loopBody) === 0) return null;
       if (loopBody.hoisted === true) hoisted = true;
       items.push(
@@ -1808,7 +1918,7 @@ function lowerRegionBody(
 
     if (ts.isIfStatement(stmt)) {
       if (countAwaitsInStatement(stmt.expression, awaitSet) > 0) return null;
-      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       const thenStatements = ts.isBlock(stmt.thenStatement) ? stmt.thenStatement.statements : [stmt.thenStatement];
       const elseStatements =
@@ -1817,8 +1927,8 @@ function lowerRegionBody(
           : ts.isBlock(stmt.elseStatement)
             ? stmt.elseStatement.statements
             : [stmt.elseStatement];
-      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth, hoist);
-      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth, hoist);
+      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth, hoist, checker);
+      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth, hoist, checker);
       if (whenTrue === null || whenFalse === null) return null;
       if (whenTrue.hoisted === true || whenFalse.hoisted === true) hoisted = true;
       items.push(
@@ -1845,17 +1955,17 @@ function lowerRegionBody(
     const catchParamSpillName =
       decl !== undefined ? `__async_catch_${decl.pos >= 0 ? decl.pos : decl.getStart()}_${catchParamName}` : null;
 
-    const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+    const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
     if (pre === null || pre.sawReturnAwait) return null; // `return await` → the try is unreachable
     items.push({ kind: "chunk", chunk: pre });
-    const tryBody = lowerRegionBody(stmt.tryBlock.statements, awaitSet, depth + 1, hoist);
+    const tryBody = lowerRegionBody(stmt.tryBlock.statements, awaitSet, depth + 1, hoist, checker);
     if (tryBody === null || bodySegCount(tryBody) === 0) return null;
     if (tryBody.hoisted === true) hoisted = true;
     if (finallyStmts !== null && bodyHasGroup(tryBody)) return null; // combined + nested — bounded out
     // A `return await` inside the try body may only be its FINAL item, and only
     // when nothing follows this group in the SOURCE body (checked by the
     // caller's non-final sawReturnAwait rejections below via the pre rule).
-    const catchChunk = lowerChunk(stmt.catchClause.block.statements, awaitSet);
+    const catchChunk = lowerChunk(stmt.catchClause.block.statements, awaitSet, checker);
     if (catchChunk === null) return null;
     items.push({
       kind: "group",
@@ -1863,7 +1973,7 @@ function lowerRegionBody(
     });
     cursor = i + 1;
   }
-  const tail = lowerChunk(statements.slice(cursor), awaitSet);
+  const tail = lowerChunk(statements.slice(cursor), awaitSet, checker);
   if (tail === null) return null;
   items.push({ kind: "chunk", chunk: tail });
   return hoisted ? { items, hoisted: true } : { items };
@@ -1881,13 +1991,14 @@ export function analyzeTryCatchAsync(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   hoist = false,
+  checker?: ts.TypeChecker,
 ): { body: RegionBody } | null {
   if (plan.awaitPoints.length === 0) return null;
   const body = fn.body;
   if (body === undefined || !ts.isBlock(body)) return null;
   const awaitSet = new Set<ts.AwaitExpression>(plan.awaitPoints);
 
-  const region = lowerRegionBody(body.statements, awaitSet, 0, hoist);
+  const region = lowerRegionBody(body.statements, awaitSet, 0, hoist, checker);
   if (region === null) return null;
   // At least one non-linear construct (else the linear path owns the body), and
   // every await accounted for by the region's chunks (no stray positions).
@@ -1913,8 +2024,9 @@ export function planTryCatchCfg(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   hoist = false,
+  checker?: ts.TypeChecker,
 ): AsyncCfgPlan | null {
-  const shape = analyzeTryCatchAsync(fn, plan, hoist);
+  const shape = analyzeTryCatchAsync(fn, plan, hoist, checker);
   if (shape === null) return null;
 
   const asLead = (stmts: readonly ts.Statement[], handler: number): AsyncCfgStmt[] =>
@@ -2296,6 +2408,7 @@ export function tryCatchAsyncSpillInfo(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   hoist = false,
+  checker?: ts.TypeChecker,
 ): {
   segments: readonly LinearAwaitSegment[];
   catchParamNames: string[];
@@ -2305,7 +2418,7 @@ export function tryCatchAsyncSpillInfo(
     source: ts.Expression;
   }>;
 } | null {
-  const shape = analyzeTryCatchAsync(fn, plan, hoist);
+  const shape = analyzeTryCatchAsync(fn, plan, hoist, checker);
   if (shape === null) return null;
   const segments: LinearAwaitSegment[] = [];
   const catchParamNames: string[] = [];

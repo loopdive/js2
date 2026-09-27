@@ -195,7 +195,47 @@ function consumesExternrefCarrier(parent: ts.CallExpression | ts.NewExpression):
   return namespace === "Object" && OBJECT_META_STATICS.has(member);
 }
 
-function expressionIsEscapingArgument(expression: ts.Expression): boolean {
+/**
+ * (#6637) True when `parent` is a plain call `f(...)` — callee is a bare
+ * identifier, never a property access — and the parameter at `argIndex`
+ * has NO type annotation (the oracle's `{kind:"any"}` fact, i.e. genuine
+ * implicit-any, not merely "the oracle couldn't resolve it").
+ *
+ * Deliberately narrower than `consumesExternrefCarrier`'s allowlist: this
+ * asks a QUESTION about the callee's OWN signature instead of naming
+ * specific host builtins, so it only fires for a plain named function/
+ * const-arrow call. `.call`/`.apply`/method receivers (the #2615 regression
+ * class — `Object.prototype.toString.call(p)`, `Array.prototype.copyWithin.
+ * call(p,...)`, `Object.getPrototypeOf(p)`) all have a PropertyAccessExpression
+ * callee and are excluded by the `ts.isIdentifier` guard below, so this
+ * cannot reopen that regression: those calls keep declining (falling back to
+ * the existing struct-typed storage) exactly as before.
+ *
+ * An untyped ("any") parameter reads its argument through the compiler's
+ * generic dynamic member-access path (`__dyn_member_get`/`__extern_get`),
+ * which already recognizes `$Proxy` via its own `ref.test` front-guard —
+ * the SAME path a direct `p.field` read on a locally-typed Proxy binding
+ * uses. So passing the raw externref Proxy carrier into an untyped
+ * parameter is always safe; forcing the struct-typed slot here instead
+ * guarded-casts the live Proxy to its (checker-fictional) target struct,
+ * which fails and replaces the value with `ref.null` — the receiver then
+ * misreads as "null or undefined" for every dynamic read the callee does.
+ */
+function calleeParamIsUntyped(
+  ctx: CodegenContext,
+  parent: ts.CallExpression | ts.NewExpression,
+  outer: ts.Expression,
+): boolean {
+  if (!ts.isCallExpression(parent) || !ts.isIdentifier(parent.expression)) return false;
+  if (parent.arguments === undefined) return false;
+  const argIndex = parent.arguments.indexOf(outer);
+  if (argIndex < 0) return false;
+  const sig = ctx.oracle.signatureOf(parent.expression);
+  if (!sig || argIndex >= sig.params.length) return false;
+  return sig.params[argIndex]!.kind === "any";
+}
+
+function expressionIsEscapingArgument(ctx: CodegenContext, expression: ts.Expression): boolean {
   const outer = outermostTransparentExpression(expression);
   const parent = outer.parent;
   if ((!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) || parent.arguments === undefined) return false;
@@ -207,6 +247,11 @@ function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   // guarded-cast the actual `$Proxy`/host Proxy to its TypeScript target type,
   // replace it with null, and skip the getOwnPropertyDescriptor trap entirely.
   if (consumesExternrefCarrier(parent)) return false;
+
+  // (#6637) A plain call to a bare-identifier function whose matching
+  // parameter carries no type annotation reads dynamically too — see
+  // `calleeParamIsUntyped` for why this cannot reopen #2615.
+  if (calleeParamIsUntyped(ctx, parent, outer)) return false;
 
   // This includes argument zero of `.call` / `.apply`, the generic-method
   // receiver that motivated #2615. A member receiver (`p.method()`) is not in
@@ -269,7 +314,7 @@ export function proxyBindingEscapesToCall(ctx: CodegenContext, declaration: ts.V
       return;
     }
 
-    if (ts.isIdentifier(node) && node.text === bindingName && expressionIsEscapingArgument(node)) {
+    if (ts.isIdentifier(node) && node.text === bindingName && expressionIsEscapingArgument(ctx, node)) {
       const resolved = ctx.oracle.valueDeclarationOf(node);
       if (resolved === declaration || resolved === undefined) {
         escapes = true;

@@ -48,16 +48,24 @@ import type { Instr, ValType } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
+import { ensureNativeArrayFlat, isNativeFlatForm, NATIVE_FLAT_METHODS } from "./array-flat-native.js"; // (#2717)
+import { ensureNativeArraySlice, isNativeSliceForm, NATIVE_SLICE_METHODS } from "./array-slice-native.js"; // (#6683)
 
 /**
  * Method names served by {@link ensureNativeArrayProducer} — the single source
  * shared by the dispatcher's reserve gate and its fill arm.
  */
-export const DYN_ARRAY_PRODUCER_METHODS: ReadonlySet<string> = new Set(["concat", "sort"]);
+export const DYN_ARRAY_PRODUCER_METHODS: ReadonlySet<string> = new Set([
+  "concat",
+  "sort",
+  ...NATIVE_FLAT_METHODS,
+  ...NATIVE_SLICE_METHODS, // (#6683) slice / at / reverse
+]);
 
 /**
  * Arity forms the dispatcher arm may claim. `concat` is variadic in the spec
@@ -69,7 +77,8 @@ export const DYN_ARRAY_PRODUCER_METHODS: ReadonlySet<string> = new Set(["concat"
 export function isDynArrayProducerForm(methodName: string, arity: number): boolean {
   if (methodName === "concat") return arity >= 0;
   if (methodName === "sort") return arity === 0 || arity === 1;
-  return false;
+  if (NATIVE_SLICE_METHODS.has(methodName)) return isNativeSliceForm(methodName, arity); // (#6683)
+  return isNativeFlatForm(methodName, arity); // (#2717) flat / flatMap
 }
 
 interface ProducerDeps {
@@ -460,6 +469,34 @@ function buildSortBody(ctx: CodegenContext, deps: ProducerDeps, cmpIdx: number):
           { op: "call", funcIdx: typeofFunction },
         ] satisfies Instr[])),
     { op: "local.set", index: HAS },
+    // (#6651 E-S1) §23.1.3.30 step 1 / §23.2.3.29 step 2: a comparefn that is
+    // PRESENT, not `undefined` and not callable is a TypeError — before any
+    // element is read. Without this the non-callable value was silently
+    // demoted to "no comparator" and the sort returned normally
+    // (`sort/comparefn-nonfunction-call-throws.js`). An ABSENT argument is
+    // told apart from an explicit one by the args vec's own length, so
+    // `sort()` and `sort(undefined)` keep the default order while `sort(null)`
+    // throws (null is distinct from undefined under the #2106 singleton).
+    ...(typeofFunction === undefined
+      ? ([] satisfies Instr[])
+      : ([
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: deps.externLength },
+          { op: "f64.const", value: 0 },
+          { op: "f64.gt" },
+          { op: "local.get", index: HAS },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
+          { op: "local.get", index: CMP },
+          { op: "call", funcIdx: deps.externIsUndefined },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildThrowJsErrorInstrs(ctx, "TypeError", "sort comparator is not a function"),
+          },
+        ] satisfies Instr[])),
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: deps.externLength },
     { op: "local.set", index: LEN },
@@ -576,6 +613,8 @@ function mintHelper(
 export function ensureNativeArrayProducer(ctx: CodegenContext, methodName: string): number | undefined {
   if (!ctx.standalone) return undefined;
   if (!DYN_ARRAY_PRODUCER_METHODS.has(methodName)) return undefined;
+  if (NATIVE_FLAT_METHODS.has(methodName)) return ensureNativeArrayFlat(ctx, methodName); // (#2717)
+  if (NATIVE_SLICE_METHODS.has(methodName)) return ensureNativeArraySlice(ctx, methodName); // (#6683)
   const helperName = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;

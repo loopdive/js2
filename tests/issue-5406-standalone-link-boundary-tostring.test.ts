@@ -133,12 +133,11 @@ describe("#5406 a value that crossed a standalone link boundary", () => {
         export function ownArray() { return eq(opaque([1, 2]), "[object Array]"); }
         export function ownNull() { return eq(opaque(null), "[object Null]"); }
         export function ownUndefined() { return eq(opaque(undefined), "[object Undefined]"); }
-        // A carrier whose §20.1.3.6 tag is NOT the step-13 default must keep
-        // today's loud refusal rather than be defaulted to [object Object].
-        export function provDateStillRefuses() { let s; try { s = Object.prototype.toString.call(NS.mkDate()); }
-          catch (e) { return 0; } return s === "[object Object]" ? 9 : 2; }
-        export function provMapStillRefuses() { let s; try { s = Object.prototype.toString.call(NS.mkMap()); }
-          catch (e) { return 0; } return s === "[object Object]" ? 9 : 2; }
+        // A carrier whose §20.1.3.6 tag is NOT the step-13 default must never be
+        // defaulted to [object Object]. It refused loudly until #6674 taught
+        // the provider's terminal its own Date / Map carriers.
+        export function provDate() { return eq(NS.mkDate(), "[object Date]"); }
+        export function provMap() { return eq(NS.mkMap(), "[object Map]"); }
       `,
       );
       // Base tree: provClass / provPlain / provError all 0 (threw) — the
@@ -154,8 +153,8 @@ describe("#5406 a value that crossed a standalone link boundary", () => {
         ownArray: ex.ownArray(),
         ownNull: ex.ownNull(),
         ownUndefined: ex.ownUndefined(),
-        provDateStillRefuses: ex.provDateStillRefuses(),
-        provMapStillRefuses: ex.provMapStillRefuses(),
+        provDate: ex.provDate(),
+        provMap: ex.provMap(),
       }).toEqual({
         ok: 7,
         provClass: 1,
@@ -167,11 +166,11 @@ describe("#5406 a value that crossed a standalone link boundary", () => {
         ownArray: 1,
         ownNull: 1,
         ownUndefined: 1,
-        // 0 = still refuses. A `9` here would mean a loud refusal had been
-        // converted into a silent mis-tag, which is the failure this arm's
-        // decline list exists to prevent.
-        provDateStillRefuses: 0,
-        provMapStillRefuses: 0,
+        // 2 would be a silent mis-tag (e.g. [object Object]) — the failure the
+        // terminal's decline list and the linked consumer's missing default
+        // arm (#6674) exist to prevent; 0 was the pre-#6674 loud refusal.
+        provDate: 1,
+        provMap: 1,
       });
     },
   );

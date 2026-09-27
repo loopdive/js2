@@ -18,6 +18,7 @@ import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-hel
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
+import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
 export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -839,16 +840,8 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "local.get", index: 3 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "i64.eq" },
-              { op: "return" },
-            ],
+            // (#6656) exact for a value past i64, not just its low 64 bits.
+            then: [...bigIntCarrierEqInstrs(ctx, 2, 3), { op: "return" }],
           },
         ]
       : []) satisfies Instr[]),
@@ -1117,9 +1110,27 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
  * Emit inline wasm helper functions for boxing/unboxing `any` values.
  * Called lazily when any-typed operations are first encountered.
  */
+/**
+ * (#6683) Reserve `__any_to_f64`'s stable handle BEFORE {@link ensureAnyHelpers}
+ * can re-enter codegen. Its `ensureObjectRuntime` call flushes the native-proto
+ * seeders, which can build the globalThis seed and its `Math` namespace carrier;
+ * the `Math.max`/`Math.min` value closures bake a call to `__any_to_f64`, and on
+ * that re-entrant path `anyHelpersEmitted` is already claimed but the helper
+ * not yet registered — so the closure declined and the seed kept a key with no
+ * value (moment's standalone-dynamic `__native_globalThis_ensure` stack-balance
+ * CE). A stable handle resolves to wherever the body is pushed later, so the
+ * physical layout is unchanged.
+ */
+function reserveAnyToF64Handle(ctx: CodegenContext): number {
+  const handle = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__any_to_f64", handle);
+  return handle;
+}
+
 export function ensureAnyHelpers(ctx: CodegenContext): void {
   if (ctx.anyHelpersEmitted) return;
   ctx.anyHelpersEmitted = true;
+  const anyToF64Handle = reserveAnyToF64Handle(ctx); // (#6683)
 
   // Ensure the $AnyValue struct type is registered before emitting helpers
   ensureAnyValueType(ctx);
@@ -1368,7 +1379,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
     locals?: { name: string; type: ValType }[],
   ): void {
     const typeIdx = addFuncType(ctx, params, results, name);
-    const funcIdx = mintDefinedFunc(ctx);
+    const funcIdx = name === "__any_to_f64" ? anyToF64Handle : mintDefinedFunc(ctx); // (#6683)
     pushDefinedFunc(ctx, funcIdx, {
       name,
       typeIdx,
