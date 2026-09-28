@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Additive paired diagnostic: copy this file unchanged to the owning-main
+// control. No patched providers, rewritten old fixtures, or acceptance fallback.
+// The JS BigInt below is the WebAssembly JS API representation of raw i64 bits;
+// it does NOT make the numeric source parameter a JavaScript BigInt.
+const rawI64 = 1152921504606846976n;
+const exportNames = ["probe", "ctorLength", "ctorUnit", "callLength", "callUnit"] as const;
+
+function emittedRoutes(wat: string) {
+  // The repository's full, unoptimized WAT emits top-level declarations at
+  // two-space indentation. Missing roots/unresolved direct calls fail closed
+  // below; a missing dump is never counted as proof of a formatter route.
+  const sections = wat.split(/(?=^  \()/m);
+  const imports = sections.filter((part) => /^  \(import .*\(func /.test(part));
+  const definitions = sections.filter((part) => /^  \(func /.test(part));
+  const declarations = [...imports, ...definitions];
+  const names = declarations.map((part) => part.match(/\(func \$([^\s()]+)/)?.[1]);
+  const functions = definitions.map((body, ordinal) => {
+    const index = imports.length + ordinal;
+    const calls = [...body.matchAll(/\b(?:return_call|call) (\d+|\$[^\s()]+)/g)].map((match) => {
+      const operand = match[1]!;
+      return { operand, target: operand.startsWith("$") ? operand.slice(1) : names[Number(operand)] ?? null };
+    });
+    return { index, name: names[index], header: body.split("\n")[0], calls, body };
+  });
+  const exports = new Map(
+    [...wat.matchAll(/\(export "([^"]+)" \(func (\d+)\)\)/g)].map((match) => [match[1]!, Number(match[2])]),
+  );
+  const roots = exportNames.map((name) => functions.find((fn) => fn.index === exports.get(name)) ?? null);
+  return {
+    roots,
+    // Shared signatures are emitted as (type N), not inline parameters.
+    // Preserve their declarations for ABI review rather than misclassifying
+    // an absent inline '(param i64)' as a compiler failure.
+    typeDeclarations: wat.split("\n").filter((line) => /^\s+\(type /.test(line)),
+    // Include the actual index/name mapping for every definition, but only
+    // retain full emitted bodies for our five observation roots. The edge
+    // list supports following wrapper/helper calls without opaque WAT dumps.
+    edges: functions.map(({ index, name, header, calls }) => ({ index, name, header, calls })),
+  };
+}
+
+for (const kind of ["numeric-i64", "branded-bigint"] as const) {
+  it(`compares constructor and call strings for ${kind}`, async () => {
+    const parameterType = kind === "numeric-i64" ? "i64" : "bigint";
+    const source = `
+type i64 = number;
+export function probe(x: ${parameterType}) { return new String(x).valueOf() === String(x) ? 1 : 0; }
+export function ctorLength(x: ${parameterType}) { return new String(x).valueOf().length; }
+export function ctorUnit(x: ${parameterType}, index: number) { return new String(x).valueOf().charCodeAt(index); }
+export function callLength(x: ${parameterType}) { return String(x).length; }
+export function callUnit(x: ${parameterType}, index: number) { return String(x).charCodeAt(index); }
+`;
+    const nativeOperand = kind === "numeric-i64" ? "2 ** 60" : "1152921504606846976n";
+    const native = runInNewContext(
+      `(() => { const x = ${nativeOperand}; return {
+        constructor: new String(x).valueOf(), call: String(x),
+        probe: new String(x).valueOf() === String(x) ? 1 : 0
+      }; })()`,
+      {},
+      { timeout: 5000 },
+    ) as { constructor: string; call: string; probe: number };
+    const receipt: Record<string, unknown> = {
+      kind,
+      source,
+      sourceSha256: createHash("sha256").update(source).digest("hex"),
+      rawI64: rawI64.toString(),
+      nativeOperand,
+      native,
+    };
+    try {
+      const result = await compile(source, {
+        fileName: "5748-numeric-i64-string-pair.ts",
+        target: "standalone",
+        nativeStrings: true,
+        hostBridge: "off",
+        optimize: false,
+        emitWat: true,
+        skipSemanticDiagnostics: true,
+      });
+      receipt.success = result.success;
+      receipt.errors = result.errors;
+      receipt.routes = emittedRoutes(result.wat);
+      receipt.watSha256 = createHash("sha256").update(result.wat).digest("hex");
+      expect(result.success, JSON.stringify(result.errors)).toBe(true);
+      const module = new WebAssembly.Module(result.binary);
+      receipt.imports = WebAssembly.Module.imports(module);
+      expect(receipt.imports).toEqual([]);
+      const instance = new WebAssembly.Instance(module, {});
+      const call = (name: string, ...args: (number | bigint)[]): number => {
+        const fn = instance.exports[name];
+        expect(fn, name).toBeTypeOf("function");
+        return (fn as (...args: (number | bigint)[]) => number)(...args);
+      };
+      const readString = (prefix: "ctor" | "call") => {
+        const length = call(`${prefix}Length`, rawI64);
+        expect(Number.isInteger(length) && length >= 0 && length <= 128, `${prefix} length=${length}`).toBe(true);
+        const units = Array.from({ length }, (_, index) => call(`${prefix}Unit`, rawI64, index));
+        expect(units.every((unit) => Number.isInteger(unit) && unit >= 0 && unit <= 65535)).toBe(true);
+        return { length, units, text: String.fromCharCode(...units) };
+      };
+      // Capture BOTH strings and the exact original equality probe before any
+      // semantic assertion, so one discrepancy cannot hide the other output.
+      const constructor = readString("ctor");
+      const direct = readString("call");
+      const probe = call("probe", rawI64);
+      receipt.actual = { constructor, direct, probe };
+      const routes = emittedRoutes(result.wat);
+      for (const root of routes.roots) {
+        expect(root, "missing emitted observation root").not.toBeNull();
+        expect(root!.calls.every((edge) => edge.target !== null), "unresolved direct call index").toBe(true);
+      }
+      const expected = kind === "numeric-i64" ? "1152921504606847000" : "1152921504606846976";
+      expect(native).toEqual({ constructor: expected, call: expected, probe: 1 });
+      expect({ constructor: constructor.text, call: direct.text, probe }).toEqual(native);
+    } catch (error) {
+      receipt.failure = String(error);
+      throw error;
+    } finally {
+      // JSON contains native results, source/hash, raw ABI argument, emitted
+      // roots/edges and both actual strings even when the comparison fails.
+      console.log(JSON.stringify(receipt));
+    }
+  }, 120_000);
+}

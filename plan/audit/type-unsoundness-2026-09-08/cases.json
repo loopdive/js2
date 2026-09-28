@@ -1,0 +1,262 @@
+[
+  {
+    "id": "any-parameter",
+    "category": "any",
+    "source": "function add(x:number){ return x+1; } const value:any=\"x\"; console.log(add(value));",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5388
+  },
+  {
+    "id": "any-typed-variable",
+    "category": "any",
+    "source": "const value:any=\"x\"; const n:number=value; console.log(n+1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5388
+  },
+  {
+    "id": "any-numeric-control",
+    "category": "any",
+    "source": "function add(x:number){return x+1;} const value:any=2; console.log(add(value));",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "assertion-number",
+    "category": "assertions",
+    "source": "const n=\"x\" as unknown as number; console.log(n+1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5388
+  },
+  {
+    "id": "assertion-boolean",
+    "category": "assertions",
+    "source": "const n=\"hello\" as unknown as boolean; console.log(typeof n); console.log(n);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5388
+  },
+  {
+    "id": "assertion-safe-control",
+    "category": "assertions",
+    "source": "const n=2 as number; console.log(n+1);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "array-oob-value",
+    "category": "lookups",
+    "source": "const xs=[1,2,3]; const n=xs[3]; console.log(n); console.log(typeof n);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5389
+  },
+  {
+    "id": "array-oob-add",
+    "category": "lookups",
+    "source": "const xs=[1,2,3]; const n=xs[3]; console.log(n+1);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "array-safe-control",
+    "category": "lookups",
+    "source": "const xs=[1,2,3]; console.log(xs[1]+1);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "index-signature-missing",
+    "category": "lookups",
+    "source": "const ids:{[key:string]:string}={known:\"yes\"}; const value=ids[\"missing\"]; console.log(value); console.log(typeof value);",
+    "expected": {
+      "gc": "match",
+      "standalone": "diagnostic"
+    },
+    "issue": 5389
+  },
+  {
+    "id": "index-signature-safe-control",
+    "category": "lookups",
+    "source": "const ids:{[key:string]:string}={known:\"yes\"}; console.log(ids[\"known\"]);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "array-oob-method",
+    "category": "lookups",
+    "source": "const xs=[1,2,3]; try { console.log(xs[3].toFixed(1)); } catch(e) { console.log(\"threw\"); }",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5389
+  },
+  {
+    "id": "overload-lie",
+    "category": "inaccurate-declarations",
+    "source": "function value(): number; function value(): any { return 'x'; } console.log(value() + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5388
+  },
+  {
+    "id": "overload-control",
+    "category": "inaccurate-declarations",
+    "source": "function value(): number; function value(): any { return 4; } console.log(value() + 1);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "array-variance-number-string",
+    "category": "array-variance",
+    "source": "const a: number[] = [1]; const b: (number | string)[] = a; b[0] = 'x'; console.log(a[0] + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "array-variance-string-number",
+    "category": "array-variance",
+    "source": "const a: string[] = ['x']; const b: (number | string)[] = a; b[0] = 2; console.log(a[0] + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "array-variance-control",
+    "category": "array-variance",
+    "source": "const a: number[] = [1]; const b: number[] = a; b[0] = 4; console.log(a[0] + 1);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "array-object-covariance",
+    "category": "array-variance",
+    "source": "const a = [{ x: 1 }]; const b: { x: number | string }[] = a; b[0].x = 'x'; console.log(a[0].x + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "callback-refinement-delete",
+    "category": "callback-refinement",
+    "source": "function change(o: { x?: number }) { delete o.x; } const a: {x?: number} = {x: 1}; if(a.x !== undefined) { change(a); console.log(a.x === undefined); }",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "callback-refinement-union",
+    "category": "callback-refinement",
+    "source": "function change(o: {x: number | string}) { o.x = 'x'; } const a: {x: number | string} = {x: 1}; if(typeof a.x === 'number') { change(a); console.log(a.x + 1); }",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "callback-refinement-control",
+    "category": "callback-refinement",
+    "source": "function change(o: {x: number | string}) { o.x = 4; } const a: {x: number | string} = {x: 1}; if(typeof a.x === 'number') { change(a); console.log(a.x + 1); }",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "optional-property-widening",
+    "category": "structural-turtles",
+    "source": "const a: {x?: number} = {x: 1}; const b: {x?: number | string} = a; b.x = 'x'; console.log(a.x! + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "required-to-optional-delete",
+    "category": "structural-turtles",
+    "source": "const a: {x: number} = {x: 1}; const b: {x?: number} = a; delete b.x; console.log(a.x + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5390
+  },
+  {
+    "id": "optional-property-control",
+    "category": "structural-turtles",
+    "source": "const a: {x?: number} = {x: 1}; const b: {x?: number} = a; b.x = 4; console.log(a.x! + 1);",
+    "expected": {
+      "gc": "match",
+      "standalone": "match"
+    },
+    "issue": 5387
+  },
+  {
+    "id": "generic-spread-intersection",
+    "category": "structural-turtles",
+    "source": "function merge<T, U>(a: T, b: U): T & U { return {...a, ...b}; } const result = merge({x: 1}, {x: 'x'}); console.log(result.x + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5391
+  },
+  {
+    "id": "generic-spread-control",
+    "category": "structural-turtles",
+    "source": "function merge<T, U>(a: T, b: U): T & U { return {...a, ...b}; } const result = merge({x: 1}, {y: 2}); console.log(result.x + 1);",
+    "expected": {
+      "gc": "diagnostic",
+      "standalone": "diagnostic"
+    },
+    "issue": 5391
+  }
+]

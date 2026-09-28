@@ -14,6 +14,7 @@ import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
+import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
@@ -25,7 +26,8 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
-import { resolveWasmType } from "./index.js";
+import { addUnionImports, resolveWasmType } from "./index.js";
+import { externIsObjectInstrs } from "./iterator-native.js";
 // (#3920) Own-presence is a per-instance bit, never a shape property — the `in`
 // answer must come from the same presence machinery the value read uses.
 import { emitInPresence } from "./closed-struct-presence.js";
@@ -244,13 +246,13 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // case for an untyped/`any` parameter), a WasmGC `ref.test` alone
       // cannot distinguish "a real object of the wrong class" (should stay
       // `false`) from "not an object at all" (should throw). Stash a raw
-      // copy of the externref BEFORE `any.convert_extern` so the JS-host
-      // fast-path check below can ask the host directly — Wasm has no
-      // visibility into what an opaque externref wraps. A statically-typed
+      // copy of the externref BEFORE `any.convert_extern` so the active
+      // target's Object predicate can classify the unbranded value.
+      // A statically-typed
       // receiver (already known to be a struct/array/etc.) skips this
       // entirely: it's always an Object, no runtime ambiguity to resolve.
       let externCopy: number | undefined;
-      if (receiverIsExternref && !ctx.standalone && !ctx.wasi) {
+      if (receiverIsExternref && !ctx.wasi) {
         externCopy = allocTempLocal(fctx, { kind: "externref" });
         fctx.body.push({ op: "local.tee", index: externCopy });
       }
@@ -260,11 +262,36 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
       emitPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
-      const isObjectIdx =
-        externCopy !== undefined
-          ? ensureLateImport(ctx, "__extern_is_object", [{ kind: "externref" }], [{ kind: "i32" }])
-          : undefined;
-      if (externCopy !== undefined && isObjectIdx !== undefined) {
+      // Native private-name checks must reject primitive receivers too. Use
+      // the shared runtime Object test, which excludes null and includes
+      // callable objects, instead of treating every failed brand as false.
+      if (externCopy !== undefined && ctx.standalone) {
+        addUnionImports(ctx);
+      } else if (externCopy !== undefined) {
+        ensureLateImport(ctx, "__extern_is_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+      }
+      const throwNonObject =
+        externCopy === undefined
+          ? undefined
+          : buildThrowTypeErrorBranch(
+              ctx,
+              fctx,
+              "Cannot use 'in' operator to search for private field in a non-object",
+            );
+      flushLateImportShifts(ctx, fctx);
+      const isObjectIdx = ctx.funcMap.get("__extern_is_object");
+      const objectCheck =
+        externCopy === undefined
+          ? undefined
+          : ctx.standalone
+            ? externIsObjectInstrs(ctx, externCopy)
+            : isObjectIdx === undefined
+              ? undefined
+              : ([
+                  { op: "local.get", index: externCopy },
+                  { op: "call", funcIdx: isObjectIdx },
+                ] satisfies Instr[]);
+      if (externCopy !== undefined && objectCheck !== undefined && throwNonObject !== undefined) {
         const externCopyLocal: number = externCopy;
         const brandLocal = allocTempLocal(fctx, { kind: "i32" });
         fctx.body.push({ op: "local.set", index: brandLocal });
@@ -274,17 +301,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "local.get", index: externCopyLocal },
-            { op: "call", funcIdx: isObjectIdx },
+            ...objectCheck,
             { op: "i32.eqz" }, // and the receiver is not an Object at all
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: buildThrowTypeErrorBranch(
-                ctx,
-                fctx,
-                "Cannot use 'in' operator to search for private field in a non-object",
-              ),
+              then: throwNonObject,
               else: [],
             },
           ],
@@ -294,11 +316,11 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         releaseTempLocal(fctx, brandLocal);
         releaseTempLocal(fctx, externCopyLocal);
       } else if (externCopy !== undefined) {
-        // Defensive: `ensureLateImport` failed (should not happen for a
-        // brand-new import name). The brand predicate's i32 is already on
-        // the stack from `emitPrivateBrandPredicate` above — just release
-        // the unused externref copy and fall back to the pre-existing
-        // false-no-throw behavior rather than failing the compile.
+        reportError(
+          ctx,
+          expr,
+          "[JS2WASM_UNSUPPORTED_PRIVATE_BRAND_CHECK] Cannot classify the private-brand receiver as an object on this target.",
+        );
         releaseTempLocal(fctx, externCopy);
       }
       releaseTempLocal(fctx, tmpAny);

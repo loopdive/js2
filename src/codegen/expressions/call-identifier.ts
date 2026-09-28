@@ -698,6 +698,35 @@ export function compileIdentifierCall(
   return withDeclarationBoundCallee(ctx, expr, () => compileBoundIdentifierCall(ctx, fctx, expr, expectedType));
 }
 
+/** Global coercing predicates; Number.is* has a separate non-coercing path. */
+function emitGlobalNumericPredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+  predicate: "isNaN" | "isFinite",
+): ValType {
+  // (#3481) Both predicates first perform ? ToNumber. The guard evaluates a
+  // static Symbol operand once and emits its throw before numeric lowering.
+  if (emitSymbolOperandCoercionThrow(ctx, fctx, operand, "number")) return { kind: "i32", boolean: true };
+  compileExpression(ctx, fctx, operand, { kind: "f64" });
+  const prefix = predicate === "isNaN" ? "__isnan_" : "__isfin_";
+  const tmp = allocLocal(fctx, `${prefix}${fctx.locals.length}`, {
+    kind: "f64",
+  });
+  fctx.body.push({ op: "local.tee", index: tmp });
+  fctx.body.push({ op: "local.get", index: tmp });
+  if (predicate === "isNaN") {
+    // n !== n
+    fctx.body.push({ op: "f64.ne" });
+  } else {
+    // n - n === 0: Infinity and NaN produce NaN; finite values produce zero.
+    fctx.body.push({ op: "f64.sub" });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "f64.eq" });
+  }
+  return { kind: "i32", boolean: true };
+}
+
 function compileBoundIdentifierCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -978,37 +1007,11 @@ function compileBoundIdentifierCall(
     const funcName = globalParseBuiltin ?? expr.expression.text;
 
     if (funcName === "isNaN" && expr.arguments.length >= 1) {
-      // (#3481) §19.2.3 step 1 is `? ToNumber(number)`, which throws on a
-      // Symbol. The `n !== n` lowering below reads the symbol's `i32` id as an
-      // ordinary number, so `isNaN(Symbol())` answered `false`
-      // (built-ins/isNaN/return-abrupt-from-tonumber-number-symbol.js).
-      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
-      // isNaN(n) → n !== n
-      compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      const tmp = allocLocal(fctx, `__isnan_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.tee", index: tmp });
-      fctx.body.push({ op: "local.get", index: tmp });
-      fctx.body.push({ op: "f64.ne" });
-      return { kind: "i32" };
+      return emitGlobalNumericPredicate(ctx, fctx, expr.arguments[0]!, "isNaN");
     }
 
     if (funcName === "isFinite" && expr.arguments.length >= 1) {
-      // (#3481) §19.2.2 step 1 — same `? ToNumber(number)` Symbol throw as
-      // `isNaN` above (built-ins/isFinite/return-abrupt-from-tonumber-number-symbol.js).
-      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
-      // isFinite(n) → n - n === 0.0  (Infinity - Infinity = NaN, NaN - NaN = NaN, finite - finite = 0)
-      compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      const tmp = allocLocal(fctx, `__isfin_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.tee", index: tmp });
-      fctx.body.push({ op: "local.get", index: tmp });
-      fctx.body.push({ op: "f64.sub" });
-      fctx.body.push({ op: "f64.const", value: 0 });
-      fctx.body.push({ op: "f64.eq" });
-      return { kind: "i32" };
+      return emitGlobalNumericPredicate(ctx, fctx, expr.arguments[0]!, "isFinite");
     }
 
     // parseInt(s, radix?) and parseFloat(s) — host imports

@@ -5,6 +5,8 @@ import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js"
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
+import { isHostDelegationCompletion } from "./expressions/misc.js";
+import { inferLetConstInitializerWasmType } from "./bindings/initializer-carriers.js";
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
 import { isConstructedFnctorName } from "./fnctor-instance-names.js";
 import {
@@ -303,7 +305,6 @@ import { noteRegexPropertySource } from "./regex-runtime/unicode.js"; // (#6677)
 import {
   hoistedVarRetypesToConcreteRef,
   inferArrayVecType,
-  inferTaViewType,
   transferredArrayLikeResultNeedsExternref,
   usageInferredLocalType,
 } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
@@ -332,7 +333,7 @@ import {
   fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
-import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
+import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
@@ -496,7 +497,6 @@ import {
   addFuncType,
   getArrTypeIdxFromVec,
   getOrRegisterArrayType,
-  getOrRegisterSubviewType,
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
 } from "./registry/types.js";
@@ -533,7 +533,7 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
@@ -1405,6 +1405,12 @@ function resolvePositionType(
       throw new Error(`function TypeNode not expressible as an IR callable signature`);
     }
     throw new Error(`unsupported TypeNode kind ${ts.SyntaxKind[node.kind]}`);
+  }
+  if (mapped?.kind === "generator-object") {
+    if (!projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }).allowHostImports) {
+      throw new Error("generator-object call result requires host imports");
+    }
+    return irVal({ kind: "externref" });
   }
   if (isConcreteLattice(mapped)) return latticeToIr(mapped);
   if (mapped?.kind === "object") {
@@ -14111,6 +14117,7 @@ function hoistVarDecl(
     // mixed-assignment demotion does not — a positive unboxing proof outranks
     // it (see `numericProofOverridesMixedCarrier`).
     const hardForcesExternref =
+      isHostDelegationCompletion(ctx, decl.initializer) ||
       initForcesExternref ||
       realmStructuralCarrier ||
       forInTargetForcesExternref ||
@@ -14531,119 +14538,6 @@ function getLoopBodyNode(loop: ts.Node): ts.Node | undefined {
   return undefined;
 }
 
-function isVecStructType(ctx: CodegenContext, type: ValType | undefined): type is ValType & { typeIdx: number } {
-  if (!type || (type.kind !== "ref" && type.kind !== "ref_null")) return false;
-  const def = ctx.mod.types[type.typeIdx];
-  return def?.kind === "struct" && def.fields[0]?.name === "length" && def.fields[1]?.name === "data";
-}
-
-function stripRegExpInferenceWrapper(expr: ts.Expression): ts.Expression {
-  while (
-    ts.isParenthesizedExpression(expr) ||
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    expr = (
-      expr as
-        | ts.ParenthesizedExpression
-        | ts.AsExpression
-        | ts.TypeAssertion
-        | ts.SatisfiesExpression
-        | ts.NonNullExpression
-    ).expression;
-  }
-  return expr;
-}
-
-function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
-  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
-}
-
-function inferLetConstInitializerWasmType(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  declaration: ts.VariableDeclaration,
-): ValType | null {
-  const initializer = declaration.initializer;
-  if (!initializer) return null;
-  // (#4376) Keep the authoritative pre-hoisted slot type in lockstep with
-  // compileVariableStatement. A buffer-backed typed array is represented by a
-  // shared-backing `$__ta_view`, not the checker-inferred plain vector. Nested
-  // functions record their capture signatures before declaration lowering, so
-  // missing this override made reifying a closure cast the real view value to
-  // an unrelated vector type and trap during Deno core bootstrap.
-  const taViewType = inferTaViewType(ctx, initializer);
-  if (taViewType !== null) return taViewType;
-  const taViewCallResultType = inferNativeTaViewCallResultType(ctx, initializer);
-  if (taViewCallResultType !== null) return taViewCallResultType;
-  const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, declaration);
-  if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
-
-  const genericFactory = genericStructFactoryExpression(ctx, initializer);
-  if (genericFactory) {
-    const target = resolveWasmType(ctx, genericFactory.target);
-    if (target.kind === "ref" || target.kind === "ref_null") {
-      // Wasm locals must be defaultable. The call emitter materializes the
-      // concrete target before the initializer is stored into this slot.
-      return { kind: "ref_null", typeIdx: target.typeIdx };
-    }
-    if (
-      (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
-      genericFactory.sourceResultAbi === true &&
-      (target.kind === "externref" || target.kind === "ref_extern")
-    ) {
-      const source = resolveWasmType(ctx, genericFactory.sourceConstraint);
-      if (source.kind === "ref" || source.kind === "ref_null") {
-        // An unmaterializable logical T does not change what the proven fresh
-        // factory allocated. Preserve that source carrier in the authoritative
-        // pre-hoisted slot so its physical fields remain observable.
-        return { kind: "ref_null", typeIdx: source.typeIdx };
-      }
-    }
-  }
-
-  const unwrapped = stripRegExpInferenceWrapper(initializer);
-  if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) {
-    return null;
-  }
-
-  const methodName = unwrapped.expression.name.text;
-  if (methodName !== "subarray" && methodName !== "slice") return null;
-
-  const receiver = unwrapped.expression.expression;
-  let receiverType: ValType | undefined;
-  if (ts.isIdentifier(receiver)) {
-    const localIdx = fctx.localMap.get(receiver.text);
-    if (localIdx !== undefined) receiverType = getLocalType(fctx, localIdx);
-    else {
-      const globalIdx = ctx.moduleGlobals.get(receiver.text);
-      if (globalIdx !== undefined) receiverType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
-    }
-  }
-  receiverType ??= resolveWasmType(ctx, ctx.checker.getTypeAtLocation(receiver));
-  if (!isVecStructType(ctx, receiverType)) return null;
-  // (#2357/#47) Standalone `subarray` produces a `$__subview` that shares the
-  // parent's backing array (true aliasing). Resolving the binding to the subview
-  // type here is what makes element access pick the windowed lowering at COMPILE
-  // time (so plain-array `a[i]` stays zero-cost). `slice` still returns an
-  // independent copy (a plain vec). The receiver may itself be a subview (nested
-  // subarray) — its element kind is recovered from the base vec.
-  if (methodName === "subarray" && (ctx.standalone || ctx.wasi)) {
-    const recvIdx = (receiverType as { typeIdx: number }).typeIdx;
-    // elemKind from the receiver's struct name: `__vec_<elem>` (plain typed array)
-    // or `__subview_<elem>` (nested subarray over a subview).
-    const recvName = ctx.typeIdxToStructName.get(recvIdx);
-    const elemKind = recvName?.replace(/^__vec_/, "").replace(/^__subview_/, "");
-    if (elemKind !== undefined && elemKind !== recvName) {
-      const svIdx = getOrRegisterSubviewType(ctx, elemKind);
-      return { kind: "ref_null", typeIdx: svIdx };
-    }
-  }
-  return { kind: "ref_null", typeIdx: receiverType.typeIdx };
-}
-
 /**
  * (#3123) When `varType` names a fnctor-subclass class (`class C extends F`,
  * F a top-level plain function), return the compiled class name; else
@@ -14858,6 +14752,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
           : null;
         const carrierForcesExternref =
+          isHostDelegationCompletion(ctx, decl.initializer) ||
           initForcesExternref ||
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||

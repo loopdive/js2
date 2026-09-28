@@ -129,10 +129,9 @@ export function main(): void {
   it("preserves the legacy control when experimental IR is disabled", async () => {
     const { result, stdout, importCount } = await runStandalone(BRANDED_BOOLEAN_SOURCE, [1], false);
 
-    // The legacy standalone scalar fallback intentionally drops bare boolean
-    // carriers; this control only proves the direct path still compiles and
-    // executes without introducing imports. Boolean spelling belongs to IR.
-    expect(stdout).toBe("\n".repeat(7));
+    // (#5392) Legacy lowering now preserves scalar console values too.
+    // Both body routes must produce the same host-free output.
+    expect(stdout).toBe(EXPECTED_BRANDED_BOOLEAN_STDOUT);
     expect(importCount).toBe(0);
     expect(result.success).toBe(true);
   });

@@ -10,6 +10,7 @@ import type { TypeFact } from "../../checker/oracle.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
+import { addGeneratorCompletionImport } from "../registry/imports.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureI32Condition, isAnyValue } from "../index.js";
 import {
@@ -260,6 +261,24 @@ function compileConditionalExpression(
  * The yield expression itself evaluates to void (we don't support receiving
  * values via yield in this initial implementation).
  */
+export function isHostDelegationCompletion(ctx: CodegenContext, expression: ts.Expression | undefined): boolean {
+  if (ctx.standalone || ctx.wasi || !expression) return false;
+  while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+  if (!ts.isYieldExpression(expression) || !expression.asteriskToken) return false;
+  let use: ts.Node = expression;
+  while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
+  if (ts.isExpressionStatement(use.parent)) return false;
+  for (let owner: ts.Node | undefined = expression.parent; owner; owner = owner.parent) {
+    if (!ts.isFunctionLike(owner)) continue;
+    return (
+      (ts.isFunctionDeclaration(owner) || ts.isFunctionExpression(owner) || ts.isMethodDeclaration(owner)) &&
+      !!owner.asteriskToken &&
+      !owner.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+    );
+  }
+  return false;
+}
+
 function compileYieldExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.YieldExpression): InnerResult {
   // Ensure we're inside a generator function
   if (!fctx.isGenerator) {
@@ -293,6 +312,13 @@ function compileYieldExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     fctx.body.push({ op: "local.set", index: tmpLocal });
     fctx.body.push({ op: "local.get", index: bufferIdx });
     fctx.body.push({ op: "local.get", index: tmpLocal });
+    if (isHostDelegationCompletion(ctx, expr)) {
+      addGeneratorCompletionImport(ctx);
+      const resultIdx = ctx.funcMap.get("__gen_yield_star_result");
+      if (resultIdx === undefined) throw new Error("Missing __gen_yield_star_result import");
+      fctx.body.push({ op: "call", funcIdx: resultIdx });
+      return { kind: "externref" };
+    }
     const yieldStarIdx = ctx.funcMap.get("__gen_yield_star");
     if (yieldStarIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: yieldStarIdx });

@@ -190,7 +190,7 @@ export function tryCompileNativeSetMethodCall(
       compileCollectionElementArg(ctx, fctx, args[0]);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // has/delete → i32 (boolean).
-      return { kind: "i32" } as ValType;
+      return { kind: "i32", boolean: true } as ValType;
     }
     case "clear": {
       fctx.body.push({ op: "call", funcIdx: helperIdx });
