@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "prototype-chain-native-bodies-delivery-20260928",
   "assignee": "ttraenkler/codex-prototype-chain-delivery-20260928",
-  "requested_by": "ttraenkler/codex-prototype-chain-delivery-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-prototype-chain-delivery-20260928",
   "claimed_at": "2026-09-28T04:29:17Z",
-  "updated_at": "2026-09-28T04:29:17Z",
-  "write_id": "18255-y6e2o6so"
+  "updated_at": "2026-09-28T09:00:22Z",
+  "write_id": "77501-xkut4odw",
+  "released_at": "2026-09-28T09:00:22Z"
 }
