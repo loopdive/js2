@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-regexp-identity-escape",
   "requested_by": "ttraenkler/codex-regexp-identity-escape",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-09-28T03:50:40Z",
-  "claimed_at": "2026-09-28T03:50:40Z",
-  "updated_at": "2026-09-28T03:50:40Z",
-  "write_id": "98628-oa4np6aw",
-  "pr_scan": "ok"
+  "branch": "codex/6721-regexp-identity-escape",
+  "claimed_at": "2026-09-28T03:51:11Z",
+  "updated_at": "2026-09-28T03:51:11Z",
+  "write_id": "99145-sp8i41oe"
 }
