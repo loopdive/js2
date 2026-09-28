@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "pr6205-native-resource-delivery",
   "assignee": "ttraenkler/codex-ir-delivery-20260927",
-  "requested_by": "ttraenkler/codex-ir-delivery-20260927",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-resume-main-20260927",
   "claimed_at": "2026-09-27T21:01:54Z",
-  "updated_at": "2026-09-27T21:01:54Z",
-  "write_id": "38006-juv9kqyv"
+  "updated_at": "2026-09-28T06:17:21Z",
+  "write_id": "57430-tml4pkgz",
+  "released_at": "2026-09-28T06:17:21Z"
 }
