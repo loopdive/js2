@@ -25,7 +25,7 @@
  * Every expectation was taken from Node BEFORE it was asserted here.
  */
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { buildImports, compile, instantiateWasm } from "../src/index.js";
 
 async function runStandalone(src: string, fn = "f"): Promise<unknown> {
   const r = await compile(src, { target: "standalone" });
@@ -35,6 +35,16 @@ async function runStandalone(src: string, fn = "f"): Promise<unknown> {
   expect(WebAssembly.Module.imports(mod)).toEqual([]);
   const { exports } = await WebAssembly.instantiate(mod, {});
   return (exports as Record<string, () => unknown>)[fn]!();
+}
+
+/** Native strings with the normal host runtime, used for late-import controls. */
+async function runNativeStringsHost(src: string, fn = "f"): Promise<unknown> {
+  const r = await compile(src, { nativeStrings: true });
+  expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+  const imports = buildImports(r.imports, undefined, r.stringPool);
+  const { instance } = await instantiateWasm(r.binary as BufferSource, imports.env, imports.string_constants);
+  imports.setInstance?.(instance);
+  return (instance.exports as Record<string, () => unknown>)[fn]!();
 }
 
 describe("#4016 — String.prototype.search coerces its search value", () => {
@@ -191,5 +201,430 @@ describe("#4016 — the refusal is NARROWED, not removed", () => {
     // the regex lowering instead of ToString-ing it to the source text "/a.c/".
     const src = `export function f(): number { const re = /a.c/; return "xxabc".search(re as any); }`;
     expect(await runStandalone(src)).toBe(2);
+  });
+});
+
+// S2v3 keeps the raw-v1 boundary visible while correcting only the borrowed
+// nullish call's TypeScript overload selection; the runtime operand remains
+// unchanged.
+describe("#4016 S2v3 — direct and borrowed split stage values before coercion", () => {
+  it("keeps the raw-v1 direct-object no-method boundary as TypeError after call evaluation", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = {
+          [Symbol.toPrimitive]() { order = order * 10 + 5; return "a,b"; },
+        };
+        function receiver(): string { order = order * 10 + 1; return receiverValue as unknown as string; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
+        try {
+          // @ts-expect-error split ignores supplied arguments after \`limit\`
+          receiver().split(separator() as any, limit() as any, extra());
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError ? order : -1;
+        }
+      }`;
+    // raw-v1 treated `receiverValue` as if it had inherited `.split`. It does
+    // not: calling the non-callable undefined member throws after all operands
+    // have evaluated.
+    expect(await runStandalone(src)).toBe(1234);
+  });
+
+  it("stages a valid direct primitive receiver before limit and separator coercion", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        function receiver(): string { order = order * 10 + 1; return "a,b"; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
+        // @ts-expect-error split ignores supplied arguments after \`limit\`
+        const result = receiver().split(separator() as any, limit() as any, extra());
+        return order * 10 + result.length;
+      }`;
+    // Evaluation: receiver, separator, limit, extra; coercion: limit, separator.
+    expect(await runStandalone(src)).toBe(1234672);
+  });
+
+  it("stages a borrowed receiver before its receiver, limit, and separator coercions", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = { [Symbol.toPrimitive]() { order = order * 10 + 5; return "a,b"; } };
+        function receiver(): typeof receiverValue { order = order * 10 + 1; return receiverValue; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
+        const result = String.prototype.split.call(receiver(), separator() as any, limit() as any, extra());
+        return order * 10 + result.length;
+      }`;
+    expect(await runStandalone(src)).toBe(12345672);
+  });
+
+  it("evaluates borrowed-call arguments before rejecting a nullish receiver", async () => {
+    const src = `
+      export function f(): number {
+        let calls = 0;
+        function separator(): string { calls = calls + 1; return ","; }
+        try {
+          // Cast only the separator to avoid TypeScript selecting the
+          // incompatible @@split overload; the raw nullish receiver remains
+          // the runtime boundary under test.
+          String.prototype.split.call(null as unknown as string, separator() as any);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError && calls === 1 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("propagates borrowed receiver ToPrimitive abrupt completion before limit and separator coercion", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = { [Symbol.toPrimitive]() { order = order * 10 + 5; throw 29; } };
+        function receiver(): typeof receiverValue { order = order * 10 + 1; return receiverValue; }
+        const separatorValue = { [Symbol.toPrimitive]() { order = order * 10 + 7; return ","; } };
+        const limitValue = { valueOf() { order = order * 10 + 6; return 2; } };
+        function separator(): typeof separatorValue { order = order * 10 + 2; return separatorValue; }
+        function limit(): typeof limitValue { order = order * 10 + 3; return limitValue; }
+        function extra(): number { order = order * 10 + 4; return 0; }
+        try {
+          String.prototype.split.call(receiver(), separator() as any, limit() as any, extra());
+          return 0;
+        } catch (e) {
+          return e === 29 && order === 12345 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("propagates a borrowed trailing argument abrupt completion before receiver coercion", async () => {
+    const src = `
+      export function f(): number {
+        let order = 0;
+        const receiverValue = { [Symbol.toPrimitive]() { order = order * 10 + 5; throw 29; } };
+        function receiver(): typeof receiverValue { order = order * 10 + 1; return receiverValue; }
+        function separator(): string { order = order * 10 + 2; return ","; }
+        function limit(): number { order = order * 10 + 3; return 2; }
+        function extra(): number { order = order * 10 + 4; throw 31; }
+        try {
+          String.prototype.split.call(receiver(), separator() as any, limit(), extra());
+          return 0;
+        } catch (e) {
+          return e === 31 && order === 1234 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("propagates the limit's abrupt completion before separator ToString", async () => {
+    const src = `
+      export function f(): number {
+        const separator = {
+          [Symbol.toPrimitive]() { throw 23; },
+          toString() { throw 24; },
+        };
+        const limit = { valueOf() { throw 19; } };
+        try {
+          "a,b".split(separator as any, limit as any);
+          return 0;
+        } catch (e) {
+          return e === 19 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("still coerces the separator before the zero-limit early result", async () => {
+    const src = `
+      export function f(): number {
+        let calls = 0;
+        const separator = { toString() { calls = calls + 1; return ","; } };
+        const result = "a,b".split(separator as any, 0);
+        return calls * 10 + result.length;
+      }`;
+    expect(await runStandalone(src)).toBe(10);
+  });
+
+  it("preserves undefined-separator evaluation and ToUint32 wrapping", async () => {
+    const src = `
+      export function f(): number {
+        let calls = 0;
+        function separator(): void { calls = calls + 1; }
+        function limit(): number { calls = calls + 1; return 0; }
+        function extra(): number { calls = calls + 1; return 0; }
+        const empty = "abc".split(separator() as any, limit() as any, extra()).length;
+        const native = { toString() { return ","; } };
+        const unbounded = "a,b,c".split(native as any, -1).length;
+        return calls * 100 + empty * 10 + unbounded;
+      }`;
+    expect(await runStandalone(src)).toBe(303);
+  });
+
+  it("refreshes native-string host helper indices after a staged undefined argument call", async () => {
+    const src = `
+      export function f(): number {
+        // Date.now is compiled while the argument is staged, after the split
+        // arm's availability preflight. The value remains exactly undefined.
+        return "abc".split(void Date.now(), 0).length;
+      }`;
+    expect(await runNativeStringsHost(src)).toBe(0);
+  });
+
+  it("keeps dynamic undefined and raw null limits distinct in the host undefined-separator arm", async () => {
+    const src = `
+      export function f(): number {
+        let dynamicLimit: any;
+        const unbounded = "abc".split(void Date.now(), dynamicLimit).length;
+        const zero = "abc".split(void Date.now(), null as any).length;
+        return unbounded * 10 + zero;
+      }`;
+    expect(await runNativeStringsHost(src)).toBe(10);
+  });
+
+  it("constructs an undescribed Symbol before host limit conversion", async () => {
+    const src = `
+      export function f(): number {
+        const limit = Symbol();
+        return typeof limit === "symbol" ? 1 : 0;
+      }`;
+    expect(await runNativeStringsHost(src)).toBe(1);
+  });
+
+  it("rejects a bare undescribed Symbol limit in the host undefined-separator arm", async () => {
+    const src = `
+      export function f(): number {
+        const limit = Symbol();
+        "a,b".split(void Date.now(), limit as any);
+        return 0;
+      }`;
+    // This assertion runs outside the opaque native error carrier. The
+    // embedded catch+instanceof form would itself re-enter the host bridge.
+    await expect(runNativeStringsHost(src)).rejects.toThrow(TypeError);
+  });
+
+  it("rejects a no-description Symbol returned by limit ToPrimitive after one numeric-hint callback", async () => {
+    const src = `
+      export function f(): number {
+        const symbol = Symbol();
+        let calls = 0;
+        let wrongHint = 0;
+        const limit = {
+          [Symbol.toPrimitive](hint: string) {
+            calls = calls + 1;
+            if (hint !== "number") wrongHint = 1;
+            return symbol;
+          },
+        };
+        try {
+          "a,b".split(void Date.now(), limit as any);
+          return 0;
+        } catch {
+          // Do not inspect the opaque host error here. The bare-Symbol control
+          // above checks its JS-visible TypeError; this pin verifies that this
+          // path reached the callback once with the required Number hint.
+          return calls === 1 && wrongHint === 0 ? 1 : 2;
+        }
+      }`;
+    expect(await runNativeStringsHost(src)).toBe(1);
+  });
+
+  it("keeps a descriptor-before-split host boundary valid", async () => {
+    const src = `
+      export function f(): number {
+        const target: any = {};
+        // Deliberately precede split with the descriptor path. This preserves
+        // the existing semantic boundary rather than hiding it by reordering.
+        Object.defineProperty(target, "fixed", { value: 1, writable: false, configurable: false });
+        Object.defineProperty(target, "fixed", { value: 1 });
+        return target.fixed + "abc".split(void Date.now(), 0).length;
+      }`;
+    // The old __object_is-import assertion belonged to the superseded split
+    // preflight experiment. This control retains only its observable behavior.
+    expect(await runNativeStringsHost(src)).toBe(1);
+  });
+
+  it("keeps a guarded any primitive-string receiver on the undefined-separator arm", async () => {
+    const src = `
+      export function f(): number {
+        const receiver: any = "a,b";
+        return receiver.split(undefined as any, 0).length;
+      }`;
+    expect(await runStandalone(src)).toBe(0);
+  });
+
+  it("keeps a guarded any primitive-string receiver on the plain-separator arm", async () => {
+    const src = `
+      export function f(): number {
+        const receiver: any = "a,b,c";
+        const comma = { toString() { return ","; } };
+        return receiver.split(comma as any, 2).length;
+      }`;
+    expect(await runStandalone(src)).toBe(2);
+  });
+
+  it("keeps raw explicit null distinct from an omitted split limit", async () => {
+    const src = `
+      export function f(): number {
+        const comma = { toString() { return ","; } };
+        return "a,b".split(comma as any, null as any).length;
+      }`;
+    expect(await runStandalone(src)).toBe(0);
+  });
+
+  it("throws for a null direct receiver before evaluating its arguments", async () => {
+    const src = `
+      export function f(): number {
+        let calls = 0;
+        const comma = { toString() { return ","; } };
+        function separator(): typeof comma { calls = calls + 1; return comma; }
+        try {
+          (null as unknown as string).split(separator() as any, 1);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError && calls === 0 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("rejects a Symbol limit before separator conversion", async () => {
+    const src = `
+      export function f(): number {
+        const comma = { toString() { return ","; } };
+        try {
+          "a,b".split(comma as any, Symbol("limit") as any);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("constructs an undescribed Symbol before native split-limit coercion", async () => {
+    const src = `
+      export function f(): number {
+        const limit = Symbol();
+        return typeof limit === "symbol" ? 1 : 0;
+      }`;
+    // This positive control keeps the post-ToPrimitive assertions below from
+    // accepting a failure in Symbol construction as a conversion TypeError.
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("rejects a no-description Symbol returned by limit ToPrimitive with the number hint", async () => {
+    const src = `
+      export function f(): number {
+        const symbol = Symbol();
+        let primitiveCalls = 0;
+        let wrongHint = 0;
+        const separator = { toString() { return ","; } };
+        const limit = {
+          [Symbol.toPrimitive](hint: string) {
+            primitiveCalls = primitiveCalls + 1;
+            if (hint !== "number") wrongHint = 1;
+            return symbol;
+          },
+        };
+        try {
+          "a,b".split(separator as any, limit as any);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError && primitiveCalls === 1 && wrongHint === 0 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("does not coerce the separator after a native limit produces a Symbol", async () => {
+    const src = `
+      export function f(): number {
+        const symbol = Symbol();
+        let primitiveCalls = 0;
+        let separatorCalls = 0;
+        const separator = {
+          toString() {
+            separatorCalls = separatorCalls + 1;
+            return ",";
+          },
+        };
+        const limit = {
+          [Symbol.toPrimitive]() {
+            primitiveCalls = primitiveCalls + 1;
+            return symbol;
+          },
+        };
+        try {
+          "a,b".split(separator as any, limit as any);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError && primitiveCalls === 1 && separatorCalls === 0 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("rejects a Symbol returned by separator conversion even with a zero limit", async () => {
+    const src = `
+      export function f(): number {
+        const symbolResult = { [Symbol.toPrimitive]() { return Symbol("separator"); } };
+        try {
+          "a,b".split(symbolResult as any, 0);
+          return 0;
+        } catch (e) {
+          return e instanceof TypeError ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("applies ToUint32 to finite fractional and negative limits", async () => {
+    const src = `
+      export function f(): number {
+        const comma = { toString() { return ","; } };
+        const fractional = "a,b,c".split(comma as any, 1.9).length;
+        const negative = "a,b,c".split(comma as any, -1.5).length;
+        return fractional * 10 + negative;
+      }`;
+    expect(await runStandalone(src)).toBe(13);
+  });
+
+  it("applies exact finite ToUint32 modulo reduction above i64 range", async () => {
+    const src = `
+      export function f(): number {
+        const comma = { toString() { return ","; } };
+        return "a,b,c".split(comma as any, 2 ** 64).length;
+      }`;
+    // ToUint32(2 ** 64) is zero. This is deliberately separate from the
+    // fractional/negative control because a saturating i64 conversion gives -1.
+    expect(await runStandalone(src)).toBe(0);
+  });
+
+  it("keeps the extracted reflective limit path in the same order", async () => {
+    const src = `
+      export function f(): number {
+        const split = String.prototype.split;
+        const separator = { [Symbol.toPrimitive]() { throw 41; } };
+        const limit = { valueOf() { throw 37; } };
+        try {
+          split.call("a,b", separator as any, limit as any);
+          return 0;
+        } catch (e) {
+          return e === 37 ? 1 : 2;
+        }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
   });
 });

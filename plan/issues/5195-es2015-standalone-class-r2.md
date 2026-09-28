@@ -102,6 +102,38 @@ func-budget-allow:
 
 # #5195 — class r2: cluster and fix the residual class-bucket failures
 
+## 2026-09-28 frozen-scope comma-heritage residual handoff
+
+The historical completed slice does not close the comma-heritage residual
+documented below. Maintained dynamic shard 0/128 at
+`f924650c6c26237f62b08a362d7003d4d2b1e12d` (upstream
+`37b11b28919ef22a428cb13aa31006850e331ecb` plus the exact-manifest runner)
+again records `test/language/statements/class/definition/side-effects-in-extends.js`
+as a compile error: its implicit-constructor support unit has no R0 terminal
+owner. The test uses `class D extends (calls++, C) {}` and checks both the
+single prefix side effect and constructor/prototype inheritance identities.
+
+The shard has 90 registered paths, canonical verdicts, started callbacks, and
+settled callbacks, with zero exclusions. Its JSONL SHA-256 is
+`8ea77faa631251b39194860569dcbec7a2fc6386dc1851eedcb422e9c7144d41`;
+completion SHA-256 is
+`a4cc376e63c793589543e77a86c4d88ca169944b82af2263b328fc705cd8c2fc`.
+The execution channel did not retain a process exit code; the maintained
+completeness validator establishes artifact completeness, not a clean exit.
+This is one measured residual, not a full-suite result or new regression claim.
+Receipts are indexed by `.tmp/4444/es2015-fullscope-128-execution-ledger.json`
+in the isolated `manifest-baseline` worktree.
+
+Implementation remains unclaimed pending coordination with the active IR
+migration. First establish terminal ownership for the exact comma heritage;
+then preserve prefix evaluation exactly once before derived-class setup and
+both inheritance identities. Use the original test plus nested/completion-
+throwing prefix controls and ordinary identifier/null heritage controls.
+Do not suppress the planning error, drop prefix effects, or treat a compile
+success as semantic acceptance. The active IR coordination thread reports
+that none of its current assignments covers this exact case, but cannot
+confirm ownership on the other machine. No IR source was edited here.
+
 Growth allowance rationale (2026-09-01, this planning pass): the steps below
 add (1) a runtime-computed-key install lane to the class prototype `$Object`
 and a new per-class static sidecar `$Object` (new file
@@ -2707,4 +2739,3 @@ issue's.
 **Validation** is on the combined session-branch tree (see the PR): typecheck,
 five gates on both bases, the seven `issue-5195` / `issue-5309` suites at the
 CI fork heap, 8 equivalence shards, and the 1,200-row baseline sample with A/B.
-

@@ -2712,8 +2712,10 @@ export function compileNativeStringMethodCall(
   // (`emitNativeStringRefFromExternref`): in the native-strings world every
   // string-typed externref wraps a native string struct (there are no host
   // strings), so `any.convert_extern` + `ref.cast $AnyString` is exact.
+  const emitRawReceiver = (): ValType | null =>
+    receiverOverride ? receiverOverride() : compileExpression(ctx, fctx, propAccess.expression);
   const emitReceiver = (): ValType | null => {
-    const t = receiverOverride ? receiverOverride() : compileExpression(ctx, fctx, propAccess.expression);
+    const t = emitRawReceiver();
     if (t && (t.kind === "externref" || t.kind === "ref_extern") && ctx.anyStrTypeIdx >= 0) {
       emitNativeStringRefFromExternref(ctx, fctx);
       return nativeStringType(ctx);
@@ -3627,9 +3629,12 @@ export function compileNativeStringMethodCall(
   // UNDEFINED separator (never splits: `[S]`) and a plain-`ToString` one
   // (`s.split(123)`) — both live in `string-search-value.ts`, which is where the
   // §22.1.3.23 step-2 decision belongs. It declines for a string-like separator
-  // so the byte-identical arm below still handles that case.
+  // so the byte-identical arm below still handles that case. A String-wrapper
+  // override can already have run ToPrimitive; that pre-existing upstream
+  // receiver-order limitation is tracked separately, while guarded native-string
+  // overrides still enter this arm with an already-evaluated native receiver.
   if (method === "split") {
-    const sep = tryCompileStandaloneSplitSeparator(ctx, fctx, expr, emitReceiver, firstArgIsStringLike);
+    const sep = tryCompileStandaloneSplitSeparator(ctx, fctx, expr, emitRawReceiver, firstArgIsStringLike);
     if (sep !== undefined) return sep;
   }
 
