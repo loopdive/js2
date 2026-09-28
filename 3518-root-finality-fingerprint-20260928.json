@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "root-finality-fingerprint-20260928",
   "assignee": "ttraenkler/codex-root-finality-fingerprint-20260928",
-  "requested_by": "ttraenkler/codex-root-finality-fingerprint-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-root-finality-fingerprint-20260928",
   "claimed_at": "2026-09-28T15:07:16Z",
-  "updated_at": "2026-09-28T15:07:16Z",
-  "write_id": "96819-7184k4lp"
+  "updated_at": "2026-09-28T17:38:22Z",
+  "write_id": "69494-t5dg9jme",
+  "released_at": "2026-09-28T17:38:22Z"
 }
