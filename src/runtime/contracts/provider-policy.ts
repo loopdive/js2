@@ -14,8 +14,8 @@ export type RuntimeBackend = "wasmgc" | "linear";
  * context.
  */
 export interface NumberBoundaryPolicy {
-  /** `host` selects `env.__box_number`. There is no native box arm in F1-S1. */
-  readonly box: "host" | "unsupported";
+  /** Explicit host import or issued native number-box implementation. Omission stays unsupported. */
+  readonly box: "host" | "native" | "unsupported";
   /** `host` selects `env.__unbox_number`; `native` the union-native function. */
   readonly unbox: "host" | "native" | "unsupported";
 }
@@ -26,16 +26,11 @@ export const NUMBER_BOUNDARY_POLICY_DISABLED: NumberBoundaryPolicy = Object.free
   unbox: "unsupported",
 });
 
-/**
- * (#3526 F1-S2) The exact, already-resolved BOOLEAN-boundary provider policy of
- * one preparation caller — a sibling of {@link NumberBoundaryPolicy}, not a
- * widening of it. The family is one-armed: the box arm resolves through the
- * host `env.__box_boolean` import, and there is no native boolean boxer to
- * select, so the union has no `"native"` member.
- */
+/** Resolved Boolean carrier policy. Native extraction requires a proven carrier, not ToBoolean. */
 export interface BooleanBoundaryPolicy {
-  /** `host` selects `env.__box_boolean`. There is no native box arm. */
-  readonly box: "host" | "unsupported";
+  readonly box: "host" | "native" | "unsupported";
+  /** Omitted means unsupported, preserving existing host-only and disabled policy records. */
+  readonly unbox?: "native" | "unsupported";
 }
 
 /** Adapters that expose no boolean boundary resolve the box arm to this. */
@@ -74,12 +69,9 @@ export const EXTERN_IS_UNDEFINED_POLICY_DISABLED: ExternIsUndefinedPolicy = Obje
  * seam's numeric boxing — a sibling of {@link NumberBoundaryPolicy}, never a
  * widening of it.
  *
- * The seam's truth table is deliberately WIDER than `numberBoundary`: this
- * boxing is performed natively on the GC native-strings lane, whereas
- * `numberBoundary.box` has no `"native"` member by design (F1-S1 excluded one
- * so that native `__box_number` presence could not widen the from-ast arm's
- * host-only policy). The two must therefore stay separate policies even though
- * both name the same physical symbol.
+ * Its policy remains independent of the synchronous number boundary. The
+ * latter now has an explicit native boxing arm for an issued standalone value
+ * owner; that addition does not select or widen this generator seam.
  */
 export interface GeneratorNumberBoxPolicy {
   /**

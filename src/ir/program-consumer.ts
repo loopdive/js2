@@ -27,6 +27,18 @@
 // consumer imports no source frontend, checker or legacy CodegenContext.
 
 import {
+  planNativeInvocationRequirements,
+  assertNativeInvocationRequirementsCurrent,
+  type NativeInvocationRequirements,
+} from "./program/native-invocation-requirements.js";
+import {
+  reserveNativeInvocationResources,
+  nativeInvocationFunctions,
+  fillNativeInvocationResources,
+  requireCompletedNativeInvocation,
+} from "../backend/wasmgc/resources/native-invocation.js";
+import { nativeSourceClosureCallableBindings } from "./program-native-invocation.js";
+import {
   reservePreparedAsyncFrame,
   fillPreparedAsyncFrame,
   type PreparedAsyncFrameReservations,
@@ -45,6 +57,21 @@ import {
 } from "../backend/wasmgc/program/native-string-values.js";
 import { deriveNativeStringOutputRequirements } from "./program/native-string-output-requirements.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
+import { reserveNativeRefCells } from "../backend/wasmgc/resources/native-ref-cells.js";
+import {
+  prepareNativeSourceClosureInput,
+  beginNativeSourceClosureEmission,
+  bindNativeSourceClosureUnits,
+  nativeSourceClosureValueType,
+  nativeSourceClosureResolver,
+  fillPreparedPrimaryUnit,
+  requireCompletedNativeSourceClosures,
+  type NativeSourceClosureEmission,
+} from "./program-native-invocation.js";
+import {
+  assertNativeSourceClosureRequirementsCurrent,
+  type NativeSourceClosureRequirements,
+} from "./program/native-source-closure-requirements.js";
 import { deriveNativeValueResourcePlan, assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
 import {
@@ -130,6 +157,8 @@ interface AcceptanceRecord {
   readonly nativeStrings?: NativeStringValueReservationInput;
   readonly nativeSnapshot?: unknown;
   readonly nativeNumberFormat?: AcceptedNativeNumberFormat;
+  readonly sourceClosures?: NativeSourceClosureRequirements;
+  readonly nativeInvocation?: NativeInvocationRequirements;
 }
 interface AcceptedNativeNumberFormat {
   readonly requirements: NativeNumberFormatRequirements;
@@ -354,6 +383,12 @@ export function acceptPreparedIrProgram(
     }
   }
   const nativeNumberFormat = prepareNativeNumberFormat(program, options, runtime);
+  const sourceClosures =
+    options.backend === "wasmgc" && options.target === "standalone"
+      ? prepareNativeSourceClosureInput(program, runtime)
+      : undefined;
+  const nativeInvocation =
+    sourceClosures && planNativeInvocationRequirements(sourceClosures, { utf8Storage: options.utf8Storage === true });
   const physical = planPhysicalSetup(program, options, runtime, nativeStrings, nativeNumberFormat);
   if (physical.kind !== "planned") return physical;
 
@@ -369,6 +404,8 @@ export function acceptPreparedIrProgram(
       physical: physical.plan,
       ...(nativeStrings ? { nativeStrings, nativeSnapshot: freezePreparedIrValue(nativeStrings.demands) } : {}),
       ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
+      ...(sourceClosures ? { sourceClosures } : {}),
+      ...(nativeInvocation ? { nativeInvocation } : {}),
     }),
   );
   observePreparedIrProgram({ phase: "accepted", program, backend: options.backend, target: options.target });
@@ -473,6 +510,37 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   const { program, runtime } = accepted;
   const record = acceptances.get(accepted);
   if (!record || record.physical !== plan) emissionFailed("physical plan does not belong to acceptance");
+  if (Boolean(record.nativeInvocation) !== Boolean(plan.nativeInvocation))
+    emissionFailed("native invocation acceptance/physical plan mismatch");
+  if (record.nativeInvocation) {
+    assertNativeInvocationRequirementsCurrent(record.nativeInvocation);
+    if (
+      record.nativeInvocation.source !== record.sourceClosures ||
+      record.nativeInvocation.key !== plan.nativeInvocation?.key
+    )
+      emissionFailed("native invocation input differs from its selected source owner");
+  }
+  if (Boolean(record.sourceClosures) !== Boolean(plan.sourceClosures))
+    emissionFailed("source closure acceptance/physical plan mismatch");
+  if (record.sourceClosures) {
+    assertNativeSourceClosureRequirementsCurrent(record.sourceClosures);
+    const { demands, ...description } = record.sourceClosures;
+    if (
+      demands.program !== program ||
+      demands.projection !== runtime ||
+      preparedIrDataMismatch(description, plan.sourceClosures) !== undefined
+    )
+      emissionFailed("source closure input differs from its accepted physical plan");
+    const current = planPhysicalSetup(
+      program,
+      accepted.options,
+      runtime,
+      record.nativeStrings,
+      record.nativeNumberFormat,
+    );
+    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
+      emissionFailed("source closure physical plan is no longer current");
+  }
   if (Boolean(record.nativeNumberFormat) !== Boolean(plan.nativeNumberFormat))
     emissionFailed("formatter acceptance/physical plan mismatch");
   if (record.nativeNumberFormat) {
@@ -555,6 +623,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     for (const row of [
       ...(native?.bindings ?? []).map((binding) => binding.entry),
       ...(plan.nativeNumberFormat?.bindings ?? []).map((binding) => binding.entry),
+      ...(plan.nativeInvocation?.bindings ?? []).map((binding) => binding.entry),
       ...(plan.hostNumberBoundary?.entries ?? []),
       ...(plan.asyncFrames?.entries ?? []),
     ]) {
@@ -720,6 +789,8 @@ function physicalSignatureConverter(
   vectorTypes: ReturnType<typeof reserveNativeVectorTypes>,
   stringTypes: ReturnType<typeof reserveNativeStringLiteralTypes> | undefined,
   formatterScratch: NonNullable<PhysicalSetupPlan["nativeStrings"]>["formatterScratch"],
+  reservations: PhysicalModuleReservations,
+  sourceClosures?: NativeSourceClosureEmission,
 ) {
   const physicalSignature = (signature: {
     readonly params: readonly PhysicalSignatureType[];
@@ -727,6 +798,11 @@ function physicalSignatureConverter(
   }) => {
     const convert = (types: readonly PhysicalSignatureType[]): ValType[] =>
       types.map((type) => {
+        if (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed") {
+          const value = sourceClosures && nativeSourceClosureValueType(reservations, sourceClosures, type);
+          if (!value) emissionFailed("logical callable signature has no accepted source type owner");
+          return value;
+        }
         if (type.kind === "support-ref") {
           if (!stringTypes || !formatterScratch || preparedIrDataMismatch(type, formatterScratch) !== undefined)
             emissionFailed("support signature is not the accepted formatter scratch type");
@@ -841,9 +917,9 @@ function fillPrimaryBody(
   nativePack: ReturnType<typeof reserveNativeStringValueResources> | undefined,
   reservations: PhysicalModuleReservations,
   physicalSignature: ReturnType<typeof physicalSignatureConverter>,
+  sourceClosures?: NativeSourceClosureEmission,
 ): void {
   const { backend, target } = accepted.options;
-  let lowered: ReturnType<typeof lowerIrFunctionBody<Instr[], ValType>>;
   try {
     const scopedResolver: IrLowerResolver = declared.dynamicCarrier
       ? { ...resolver, resolveDynamic: () => declared.dynamicCarrier! }
@@ -861,12 +937,14 @@ function fillPrimaryBody(
             emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
         }
       : scopedResolver;
-    const emitter = backend === "wasmgc" ? new WasmGcEmitter(ownerResolver) : new LinearEmitter();
-    lowered = lowerIrFunctionBody<Instr[], ValType>(
+    fillPreparedPrimaryUnit(
+      reservations,
       fn,
+      reserved,
+      physicalSignature(declared),
       ownerResolver,
-      emitter,
-      wasmValueTypeConverter(backend, ownerResolver, fn.name),
+      backend,
+      sourceClosures,
     );
   } catch (error) {
     emissionFailed(
@@ -875,20 +953,6 @@ function fillPrimaryBody(
       }`,
     );
   }
-  const params = lowered.params.flatMap((param) => [...param.slots]);
-  const results = lowered.results.flatMap((result) => [...result]);
-  const signature = physicalSignature(declared);
-  if (!sameValTypes(params, signature.params) || !sameValTypes(results, signature.results))
-    emissionFailed(`body ${declared.unitId} lowered to a signature that contradicts its reserved ABI slot`);
-  reservations.fillFunction(reserved, {
-    locals: lowered.locals.flatMap((local) =>
-      local.slots.map((type, slot) => ({
-        name: slot === 0 ? local.name : `${local.name}$${slot}`,
-        type,
-      })),
-    ),
-    body: lowered.body,
-  });
 }
 
 /** Publish the already reserved startup adapter without allocating a new slot. */
@@ -949,7 +1013,11 @@ function bindPhysicalAbi(
   }
   if (native) {
     const bound = new Set<IrBindingId>();
-    for (const binding of [...native.bindings, ...(formatter?.bindings ?? [])]) {
+    for (const binding of [
+      ...native.bindings,
+      ...(formatter?.bindings ?? []),
+      ...(plan.nativeInvocation?.bindings ?? []),
+    ]) {
       if (bound.has(binding.entry.id)) continue;
       const resource = resourcesByBinding.get(binding.entry.id);
       if (!resource || binding.entry.slotPolicy !== "required") emissionFailed("native ABI resource vanished");
@@ -986,6 +1054,114 @@ function indexSupportFunctions(rows: readonly NativeNumberFormatResourceRow[]): 
   return functions;
 }
 
+/** Resolve body references only through this transaction's reserved resources. */
+function physicalBodyResolver(
+  context: NativeReconciliationContext,
+  vectorTypes: ReturnType<typeof reserveNativeVectorTypes>,
+  stringTypes: ReturnType<typeof reserveNativeStringLiteralTypes> | undefined,
+  exnTagIdx: number | undefined,
+  sourceClosures: NativeSourceClosureEmission | undefined,
+): IrLowerResolver {
+  const { functionsByKey, globalsByKey, typesByKey, reservations } = context;
+  // Resource validation authenticates this exact shared two-field layout.
+  const vectorLowering = (layout: ReturnType<typeof resolveNativeVector>) =>
+    layout ? { ...layout, lengthFieldIdx: 0, dataFieldIdx: 1 } : null;
+  return {
+    resolveFunc: (ref: IrFuncRef) => {
+      const reserved = functionsByKey.get(irCallableBindingKey(ref.binding));
+      if (!reserved) emissionFailed(`callable ${ref.name} (${ref.binding.kind}) was not reserved`);
+      return reserved.handle;
+    },
+    resolveGlobal: (ref: IrGlobalRef) => {
+      const reserved = globalsByKey.get(irGlobalBindingKey(ref.binding));
+      if (!reserved) emissionFailed(`global ${ref.name} (${ref.binding.kind}) was not reserved`);
+      return reservations.physicalIndex(reserved);
+    },
+    resolveType: (ref) => {
+      const reserved = typesByKey.get(irTypeBindingKey(ref.binding));
+      if (!reserved) emissionFailed(`type ${ref.name} was not reserved`);
+      return reservations.physicalIndex(reserved);
+    },
+    ...(stringTypes
+      ? {
+          resolveString: (): ValType => ({ kind: "ref", typeIdx: stringTypes.layout.anyStrTypeIdx }),
+          nativeStrings: () => true,
+        }
+      : {}),
+    ...(sourceClosures ? nativeSourceClosureResolver(reservations, sourceClosures) : {}),
+    resolveVec: (type) => vectorLowering(resolveNativeVector(vectorTypes, type)),
+    resolveVecForElement: (element) => vectorLowering(resolveNativeVectorForElement(vectorTypes, element)),
+    internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
+    ensureExnTag: () => {
+      if (exnTagIdx === undefined) emissionFailed("a body requires the __exn tag but the plan reserved none");
+      return exnTagIdx;
+    },
+  };
+}
+
+/** Preserve global-before-unit reservation in the consumer's sole slot allocator. */
+function reservePhysicalProgramSlots(
+  plan: PhysicalSetupPlan,
+  context: NativeReconciliationContext,
+  physicalSignature: ReturnType<typeof physicalSignatureConverter>,
+) {
+  const { reservations, globalsByKey, resourcesByBinding, functionsByKey } = context;
+  for (const global of plan.definedGlobals) {
+    const reserved = reservations.reserveGlobal(global.bindingId, global.name, global.type, global.mutable);
+    globalsByKey.set(global.referenceKey, reserved);
+    resourcesByBinding.set(global.bindingId, reserved);
+  }
+
+  const slots = new Map<IrUnitId, FunctionReservation>();
+  const slotOwners = new Map<WasmFunction, IrUnitId>();
+  for (const declared of plan.functions) {
+    const reserved = reservations.reserveFunction(declared.bindingId, declared.name, physicalSignature(declared));
+    slots.set(declared.unitId, reserved);
+    slotOwners.set(reserved.object, declared.unitId);
+    functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
+    resourcesByBinding.set(declared.bindingId, reserved);
+  }
+  return { slots, slotOwners };
+}
+
+/** Publish only the exact canonical reservations after their physical bodies are filled. */
+function publishPhysicalExports(
+  plan: PhysicalSetupPlan,
+  abi: ProgramAbiMap,
+  context: NativeReconciliationContext,
+): void {
+  const { module, reservations, resourcesByBinding } = context;
+  const exportNames = new Set<string>(module.exports.map((entry) => entry.name));
+  for (const exported of plan.exports) {
+    const final = abi.resolveFinalIndex(exported.targetBindingId);
+    if (!final || final.space !== exported.space) {
+      emissionFailed(`export ${exported.externalName} does not resolve to a bound ${exported.space}`);
+    }
+    const reserved = resourcesByBinding.get(abi.canonicalId(exported.targetBindingId));
+    if (
+      !reserved ||
+      reserved.kind === "type" ||
+      reservations.physicalIndex(reserved) !== final.index ||
+      (reserved.kind === "function" || reserved.kind === "function-import" ? "function" : "global") !== final.space
+    ) {
+      emissionFailed(`export ${exported.externalName} contradicts its canonical physical reservation`);
+    }
+    if (exportNames.has(exported.externalName)) emissionFailed(`export ${exported.externalName} is declared twice`);
+    exportNames.add(exported.externalName);
+    reservations.defineExport(`publication:export:${exported.externalName}`, exported.externalName, reserved);
+  }
+}
+
+/** Fill the reserved globals only after the physical index space is frozen. */
+function fillPhysicalGlobals(plan: PhysicalSetupPlan, context: NativeReconciliationContext): void {
+  const { reservations, globalsByKey } = context;
+  for (const global of plan.definedGlobals) {
+    const reserved = globalsByKey.get(global.referenceKey);
+    if (!reserved || reserved.kind !== "global") emissionFailed(`global ${global.name} has no defined reservation`);
+    reservations.fillGlobal(reserved, defaultInit(global.type));
+  }
+}
+
 function materializePhysicalProgram(
   accepted: AcceptedPreparedIrProgram,
   plan: PhysicalSetupPlan,
@@ -999,10 +1175,7 @@ function materializePhysicalProgram(
   const reservations = new PhysicalModuleReservations(module);
   const functionsByKey = new Map<string, CallableReservation>();
   const globalsByKey = new Map<string, GlobalReservation | GlobalImportReservation>();
-  const resourcesByBinding = new Map<
-    IrBindingId,
-    CallableReservation | GlobalReservation | GlobalImportReservation | TypeReservation
-  >();
+  const resourcesByBinding = new Map<IrBindingId, ConsumerReservation>();
   const typesByKey = new Map<string, TypeReservation>();
   const exceptionTag = plan.exceptionTag.required
     ? reservations.reserveTag(
@@ -1022,7 +1195,25 @@ function materializePhysicalProgram(
         native.resources.literalRequirements.utf8Storage,
       )
     : undefined;
-  const physicalSignature = physicalSignatureConverter(vectorTypes, stringTypes, native?.formatterScratch);
+  const sourceClosures = record.sourceClosures
+    ? beginNativeSourceClosureEmission(reservations, record.sourceClosures, {
+        vectors: vectorTypes,
+        vectorPlan: plan.vectors,
+        ...(record.sourceClosures.refCells.length
+          ? { refCells: reserveNativeRefCells(reservations, record.sourceClosures) }
+          : {}),
+        ...(stringTypes
+          ? { strings: { types: stringTypes, key: stringTypes.key, utf8Storage: stringTypes.utf8Storage } }
+          : {}),
+      })
+    : undefined;
+  const physicalSignature = physicalSignatureConverter(
+    vectorTypes,
+    stringTypes,
+    native?.formatterScratch,
+    reservations,
+    sourceClosures,
+  );
 
   for (const imported of plan.importedFunctions) {
     const reserved = reservations.reserveFunctionImport(
@@ -1086,24 +1277,41 @@ function materializePhysicalProgram(
       nativeFunctions.add(fn);
     }
   }
-  for (const global of plan.definedGlobals) {
-    const reserved = reservations.reserveGlobal(global.bindingId, global.name, global.type, global.mutable);
-    globalsByKey.set(global.referenceKey, reserved);
-    resourcesByBinding.set(global.bindingId, reserved);
+  const { slots, slotOwners } = reservePhysicalProgramSlots(plan, reconciliation, physicalSignature);
+  const invocationPack =
+    record.nativeInvocation && sourceClosures && nativePack?.number && record.nativeStrings?.valueRequirements
+      ? reserveNativeInvocationResources(reservations, record.nativeInvocation, {
+          source: sourceClosures.types,
+          values: nativePack.number.values,
+          valuePlan: record.nativeStrings.valueRequirements,
+          valueDependencies: nativePack.number.dependencies,
+          strings: nativePack.strings,
+          vectors: vectorTypes,
+          vectorPlan: plan.vectors,
+        })
+      : undefined;
+  if (Boolean(invocationPack) !== Boolean(plan.nativeInvocation))
+    emissionFailed("native invocation prerequisites were not reserved");
+  const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
+  for (const token of invocationFunctions) {
+    if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");
+    nativeFunctions.add(token.object);
   }
-
-  const slots = new Map<IrUnitId, FunctionReservation>();
-  const slotOwners = new Map<WasmFunction, IrUnitId>();
-  for (const declared of plan.functions) {
-    const reserved = reservations.reserveFunction(declared.bindingId, declared.name, physicalSignature(declared));
-    slots.set(declared.unitId, reserved);
-    slotOwners.set(reserved.object, declared.unitId);
-    functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
-    resourcesByBinding.set(declared.bindingId, reserved);
+  for (const binding of plan.nativeInvocation?.bindings ?? []) {
+    const token = invocationFunctions.find((row) => row.key === binding.resourceKey);
+    if (
+      !token ||
+      functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
+      resourcesByBinding.has(binding.entry.id)
+    )
+      emissionFailed("invocation semantic binding lacks its unique actual resource");
+    functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
+    resourcesByBinding.set(binding.entry.id, token);
   }
   const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   const asyncHelpers = new Set<WasmFunction>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
+  for (const token of invocationFunctions) supportFunctions.set(token.object, token);
   for (const frame of plan.asyncFrames?.frames ?? []) {
     const entry = slots.get(frame.owner);
     if (!entry || !exceptionTag) emissionFailed("async frame has no reserved entry or exception tag");
@@ -1139,12 +1347,9 @@ function materializePhysicalProgram(
 
   // 2. Freeze the index space: nothing below may add an import or a slot.
   reservations.freezeReservations();
+  if (sourceClosures) bindNativeSourceClosureUnits(reservations, sourceClosures, slots);
   const exnTagIdx = exceptionTag === undefined ? undefined : reservations.physicalIndex(exceptionTag);
-  for (const global of plan.definedGlobals) {
-    const reserved = globalsByKey.get(global.referenceKey);
-    if (!reserved || reserved.kind !== "global") emissionFailed(`global ${global.name} has no defined reservation`);
-    reservations.fillGlobal(reserved, defaultInit(global.type));
-  }
+  fillPhysicalGlobals(plan, reconciliation);
 
   // 3. A's authoritative ABI over the program's entries, bound to the reserved indices.
   if (!abi) {
@@ -1157,41 +1362,19 @@ function materializePhysicalProgram(
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
   if (vectorHelper) fillNativeVectorHelper(reservations, vectorHelper);
+  if (invocationPack) {
+    if (!sourceClosures || !exceptionTag || !record.nativeInvocation)
+      emissionFailed("native invocation lost its source or exception owner");
+    fillNativeInvocationResources(
+      reservations,
+      invocationPack,
+      nativeSourceClosureCallableBindings(reservations, sourceClosures, record.nativeInvocation),
+      exceptionTag,
+    );
+  }
 
   // 4. Lower every physical body into its reserved slot.
-  // Resource validation authenticates this exact shared two-field layout.
-  const vectorLowering = (layout: ReturnType<typeof resolveNativeVector>) =>
-    layout ? { ...layout, lengthFieldIdx: 0, dataFieldIdx: 1 } : null;
-  const resolver: IrLowerResolver = {
-    resolveFunc: (ref: IrFuncRef) => {
-      const reserved = functionsByKey.get(irCallableBindingKey(ref.binding));
-      if (!reserved) emissionFailed(`callable ${ref.name} (${ref.binding.kind}) was not reserved`);
-      return reserved.handle;
-    },
-    resolveGlobal: (ref: IrGlobalRef) => {
-      const reserved = globalsByKey.get(irGlobalBindingKey(ref.binding));
-      if (!reserved) emissionFailed(`global ${ref.name} (${ref.binding.kind}) was not reserved`);
-      return reservations.physicalIndex(reserved);
-    },
-    resolveType: (ref) => {
-      const reserved = typesByKey.get(irTypeBindingKey(ref.binding));
-      if (!reserved) emissionFailed(`type ${ref.name} was not reserved`);
-      return reservations.physicalIndex(reserved);
-    },
-    ...(stringTypes
-      ? {
-          resolveString: (): ValType => ({ kind: "ref", typeIdx: stringTypes.layout.anyStrTypeIdx }),
-          nativeStrings: () => true,
-        }
-      : {}),
-    resolveVec: (type) => vectorLowering(resolveNativeVector(vectorTypes, type)),
-    resolveVecForElement: (element) => vectorLowering(resolveNativeVectorForElement(vectorTypes, element)),
-    internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
-    ensureExnTag: () => {
-      if (exnTagIdx === undefined) emissionFailed("a body requires the __exn tag but the plan reserved none");
-      return exnTagIdx;
-    },
-  };
+  const resolver = physicalBodyResolver(reconciliation, vectorTypes, stringTypes, exnTagIdx, sourceClosures);
   const bodies = new Map<IrUnitId, IrFunction>(runtime.prepared.functions.map((fn) => [fn.unitId, fn] as const));
   if (formatterPack) {
     if (!record.nativeNumberFormat) emissionFailed("formatter support authority vanished");
@@ -1216,33 +1399,28 @@ function materializePhysicalProgram(
         )
           emissionFailed("async frame belongs to a different acceptance");
       });
-    } else fillPrimaryBody(accepted, declared, fn, reserved, resolver, nativePack, reservations, physicalSignature);
+    } else
+      fillPrimaryBody(
+        accepted,
+        declared,
+        fn,
+        reserved,
+        resolver,
+        nativePack,
+        reservations,
+        physicalSignature,
+        sourceClosures,
+      );
   }
 
   // 5. Startup adapter and ABI export aliases (by their planned index space).
   fillStartupAdapter(startAdapter, plan, slots, reservations);
-  const exportNames = new Set<string>(module.exports.map((entry) => entry.name));
-  for (const exported of plan.exports) {
-    const final = abi.resolveFinalIndex(exported.targetBindingId);
-    if (!final || final.space !== exported.space) {
-      emissionFailed(`export ${exported.externalName} does not resolve to a bound ${exported.space}`);
-    }
-    const reserved = resourcesByBinding.get(abi.canonicalId(exported.targetBindingId));
-    if (
-      !reserved ||
-      reserved.kind === "type" ||
-      reservations.physicalIndex(reserved) !== final.index ||
-      (reserved.kind === "function" || reserved.kind === "function-import" ? "function" : "global") !== final.space
-    ) {
-      emissionFailed(`export ${exported.externalName} contradicts its canonical physical reservation`);
-    }
-    if (exportNames.has(exported.externalName)) emissionFailed(`export ${exported.externalName} is declared twice`);
-    exportNames.add(exported.externalName);
-    reservations.defineExport(`publication:export:${exported.externalName}`, exported.externalName, reserved);
-  }
+  publishPhysicalExports(plan, abi, reconciliation);
 
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
+  if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
+  if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
   if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
   else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
   if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);

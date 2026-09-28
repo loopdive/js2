@@ -21,6 +21,29 @@ export type IrLexicalOwnerId = IrUnitId | IrClassId;
 export interface IrFunctionIdentity {
   readonly unitId: IrUnitId;
   readonly name: string;
+  /** Retained lifted-artifact provenance; absent on ordinary terminal bodies. */
+  readonly parentId?: IrUnitId;
+  readonly role?: IrSyntheticUnitRole;
+  readonly ordinal?: number;
+  /** An original nested source body must carry the complete lifted provenance. */
+  readonly sourceUnit?: true;
+}
+
+export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
+  readonly parentId: IrUnitId;
+  readonly role: "lifted-closure";
+  readonly ordinal: number;
+  /** Present when the lifted artifact is an inventoried source body, not a pass-created unit. */
+  readonly sourceUnit?: true;
+}
+
+/** Exact lowering-side provenance for an inventoried nested source body. */
+export interface IrLiftedSourceUnitProvenance {
+  readonly id: IrUnitId;
+  readonly parentId: IrUnitId;
+  readonly role: "lifted-closure";
+  readonly ordinal: number;
+  readonly sourceUnit: true;
 }
 
 /** Closed role families for compiler/pass-created executable units. */

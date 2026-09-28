@@ -27,6 +27,7 @@ import {
 } from "./runtime/host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./core/async-callables.js";
 import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
+import { irOrdinaryObjectCallableDeclaration } from "./runtime/ordinary-object-callables.js";
 import {
   assertNativeAsyncCallableDemands,
   assertNativeAsyncRuntimeCallables,
@@ -823,7 +824,13 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
           forEachInstrDeep(root, (instr) => {
             if (instr.kind === "call" || instr.kind === "closure.new") {
               const declaration = irRuntimeCallableDeclaration(instr.kind === "call" ? instr.target : instr.liftedFunc);
-              if (declaration?.feature === "error.reference.construct") runtimeCallFeatures.add(declaration.feature);
+              if (
+                declaration &&
+                (declaration.feature === "error.reference.construct" ||
+                  declaration.feature === "js.number.from-value" ||
+                  irOrdinaryObjectCallableDeclaration(declaration.ref))
+              )
+                runtimeCallFeatures.add(declaration.feature);
             }
             if (instr.kind !== "intrinsic") return;
             const argumentTypes = instr.args.map((arg) => {

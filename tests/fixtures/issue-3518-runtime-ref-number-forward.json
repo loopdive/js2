@@ -1,0 +1,20 @@
+{
+  "kind": "authored-extraction-and-explicit-canonical-object-forward-correction",
+  "base": "0ef8e0ea4c23829a4eba37dca6dd6822aa95265e",
+  "sourcePath": "src/codegen/type-coercion.ts",
+  "gitBlob": "09496ab7f4018d30df9ead9cd16c6023a4d4b41e",
+  "sourceSha256": "38c6fb1a4eecd96d30df476681300dd8195b3c493c04f7eb7537921862f498c0",
+  "helperPath": "src/codegen/runtime-ref-number.ts",
+  "nativeStringBranch": "    if (\n      ctx.nativeStrings &&\n      (typeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && typeIdx === ctx.nativeStrTypeIdx))\n    ) {\n      let strToNumberIdx = ctx.funcMap.get(\"__str_to_number\");\n      if (strToNumberIdx === undefined) {\n        addUnionImports(ctx);\n        strToNumberIdx = ctx.funcMap.get(\"__str_to_number\");\n      }\n      if (strToNumberIdx !== undefined) {\n        fctx.body.push({ op: \"extern.convert_any\" });\n        fctx.body.push({ op: \"call\", funcIdx: strToNumberIdx });\n        return;\n      }\n      addUnionImports(ctx);\n      const unboxIdx = ctx.funcMap.get(\"__unbox_number\");\n      if (unboxIdx !== undefined) {\n        fctx.body.push({ op: \"extern.convert_any\" });\n        fctx.body.push({ op: \"call\", funcIdx: unboxIdx });\n        return;\n      }\n      fctx.body.push({ op: \"drop\" });\n      fctx.body.push({ op: \"f64.const\", value: NaN });\n      return;\n    }\n",
+  "nativeStringBranchSha256": "71a70484f77776f0acea51c01bbd37741c2a479d625cd1771d24f02963e807a1",
+  "spans": [
+    {
+      "before": "import { tryEmitFastToNumber } from \"./tonumber-fast-paths.js\";",
+      "after": "import { tryRuntimeRefToNumber } from \"./runtime-ref-number.js\";\nimport { tryEmitFastToNumber } from \"./tonumber-fast-paths.js\";"
+    },
+    {
+      "before": "    if (\n      ctx.nativeStrings &&\n      (typeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && typeIdx === ctx.nativeStrTypeIdx))\n    ) {\n      let strToNumberIdx = ctx.funcMap.get(\"__str_to_number\");\n      if (strToNumberIdx === undefined) {\n        addUnionImports(ctx);\n        strToNumberIdx = ctx.funcMap.get(\"__str_to_number\");\n      }\n      if (strToNumberIdx !== undefined) {\n        fctx.body.push({ op: \"extern.convert_any\" });\n        fctx.body.push({ op: \"call\", funcIdx: strToNumberIdx });\n        return;\n      }\n      addUnionImports(ctx);\n      const unboxIdx = ctx.funcMap.get(\"__unbox_number\");\n      if (unboxIdx !== undefined) {\n        fctx.body.push({ op: \"extern.convert_any\" });\n        fctx.body.push({ op: \"call\", funcIdx: unboxIdx });\n        return;\n      }\n      fctx.body.push({ op: \"drop\" });\n      fctx.body.push({ op: \"f64.const\", value: NaN });\n      return;\n    }\n",
+      "after": "    if (tryRuntimeRefToNumber(ctx, fctx, typeIdx, toPrimitiveHint)) return;\n"
+    }
+  ]
+}

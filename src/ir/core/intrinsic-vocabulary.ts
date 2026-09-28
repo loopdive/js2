@@ -59,17 +59,8 @@ export const NUMBER_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.number.box", "js
 
 export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];
 
-/**
- * (#3526 F1-S2) The synchronous BOOLEAN boundary — the branded-i32→externref
- * carrier the front-end used to emit as a direct named call to
- * `__box_boolean` after reading the `hasHostBooleanBox` resolver predicate.
- *
- * A deliberate SIBLING of the number constants, not a widening of them: this
- * family is one-armed. There is no `js.boolean.unbox` because there is no
- * front-end producer for one — `__unbox_boolean` is a union member with no IR
- * consumer, and the boolean capability has no widening follow-up.
- */
-export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box"] as const);
+/** Boolean carrier boundaries. Unbox requires a proven Boolean carrier, never general truthiness. */
+export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box", "js.boolean.unbox"] as const);
 
 export type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];
 

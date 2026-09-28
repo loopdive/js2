@@ -49,6 +49,8 @@
  * Runtime arithmetic on the i64 lane is unchanged (it still wraps), because an
  * i64 slot cannot hold the wider result.
  */
+import { buildBigIntLimbsType, buildWideBigIntType } from "../runtime/wasmgc/values/bigint-carrier-layouts.js";
+import { buildBigIntCarrierEqualityDefinition } from "../runtime/wasmgc/values/bigint-carrier-body.js";
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -77,18 +79,9 @@ const WIDE_FIELD_MAG = 2;
  */
 export function registerWideBigIntTypes(ctx: CodegenContext, bigIntStructIdx: number): void {
   const limbsIdx = ctx.mod.types.length;
-  ctx.mod.types.push({ kind: "array", name: "$BigIntLimbs", element: { kind: "i32" }, mutable: true });
+  ctx.mod.types.push(buildBigIntLimbsType());
   const wideIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "$BigIntWide",
-    superTypeIdx: bigIntStructIdx,
-    fields: [
-      { name: "value", type: { kind: "i64", bigint: true }, mutable: false },
-      { name: "sign", type: { kind: "i32" }, mutable: false },
-      { name: "mag", type: { kind: "ref", typeIdx: limbsIdx }, mutable: false },
-    ],
-  });
+  ctx.mod.types.push(buildWideBigIntType(bigIntStructIdx, limbsIdx));
   ctx.nativeBigIntLimbsTypeIdx = limbsIdx;
   ctx.nativeBigIntWideTypeIdx = wideIdx;
 }
@@ -844,98 +837,18 @@ function ensureBigIntCarrierFormatter(ctx: CodegenContext): number | undefined {
  * wide value never equal to an i64 one, and two wide values equal exactly when
  * sign and magnitude limbs agree.
  */
-function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {
+export function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get("__bigint_carrier_eq");
   if (existing !== undefined) return existing;
   const types = wideTypes(ctx);
   if (types === undefined) return undefined;
-  const WA = 2;
-  const WB = 3;
-  const N = 4;
-  const I = 5;
-  const isWide = (index: number): Instr[] => [
-    { op: "local.get", index },
-    { op: "ref.test", typeIdx: types.wide },
-  ];
-  const field = (local: number, fieldIdx: number): Instr[] => [
-    { op: "local.get", index: local },
-    { op: "struct.get", typeIdx: types.wide, fieldIdx },
-  ];
-  const returnFalse: Instr[] = [{ op: "i32.const", value: 0 }, { op: "return" }];
-  const body: Instr[] = [
-    ...isWide(0),
-    ...isWide(1),
-    { op: "i32.or" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...isWide(0),
-        ...isWide(1),
-        { op: "i32.and" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: returnFalse },
-        { op: "local.get", index: 0 },
-        { op: "ref.cast", typeIdx: types.wide },
-        { op: "local.set", index: WA },
-        { op: "local.get", index: 1 },
-        { op: "ref.cast", typeIdx: types.wide },
-        { op: "local.set", index: WB },
-        ...field(WA, WIDE_FIELD_SIGN),
-        ...field(WB, WIDE_FIELD_SIGN),
-        { op: "i32.ne" },
-        { op: "if", blockType: { kind: "empty" }, then: returnFalse },
-        ...field(WA, WIDE_FIELD_MAG),
-        { op: "array.len" },
-        { op: "local.tee", index: N },
-        ...field(WB, WIDE_FIELD_MAG),
-        { op: "array.len" },
-        { op: "i32.ne" },
-        { op: "if", blockType: { kind: "empty" }, then: returnFalse },
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: I },
-            { op: "local.get", index: N },
-            { op: "i32.ge_u" },
-            { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
-            ...field(WA, WIDE_FIELD_MAG),
-            { op: "local.get", index: I },
-            { op: "array.get", typeIdx: types.limbs },
-            ...field(WB, WIDE_FIELD_MAG),
-            { op: "local.get", index: I },
-            { op: "array.get", typeIdx: types.limbs },
-            { op: "i32.ne" },
-            { op: "if", blockType: { kind: "empty" }, then: returnFalse },
-            { op: "local.get", index: I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: I },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    { op: "local.get", index: 0 },
-    { op: "ref.cast", typeIdx: types.narrow },
-    { op: "struct.get", typeIdx: types.narrow, fieldIdx: 0 },
-    { op: "local.get", index: 1 },
-    { op: "ref.cast", typeIdx: types.narrow },
-    { op: "struct.get", typeIdx: types.narrow, fieldIdx: 0 },
-    { op: "i64.eq" },
-  ];
+  const { locals, body } = buildBigIntCarrierEqualityDefinition(types);
   return pushHelper(
     ctx,
     "__bigint_carrier_eq",
     [{ kind: "anyref" }, { kind: "anyref" }],
     [{ kind: "i32" }],
-    [
-      { name: "wa", type: { kind: "ref_null", typeIdx: types.wide } },
-      { name: "wb", type: { kind: "ref_null", typeIdx: types.wide } },
-      { name: "n", type: { kind: "i32" } },
-      { name: "i", type: { kind: "i32" } },
-    ],
+    locals,
     body,
   );
 }

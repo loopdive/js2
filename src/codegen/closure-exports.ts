@@ -7,6 +7,21 @@
 // via ref.test/ref.cast shape dispatch. Called only by the compile driver
 // (generateModule), which imports these back.
 
+import {
+  buildClosureArityBody,
+  buildClosureArityProbe as buildRuntimeClosureArityProbe,
+  buildClosureFuncrefExtraction,
+  buildClosureMethodArgumentState,
+  buildClosureMethodCallBody,
+  orderClosureDispatchEntries as orderRuntimeClosureDispatchEntries,
+} from "../runtime/wasmgc/values/closure-invocation-bodies.js";
+import {
+  needsExternToAnyForClosureParam,
+  buildClosureF64Argument as externToClosureF64,
+  buildClosureI64Argument,
+  buildClosureMethodArgument,
+  buildClosureReferenceArgument,
+} from "../runtime/wasmgc/values/closure-argument-bodies.js";
 import { buildVariadicBuiltinMethodCallArm, restoreThisKeepResult } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { ts } from "../ts-api.js";
 import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
@@ -504,18 +519,6 @@ export function emitClosureCallExport4(ctx: CodegenContext): void {
  * the numeric/value kinds (handled by the f64/i32 unbox branches at the call
  * site, or simply not reference args).
  */
-function needsExternToAnyForClosureParam(paramType: ValType): boolean {
-  switch (paramType.kind) {
-    case "anyref":
-    case "eqref":
-    case "ref":
-    case "ref_null":
-      return true;
-    default:
-      // externref / ref_extern (already extern), funcref, and value types.
-      return false;
-  }
-}
 
 /**
  * #1896 — Lower an `externref` closure-call arg into the internal ref domain
@@ -527,49 +530,15 @@ function needsExternToAnyForClosureParam(paramType: ValType): boolean {
  * `needsExternToAnyForClosureParam(paramType)` first.
  */
 function externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr[] {
-  // (#4536) A vec-typed closure param (e.g. `arr = []` typing the lifted
-  // signature with a native vec) can receive a HOST array externref through
-  // this dynamic bridge — `ArrayHelpers.groupBy([1,2,3], fn)` crossing via
-  // `__extern_method_call` hands the raw JS array in. A bare `ref.cast` then
-  // traps (illegal cast). Route vec params through the #2831 materializer
-  // `__vec_from_extern_<vecTypeIdx>` instead: same-rep vecs short-circuit via
-  // its internal `ref.test`, host arrays are materialized into a fresh vec.
   if (paramType.kind === "ref" || paramType.kind === "ref_null") {
     const helperName = buildVecFromExternMaterializer(ctx, paramType.typeIdx);
     const helperIdx = helperName !== undefined ? ctx.funcMap.get(helperName) : undefined;
-    if (helperIdx !== undefined) {
-      const ops: Instr[] = [{ op: "call", funcIdx: helperIdx }];
-      if (paramType.kind === "ref") ops.push({ op: "ref.as_non_null" });
-      return ops;
-    }
+    if (helperIdx !== undefined) return buildClosureReferenceArgument(paramType, helperIdx);
   }
-  const ops: Instr[] = [{ op: "any.convert_extern" }];
-  if (paramType.kind === "ref") {
-    ops.push({ op: "ref.cast", typeIdx: paramType.typeIdx });
-  } else if (paramType.kind === "ref_null") {
-    ops.push({ op: "ref.cast_null", typeIdx: paramType.typeIdx });
-  }
-  return ops;
+  return buildClosureReferenceArgument(paramType);
 }
 
 /** Preserve explicit host `undefined` for numeric default-parameter checks. */
-function externToClosureF64(argLocalIdx: number, unboxIdx: number, isUndefinedIdx?: number): Instr[] {
-  const unbox: Instr[] = [
-    { op: "local.get", index: argLocalIdx },
-    { op: "call", funcIdx: unboxIdx },
-  ];
-  if (isUndefinedIdx === undefined) return unbox;
-  return [
-    { op: "local.get", index: argLocalIdx },
-    { op: "call", funcIdx: isUndefinedIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "f64" } },
-      then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
-      else: unbox,
-    },
-  ];
-}
 
 /** Lower a host argument into the closure's native i64 carrier. */
 function externToClosureI64(
@@ -579,18 +548,9 @@ function externToClosureI64(
 ): Instr[] {
   if (paramType.bigint === true) {
     const toBigintIdx = ctx.funcMap.get("__to_bigint");
-    if (toBigintIdx !== undefined) {
-      return [
-        { op: "local.get", index: argLocalIdx },
-        { op: "call", funcIdx: toBigintIdx },
-      ];
-    }
+    if (toBigintIdx !== undefined) return buildClosureI64Argument(argLocalIdx, toBigintIdx, undefined);
   }
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
-  if (unboxIdx !== undefined) {
-    return [{ op: "local.get", index: argLocalIdx }, { op: "call", funcIdx: unboxIdx }, { op: "i64.trunc_sat_f64_s" }];
-  }
-  return [{ op: "i64.const", value: 0n }];
+  return buildClosureI64Argument(argLocalIdx, undefined, ctx.funcMap.get("__unbox_number"));
 }
 
 /**
@@ -1183,65 +1143,12 @@ function buildFuncrefExtraction(
   anyLocal: number,
   funcLocal: number,
 ): Instr[] {
-  // (#3673) Root-collapse: every shared-signature wrapper AND every
-  // capture-carrying closure struct subtypes the canonical root wrapper
-  // (mintClosureStructTypes / getOrCreateFuncRefWrapperTypes), and field 0 is
-  // funcref on the root itself — so ONE `ref.test <root>` arm extracts the
-  // funcref for all of them. Only shapes with no path to the root (named
-  // function expressions, wrapper-less fallbacks) keep per-shape arms. The
-  // old one-arm-per-shape ladder ran per dynamic call/arity-probe and scaled
-  // with the number of closures in the program (hundreds for acorn).
-  const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
-  const isRootDescendant = (typeIdx: number): boolean => {
-    if (rootIdx === undefined) return false;
-    let cur: number | undefined = typeIdx;
-    let guard = 0;
-    while (cur !== undefined && cur >= 0 && guard++ < 64) {
-      if (cur === rootIdx) return true;
-      const t: { kind: string; superTypeIdx?: number } | undefined = ctx.mod.types[cur];
-      cur = t && t.kind === "struct" ? t.superTypeIdx : undefined;
-    }
-    return false;
-  };
-  const out: Instr[] = [];
-  const seenShape = new Set<number>();
-  let needRootArm = false;
-  const ladderShapes: number[] = [];
-  for (const entry of entries) {
-    if (seenShape.has(entry.selfTypeIdx)) continue;
-    seenShape.add(entry.selfTypeIdx);
-    if (isRootDescendant(entry.selfTypeIdx)) needRootArm = true;
-    else ladderShapes.push(entry.selfTypeIdx);
-  }
-  if (needRootArm) {
-    out.push({ op: "local.get", index: anyLocal });
-    out.push({ op: "ref.test", typeIdx: rootIdx! });
-    out.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: anyLocal },
-        { op: "ref.cast", typeIdx: rootIdx! },
-        { op: "struct.get", typeIdx: rootIdx!, fieldIdx: 0 },
-        { op: "local.set", index: funcLocal },
-      ],
-    });
-  }
-  for (const selfTypeIdx of ladderShapes) {
-    out.push({ op: "local.get", index: anyLocal });
-    out.push({ op: "ref.test", typeIdx: selfTypeIdx });
-    out.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: anyLocal },
-        { op: "ref.cast", typeIdx: selfTypeIdx },
-        { op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 },
-        { op: "local.set", index: funcLocal },
-      ],
-    });
-  }
-  return out;
+  return buildClosureFuncrefExtraction(
+    { rootTypeIdx: getFuncRefWrapperRootTypeIdx(ctx), types: ctx.mod.types },
+    entries,
+    anyLocal,
+    funcLocal,
+  );
 }
 
 /**
@@ -1262,32 +1169,7 @@ function orderClosureDispatchEntries<T extends { funcTypeIdx: number; rest?: unk
   ctx: CodegenContext,
   entries: T[],
 ): T[] {
-  const breadth = (type: ValType | undefined): number =>
-    type?.kind === "externref" || type?.kind === "anyref" ? 1 : 0;
-  const score = (entry: T) => {
-    const def = ctx.mod.types[entry.funcTypeIdx];
-    if (!def || def.kind !== "func") return { params: 0, results: 0 };
-    // Skip the lifted self parameter. Host dispatch only converts user args.
-    const params = def.params.slice(1).reduce((sum, type) => sum + breadth(type), 0);
-    const results = def.results.reduce((sum, type) => sum + breadth(type), 0);
-    return { params, results };
-  };
-  const ordered = entries
-    .map((entry, index) => ({ entry, index, score: score(entry) }))
-    .sort((a, b) => {
-      // Shape-qualified rest entries must win over a same-signature ordinary
-      // vec entry.  The stable index tie-break preserves deterministic output.
-      const restOrder = Number(Boolean(b.entry.rest)) - Number(Boolean(a.entry.rest));
-      if (restOrder !== 0) return restOrder;
-      // Function-parameter contravariance: broad host-facing parameters first.
-      if (a.score.params !== b.score.params) return b.score.params - a.score.params;
-      // Function-result covariance: concrete results first, broad externref
-      // results last, so a broad result arm cannot claim a narrower closure.
-      if (a.score.results !== b.score.results) return a.score.results - b.score.results;
-      return a.index - b.index;
-    })
-    .map(({ entry }) => entry);
-  return ordered;
+  return orderRuntimeClosureDispatchEntries(ctx.mod.types, entries);
 }
 
 /**
@@ -1596,69 +1478,24 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
-      let ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
-      if (paramType) {
-        if (paramType.kind === "f64") {
-          const unboxIdx = ctx.funcMap.get("__unbox_number");
-          if (unboxIdx !== undefined) {
-            return externToClosureF64(argLocalIdx, unboxIdx, isUndefinedIdx);
-          }
-        } else if (paramType.kind === "i32") {
-          // Mirror the free-call bridge above: standalone host booleans can be
-          // i31 numeric carriers, so the numeric coercion is the lossless union
-          // decoder for both booleans and integer-valued arguments here.
-          const unboxIdx = ctx.funcMap.get("__unbox_number");
-          if (unboxIdx !== undefined) {
-            ops.push({ op: "call", funcIdx: unboxIdx });
-            ops.push({ op: "i32.trunc_sat_f64_s" });
-          }
-        } else if (paramType.kind === "i64") {
-          return externToClosureI64(ctx, argLocalIdx, paramType);
-        } else if (needsExternToAnyForClosureParam(paramType)) {
-          // See emitClosureCallExportN: a non-extern reference param (anyref /
-          // WasmGC struct ref, e.g. a native-strings `string`) needs the host
-          // externref lowered into the internal ref domain before `call_ref`.
-          // Skipped in gc mode where string params are already externref.
-          if (paramType.kind === "ref_null" && isUndefinedIdx !== undefined) {
-            ops = [
-              { op: "local.get", index: argLocalIdx },
-              { op: "call", funcIdx: isUndefinedIdx },
-              {
-                op: "if",
-                blockType: { kind: "val", type: paramType },
-                then: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
-                else: [
-                  { op: "local.get", index: argLocalIdx },
-                  ...(unwrapForWasmIdx === undefined ? [] : [{ op: "call", funcIdx: unwrapForWasmIdx } as Instr]),
-                  ...externToClosureParamRef(ctx, paramType),
-                ],
-              },
-            ];
-          } else {
-            if (unwrapForWasmIdx !== undefined) ops.push({ op: "call", funcIdx: unwrapForWasmIdx });
-            ops.push(...externToClosureParamRef(ctx, paramType));
-          }
-        }
+      let unboxNumber: number | undefined;
+      let toBigInt: number | undefined;
+      let materializer: number | undefined;
+      if (paramType?.kind === "f64" || paramType?.kind === "i32") unboxNumber = ctx.funcMap.get("__unbox_number");
+      else if (paramType?.kind === "i64") {
+        if (paramType.bigint === true) toBigInt = ctx.funcMap.get("__to_bigint");
+        if (toBigInt === undefined) unboxNumber = ctx.funcMap.get("__unbox_number");
+      } else if (paramType?.kind === "ref" || paramType?.kind === "ref_null") {
+        const helperName = buildVecFromExternMaterializer(ctx, paramType.typeIdx);
+        materializer = helperName !== undefined ? ctx.funcMap.get(helperName) : undefined;
       }
-      // The widened dispatcher receives a real JS `undefined` carrier in each
-      // padded externref slot. That value cannot be `ref.cast` to a nullable
-      // closed struct even though the callee's internal representation for an
-      // omitted optional object is exactly `ref.null $T`. Preserve dynamic
-      // coercion for supplied arguments (notably numeric undefined -> NaN),
-      // but materialize omission in the nullable reference domain before the
-      // cast. `__argc` still contains the raw call-site count at this point.
-      if (paramType?.kind !== "ref_null") return ops;
-      return [
-        { op: "global.get", index: argcGlobalIdx },
-        { op: "i32.const", value: formalIndex },
-        { op: "i32.gt_s" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: paramType },
-          then: ops,
-          else: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
-        },
-      ];
+      return buildClosureMethodArgument(argLocalIdx, formalIndex, paramType, argcGlobalIdx, {
+        unboxNumber,
+        toBigInt,
+        materializer,
+        isUndefined: isUndefinedIdx,
+        unwrapForWasm: unwrapForWasmIdx,
+      });
     };
 
     // User args occupy locals [2..arity+1]. Push fixed formals, then build the
@@ -1691,53 +1528,13 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     // call-site count first; preserve min(actual, formals) in every target mode.
     // Callers without an exact count leave the -1 sentinel and retain the
     // historical declared-arity fallback.
-    const setupInstrs: Instr[] = [
-      { op: "global.get", index: argcGlobalIdx },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "global.get", index: argcGlobalIdx },
-          { op: "i32.const", value: entry.closureArity },
-          { op: "i32.lt_s" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "global.get", index: argcGlobalIdx }],
-            else: [{ op: "i32.const", value: entry.closureArity }],
-          },
-        ],
-        else: [{ op: "i32.const", value: entry.closureArity }],
-      },
-      { op: "global.set", index: argcGlobalIdx },
-    ];
-    if (arity > entry.closureArity) {
-      const extrasCount = arity - entry.closureArity;
-      setupInstrs.push({ op: "i32.const", value: extrasCount });
-      for (let i = entry.closureArity; i < arity; i++) {
-        setupInstrs.push({ op: "local.get", index: i + 2 });
-      }
-      setupInstrs.push({ op: "array.new_fixed", typeIdx: extrasArrTypeIdx, length: extrasCount });
-      setupInstrs.push({ op: "struct.new", typeIdx: extrasVecTypeIdx });
-      setupInstrs.push({ op: "global.set", index: extrasArgvGlobalIdx });
-    } else {
-      setupInstrs.push({ op: "ref.null", typeIdx: extrasVecTypeIdx });
-      setupInstrs.push({ op: "global.set", index: extrasArgvGlobalIdx });
-    }
-
-    const callBody: Instr[] = [
-      ...setupInstrs,
-      { op: "local.get", index: anyLocal },
-      { op: "ref.cast", typeIdx: entry.selfTypeIdx },
-      ...argInstrs,
-      { op: "local.get", index: funcLocal },
-      { op: "ref.cast", typeIdx: entry.funcTypeIdx },
-      { op: "call_ref", typeIdx: entry.funcTypeIdx },
-    ];
-
-    // (#4082) One shared decision — see buildClosureResultBoxing.
+    const setupInstrs = buildClosureMethodArgumentState(arity, entry.closureArity, {
+      argc: argcGlobalIdx,
+      extrasArgv: extrasArgvGlobalIdx,
+      extrasVecTypeIdx,
+      extrasArrTypeIdx,
+    });
+    const callBody = buildClosureMethodCallBody(entry, anyLocal, funcLocal, setupInstrs, argInstrs);
     callBody.push(...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx));
 
     const entryMatches: Instr[] = entry.rest
@@ -2185,69 +1982,13 @@ function buildClosureArityProbe(
 ): Instr[] | undefined {
   const entries = collectClosureArityEntries(ctx);
   if (entries.length === 0) return undefined;
-  // (#3673) Root fast path: every closure struct in the wrapper hierarchy
-  // carries its declared arity as field CLOSURE_ARITY_FIELD_IDX, so ONE
-  // `ref.test <root>` + `struct.get` answers the probe — the per-func-type
-  // `ref.test` chain (90 arms on compiled acorn) survives only for closure
-  // shapes OUTSIDE the hierarchy (e.g. fnctor ctor closures).
-  const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
-  const isRootDescendant = (typeIdx: number): boolean => {
-    if (rootIdx === undefined) return false;
-    let cur: number | undefined = typeIdx;
-    let guard = 0;
-    while (cur !== undefined && cur >= 0 && guard++ < 64) {
-      if (cur === rootIdx) return true;
-      const t: { kind: string; superTypeIdx?: number } | undefined = ctx.mod.types[cur];
-      cur = t && t.kind === "struct" ? t.superTypeIdx : undefined;
-    }
-    return false;
-  };
-  const ladderEntries = entries.filter((e) => !isRootDescendant(e.selfTypeIdx));
-  // Nested if/else so exactly ONE arm wins (the export twin uses early `return`,
-  // which is unavailable mid-body).
-  let chain: Instr[] = [{ op: "i32.const", value: -1 }];
-  for (let i = ladderEntries.length - 1; i >= 0; i--) {
-    chain = [
-      { op: "local.get", index: funcLocal },
-      { op: "ref.test", typeIdx: ladderEntries[i]!.funcTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: ladderEntries[i]!.closureArity }],
-        else: chain,
-      },
-    ];
-  }
-  const slowPath: Instr[] = [
-    { op: "ref.null.func" },
-    { op: "local.set", index: funcLocal },
-    ...buildFuncrefExtraction(ctx, ladderEntries, anyLocal, funcLocal),
-    ...chain,
-  ];
-  if (rootIdx === undefined) {
-    return [
-      { op: "local.get", index: valueLocal },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: anyLocal },
-      ...slowPath,
-    ];
-  }
-  return [
-    { op: "local.get", index: valueLocal },
-    { op: "any.convert_extern" },
-    { op: "local.tee", index: anyLocal },
-    { op: "ref.test", typeIdx: rootIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: anyLocal },
-        { op: "ref.cast", typeIdx: rootIdx },
-        { op: "struct.get", typeIdx: rootIdx, fieldIdx: CLOSURE_ARITY_FIELD_IDX },
-      ],
-      else: slowPath,
-    },
-  ];
+  return buildRuntimeClosureArityProbe(
+    { rootTypeIdx: getFuncRefWrapperRootTypeIdx(ctx), types: ctx.mod.types },
+    entries,
+    valueLocal,
+    anyLocal,
+    funcLocal,
+  );
 }
 
 /**
@@ -2320,57 +2061,7 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
 
   const arityTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$closure_arity_type");
 
-  // Locals: 0 = value externref (param), 1 = anyref, 2 = funcref.
-  const anyLocal = 1;
-  const funcLocal = 2;
-  // (#3673) Root fast path — mirror of buildClosureArityProbe: one
-  // struct.get on the wrapper root answers every in-hierarchy closure; the
-  // per-func-type chain survives only for shapes outside the hierarchy.
-  const rootIdxForExport = getFuncRefWrapperRootTypeIdx(ctx);
-  const isRootDescendantExport = (typeIdx: number): boolean => {
-    if (rootIdxForExport === undefined) return false;
-    let cur: number | undefined = typeIdx;
-    let guard = 0;
-    while (cur !== undefined && cur >= 0 && guard++ < 64) {
-      if (cur === rootIdxForExport) return true;
-      const t: { kind: string; superTypeIdx?: number } | undefined = ctx.mod.types[cur];
-      cur = t && t.kind === "struct" ? t.superTypeIdx : undefined;
-    }
-    return false;
-  };
-  const ladderEntriesExport = entries.filter((e) => !isRootDescendantExport(e.selfTypeIdx));
-  const body: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "local.set", index: anyLocal },
-  ];
-  if (rootIdxForExport !== undefined) {
-    body.push(
-      { op: "local.get", index: anyLocal },
-      { op: "ref.test", typeIdx: rootIdxForExport },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: anyLocal },
-          { op: "ref.cast", typeIdx: rootIdxForExport },
-          { op: "struct.get", typeIdx: rootIdxForExport, fieldIdx: CLOSURE_ARITY_FIELD_IDX },
-          { op: "return" },
-        ],
-      },
-    );
-  }
-  body.push(...buildFuncrefExtraction(ctx, ladderEntriesExport, anyLocal, funcLocal));
-  for (const entry of ladderEntriesExport) {
-    body.push({ op: "local.get", index: funcLocal });
-    body.push({ op: "ref.test", typeIdx: entry.funcTypeIdx });
-    body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: entry.closureArity }, { op: "return" }],
-    });
-  }
-  body.push({ op: "i32.const", value: -1 });
+  const body = buildClosureArityBody({ rootTypeIdx: getFuncRefWrapperRootTypeIdx(ctx), types: mod.types }, entries);
 
   const funcIdx = publishClosureHostBridge(
     ctx,

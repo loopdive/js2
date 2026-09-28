@@ -5,6 +5,8 @@ import type { FieldDef } from "../../../wasm/model/module-records.js";
 export type NativeDeclaredValType =
   | Exclude<ValType, { kind: "ref" | "ref_null" }>
   | { readonly kind: "ref" | "ref_null"; readonly typeKey: string };
+// A plain final struct field may use its own declaration key. Other references
+// (including arrays, parents, globals and signatures) still require prior keys.
 export interface NativeDeclaredSignature {
   readonly params: readonly NativeDeclaredValType[];
   readonly results: readonly NativeDeclaredValType[];

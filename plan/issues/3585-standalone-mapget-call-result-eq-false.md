@@ -343,6 +343,23 @@ inference, which is why the local variant works.
 
 ## Acceptance
 
+### 2026-09-28 upstream-merge checkpoint
+
+The source checkpoint `c63dcf845b585e9a4ede52f18002d13d4c55d676` was merged
+normally with upstream main `45ce4a8e207742df5ca3888c0a458e8a48ee1655`.
+At merge revision `f84bbc4acb2ca0f3c9e40e3afc429e16c948530f`, the focused
+Node 24.19.0 / one-fork / 4 GiB run (retained session `53167`) terminated
+exit 1 after 15.06 seconds: **7 pass / 3 fail**, with unchanged nullish values
+2 versus 3, 687 versus 1023, and 42 versus 63. No assertion was removed.
+The subsequent publication commit adds documentation only to that tested tree.
+
+Source SHA-256: `9b86c06137d527b1b290d6a3df8627b66609e8b4c91e6a8a69c88cce1e967e76`.
+Fixture SHA-256: `e57e1ee4c5785d3631256d62487d60794eefc7ef2dd940a9c7984aacee56d476`.
+Log: `.tmp/3585/root-post-main-focused.log`, SHA-256
+`8511775589b04223cc2b132f0661518a404162eb7f9f09e0f8932517220e0637`.
+This remains an unfinished draft checkpoint, not closure of the issue or a
+claim that the original mixed-Map Test262 failure is fixed.
+
 - Both probes above return the node value (133 / 111) under
   `target: "standalone"`.
 - The mixed-value direct sources validate and instantiate; no `f64.eq(anyref,

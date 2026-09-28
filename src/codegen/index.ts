@@ -448,6 +448,12 @@ import { fillNumberToLocaleString, fillTaToLocaleString } from "./to-locale-stri
 import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
 import { fillClassToPrimitive } from "./class-to-primitive.js";
 import {
+  captureToPrimitiveDispatchFrame,
+  ensureToPrimitiveDispatchBoxing,
+  markToPrimitiveDispatchCall,
+  publishToPrimitiveMethodDispatcher,
+} from "./to-primitive-dispatch-presence.js";
+import {
   fixupExternConvertAny,
   fixupStructNewArgCounts,
   fixupStructNewResultCoercion,
@@ -531,6 +537,7 @@ import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
 import {
   buildIsUndefinedExternBody,
+  canonicalUndefinedExternInstrs,
   emitWrapperValueOfFunctions,
   ensureAnyFromExternHelper,
   ensureAnyHelpers,
@@ -9189,6 +9196,7 @@ function toPrimitiveNeedsBoxing(ctx: CodegenContext, methodSuffix: string): bool
  */
 function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   const mod = ctx.mod;
+  ensureToPrimitiveDispatchBoxing(ctx);
   // (#4644) A `toString(hint)` / `valueOf(hint)` reached ONLY through
   // ToPrimitive needs the host `undefined` for its padded argument, and
   // nothing else in such a module necessarily imports it — `__get_undefined`
@@ -9219,14 +9227,14 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   }
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_toPrim_type");
 
-  const emitDispatchForMethod = (methodName: string, exportName: string) => {
+  const emitDispatchForMethod = (methodName: string, exportName: "__call_valueOf" | "__call_toString") => {
     type DispatchEntry =
       | {
           structName: string;
           typeIdx: number;
           mode: "standalone";
           funcIdx: number;
-          resultType: ValType;
+          resultType: ValType | undefined;
           /**
            * (#4644) Operands for the callee's params BEYOND `this`. ToPrimitive
            * invokes `toString`/`valueOf` with ZERO arguments, but the method may
@@ -9420,10 +9428,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       if (funcIdx !== undefined) {
         const funcDef = definedFuncAt(ctx, funcIdx);
         const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
-        const resultType: ValType =
-          funcType && funcType.kind === "func" && funcType.results.length > 0
-            ? funcType.results[0]!
-            : { kind: "externref" };
+        const resultType = funcType?.kind === "func" ? funcType.results[0] : { kind: "externref" as const };
         // (#4644) Pad the declared-but-unpassed params. A method whose extra
         // params we cannot supply a value for (a non-nullable GC ref) is
         // skipped entirely rather than emitted short — an arm that cannot be
@@ -9436,34 +9441,19 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
 
     if (entries.length === 0) return;
 
-    const funcIdx = ctx.numImportFuncs + mod.functions.length;
     const anyLocal = 1;
 
-    const boxResult = (resultType: ValType, instrs: Instr[]) => {
-      if (resultType.kind === "f64") {
+    const boxResult = (resultType: ValType | null | undefined, instrs: Instr[]) => {
+      if (resultType === null || resultType === undefined) {
+        // A completed void method returns undefined, never a dispatch miss.
+        instrs.push(...canonicalUndefinedExternInstrs(ctx));
+      } else if (resultType.kind === "f64" || resultType.kind === "i32" || resultType.kind === "i64") {
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
-        else {
-          instrs.push({ op: "drop" });
-          instrs.push({ op: "ref.null.extern" });
-        }
-      } else if (resultType.kind === "i32") {
-        instrs.push({ op: "f64.convert_i32_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
-        else {
-          instrs.push({ op: "drop" });
-          instrs.push({ op: "ref.null.extern" });
-        }
-      } else if (resultType.kind === "i64") {
-        // i64 (BigInt) — convert to f64 then box, or drop and return null
-        instrs.push({ op: "f64.convert_i64_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
-        else {
-          instrs.push({ op: "drop" });
-          instrs.push({ op: "ref.null.extern" });
-        }
+        if (boxIdx === undefined) throw new Error("ToPrimitive method result requires __box_number");
+        if (resultType.kind === "i32") instrs.push({ op: "f64.convert_i32_s" });
+        // Retain the legacy i64 numeric bridge; this does not certify BigInt branding.
+        if (resultType.kind === "i64") instrs.push({ op: "f64.convert_i64_s" });
+        instrs.push({ op: "call", funcIdx: boxIdx });
       } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
         instrs.push({ op: "extern.convert_any" });
       }
@@ -9476,6 +9466,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       const thenInstrs: Instr[] = [];
       if (entry.mode === "standalone") {
         thenInstrs.push(
+          ...markToPrimitiveDispatchCall(),
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           // (#4644) `this`, then one operand per DECLARED param — the callee's
@@ -9494,6 +9485,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         const ci = entry.closureInfo;
         const closureLocal = 2; // eqref scratch local
         thenInstrs.push(
+          ...markToPrimitiveDispatchCall(),
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
@@ -9522,11 +9514,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           { op: "ref.cast", typeIdx: ci.funcTypeIdx },
           { op: "call_ref", typeIdx: ci.funcTypeIdx },
         );
-        if (!ci.returnType) {
-          thenInstrs.push({ op: "ref.null.extern" });
-        } else {
-          boxResult(ci.returnType, thenInstrs);
-        }
+        boxResult(ci.returnType, thenInstrs);
       } else if (entry.mode === "callable-dynamic") {
         // (ES5 standalone lane) Untracked callable in a method field: read it,
         // confirm it is callable, and invoke it with `this` bound to the
@@ -9552,6 +9540,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "val" as const, type: { kind: "externref" as const } },
             then: [
+              ...markToPrimitiveDispatchCall(),
               // receiver (externref) — `this` for the call
               { op: "local.get", index: anyLocal },
               { op: "extern.convert_any" },
@@ -9574,6 +9563,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           const { closureTypeIdx, closureInfo } = fieldEntry.candidates[ci]!;
           // Body run when BOTH the struct cast and the funcref type match.
           const callInstrs: Instr[] = [
+            ...markToPrimitiveDispatchCall(),
             // self-param: the closure struct (cast is safe — struct ref.test passed)
             { op: "local.get", index: closureLocal },
             { op: "ref.cast", typeIdx: closureTypeIdx },
@@ -9582,11 +9572,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             { op: "ref.cast", typeIdx: closureInfo.funcTypeIdx },
             { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
           ];
-          if (!closureInfo.returnType) {
-            callInstrs.push({ op: "ref.null.extern" });
-          } else {
-            boxResult(closureInfo.returnType, callInstrs);
-          }
+          boxResult(closureInfo.returnType, callInstrs);
           // Guard 1: the stored closure must be (a subtype of) this candidate's
           // struct type. Guard 2: its funcref (field 0) must be this candidate's
           // func type — distinct methods can share a struct type but differ in
@@ -9626,6 +9612,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         // Closure field: extract closure, get funcref, call_ref
         const ci = entry.closureInfo;
         thenInstrs.push(
+          ...markToPrimitiveDispatchCall(),
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           {
@@ -9648,13 +9635,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           { op: "ref.cast", typeIdx: ci.funcTypeIdx },
           { op: "call_ref", typeIdx: ci.funcTypeIdx },
         );
-        const retType = ci.returnType ?? { kind: "externref" as const };
-        if (!ci.returnType) {
-          // void — push null externref
-          thenInstrs.push({ op: "ref.null.extern" });
-        } else {
-          boxResult(retType, thenInstrs);
-        }
+        boxResult(ci.returnType, thenInstrs);
       }
 
       // (#5268 r3 R3-5c) OrdinaryToPrimitive step 5.b.i is `IsCallable(method)`:
@@ -9714,78 +9695,14 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       ];
     };
 
-    // Determine locals: param 0 (externref), local 1 (anyref), local 2 (eqref for closure)
-    // (#2679) locals 3/4 (__prev_this / __tp_result) thread `__current_this`.
     const hasClosureEntry = entries.some(
       (e) => e.mode === "closure" || e.mode === "closure-extern" || e.mode === "closure-eqref-multi",
     );
-    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
-    if (hasClosureEntry) {
-      locals.push({ name: "__closure", type: { kind: "eqref" } });
-    } else {
-      // Reserve slot 2 so the prevThis/result locals land at fixed indices 3/4
-      // regardless of the closure-entry branch.
-      locals.push({ name: "__closure_unused", type: { kind: "eqref" } });
-    }
-    // (#2679) `__call_valueOf`/`__call_toString` must invoke the method with the
-    // RECEIVER as `this` (§7.1.1.1 OrdinaryToPrimitive step 4.b `Call(method, O)`).
-    // A compiled `valueOf(){…this…}` reads `this` from `__current_this`; the
-    // dispatch below `call_ref`s the closure body WITHOUT installing it, so the
-    // body saw a stale `this`. Install `__current_this` = param 0 (the receiver)
-    // around the dispatch and restore it afterward (nesting-safe).
-    const prevThisLocal2 = 3;
-    const tpResultLocal = 4;
-    locals.push({ name: "__prev_this", type: { kind: "externref" } });
-    locals.push({ name: "__tp_result", type: { kind: "externref" } });
-    // (#2891) funcref scratch (index 5) for the guarded `closure-eqref-multi`
-    // dispatch — distinct method closures can share one closure STRUCT type but
-    // carry different FUNC types, so the candidate is discriminated by a guarded
-    // `ref.test` on the funcref (field 0), not by the struct type alone.
-    locals.push({ name: "__tp_funcref", type: { kind: "funcref" } });
+    // Preserve the original current-this acquisition before building the arms.
+    // The guarded multi-candidate arm retains its fixed funcref scratch slot.
     const eqrefFuncLocal = 5;
-    // (ES5 standalone lane) externref scratch (index 6) for the
-    // `callable-dynamic` arm — the untracked method value read out of the
-    // struct field, held across the `__typeof_function` guard and the
-    // `__call_accessor_get` invocation.
-    locals.push({ name: "__tp_callable", type: { kind: "externref" } });
-    const currentThisGlobalIdx2 = ensureCurrentThisGlobal(ctx);
-
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: anyLocal },
-      // save __current_this, install the receiver
-      { op: "global.get", index: currentThisGlobalIdx2 },
-      { op: "local.set", index: prevThisLocal2 },
-      { op: "local.get", index: 0 },
-      { op: "global.set", index: currentThisGlobalIdx2 },
-      // dispatch (leaves result externref on stack) → capture
-      ...buildDispatch(0),
-      { op: "local.set", index: tpResultLocal },
-      // restore __current_this, return the captured result
-      { op: "local.get", index: prevThisLocal2 },
-      { op: "global.set", index: currentThisGlobalIdx2 },
-      { op: "local.get", index: tpResultLocal },
-    ];
-
-    mod.functions.push({
-      name: exportName,
-      typeIdx: dispatchTypeIdx,
-      locals,
-      body,
-      exported: true,
-    } as WasmFunction);
-
-    mod.exports.push({
-      name: exportName,
-      desc: { kind: "func", index: funcIdx },
-    });
-
-    // (#2638) Record the dispatcher funcIdx so `fillClassToPrimitive` can `call`
-    // it from the reserved `__class_to_primitive` driver. The host-side
-    // `_hostToPrimitive` loop reaches these via the export, not funcMap, so this
-    // is purely additive (the iterator dispatchers already use this convention).
-    ctx.funcMap.set(exportName, funcIdx);
+    const frame = captureToPrimitiveDispatchFrame(ctx, hasClosureEntry);
+    publishToPrimitiveMethodDispatcher(ctx, exportName, dispatchTypeIdx, frame, buildDispatch(0));
   };
 
   emitDispatchForMethod("toString", "__call_toString");

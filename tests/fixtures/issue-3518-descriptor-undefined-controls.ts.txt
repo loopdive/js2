@@ -1,0 +1,39 @@
+function make(): any { return {}; }
+export function explicitNull(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { get() { return 7; }, configurable: true });
+  Object.defineProperty(object, "value", { value: null });
+  return object.value === null && Object.getOwnPropertyDescriptor(object, "value")!.value === null ? 1 : 0;
+}
+export function explicitUndefined(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { get() { return 7; }, configurable: true });
+  Object.defineProperty(object, "value", { value: undefined });
+  return object.value === undefined && Object.getOwnPropertyDescriptor(object, "value")!.value === undefined ? 1 : 0;
+}
+export function genericPreservesGetter(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { get() { return 7; }, configurable: true });
+  Object.defineProperty(object, "value", { enumerable: true });
+  return object.value === 7 && Object.getOwnPropertyDescriptor(object, "value")!.enumerable === true ? 1 : 0;
+}
+export function nonConfigurableRejects(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { get() { return 7; } });
+  try { Object.defineProperty(object, "value", { writable: true }); }
+  catch (error) { return error instanceof TypeError && object.value === 7 ? 1 : 0; }
+  return 0;
+}
+export function writableFalseDefaultsUndefined(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { get() { return 7; }, configurable: true });
+  Object.defineProperty(object, "value", { writable: false });
+  const descriptor = Object.getOwnPropertyDescriptor(object, "value")!;
+  return object.value === undefined && descriptor.value === undefined && descriptor.writable === false ? 1 : 0;
+}
+export function existingNullPreserved(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { value: null, configurable: true });
+  Object.defineProperty(object, "value", { writable: true });
+  return object.value === null && Object.getOwnPropertyDescriptor(object, "value")!.value === null ? 1 : 0;
+}

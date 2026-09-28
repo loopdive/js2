@@ -1,0 +1,71 @@
+{
+  "base": "f52f6ae020d6d5ddb07e69a3b18811a5b4f86c24",
+  "priorReceipts": [
+    {
+      "path": "tests/fixtures/issue-3518-bigint-carrier-port.json",
+      "sha256": "4b6214afe2ccf68e3c45e3cd8e2497d22cd71ce4fc32c5cf572acad150be7a43"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-descriptor-undefined-correction.json",
+      "sha256": "2a86a79619ace64857d59652e85f24dd132576d67a93e61dc583c00797794ce6"
+    }
+  ],
+  "records": [
+    {
+      "path": "src/codegen/object-runtime-enumeration.ts",
+      "beforeSHA256": "57d79bed49bb1d1fa30faf7515e6a971c87c5d92fd4b597a302482e720dfe596",
+      "afterSHA256": "1a2ded1971ead92d2470d0ec6e1eb22f5a920213b84a838272cf282fdf8cba75",
+      "priorReceipt": "tests/fixtures/issue-3518-bigint-carrier-port.json",
+      "spans": [
+        {
+          "before": " * so the `registerNative` call ORDER (and the minted func-index sequence) is\n * preserved exactly.\n */\nimport { buildObjectSameValueBody } from \"../runtime/wasmgc/values/object-same-value-body.js\";\nimport { ensureBigIntCarrierEq } from \"./bigint-wide.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\nimport { getStringToNumberProvider, getToPrimitiveProvider } from \"./coercion-engine.js\";\nimport { buildThrowJsErrorInstrs } from \"./js-errors.js\";\nimport { nativeStringLiteralInstrs } from \"./native-strings.js\";\nimport { addUnionImportsViaRegistry } from \"./shared.js\";\nimport { getOrRegisterVecBaseType } from \"./registry/types.js\";\nimport { undefinedExternInstrs } from \"./any-helpers.js\";\nimport { buildExternGetIdxBody } from \"./object-runtime.js\";\n",
+          "after": " * so the `registerNative` call ORDER (and the minted func-index sequence) is\n * preserved exactly.\n */\nimport { registerObjectSameValueHelper } from \"./object-same-value.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\nimport { getStringToNumberProvider, getToPrimitiveProvider } from \"./coercion-engine.js\";\nimport { buildThrowJsErrorInstrs } from \"./js-errors.js\";\nimport { nativeStringLiteralInstrs } from \"./native-strings.js\";\nimport { getOrRegisterVecBaseType } from \"./registry/types.js\";\nimport { undefinedExternInstrs } from \"./any-helpers.js\";\nimport { buildExternGetIdxBody } from \"./object-runtime.js\";\n",
+          "beforeOffset": 1157,
+          "afterOffset": 1157
+        },
+        {
+          "before": "      else: [{ op: \"f64.const\", value: 0 }],\n    },\n  ];\n}\n\n/** Register SameValue at its original final enumeration step, using captured string bindings. */\nfunction registerObjectSameValueHelper(\n  ctx: CodegenContext,\n  bindings: Pick<ObjectEnumerationHelperState, \"registerNative\" | \"anyStrTypeIdx\" | \"strFlattenIdx\" | \"strEqualsIdx\">,\n): void {\n  const { registerNative, anyStrTypeIdx, strFlattenIdx, strEqualsIdx } = bindings;\n  // ── __object_is(externref a, externref b) -> i32 (#2042 S3 — Object.is) ────\n  //\n  // SameValue (§7.2.10) over two boxed externrefs. Tag-dispatched like the\n  // union-helper `===` lowering, but with the SameValue numeric rule:\n  // NaN is SameValue NaN, and +0 is NOT SameValue -0. Comparing the f64 bit\n  // patterns (`i64.reinterpret_f64` + `i64.eq`) gives exactly that — equal NaN\n  // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.\n  // boolean → unbox i32; bigint → exact carrier equality; both-null → equal; else ref identity.\n  //\n  // NATIVE-PROVIDER (`semanticProviders === \"native-first\"`), not merely\n  // standalone-only (#2609/#4397). The\n  // native `__defineProperty_value` block below is registered UNCONDITIONALLY by\n  // this runtime and its #2042-S4 ValidateAndApplyPropertyDescriptor preflight\n  // bakes a direct `call __object_is` for the SameValue value-change check. WASI\n  // is host-free too (no JS `__object_is` import — `--target wasi` sets\n  // `ctx.wasi` but leaves `ctx.standalone` false), so gating this registration on\n  // `ctx.standalone` alone left `funcMap.get(\"__object_is\")` undefined in WASI,\n  // and the define helper baked an undefined funcIdx → \"function index out of\n  // range — undefined at __defineProperty_value\" hard emit error (loopdive/js2wasm#389).\n  // The compatibility-provider path still owns `__object_is` via its JS import,\n  // so its output stays byte-identical.\n  if (ctx.targetProfile.semanticProviders === \"native-first\") {\n    addUnionImportsViaRegistry(ctx);\n    const bigintEqualityIdx = ensureBigIntCarrierEq(ctx);\n    if (bigintEqualityIdx === undefined) throw new Error(\"native SameValue requires canonical BigInt carrier equality\");\n    const typeofNumIdx = ctx.funcMap.get(\"__typeof_number\")!;\n    const typeofBoolIdx = ctx.funcMap.get(\"__typeof_boolean\")!;\n    const typeofBigIdx = ctx.funcMap.get(\"__typeof_bigint\")!;\n    const unboxNumIdx = ctx.funcMap.get(\"__unbox_number\")!;\n    const unboxBoolIdx = ctx.funcMap.get(\"__unbox_boolean\")!;\n    registerNative(\n      \"__object_is\",\n      [{ kind: \"externref\" }, { kind: \"externref\" }],\n      [{ kind: \"i32\" }],\n      [\n        { name: \"aa\", type: { kind: \"anyref\" } },\n        { name: \"ba\", type: { kind: \"anyref\" } },\n      ],\n      buildObjectSameValueBody({\n        typeofNumIdx,\n        typeofBoolIdx,\n        typeofBigIdx,\n        unboxNumIdx,\n        unboxBoolIdx,\n        bigint: { kind: \"carrier\", equalIdx: bigintEqualityIdx },\n        anyStrTypeIdx,\n        strFlattenIdx,\n        strEqualsIdx,\n      }),\n    );\n  }\n}\n\nexport function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnumerationHelperState): void {\n",
+          "after": "      else: [{ op: \"f64.const\", value: 0 }],\n    },\n  ];\n}\n\nexport function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnumerationHelperState): void {\n",
+          "beforeOffset": 10390,
+          "afterOffset": 10251
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/object-runtime-descriptors.ts",
+      "beforeSHA256": "a79690dd2afa20c837c7e94ed9fd19e119bc497c9dcc0b6cd091552a62881590",
+      "afterSHA256": "17bfadd1814308600d1171de38acd55186f1f2e2d8f055c32b4c1d401a17327f",
+      "priorReceipt": "tests/fixtures/issue-3518-descriptor-undefined-correction.json",
+      "spans": [
+        {
+          "before": " * the `ObjectDescriptorHelperState` bundle so the `registerNative` call ORDER\n * (and therefore the minted func-index sequence) is preserved exactly.\n */\nimport { buildOrdinaryObjectDataDescriptorBody } from \"../runtime/wasmgc/values/ordinary-object-descriptor-data.js\";\nimport { buildOrdinaryObjectAccessorDescriptorBody } from \"../runtime/wasmgc/values/ordinary-object-descriptor-accessor.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\n",
+          "after": " * the `ObjectDescriptorHelperState` bundle so the `registerNative` call ORDER\n * (and therefore the minted func-index sequence) is preserved exactly.\n */\nimport { buildObjectDataDescriptorBody } from \"./object-descriptor-data.js\";\nimport { buildOrdinaryObjectAccessorDescriptorBody } from \"../runtime/wasmgc/values/ordinary-object-descriptor-accessor.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\n",
+          "beforeOffset": 1643,
+          "afterOffset": 1643
+        },
+        {
+          "before": "import { emitWasiErrorConstructor } from \"./registry/error-types.js\";\nimport { addStringConstantGlobal, ensureExnTag } from \"./registry/imports.js\";\nimport { addUnionImportsViaRegistry } from \"./shared.js\";\nimport {\n  canonicalUndefinedExternInstrs,\n  ensureAnyValueType,\n  undefinedExternInstrs,\n  undefinedSingletonActive,\n} from \"./any-helpers.js\";\nimport { emitSelfHostedFunc } from \"./stdlib-selfhost.js\";\nimport { SELF_HOSTED_OBJECT_RUNTIME } from \"../stdlib/object-runtime.js\";\nimport { getOrRegisterVecBaseType } from \"./registry/types.js\";\n",
+          "after": "import { emitWasiErrorConstructor } from \"./registry/error-types.js\";\nimport { addStringConstantGlobal, ensureExnTag } from \"./registry/imports.js\";\nimport { addUnionImportsViaRegistry } from \"./shared.js\";\nimport { ensureAnyValueType, undefinedExternInstrs, undefinedSingletonActive } from \"./any-helpers.js\";\nimport { emitSelfHostedFunc } from \"./stdlib-selfhost.js\";\nimport { SELF_HOSTED_OBJECT_RUNTIME } from \"../stdlib/object-runtime.js\";\nimport { getOrRegisterVecBaseType } from \"./registry/types.js\";\n",
+          "beforeOffset": 2381,
+          "afterOffset": 2341
+        },
+        {
+          "before": "          ...(dpValueClosureArm ?? [{ op: \"local.get\", index: 0 }, { op: \"return\" }]),\n        ],\n      },\n      ...buildOrdinaryObjectDataDescriptorBody(s4DescriptorResources, [\n        ...canonicalUndefinedExternInstrs(ctx),\n        { op: \"any.convert_extern\" },\n      ]),\n    ];\n    registerNative(\n      \"__defineProperty_value\",\n",
+          "after": "          ...(dpValueClosureArm ?? [{ op: \"local.get\", index: 0 }, { op: \"return\" }]),\n        ],\n      },\n      ...buildObjectDataDescriptorBody(ctx, s4DescriptorResources),\n    ];\n    registerNative(\n      \"__defineProperty_value\",\n",
+          "beforeOffset": 18364,
+          "afterOffset": 18283
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "path": "src/codegen/object-same-value.ts",
+      "sha256": "1c48c1893eb8d33e1b3e8dca41d4e228d86f3d3e1d2f70e313c2dbeabe6fbc96"
+    },
+    {
+      "path": "src/codegen/object-descriptor-data.ts",
+      "sha256": "a3ec99b4212c033708c90f4df55b412f0bf0d2406b2a8726bbbd9bf40f7926d4"
+    }
+  ]
+}

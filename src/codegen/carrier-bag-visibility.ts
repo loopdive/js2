@@ -89,6 +89,12 @@
  * placeholder body is the "nothing to add" answer, so a skipped fill degrades to
  * exactly today's behaviour instead of trapping.
  */
+import {
+  buildCarrierBagMarkerBody,
+  buildCarrierBagOfBody,
+  buildCarrierBagHasBody,
+  type CarrierBagReadArm,
+} from "../runtime/wasmgc/values/carrier-bag-read-bodies.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -112,9 +118,6 @@ const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
 /** (#4098) Native `$Error_struct.$props` carrier (`error-props.ts`). */
 const IS_ERROR_PROP_CARRIER = "__is_error_prop_carrier";
 const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
-
-/** Abbreviated heap type `eq` (`closure-props.ts` uses the same encoding). */
-const EQ_HEAP_TYPE = -19;
 
 /** `(externref obj) -> externref` — the receiver's bag as a screened `$Object`, or null. */
 export const CARRIER_BAG_OF = "__carrier_bag_of";
@@ -302,26 +305,7 @@ export function buildBagMarkerTestInstrs(
 ): Instr[] {
   const propEntryTypeIdx = ctx.objectRuntimeTypes?.propEntryTypeIdx;
   if (propEntryTypeIdx === undefined) return [{ op: "i32.const", value: 0 }];
-  return [
-    { op: "local.get", index: args.entryLocal },
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value (anyref)
-    { op: "local.tee", index: args.tmpAnyLocal },
-    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-    {
-      op: "if",
-      blockType: { kind: "val", type: I32 },
-      then: [
-        { op: "local.get", index: args.tmpAnyLocal },
-        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-        { op: "local.get", index: args.bagLocal },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-        { op: "ref.eq" },
-      ],
-      else: [{ op: "i32.const", value: 0 }],
-    },
-  ];
+  return buildCarrierBagMarkerBody(propEntryTypeIdx, args);
 }
 
 /**
@@ -520,41 +504,10 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   // never throw (#3468 S1 discipline). Screening once here keeps all three
   // consumers cast-safe.
   {
-    const arm = (isName: string, lookupName: string): Instr[] => {
+    const arm = (isName: string, lookupName: string): CarrierBagReadArm => {
       const isIdx = ctx.funcMap.get(isName);
       const lookupIdx = ctx.funcMap.get(lookupName);
-      if (isIdx === undefined || lookupIdx === undefined) return [];
-      return [
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: isIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: lookupIdx },
-            { op: "local.tee", index: 1 },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 1 },
-                { op: "any.convert_extern" },
-                { op: "ref.test", typeIdx: objectTypeIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: 1 }, { op: "return" }],
-                },
-              ],
-            },
-            { op: "ref.null.extern" },
-            { op: "return" },
-          ],
-        },
-      ];
+      return { predicate: isIdx, lookup: lookupIdx };
     };
     const closureArm = arm(IS_CLOSURE_PROP_CARRIER, CLOSURE_BAG_LOOKUP);
     const vecArm = arm(IS_VEC_PROP_CARRIER, VEC_BAG_LOOKUP);
@@ -566,12 +519,15 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
     // closure side table. Only user-created entries live there, so widening
     // visibility cannot fabricate `$Error_struct` internals.
     const errorArm = arm(IS_ERROR_PROP_CARRIER, ERROR_PROP_BAG_LOOKUP);
-    if (closureArm.length === 0 && vecArm.length === 0 && instanceArm.length === 0 && errorArm.length === 0) return;
-    setFn(
-      CARRIER_BAG_OF,
-      [{ name: "bag", type: EXT }],
-      [...closureArm, ...vecArm, ...instanceArm, ...errorArm, { op: "ref.null.extern" }],
-    );
+    const body = buildCarrierBagOfBody({
+      objectTypeIdx,
+      closure: closureArm,
+      vec: vecArm,
+      instance: instanceArm,
+      error: errorArm,
+    });
+    if (body === undefined) return;
+    setFn(CARRIER_BAG_OF, [{ name: "bag", type: EXT }], body);
   }
 
   /** `bag = __carrier_bag_of(obj); if (bag == null) <miss>;` */
@@ -601,15 +557,12 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
       { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
       { name: "v", type: { kind: "anyref" } },
     ],
-    [
-      ...loadBag(2, [{ op: "i32.const", value: 0 }, { op: "return" }]),
-      ...findInBag(2, 1),
-      { op: "local.tee", index: 3 },
-      { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-      ...buildBagMarkerTestInstrs(ctx, { entryLocal: 3, bagLocal: 2, tmpAnyLocal: 4 }),
-      { op: "i32.eqz" },
-    ],
+    buildCarrierBagHasBody({
+      objectTypeIdx,
+      bagOfIdx,
+      objFindIdx,
+      markerPropEntryTypeIdx: ctx.objectRuntimeTypes?.propEntryTypeIdx,
+    }),
   );
 
   // ── __carrier_bag_gopd(obj, key) -> externref (null = NOT HANDLED) ──────

@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-27
+updated: 2026-09-28
 priority: high
 horizon: xl
 feasibility: hard
@@ -9654,6 +9654,26 @@ partitioned by lane:
 | project-thread lane (shipped PR #6026, #6029) | **F** Proxy/Reflect, **H** builtins misc, **I** language misc |
 | this lane (shipped #6023/#6024/#6027/#6028) | **B**, **C**, **D**, **E** (E4 in flight), **G** |
 | cluster **A** | neither lane until explicitly claimed here first |
+
+**Cluster A claimed — 2026-09-28** by session `session_01FEGi3DmyPRPD5dx4kWU8hs`
+(the lane that rebuilt A5). The claim covers generator lowering residuals, in
+this order:
+
+1. **A5**, PR #6101: `yield` in computed keys; `yield*` inside a `for-of` body.
+2. **A6**: nested yield operands, `yield [...yield yield]` and `yield yield`.
+   About 22 ES2015 rows, both lanes fail them. The work goes in
+   `generator-yield-nested.ts`, after A5.
+3. The small generator groups being root-caused now:
+   - named generator expression reassigning its own name (6)
+   - `yield` as an identifier inside a nested sloppy function (4)
+   - `yield … in obj` (2)
+   - generator prototype relations (5)
+
+Each slice opens a WIP PR before any code is written. The claim excludes what
+lanes SG1 and SC1 already diagnosed as substrate work: the rest-parameter bail,
+dynamic `GeneratorFunction`, delete visibility, `-var-open` ordering, and #2170
+`yield-star-before-newline`. Those stay unclaimed. Clusters B–I keep their
+owners above.
 
 Both lanes `git merge origin/main` before opening a slice and record slices
 under `## Cluster status`. This lane has not opened F, H or I since round 1;

@@ -213,6 +213,18 @@ function authenticateTypes(tx: PhysicalModuleReservations, pack: NativeStringLit
   }
   return owner;
 }
+/** Read-only issued type-family check; does not consume its literal reservation phase. */
+export function requireNativeStringLiteralTypes(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralTypeReservations,
+  expectedKey: string,
+  expectedUtf8Storage: boolean,
+): NativeStringLiteralTypeReservations {
+  authenticateTypes(tx, pack);
+  if (pack.key !== expectedKey || pack.utf8Storage !== expectedUtf8Storage)
+    throw new Error("native strings: substituted type-family plan");
+  return pack;
+}
 interface LiteralOwner {
   readonly tx: PhysicalModuleReservations;
   readonly typePack: NativeStringLiteralTypeReservations;

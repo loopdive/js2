@@ -218,7 +218,44 @@ const groups = {
 const required = Object.values(groups).flat();
 // Keep the historical 102-owner receipt archival; main now requires four
 // canonical formatter contracts, each present once in the current fixture.
-const liveFixtureGroups = groups;
+const semanticCallableAdditions = [
+  "src/ir/runtime/number-conversion-callable.ts",
+  "src/ir/runtime/ordinary-object-callables.ts",
+];
+const liveFixtureGroups = {
+  ...groups,
+  "ir-runtime": [
+    ...groups["ir-runtime"],
+    ...semanticCallableAdditions,
+    "src/ir/runtime/closure-invocation-callables.ts",
+  ],
+  "ir-core": [
+    ...groups["ir-core"],
+    "src/ir/core/string-callables.ts",
+    "src/ir/core/closure-invocation-callables.ts",
+    "src/ir/core/type-key.ts",
+  ],
+  "ir-program": [
+    ...groups["ir-program"],
+    "src/ir/program/native-string-output-requirements.ts",
+    "src/ir/program/population.ts",
+    "src/ir/program/abi-signatures.ts",
+    "src/ir/program/callable-results.ts",
+  ],
+  "native-runtime": [
+    ...groups["native-runtime"],
+    "src/runtime/wasmgc/values/boolean-bodies.ts",
+    "src/runtime/wasmgc/values/bigint-primitive-bodies.ts",
+    "src/runtime/wasmgc/values/string-concat-bodies.ts",
+    "src/runtime/wasmgc/values/stdout-bodies.ts",
+  ],
+  "backend-wasmgc": [
+    ...groups["backend-wasmgc"],
+    "src/backend/wasmgc/resources/native-booleans.ts",
+    "src/backend/wasmgc/program/native-string-output.ts",
+    "src/backend/wasmgc/resources/native-string-output.ts",
+  ],
+};
 const liveRequired = Object.values(liveFixtureGroups).flat();
 // Ordered additions independently reviewed at published policy 1eaa57abc,
 // and checked against local composition 19a0a9bd8c2c.
@@ -484,8 +521,208 @@ function assertNewActivations(history: unknown[]) {
     ),
   );
 }
+// Exact intervening signed composition: preserve the original 75-record proof below.
+const interveningActivations = [
+  {
+    layer: "backend-wasmgc",
+    entries: [
+      "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+      "src/backend/wasmgc/resources/prepared-async-frame.ts",
+    ],
+    minModules: 2,
+  },
+  {
+    layer: "ir-program",
+    entries: [
+      "src/ir/program/async-frame-setup.ts",
+      "src/ir/program/prepared-async-frame-plan.ts",
+      "src/ir/program/abi-signatures.ts",
+    ],
+    minModules: 3,
+  },
+  {
+    layer: "native-runtime",
+    entries: [
+      "src/runtime/wasmgc/async/frame-defaults.ts",
+      "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+      "src/runtime/wasmgc/async/prepared-async-frame-types.ts",
+    ],
+    minModules: 3,
+  },
+  {
+    layer: "ir-core",
+    entries: ["src/ir/core/type-binding-keys.ts", "src/ir/core/type-key.ts"],
+    minModules: 2,
+  },
+  {
+    layer: "ir-program",
+    entries: ["src/ir/program/host-async-dynamic.ts"],
+    minModules: 1,
+  },
+  {
+    layer: "ir-program",
+    entries: ["src/ir/program/host-import-plan.ts", "src/ir/program/host-number-boundary-setup.ts"],
+    minModules: 2,
+  },
+];
+const booleanAdditions = {
+  "native-runtime": "src/runtime/wasmgc/values/boolean-bodies.ts",
+  "backend-wasmgc": "src/backend/wasmgc/resources/native-booleans.ts",
+} as const;
+const signedLayerComposition = {
+  foundation: {
+    entriesSha256: "0c82c6ef1e9cdc4a3d5ac23b84e58dffd8b547794d84f236107234a0e7efff19",
+    minModules: 6,
+  },
+  "wasm-model": {
+    entriesSha256: "3d5f9da2f25cea8676407c56c2a2bfbf6496fa96c985fd91a646062f79ba5ef1",
+    minModules: 3,
+  },
+  "wasm-physical": {
+    entriesSha256: "bedf46dac03a20c813a9484e17c2dcfd9489b284333c3d3edd15c635706f1e7d",
+    minModules: 5,
+  },
+  "frontend-ts": {
+    entriesSha256: "e1ffbf692bc76068c856f9df56c5b6927ee997d6058e0f72df9d67a3e47c9e6f",
+    minModules: 3,
+  },
+  "ir-core": {
+    entriesSha256: "230571170e29dd9625543d48bb80d89834bbdf875f908e5e5e1df44da3b25e23",
+    minModules: 21,
+  },
+  "ir-analysis": {
+    entriesSha256: "f20e2aaaa3707ddf1213f93be9a36f41704ed01da9324358d99c72b7ac941401",
+    minModules: 5,
+  },
+  "ir-passes": {
+    entriesSha256: "75104b0b06c8b28202b9495496c29f3218451aeb90bd8568efe7d7ea3f5b3b4d",
+    minModules: 1,
+  },
+  "ir-runtime": {
+    entriesSha256: "d2d39ae1bf77938b93d9e69fff4cabee6ada2bf7413be2fce70514400f18a11a",
+    minModules: 12,
+  },
+  "ir-program": {
+    entriesSha256: "a781a3ebad443020dd73fbce212704e467d6b869f7139864f78f71586a92bb4e",
+    minModules: 27,
+  },
+  "runtime-contracts": {
+    entriesSha256: "9d116d868df3fc66877e007063dd4a1073fb8e43e1341a17bf684d05940bfe01",
+    minModules: 5,
+  },
+  "backend-wasmgc": {
+    entriesSha256: "ee02751a4e8399ca9f8207ec3c90ddbfbae63fe6e61127fbad5a44f7f13e76f4",
+    minModules: 23,
+  },
+  "native-runtime": {
+    entriesSha256: "27addaaf4efcbad980f1ade89b9e620687b868b4c8047afbe59ff10aa004323b",
+    minModules: 50,
+  },
+} as const;
+// Independently matched to signed cb64af7b's additions over fdaa; the
+// existing 97ee composition and its original per-layer digests stay intact.
+const mergedInvocationAdditions: Readonly<Record<string, readonly string[]>> = {
+  "ir-core": ["src/ir/core/closure-invocation-callables.ts"],
+  "ir-runtime": ["src/ir/runtime/closure-invocation-callables.ts"],
+  "ir-program": [
+    "src/ir/program/callable-results.ts",
+    "src/ir/program/native-source-closure-requirements.ts",
+    "src/ir/program/population.ts",
+    "src/ir/program/native-ref-cell-requirements.ts",
+    "src/ir/program/native-invocation-requirements.ts",
+  ],
+  "backend-wasmgc": [
+    "src/backend/wasmgc/resources/native-source-closures.ts",
+    "src/backend/wasmgc/resources/native-ref-cells.ts",
+    "src/backend/wasmgc/program/native-invocation-abi.ts",
+    "src/backend/wasmgc/resources/native-invocation.ts",
+    "src/backend/wasmgc/resources/native-source-closure-callables.ts",
+  ],
+  "native-runtime": [
+    "src/runtime/wasmgc/values/closure-apply-body.ts",
+    "src/runtime/wasmgc/values/closure-argument-bodies.ts",
+    "src/runtime/wasmgc/values/closure-capture-layouts.ts",
+    "src/runtime/wasmgc/values/closure-invocation-bodies.ts",
+    "src/runtime/wasmgc/values/closure-invocation-types.ts",
+    "src/runtime/wasmgc/values/closure-method-body.ts",
+    "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
+    "src/runtime/wasmgc/values/closure-result-bodies.ts",
+    "src/runtime/wasmgc/values/ref-cell-layouts.ts",
+    "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
+  ],
+};
+// Independently authenticated against signed B890cd3b5 and its parent;
+// overlap with the existing ordinary-object catalogue is excluded.
+const mergedObjectStorageAdditions: Readonly<Record<string, readonly string[]>> = {
+  "ir-program": ["src/ir/program/native-object-access-requirements.ts"],
+  "backend-wasmgc": [
+    "src/backend/wasmgc/resources/native-object-access-declarations.ts",
+    "src/backend/wasmgc/resources/native-object-access.ts",
+    "src/backend/wasmgc/resources/native-object-storage.ts",
+  ],
+  "native-runtime": [
+    "src/runtime/wasmgc/values/object-same-value-body.ts",
+    "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
+    "src/runtime/wasmgc/values/ordinary-object-key-definitions.ts",
+    "src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts",
+    "src/runtime/wasmgc/values/ordinary-object-storage-definitions.ts",
+  ],
+};
+// Add only the current getter/result proof leaves; signed layer receipts and
+// the complete historical activation sequence remain unchanged below.
+const getterResultAdditions = [
+  "src/ir/program/native-getter-invocation-requirements.ts",
+  "src/ir/program/native-object-result-requirements.ts",
+  "src/ir/program/native-object-result-values.ts",
+];
+const mergedInvocationActivations = [
+  {
+    layer: "ir-program",
+    entries: [
+      "src/ir/program/callable-results.ts",
+      "src/ir/program/native-source-closure-requirements.ts",
+      "src/ir/program/population.ts",
+    ],
+    minModules: 3,
+  },
+  {
+    layer: "backend-wasmgc",
+    entries: ["src/backend/wasmgc/resources/native-source-closures.ts"],
+    minModules: 1,
+  },
+  {
+    layer: "native-runtime",
+    entries: [
+      "src/runtime/wasmgc/values/closure-apply-body.ts",
+      "src/runtime/wasmgc/values/closure-argument-bodies.ts",
+      "src/runtime/wasmgc/values/closure-capture-layouts.ts",
+      "src/runtime/wasmgc/values/closure-invocation-bodies.ts",
+      "src/runtime/wasmgc/values/closure-invocation-types.ts",
+      "src/runtime/wasmgc/values/closure-method-body.ts",
+      "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
+      "src/runtime/wasmgc/values/closure-result-bodies.ts",
+    ],
+    minModules: 8,
+  },
+];
 // Authenticate the additive prefix before examining the unchanged old history.
 function assertCurrentActivations(history: unknown[]) {
+  expect(history).toHaveLength(88);
+  expect(history.slice(85)).toEqual(mergedInvocationActivations);
+  expect(history.slice(75, 81)).toEqual(interveningActivations);
+  expect(history.slice(81, 83)).toEqual(
+    Object.entries(booleanAdditions).map(([layer, path]) => ({ layer, entries: [path], minModules: 1 })),
+  );
+  expect(history[83]).toEqual({
+    layer: "native-runtime",
+    entries: ["src/runtime/wasmgc/values/bigint-primitive-bodies.ts"],
+    minModules: 1,
+  });
+  expect(history[84]).toEqual({ layer: "ir-runtime", entries: semanticCallableAdditions, minModules: 2 });
+  history = history.slice(0, 75);
   expect(history).toHaveLength(75);
   // Exact d132 records remain an ordered subsequence; all main records remain
   // a contiguous suffix. Original hashes and record order stay independent.
@@ -648,9 +885,53 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     for (const [id, entries] of Object.entries(currentLayerGroups)) {
       const layer = p.layers.find((row: { id: string }) => row.id === id);
-      expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
-      expect(layer.entries).toEqual(entries);
-      for (const path of entries)
+      const added = booleanAdditions[id as keyof typeof booleanAdditions];
+      const additions: string[] = added ? [added] : [];
+      if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/bigint-primitive-bodies.ts");
+      if (id === "ir-runtime") additions.push(...semanticCallableAdditions);
+      additions.push(...(mergedInvocationAdditions[id] ?? []));
+      additions.push(...(mergedObjectStorageAdditions[id] ?? []));
+      if (id === "ir-program") additions.push(...getterResultAdditions);
+      if (id === "ir-program") additions.push("src/ir/program/native-prototype-requirements.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/prototype-companion-body.ts",
+          "src/runtime/wasmgc/values/prototype-key-normalization-body.ts",
+          "src/runtime/wasmgc/values/prototype-read-bodies.ts",
+          "src/runtime/wasmgc/values/prototype-receiver-bodies.ts",
+        );
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/resources/native-bigint.ts",
+          "src/backend/wasmgc/resources/native-object-same-value.ts",
+          "src/backend/wasmgc/resources/native-object-descriptors.ts",
+          "src/backend/wasmgc/resources/native-prototype-layouts.ts",
+          "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
+        );
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/bigint-carrier-body.ts",
+          "src/runtime/wasmgc/values/bigint-carrier-layouts.ts",
+          "src/runtime/wasmgc/values/bigint-finalized-layouts.ts",
+          "src/runtime/wasmgc/values/ordinary-object-descriptor-definitions.ts",
+          "src/runtime/wasmgc/values/prototype-layouts.ts",
+          "src/runtime/wasmgc/values/prototype-singleton-bodies.ts",
+          "src/runtime/wasmgc/values/own-property-bodies.ts",
+          "src/runtime/wasmgc/values/prototype-seeder-bodies.ts",
+        );
+      if (id === "runtime-contracts")
+        additions.push("src/runtime/contracts/builtin-brands.ts", "src/runtime/contracts/collection-kind.ts");
+      const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
+      if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
+      const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
+      expect(digest(signedEntries)).toBe(receipt.entriesSha256);
+      expect(layer).toMatchObject({
+        status: "active",
+        required: true,
+        minModules: receipt.minModules + additions.length,
+      });
+      expect(signedEntries.filter((path: string) => entries.includes(path))).toEqual(entries);
+      for (const path of layer.entries)
         expect(p.files.filter((row: { path: string }) => row.path === path)).toEqual([
           { path, state: "clean", layer: id },
         ]);
@@ -661,20 +942,26 @@ describe("semantic verification and provider ownership boundary", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
     expect(required).toHaveLength(106);
-    expect(liveRequired).toHaveLength(106);
-    expect(new Set(liveRequired).size).toBe(106);
-    expect(r.report.counts.total).toBe(106);
+    expect(liveRequired).toHaveLength(123);
+    expect(new Set(liveRequired).size).toBe(123);
+    expect(r.report.counts.total).toBe(123);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
     // Formatter support adds four canonical modules and 26 imports to the
     // delivered-main closure: 11 type-only and 15 runtime. The original
     // September 14 missing-module and history-offset failures are retained.
+    // Boolean bodies/owner add five edges: three type-only and two runtime.
+    // The signed-i64 BigInt body adds two model-only type imports.
+    // The live closure also includes eight actual string-output/semantic-callable
+    // dependencies. Counts below include import-type nodes and erased named imports.
+    // Invocation adds six reachable modules; static reference census includes
+    // their complete dependency closure without admitting unrelated owner modules.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 425,
-      typeOnly: 262,
-      runtime: 163,
+      edges: 506,
+      typeOnly: 298,
+      runtime: 208,
     });
   });
 
@@ -694,6 +981,20 @@ describe("semantic verification and provider ownership boundary", () => {
       expect(() => assertCurrentActivations(history)).toThrow();
     },
   );
+
+  it.each([81, 82, 83, 84])("rejects a changed primitive composition record %i", (index) => {
+    const history = policy().activationHistory;
+    assertCurrentActivations(history);
+    history[index].entries[0] += ".lookalike";
+    expect(() => assertCurrentActivations(history)).toThrow();
+  });
+
+  it.each([85, 86, 87])("rejects changed merged invocation record %i", (index) => {
+    const history = policy().activationHistory;
+    assertCurrentActivations(history);
+    history[index].entries[0] += ".lookalike";
+    expect(() => assertCurrentActivations(history)).toThrow();
+  });
 
   function assertModelOnlyDeclarations(text: string) {
     const source = ts.createSourceFile("declarations.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { VecOrClosureReadBinding } from "../runtime/wasmgc/values/object-get-arms.js";
 /**
  * (#3537) Array ($Vec) expando own-property side table for `--target standalone`.
  *
@@ -47,7 +48,7 @@
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import {
-  buildClosurePropGetMissArm,
+  captureClosureReadBinding,
   buildClosurePropMethodCallElseArm,
   buildClosurePropSetMissArm,
 } from "./closure-props.js";
@@ -91,30 +92,18 @@ const F_BAG = 2;
  * otherwise the UNCHANGED #3468 closure arm (which itself answers the
  * undefined-read sentinel for every other brand).
  */
-export function buildVecOrClosurePropGetMissArm(
+export function captureVecOrClosureReadBinding(
   ctx: CodegenContext,
   getMiss: () => Instr[],
   explicitReceiverLocal?: number,
-): Instr[] {
-  const closureArm = buildClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal);
+): VecOrClosureReadBinding {
+  const closure = captureClosureReadBinding(ctx, getMiss, explicitReceiverLocal);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
   const vecGetIdx = ctx.funcMap.get(VEC_PROP_GET);
-  if (isVecIdx === undefined || vecGetIdx === undefined) return closureArm;
-  return [
-    { op: "local.get", index: 0 }, // obj
-    { op: "call", funcIdx: isVecIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 0 }, // obj
-        { op: "local.get", index: 1 }, // key
-        { op: "call", funcIdx: vecGetIdx },
-        { op: "return" },
-      ],
-    },
-    ...closureArm,
-  ];
+  return {
+    closure,
+    vector: isVecIdx === undefined || vecGetIdx === undefined ? undefined : { isCarrier: isVecIdx, get: vecGetIdx },
+  };
 }
 
 /**

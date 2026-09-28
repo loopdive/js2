@@ -134,6 +134,7 @@ export interface NativeValueReservations {
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly requirements: NativeValueResourcePlan;
+  readonly dependencies: NativeValueDependencies;
   readonly dependency: NativeValueStringDependency;
   filled: boolean;
 }
@@ -187,6 +188,7 @@ export function reserveNativeValueResources(
   owners.set(result, {
     tx,
     requirements,
+    dependencies,
     filled: false,
     dependency:
       strings.kind === "absent"
@@ -194,6 +196,41 @@ export function reserveNativeValueResources(
         : Object.freeze({ kind: "native-string", stringPack: strings.stringPack, scanner: strings.scanner }),
   });
   return result;
+}
+
+/** Authenticate the original reservation inputs before a dependent owner allocates. */
+export function requireNativeValueReservations(
+  tx: PhysicalModuleReservations,
+  pack: NativeValueReservations,
+  expectedRequirements: NativeValueResourcePlan,
+  expectedDependencies: NativeValueDependencies,
+): NativeValueReservations {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign native value reservations");
+  if (owner.requirements !== expectedRequirements || owner.dependencies !== expectedDependencies)
+    fail("substituted native value reservation inputs");
+  assertNativeValueResourcePlan(expectedRequirements);
+  const strings = requireDependency(tx, expectedRequirements, expectedDependencies);
+  if (
+    strings.kind !== owner.dependency.kind ||
+    (strings.kind === "native-string" &&
+      (owner.dependency.kind !== "native-string" ||
+        strings.stringPack !== owner.dependency.stringPack ||
+        strings.scanner !== owner.dependency.scanner))
+  )
+    fail("substituted native string conversion dependency");
+  // Each ledger assertion also authenticates the complete registered layout,
+  // including the actual signatures and headers of this owner's other tokens.
+  for (const [token, expected] of [
+    [pack.types.anyValue, buildAnyValueType()],
+    [pack.types.boxedNumber, buildBoxNumberType()],
+    [pack.types.boxedBoolean, buildBoxBooleanType()],
+  ] as const) {
+    if (tx.state === "reserving") tx.assertTypeReservation(token);
+    else if (tx.physicalIndex(token) !== token.typeIndex) fail("stale primitive layout coordinate");
+    same(token.object, expected, "altered primitive layout");
+  }
+  return pack;
 }
 
 /** Fill the exact reserved objects after freeze. The ledger remains completion authority. */

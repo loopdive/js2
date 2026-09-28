@@ -1,5 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { AllocSiteId } from "../../../ir/core/nodes.js";
+import {
+  IR_CLOSURE_VECTOR_APPLY,
+  IR_CLOSURE_UNDEFINED,
+  closureMethodArity,
+} from "../../../ir/core/closure-invocation-callables.js";
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
@@ -58,6 +63,7 @@ import {
   fillNativeValueResources,
   requireCompletedNativeValues,
   type NativeValueReservations,
+  type NativeValueDependencies,
 } from "../resources/native-values.js";
 
 import {
@@ -111,6 +117,7 @@ export interface NativeStringValueReservations {
     readonly flatten: NativeStringFlattenReservations;
     readonly scanner: NativeStringNumberReservations;
     readonly values: NativeValueReservations;
+    readonly dependencies: NativeValueDependencies;
   };
 }
 function fail(detail: string): never {
@@ -181,9 +188,28 @@ export function planNativeStringValuePhysical(
     emptyIdentity: options.stringConcatEmptyIdentity ?? true,
   });
   if ("kind" in outputRequirements) return outputRequirements;
-  const numeric = demands.intrinsics.some(
-    (row) => executable(row.occurrence) && row.instruction.id === "js.number.unbox",
-  );
+  const invocation = demands.occurrences.some((row, index) => {
+    const instruction = row.instruction;
+    return (
+      executable(index) &&
+      instruction.kind === "call" &&
+      instruction.target.binding.kind === "intrinsic" &&
+      (instruction.target.binding.symbol === IR_CLOSURE_VECTOR_APPLY ||
+        instruction.target.binding.symbol === IR_CLOSURE_UNDEFINED ||
+        closureMethodArity(instruction.target.binding.symbol) !== undefined)
+    );
+  });
+  const numeric =
+    invocation ||
+    demands.intrinsics.some(
+      (row) =>
+        executable(row.occurrence) &&
+        (row.instruction.id === "js.number.unbox" ||
+          (row.instruction.id === "js.number.box" &&
+            row.instruction.provider?.kind === "callable" &&
+            row.instruction.provider.target.binding.kind === "runtime" &&
+            row.instruction.provider.target.binding.symbol === "__box_number")),
+    );
   const literals: { value: string; encoding?: IrStringEncoding }[] = [];
   const uses: { demandIndex: number; cacheKey: string }[] = [];
   const references: { reference: IrGlobalRef | IrFuncRef; key: string }[] = [];
@@ -247,6 +273,7 @@ export function planNativeStringValuePhysical(
       })
     : undefined;
   if (numeric || output) literals.push({ value: "", encoding: "wtf16" });
+  if (invocation) literals.push({ value: "TypeError" }, { value: "Value is not callable" });
   if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
   const literalRequirements = { key, utf8Storage: options.utf8Storage, literals };
   // Acceptance describes the same recipes the producers later execute. No
@@ -336,10 +363,11 @@ export function reserveNativeStringValueResources(
   if (input.plan.mode === "number-boundary") {
     if (!flatten) fail("number resources require flatten");
     const scanner = reserveNativeStringNumberResources(tx, input.valueRequirements!, flatten);
-    const values = reserveNativeValueResources(tx, input.valueRequirements!, {
-      strings: { kind: "native-string", stringPack: strings, scanner },
+    const dependencies: NativeValueDependencies = Object.freeze({
+      strings: { kind: "native-string" as const, stringPack: strings, scanner },
     });
-    number = Object.freeze({ flatten, scanner, values });
+    const values = reserveNativeValueResources(tx, input.valueRequirements!, dependencies);
+    number = Object.freeze({ flatten, scanner, values, dependencies });
   }
   const output =
     input.plan.output && input.outputRequirements && flatten

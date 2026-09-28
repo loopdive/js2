@@ -1,0 +1,7 @@
+function make(): any { return {}; }
+export function run(): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { get() { return 7; }, configurable: true });
+  Object.defineProperty(object, "value", { writable: true });
+  return object.value === undefined && Object.getOwnPropertyDescriptor(object, "value")!.value === undefined ? 1 : 0;
+}

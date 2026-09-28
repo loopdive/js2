@@ -1,0 +1,26 @@
+{
+  "base": "637a810dc268bb7aa516aaffd08c0f72379d7c43",
+  "path": "src/codegen/object-runtime.ts",
+  "baseSha256": "86a86aee8b914f6ea97320253dd53daf64463ef80a6b2122bcb6a85281141b31",
+  "afterSha256": "d27cc45cfbca7e8fbcfd878c64faad9d5b0dd718ec3833779f8525a3acac43fb",
+  "spans": [
+    {
+      "before": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport {\n  buildOrdinaryObjectCreateBody,\n  buildOrdinaryObjectInsertBody,\n",
+      "after": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { buildOwnPropertyBody, buildPropertyIsEnumerableBody } from \"../runtime/wasmgc/values/own-property-bodies.js\";\nimport {\n  buildOrdinaryObjectCreateBody,\n  buildOrdinaryObjectInsertBody,\n"
+    },
+    {
+      "before": "    const body: Instr[] = [\n      ...hasOwnNpcArm,\n      ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),\n      // (#2896) Builtin-fn metadata arm: name/length are OWN properties of a\n      // builtin function value (until deleted). get_meta returns non-null\n      // exactly when the own property exists.\n      ...(bfnGetMetaIdx !== undefined\n        ? ([\n            { op: \"local.get\", index: 0 },\n            { op: \"local.get\", index: 1 },\n            { op: \"call\", funcIdx: bfnGetMetaIdx },\n            { op: \"ref.is_null\" },\n            { op: \"i32.eqz\" },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }],\n            },\n          ] satisfies Instr[])\n        : []),\n      // any = any.convert_extern(obj); if !ref.test $Object \u2192 carrier bag, else 0 (#4010 S3)\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"local.tee\", index: 2 },\n      { op: \"ref.test\", typeIdx: objectTypeIdx },\n      { op: \"i32.eqz\" },\n      bagHasIfAbsent(ctx),\n      // e = __obj_find(cast<$Object>(any), key) ; return e != null\n      { op: \"local.get\", index: 2 },\n      { op: \"ref.cast\", typeIdx: objectTypeIdx },\n      { op: \"local.get\", index: 1 },\n      { op: \"call\", funcIdx: objFindIdx },\n      { op: \"ref.is_null\" },\n      { op: \"i32.eqz\" },\n    ];\n    registerNative(\n      name,\n",
+      "after": "    const body: Instr[] = [\n      ...hasOwnNpcArm,\n      ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),\n      ...buildOwnPropertyBody({\n        objectTypeIdx,\n        findOwnIdx: objFindIdx,\n        builtinMetadataIdx: bfnGetMetaIdx,\n        nonObjectArm: bagHasIfAbsent(ctx),\n      }),\n    ];\n    registerNative(\n      name,\n"
+    },
+    {
+      "before": "  // This replaces the standalone #1472-Phase-B refusal with a native lowering\n  // over the same $Object/$PropEntry runtime; host mode keeps its JS import.\n  {\n    const body: Instr[] = [\n      // any = any.convert_extern(obj); if !ref.test $Object \u2192 0\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"local.tee\", index: 2 },\n      { op: \"ref.test\", typeIdx: objectTypeIdx },\n      { op: \"i32.eqz\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],\n      },\n      // e = __obj_find(cast<$Object>(any), key)  (local 3)\n      { op: \"local.get\", index: 2 },\n      { op: \"ref.cast\", typeIdx: objectTypeIdx },\n      { op: \"local.get\", index: 1 },\n      { op: \"call\", funcIdx: objFindIdx },\n      { op: \"local.tee\", index: 3 },\n      // if e == null \u2192 0 (no own property)\n      { op: \"ref.is_null\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],\n      },\n      // return (e.flags & FLAG_ENUMERABLE) != 0\n      { op: \"local.get\", index: 3 },\n      { op: \"ref.as_non_null\" },\n      { op: \"struct.get\", typeIdx: propEntryTypeIdx, fieldIdx: 2 },\n      { op: \"i32.const\", value: FLAG_ENUMERABLE },\n      { op: \"i32.and\" },\n      { op: \"i32.const\", value: 0 },\n      { op: \"i32.ne\" },\n    ];\n    registerNative(\n      \"__propertyIsEnumerable\",\n      [{ kind: \"externref\" }, { kind: \"externref\" }],\n",
+      "after": "  // This replaces the standalone #1472-Phase-B refusal with a native lowering\n  // over the same $Object/$PropEntry runtime; host mode keeps its JS import.\n  {\n    const body = buildPropertyIsEnumerableBody({\n      objectTypeIdx,\n      propEntryTypeIdx,\n      findOwnIdx: objFindIdx,\n      enumerableFlag: FLAG_ENUMERABLE,\n    });\n    registerNative(\n      \"__propertyIsEnumerable\",\n      [{ kind: \"externref\" }, { kind: \"externref\" }],\n"
+    }
+  ],
+  "modules": [
+    {
+      "path": "src/runtime/wasmgc/values/own-property-bodies.ts",
+      "sha256": "995f4b6bc3fe41363503f6b072df830495ee0da407b3a74d242bb55b77849fb6"
+    }
+  ]
+}

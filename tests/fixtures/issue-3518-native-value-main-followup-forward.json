@@ -1,0 +1,92 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/registry/imports.ts",
+  "sourceProvenance": {
+    "10873df1e0d37b485bb92b102fe4e979784ed5ae": {
+      "blob": "3c5cae817b1d5a42f575525511703741d3eb8bf1",
+      "sha256": "61e65d654353c4536792899529a0d6204b523abac69269880a4590b6639b1aa8",
+      "bytes": 115967,
+      "hasSignatureHeader": true
+    },
+    "a31a2fce94c6b58cef1fafc68aaa2539fc751ca1": {
+      "blob": "ec402bab28dffee85d007890fe1d56bd1e3c76a9",
+      "sha256": "143a0f5cdc03fa58704b467ea180576913a104080d064011d7caed60f14f378c",
+      "bytes": 118448,
+      "hasSignatureHeader": true
+    },
+    "a300adfb9ee8aac861cb09f857aeac652538b91f": {
+      "blob": "2cf9fb38570c305a1ced51292ac0ddfe6eb08cae",
+      "sha256": "d15e696cf9b169b4ad53f12a2070b7b6689a66eed41eb203cfb59adbde21af34",
+      "bytes": 115225,
+      "hasSignatureHeader": true
+    },
+    "641509ab720be82ff11f761b9f880695938037fb": {
+      "blob": "ca5597dfaefaad8e2b0fcda9eb37c454fed7200a",
+      "sha256": "33d3376e3efd9f02ce1716e8d3a41ea026a2a8ec0d3a7b4114e6ef0698fea7b4",
+      "bytes": 115506,
+      "hasSignatureHeader": true
+    },
+    "783aaa3cbb31ddaabc3ec2bab8180099234c2e5e": {
+      "blob": "ca5597dfaefaad8e2b0fcda9eb37c454fed7200a",
+      "sha256": "33d3376e3efd9f02ce1716e8d3a41ea026a2a8ec0d3a7b4114e6ef0698fea7b4",
+      "bytes": 115506,
+      "hasSignatureHeader": true
+    },
+    "665930876ef9c7c2d9665aa258077fc5cc79e103": {
+      "blob": "3c5cae817b1d5a42f575525511703741d3eb8bf1",
+      "sha256": "61e65d654353c4536792899529a0d6204b523abac69269880a4590b6639b1aa8",
+      "bytes": 115967,
+      "hasSignatureHeader": true
+    }
+  },
+  "derivation": {
+    "checkpoint": "7de4c2f421416b8b521dda0b0c777da140ed81df",
+    "checkpointSha256": "143a0f5cdc03fa58704b467ea180576913a104080d064011d7caed60f14f378c",
+    "historicalPreparedHead": "5b59430597315b08b2d7a1365324b56551230308",
+    "historicalPreparedHeadSha256": "be46472568a57e877571770c817ede6af9ad6e8ca71d04da77aa6c20bca68668",
+    "order": "Boolean extraction inverse, these five committed main spans, then unchanged exported-tag and prepared-import inverses",
+    "proof": "Each before/after span occurs exactly once in the introducing commit parent/commit; composed inverse equals historical prepared head after exported-tag inverse."
+  },
+  "spans": [
+    {
+      "id": "string-to-bigint-import",
+      "before": "import { reconcileNativeStrFinalizeShift } from \"../expressions/late-imports.js\";\nimport { emitWasiErrorConstructor } from \"./error-constructor-delegates.js\";\nimport { emitNativeParseNumber } from \"./parse-number-delegates.js\";\nimport { boxBooleanBody } from \"../interned-boolean-boxes.js\"; // (#3780) interned true/false carriers\nimport { planProgramAbiStringConstantImport } from \"../program-abi-import-planning.js\";\nimport { shiftModuleGlobalExportIndices } from \"../global-export-fixup.js\";\n",
+      "after": "import { reconcileNativeStrFinalizeShift } from \"../expressions/late-imports.js\";\nimport { emitWasiErrorConstructor } from \"./error-constructor-delegates.js\";\nimport { emitNativeParseNumber } from \"./parse-number-delegates.js\";\nimport {\n  buildStringToBigIntBody,\n  buildStringToBigIntLocals,\n} from \"../../runtime/wasmgc/values/string-to-bigint-body.js\"; // (#6642 S61)\nimport { boxBooleanBody } from \"../interned-boolean-boxes.js\"; // (#3780) interned true/false carriers\nimport { planProgramAbiStringConstantImport } from \"../program-abi-import-planning.js\";\nimport { shiftModuleGlobalExportIndices } from \"../global-export-fixup.js\";\n",
+      "beforeSha256": "594d28f4964f247eb974979095feb3d7d238808c6468dd799d89732223bffa1f",
+      "afterSha256": "c99a3c72f0f265c86e81b92812fb14ee12166f72f9689d2b48f8d938b53266a4",
+      "introducedBy": "a31a2fce94c6b58cef1fafc68aaa2539fc751ca1"
+    },
+    {
+      "id": "indexed-global-shift",
+      "before": "  function shiftGlobalIndices(instrs: Instr[]): void {\n    if (visitedArrays.has(instrs)) return;\n    visitedArrays.add(instrs);\n    for (const instr of instrs) {\n      if ((instr.op === \"global.get\" || instr.op === \"global.set\") && instr.index >= threshold) {\n        if (!visitedInstrs.has(instr as object)) {\n          visitedInstrs.add(instr as object);\n",
+      "after": "  function shiftGlobalIndices(instrs: Instr[]): void {\n    if (visitedArrays.has(instrs)) return;\n    visitedArrays.add(instrs);\n    // (#6480) Indexed loop rather than `for…of`: this walk runs ~36 times per\n    // compile over every live body, and the per-array iterator object is pure\n    // overhead on arrays this small and this numerous. Semantics unchanged.\n    for (let i = 0; i < instrs.length; i++) {\n      const instr = instrs[i]!;\n      if ((instr.op === \"global.get\" || instr.op === \"global.set\") && instr.index >= threshold) {\n        if (!visitedInstrs.has(instr as object)) {\n          visitedInstrs.add(instr as object);\n",
+      "beforeSha256": "47fc0e4928ef4326e1393cfd35d4ddf280102b13a0009a35da27f1103e450839",
+      "afterSha256": "39eac6e1f6146935a10b87fa014a9c0cab588d72b1c8de2ad72b6c6f12263afa",
+      "introducedBy": "641509ab720be82ff11f761b9f880695938037fb"
+    },
+    {
+      "id": "string-to-bigint-layout",
+      "before": "  }\n  const strToNumberIdx = ctx.funcMap.get(\"__str_to_number\");\n\n  // (#2106 S1) `undefinedSingleton` regime support for the union natives:\n  // when active, `undefined` is a non-null extern-wrapped tag-1 `$AnyValue`\n  // (never `ref.null.extern`), so ToBoolean must classify it FALSY, the\n",
+      "after": "  }\n  const strToNumberIdx = ctx.funcMap.get(\"__str_to_number\");\n\n  // (#6642 S61) Native StringToBigInt operands. `__bigint_ctor`s terminal used\n  // to throw SyntaxError for EVERY string, which is what makes a linked\n  // standalone Temporal provider hand back a raw JSBI limb array instead of a\n  // BigInt (it converts via `globalThis.BigInt(x.toString(10))`). The scan is\n  // spliced INLINE rather than minted as its own function so the function index\n  // space does not move — see string-to-bigint-body.ts.\n  const strFlattenIdx = ctx.nativeStrHelpers.get(\"__str_flatten\");\n  const strToBigIntLayout =\n    ctx.nativeStrings &&\n    ctx.anyStrTypeIdx >= 0 &&\n    ctx.nativeStrTypeIdx >= 0 &&\n    ctx.nativeStrDataTypeIdx >= 0 &&\n    strFlattenIdx !== undefined\n      ? {\n          anyStrTypeIdx: ctx.anyStrTypeIdx,\n          nativeStrTypeIdx: ctx.nativeStrTypeIdx,\n          nativeStrDataTypeIdx: ctx.nativeStrDataTypeIdx,\n          consStrTypeIdx: ctx.consStrTypeIdx,\n          hashedStrTypeIdx: ctx.hashedStrTypeIdx,\n          utf8StrDataTypeIdx: ctx.utf8StrDataTypeIdx,\n          utf8StrTypeIdx: ctx.utf8StrTypeIdx,\n        }\n      : undefined;\n\n  // (#2106 S1) `undefinedSingleton` regime support for the union natives:\n  // when active, `undefined` is a non-null extern-wrapped tag-1 `$AnyValue`\n  // (never `ref.null.extern`), so ToBoolean must classify it FALSY, the\n",
+      "beforeSha256": "5960befb50d585ef5f8b5d792ec10f4ff2947167ca7d77f2d68de1e25b46b603",
+      "afterSha256": "ce2f8dd40e3e12761f9c8443744ba7f9b95ef97660e93a4c0138778867b7da86",
+      "introducedBy": "a31a2fce94c6b58cef1fafc68aaa2539fc751ca1"
+    },
+    {
+      "id": "string-to-bigint-scanner-and-locals",
+      "before": "          { op: \"return\" },\n        ],\n      },\n      ...throwNativeError(\"SyntaxError\", \"Cannot convert string to a BigInt in standalone mode\"),\n    ],\n    [\n      { name: \"$any_temp\", type: { kind: \"anyref\" } as ValType },\n      { name: \"$num_temp\", type: { kind: \"f64\" } },\n    ],\n  );\n\n",
+      "after": "          { op: \"return\" },\n        ],\n      },\n      // (#6642 S61) String operand — §7.1.14 StringToBigInt, scanned natively\n      // into the i64 the `$BigInt` carrier holds. Spliced inline (no new\n      // function index, so no already-emitted `call` immediate shifts); leaves\n      // one i64, consumed by the `return` that follows. A grammar violation\n      // throws SyntaxError from inside the scan.\n      ...(strToBigIntLayout !== undefined && strFlattenIdx !== undefined\n        ? ([\n            { op: \"local.get\", index: 1 },\n            { op: \"ref.test\", typeIdx: strToBigIntLayout.anyStrTypeIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [\n                ...buildStringToBigIntBody(\n                  strToBigIntLayout,\n                  strFlattenIdx,\n                  1,\n                  3,\n                  throwNativeError(\"SyntaxError\", \"Cannot convert string to a BigInt\"),\n                ),\n                { op: \"return\" },\n              ],\n            },\n          ] as Instr[])\n        : []),\n      // Non-string, non-number, non-boolean, non-bigint operands keep the\n      // pre-#6642 terminal verbatim.\n      ...throwNativeError(\"SyntaxError\", \"Cannot convert string to a BigInt in standalone mode\"),\n    ],\n    [\n      { name: \"$any_temp\", type: { kind: \"anyref\" } as ValType },\n      { name: \"$num_temp\", type: { kind: \"f64\" } },\n      ...(strToBigIntLayout !== undefined ? buildStringToBigIntLocals(strToBigIntLayout) : []),\n    ],\n  );\n\n",
+      "beforeSha256": "84654cc833828790ef7036a4590a6dbeed211f0327ec87307cf12155bc0f0582",
+      "afterSha256": "5ae0e416f036a20d75a90da37b861e94dc667ce140bb3fd7e29e83b83d314818",
+      "introducedBy": "a31a2fce94c6b58cef1fafc68aaa2539fc751ca1"
+    },
+    {
+      "id": "class-object-placeholder",
+      "before": "  // placeholder at finalize from the same host-free carrier inventory, omitting\n  // only class-object singletons.\n  registerNative(\"__is_callable\", externrefToI32, [{ op: \"i32.const\", value: 0 }]);\n\n  // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.\n  //     (#2965) This was a `ref.null.extern` stub (\"defer until a wasi caller\n",
+      "after": "  // placeholder at finalize from the same host-free carrier inventory, omitting\n  // only class-object singletons.\n  registerNative(\"__is_callable\", externrefToI32, [{ op: \"i32.const\", value: 0 }]);\n\n  // 14b. __is_class_object(externref) -> i32 — (#6625) true only for a\n  // class-object SINGLETON (`class C {}`'s own value, not an instance).\n  // Conservative placeholder; `fillStandaloneTypeofClosureArms` fills the real\n  // body at finalize from the class-object identity ladder plus (across a\n  // linked provider) the wasm→wasm boundary's own identity ladder.\n  registerNative(\"__is_class_object\", externrefToI32, [{ op: \"i32.const\", value: 0 }]);\n\n  // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.\n  //     (#2965) This was a `ref.null.extern` stub (\"defer until a wasi caller\n",
+      "beforeSha256": "1d7d3b73a19651af81c9ad392de8a45815b71460a8f7c54192f0a0f3d49a56a4",
+      "afterSha256": "7f6280e53b7956a327500ae76a0a68f04a1f18613f39794df56b5d5f274f2206",
+      "introducedBy": "665930876ef9c7c2d9665aa258077fc5cc79e103"
+    }
+  ]
+}

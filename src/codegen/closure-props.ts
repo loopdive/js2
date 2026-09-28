@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { ClosureReadBinding } from "../runtime/wasmgc/values/object-get-arms.js";
 /**
  * (#3468 C-core) Closure-own-property side table for `--target standalone`.
  *
@@ -70,7 +71,7 @@ import { closurePrototypeEdgeGetArm } from "./closure-prototype-edge.js"; // (#2
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
-import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
+import { captureProtoIndexReadBinding, protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { ensureNativeProtoCompanionSeeder } from "./native-proto.js"; // (#6651 F1) populate the Function companion
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js"; // (#6651 F1) %Function.prototype% glue
 import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
@@ -169,32 +170,24 @@ function slottedInstanceCarrierRoots(ctx: CodegenContext): { typeIdx: number; ba
  * brand still comes from `obj`, the accessor `this` from the explicit
  * receiver. Closure carriers keep the bag/prototype-edge route untouched.
  */
-export function buildClosurePropGetMissArm(
+export function captureClosureReadBinding(
   ctx: CodegenContext,
   getMiss: () => Instr[],
   explicitReceiverLocal?: number,
-): Instr[] {
+): ClosureReadBinding {
   const closurePropGetIdx = ctx.funcMap.get(CLOSURE_PROP_GET);
-  if (closurePropGetIdx === undefined) return [...getMiss(), { op: "return" }];
+  if (closurePropGetIdx === undefined) return { kind: "legacy-missing", undefinedValue: [...getMiss()] };
   const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
   const receiverAwareConsult =
     explicitReceiverLocal === undefined || isClosureIdx === undefined
       ? undefined
-      : protoIndexRecvGetMissInstrs(ctx, 0, 1, explicitReceiverLocal);
-  return [
-    ...(receiverAwareConsult === undefined
-      ? []
-      : ([
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: isClosureIdx! },
-          { op: "i32.eqz" },
-          { op: "if", blockType: { kind: "empty" }, then: [...receiverAwareConsult, { op: "return" }] },
-        ] satisfies Instr[])),
-    { op: "local.get", index: 0 }, // obj
-    { op: "local.get", index: 1 }, // key
-    { op: "call", funcIdx: closurePropGetIdx },
-    { op: "return" },
-  ];
+      : captureProtoIndexReadBinding(ctx, 0, 1, explicitReceiverLocal);
+  return {
+    kind: "closure",
+    get: closurePropGetIdx,
+    companion:
+      receiverAwareConsult === undefined ? undefined : { isCarrier: isClosureIdx!, read: receiverAwareConsult },
+  };
 }
 
 /** Build `__extern_set`'s non-object receiver arm. */

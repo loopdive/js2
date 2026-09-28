@@ -3,6 +3,8 @@
 import type { FuncHandle, Instr, LocalDef, ValType } from "../model/instructions.js";
 import type {
   TypeDef,
+  FieldDef,
+  StructTypeDef,
   FuncTypeDef,
   WasmFunction,
   Import,
@@ -55,6 +57,30 @@ export interface TypeReservation extends Reservation<"type", TypeDef> {
   /** Type indices do not have a separate stable-handle regime. */
   readonly typeIndex: number;
 }
+/** Only this explicit marker may name the type being reserved. */
+export interface SelfReferentialStructDefinition {
+  readonly name: string;
+  readonly fields: readonly (Pick<FieldDef, "name" | "mutable"> & {
+    readonly type:
+      | { readonly kind: Exclude<ValType, { kind: "ref" | "ref_null" }>["kind"] }
+      | Extract<ValType, { kind: "ref" | "ref_null" }>
+      | { readonly kind: "ref" | "ref_null"; readonly self: true };
+  })[];
+}
+const selfFieldScalarKinds = new Set([
+  "i32",
+  "i64",
+  "f32",
+  "f64",
+  "v128",
+  "i8",
+  "i16",
+  "funcref",
+  "externref",
+  "ref_extern",
+  "eqref",
+  "anyref",
+]);
 export interface FunctionReservation extends Reservation<"function", WasmFunction> {
   /** For emitted instructions; NOT a physical index for ProgramAbiMap. */
   readonly handle: FuncHandle;
@@ -213,6 +239,7 @@ export class PhysicalModuleReservations {
   #canonicalGroupText: string;
   #canonicalGroupRegistered = false;
   #importsClosed = false;
+  #checkingSelfDefinition = false;
 
   constructor(module: PhysicalModuleStorage) {
     this.#module = module;
@@ -277,6 +304,7 @@ export class PhysicalModuleReservations {
   }
 
   #require(phase: "reserving" | "filling"): void {
+    if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
     if (this.#state !== phase) this.#fail(`operation requires ${phase}, observed ${this.#state}`);
     this.#verifyLayout();
   }
@@ -381,6 +409,7 @@ export class PhysicalModuleReservations {
 
   /** Preserve original interning points and hit naming. After freeze this is cache-only. */
   internFunctionType(params: readonly ValType[], results: readonly ValType[], name?: string): number {
+    if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
     if (this.#state !== "reserving" && this.#state !== "filling") this.#fail(`type lookup in ${this.#state}`);
     this.#verifyLayout();
     const key = funcTypeKey([...params], [...results]);
@@ -412,6 +441,8 @@ export class PhysicalModuleReservations {
 
   reserveType(key: PhysicalResourceKey, definition: TypeDef): TypeReservation {
     this.#require("reserving");
+    // Inspect the candidate before consuming a key or publishing any type slot.
+    this.#validateFinalParents([...this.#module.types, definition]);
     this.#key(key);
     if (this.#typeRecords.has(definition)) this.#fail("same type object reserved twice");
     const typeIndex = this.#flatTypes().length;
@@ -420,6 +451,87 @@ export class PhysicalModuleReservations {
     this.#flatTypes();
     this.#typeRecords.set(definition, { text: this.#snapshot(definition), members: this.#typeMembers(definition) });
     return this.#register({ kind: "type", key, object: definition, typeIndex }, typeIndex);
+  }
+
+  /** Check the whole planned append population without consuming any resource key. */
+  assertReservationKeysAvailable(keys: readonly PhysicalResourceKey[]): void {
+    this.#require("reserving");
+    const seen = new Set<string>();
+    for (const key of keys) {
+      if (typeof key !== "string" || !key || seen.has(key) || this.#keys.has(key))
+        this.#fail("empty or duplicate planned resource key");
+      seen.add(key);
+    }
+  }
+
+  /** Plain final struct only; the ledger, not its caller, chooses the self coordinate. */
+  reserveSelfReferentialStructType(
+    key: PhysicalResourceKey,
+    definition: SelfReferentialStructDefinition,
+  ): TypeReservation {
+    this.#require("reserving");
+    if (typeof key !== "string" || !key || this.#keys.has(key)) this.#fail("empty or duplicate self-type key");
+    const next = this.#flatTypes().length;
+    let resolved: StructTypeDef;
+    this.#checkingSelfDefinition = true;
+    try {
+      const input = this.#selfDataRecord(definition, ["name", "fields"]);
+      if (typeof input.name !== "string" || !Array.isArray(input.fields)) this.#fail("invalid self struct");
+      const fields = input.fields;
+      const fieldCount = Object.getOwnPropertyDescriptor(fields, "length")?.value;
+      if (
+        typeof fieldCount !== "number" ||
+        !Number.isSafeInteger(fieldCount) ||
+        fieldCount < 0 ||
+        Reflect.ownKeys(fields).length !== fieldCount + 1
+      )
+        this.#fail("non-dense self fields");
+      let selfFields = 0;
+      const resolvedFields: FieldDef[] = [];
+      for (let index = 0; index < fieldCount; index++) {
+        const field = Object.getOwnPropertyDescriptor(fields, index);
+        if (!field || !("value" in field)) this.#fail("non-data self field");
+        const row = this.#selfDataRecord(field.value, ["name", "type", "mutable"]);
+        if (typeof row.name !== "string" || typeof row.mutable !== "boolean") this.#fail("invalid self field");
+        const type = this.#selfDataRecord(row.type, ["kind", "self", "typeIdx"]);
+        let value: ValType;
+        if (Object.hasOwn(type, "self")) {
+          if (type.self !== true || (type.kind !== "ref" && type.kind !== "ref_null") || "typeIdx" in type)
+            this.#fail("invalid self reference marker");
+          selfFields++;
+          value = { kind: type.kind, typeIdx: next };
+        } else if (type.kind === "ref" || type.kind === "ref_null") {
+          if (!Number.isSafeInteger(type.typeIdx) || (type.typeIdx as number) < 0 || (type.typeIdx as number) >= next)
+            this.#fail("self field has missing/forward existing reference");
+          value = { kind: type.kind, typeIdx: type.typeIdx as number };
+          this.#validateValue(value);
+        } else {
+          if (typeof type.kind !== "string" || "typeIdx" in type || !selfFieldScalarKinds.has(type.kind))
+            this.#fail("invalid self field scalar");
+          value = { kind: type.kind } as ValType;
+        }
+        resolvedFields.push({ name: row.name, type: value, mutable: row.mutable });
+      }
+      if (selfFields === 0) this.#fail("missing self reference field");
+      resolved = { kind: "struct", name: input.name, fields: resolvedFields };
+    } finally {
+      this.#checkingSelfDefinition = false;
+    }
+    return this.reserveType(key, resolved);
+  }
+
+  #selfDataRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) this.#fail("non-data self descriptor");
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) this.#fail("non-plain self descriptor");
+    const result: Record<string, unknown> = {};
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (typeof key !== "string" || !keys.includes(key) || !descriptor || !("value" in descriptor))
+        this.#fail("non-data or unknown self descriptor field");
+      result[key] = descriptor.value;
+    }
+    return result;
   }
 
   /** Authenticate a prerequisite before allocating dependents; exposes no final index. */
@@ -785,6 +897,36 @@ export class PhysicalModuleReservations {
     }
   }
 
+  /** Match emitted finality, including implicit final plain types and rec/sub wrappers. */
+  #validateFinalParents(types: readonly TypeDef[]): void {
+    let entries: ReturnType<typeof indexPhysicalTypes>["entries"];
+    try {
+      entries = indexPhysicalTypes(types).entries;
+    } catch (error) {
+      this.#fail(error instanceof Error ? error.message : String(error));
+    }
+    for (const { definition } of entries) {
+      const parentIndex =
+        definition.kind === "sub"
+          ? definition.superType
+          : definition.kind === "struct"
+            ? definition.superTypeIdx
+            : undefined;
+      if (parentIndex === undefined || parentIndex === null || parentIndex === -1) continue;
+      const parent = entries[parentIndex]?.definition;
+      // Forward coordinates may still be unresolved during reservation. The
+      // existing final resource validation rejects any unresolved coordinate.
+      if (!parent) continue;
+      const final =
+        parent.kind === "sub"
+          ? !!parent.final
+          : parent.kind === "struct"
+            ? parent.superTypeIdx === undefined || !!parent.final
+            : true;
+      if (final) this.#fail(`cannot extend final parent type ${parentIndex}`);
+    }
+  }
+
   #validateType(type: TypeDef): void {
     switch (type.kind) {
       case "func":
@@ -871,6 +1013,7 @@ export class PhysicalModuleReservations {
   #validateResources(): void {
     const m = this.#module;
     this.#validateCanonicalGroup();
+    this.#validateFinalParents(m.types);
     for (const type of m.types) this.#validateType(type);
     this.#planTypes();
     for (const imp of m.imports) {

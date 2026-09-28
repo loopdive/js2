@@ -19,6 +19,7 @@ import type { PreparedIrProgramFailure } from "./prepared-contracts.js";
 import { collectNativeStringValueDemands, type NativeStringValueDemands } from "./native-string-value-demands.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { assertPreparedIrProgramPopulation } from "./population.js";
 
 export interface NativeStringOutputOptions {
   readonly emptyIdentity: boolean;
@@ -89,13 +90,21 @@ function locate(demands: NativeStringValueDemands, occurrence: number, detail: s
 function authenticateCensus(demands: NativeStringValueDemands): void {
   const current = collectNativeStringValueDemands(demands.program, demands.projection);
   same(demands, current, "stale or mismatched complete occurrence census");
-  const expected = [...demands.program.inventory.terminalUnits, ...demands.program.derivedUnits].map((row) => row.id);
-  if (
-    new Set(expected).size !== expected.length ||
-    expected.length !== demands.owners.length ||
-    expected.some((id) => !demands.owners.some((owner) => owner.unitId === id))
-  )
-    fail("missing or extra original/derived output owner");
+  try {
+    assertPreparedIrProgramPopulation(demands.program, demands.program.abi);
+    assertPreparedIrProgramPopulation(
+      {
+        inventory: demands.program.inventory,
+        derivedUnits: demands.program.derivedUnits,
+        ir: { functions: demands.projection.prepared.functions },
+      },
+      demands.program.abi,
+    );
+  } catch (error) {
+    if (error instanceof PreparedIrProgramInvariantError && error.code === "invalid-prepared-data")
+      fail(`missing or extra original/derived owner: ${error.message}`);
+    throw error;
+  }
   if (
     demands.allocations !== demands.program.allocations ||
     current.owners.some(

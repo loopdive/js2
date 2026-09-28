@@ -156,14 +156,16 @@ describe("explicit-rec grouping admission", () => {
         const prefix: Canonical.StructTypeDef = { kind: "struct", name: "prefix", fields: [], superTypeIdx: -1 };
         const target: Canonical.StructTypeDef = { kind: "struct", name: "target", fields: [], superTypeIdx: -1 };
         tx.reserveType("prefix", position === "earlier" ? referencing(form, 2) : prefix);
+        const first: Canonical.TypeDef =
+          position === "at-first" || position === "internal-forward"
+            ? referencing(form, position === "at-first" ? 1 : 2)
+            : { kind: "struct", name: "member", fields: [] };
+        // Exercise ordering independently of the earlier final-parent guard.
+        // The original final self-parent shape is retained in its guard suite.
+        if (position === "at-first" && first.kind === "sub") first.final = false;
         tx.reserveType("group", {
           kind: "rec",
-          types: [
-            position === "at-first" || position === "internal-forward"
-              ? referencing(form, position === "at-first" ? 1 : 2)
-              : { kind: "struct", name: "member", fields: [] },
-            target,
-          ],
+          types: [first, target],
         });
         if (position === "trailing-forward") {
           tx.reserveType("trailing-holder", referencing(form, 4));

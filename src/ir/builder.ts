@@ -1680,6 +1680,32 @@ export class IrFunctionBuilder {
   }
 
   /**
+   * Preserve the exact externref returned by ordinary Get. This only records
+   * logical intent: native acceptance must prove the actual keyed descriptor
+   * result, including every callable projection reconstructed by the codec.
+   * No allocation, cast, call or exception occurs at this representation step.
+   */
+  emitOrdinaryGetCallableResult(value: IrValueId, signature: IrClosureSignature): IrValueId {
+    const definition = (this.bodyBuffer ?? this.current?.instrs)?.find((row) => row.result === value);
+    const type = this.typeOf(value);
+    if (
+      type.kind !== "val" ||
+      type.typeRef ||
+      type.val.kind !== "externref" ||
+      definition?.kind !== "call" ||
+      definition.target.binding.kind !== "intrinsic" ||
+      definition.target.binding.symbol !== "js.object.get" ||
+      definition.args.length !== 3
+    )
+      throw new Error(`IrFunctionBuilder: callable result requires its actual ordinary Get (func ${this.id.name})`);
+    const result = this.allocator.fresh();
+    const resultType: IrType = { kind: "callable", signature };
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "coerce.to_externref", value, result, resultType });
+    return result;
+  }
+
+  /**
    * Construct a host iterator handle from an externref iterable.
    * `async: false` calls `__iterator`; `async: true` calls
    * `__async_iterator` (reserved for #1169f, slice 7).

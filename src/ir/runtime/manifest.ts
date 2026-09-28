@@ -107,7 +107,9 @@ import {
   REFERENCE_ERROR_RUNTIME_FEATURES,
   REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
   VECTOR_CALLABLE_RUNTIME_FEATURES,
+  ORDINARY_OBJECT_RUNTIME_FEATURES,
   VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
+  ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,
   NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
   type RuntimeFeature,
@@ -219,18 +221,14 @@ export type {
 } from "./contracts/manifest.js";
 
 import { irTypeEquals } from "../core/types.js";
-import { REFERENCE_ERROR_SIGNATURE, REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
 import {
-  VECTOR_CALLABLE_RUNTIME_PROVIDERS,
-  vectorProviderMismatch,
-  vectorCallablePolicyMismatch,
-} from "./vector-callables.js";
+  REFERENCE_ERROR_SIGNATURE,
+  REFERENCE_ERROR_RUNTIME_PROVIDERS,
+  SEMANTIC_CALLABLE_RUNTIME_PROVIDERS,
+  semanticCallableProviderMismatch,
+  semanticCallablePolicyMismatch,
+} from "./callable-declarations.js";
 export { REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
-import {
-  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
-  nativeAsyncProviderMismatch,
-  nativeAsyncCallablePolicyMismatch,
-} from "./native-async-callables.js";
 import {
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
@@ -262,6 +260,7 @@ import {
   EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+  EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,
 } from "../core/intrinsics.js";
 import {
   type IntrinsicSignature,
@@ -487,11 +486,9 @@ function numberBoundaryProvider(
 }
 
 /**
- * (#3526 F1-S1) The synchronous number boundary. `js.number.box` is HOST-ONLY
- * by policy in this slice: standalone does define a native `__box_number`
- * through the union-native family, but the current front-end arm is gated on
- * `!nativeStrings`, and support may not be inferred from helper presence. The
- * `$AnyValue` standalone boxing family is explicitly not this intrinsic.
+ * Explicit synchronous number-boundary selection. Native boxing additionally
+ * requires the physical consumer's actual issued value owner; helper presence
+ * or the target alone cannot select it. The disabled default is unchanged.
  */
 export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
   numberBoundaryProvider(
@@ -501,6 +498,17 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
     { kind: "host-callable", capability: "number.box" },
     ["number.box"],
   ),
+  Object.freeze({
+    ...numberBoundaryProvider(
+      "native.js.number.box",
+      "js.number.box",
+      F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+      { kind: "runtime-callable", symbol: "__box_number" },
+      [],
+    ),
+    supportedTargets: Object.freeze(["standalone"] as const),
+    supportedBackends: Object.freeze(["wasmgc"] as const),
+  }),
   numberBoundaryProvider(
     "host.js.number.unbox",
     "js.number.unbox",
@@ -517,12 +525,7 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
   ),
 ]);
 
-/**
- * (#3526 F1-S2) The synchronous boolean boundary. Host-only by policy: no
- * native boolean boxer exists, so there is no `runtime-callable` sibling to
- * select. The physical target stays the exact `env.__box_boolean` union import
- * the direct call used, so raw consumers and import order are untouched.
- */
+/** Explicit Boolean carrier providers. Physical admission still requires the issued native owner. */
 export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
   numberBoundaryProvider(
     "host.js.boolean.box",
@@ -531,6 +534,26 @@ export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
     { kind: "host-callable", capability: "boolean.box" },
     ["boolean.box"],
   ),
+  Object.freeze({
+    ...numberBoundaryProvider(
+      "native.js.boolean.box",
+      "js.boolean.box",
+      I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+      { kind: "runtime-callable", symbol: "__box_boolean" },
+      [],
+    ),
+    supportedBackends: Object.freeze(["wasmgc"] as const),
+  }),
+  Object.freeze({
+    ...numberBoundaryProvider(
+      "native.js.boolean.unbox",
+      "js.boolean.unbox",
+      EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,
+      { kind: "runtime-callable", symbol: "__unbox_boolean" },
+      [],
+    ),
+    supportedBackends: Object.freeze(["wasmgc"] as const),
+  }),
 ]);
 
 /**
@@ -1000,8 +1023,12 @@ function isGeneratorNumberBoxFeature(feature: RuntimeFeature): feature is Genera
 
 /** The exact provider the admitted boolean arm selects, or `null` when the
  * caller resolved it to unsupported. */
-function booleanBoundaryProviderId(policy: BooleanBoundaryPolicy): BooleanBoundaryRuntimeProviderId | null {
-  return policy.box === "host" ? "host.js.boolean.box" : null;
+function booleanBoundaryProviderId(
+  feature: BooleanBoundaryRuntimeFeature,
+  policy: BooleanBoundaryPolicy,
+): BooleanBoundaryRuntimeProviderId | null {
+  if (feature === "js.boolean.unbox") return policy.unbox === "native" ? "native.js.boolean.unbox" : null;
+  return policy.box === "host" ? "host.js.boolean.box" : policy.box === "native" ? "native.js.boolean.box" : null;
 }
 
 const BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);
@@ -1029,7 +1056,8 @@ function numberBoundaryProviderId(
   feature: NumberBoundaryRuntimeFeature,
   policy: NumberBoundaryPolicy,
 ): NumberBoundaryRuntimeProviderId | null {
-  if (feature === "js.number.box") return policy.box === "host" ? "host.js.number.box" : null;
+  if (feature === "js.number.box")
+    return policy.box === "host" ? "host.js.number.box" : policy.box === "native" ? "native.js.number.box" : null;
   if (policy.unbox === "host") return "host.js.number.unbox";
   return policy.unbox === "native" ? "native.js.number.unbox" : null;
 }
@@ -1343,8 +1371,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,
     ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,
     ...REFERENCE_ERROR_RUNTIME_PROVIDERS,
-    ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
-    ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
+    ...SEMANTIC_CALLABLE_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -1368,6 +1395,8 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...PURE_MATH_RUNTIME_FEATURES,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
   ...VECTOR_CALLABLE_RUNTIME_FEATURES,
+  ...ORDINARY_OBJECT_RUNTIME_FEATURES,
+  "js.number.from-value",
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
 ]);
@@ -1390,6 +1419,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
   ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
+  ...ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
 const HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);
@@ -1621,7 +1651,10 @@ export class RuntimeManifestBuilder {
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
-      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
+      booleanBoundary: Object.freeze({
+        box: booleanBoundary.box,
+        ...(booleanBoundary.unbox === undefined ? {} : { unbox: booleanBoundary.unbox }),
+      }),
       externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
       generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
       stringCompare: Object.freeze({ compare: stringCompare.compare }),
@@ -1862,7 +1895,7 @@ export class RuntimeManifestBuilder {
     const ids = new Set<RuntimeProviderId>();
     const byFeature = new Map<RuntimeFeature, RuntimeProviderDefinition[]>();
     for (const provider of this.#providers) {
-      const nativeMismatch = nativeAsyncProviderMismatch(provider) ?? vectorProviderMismatch(provider);
+      const nativeMismatch = semanticCallableProviderMismatch(provider);
       if (nativeMismatch)
         throw new RuntimeManifestInvariantError(
           "provider-signature-mismatch",
@@ -2087,9 +2120,7 @@ export class RuntimeManifestBuilder {
     providers: ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]>,
   ): RuntimeProviderDefinition {
     const candidates = providers.get(feature) ?? [];
-    const nativePolicyMismatch = NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)
-      ? nativeAsyncCallablePolicyMismatch(feature, this.#policy)
-      : vectorCallablePolicyMismatch(feature, this.#policy);
+    const nativePolicyMismatch = semanticCallablePolicyMismatch(feature, this.#policy);
     if (nativePolicyMismatch)
       throw new RuntimeManifestInvariantError("provider-target-unavailable", nativePolicyMismatch);
     if (candidates.length === 0) {
@@ -2117,12 +2148,12 @@ export class RuntimeManifestBuilder {
         // `target` cannot express.
         isBooleanBoundaryFeature(feature)
         ? ((): readonly RuntimeProviderDefinition[] => {
-            const selectedId = booleanBoundaryProviderId(this.#policy.booleanBoundary);
+            const selectedId = booleanBoundaryProviderId(feature, this.#policy.booleanBoundary);
             if (selectedId === null) {
               throw new RuntimeManifestInvariantError(
                 "provider-target-unavailable",
                 `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +
-                  `box=${this.#policy.booleanBoundary.box}`,
+                  `box=${this.#policy.booleanBoundary.box}/unbox=${this.#policy.booleanBoundary.unbox ?? "unsupported"}`,
               );
             }
             return candidates.filter((candidate) => candidate.id === selectedId);

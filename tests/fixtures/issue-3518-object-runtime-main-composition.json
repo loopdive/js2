@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "kind": "signed-main-forward-composition-not-replacement-donor",
+  "path": "src/codegen/object-runtime.ts",
+  "base": {
+    "commit": "750fb7e7365692b315179dc909b57fa1407d4527",
+    "blob": "efd092e999226e75de6951fb81c9601944c04a91",
+    "sha256": "692133e0345a24e3c45071ed031036b96dc3f6e7702dc358e2f99651820eed9e"
+  },
+  "main": {
+    "commit": "35e040c08ed10f793faf26bb0f0eac55be662627",
+    "blob": "57375151acd765e8870c3c7f67bf7e25797fd970",
+    "sha256": "45b31c33b9524059163ddf8de9945848db3685437d72454a63e5107207fadd35"
+  },
+  "integration": {
+    "commit": "20dd4850644dc3b42802d31fa15ddbc3ee0a4800",
+    "blob": "77ddd2aabd035307a0be00928f927e158c721bc2",
+    "sha256": "2cc32a6af0e913340ac8a27c77befb6b345a61688893aa1cb3fc29d6161719b7"
+  },
+  "spans": [
+    {
+      "ordinal": 0,
+      "baseStartLine": 104,
+      "baseEndLine": 109,
+      "mainStartLine": 104,
+      "mainEndLine": 110,
+      "before": "import * as bc from \"./builtin-ctor-callable.js\"; // (#4394/#4656) constructor [[Call]] arms\nimport { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from \"./closure-exports.js\"; // (#3592) under-application widening\nimport {\n  buildTransferredNativeProtoVariadicApplyInstrs,\n  collectTransferredNativeProtoReceivers,\n} from \"./closures/transferred-native-proto.js\";\n",
+      "after": "import * as bc from \"./builtin-ctor-callable.js\"; // (#4394/#4656) constructor [[Call]] arms\nimport { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from \"./closure-exports.js\"; // (#3592) under-application widening\nimport {\n  buildTransferredNativeProtoOwnedBitInstrs,\n  buildTransferredNativeProtoVariadicApplyInstrs,\n  collectTransferredNativeProtoReceivers,\n} from \"./closures/transferred-native-proto.js\";\n",
+      "beforeSha256": "389f47b37b1174c707bd56cb5eb4a7173350e764c1efc3fce062d8ed73e08ae4",
+      "afterSha256": "d07d265d6ab0eb6da92d12af52b2144e7c76e6ec16b1a56a76c1d05e7a9e67c1"
+    },
+    {
+      "ordinal": 1,
+      "baseStartLine": 113,
+      "baseEndLine": 118,
+      "mainStartLine": 114,
+      "mainEndLine": 121,
+      "before": "import { registerDescriptorHasOwn } from \"./carrier-bag-hasown.js\"; // (#4055) descriptor-scoped HasProperty over the #3468 bag\nimport { buildNonObjectDeleteArms, reserveCarrierBagDelete } from \"./carrier-bag-delete.js\"; // (#4010 S2) OrdinaryDelete over the carrier bags\nimport {\n  bagHasIfAbsent,\n  bagKeysTail,\n  buildBagPushKeys,\n",
+      "after": "import { registerDescriptorHasOwn } from \"./carrier-bag-hasown.js\"; // (#4055) descriptor-scoped HasProperty over the #3468 bag\nimport { buildNonObjectDeleteArms, reserveCarrierBagDelete } from \"./carrier-bag-delete.js\"; // (#4010 S2) OrdinaryDelete over the carrier bags\nimport {\n  CARRIER_BAG_HAS,\n  CARRIER_BAG_OF,\n  bagHasIfAbsent,\n  bagKeysTail,\n  buildBagPushKeys,\n",
+      "beforeSha256": "41e89fcdeda13edb4311732872ba20a1c7ea2898bdc43211bcbfb35eaf82a6f0",
+      "afterSha256": "4b94682c7b7f2175982ebe0121da88411ef583d41fbeebda7c8fb424e2fc8aaa"
+    },
+    {
+      "ordinal": 2,
+      "baseStartLine": 196,
+      "baseEndLine": 202,
+      "mainStartLine": 199,
+      "mainEndLine": 209,
+      "before": "import { exposedClosedStructFieldName, isOpenDescriptorShape } from \"./property-descriptor-shape.js\";\nimport type { PresenceSlot } from \"./fnctor-presence-bits.js\"; // (#3780) packed own-presence flags\nimport { presenceSlotOf, presenceTestInstrs } from \"./fnctor-presence-bits.js\";\nimport { buildObjectEnumerationHelpers, fillObjectAssignProxySourceArm } from \"./object-runtime-enumeration.js\"; // (#3274 wave-B) enumeration/array-like/object-static helper builders\nimport { fillObjectIntegrityProxyArms } from \"./object-integrity-proxy.js\"; // (#5268 step 2)\nimport { buildObjectPrototypeHelpers } from \"./object-runtime-prototype.js\"; // (#3274 wave-B) prototype-chain helper builders\nimport * as fnctorArray from \"./fnctor-array-prototype.js\";\n",
+      "after": "import { exposedClosedStructFieldName, isOpenDescriptorShape } from \"./property-descriptor-shape.js\";\nimport type { PresenceSlot } from \"./fnctor-presence-bits.js\"; // (#3780) packed own-presence flags\nimport { presenceSlotOf, presenceTestInstrs } from \"./fnctor-presence-bits.js\";\nimport {\n  buildArrayLikeToLengthFromExternref,\n  buildObjectEnumerationHelpers,\n  fillObjectAssignProxySourceArm,\n} from \"./object-runtime-enumeration.js\"; // (#3274 wave-B) enumeration/array-like/object-static helper builders\nimport { fillObjectIntegrityProxyArms } from \"./object-integrity-proxy.js\"; // (#5268 step 2)\nimport { buildObjectPrototypeHelpers } from \"./object-runtime-prototype.js\"; // (#3274 wave-B) prototype-chain helper builders\nimport * as fnctorArray from \"./fnctor-array-prototype.js\";\n",
+      "beforeSha256": "1812f6218ddd5150d43728166ef2d797ad4c6ee0739152b03ea59044f07986fd",
+      "afterSha256": "a01d7973435144b99d0214defac3cc1ecb5fab3aec37cc6d36138c79605aa45d"
+    },
+    {
+      "ordinal": 3,
+      "baseStartLine": 7775,
+      "baseEndLine": 7786,
+      "mainStartLine": 7782,
+      "mainEndLine": 7825,
+      "before": "  // the existing local dispatch unchanged.\n  const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, \"callableKind\");\n  const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, \"apply\");\n  if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {\n    body.unshift(\n      { op: \"local.get\", index: 0 },\n      { op: \"call\", funcIdx: linkedStandaloneCallableKindIdx },\n      { op: \"i32.const\", value: 1 },\n      { op: \"i32.and\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n",
+      "after": "  // the existing local dispatch unchanged.\n  const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, \"callableKind\");\n  const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, \"apply\");\n  // (#6643) …but NEVER for one of THIS module's own native-prototype method\n  // closures. The arm is unshifted AHEAD of the local dispatcher and the peer's\n  // predicate is not a statement about OWNERSHIP — the peer's `__is_callable`\n  // is structural, so it answers 1 for a closure that crossed INTO it too.\n  // `f.apply(thisArg, args)` resolves `apply` to this module's own\n  // `%Function.prototype%` glue (#6630) whenever `%Function.prototype%` is\n  // materialized and `.apply` has been read as a value, and\n  // `__closure_method_call` then hands that GLUE closure to this bridge — where\n  // the peer arm claimed it and shipped the whole operation to the provider,\n  // which cannot run a consumer closure and answered the null sentinel.\n  // Measured against the real `@js-temporal/polyfill` provider: every\n  // `Temporal.PlainDate.from.apply(…)` spelling returned `null` WITHOUT the\n  // provider function ever being entered (a deliberately invalid argument that\n  // must throw returned `null` instead) — the first assertion of test262's\n  // `checkSubclassingIgnoredStatic`. With the conjunct the glue takes its own\n  // local dispatch and the `__apply_closure(target, …)` INSIDE it, where\n  // `target` really is provider-owned, takes the peer arm as #6420 intended.\n  //\n  // The predicate is deliberately NOT \"is locally callable\": that would also\n  // exclude an ORDINARY consumer closure invoked inside the provider, which is\n  // the reverse-call case #6605/#6616 exist for and which MUST reach the peer\n  // (measured — those two witnesses fail on the broader predicate). It is the\n  // narrow \"this module has a dedicated dispatch arm for this exact callee\",\n  // sharing `buildTransferredNativeProtoCallInstrs`'s own claim test.\n  const nativeProtoOwnedBit = buildTransferredNativeProtoOwnedBitInstrs(\n    ctx,\n    collectTransferredNativeProtoReceivers(ctx, 0),\n    0,\n  );\n  if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {\n    body.unshift(\n      { op: \"local.get\", index: 0 },\n      { op: \"call\", funcIdx: linkedStandaloneCallableKindIdx },\n      { op: \"i32.const\", value: 1 },\n      { op: \"i32.and\" },\n      ...(nativeProtoOwnedBit === undefined\n        ? []\n        : ([...nativeProtoOwnedBit, { op: \"i32.eqz\" }, { op: \"i32.and\" }] as Instr[])),\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n",
+      "beforeSha256": "3d7034ea0758cff2e986cd242d18626c137bb2dc3d782472d359423cdcf8d2cd",
+      "afterSha256": "ae6d903fbb31916df3b2a0bd926a4045a92e964aebff0ab4eaee8696562496b2"
+    },
+    {
+      "ordinal": 4,
+      "baseStartLine": 9971,
+      "baseEndLine": 9976,
+      "mainStartLine": 10010,
+      "mainEndLine": 10016,
+      "before": "  const equalsIdx = ctx.nativeStrHelpers.get(\"__str_equals\");\n  const boxNumberIdx = ctx.funcMap.get(\"__box_number\");\n  const boxBooleanIdx = ctx.funcMap.get(\"__box_boolean\");\n  const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;\n  if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;\n  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);\n",
+      "after": "  const equalsIdx = ctx.nativeStrHelpers.get(\"__str_equals\");\n  const boxNumberIdx = ctx.funcMap.get(\"__box_number\");\n  const boxBooleanIdx = ctx.funcMap.get(\"__box_boolean\");\n  const boxSymbolIdx = ctx.funcMap.get(\"__box_symbol\");\n  const boxedNumberTypeIdx = ctx.nativeBoxNumberTypeIdx;\n  if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;\n  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);\n",
+      "beforeSha256": "a73becdcbcd850c818099dd849972fab903382a3a7ae5e55455409adb17eceb4",
+      "afterSha256": "e16e362ce1b60b68113df128d976fd016dcf627e0e07185d8b56d3ca26388f85"
+    },
+    {
+      "ordinal": 5,
+      "baseStartLine": 9990,
+      "baseEndLine": 10001,
+      "mainStartLine": 10030,
+      "mainEndLine": 10054,
+      "before": "    shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };\n  };\n  const byField = new Map<string, Entry[]>();\n  for (const [structName, fields] of ctx.structFields) {\n    if (isSyntheticStructName(structName) || isOpenDescriptorShape(structName, fields)) continue;\n    const typeIdx = ctx.structMap.get(structName);\n    if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;\n    const shapeFieldIdx = fields.findIndex((field) => field?.name === \"$shape\");\n    const shapeId = ctx.shapeIdByStructName.get(structName);\n    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {\n      const field = fields[fieldIdx];\n      // `exposedClosedStructFieldName` owns the special `$constructor` →\n",
+      "after": "    shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };\n  };\n  const byField = new Map<string, Entry[]>();\n  // Descriptor defines on user shapes live in the identity-keyed carrier bag,\n  // not in their physical Wasm slots. Record the exact admitted receiver types\n  // independently of exposed fields: `{ raw: {} }` has no physical `length`,\n  // but a bag-only accessor must still win an ordinary dynamic read.\n  const bagCarrierTypeIdxs = new Set<number>();\n  for (const [structName, fields] of ctx.structFields) {\n    const typeIdx = ctx.structMap.get(structName);\n    const shapeFieldIdx = fields.findIndex((field) => field?.name === \"$shape\");\n    const shapeId = ctx.shapeIdByStructName.get(structName);\n    if (\n      !isSyntheticStructName(structName) &&\n      isUserDeclaredStruct(ctx, structName) &&\n      typeIdx !== undefined &&\n      allocatedTypes.has(typeIdx)\n    ) {\n      bagCarrierTypeIdxs.add(typeIdx);\n    }\n    if (isSyntheticStructName(structName) || isOpenDescriptorShape(structName, fields)) continue;\n    if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;\n    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {\n      const field = fields[fieldIdx];\n      // `exposedClosedStructFieldName` owns the special `$constructor` →\n",
+      "beforeSha256": "785d6815d6512034a4feab312fdc41718ee1f27b2a6cc91483bfed1b9e218ff1",
+      "afterSha256": "7a5e68cbb69a63cc3918efb27915fc23fd455a90a38da6315bcaee72c79f49e9"
+    },
+    {
+      "ordinal": 6,
+      "baseStartLine": 10016,
+      "baseEndLine": 10022,
+      "mainStartLine": 10069,
+      "mainEndLine": 10079,
+      "before": "        field.type.kind === \"ref_null\" ||\n        (field.type.kind === \"f64\" && boxNumberIdx !== undefined) ||\n        (field.type.kind === \"i32\" &&\n          (field.jsBoolean || field.type.boolean ? boxBooleanIdx !== undefined : boxNumberIdx !== undefined));\n      if (!boxable) continue;\n      const presenceSlot = presenceSlotOf(fields, field.name);\n      let entries = byField.get(exposedFieldName);\n",
+      "after": "        field.type.kind === \"ref_null\" ||\n        (field.type.kind === \"f64\" && boxNumberIdx !== undefined) ||\n        (field.type.kind === \"i32\" &&\n          (field.jsBoolean || field.type.boolean\n            ? boxBooleanIdx !== undefined\n            : field.type.symbol === true\n              ? boxSymbolIdx !== undefined\n              : boxNumberIdx !== undefined));\n      if (!boxable) continue;\n      const presenceSlot = presenceSlotOf(fields, field.name);\n      let entries = byField.get(exposedFieldName);\n",
+      "beforeSha256": "b4bd786ec81405b114c347e4b3b95d3f2ab41d38532ca45456170a64e02572e4",
+      "afterSha256": "6adb502c13bbe2cade55ccd9ef784aedf5bd07c646f997c00b3ab4e58838653c"
+    },
+    {
+      "ordinal": 7,
+      "baseStartLine": 10100,
+      "baseEndLine": 10106,
+      "mainStartLine": 10157,
+      "mainEndLine": 10207,
+      "before": "      for (const name of info.residFieldNames) appendFamilyArms(name);\n    }\n  }\n  if (byField.size === 0) return;\n  // A closed struct's f64 field may carry the identity-preserving undefined\n  // sentinel.  The native computed getter returns externref, so reserve one\n  // scratch f64 local for the exact-bit test before boxing.  Keep this local\n",
+      "after": "      for (const name of info.residFieldNames) appendFamilyArms(name);\n    }\n  }\n  // A descriptor in a carrier bag has ordinary-own-property precedence over a\n  // physical field. `__carrier_bag_has` is presence-based (not value-based), so\n  // a getter/data descriptor returning `undefined` remains a hit. Read the bag\n  // through the existing Reflect.get wrapper to bind an accessor's `this` to the\n  // original closed receiver rather than its backing `$Object` bag.\n  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);\n  const bagOfIdx = ctx.funcMap.get(CARRIER_BAG_OF);\n  const reflectGetReceiverIdx = ctx.funcMap.get(\"__reflect_get_receiver\");\n  const bagOverrideArms: Instr[] = [];\n  if (bagHasIdx !== undefined && bagOfIdx !== undefined && reflectGetReceiverIdx !== undefined) {\n    for (const typeIdx of [...bagCarrierTypeIdxs].sort((a, b) => a - b)) {\n      bagOverrideArms.push(\n        { op: \"local.get\", index: 0 },\n        { op: \"any.convert_extern\" },\n        { op: \"ref.test\", typeIdx },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: 0 },\n            { op: \"local.get\", index: 1 },\n            { op: \"call\", funcIdx: bagHasIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [\n                // A positive `__carrier_bag_has` proves `__carrier_bag_of`\n                // has the screened bag for this receiver.\n                { op: \"local.get\", index: 0 },\n                { op: \"call\", funcIdx: bagOfIdx },\n                { op: \"local.get\", index: 1 },\n                { op: \"local.get\", index: 0 },\n                { op: \"call\", funcIdx: reflectGetReceiverIdx },\n                { op: \"return\" },\n              ],\n            },\n          ],\n        },\n      );\n    }\n  }\n  if (byField.size === 0) {\n    if (bagOverrideArms.length > 0) fn.body.unshift(...bagOverrideArms);\n    return;\n  }\n  // A closed struct's f64 field may carry the identity-preserving undefined\n  // sentinel.  The native computed getter returns externref, so reserve one\n  // scratch f64 local for the exact-bit test before boxing.  Keep this local\n",
+      "beforeSha256": "b19ccb77df4d7a37e8d1ef0c69f553f2c93b1410ff35c3c047bc4fd072007d05",
+      "afterSha256": "0a881d81f66373814fc70c9bb980c54e017c7bf29e6f3c5bd945312543758119"
+    },
+    {
+      "ordinal": 8,
+      "baseStartLine": 10170,
+      "baseEndLine": 10175,
+      "mainStartLine": 10271,
+      "mainEndLine": 10277,
+      "before": "      );\n    } else if (entry.fieldType.kind === \"i32\") {\n      if (entry.jsBoolean) read.push({ op: \"call\", funcIdx: boxBooleanIdx! });\n      else read.push({ op: \"f64.convert_i32_s\" }, { op: \"call\", funcIdx: boxNumberIdx! });\n    } else if (entry.fieldType.kind !== \"externref\" && entry.fieldType.kind !== \"ref_extern\") {\n      read.push({ op: \"extern.convert_any\" });\n",
+      "after": "      );\n    } else if (entry.fieldType.kind === \"i32\") {\n      if (entry.jsBoolean) read.push({ op: \"call\", funcIdx: boxBooleanIdx! });\n      else if (entry.fieldType.symbol === true) read.push({ op: \"call\", funcIdx: boxSymbolIdx! });\n      else read.push({ op: \"f64.convert_i32_s\" }, { op: \"call\", funcIdx: boxNumberIdx! });\n    } else if (entry.fieldType.kind !== \"externref\" && entry.fieldType.kind !== \"ref_extern\") {\n      read.push({ op: \"extern.convert_any\" });\n",
+      "beforeSha256": "6778ddbae8fe3614d7d8f4f537747e8ccef92c062fe3d0039eaf13cf98abee2c",
+      "afterSha256": "7592e7cd3f57936bbb032c4b223c191dabf054fbf1c306d1c9589a18345a7d50"
+    },
+    {
+      "ordinal": 9,
+      "baseStartLine": 10408,
+      "baseEndLine": 10413,
+      "mainStartLine": 10510,
+      "mainEndLine": 10516,
+      "before": "    }\n  }\n  fn.body.unshift(\n    // (#4098 G1 s1) Screen ahead of every field arm (see fillClosedStructHasOwnArms).\n    // Fresh Instr objects: finalize remaps bodies in place, a shared tree twice.\n    ...buildTombstoneScreen(ctx, [\n",
+      "after": "    }\n  }\n  fn.body.unshift(\n    ...bagOverrideArms,\n    // (#4098 G1 s1) Screen ahead of every field arm (see fillClosedStructHasOwnArms).\n    // Fresh Instr objects: finalize remaps bodies in place, a shared tree twice.\n    ...buildTombstoneScreen(ctx, [\n",
+      "beforeSha256": "565634e76538e48dbde40d4bbd4de78a396b29641e71229d5180667330b60c20",
+      "afterSha256": "44095e5012fa0fbb5f67ab45fc9596c7f1b1511949cf9e58d85fba592d24df6a"
+    },
+    {
+      "ordinal": 10,
+      "baseStartLine": 11689,
+      "baseEndLine": 11695,
+      "mainStartLine": 11792,
+      "mainEndLine": 11798,
+      "before": " * that field (its index reads as a miss, same as before the fill).\n */\nfunction boxClosedStructFieldToExternref(ctx: CodegenContext, fieldType: ValType): Instr[] | null {\n  if (fieldType.kind === \"externref\") return [];\n  if (fieldType.kind === \"f64\") {\n    const boxNumIdx = ctx.funcMap.get(\"__box_number\");\n    return boxNumIdx === undefined ? null : [{ op: \"call\", funcIdx: boxNumIdx }];\n",
+      "after": " * that field (its index reads as a miss, same as before the fill).\n */\nfunction boxClosedStructFieldToExternref(ctx: CodegenContext, fieldType: ValType): Instr[] | null {\n  if (fieldType.kind === \"externref\" || fieldType.kind === \"ref_extern\") return [];\n  if (fieldType.kind === \"f64\") {\n    const boxNumIdx = ctx.funcMap.get(\"__box_number\");\n    return boxNumIdx === undefined ? null : [{ op: \"call\", funcIdx: boxNumIdx }];\n",
+      "beforeSha256": "c8c8a7aae3b65ca04b74ed154ca54964fe2165fc46e1fd9b5ba7171761ec0d19",
+      "afterSha256": "4645b7f54a9a59a625a0c19f587b889d30bb92ea92313a359552d26c7d575d30"
+    },
+    {
+      "ordinal": 11,
+      "baseStartLine": 11699,
+      "baseEndLine": 11708,
+      "mainStartLine": 11802,
+      "mainEndLine": 11822,
+      "before": "      const boxBoolIdx = ctx.funcMap.get(\"__box_boolean\");\n      if (boxBoolIdx !== undefined) return [{ op: \"call\", funcIdx: boxBoolIdx }];\n    }\n    const boxNumIdx = ctx.funcMap.get(\"__box_number\");\n    return boxNumIdx === undefined ? null : [{ op: \"f64.convert_i32_s\" }, { op: \"call\", funcIdx: boxNumIdx }];\n  }\n  if (fieldType.kind === \"ref\" || fieldType.kind === \"ref_null\") return [{ op: \"extern.convert_any\" }];\n  return null;\n}\n\n",
+      "after": "      const boxBoolIdx = ctx.funcMap.get(\"__box_boolean\");\n      if (boxBoolIdx !== undefined) return [{ op: \"call\", funcIdx: boxBoolIdx }];\n    }\n    if ((fieldType as { symbol?: boolean }).symbol === true) {\n      const boxSymbolIdx = ctx.funcMap.get(\"__box_symbol\");\n      if (boxSymbolIdx !== undefined) return [{ op: \"call\", funcIdx: boxSymbolIdx }];\n    }\n    const boxNumIdx = ctx.funcMap.get(\"__box_number\");\n    return boxNumIdx === undefined ? null : [{ op: \"f64.convert_i32_s\" }, { op: \"call\", funcIdx: boxNumIdx }];\n  }\n  if (\n    fieldType.kind === \"anyref\" ||\n    fieldType.kind === \"eqref\" ||\n    fieldType.kind === \"ref\" ||\n    fieldType.kind === \"ref_null\"\n  ) {\n    return [{ op: \"extern.convert_any\" }];\n  }\n  return null;\n}\n\n",
+      "beforeSha256": "dd73eb282999d56df68b40ea32baa4a66e6b6082b60251b8807057841987bb64",
+      "afterSha256": "a10aa25afdd877aa0ec953b03d5c88561da2dbd4b25e32fb1a7c02c7c3188c32"
+    },
+    {
+      "ordinal": 12,
+      "baseStartLine": 11756,
+      "baseEndLine": 11762,
+      "mainStartLine": 11870,
+      "mainEndLine": 11889,
+      "before": "  const getIdxFn = findFn(\"__extern_get_idx\");\n  const hasIdxFn = findFn(\"__extern_has_idx\");\n  if (!lenFn && !getIdxFn && !hasIdxFn) return;\n  const unboxNumIdx = ctx.funcMap.get(\"__unbox_number\");\n  // (#3317) OBJECT-valued `length` fields (`{1:true, length:{toString(){…}}}`,\n  // the test262 `-3-19/-3-20/-3-21/-3-22` indexOf/lastIndexOf family plus\n  // includes/return-abrupt-tonumber-length) run the observable §7.1.20\n",
+      "after": "  const getIdxFn = findFn(\"__extern_get_idx\");\n  const hasIdxFn = findFn(\"__extern_has_idx\");\n  if (!lenFn && !getIdxFn && !hasIdxFn) return;\n  const ordinaryExternGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const ordinaryNumberToStringIdx = ctx.funcMap.get(\"number_toString\");\n  const ordinaryExternHasIdx = ctx.funcMap.get(\"__extern_has\");\n  const unboxNumIdx = ctx.funcMap.get(\"__unbox_number\");\n  // Keep the established physical-reader fallback if a partial runtime lacks\n  // any part of the shared ordinary-read trio. Normal standalone modules have\n  // all four helpers; the guard only avoids turning a missing helper into a\n  // new regression in a reduced profile.\n  const ordinaryReaderReady =\n    ctx.standalone &&\n    ordinaryExternGetIdx !== undefined &&\n    ordinaryNumberToStringIdx !== undefined &&\n    ordinaryExternHasIdx !== undefined &&\n    unboxNumIdx !== undefined;\n  // (#3317) OBJECT-valued `length` fields (`{1:true, length:{toString(){…}}}`,\n  // the test262 `-3-19/-3-20/-3-21/-3-22` indexOf/lastIndexOf family plus\n  // includes/return-abrupt-tonumber-length) run the observable §7.1.20\n",
+      "beforeSha256": "a9c4a6569bea7d66e8e6a2e0746b5e99a7fbf92f738f94c4d65ce8b44b6380d3",
+      "afterSha256": "e027958a9eb77ca3afd42053ed9111ecc71dba4ceb558d24c554fd25affaf516"
+    },
+    {
+      "ordinal": 13,
+      "baseStartLine": 11845,
+      "baseEndLine": 11850,
+      "mainStartLine": 11972,
+      "mainEndLine": 11990,
+      "before": "  // #5205) and is `ref.test`-guarded per type like every other arm, so no\n  // other receiver shape changes.\n  const tupleTypeIdxs = new Set(ctx.tupleTypeMap.values());\n  for (const [structName, fields] of ctx.structFields) {\n    const typeIdx = ctx.structMap.get(structName);\n    if (typeIdx !== undefined && !seen.has(typeIdx) && tupleTypeIdxs.has(typeIdx)) {\n",
+      "after": "  // #5205) and is `ref.test`-guarded per type like every other arm, so no\n  // other receiver shape changes.\n  const tupleTypeIdxs = new Set(ctx.tupleTypeMap.values());\n  // User-declared closed structs may carry descriptor overrides in the\n  // identity-keyed bag. Route them through ordinary Get/Has rather than a\n  // physical slot scan so accessor abrupt completion, descriptor precedence,\n  // Symbol identity, and present `undefined` all survive the array-like ABI.\n  const ordinaryReadTypeIdxs = new Set<number>();\n  if (ordinaryReaderReady) {\n    const allocatedTypes = allocatedStructTypeIndices(ctx.mod);\n    for (const [structName] of ctx.structFields) {\n      if (isSyntheticStructName(structName) || !isUserDeclaredStruct(ctx, structName)) continue;\n      const typeIdx = ctx.structMap.get(structName);\n      if (typeIdx !== undefined && allocatedTypes.has(typeIdx)) ordinaryReadTypeIdxs.add(typeIdx);\n    }\n  }\n  for (const [structName, fields] of ctx.structFields) {\n    const typeIdx = ctx.structMap.get(structName);\n    if (typeIdx !== undefined && !seen.has(typeIdx) && tupleTypeIdxs.has(typeIdx)) {\n",
+      "beforeSha256": "7346610e3d36c49251ba21e2d28493bba8979cdaa8f98e47f27cce6f718af41b",
+      "afterSha256": "e265ddfff32b22afd217ae71c6e55f9f60cbe4f27302df44fe921009d5b2ea8f"
+    },
+    {
+      "ordinal": 14,
+      "baseStartLine": 11864,
+      "baseEndLine": 11869,
+      "mainStartLine": 12004,
+      "mainEndLine": 12013,
+      "before": "      continue;\n    }\n    if (typeIdx === undefined || seen.has(typeIdx)) continue;\n    if (\n      structName.startsWith(\"Wrapper\") ||\n      structName === \"$AnyValue\" ||\n",
+      "after": "      continue;\n    }\n    if (typeIdx === undefined || seen.has(typeIdx)) continue;\n    if (ordinaryReadTypeIdxs.has(typeIdx)) {\n      seen.add(typeIdx);\n      continue;\n    }\n    if (\n      structName.startsWith(\"Wrapper\") ||\n      structName === \"$AnyValue\" ||\n",
+      "beforeSha256": "1da14f305482712b65531ea351d5f17628bfbcfaf6727132cc9f2cdfe997d23a",
+      "afterSha256": "6f1efc1e63928a3c9fa6da4f1cd35cacdecc0f22a7998729471b7f92b722b97b"
+    },
+    {
+      "ordinal": 15,
+      "baseStartLine": 11905,
+      "baseEndLine": 11912,
+      "mainStartLine": 12049,
+      "mainEndLine": 12057,
+      "before": "    if (protoGlobalIdx !== undefined) fnctorProtoGlobals.set(typeIdx, protoGlobalIdx);\n    cands.push({ typeIdx, lengthFieldIdx, lengthFieldType: fields[lengthFieldIdx]!.type, numericFields });\n  }\n  if (cands.length === 0) return;\n  cands.sort((a, b) => a.typeIdx - b.typeIdx);\n\n  const idxMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: \"ref.null.extern\" }];\n  // (#4160) Arm-level miss for a closed-struct receiver — every own integer\n",
+      "after": "    if (protoGlobalIdx !== undefined) fnctorProtoGlobals.set(typeIdx, protoGlobalIdx);\n    cands.push({ typeIdx, lengthFieldIdx, lengthFieldType: fields[lengthFieldIdx]!.type, numericFields });\n  }\n  if (cands.length === 0 && ordinaryReadTypeIdxs.size === 0) return;\n  cands.sort((a, b) => a.typeIdx - b.typeIdx);\n  const ordinaryReadTypeIdxsSorted = [...ordinaryReadTypeIdxs].sort((a, b) => a - b);\n\n  const idxMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: \"ref.null.extern\" }];\n  // (#4160) Arm-level miss for a closed-struct receiver — every own integer\n",
+      "beforeSha256": "0efb698ceaa1e66d1c8002346a41652dcc650b4c5b53ebf93e17bf551aa800bc",
+      "afterSha256": "24ca4dc02294b9b11a36cbbdd1201ae6add19e0f190817e807f3da0f94ebabb8"
+    },
+    {
+      "ordinal": 16,
+      "baseStartLine": 11950,
+      "baseEndLine": 11958,
+      "mainStartLine": 12095,
+      "mainEndLine": 12177,
+      "before": "    fn.body[1]?.op === \"any.convert_extern\" &&\n    fn.body[2]?.op === \"local.set\";\n\n  // ── __extern_length arms (locals: 1=any, 2=lenF64, 3=lenTrunc) ──\n  if (lenFn && hasPreamble(lenFn)) {\n    const arms: Instr[] = [];\n    let lenPrimLocalAdded = false; // (#3317) L_PRIM scratch appended at most once\n    for (const cand of cands) {\n      // (#5383 S2l) A tuple carrier's length is its field count — a constant,\n",
+      "after": "    fn.body[1]?.op === \"any.convert_extern\" &&\n    fn.body[2]?.op === \"local.set\";\n\n  // User carriers deliberately take the ordinary dynamic path. Unlike a\n  // physical scan it observes bag descriptors first; using the same key\n  // conversion in Get and Has keeps an accessor-only numeric key visible to\n  // every array-like consumer without treating `undefined` as absence.\n  const ordinaryLengthArms = (): Instr[] => {\n    if (!ordinaryReaderReady) return [];\n    const arms: Instr[] = [];\n    for (const typeIdx of ordinaryReadTypeIdxsSorted) {\n      arms.push(\n        { op: \"local.get\", index: 1 },\n        { op: \"ref.test\", typeIdx },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: 0 },\n            ...nativeStringLiteralInstrs(ctx, \"length\"),\n            { op: \"extern.convert_any\" },\n            { op: \"call\", funcIdx: ordinaryExternGetIdx! },\n            ...buildArrayLikeToLengthFromExternref(ctx, symbolTypeIdx),\n            { op: \"return\" },\n          ],\n        },\n      );\n    }\n    return arms;\n  };\n  const ordinaryGetIdxArms = (): Instr[] => {\n    if (!ordinaryReaderReady) return [];\n    const arms: Instr[] = [];\n    for (const typeIdx of ordinaryReadTypeIdxsSorted) {\n      arms.push(\n        { op: \"local.get\", index: 2 },\n        { op: \"ref.test\", typeIdx },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: 0 },\n            // Do not truncate: ToPropertyKey of a numeric index is its\n            // canonical ToString form, matching `buildExternGetIdxBody`.\n            { op: \"local.get\", index: 1 },\n            { op: \"call\", funcIdx: ordinaryNumberToStringIdx! },\n            { op: \"call\", funcIdx: ordinaryExternGetIdx! },\n            { op: \"return\" },\n          ],\n        },\n      );\n    }\n    return arms;\n  };\n  const ordinaryHasIdxArms = (): Instr[] => {\n    if (!ordinaryReaderReady) return [];\n    const arms: Instr[] = [];\n    for (const typeIdx of ordinaryReadTypeIdxsSorted) {\n      arms.push(\n        { op: \"local.get\", index: 2 },\n        { op: \"ref.test\", typeIdx },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: 0 },\n            { op: \"local.get\", index: 1 },\n            { op: \"call\", funcIdx: ordinaryNumberToStringIdx! },\n            { op: \"call\", funcIdx: ordinaryExternHasIdx! },\n            { op: \"return\" },\n          ],\n        },\n      );\n    }\n    return arms;\n  };\n\n  // ── __extern_length arms (locals: 1=any, 2=lenF64, 3=lenTrunc) ──\n  if (lenFn && hasPreamble(lenFn)) {\n    const arms: Instr[] = ordinaryLengthArms();\n    let lenPrimLocalAdded = false; // (#3317) L_PRIM scratch appended at most once\n    for (const cand of cands) {\n      // (#5383 S2l) A tuple carrier's length is its field count — a constant,\n",
+      "beforeSha256": "446d1e13d08fee834fbb83b423b085b23eedad4b8169a4e9a4486271958ebb1a",
+      "afterSha256": "68e9dafb6d5cf6f912416f18ad6f78c4ef88436028c4a47fc3597a66db16fccb"
+    },
+    {
+      "ordinal": 17,
+      "baseStartLine": 12092,
+      "baseEndLine": 12098,
+      "mainStartLine": 12311,
+      "mainEndLine": 12317,
+      "before": "\n  // ── __extern_get_idx arms (params: 1=idx f64; locals: 2=any) ──\n  if (getIdxFn && hasPreamble(getIdxFn)) {\n    const arms: Instr[] = [];\n    const getIdxSelfIdx = ctx.funcMap.get(\"__extern_get_idx\");\n    for (const cand of cands) {\n      const fieldChecks: Instr[] = [];\n",
+      "after": "\n  // ── __extern_get_idx arms (params: 1=idx f64; locals: 2=any) ──\n  if (getIdxFn && hasPreamble(getIdxFn)) {\n    const arms: Instr[] = ordinaryGetIdxArms();\n    const getIdxSelfIdx = ctx.funcMap.get(\"__extern_get_idx\");\n    for (const cand of cands) {\n      const fieldChecks: Instr[] = [];\n",
+      "beforeSha256": "8d1c2d9e8dfc05356def5cc384cf21349d51eda2c3c56614465da2cf1a5e66af",
+      "afterSha256": "e8646818f31f65c588e13c8d2aa6d6437504af9c01c19969a4933642a26b38be"
+    },
+    {
+      "ordinal": 18,
+      "baseStartLine": 12138,
+      "baseEndLine": 12144,
+      "mainStartLine": 12357,
+      "mainEndLine": 12363,
+      "before": "\n  // ── __extern_has_idx arms (params: 1=idx f64; locals: 2=any) ──\n  if (hasIdxFn && hasPreamble(hasIdxFn)) {\n    const arms: Instr[] = [];\n    const hasIdxSelfIdx = ctx.funcMap.get(\"__extern_has_idx\");\n    for (const cand of cands) {\n      const protoGlobalIdx = fnctorProtoGlobals.get(cand.typeIdx);\n",
+      "after": "\n  // ── __extern_has_idx arms (params: 1=idx f64; locals: 2=any) ──\n  if (hasIdxFn && hasPreamble(hasIdxFn)) {\n    const arms: Instr[] = ordinaryHasIdxArms();\n    const hasIdxSelfIdx = ctx.funcMap.get(\"__extern_has_idx\");\n    for (const cand of cands) {\n      const protoGlobalIdx = fnctorProtoGlobals.get(cand.typeIdx);\n",
+      "beforeSha256": "115e1951c62fe25d97194ffe1f54c3fd5ffa2020edaadd7725aa3e4985c8f543",
+      "afterSha256": "0621b5255585ec2cd4eee4357011fb58b953b29b137e0708e79d6f8119f74a25"
+    }
+  ]
+}

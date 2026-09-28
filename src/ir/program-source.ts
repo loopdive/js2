@@ -2,6 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
+import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
@@ -22,6 +23,7 @@ import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } fro
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
+import { preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { preparedIrProgramOwner } from "./program.js";
@@ -32,6 +34,8 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
+import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
+import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
@@ -159,6 +163,85 @@ function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefin
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
   if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
   return undefined;
+}
+
+/** Shared logical callable conversion; this does not issue a physical carrier. */
+function checkerCallableType(checker: ts.TypeChecker, input: ts.Type, where: string): IrType | null {
+  const active = new Set<ts.Type>();
+  const convert = (type: ts.Type): IrType | null => {
+    if ((type.flags & ts.TypeFlags.Void) !== 0) return null;
+    if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
+    if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
+    if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
+    if (active.has(type)) unsupported(`callable annotation in ${where} has a recursive anonymous contract`);
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    if (signatures.length !== 1 || checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length)
+      unsupported(`callable annotation in ${where} requires one non-constructing call signature`);
+    const signature = signatures[0]!;
+    if (signature.typeParameters?.length || signature.thisParameter)
+      unsupported(`callable annotation in ${where} has unsupported generic/this parameters`);
+    active.add(type);
+    try {
+      const params = signature.parameters.map((symbol) => {
+        const declaration = symbol.valueDeclaration;
+        if (
+          !declaration ||
+          !ts.isParameter(declaration) ||
+          !declaration.type ||
+          declaration.dotDotDotToken ||
+          declaration.questionToken ||
+          declaration.initializer ||
+          (symbol.flags & ts.SymbolFlags.Optional) !== 0
+        )
+          unsupported(`callable annotation in ${where} requires exact required parameter declarations`);
+        const value = convert(checker.getTypeOfSymbolAtLocation(symbol, declaration));
+        if (!value) unsupported(`callable annotation in ${where} cannot use a void parameter`);
+        return value;
+      });
+      return {
+        kind: "callable",
+        signature: { params, returnType: convert(checker.getReturnTypeOfSignature(signature)) },
+      };
+    } finally {
+      active.delete(type);
+    }
+  };
+  return convert(input);
+}
+
+/** Checker-certified callable annotations; no physical carrier or provider is inferred. */
+function checkerCallable(checker: ts.TypeChecker, node: ts.TypeNode, where: string): IrType | undefined {
+  const declared = checker.getTypeFromTypeNode(node);
+  if (!checker.getSignaturesOfType(declared, ts.SignatureKind.Call).length) return undefined;
+  const result = checkerCallableType(checker, declared, where);
+  const observed = checkerCallableType(checker, checker.getTypeAtLocation(node), where);
+  if (!result || preparedIrDataMismatch(result, observed) !== undefined)
+    unsupported(`callable annotation in ${where} disagrees with its checker contract`);
+  return result;
+}
+
+/** Preserve a real inferred callable return instead of the scalar lattice's null fallback. */
+function checkerInferredCallableResult(
+  checker: ts.TypeChecker,
+  declaration: ts.FunctionDeclaration,
+  where: string,
+): IrType | undefined {
+  if (
+    declaration.type ||
+    !declaration.body ||
+    declaration.asteriskToken ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  )
+    return undefined;
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  if (!signature) return undefined;
+  const type = checker.getReturnTypeOfSignature(signature);
+  const parts = type.isUnionOrIntersection() ? type.types : [type];
+  if (!parts.some((part) => checker.getSignaturesOfType(part, ts.SignatureKind.Call).length)) return undefined;
+  if (type.isUnionOrIntersection()) unsupported(`inferred callable result in ${where} has an ambiguous contract`);
+  const result = checkerCallableType(checker, type, where);
+  if (result?.kind !== "callable") unsupported(`inferred callable result in ${where} lost its checker contract`);
+  return result;
 }
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
@@ -537,7 +620,9 @@ function prepareSourceFunctionSignatures(
       family?.params ??
       declaration.parameters.map((param, index) =>
         param.type
-          ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ?? typeNodeToIr(param.type, unit.displayName))
+          ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
+            checkerCallable(checker, param.type, unit.displayName) ??
+            typeNodeToIr(param.type, unit.displayName))
           : propagated?.params[index]
             ? lowerTypeToIrType(propagated.params[index]!)
             : checkerScalar(checker, param),
@@ -560,10 +645,9 @@ function prepareSourceFunctionSignatures(
                 returnNode.typeName.text === "Promise"
               ? { kind: "val", val: { kind: "externref" } }
               : returnNode
-                ? typeNodeToIr(returnNode, unit.displayName)
-                : propagated
-                  ? lowerTypeToIrType(propagated.returnType)
-                  : null;
+                ? (checkerCallable(checker, returnNode, unit.displayName) ?? typeNodeToIr(returnNode, unit.displayName))
+                : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
+                  (propagated ? lowerTypeToIrType(propagated.returnType) : null));
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",
@@ -574,6 +658,41 @@ function prepareSourceFunctionSignatures(
 }
 
 /** Build each original source body once, before any backend context or allocator exists. */
+/** Combine source-owned call/read plans; no physical provider is selected here. */
+function prepareSourceBuiltinResolvers(
+  input: IrProgramSourceInput,
+  roots: ts.FunctionDeclaration | readonly ts.Statement[],
+) {
+  return {
+    ...prepareNumberConversionResolver(input.checker, input.sourceFiles, roots),
+    ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
+  };
+}
+
+/** Preserve exact original lifted provenance before admitting derived records. */
+function appendLiftedSourceProvenance(
+  provenanceRecords: ReturnType<typeof lowerFunctionAstToIr>["liftedUnitProvenance"],
+  inventory: IrUnitInventory,
+  unit: IrUnitInventory["terminalUnits"][number],
+  derivedUnits: ProgramAbiDerivedUnitRecord[],
+): void {
+  for (const provenance of provenanceRecords) {
+    if ("sourceUnit" in provenance) {
+      const sourceUnit = inventory.allUnits.find((record) => record.id === provenance.id);
+      if (
+        !sourceUnit ||
+        sourceUnit.sourceId !== unit.sourceId ||
+        sourceUnit.lexicalOwnerId !== provenance.parentId ||
+        sourceUnit.ordinal !== provenance.ordinal
+      )
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          `lifted source ${provenance.id} contradicts the original inventory`,
+        );
+    } else derivedUnits.push({ ...provenance, sourceId: unit.sourceId, terminalOwnerId: unit.id });
+  }
+}
+
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
@@ -693,6 +812,10 @@ export function prepareIrProgramSources(
         }
       }
     }
+    const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
+    const closureCallableParameters = new Set(
+      [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
+    );
     const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
     for (const use of callGraph.uses) {
       diagnostic.active = use.ownerUnitId;
@@ -755,6 +878,8 @@ export function prepareIrProgramSources(
         };
       };
       const resolver: IrFromAstResolver = {
+        sourceClosureInvocation: (expression) => closureInvocations.get(expression),
+        sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
         resolveModuleBinding: resolveBinding,
         preparedAsyncAwaitSite: (awaitExpression) => {
           const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
@@ -776,6 +901,13 @@ export function prepareIrProgramSources(
         ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
         : identity.declarationByUnitId.get(unit.id)!;
       if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
+      Object.assign(
+        resolver,
+        prepareSourceBuiltinResolvers(
+          input,
+          moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration,
+        ),
+      );
       const signature = signatures.get(unit.id);
       const lowered = lowerFunctionAstToIr(declaration, {
         ownerUnitId: unit.id,
@@ -817,21 +949,7 @@ export function prepareIrProgramSources(
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
       functions.push(lowered.main, ...lowered.lifted);
-      for (const provenance of lowered.liftedUnitProvenance) {
-        if ("sourceUnit" in provenance) {
-          const sourceUnit = inventory.allUnits.find((record) => record.id === provenance.id);
-          if (
-            !sourceUnit ||
-            sourceUnit.sourceId !== unit.sourceId ||
-            sourceUnit.lexicalOwnerId !== provenance.parentId ||
-            sourceUnit.ordinal !== provenance.ordinal
-          )
-            throw new PreparedIrProgramInvariantError(
-              "invalid-prepared-data",
-              `lifted source ${provenance.id} contradicts the original inventory`,
-            );
-        } else derivedUnits.push({ ...provenance, sourceId: unit.sourceId, terminalOwnerId: unit.id });
-      }
+      appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
     }
     nativeFamily?.assertCurrent();
     if (nativeDelay)

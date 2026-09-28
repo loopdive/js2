@@ -21,6 +21,7 @@ import {
   createVectorBackingArrayType,
   createVectorCarrierType,
 } from "../../runtime/wasmgc/values/vector-grow-store.js";
+import { createRefCellType, refCellTypeKey } from "../../runtime/wasmgc/values/ref-cell-layouts.js";
 import type { CodegenContext } from "../context/types.js";
 import { internFunctionType } from "../../wasm/physical/function-types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
@@ -763,19 +764,12 @@ export function getOrRegisterTemplateVecType(ctx: CodegenContext): number {
  * Get or register a ref cell struct type for mutable closure captures.
  */
 export function getOrRegisterRefCellType(ctx: CodegenContext, valType: ValType): number {
-  const key =
-    valType.kind === "ref" || valType.kind === "ref_null"
-      ? `${valType.kind}_${(valType as { typeIdx: number }).typeIdx}`
-      : valType.kind;
+  const key = refCellTypeKey(valType);
   const existing = ctx.refCellTypeMap.get(key);
   if (existing !== undefined) return existing;
 
   const typeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__ref_cell_${key}`,
-    fields: [{ name: "value", type: valType, mutable: true }],
-  });
+  ctx.mod.types.push(createRefCellType(key, valType));
   ctx.refCellTypeMap.set(key, typeIdx);
   return typeIdx;
 }

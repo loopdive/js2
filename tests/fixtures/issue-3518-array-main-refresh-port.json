@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "priorCommit": "90a0219f954857012e70c0ca6c2f3bc5d71397b4",
+  "mainCommit": "bb41a01224b8173818f4e4cde86f1fdf1905d8aa",
+  "mergeBase": "5bfc069422c7cece3e7f19f84e7ce3e51be2269c",
+  "records": [
+    {
+      "path": "src/codegen/expressions/calls.ts",
+      "before": {
+        "gitBlob": "6e62b4f8a0b50697a0d775cc88f90f009eafcb84",
+        "sha256": "b9f0c5d2d0a8f6603e0e174cfe8abb20dd2843b64ae14ff75a937467ee0f3ff7"
+      },
+      "after": {
+        "gitBlob": "325fa2431c7adab9ab2ef074bd031d70f44766b8",
+        "sha256": "631b1b2b58d252af22c0b74bbf7ed8387e0c175d24a00c609f1420085b8c18b6"
+      },
+      "upstream": {
+        "before": {
+          "gitBlob": "6e62b4f8a0b50697a0d775cc88f90f009eafcb84",
+          "sha256": "b9f0c5d2d0a8f6603e0e174cfe8abb20dd2843b64ae14ff75a937467ee0f3ff7"
+        },
+        "after": {
+          "gitBlob": "325fa2431c7adab9ab2ef074bd031d70f44766b8",
+          "sha256": "631b1b2b58d252af22c0b74bbf7ed8387e0c175d24a00c609f1420085b8c18b6"
+        }
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === \"String\" && member === \"normalize\";\n  for (let i = 0; i < paramTypes.length; i++) {\n",
+          "after": "    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === \"String\" && member === \"normalize\";\n  // (#6701) `Array.prototype.slice.call(o, k)`: an omitted `end` is\n  // `undefined` (⇒ len), not `null` (⇒ 0), so pad it with the canonical\n  // undefined — `[].slice.call(arguments, 1)` answered an empty array.\n  const arraySliceEnd = ctx.standalone && member === \"slice\" && getNativeProtoBuiltinGlue(ctx, brand)?.name === \"Array\";\n  for (let i = 0; i < paramTypes.length; i++) {\n",
+          "beforeSha256": "17e4625b19944e806f20c9a3e16bab907c526d67bc0b2fe18a927b9071f5f207",
+          "afterSha256": "ba066013585db9c9e12cb747c9626931f61ad5cbdf52f0a501b288b78c5bc746",
+          "beforeOffset": 72938,
+          "afterOffset": 72938,
+          "upstreamBeforeOffset": 72938,
+          "upstreamAfterOffset": 72938
+        },
+        {
+          "ordinal": 1,
+          "before": "      const missingPad =\n        nativeStringNormalize && i === 1 ? canonicalUndefinedExternInstrs(ctx) : arrayBufferUndefinedPad;\n      fctx.body.push(...(missingPad ?? [{ op: \"ref.null.extern\" }]));\n",
+          "after": "      const missingPad =\n        (nativeStringNormalize && i === 1) || arraySliceEnd\n          ? canonicalUndefinedExternInstrs(ctx)\n          : arrayBufferUndefinedPad;\n      fctx.body.push(...(missingPad ?? [{ op: \"ref.null.extern\" }]));\n",
+          "beforeSha256": "9c969647c81f4b1f5f67ddb082d2cb564387f1f99159942041bc10c4eb5c54e8",
+          "afterSha256": "8daa2c391bb15c2cf65155792bfb6bb2fa40928df175586eefdd3cf81f7ad303",
+          "beforeOffset": 74573,
+          "afterOffset": 74908,
+          "upstreamBeforeOffset": 74573,
+          "upstreamAfterOffset": 74908
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/object-runtime.ts",
+      "before": {
+        "gitBlob": "25926f700ddac97e20cd2f2e97efad583628d608",
+        "sha256": "d27cc45cfbca7e8fbcfd878c64faad9d5b0dd718ec3833779f8525a3acac43fb"
+      },
+      "after": {
+        "gitBlob": "b31b3ff6a6162b7d3c8cd85e72582360153a3548",
+        "sha256": "4fdafd412c04e87006c335567647810cbb185e82d405e62e196144c2f4e98228"
+      },
+      "upstream": {
+        "before": {
+          "gitBlob": "9b4406d125a508ad7c05772d1d9f4cb9150e07da",
+          "sha256": "24ef1173d8fe92682f26a259332ceec65ac37945345d687e7b93af9645617d22"
+        },
+        "after": {
+          "gitBlob": "9deafec2de7afe1b9bb486996d7dcf65bf6bb490",
+          "sha256": "a1ba85c949365f81773e389bc53a163ae4679fa5acbd4bdff6613f1ac0da1a13"
+        }
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": " */\nimport {\n",
+          "after": " */\nimport { buildVariadicBuiltinApplyArm } from \"./apply-closure-variadic-builtin.js\"; // (#6701)\nimport {\n",
+          "beforeSha256": "ef4073a07e5880583f141ebe53814e7d532b70a9b867b87f765ad67dfe52d498",
+          "afterSha256": "70c240475b95fe13b1b029731a7a2eab89ca984448802a0fb3e64fb004d41f0e",
+          "beforeOffset": 3330,
+          "afterOffset": 3330,
+          "upstreamBeforeOffset": 2952,
+          "upstreamAfterOffset": 2952
+        },
+        {
+          "ordinal": 1,
+          "before": "  const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);\n\n",
+          "after": "  const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);\n  const variadicBuiltinArm = buildVariadicBuiltinApplyArm(ctx, locals, 3, argcGlobalIdx);\n\n",
+          "beforeSha256": "07aa923b010188512b56b7fb5b0e38b0baefddea160c4abdfec054205f6a0b0e",
+          "afterSha256": "c024c02014acf2aa3fe17745b19c486df361ec8d328ce7402ffdbfcf9ce73d5e",
+          "beforeOffset": 292153,
+          "afterOffset": 292248,
+          "upstreamBeforeOffset": 352273,
+          "upstreamAfterOffset": 352368
+        },
+        {
+          "ordinal": 2,
+          "before": "    ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),\n    ...widen,\n",
+          "after": "    ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),\n    ...variadicBuiltinArm, // (#6701) Math.max/min, String.fromCharCode values\n    ...widen,\n",
+          "beforeSha256": "5f102234d295ee6a238edffd556fb43121db5bc0ae078c5b4059725c7fdd7741",
+          "afterSha256": "d0ff67d026a56ef70300a95d98d23442151c1137d4f7a29095901be8a0ffab71",
+          "beforeOffset": 299294,
+          "afterOffset": 299479,
+          "upstreamBeforeOffset": 360719,
+          "upstreamAfterOffset": 360904
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/closure-exports.ts",
+      "before": {
+        "gitBlob": "00c5cd8bae8fdfe0744bad6d2a02e4b94c535e37",
+        "sha256": "17584fdedb87ca9eec60623ec130ade4bd15aff0697c0f92ecb44c741055efbd"
+      },
+      "after": {
+        "gitBlob": "8d65b08491a7f8db6eddec3550a4a928286fa8ab",
+        "sha256": "3253fb30a184f9aef53e975a000bc05d5a32890ec4783e19f93d63a240b2fb84"
+      },
+      "upstream": {
+        "before": {
+          "gitBlob": "e7d5c22ef6c4107b31f5663a89d3a460755b2539",
+          "sha256": "83be32f9cdfc087d3d422f78171e27907bd8be5467db206d05c1713f9e3c7f51"
+        },
+        "after": {
+          "gitBlob": "d4fdad429d4f0b4b6d04a2b47658f5afddc1aaf0",
+          "sha256": "a9cb9ef2749d94682cbf281e6fee351a00aa81c323d80373cb0f1259dec2f044"
+        }
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "\nimport { ts } from \"../ts-api.js\";\n",
+          "after": "\nimport { buildVariadicBuiltinMethodCallArm, restoreThisKeepResult } from \"./apply-closure-variadic-builtin.js\"; // (#6701)\nimport { ts } from \"../ts-api.js\";\n",
+          "beforeSha256": "fcbab5e9c15b2ddcf595515ec6ec38455e08e056b61d0c9bb5533d8abe0a4b7e",
+          "afterSha256": "2ee3d7f45703ee040acb8de0fc869b9a72cc17f1e60a9af5ab09957d4163954d",
+          "beforeOffset": 1097,
+          "afterOffset": 1097,
+          "upstreamBeforeOffset": 528,
+          "upstreamAfterOffset": 528
+        },
+        {
+          "ordinal": 1,
+          "before": "  body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));\n\n",
+          "after": "  body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));\n  // (#6701) Math.max/min / String.fromCharCode values take ONE packed-args vec.\n  const restoreThis = restoreThisKeepResult(resultSaveLocal, prevThisLocal, currentThisGlobalIdx);\n  body.push(...buildVariadicBuiltinMethodCallArm(ctx, arity, anyLocal, restoreThis));\n\n",
+          "beforeSha256": "2eb229db7aa00de15752903a72e5f94f15968bcc2318437aa0128a9bc5f540c7",
+          "afterSha256": "1312f37035a0fafdae896cec501dcaa2bf19086f92281f0326928e2e395e4d3b",
+          "beforeOffset": 65896,
+          "afterOffset": 66019,
+          "upstreamBeforeOffset": 70901,
+          "upstreamAfterOffset": 71024
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/apply-closure-variadic-builtin.ts",
+      "gitBlob": "e447950d4cf80b167671cd69f4083f49dcdabab0",
+      "sha256": "030d401c3784a5325d606ce3af00a4db5311220cadb7249e8313bbc1aab3410b"
+    }
+  ]
+}

@@ -26,6 +26,8 @@
  * the `ObjectDescriptorHelperState` bundle so the `registerNative` call ORDER
  * (and therefore the minted func-index sequence) is preserved exactly.
  */
+import { buildObjectDataDescriptorBody } from "./object-descriptor-data.js";
+import { buildOrdinaryObjectAccessorDescriptorBody } from "../runtime/wasmgc/values/ordinary-object-descriptor-accessor.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -298,7 +300,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // locals: 4=o(ref null $Object) 5=any(anyref) 6=cap 7=load 8=nflags(i32) 9=hf(i32)
   //         10=e(ref null $PropEntry) 11=efl(i32)  — #2042 S4 ValidateAndApply
   {
-    const NATIVE_ATTR_MASK = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE; // 0x07
+    // 0x07
 
     // #2042 S4 — ValidateAndApplyPropertyDescriptor (§10.1.6.3) preflight for the
     // DATA-descriptor define. The host flags f64 carries, beyond the value bits
@@ -313,197 +315,44 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const s4TypeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const s4ExnTagIdx = ensureExnTag(ctx);
     const s4ObjectIsIdx = ctx.funcMap.get("__object_is")!;
-    const HOST_WRITABLE_SPECIFIED = 1 << 3;
-    const HOST_ENUMERABLE_SPECIFIED = 1 << 4;
-    const HOST_CONFIGURABLE_SPECIFIED = 1 << 5;
-    const HOST_HAS_VALUE = 1 << 7;
-    const s4Throw = (message: string): Instr[] => {
+    const s4Literal = (message: string): Instr[] => {
       addStringConstantGlobal(ctx, message);
-      return [
-        ...stringConstantExternrefInstrs(ctx, message),
-        { op: "call", funcIdx: s4TypeErrorCtorIdx },
-        { op: "throw", tagIdx: s4ExnTagIdx },
-      ];
+      return structuredClone(stringConstantExternrefInstrs(ctx, message));
     };
-    // `(hf & valueBit) != 0` as an i32 0/1.
-    const hfBit = (bit: number): Instr[] => [
-      { op: "local.get", index: 9 },
-      { op: "i32.const", value: bit },
-      { op: "i32.and" },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ne" },
-    ];
-    // `(efl & flagBit) != 0` as an i32 0/1 (existing entry's flag word, local 12).
-    const eflBit = (bit: number): Instr[] => [
-      { op: "local.get", index: 12 },
-      { op: "i32.const", value: bit },
-      { op: "i32.and" },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ne" },
-    ];
-    // The preflight body, emitted after `o` (local 4) and `hf` (local 9) are set,
-    // before the grow/insert. §10.1.6.3 in spec order.
-    const s4Preflight: Instr[] = [
-      // e = __obj_find(o, key)  (local 11)
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: 11 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        // current is undefined (new property): §10.1.6.3 step 2 — reject if the
-        // object is non-extensible.
-        then: [
-          { op: "local.get", index: 4 },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-          { op: "i32.const", value: OBJ_FLAG_NONEXTENSIBLE },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            // (#5316 r6) DELIBERATELY NOT guarded by the receiver-owns-the-key
-            // predicate its accessor twin uses (`accNonExtensibleArm` below).
-            // The guard was written here for symmetry, measured, and reverted:
-            // it silenced the throw of
-            // `Object.defineProperty(Object.freeze({existing:null}),"existing",
-            // {value:2})`, which node throws and this arm correctly threw — so
-            // the arm IS reachable for a frozen carrier receiver. A data→data
-            // redefine of an existing property is legal on a merely
-            // non-extensible or sealed object and illegal on a frozen one, so
-            // relaxing the refusal by ownership alone is too coarse, and no
-            // probe shows this arm refusing a define that must succeed. See the
-            // r6 probe table in plan/issues/5316-*.md.
-            then: s4Throw("TypeError: Cannot define property, object is not extensible"),
-          },
-        ],
-        // current exists: §10.1.6.3 step 4 — if current is non-configurable, gate
-        // the forbidden transitions.
-        else: [
-          // efl = e.flags  (local 12)
-          { op: "local.get", index: 11 },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-          { op: "local.set", index: 12 },
-          // if (efl & FLAG_CONFIGURABLE) == 0  → current is non-configurable
-          ...eflBit(FLAG_CONFIGURABLE),
-          { op: "i32.eqz" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              // 4.a: Desc specifies configurable:true → reject.
-              ...hfBit(HOST_CONFIGURABLE_SPECIFIED),
-              ...hfBit(1 << 2), // configurable value bit
-              { op: "i32.and" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: s4Throw(
-                  "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
-                ),
-              },
-              // 4.b: Desc specifies enumerable that differs from current → reject.
-              ...hfBit(HOST_ENUMERABLE_SPECIFIED),
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  ...hfBit(1 << 1), // desc enumerable value
-                  ...eflBit(FLAG_ENUMERABLE), // current enumerable
-                  { op: "i32.ne" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: s4Throw(
-                      "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
-                    ),
-                  },
-                ],
-              },
-              // 4.c: data↔accessor conversion. This is the DATA define path; if the
-              // current entry is an accessor, converting it to data is forbidden.
-              //
-              // (#4491) …but only when Desc is NOT generic. Step 4.c reads "If
-              // IsGenericDescriptor(Desc) is false and IsAccessorDescriptor(Desc)
-              // is not IsAccessorDescriptor(current)" — a descriptor that mentions
-              // neither [[Value]] nor [[Writable]] converts nothing, so
-              // `Object.defineProperty(o, k, {})` (and an attributes-only
-              // descriptor that agrees with the current attributes) over a
-              // non-configurable accessor is a legal no-op, not a TypeError.
-              // Steps 4.a/4.b above still reject a generic descriptor that asks
-              // for configurable:true or a different enumerable, and step 5's
-              // `keepAccessor` arm below already applies the generic case
-              // correctly — this only removes a throw that pre-empted it
-              // (`built-ins/Object/defineProperty/15.2.3.6-4-59`).
-              ...hfBit(HOST_HAS_VALUE),
-              ...hfBit(HOST_WRITABLE_SPECIFIED),
-              { op: "i32.or" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  ...eflBit(FLAG_ACCESSOR),
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: s4Throw(
-                      "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
-                    ),
-                  },
-                ],
-              },
-              // 4.d: both data, current non-writable (FLAG_WRITABLE clear) → reject
-              // a writable:true request OR a value change (SameValue).
-              ...eflBit(FLAG_WRITABLE),
-              { op: "i32.eqz" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  // writable false→true
-                  ...hfBit(HOST_WRITABLE_SPECIFIED),
-                  ...hfBit(1 << 0), // desc writable value
-                  { op: "i32.and" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: s4Throw(
-                      "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
-                    ),
-                  },
-                  // value change: Desc has a value (hasValue) AND
-                  // !SameValue(descValue, e.value) → reject.
-                  ...hfBit(HOST_HAS_VALUE),
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [
-                      // __object_is(descValue (param 2), e.value)
-                      { op: "local.get", index: 2 },
-                      { op: "local.get", index: 11 },
-                      { op: "ref.as_non_null" },
-                      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                      { op: "extern.convert_any" },
-                      { op: "call", funcIdx: s4ObjectIsIdx },
-                      { op: "i32.eqz" },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: s4Throw("TypeError: Cannot assign to read only property of a non-configurable property"),
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
+    const s4DescriptorResources = {
+      objectTypeIdx,
+      propEntryTypeIdx,
+      objFindIdx,
+      objInsertIdx,
+      objGrowIdx,
+      sameValueIdx: s4ObjectIsIdx,
+      flags: {
+        writable: FLAG_WRITABLE,
+        enumerable: FLAG_ENUMERABLE,
+        configurable: FLAG_CONFIGURABLE,
+        accessor: FLAG_ACCESSOR,
+        nonExtensible: OBJ_FLAG_NONEXTENSIBLE,
+        sealed: OBJ_FLAG_SEALED,
+        frozen: OBJ_FLAG_FROZEN,
+        noneHeap: NONE_HEAP,
+      },
+      errors: {
+        constructorIdx: s4TypeErrorCtorIdx,
+        tagIdx: s4ExnTagIdx,
+        messages: [
+          s4Literal("TypeError: Cannot define property, object is not extensible"),
+          s4Literal("TypeError: Cannot redefine property: configurable attribute of a non-configurable property"),
+          s4Literal("TypeError: Cannot redefine property: enumerable attribute of a non-configurable property"),
+          s4Literal(
+            "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+          ),
+          s4Literal(
+            "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+          ),
+          s4Literal("TypeError: Cannot assign to read only property of a non-configurable property"),
         ],
       },
-    ];
+    };
 
     // (#4161, #4098) Carrier-bag substitution; bag local APPENDED at index 13
     // Runs AFTER the vec overlay (#3251 owns vec
@@ -556,197 +405,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           ...(dpValueClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
         ],
       },
-      // o = cast<$Object>(any)
-      { op: "local.get", index: 5 },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "local.set", index: 4 },
-      // hf = trunc_s(flagsF64)  (the host encoding is a small non-negative int)
-      { op: "local.get", index: 3 },
-      { op: "i32.trunc_f64_s" },
-      { op: "local.set", index: 9 },
-      // nflags = hf & (WRITABLE|ENUMERABLE|CONFIGURABLE)
-      // Host value bits 0/1/2 line up with native FLAG_* bit positions, so a
-      // direct mask is the translation. (Specified/hasValue/accessor bits 3-7
-      // are dropped.)
-      { op: "local.get", index: 9 },
-      { op: "i32.const", value: NATIVE_ATTR_MASK },
-      { op: "i32.and" },
-      { op: "local.set", index: 8 },
-      // #2042 S4 — ValidateAndApplyPropertyDescriptor preflight (throws on an
-      // invalid (re)definition before any table mutation).
-      ...s4Preflight,
-      // (#2992 S3) EXISTING live entry → §10.1.6.3 steps 5-10 in-place MERGE.
-      // A partial descriptor must PRESERVE every unspecified attribute and the
-      // current [[Value]]; the old blanket `__obj_insert` reset unspecified
-      // attrs to false, clobbered the value with the (null) value param on a
-      // flags-only define, and wiped FLAG_ACCESSOR off accessor properties
-      // (15.2.3.6-4-82-*, -107, -75; the "obj.prop stays 2010" family).
-      // e (local 11) and efl (local 12) were resolved by the preflight.
-      { op: "local.get", index: 11 },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // spec = (hf >> 3) & 7 — the host "specified" bits 3/4/5 shift onto
-          // the native W/E/C bit positions 0/1/2 (locals 6/7 are scratch here;
-          // the merge path returns before the grow section reuses them).
-          { op: "local.get", index: 9 },
-          { op: "i32.const", value: 3 },
-          { op: "i32.shr_u" },
-          { op: "i32.const", value: 7 },
-          { op: "i32.and" },
-          { op: "local.set", index: 6 },
-          // mergedWEC = ((efl & 7) & ~spec) | (hf & spec)
-          { op: "local.get", index: 12 },
-          { op: "i32.const", value: 7 },
-          { op: "i32.and" },
-          { op: "local.get", index: 6 },
-          { op: "i32.const", value: -1 },
-          { op: "i32.xor" },
-          { op: "i32.and" },
-          { op: "local.get", index: 9 },
-          { op: "local.get", index: 6 },
-          { op: "i32.and" },
-          { op: "i32.or" },
-          { op: "local.set", index: 7 },
-          // nf = (efl & ~0x0F) | mergedWEC  (clears W/E/C + FLAG_ACCESSOR;
-          // any other entry bits are preserved)
-          { op: "local.get", index: 12 },
-          { op: "i32.const", value: -16 },
-          { op: "i32.and" },
-          { op: "local.get", index: 7 },
-          { op: "i32.or" },
-          { op: "local.set", index: 8 },
-          // keepAccessor = existing accessor AND a GENERIC desc (no [[Value]],
-          // no [[Writable]]) — §10.1.6.3 step 6: generic descs only touch
-          // attributes, the accessor halves stay live.
-          ...eflBit(FLAG_ACCESSOR),
-          { op: "local.get", index: 9 },
-          { op: "i32.const", value: HOST_HAS_VALUE | HOST_WRITABLE_SPECIFIED },
-          { op: "i32.and" },
-          { op: "i32.eqz" },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              // flags-only update of an accessor: e.flags = nf | FLAG_ACCESSOR
-              { op: "local.get", index: 11 },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: 8 },
-              { op: "i32.const", value: FLAG_ACCESSOR },
-              { op: "i32.or" },
-              { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-            ],
-            else: [
-              // data result: e.flags = nf (FLAG_ACCESSOR cleared)
-              { op: "local.get", index: 11 },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: 8 },
-              { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-              // [[Value]]: specified → overwrite; converting accessor→data →
-              // undefined (null slot); otherwise PRESERVE the current value.
-              ...hfBit(HOST_HAS_VALUE),
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 11 },
-                  { op: "ref.as_non_null" },
-                  { op: "local.get", index: 2 },
-                  { op: "any.convert_extern" },
-                  { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                ],
-                else: [
-                  ...eflBit(FLAG_ACCESSOR),
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [
-                      { op: "local.get", index: 11 },
-                      { op: "ref.as_non_null" },
-                      { op: "ref.null", typeIdx: NONE_HEAP },
-                      { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                    ],
-                  },
-                ],
-              },
-              // converting accessor→data: clear the stale get/set slots.
-              ...eflBit(FLAG_ACCESSOR),
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 11 },
-                  { op: "ref.as_non_null" },
-                  { op: "ref.null", typeIdx: NONE_HEAP },
-                  { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
-                  { op: "local.get", index: 11 },
-                  { op: "ref.as_non_null" },
-                  { op: "ref.null", typeIdx: NONE_HEAP },
-                  { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
-                ],
-              },
-            ],
-          },
-          // merged in place — return O.
-          { op: "local.get", index: 0 },
-          { op: "return" },
-        ],
-      },
-      // load = o.count + o.tombstones ; cap = o.props.len ; grow at LF 0.7
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 2 },
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 3 },
-      { op: "i32.add" },
-      { op: "local.set", index: 7 },
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 1 },
-      { op: "array.len" },
-      { op: "local.set", index: 6 },
-      // if (load + 1) * 10 >= cap * 7 → grow
-      { op: "local.get", index: 7 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "i32.const", value: 10 },
-      { op: "i32.mul" },
-      { op: "local.get", index: 6 },
-      { op: "i32.const", value: 7 },
-      { op: "i32.mul" },
-      { op: "i32.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 4 }, { op: "ref.as_non_null" }, { op: "call", funcIdx: objGrowIdx }],
-      },
-      // seq = o.nextSeq ; o.nextSeq = seq + 1  (#1837)
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 5 },
-      { op: "local.set", index: 10 },
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 10 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 5 },
-      // __obj_insert(o, key, any.convert_extern(value), nflags, seq)
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "any.convert_extern" },
-      { op: "local.get", index: 8 },
-      { op: "local.get", index: 10 },
-      { op: "call", funcIdx: objInsertIdx },
-      // return obj (host import returns O)
-      { op: "local.get", index: 0 },
+      ...buildObjectDataDescriptorBody(ctx, s4DescriptorResources),
     ];
     registerNative(
       "__defineProperty_value",
@@ -812,7 +471,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // locals: 5=o(ref null $Object) 6=any(anyref) 7=cap 8=load 9=nflags(i32) 10=hf(i32) 11=seq 12=e(ref null $PropEntry)
   //         13=efl(i32) 14=getSpec(i32) 15=setSpec(i32)  — #2992 S3 merge
   {
-    const NATIVE_ATTR_MASK = FLAG_ENUMERABLE | FLAG_CONFIGURABLE; // 0x06 — accessors carry no WRITABLE
+    // 0x06 — accessors carry no WRITABLE
     // (#2992 S3) §10.1.6.3 ValidateAndApplyPropertyDescriptor for the accessor
     // define: partial descriptors MERGE into an existing entry (an absent
     // get/set half PRESERVES the live half; absent enumerable/configurable
@@ -828,33 +487,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const accTypeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const accExnTagIdx = ensureExnTag(ctx);
     const accObjectIsIdx = ctx.funcMap.get("__object_is")!;
-    const ACC_HOST_ENUMERABLE_SPECIFIED = 1 << 4;
-    const ACC_HOST_CONFIGURABLE_SPECIFIED = 1 << 5;
-    const ACC_HOST_GET_SPECIFIED = 1 << 8;
-    const ACC_HOST_SET_SPECIFIED = 1 << 9;
-    const accThrow = (message: string): Instr[] => {
+    const accLiteral = (message: string): Instr[] => {
       addStringConstantGlobal(ctx, message);
-      return [
-        ...stringConstantExternrefInstrs(ctx, message),
-        { op: "call", funcIdx: accTypeErrorCtorIdx },
-        { op: "throw", tagIdx: accExnTagIdx },
-      ];
+      return structuredClone(stringConstantExternrefInstrs(ctx, message));
     };
-    // `(hf & bit) != 0` / `(efl & bit) != 0` as i32 0/1.
-    const accHfBit = (bit: number): Instr[] => [
-      { op: "local.get", index: 10 },
-      { op: "i32.const", value: bit },
-      { op: "i32.and" },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ne" },
-    ];
-    const accEflBit = (bit: number): Instr[] => [
-      { op: "local.get", index: 13 },
-      { op: "i32.const", value: bit },
-      { op: "i32.and" },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ne" },
-    ];
     // (#5316 r6) OWN-key predicate for the non-extensible arm below; see
     // OWN_KEY_PREDICATE for why it is this native and not `__desc_has_own`.
     // Absent on the host/gc lanes, where `env::__defineProperty_accessor` owns
@@ -877,33 +513,22 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     // For a plain `$Object` receiver this guard is a NO-OP: `__obj_find` null
     // implies own-key absent, so the predicate answers false and control reaches
     // the same throw.
-    const accNonExtensibleArm: Instr[] =
-      accOwnKeyIdx === undefined
-        ? accThrow("TypeError: Cannot define property, object is not extensible")
-        : [
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: accOwnKeyIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 5 },
-                { op: "ref.as_non_null" },
-                { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-                { op: "i32.const", value: OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN },
-                { op: "i32.and" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: accThrow(
-                    "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
-                  ),
-                },
+    const accNonExtensible = {
+      ownKeyIdx: accOwnKeyIdx,
+      errors: {
+        constructorIdx: accTypeErrorCtorIdx,
+        tagIdx: accExnTagIdx,
+        messages:
+          accOwnKeyIdx === undefined
+            ? [accLiteral("TypeError: Cannot define property, object is not extensible")]
+            : [
+                accLiteral(
+                  "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+                ),
+                accLiteral("TypeError: Cannot define property, object is not extensible"),
               ],
-              else: accThrow("TypeError: Cannot define property, object is not extensible"),
-            },
-          ];
+      },
+    };
     // (#4161, #4098) Carrier-bag substitution; bag local APPENDED at index 16
     // (standalone/wasi only) — same shape as the `__defineProperty_value` arm.
     const dpAccessorClosureArm = defineCarrierBagSubstitutionArm(ctx, {
@@ -952,321 +577,38 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           ...(dpAccessorClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
         ],
       },
-      // o = cast<$Object>(any)
-      { op: "local.get", index: 6 },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "local.set", index: 5 },
-      // hf = trunc_s(flagsF64)
-      { op: "local.get", index: 4 },
-      { op: "i32.trunc_f64_s" },
-      { op: "local.set", index: 10 },
-      // getSpec/setSpec — legacy fallback: no bit 8/9 set ⇒ both specified.
-      { op: "local.get", index: 10 },
-      { op: "i32.const", value: ACC_HOST_GET_SPECIFIED | ACC_HOST_SET_SPECIFIED },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          ...accHfBit(ACC_HOST_GET_SPECIFIED),
-          { op: "local.set", index: 14 },
-          ...accHfBit(ACC_HOST_SET_SPECIFIED),
-          { op: "local.set", index: 15 },
-        ],
-        else: [
-          { op: "i32.const", value: 1 },
-          { op: "local.set", index: 14 },
-          { op: "i32.const", value: 1 },
-          { op: "local.set", index: 15 },
-        ],
-      },
-      // nflags = (hf & (ENUMERABLE|CONFIGURABLE)) | FLAG_ACCESSOR
-      { op: "local.get", index: 10 },
-      { op: "i32.const", value: NATIVE_ATTR_MASK },
-      { op: "i32.and" },
-      { op: "i32.const", value: FLAG_ACCESSOR },
-      { op: "i32.or" },
-      { op: "local.set", index: 9 },
-      // (#2992 S3) e = __obj_find(o, key) — existing live entry → validate + merge in place.
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: 12 },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // efl = e.flags
-          { op: "local.get", index: 12 },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-          { op: "local.set", index: 13 },
-          // non-configurable current → §10.1.6.3 step 7 rejections
-          ...accEflBit(FLAG_CONFIGURABLE),
-          { op: "i32.eqz" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              // 7.a configurable:true requested
-              ...accHfBit(ACC_HOST_CONFIGURABLE_SPECIFIED),
-              ...accHfBit(1 << 2),
-              { op: "i32.and" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: accThrow(
-                  "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
-                ),
-              },
-              // 7.b enumerable flip requested
-              ...accHfBit(ACC_HOST_ENUMERABLE_SPECIFIED),
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  ...accHfBit(1 << 1),
-                  ...accEflBit(FLAG_ENUMERABLE),
-                  { op: "i32.ne" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: accThrow(
-                      "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
-                    ),
-                  },
-                ],
-              },
-              // 7.c current is a data property → data→accessor conversion forbidden
-              ...accEflBit(FLAG_ACCESSOR),
-              { op: "i32.eqz" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: accThrow(
-                  "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
-                ),
-              },
-              // 7.d/e [[Get]]/[[Set]] change (SameValue) forbidden
-              { op: "local.get", index: 14 },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 2 },
-                  { op: "local.get", index: 12 },
-                  { op: "ref.as_non_null" },
-                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
-                  { op: "extern.convert_any" },
-                  { op: "call", funcIdx: accObjectIsIdx },
-                  { op: "i32.eqz" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: accThrow("TypeError: Cannot redefine property: get attribute of a non-configurable property"),
-                  },
-                ],
-              },
-              { op: "local.get", index: 15 },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 3 },
-                  { op: "local.get", index: 12 },
-                  { op: "ref.as_non_null" },
-                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
-                  { op: "extern.convert_any" },
-                  { op: "call", funcIdx: accObjectIsIdx },
-                  { op: "i32.eqz" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: accThrow("TypeError: Cannot redefine property: set attribute of a non-configurable property"),
-                  },
-                ],
-              },
-            ],
-          },
-          // merge flags: spec = (hf >> 3) & 6 (E/C only — accessors carry no W)
-          // nf = (efl & ~0x0F) | ((efl & 6 & ~spec) | (hf & spec)) | FLAG_ACCESSOR
-          // (locals 7/8 are scratch here; this path returns before grow uses them)
-          { op: "local.get", index: 10 },
-          { op: "i32.const", value: 3 },
-          { op: "i32.shr_u" },
-          { op: "i32.const", value: 6 },
-          { op: "i32.and" },
-          { op: "local.set", index: 7 },
-          { op: "local.get", index: 13 },
-          { op: "i32.const", value: 6 },
-          { op: "i32.and" },
-          { op: "local.get", index: 7 },
-          { op: "i32.const", value: -1 },
-          { op: "i32.xor" },
-          { op: "i32.and" },
-          { op: "local.get", index: 10 },
-          { op: "local.get", index: 7 },
-          { op: "i32.and" },
-          { op: "i32.or" },
-          { op: "local.set", index: 8 },
-          { op: "local.get", index: 12 },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 13 },
-          { op: "i32.const", value: -16 },
-          { op: "i32.and" },
-          { op: "local.get", index: 8 },
-          { op: "i32.or" },
-          { op: "i32.const", value: FLAG_ACCESSOR },
-          { op: "i32.or" },
-          { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-          // halves: specified → overwrite; absent → preserve (a data entry's
-          // slots are already null, so conversion data→accessor is covered)
-          { op: "local.get", index: 14 },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 12 },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: 2 },
-              { op: "any.convert_extern" },
-              { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
-            ],
-          },
-          { op: "local.get", index: 15 },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 12 },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: 3 },
-              { op: "any.convert_extern" },
-              { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
-            ],
-          },
-          // converting data→accessor: the data value slot dies.
-          ...accEflBit(FLAG_ACCESSOR),
-          { op: "i32.eqz" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 12 },
-              { op: "ref.as_non_null" },
-              { op: "ref.null", typeIdx: NONE_HEAP },
-              { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-            ],
-          },
-          // merged in place — return O.
-          { op: "local.get", index: 0 },
-          { op: "return" },
-        ],
-      },
-      // NEW key on a non-extensible object → TypeError (§10.1.6.3 step 2,
-      // matches the data-path preflight; previously a silent no-op).
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-      { op: "i32.const", value: OBJ_FLAG_NONEXTENSIBLE },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: accNonExtensibleArm,
-      },
-      // load = o.count + o.tombstones ; cap = o.props.len ; grow at LF 0.7
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 2 },
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 3 },
-      { op: "i32.add" },
-      { op: "local.set", index: 8 },
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 1 },
-      { op: "array.len" },
-      { op: "local.set", index: 7 },
-      // if (load + 1) * 10 >= cap * 7 → grow
-      { op: "local.get", index: 8 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "i32.const", value: 10 },
-      { op: "i32.mul" },
-      { op: "local.get", index: 7 },
-      { op: "i32.const", value: 7 },
-      { op: "i32.mul" },
-      { op: "i32.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 5 }, { op: "ref.as_non_null" }, { op: "call", funcIdx: objGrowIdx }],
-      },
-      // seq = o.nextSeq ; o.nextSeq = seq + 1  (#1837)
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 5 },
-      { op: "local.set", index: 11 },
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 11 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 5 },
-      // __obj_insert(o, key, ref.null any, nflags, seq) — value slot stays null
-      // for an accessor; this creates the entry (or updates flags in place) and
-      // handles growth/tombstone reuse in one place.
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 1 },
-      { op: "ref.null", typeIdx: NONE_HEAP },
-      { op: "local.get", index: 9 },
-      { op: "local.get", index: 11 },
-      { op: "call", funcIdx: objInsertIdx },
-      // e = __obj_find(o, key) — re-locate the just-inserted/updated entry to
-      // write the accessor slots. (__obj_insert does not take get/set params.)
-      // It is always non-null here: either we just created it, or the update-in-
-      // place branch matched an existing live entry. The only way to get null is
-      // a non-extensible object refusing a NEW key — in which case there are no
-      // accessor slots to write, so the null-guarded if is a correct no-op.
-      { op: "local.get", index: 5 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: 12 },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // e.get = any.convert_extern(getter) ; e.set = any.convert_extern(setter)
-          // A null externref (absent get/set) converts to a null anyref, which
-          // GOPD reads back as `undefined` for that half of the descriptor.
-          { op: "local.get", index: 12 },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 2 },
-          { op: "any.convert_extern" },
-          { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 4 },
-          { op: "local.get", index: 12 },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 3 },
-          { op: "any.convert_extern" },
-          { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
-          // e.value = null (clear any prior data value — accessors hold no value)
-          { op: "local.get", index: 12 },
-          { op: "ref.as_non_null" },
-          { op: "ref.null", typeIdx: NONE_HEAP },
-          { op: "struct.set", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-        ],
-      },
-      // return obj (host import returns O)
-      { op: "local.get", index: 0 },
+      ...buildOrdinaryObjectAccessorDescriptorBody({
+        objectTypeIdx,
+        propEntryTypeIdx,
+        objFindIdx,
+        objInsertIdx,
+        objGrowIdx,
+        sameValueIdx: accObjectIsIdx,
+        flags: {
+          writable: FLAG_WRITABLE,
+          enumerable: FLAG_ENUMERABLE,
+          configurable: FLAG_CONFIGURABLE,
+          accessor: FLAG_ACCESSOR,
+          nonExtensible: OBJ_FLAG_NONEXTENSIBLE,
+          sealed: OBJ_FLAG_SEALED,
+          frozen: OBJ_FLAG_FROZEN,
+          noneHeap: NONE_HEAP,
+        },
+        nonExtensible: accNonExtensible,
+        errors: {
+          constructorIdx: accTypeErrorCtorIdx,
+          tagIdx: accExnTagIdx,
+          messages: [
+            accLiteral("TypeError: Cannot redefine property: configurable attribute of a non-configurable property"),
+            accLiteral("TypeError: Cannot redefine property: enumerable attribute of a non-configurable property"),
+            accLiteral(
+              "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+            ),
+            accLiteral("TypeError: Cannot redefine property: get attribute of a non-configurable property"),
+            accLiteral("TypeError: Cannot redefine property: set attribute of a non-configurable property"),
+          ],
+        },
+      }),
     ];
     registerNative(
       "__defineProperty_accessor",

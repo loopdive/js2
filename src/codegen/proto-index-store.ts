@@ -1,4 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  buildPrototypeBrandOffsetDefinition,
+  buildPrototypeReceiverConsultBody,
+} from "../runtime/wasmgc/values/prototype-receiver-bodies.js";
+import { buildPrototypeKeyNormalizationBody } from "../runtime/wasmgc/values/prototype-key-normalization-body.js";
+import {
+  buildPrototypeGetBody,
+  buildPrototypeHasBody,
+  type PrototypeReadRecipe,
+  type PrototypeReadResources,
+} from "../runtime/wasmgc/values/prototype-read-bodies.js";
+import { nativeStringLiteralMaterialization } from "./native-string-literals.js";
+import {
+  buildPrototypeCompanionBody,
+  type PrototypeCompanionSeedCall,
+} from "../runtime/wasmgc/values/prototype-companion-body.js";
 /**
  * (#4160, generalized by #4176) Prototype-PROPERTY store for `--target
  * standalone` — the runtime substrate that makes a property written onto a
@@ -108,6 +124,14 @@ import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, builtinBrandOffsetOf } from ".
 import { nativeStringLiteralInstrs } from "./native-strings.js"; // (#4176) wrapper-slot key at FILL time
 import { nativeProtoParentBrands, nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#2175 V2-S3b-1) companion seeding
 import { addFuncType } from "./registry/types.js";
+import { createToPrimitivePresenceOwner } from "./to-primitive-presence.js";
+export {
+  protoIndexRecvGetMissInstrs,
+  captureProtoIndexReadBinding,
+  protoIndexRecvHasMissInstrs,
+} from "./proto-index-read-bindings.js";
+
+const toPrimitivePresence = createToPrimitivePresenceOwner();
 
 /** Reserved helper names (all internal, never exported from the module). */
 const PROTOIDX_COMPANION = "__protoidx_companion";
@@ -129,37 +153,6 @@ const PROTOIDX_OWN_RECV = "__protoidx_own_recv";
 /** Static brand OFFSETS (0-based slots in the brand band — native-proto.ts). */
 const OBJ_OFF = builtinBrandOffsetOf("Object")!;
 const ARR_OFF = builtinBrandOffsetOf("Array")!;
-const FUN_OFF = builtinBrandOffsetOf("Function")!;
-const REGEXP_OFF = builtinBrandOffsetOf("RegExp")!;
-const DATE_OFF = builtinBrandOffsetOf("Date")!;
-const ERROR_OFF = builtinBrandOffsetOf("Error")!;
-const PROMISE_OFF = builtinBrandOffsetOf("Promise")!;
-const STRING_OFF = builtinBrandOffsetOf("String")!;
-const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
-const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
-const SYMBOL_OFF = builtinBrandOffsetOf("Symbol")!;
-const SET_OFF = builtinBrandOffsetOf("Set")!;
-const MAP_OFF = builtinBrandOffsetOf("Map")!;
-const WEAKMAP_OFF = builtinBrandOffsetOf("WeakMap")!;
-const WEAKSET_OFF = builtinBrandOffsetOf("WeakSet")!;
-
-/** `$Map.kind` field / `COLLECTION_KIND` values (map-runtime.ts). Kept as
- * literals here to avoid an import cycle: map-runtime already consumes the
- * receiver-brand helper. */
-const MAP_KIND_FIELD = 4;
-const MAP_KIND = 0;
-const SET_KIND = 1;
-const WEAKMAP_KIND = 2;
-const WEAKSET_KIND = 3;
-
-/** (#5151) `$Map.kind` → the brand offset whose companion holds that
- *  collection's prototype overrides. All four share the `$Map` carrier. */
-const COLLECTION_KIND_OFFSETS: readonly (readonly [number, number])[] = [
-  [MAP_KIND, MAP_OFF],
-  [SET_KIND, SET_OFF],
-  [WEAKMAP_KIND, WEAKMAP_OFF],
-  [WEAKSET_KIND, WEAKSET_OFF],
-];
 
 /**
  * (#4176) The boxed-primitive wrapper internal-slot key — MUST equal
@@ -183,8 +176,6 @@ const FLAG_ACCESSOR = 0x08;
 const FLAG_WRITABLE = 0x01;
 /** `$Object.flags` frozen bit (object-runtime.ts `OBJ_FLAG_FROZEN`). */
 const OBJ_FLAG_FROZEN = 0x04;
-/** i31 abstract heap type (signed LEB -20) — small-int boxed numbers (#3673). */
-const I31_HEAP_TYPE = -20;
 
 /** Shared four-state internal [[Set]] decision ABI. */
 export const SET_DECISION_MISS = 0;
@@ -232,6 +223,8 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   });
   ctx.protoIndexCompanionsGlobalIdx = tableGlobalIdx;
 
+  const presenceReservations = toPrimitivePresence.createReservations(ctx);
+
   // --- helper stubs (bodies filled by fillProtoIndexStore at finalize).
   // Stub bodies are FRESH arrays per helper — never a shared Instr list.
   const reserve = (name: string, params: ValType[], results: ValType[], stub: () => Instr[]): void => {
@@ -241,6 +234,7 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
     const placeholder: WasmFunction = { name, typeIdx, locals: [], body: stub(), exported: false };
     pushDefinedFunc(ctx, funcIdx, placeholder);
     ctx.funcMap.set(name, funcIdx);
+    toPrimitivePresence.recordReservation(ctx, presenceReservations, name, placeholder);
   };
   const ext: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
@@ -297,6 +291,7 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // resolves that index at fill time; this one now matches them structurally so
   // the split cannot be reintroduced.
   reserve(PROTOIDX_OWN_RECV, [ext], [ext], () => [{ op: "local.get", index: 0 }]);
+  toPrimitivePresence.installReservations(ctx, presenceReservations);
 }
 
 /**
@@ -319,51 +314,6 @@ export function protoIndexForInPushInstrs(
     { op: "local.get", index: vecLocal },
     { op: "local.get", index: seenLocal },
     { op: "call", funcIdx: pushIdx },
-  ];
-}
-
-/**
- * (#4176) Receiver-aware GET consult `[recv, key] -> externref` for a
- * non-`$Object` miss chokepoint (`__closure_prop_get` / `__vec_prop_get`
- * tails): classifies the receiver's proto brand at runtime and consults that
- * companion, then Object's. `undefined` when unreserved — the caller keeps
- * its pre-existing miss byte-identically.
- */
-export function protoIndexRecvGetMissInstrs(
-  ctx: CodegenContext,
-  recvLocal: number,
-  keyLocal: number,
-  accessorRecvLocal?: number,
-): Instr[] | undefined {
-  const getRIdx = ctx.funcMap.get(PROTOIDX_GET_R);
-  if (getRIdx === undefined) return undefined;
-  // (#5194 r3 review F2) §7.3.2 OrdinaryGet step 3 / §6.2.5.5 — the brand
-  // (which companion to consult) comes from the object the walk is ON
-  // (`recvLocal`), but an accessor found there runs with `this` = the
-  // ORIGINAL receiver the [[Get]] started on. `__extern_get` hands its
-  // `explicitReceiverLocal` here (param 0, or the one-shot Reflect.get /
-  // dyn-view-walk receiver); the two coincide for every ordinary read, so
-  // this is `__protoidx_get_r`'s body inlined with the receiver split.
-  const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);
-  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
-  if (
-    accessorRecvLocal !== undefined &&
-    accessorRecvLocal !== recvLocal &&
-    getKIdx !== undefined &&
-    brandOffIdx !== undefined
-  ) {
-    return [
-      { op: "local.get", index: accessorRecvLocal },
-      { op: "local.get", index: keyLocal },
-      { op: "local.get", index: recvLocal },
-      { op: "call", funcIdx: brandOffIdx },
-      { op: "call", funcIdx: getKIdx },
-    ];
-  }
-  return [
-    { op: "local.get", index: recvLocal },
-    { op: "local.get", index: keyLocal },
-    { op: "call", funcIdx: getRIdx },
   ];
 }
 
@@ -475,19 +425,12 @@ function fillOwnRecvBody(ctx: CodegenContext): void {
   ];
 }
 
-/** (#4176) Receiver-aware HAS consult `[recv, key] -> i32`; see get twin. */
-export function protoIndexRecvHasMissInstrs(
-  ctx: CodegenContext,
-  recvLocal: number,
-  keyLocal: number,
-): Instr[] | undefined {
-  const hasRIdx = ctx.funcMap.get(PROTOIDX_HAS_R);
-  if (hasRIdx === undefined) return undefined;
-  return [
-    { op: "local.get", index: recvLocal },
-    { op: "local.get", index: keyLocal },
-    { op: "call", funcIdx: hasRIdx },
-  ];
+/** The registered body stays unreachable until the existing finalizer completes it. */
+export function captureProtoIndexPresenceBinding(ctx: CodegenContext): {
+  readonly kind: "call";
+  readonly hasIdx: number;
+} {
+  return toPrimitivePresence.capture(ctx);
 }
 
 /**
@@ -668,11 +611,21 @@ function findFn(ctx: CodegenContext, name: string): WasmFunction | undefined {
  * `reserveProtoIndexStore` ran (flag-set standalone modules only).
  */
 export function fillProtoIndexStore(ctx: CodegenContext): void {
-  if (!ctx.protoIndexStoreReserved || ctx.protoIndexStoreFilled) return;
+  toPrimitivePresence.assertCurrent(ctx);
+  // Body generation can discover a dynamic TypedArray after the original
+  // prescan. Resolve that real demand here without rebuilding ToPrimitive.
+  if (toPrimitivePresence.needsReservation(ctx)) reserveProtoIndexStore(ctx);
+  if (!ctx.protoIndexStoreReserved || ctx.protoIndexStoreFilled) {
+    toPrimitivePresence.complete(ctx);
+    return;
+  }
   ctx.protoIndexStoreFilled = true;
   const deps = resolveFillDeps(ctx);
-  if (!deps) return; // dependencies absent — stubs keep answering "miss" (safe)
-
+  if (!deps) {
+    toPrimitivePresence.complete(ctx); // A selected consumer must not bind unfilled stubs.
+    return;
+  }
+  const presenceInputs = toPrimitivePresence.captureFillInputs(ctx);
   fillCompanionBody(ctx, deps);
   fillNormKeyBody(ctx, deps);
   fillHasKBody(ctx, deps);
@@ -686,6 +639,7 @@ export function fillProtoIndexStore(ctx: CodegenContext): void {
   fillOwnRecvBody(ctx); // (#2175 P2) own-view substitution — type idx resolved HERE
   spliceNativeProtoWriteArms(ctx);
   spliceNativeProtoDirectReadArms(ctx);
+  toPrimitivePresence.complete(ctx, presenceInputs);
 }
 
 /**
@@ -819,139 +773,34 @@ function fillCompanionBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void 
     { name: "arr", type: arrRefNull },
     { name: "c", type: { kind: "externref" } },
   ];
-  fn.body = [
-    // (#2175 V2-S3b-1) A brand with a SEEDER always materializes its companion,
-    // even on a pure read. Both read probes (`__protoidx_get_k` /
-    // `__protoidx_has_k`) call in with `create = 0` — correct for #4176, where a
-    // companion only exists once the program has WRITTEN to that prototype, so
-    // "absent slot" genuinely means "nothing stored". A seeded brand inverts
-    // that: its own members are waiting to be installed and the slot is absent
-    // only because nobody has asked yet. Forcing `create = 1` for exactly the
-    // seeded offsets makes the read paths self-materializing without changing
-    // behaviour for any unseeded brand (whose slot keeps its create-on-write
-    // rule) — and, because both probes go through here, GET and `in` agree by
-    // construction instead of by accident.
-    ...buildSeededOffsetForceCreateArms(ctx, 0, 1),
-    { op: "global.get", index: deps.tableGlobalIdx },
-    { op: "local.set", index: 2 },
-    { op: "local.get", index: 2 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 1 },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [{ op: "ref.null.extern" }, { op: "return" }],
-        },
-        { op: "i32.const", value: BUILTIN_BRAND_COUNT },
-        { op: "array.new_default", typeIdx: deps.tableArrTypeIdx },
-        { op: "local.set", index: 2 },
-        { op: "local.get", index: 2 },
-        { op: "global.set", index: deps.tableGlobalIdx },
-      ],
-    },
-    // c = arr[whichOff]
-    { op: "local.get", index: 2 },
-    { op: "ref.as_non_null" },
-    { op: "local.get", index: 0 },
-    { op: "array.get", typeIdx: deps.tableArrTypeIdx },
-    { op: "local.set", index: 3 },
-    // absent && create → mint a plain $Object companion into the slot
-    { op: "local.get", index: 3 },
-    { op: "ref.is_null" },
-    { op: "local.get", index: 1 },
-    { op: "i32.and" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "call", funcIdx: deps.newPlainObjectIdx },
-        { op: "local.set", index: 3 },
-        { op: "local.get", index: 2 },
-        { op: "ref.as_non_null" },
-        { op: "local.get", index: 0 },
-        { op: "local.get", index: 3 },
-        { op: "array.set", typeIdx: deps.tableArrTypeIdx },
-        // (#2175 V2-S3b-1) Seed the fresh companion with the brand's BUILTIN
-        // own members, so a `$NativeProto` flowing as a runtime value answers
-        // `p.exec` / `TypedArray.prototype.find` through the ordinary consult.
-        // Placed AFTER the slot store, which is what makes it re-entrancy-safe:
-        // a seeder body calls `__defineProperty_value`/`_accessor`, whose own
-        // #4176 write arms can route back into `__protoidx_companion` for the
-        // same offset — by then the slot is non-null, so that re-entry takes
-        // the cached path instead of minting a second companion and recursing.
-        ...buildCompanionSeedArms(ctx, 0, 3),
-      ],
-    },
-    { op: "local.get", index: 3 },
-  ];
+  fn.body = buildPrototypeCompanionBody({
+    tableGlobalIdx: deps.tableGlobalIdx,
+    tableArrTypeIdx: deps.tableArrTypeIdx,
+    newPlainObjectIdx: deps.newPlainObjectIdx,
+    brandCount: BUILTIN_BRAND_COUNT,
+    forceCreateOffsets: companionForceCreateOffsets(ctx),
+    seedCalls: companionSeedCalls(ctx),
+  });
 }
 
-/**
- * (#2175 V2-S3b-1) The brand-offset dispatch that seeds a freshly minted
- * companion: `if (whichOff == <off>) __nativeproto_seed_<brand>(companion)`,
- * one arm per brand whose `$NativeProto` was materialized during codegen.
- *
- * Empty when nothing registered (no arms, no bytes) — which is the case for
- * every module that is not `protoMemberDirty`, so this fill stays
- * byte-identical for them. funcIdx is resolved from `funcMap` HERE, at fill
- * time, never captured at mint time: a late import between the two shifts every
- * defined-func index (#2043), and a stale `call` would silently target the
- * wrong function.
- */
-/**
- * (#2175 V2-S3b-1) `if (whichOff == <seededOff>) create = 1` — one arm per
- * seeded brand. Empty (and therefore byte-inert) when no seeder registered.
- */
-function buildSeededOffsetForceCreateArms(ctx: CodegenContext, whichOffLocal: number, createLocal: number): Instr[] {
+// Keep the two original late-resolution traversals separate and ordered.
+function companionForceCreateOffsets(ctx: CodegenContext): number[] {
   const seeders = nativeProtoSeedersByBrandOffset(ctx);
-  if (seeders.size === 0) return [];
-  const arms: Instr[] = [];
-  for (const [off, funcName] of seeders) {
-    if (ctx.funcMap.get(funcName) === undefined) continue;
-    arms.push(
-      { op: "local.get", index: whichOffLocal },
-      { op: "i32.const", value: off },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "i32.const", value: 1 },
-          { op: "local.set", index: createLocal },
-        ],
-      },
-    );
+  const offsets: number[] = [];
+  for (const [offset, name] of seeders) {
+    if (ctx.funcMap.get(name) !== undefined) offsets.push(offset);
   }
-  return arms;
+  return offsets;
 }
 
-function buildCompanionSeedArms(ctx: CodegenContext, whichOffLocal: number, companionLocal: number): Instr[] {
+function companionSeedCalls(ctx: CodegenContext): PrototypeCompanionSeedCall[] {
   const seeders = nativeProtoSeedersByBrandOffset(ctx);
-  if (seeders.size === 0) return [];
-  const arms: Instr[] = [];
-  for (const [off, funcName] of seeders) {
-    const funcIdx = ctx.funcMap.get(funcName);
-    if (funcIdx === undefined) continue;
-    arms.push(
-      { op: "local.get", index: whichOffLocal },
-      { op: "i32.const", value: off },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: companionLocal },
-          { op: "call", funcIdx },
-        ],
-      },
-    );
+  const calls: PrototypeCompanionSeedCall[] = [];
+  for (const [offset, name] of seeders) {
+    const functionIndex = ctx.funcMap.get(name);
+    if (functionIndex !== undefined) calls.push({ offset, functionIndex });
   }
-  return arms;
+  return calls;
 }
 
 /**
@@ -970,319 +819,83 @@ function fillNormKeyBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const anyStr = ctx.anyStrTypeIdx;
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
   const symbolTypeIdx = ctx.symbolTypeIdx;
-  // locals: 1=any(anyref)
   fn.locals = [{ name: "any", type: { kind: "anyref" } }];
-  const miss = (): Instr[] => [{ op: "ref.null.extern" }, { op: "return" }];
-  fn.body = [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "local.tee", index: 1 },
-    { op: "ref.test", typeIdx: anyStr },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: 0 }, { op: "return" }],
-    },
-    ...(symbolTypeIdx >= 0
-      ? ([
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: symbolTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [{ op: "local.get", index: 0 }, { op: "return" }],
-          },
-        ] satisfies Instr[])
-      : []),
-    ...(boxNumTypeIdx >= 0
-      ? ([
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: boxNumTypeIdx },
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: I31_HEAP_TYPE },
-          { op: "i32.or" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 0 },
-              { op: "call", funcIdx: deps.unboxNumberIdx },
-              { op: "call", funcIdx: deps.numberToStringIdx },
-              { op: "return" },
-            ],
-          },
-        ] satisfies Instr[])
-      : []),
-    ...miss().slice(0, 1), // bare null-extern in tail position
-  ];
+  fn.body = buildPrototypeKeyNormalizationBody({
+    anyStr,
+    boxNumTypeIdx,
+    symbolTypeIdx,
+    unboxNumberIdx: deps.unboxNumberIdx,
+    numberToStringIdx: deps.numberToStringIdx,
+  });
 }
 
-/**
- * Probe one companion (LOOKUP, never ensure — reads must not allocate): if it
- * exists and `__obj_find` answers a live entry for the key, run `hit`.
- * `whichInstrs` pushes the brand offset (a param read or a constant);
- * `cLocal` is an externref scratch local of the enclosing helper.
- */
-function companionProbeArm(
-  deps: ProtoIndexFillDeps,
-  whichInstrs: Instr[],
-  keyLocal: number,
-  cLocal: number,
-  hit: Instr[],
-): Instr[] {
-  return [
-    ...whichInstrs,
-    { op: "i32.const", value: 0 },
-    { op: "call", funcIdx: deps.companionIdx },
-    { op: "local.set", index: cLocal },
-    { op: "local.get", index: cLocal },
-    { op: "ref.is_null" },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: cLocal },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: deps.objectTypeIdx },
-        { op: "local.get", index: keyLocal },
-        { op: "call", funcIdx: deps.objFindIdx },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: hit },
-      ],
-    },
-  ];
+function prototypeReadResources(ctx: CodegenContext, deps: ProtoIndexFillDeps, getter = false): PrototypeReadResources {
+  return {
+    objectTypeIdx: deps.objectTypeIdx,
+    propEntryTypeIdx: deps.propEntryTypeIdx,
+    companionIdx: deps.companionIdx,
+    objFindIdx: deps.objFindIdx,
+    callAccessorGetIdx: deps.callAccessorGetIdx,
+    brandBase: BUILTIN_BRAND_BASE,
+    brandCount: BUILTIN_BRAND_COUNT,
+    objectOffset: OBJ_OFF,
+    entryFlagsField: ENTRY_FLAGS,
+    entryGetterField: ENTRY_GET,
+    entryValueField: ENTRY_VALUE,
+    accessorFlag: FLAG_ACCESSOR,
+    anyStr: getter ? ctx.anyStrTypeIdx : -1,
+    flattenIdx: getter ? ctx.nativeStrHelpers.get("__str_flatten") : undefined,
+    equalsIdx: getter ? ctx.nativeStrHelpers.get("__str_equals") : undefined,
+  };
 }
 
-/**
- * (#5194 step 1) The PARENT-level probe spliced between a receiver brand's own
- * companion and `Object.prototype`'s. `<View>.prototype` owns nothing but
- * `constructor`/`BYTES_PER_ELEMENT` (§23.2.7), so a dynamic
- * `uint8ArrayProto.forEach` / `"forEach" in Uint8Array.prototype` has to reach
- * `%TypedArray%.prototype`'s companion, which sits between the two levels this
- * two-level store models. Emits one `if firstOff === <off>` arm per registered
- * `parentBrand` link and nothing at all when no glue declares one, so every
- * module without a chained prototype keeps a byte-identical body.
- *
- * `guard` is invoked once PER ARM and its result prepended inside that arm (the
- * get body only walks the parent when nothing was found yet); `probe` builds the
- * probe for a constant parent offset.
- */
-function parentLevelProbeArms(
-  ctx: CodegenContext,
-  firstOffParam: number,
-  probe: (parentOff: number) => Instr[],
-  // (#5194 review F5) A FACTORY, not an array: the guard is spliced into every
-  // emitted arm (one per declared parent link -- 11 for the TypedArray family),
-  // and spreading one shared `Instr[]` put the SAME objects into all of them.
-  // This file's own discipline is that a spliced sequence is minted fresh per
-  // arm (the #1058 hazard: a later per-arm rewrite -- an index shift, a peephole
-  // -- would silently edit every other arm too).
-  guard?: () => Instr[],
-): Instr[] {
-  const arms: Instr[] = [];
-  const links = [...nativeProtoParentBrands(ctx).entries()].sort((a, b) => a[0] - b[0]);
-  for (const [brand, parentBrand] of links) {
-    const off = brand - BUILTIN_BRAND_BASE;
-    const parentOff = parentBrand - BUILTIN_BRAND_BASE;
-    if (off < 0 || off >= BUILTIN_BRAND_COUNT || parentOff < 0 || parentOff >= BUILTIN_BRAND_COUNT) continue;
-    if (parentOff === OBJ_OFF) continue; // already the implicit chain end
-    arms.push(
-      ...(guard === undefined ? [] : guard()),
-      { op: "local.get", index: firstOffParam },
-      { op: "i32.const", value: off },
-      { op: "i32.eq" },
-      ...(guard === undefined ? [] : [{ op: "i32.and" } satisfies Instr]),
-      { op: "if", blockType: { kind: "empty" }, then: probe(parentOff) },
-    );
+/** Answer only the donor's closed construction-time acquisitions, in order. */
+function materializePrototypeRead(ctx: CodegenContext, recipe: PrototypeReadRecipe): Instr[] {
+  let step = recipe.next();
+  while (!step.done) {
+    const request = step.value;
+    switch (request.kind) {
+      case "constructor-literal":
+        step = recipe.next({
+          kind: request.kind,
+          materialization: nativeStringLiteralMaterialization(ctx, "constructor"),
+        });
+        break;
+      case "parent-links":
+        step = recipe.next({ kind: request.kind, links: [...nativeProtoParentBrands(ctx).entries()] });
+        break;
+      case "undefined": {
+        const instructions = undefinedExternInstrs(ctx);
+        step = recipe.next({
+          kind: request.kind,
+          globalIdx: instructions === undefined ? undefined : ctx.undefinedGlobalIdx,
+        });
+        break;
+      }
+    }
   }
-  return arms;
+  return step.value;
 }
 
-/** `__protoidx_has_k(key, firstOff) -> i32` — §7.3.12 presence. */
+/** Presence probes never acquire or invoke an accessor. */
 function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_HAS_K);
   if (!fn) return;
-  // params: 0=key 1=firstOff ; locals: 2=c(externref)
   fn.locals = [{ name: "c", type: { kind: "externref" } }];
-  const hit = (): Instr[] => [{ op: "i32.const", value: 1 }, { op: "return" }];
-  fn.body = [
-    // firstOff companion, then — when firstOff is not Object's — the implicit
-    // chain end Object.prototype.
-    ...companionProbeArm(deps, [{ op: "local.get", index: 1 }], 0, 2, hit()),
-    // (#5194 step 1) …with the declared PARENT level in between, when the
-    // receiver's brand declares one.
-    ...parentLevelProbeArms(ctx, 1, (parentOff) =>
-      companionProbeArm(deps, [{ op: "i32.const", value: parentOff }], 0, 2, hit()),
-    ),
-    { op: "local.get", index: 1 },
-    { op: "i32.const", value: OBJ_OFF },
-    { op: "i32.ne" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: companionProbeArm(deps, [{ op: "i32.const", value: OBJ_OFF }], 0, 2, hit()),
-    },
-    { op: "i32.const", value: 0 },
-  ];
+  fn.body = materializePrototypeRead(ctx, buildPrototypeHasBody(prototypeReadResources(ctx, deps)));
 }
 
-/**
- * (#4491 T10) `key !== "constructor"` as an i32, built at FILL time.
- *
- * Guards the Object.prototype FALLTHROUGH in {@link fillGetKBody}. `constructor`
- * is an own data property of EVERY builtin prototype (§19.2.3.1, §20.2.3.1,
- * §22.1.3.1, …), so for a receiver whose implicit prototype is any brand other
- * than `Object` the correct answer never comes from `Object.prototype` — the
- * nearer level always shadows it. The two-level walk this store models
- * (brand companion, then Object's) has no way to express "the nearer level owns
- * this key but has no companion", so it has to be said for the one key where a
- * missing companion is common: `Function` and `Date` decline a `constructor`
- * seed (no identity-stable carrier — see builtin-proto-constructor-seed.ts), and
- * without this guard a closure's `f.constructor` walks past the absent
- * `Function.prototype` companion straight into `Object.prototype.constructor`
- * and answers `Object`.
- *
- * That is exactly what regressed the QuickJS provider's function-parity canary:
- * `new Function(…).constructor === Function` reads through
- * `__closure_prop_get`'s #4176 miss consult, and once the T9 seed put
- * `constructor` on `Object.prototype`'s companion the consult started answering
- * `Object` — which then shadowed the runtime-eval carrier's own marker
- * `constructor` field (the provider-realm `%Function%`), because a non-undefined
- * consult result is taken as final by the carrier's property-get trampoline.
- *
- * A MISS here is the pre-T9 answer and lets each caller's own fallback run (the
- * carrier's marker metadata, #4442's `%Function%` arm for a statically
- * function-typed receiver). Returns `undefined` when the native-string helpers
- * are unavailable, in which case the caller keeps its body byte-identical.
- */
-function keyIsNotConstructorInstrs(ctx: CodegenContext, keyParam: number): Instr[] | undefined {
-  const anyStr = ctx.anyStrTypeIdx;
-  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
-  if (anyStr < 0 || flattenIdx === undefined || equalsIdx === undefined) return undefined;
-  return [
-    { op: "local.get", index: keyParam },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: anyStr },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: keyParam },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: anyStr },
-        { op: "call", funcIdx: flattenIdx },
-        ...nativeStringLiteralInstrs(ctx, "constructor"),
-        { op: "call", funcIdx: equalsIdx },
-        { op: "i32.eqz" },
-      ],
-      // A non-string key (symbol / already-normalised index) can never be
-      // `constructor`, so the fallthrough stays available.
-      else: [{ op: "i32.const", value: 1 }],
-    },
-  ];
-}
-
-/** `__protoidx_get_k(origRecv, key, firstOff) -> externref` — §6.2.5.5 Get. */
+/** Preserve the original receiver and the constructor shadowing tail guard. */
 function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_GET_K);
   if (!fn) return;
   const entryRefNull: ValType = { kind: "ref_null", typeIdx: deps.propEntryTypeIdx };
-  // params: 0=origRecv 1=key 2=firstOff
-  // locals: 3=c(externref) 4=e(ref null $PropEntry, default null) 5=getter(externref)
   fn.locals = [
     { name: "c", type: { kind: "externref" } },
     { name: "e", type: entryRefNull },
     { name: "getter", type: { kind: "externref" } },
   ];
-  const miss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
-  const probeInto = (whichInstrs: Instr[]): Instr[] => [
-    ...whichInstrs,
-    { op: "i32.const", value: 0 },
-    { op: "call", funcIdx: deps.companionIdx },
-    { op: "local.set", index: 3 },
-    { op: "local.get", index: 3 },
-    { op: "ref.is_null" },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 3 },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: deps.objectTypeIdx },
-        { op: "local.get", index: 1 },
-        { op: "call", funcIdx: deps.objFindIdx },
-        { op: "local.set", index: 4 },
-      ],
-    },
-  ];
-  // (#4491 T10) …and never for `constructor`, which every builtin prototype owns.
-  const notConstructor = keyIsNotConstructorInstrs(ctx, 1);
-  fn.body = [
-    // firstOff companion first (the receiver's own proto brand)…
-    ...probeInto([{ op: "local.get", index: 2 }]),
-    // (#5194 step 1) …then the declared PARENT level, when nothing was found
-    // there and the receiver's brand declares one (§23.2.7 view prototypes).
-    ...parentLevelProbeArms(
-      ctx,
-      2,
-      (parentOff) => probeInto([{ op: "i32.const", value: parentOff }]),
-      () => [{ op: "local.get", index: 4 }, { op: "ref.is_null" }],
-    ),
-    // …then Object.prototype's when nothing was found and firstOff differs.
-    { op: "local.get", index: 4 },
-    { op: "ref.is_null" },
-    { op: "local.get", index: 2 },
-    { op: "i32.const", value: OBJ_OFF },
-    { op: "i32.ne" },
-    { op: "i32.and" },
-    ...(notConstructor === undefined ? [] : [...notConstructor, { op: "i32.and" } satisfies Instr]),
-    { op: "if", blockType: { kind: "empty" }, then: probeInto([{ op: "i32.const", value: OBJ_OFF }]) },
-    // No entry anywhere → undefined miss.
-    { op: "local.get", index: 4 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [...miss(), { op: "return" }],
-    },
-    // Accessor entry → invoke the getter with the ORIGINAL receiver
-    // (§6.2.5.5 step 8 — Receiver is the object the Get started on).
-    { op: "local.get", index: 4 },
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
-    { op: "i32.const", value: FLAG_ACCESSOR },
-    { op: "i32.and" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 4 },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_GET },
-        { op: "extern.convert_any" },
-        { op: "local.tee", index: 5 },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [...miss(), { op: "return" }],
-        },
-        { op: "local.get", index: 0 },
-        { op: "local.get", index: 5 },
-        { op: "call", funcIdx: deps.callAccessorGetIdx },
-        { op: "return" },
-      ],
-    },
-    // Data entry → its value.
-    { op: "local.get", index: 4 },
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
-    { op: "extern.convert_any" },
-  ];
+  fn.body = materializePrototypeRead(ctx, buildPrototypeGetBody(prototypeReadResources(ctx, deps, true)));
 }
 
 /**
@@ -1445,208 +1058,48 @@ function fillGetFBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
 function fillBrandOffBody(ctx: CodegenContext): void {
   const fn = findFn(ctx, PROTOIDX_BRAND_OFF);
   if (!fn) return;
-  // params: 0=v ; locals: 1=any(anyref) 2=off(i32)
-  fn.locals = [
-    { name: "any", type: { kind: "anyref" } },
-    { name: "off", type: { kind: "i32" } },
-  ];
-  const ret = (off: number): Instr[] => [{ op: "i32.const", value: off }, { op: "return" }];
-  const testArm = (typeIdx: number | undefined, off: number): Instr[] =>
-    typeIdx === undefined
-      ? []
-      : [
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx },
-          { op: "if", blockType: { kind: "empty" }, then: ret(off) },
-        ];
-
-  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
-
-  // $NativeProto receiver → its OWN brand offset (direct proto reads see
-  // their own companion first; out-of-band brands — user-class protos — fall
-  // back to Object).
-  const npTypeIdx = ctx.nativeProtoTypeIdx;
-  if (npTypeIdx !== undefined) {
-    body.push(
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: npTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: npTypeIdx },
-          { op: "struct.get", typeIdx: npTypeIdx, fieldIdx: 0 }, // $brand
-          { op: "i32.const", value: BUILTIN_BRAND_BASE },
-          { op: "i32.sub" },
-          { op: "local.tee", index: 2 },
-          { op: "i32.const", value: BUILTIN_BRAND_COUNT },
-          { op: "i32.lt_u" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [{ op: "local.get", index: 2 }, { op: "return" }],
-          },
-          ...ret(OBJ_OFF),
-        ],
-      },
-    );
-  }
-  // Boxed-primitive WRAPPER (`new String()` / `new Number()` / `new
-  // Boolean()`) — a plain `$Object` carrying the [[PrimitiveValue]] internal
-  // slot (see WRAPPER_PRIMITIVE_KEY above). Classify by the slot value's box
-  // type so the wrapper's chain starts at its OWN prototype brand
-  // (`String.prototype.enumerable = true; Object.defineProperty(o, "p",
-  // new String())` — the 15.2.3.6-3-{35,141,220,250}-1 family). An ordinary
-  // `$Object` (no slot) falls through to the OBJ default. The key is built
-  // with `nativeStringLiteralInstrs` — finalize-safe (no import-global adds).
-  {
-    const types = ctx.objectRuntimeTypes;
-    const objFindIdx = ctx.funcMap.get("__obj_find");
-    const anyStr = ctx.anyStrTypeIdx;
-    if (types && objFindIdx !== undefined && anyStr >= 0) {
-      const entryRefNull: ValType = { kind: "ref_null", typeIdx: types.propEntryTypeIdx };
-      const eLocal = fn.locals.length + 1; // params: 1 → locals start at 1
-      fn.locals.push({ name: "we", type: entryRefNull });
-      const slotValue = (): Instr[] => [
-        { op: "local.get", index: eLocal },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: types.propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
-      ];
-      const boxNum = ctx.nativeBoxNumberTypeIdx;
-      const boxBool = ctx.nativeBoxBooleanTypeIdx;
-      body.push(
-        { op: "local.get", index: 1 },
-        { op: "ref.test", typeIdx: types.objectTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 1 },
-            { op: "ref.cast", typeIdx: types.objectTypeIdx },
-            ...nativeStringLiteralInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
-            { op: "extern.convert_any" },
-            { op: "call", funcIdx: objFindIdx },
-            { op: "local.set", index: eLocal },
-            { op: "local.get", index: eLocal },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...slotValue(),
-                { op: "ref.test", typeIdx: anyStr },
-                { op: "if", blockType: { kind: "empty" }, then: ret(STRING_OFF) },
-                ...(boxNum >= 0
-                  ? ([
-                      ...slotValue(),
-                      { op: "ref.test", typeIdx: boxNum },
-                      ...slotValue(),
-                      { op: "ref.test", typeIdx: I31_HEAP_TYPE },
-                      { op: "i32.or" },
-                      { op: "if", blockType: { kind: "empty" }, then: ret(NUMBER_OFF) },
-                    ] satisfies Instr[])
-                  : []),
-                ...(boxBool >= 0
-                  ? ([
-                      ...slotValue(),
-                      { op: "ref.test", typeIdx: boxBool },
-                      { op: "if", blockType: { kind: "empty" }, then: ret(BOOLEAN_OFF) },
-                    ] satisfies Instr[])
-                  : []),
-                // (#6651 H5) …and the SYMBOL wrapper (`Object(sym)`, built by #6651
-                // I4). A `[[PrimitiveValue]]` slot holding the `$Symbol` carrier
-                // (#2866) makes the wrapper a Symbol object, so §10.4.3's rule —
-                // the receiver's implicit chain starts at its OWN wrapper
-                // prototype — names Symbol.prototype. That is what lets
-                // `Object(Symbol.toPrimitive)[Symbol.toPrimitive]` reach the
-                // seeded `@@3` companion entry: this consult is key-AGNOSTIC
-                // (`__protoidx_get_k` hands the key straight to `__obj_find`), so
-                // a boxed-symbol key resolves here where the string-key
-                // inherited-method arm cannot look at all.
-                //
-                // Gated on the carrier ALREADY being registered. The fill never
-                // calls `ensureSymbolCarrier`, so a module with no symbols emits
-                // the exact previous body — the demand gate, not a flag.
-                ...(ctx.symbolTypeIdx >= 0
-                  ? ([
-                      ...slotValue(),
-                      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
-                      { op: "if", blockType: { kind: "empty" }, then: ret(SYMBOL_OFF) },
-                    ] satisfies Instr[])
-                  : []),
-              ],
+  const types = ctx.objectRuntimeTypes;
+  const findOwn = ctx.funcMap.get("__obj_find");
+  const recipe = buildPrototypeBrandOffsetDefinition({
+    nativeProtoTypeIdx: ctx.nativeProtoTypeIdx,
+    wrapper:
+      types && findOwn !== undefined && ctx.anyStrTypeIdx >= 0
+        ? {
+            types,
+            findOwn,
+            anyString: ctx.anyStrTypeIdx,
+            boxNumber: ctx.nativeBoxNumberTypeIdx,
+            boxBoolean: ctx.nativeBoxBooleanTypeIdx,
+          }
+        : undefined,
+  });
+  let step = recipe.next();
+  while (!step.done) {
+    step =
+      step.value.kind === "wrapper-key"
+        ? recipe.next({
+            kind: "wrapper-key",
+            materialization: nativeStringLiteralMaterialization(ctx, WRAPPER_PRIMITIVE_KEY),
+          })
+        : recipe.next({
+            kind: "remaining-carriers",
+            resources: {
+              symbolTypeIdx: ctx.symbolTypeIdx,
+              vecPropBaseTypeIdx: ctx.vecPropBaseTypeIdx,
+              mapTypeIdx: ctx.mapTypeIdx,
+              regExpTypeIdx: ctx.structMap.get("__StandaloneRegExp"),
+              dateTypeIdx: ctx.structMap.get("__Date"),
+              promiseTypeIdx: ctx.structMap.get("$Promise"),
+              boxBooleanTypeIdx: ctx.nativeBoxBooleanTypeIdx,
+              boxNumberTypeIdx: ctx.nativeBoxNumberTypeIdx,
+              anyStringTypeIdx: ctx.anyStrTypeIdx,
+              errorTypeIdx: ctx.errorStructTypeIdx,
+              isClosureCarrier: ctx.funcMap.get("__is_closure_prop_carrier"),
             },
-            ...ret(OBJ_OFF),
-          ],
-        },
-      );
-    }
+          });
   }
-  body.push(...testArm(ctx.vecPropBaseTypeIdx, ARR_OFF));
-  // The native keyed collections are the one non-`$Object` carrier family whose
-  // implicit prototype participates in the companion store. The collection
-  // runtime shares `$Map` for Map/Set/WeakMap/WeakSet, so discriminate by the
-  // immutable kind tag before the generic Object fallback. This lets a
-  // standalone constructor honor a user-installed `X.prototype.<adder>` without
-  // changing the native fast path when the companion has no override.
-  //
-  // (#5151) Only SET was classified until now, so `Map.prototype.set = null`
-  // (and the WeakMap/WeakSet twins) were invisible to every receiver-aware
-  // consult: the Map receiver answered `Object`, whose companion has no `set`.
-  // All four kinds map to their own brand offset here.
-  if (ctx.mapTypeIdx >= 0) {
-    body.push(
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: ctx.mapTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: COLLECTION_KIND_OFFSETS.flatMap(([kind, off]): Instr[] => [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: ctx.mapTypeIdx },
-          { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: MAP_KIND_FIELD },
-          { op: "i32.const", value: kind },
-          { op: "i32.eq" },
-          { op: "if", blockType: { kind: "empty" }, then: ret(off) },
-        ]),
-      },
-    );
-  }
-  body.push(...testArm(ctx.structMap.get("__StandaloneRegExp"), REGEXP_OFF));
-  body.push(...testArm(ctx.structMap.get("__Date"), DATE_OFF));
-  // `$Promise` participates in the generic carrier-bag predicate so promise
-  // expandos work, but its implicit prototype is Promise.prototype rather
-  // than Function.prototype. Classify it before the widened closure-carrier
-  // fallback or a dynamic `promise.then` read consults the wrong companion.
-  body.push(...testArm(ctx.structMap.get("$Promise"), PROMISE_OFF));
-  // (#4207) BARE primitive receiver — a native string / boxed number / boxed
-  // boolean that never went through `ToObject`. The wrapper arm above only
-  // classifies a `$Object` carrying [[PrimitiveValue]]; a primitive reaching a
-  // consult site directly (`Number.prototype.m = f; (5).m()`, which lowers to
-  // `__extern_method_call(__box_number(5), "m", …)`) fell through every test
-  // and answered `Object`, so `Number.prototype`'s companion was never
-  // consulted and the inherited method was invisible. §10.4.3 says the
-  // receiver's implicit chain starts at its OWN wrapper prototype, so this is
-  // the same rule the wrapper arm states, applied one representation earlier.
-  // Ordered boolean-before-number because the boxes are distinct struct types
-  // and i31 is claimed by Number (a boxed boolean is never an i31 here).
-  body.push(...testArm(ctx.nativeBoxBooleanTypeIdx >= 0 ? ctx.nativeBoxBooleanTypeIdx : undefined, BOOLEAN_OFF));
-  body.push(...testArm(ctx.nativeBoxNumberTypeIdx >= 0 ? ctx.nativeBoxNumberTypeIdx : undefined, NUMBER_OFF));
-  body.push(...testArm(I31_HEAP_TYPE, NUMBER_OFF));
-  body.push(...testArm(ctx.anyStrTypeIdx >= 0 ? ctx.anyStrTypeIdx : undefined, STRING_OFF));
-  body.push(...testArm(ctx.errorStructTypeIdx >= 0 ? ctx.errorStructTypeIdx : undefined, ERROR_OFF));
-  const isClosureCarrierIdx = ctx.funcMap.get("__is_closure_prop_carrier");
-  if (isClosureCarrierIdx !== undefined) {
-    body.push(
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: isClosureCarrierIdx },
-      { op: "if", blockType: { kind: "empty" }, then: ret(FUN_OFF) },
-    );
-  }
-  body.push({ op: "i32.const", value: OBJ_OFF });
-  fn.body = body;
+  fn.locals = step.value.locals;
+  fn.body = step.value.body;
 }
 
 /** (#4176) `__protoidx_has_r` / `__protoidx_get_r` — receiver-aware consults. */
@@ -1656,26 +1109,9 @@ function fillRecvConsultBodies(ctx: CodegenContext): void {
   const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);
   if (brandOffIdx === undefined) return;
   const hasR = findFn(ctx, PROTOIDX_HAS_R);
-  if (hasR && hasKIdx !== undefined) {
-    // (recv, key) -> has_k(key, brand_off(recv))
-    hasR.body = [
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: brandOffIdx },
-      { op: "call", funcIdx: hasKIdx },
-    ];
-  }
+  if (hasR && hasKIdx !== undefined) hasR.body = buildPrototypeReceiverConsultBody("has", brandOffIdx, hasKIdx);
   const getR = findFn(ctx, PROTOIDX_GET_R);
-  if (getR && getKIdx !== undefined) {
-    // (recv, key) -> get_k(recv, key, brand_off(recv))
-    getR.body = [
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: brandOffIdx },
-      { op: "call", funcIdx: getKIdx },
-    ];
-  }
+  if (getR && getKIdx !== undefined) getR.body = buildPrototypeReceiverConsultBody("get", brandOffIdx, getKIdx);
 }
 
 /**

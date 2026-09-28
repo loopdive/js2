@@ -2079,10 +2079,7 @@ export function compileStringBinaryOp(
   // §7.1.17 ToString(Symbol) throws — `str + sym` / `sym + str` must throw
   // TypeError before any concat lowering (native, batched, or host) runs.
   if (op === ts.SyntaxKind.PlusToken) {
-    if (tryThrowOnSymbolStringCoercion(ctx, fctx, expr.left)) {
-      return ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 ? nativeStringType(ctx) : { kind: "externref" };
-    }
-    if (tryThrowOnSymbolStringCoercion(ctx, fctx, expr.right)) {
+    if ([expr.left, expr.right].some((operand) => tryThrowOnSymbolStringCoercion(ctx, fctx, operand))) {
       return ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 ? nativeStringType(ctx) : { kind: "externref" };
     }
   }

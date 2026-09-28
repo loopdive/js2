@@ -342,6 +342,13 @@ export function isKnownLibName(name: string): boolean {
 
 /** Pre-parsed lib SourceFiles — cached to avoid re-parsing on every compile */
 const LIB_SOURCE_FILES = new Map<string, ts.SourceFile>();
+
+/** Identity of a currently cached compiler library; invalidation revokes old nodes. */
+export function isCurrentCompilerLibrarySourceFile(source: ts.SourceFile): boolean {
+  for (const current of LIB_SOURCE_FILES.values()) if (current === source) return true;
+  return false;
+}
+
 export function getLibSourceFile(
   name: string,
   languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,

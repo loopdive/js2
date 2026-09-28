@@ -13,6 +13,11 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import {
+  planNativeInvocationInput,
+  nativeInvocationSetup,
+  type NativeInvocationPhysicalSetup,
+} from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
 import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
@@ -84,10 +89,17 @@ import {
 } from "./program/native-value-resources.js";
 
 import { planAsyncFrameSetup, type AsyncFrameSetup } from "./program/async-frame-setup.js";
+import { nativeRefCellScalarInner } from "./program/native-ref-cell-requirements.js";
 import { planNativePromiseInventoryPreflight } from "./program-native-async-resources.js";
+import {
+  planNativeSourceClosureRequirements,
+  type NativeSourceClosureRequirements,
+} from "./program/native-source-closure-requirements.js";
 
 /** Vector/string carriers stay logical until the consumer reserves their shared types. */
-export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" | "string" | "support-ref" }>;
+export type PhysicalSignatureType =
+  | ValType
+  | Extract<IrType, { kind: "vec" | "string" | "support-ref" | "closure" | "callable" | "boxed" }>;
 
 export interface NativeStringValueAbiBinding {
   readonly resourceKey: string;
@@ -177,6 +189,8 @@ export interface PhysicalSetupPlan {
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
   readonly vectors: NativeVectorResourcePlan;
+  readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
+  readonly nativeInvocation?: NativeInvocationPhysicalSetup;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
   readonly nativeStrings?: PhysicalNativeStringSetup;
@@ -497,56 +511,56 @@ function literalNativeBinding(
   return { resourceKey: declaration.key, entry: plan, reference };
 }
 
-function nativeUnboxBinding(
+function nativeNumberBinding(
   context: NativeAbiContext,
   input: NativeStringValueReservationInput,
   declarationOrder: number,
+  direction: "box" | "unbox",
 ): NativeStringValueAbiBinding | undefined {
   const { projection } = input.demands;
+  if (direction === "box" && projection.prepared.manifest.policy.numberBoundary.box !== "native") return undefined;
+  const feature = direction === "box" ? "js.number.box" : "js.number.unbox";
   const demands = input.demands.intrinsics.filter(
     (row) =>
-      row.instruction.id === "js.number.unbox" &&
+      row.instruction.id === feature &&
       input.demands.buffers[input.demands.occurrences[row.occurrence]!.bufferIndex]!.view === "projection",
   );
-  if (!demands.length) {
-    if (input.plan.mode !== "literals") nativeInvalid("number-boundary plan has no actual unbox demand");
-    return undefined;
-  }
-  const canonical = NUMBER_BOUNDARY_RUNTIME_PROVIDERS.filter((row) => row.id === "native.js.number.unbox");
-  if (canonical.length !== 1) nativeInvalid("canonical unbox provider is not unique");
+  if (!demands.length) return undefined;
+  const canonical = NUMBER_BOUNDARY_RUNTIME_PROVIDERS.filter((row) => row.id === `native.${feature}`);
+  if (canonical.length !== 1) nativeInvalid(`canonical ${direction} provider is not unique`);
   const provider = canonical[0]!;
   if (provider.implementation.kind !== "runtime-callable" || !provider.signature)
-    nativeInvalid("canonical unbox contract is not callable");
+    nativeInvalid(`canonical ${direction} contract is not callable`);
   const manifest = projection.prepared.manifest;
   const selected = manifest.providers.filter((row) => row.id === provider.id || row.feature === provider.feature);
   if (
     input.plan.mode !== "number-boundary" ||
-    manifest.policy.numberBoundary.unbox !== "native" ||
+    manifest.policy.numberBoundary[direction] !== "native" ||
     selected.length !== 1
   )
-    nativeInvalid("unbox requires the unique selected native number-boundary policy/provider");
-  nativeSame(selected[0], provider, "manifest unbox provider differs from complete canonical definition");
+    nativeInvalid(`${direction} requires the unique selected native number-boundary policy/provider`);
+  nativeSame(selected[0], provider, `manifest ${direction} provider differs from complete canonical definition`);
   nativeSame(
-    projection.prepared.providers.get("js.number.unbox"),
+    projection.prepared.providers.get(feature),
     provider,
-    "selected unbox lookup differs from canonical provider",
+    `selected ${direction} lookup differs from canonical provider`,
   );
   nativeSame(
     provider.signature,
-    INTRINSIC_DEFINITIONS["js.number.unbox"].signature,
-    "canonical intrinsic/unbox signatures differ",
+    INTRINSIC_DEFINITIONS[feature].signature,
+    `canonical intrinsic/${direction} signatures differ`,
   );
   const reference = irRuntimeFuncRef(provider.implementation.symbol);
   for (const { instruction } of demands) {
-    if (instruction.provider?.kind !== "callable") nativeInvalid("unbox attachment is not callable");
+    if (instruction.provider?.kind !== "callable") nativeInvalid(`${direction} attachment is not callable`);
     nativeSame(
       instruction.provider.target.binding,
       reference.binding,
-      "unbox attachment target is not the selected runtime binding",
+      `${direction} attachment target is not the selected runtime binding`,
     );
   }
-  const declaration = declarationForRole(context.resources, ["values", "unbox-number"]);
-  if (declaration.space !== "function") nativeInvalid("unbox declaration is not a function");
+  const declaration = declarationForRole(context.resources, ["values", `${direction}-number`]);
+  if (declaration.space !== "function") nativeInvalid(`${direction} declaration is not a function`);
   const physical = (type: IrType): ValType => {
     if (type.kind !== "val" || Object.hasOwn(type, "typeRef"))
       nativeInvalid("canonical number-boundary signature has a non-scalar carrier");
@@ -555,7 +569,7 @@ function nativeUnboxBinding(
   nativeSame(
     declaration.signature,
     { params: provider.signature.params.map(physical), results: [physical(provider.signature.result)] },
-    "unbox recipe disagrees with canonical carriers",
+    `${direction} recipe disagrees with canonical carriers`,
   );
   const signature = preparedIrCallableSignature(provider.signature.params, [provider.signature.result]);
   const id = preparedIrRuntimeCallableBindingId(context.program.inventory, reference);
@@ -573,15 +587,15 @@ function nativeUnboxBinding(
     nativeSame(
       previous.plan,
       { ...entry, order: previous.plan.order, displayName: previous.plan.displayName },
-      "existing runtime unbox ABI entry contradicts its canonical contract",
+      `existing runtime ${direction} ABI entry contradicts its canonical contract`,
     );
     if (previous.contract.kind !== "callable" || Object.hasOwn(previous.contract, "promise"))
-      nativeInvalid("existing unbox semantic contract is not synchronous callable");
-    nativeSame(previous.contract.ref.binding, reference.binding, "existing unbox reference differs");
+      nativeInvalid(`existing ${direction} semantic contract is not synchronous callable`);
+    nativeSame(previous.contract.ref.binding, reference.binding, `existing ${direction} reference differs`);
     nativeSame(
       preparedIrCallableSignature(previous.contract.params, previous.contract.results),
       signature,
-      "existing unbox semantic signature differs",
+      `existing ${direction} semantic signature differs`,
     );
   }
   return { resourceKey: declaration.key, entry: previous?.plan ?? entry, reference };
@@ -684,11 +698,13 @@ function nativeStringSetup(
     const root = context.entries.get(binding.entry.id)!.contract;
     if (root.kind === "global" || root.kind === "callable") add({ ...binding, reference: root.ref });
   }
-  const unboxIndex = input.plan.declarations.findIndex(
-    (row) => preparedIrDataMismatch(row.role, ["values", "unbox-number"]) === undefined,
-  );
-  const unbox = nativeUnboxBinding(context, input, baseOrder + unboxIndex);
-  if (unbox) add(unbox);
+  for (const direction of ["box", "unbox"] as const) {
+    const index = input.plan.declarations.findIndex(
+      (row) => preparedIrDataMismatch(row.role, ["values", `${direction}-number`]) === undefined,
+    );
+    const binding = nativeNumberBinding(context, input, baseOrder + index, direction);
+    if (binding) add(binding);
+  }
   if (input.plan.output) {
     if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
     const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
@@ -953,6 +969,7 @@ function physicalSignatureConverter(
   gaps: Gaps,
   native?: PhysicalNativeStringSetup,
   dynamicUnits: readonly IrUnitId[] = [],
+  sourceClosures?: NativeSourceClosureRequirements,
 ) {
   const abi = native ? new ProgramAbiMap(program.inventory, program.derivedUnits) : undefined;
   if (abi) {
@@ -971,6 +988,26 @@ function physicalSignatureConverter(
   return (types: readonly IrType[], where: string, unitId?: IrUnitId): PhysicalSignatureType[] => {
     const out: PhysicalSignatureType[] = [];
     for (const type of types) {
+      const cellInner = nativeRefCellScalarInner(type);
+      if (
+        type.kind === "boxed" &&
+        cellInner &&
+        sourceClosures?.refCells.some((row) => preparedIrDataMismatch(row.inner, cellInner) === undefined)
+      ) {
+        out.push(type);
+        continue;
+      }
+      if (
+        (type.kind === "closure" || type.kind === "callable") &&
+        sourceClosures?.signatures.some(
+          (row) =>
+            preparedIrTypeKey({ kind: "closure", signature: row.signature }) ===
+            preparedIrTypeKey({ kind: "closure", signature: type.signature }),
+        )
+      ) {
+        out.push(type);
+        continue;
+      }
       const value =
         scalar(type) ??
         (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
@@ -1087,6 +1124,76 @@ function planPhysicalFunctionSlots(
   return functions;
 }
 
+/** Check the selected source closure bodies and their required native carriers. */
+function planSourceClosureSetup(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+  bodies: ReadonlyMap<IrUnitId, IrFunction>,
+  vectors: NativeVectorResourcePlan,
+  nativeStrings: PhysicalNativeStringSetup | undefined,
+  gaps: Gaps,
+): NativeSourceClosureRequirements | undefined {
+  const sourceClosures =
+    options.backend === "wasmgc" && options.target === "standalone"
+      ? planNativeSourceClosureRequirements(program, projection)
+      : undefined;
+  if (sourceClosures) {
+    for (const gap of sourceClosures.gaps) gaps.add(gap.detail, gap.unitId);
+    for (const unit of sourceClosures.units) {
+      const fn = bodies.get(unit.unitId);
+      if (fn?.asyncPlan || fn?.asyncRuntime)
+        gaps.add("async source closure needs its native canonical frame completion owner", unit.unitId);
+    }
+    const requireCarrier = (type: IrType): void => {
+      if (type.kind === "string" && !nativeStrings)
+        gaps.add("source closure string needs its actual native string carrier owner");
+      if (type.kind === "vec" && type.elementType.kind === "val") {
+        const elementKind = type.elementType.val.kind;
+        if (!vectors.layouts.some((element) => element === elementKind))
+          gaps.add("source closure vector needs its actual native vector carrier owner");
+      }
+    };
+    for (const row of sourceClosures.signatures) {
+      row.signature.params.forEach(requireCarrier);
+      if (row.signature.returnType) requireCarrier(row.signature.returnType);
+    }
+    for (const row of sourceClosures.shapes) row.captures.forEach(requireCarrier);
+  }
+  return sourceClosures;
+}
+
+function planPhysicalStartup(
+  program: PreparedIrProgram,
+  bodies: ReadonlyMap<IrUnitId, IrFunction>,
+  exportNames: ReadonlySet<string>,
+  gaps: Gaps,
+): PhysicalStartup {
+  // 4. Startup: executable units in semantic order, one adapter.
+  const startupUnits: IrUnitId[] = [];
+  let adapter: PhysicalStartup["adapter"] = "none";
+  for (const plan of program.startup) {
+    if (!plan.executable || plan.unitId === null) continue;
+    if (!bodies.has(plan.unitId))
+      gaps.add(`startup source ${plan.sourceId} has no physical initializer body`, plan.unitId);
+    startupUnits.push(plan.unitId);
+    const kind = plan.invocation.kind;
+    if (kind === "wasm-start" || kind === "deferred-export") {
+      if (adapter !== "none" && adapter !== kind) {
+        gaps.add(`startup sources disagree on the invocation adapter (${adapter} vs ${kind})`, plan.unitId);
+      }
+      adapter = kind;
+    } else {
+      gaps.add(`startup adapter ${kind} is not materializable (only wasm-start and deferred-export)`, plan.unitId);
+    }
+  }
+  if (adapter === "deferred-export" && exportNames.has("__module_init")) {
+    gaps.add("deferred startup export __module_init collides with a program export of the same name");
+  }
+
+  return { units: startupUnits, adapter };
+}
+
 /**
  * Derive the physical setup for one projection, or the first located gap.
  * Only scalar carriers, unit/import callables, source/import globals, export
@@ -1122,7 +1229,16 @@ export function planPhysicalSetup(
   }
   const nativeNumberFormat =
     formatter && nativeStrings ? nativeFormatterSetup(program, nativeStrings, formatter.requirements) : undefined;
-  const nativeBindings = [...(nativeStrings?.bindings ?? []), ...(nativeNumberFormat?.bindings ?? [])];
+  const sourceClosures = planSourceClosureSetup(program, options, projection, bodies, vectors, nativeStrings, gaps);
+  const invocation = planNativeInvocationInput(sourceClosures, options.utf8Storage === true, native);
+  for (const gap of invocation.gaps) gaps.add(gap.detail, gap.unitId);
+  const priorBindings = [...(nativeStrings?.bindings ?? []), ...(nativeNumberFormat?.bindings ?? [])];
+  const invocationOrder = Math.max(
+    nativeSupplementalOrder(program),
+    ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
+  );
+  const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
+  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? [])];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
     program,
@@ -1144,7 +1260,7 @@ export function planPhysicalSetup(
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
   const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
-  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units);
+  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
 
   const functions = planPhysicalFunctionSlots(physical, entries, convert, dynamic.units, gaps);
 
@@ -1251,7 +1367,7 @@ export function planPhysicalSetup(
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
-  let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length);
+  let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length) || Boolean(nativeInvocation);
   for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
     const diagnosticUnit =
       formatter && fn === formatter.support.functions[0]
@@ -1286,7 +1402,10 @@ export function planPhysicalSetup(
               !(
                 provider.kind === "callable" &&
                 reserved.has(irCallableBindingKey(provider.target.binding)) &&
-                ((nativeStrings && instruction.id === "js.number.unbox") ||
+                ((nativeStrings &&
+                  (instruction.id === "js.number.unbox" ||
+                    (instruction.id === "js.number.box" &&
+                      projection.prepared.manifest.policy.numberBoundary.box === "native"))) ||
                   (instruction.id === "js.number.box" &&
                     hostNumberBoundary?.imports.some(
                       (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
@@ -1309,27 +1428,7 @@ export function planPhysicalSetup(
     }
   }
 
-  // 4. Startup: executable units in semantic order, one adapter.
-  const startupUnits: IrUnitId[] = [];
-  let adapter: PhysicalStartup["adapter"] = "none";
-  for (const plan of program.startup) {
-    if (!plan.executable || plan.unitId === null) continue;
-    if (!bodies.has(plan.unitId))
-      gaps.add(`startup source ${plan.sourceId} has no physical initializer body`, plan.unitId);
-    startupUnits.push(plan.unitId);
-    const kind = plan.invocation.kind;
-    if (kind === "wasm-start" || kind === "deferred-export") {
-      if (adapter !== "none" && adapter !== kind) {
-        gaps.add(`startup sources disagree on the invocation adapter (${adapter} vs ${kind})`, plan.unitId);
-      }
-      adapter = kind;
-    } else {
-      gaps.add(`startup adapter ${kind} is not materializable (only wasm-start and deferred-export)`, plan.unitId);
-    }
-  }
-  if (adapter === "deferred-export" && exportNames.has("__module_init")) {
-    gaps.add("deferred startup export __module_init collides with a program export of the same name");
-  }
+  const startup = planPhysicalStartup(program, bodies, exportNames, gaps);
 
   // 5. Linear physical needs beyond scalar bodies.
   if (options.backend === "linear" && program.allocations.size > 0) {
@@ -1370,6 +1469,21 @@ export function planPhysicalSetup(
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
+    ...(sourceClosures
+      ? {
+          sourceClosures: {
+            key: sourceClosures.key,
+            signatures: sourceClosures.signatures,
+            shapes: sourceClosures.shapes,
+            units: sourceClosures.units,
+            allocations: sourceClosures.allocations,
+            refCells: sourceClosures.refCells,
+            refCellAllocations: sourceClosures.refCellAllocations,
+            gaps: sourceClosures.gaps,
+          },
+        }
+      : {}),
+    ...(nativeInvocation ? { nativeInvocation } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),
     ...(nativeStrings ? { nativeStrings } : {}),
@@ -1379,7 +1493,7 @@ export function planPhysicalSetup(
     definedGlobals,
     functions,
     exports,
-    startup: { units: startupUnits, adapter },
+    startup,
   };
   // Deep-frozen, null-prototype copy: nested records and arrays included.
   return { kind: "planned", plan: freezePreparedIrValue(plan) as PhysicalSetupPlan };

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { GeneratorReadBinding } from "../runtime/wasmgc/values/object-get-arms.js";
 /** Ordinary protocol property values for native generator state objects. */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -250,21 +251,10 @@ export function fillNativeGeneratorProtocol(ctx: CodegenContext): void {
 }
 
 /** Canonical property-get prefix. Requires the caller's ER scratch local. */
-export function nativeGeneratorProtocolReadPrefix(ctx: CodegenContext, valueLocal: number): Instr[] {
+export function captureGeneratorReadBinding(ctx: CodegenContext, valueLocal: number): GeneratorReadBinding | undefined {
   const funcIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
-  if (funcIdx === undefined) return [];
-  return [
-    load(0),
-    load(1),
-    { op: "call", funcIdx },
-    { op: "local.set", index: valueLocal },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [load(valueLocal), { op: "return" }],
-      else: [],
-    },
-  ];
+  if (funcIdx === undefined) return undefined;
+  return { get: funcIdx, valueLocal };
 }
 
 /** Delegation getter bridge. The receiver is parameter zero of that getter. */

@@ -22,7 +22,7 @@
 
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrModuleDeclarations, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
-import { irSupportRef } from "./core/types.js";
+import { irSupportRef, closureSignatureEquals } from "./core/types.js";
 // #4605 — the module-level declared-type tables and the rules that read them.
 // `verifyIrFunction` stays standalone: the tables arrive as an optional
 // parameter, and their absence is always a conservative skip.
@@ -2116,13 +2116,48 @@ function checkRoadmapCarrierRule(instr: RoadmapCarrierInstr, blockId: number, ct
       // resultType, which also lowers to externref, so both spellings are
       // valid and nothing else is.
       const rt = instr.resultType;
-      if (instr.result === null || rt === null || rt.kind === "callable") return;
+      if (instr.result === null || rt === null) return;
+      if (rt.kind === "callable") {
+        checkCallableProjection(instr, rt, blockId, ctx);
+        return;
+      }
       const got = asVal(rt)?.kind ?? null;
       if (got !== null && got !== "externref") {
         roadmapError(ctx, blockId, `coerce.to_externref resultType must be externref or a callable, got ${got}`);
       }
     }
   }
+}
+
+/** Structural precondition only; ordinary Get additionally needs the issued keyed-result proof. */
+function checkCallableProjection(
+  instr: Extract<IrInstr, { kind: "coerce.to_externref" }>,
+  result: Extract<IrType, { kind: "callable" }>,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+): void {
+  const input = ctx.typeOf.get(instr.value),
+    definition = ctx.definitions.get(instr.value);
+  if (
+    (input?.kind === "closure" || input?.kind === "callable") &&
+    closureSignatureEquals(input.signature, result.signature)
+  )
+    return;
+  if (
+    input?.kind === "val" &&
+    !input.typeRef &&
+    input.val.kind === "externref" &&
+    definition?.kind === "call" &&
+    definition.args.length === 3 &&
+    definition.target.binding.kind === "intrinsic" &&
+    definition.target.binding.symbol === "js.object.get"
+  )
+    return;
+  roadmapError(
+    ctx,
+    blockId,
+    "callable projection requires an exact closure/callable signature or ordinary Get result proof",
+  );
 }
 
 /** Shared by `select` / `if`: each arm carrier must match `resultType`. */

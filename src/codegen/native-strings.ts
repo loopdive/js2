@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildAnyToStringBody } from "../runtime/wasmgc/values/any-to-string-body.js";
+import type { AnyToStringResponse } from "../runtime/wasmgc/values/any-to-string-types.js";
 /**
  * Native WasmGC string helpers — $AnyString, $FlatString, $ConsString types
  * and ensureNativeStringHelpers which emits the full string runtime.
@@ -456,569 +458,62 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   // native-strings mode; convert it back with any.convert_extern + ref.cast.
   const numToStrIdx = ctx.funcMap.get("number_toString");
 
-  const litStr = (value: string): Instr[] => nativeStringLiteralInstrs(ctx, value);
-
-  // `box` (the $AnyValue ref) lives in local 1; the original anyref param in 0.
-  const L_V = 0;
-  const L_BOX = 1;
-  // #1910/#1472 S2 — scratch anyref for the tag-5 string-vs-wrapper recovery.
-  const L_RECOVER = 2;
-  // (ES5 standalone lane) scratch anyref for the OrdinaryToPrimitive terminal.
-  const L_TOPRIM = 3;
-
-  const numberArm = (loadNumeric: Instr[]): Instr[] =>
-    numToStrIdx !== undefined
-      ? [
-          ...loadNumeric,
-          { op: "call", funcIdx: numToStrIdx },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: anyStrTypeIdx },
-        ]
-      : litStr("[object Object]");
-
-  // (ES5 standalone lane) §7.1.17 step 5 — ToString of an OBJECT is
-  // `ToString(? ToPrimitive(argument, string))`, and it is `ToPrimitive` that
-  // runs a user `toString`/`valueOf`. Every arm above this terminal handles a
-  // value that is ALREADY primitive, so reaching here means "an object we could
-  // not render" — precisely where the OrdinaryToPrimitive step belongs.
-  //
-  // Root cause this closes: a plain-function-constructor ("fnctor") instance —
-  // `function F(){ this.toString = function(){…} }; new F()` — is a NOMINAL
-  // WasmGC struct, so it is neither `$Object` nor `$Vec`. `__to_primitive`'s
-  // `$Object` arm (the only ToPrimitive step `__any_to_string` had, in
-  // `recoverNonStringExtern`) misses it, and the value fell straight through to
-  // the "[object Object]" literal. Measured standalone before this change:
-  // `"" + new F()`, `String(new F())`, and every borrowed
-  // `String.prototype.<m>.call(new F(), …)` answered "[object Object]" for a
-  // receiver whose own OR inherited `toString` returns "OWN".
-  //
-  // The driver is `__class_to_primitive(obj, stringHint)` (class-to-primitive.ts)
-  // rather than `__to_primitive`, deliberately: it dispatches ONLY on the
-  // per-struct `__call_valueOf`/`__call_toString` arms, so a `$Object`, a `$Vec`
-  // or a bare closure struct gets `ref.null.extern` from the dispatchers and the
-  // driver's string-hint tail answers the same "[object Object]" as before. The
-  // blast radius is therefore exactly "nominal struct carrying a user
-  // valueOf/toString", leaving the `$Object` and array renderings byte-identical.
-  //
-  // Only a PRIMITIVE result is accepted (`$AnyString`, boxed number / i31 small
-  // int, boxed boolean); anything else falls back to "[object Object]". That is
-  // what makes the terminal non-recursive: it never re-enters `__any_to_string`,
-  // so a driver that answers with another object cannot loop.
+  // Preserve donor capture order before the first body-construction request.
   const classToPrimIdx = ctx.funcMap.get("__class_to_primitive");
   const boxNumTerminalIdx = ctx.nativeBoxNumberTypeIdx;
   const boxBoolTerminalIdx = ctx.nativeBoxBooleanTypeIdx;
-  const objectTag = (loadRef: () => Instr[]): Instr[] => {
-    if (classToPrimIdx === undefined) return litStr("[object Object]");
-    const boxArms: Instr[] =
-      boxNumTerminalIdx >= 0 && boxBoolTerminalIdx >= 0
-        ? [
-            { op: "local.get", index: L_TOPRIM },
-            { op: "ref.test", typeIdx: boxNumTerminalIdx },
-            { op: "local.get", index: L_TOPRIM },
-            { op: "ref.test", typeIdx: -20 }, // abstract i31 (#3673 small int)
-            { op: "i32.or" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: strRef },
-              then: numberArm([
-                { op: "local.get", index: L_TOPRIM },
-                { op: "ref.test", typeIdx: -20 },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "f64" } },
-                  then: [
-                    { op: "local.get", index: L_TOPRIM },
-                    { op: "ref.cast", typeIdx: -20 },
-                    { op: "i31.get_s" },
-                    { op: "f64.convert_i32_s" },
-                  ],
-                  else: [
-                    { op: "local.get", index: L_TOPRIM },
-                    { op: "ref.cast", typeIdx: boxNumTerminalIdx },
-                    { op: "struct.get", typeIdx: boxNumTerminalIdx, fieldIdx: 0 },
-                  ],
-                },
-              ]),
-              else: [
-                { op: "local.get", index: L_TOPRIM },
-                { op: "ref.test", typeIdx: boxBoolTerminalIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: strRef },
-                  then: [
-                    { op: "local.get", index: L_TOPRIM },
-                    { op: "ref.cast", typeIdx: boxBoolTerminalIdx },
-                    { op: "struct.get", typeIdx: boxBoolTerminalIdx, fieldIdx: 0 },
-                    {
-                      op: "if",
-                      blockType: { kind: "val", type: strRef },
-                      then: litStr("true"),
-                      else: litStr("false"),
-                    },
-                  ],
-                  else: litStr("[object Object]"),
-                },
-              ],
-            },
-          ]
-        : litStr("[object Object]");
-    return [
-      ...loadRef(),
-      { op: "extern.convert_any" },
-      { op: "i32.const", value: 1 }, // string hint (§7.1.17 → ToPrimitive(_, string))
-      { op: "call", funcIdx: classToPrimIdx },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: L_TOPRIM },
-      { op: "ref.test", typeIdx: anyStrTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: strRef },
-        then: [
-          { op: "local.get", index: L_TOPRIM },
-          { op: "ref.cast", typeIdx: anyStrTypeIdx },
-        ],
-        else: boxArms,
-      },
-    ];
-  };
-
-  // (#2962) Shared terminal for an unrecognized object ref: `$Error_struct` →
-  // `__error_to_string` (a real "TypeError: boom"), anything else → the
-  // OrdinaryToPrimitive terminal above, which ends at the canonical
-  // "[object Object]". `loadRef` is a FACTORY (fresh instruction
-  // objects per use) because the ref is loaded twice (test + call) — aliasing
-  // one instr array into two tree positions double-shifts funcIdx fields when
-  // post-codegen passes walk the tree (the #1448 corruption class).
-  const objectOrErrorTagInner = (loadRef: () => Instr[]): Instr[] =>
-    errToStrIdx !== undefined && errStructTypeIdx >= 0
-      ? [
-          ...loadRef(),
-          { op: "ref.test", typeIdx: errStructTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: strRef },
-            then: [...loadRef(), { op: "call", funcIdx: errToStrIdx }],
-            else: objectTag(loadRef),
-          },
-        ]
-      : objectTag(loadRef);
-
-  // (#4491 T4-B) The Date arm sits OUTSIDE the error arm, same factory
-  // discipline. `d.toString()` is folded statically to `__date_format_string`;
-  // every DYNAMIC spelling (`String(d)`, `"" + d`, `d + d`, a template
-  // substitution) arrived here and answered "[object Object]" — one value, two
-  // renderings, and the spelling one reaches for when checking is the correct
-  // one. `__date_any_to_string` calls that same formatter, so the two cannot
-  // drift.
-  const objectOrErrorTagBase = (loadRef: () => Instr[]): Instr[] =>
-    dateToStrIdx !== undefined && dateStructTypeIdx >= 0
-      ? [
-          ...loadRef(),
-          { op: "ref.test", typeIdx: dateStructTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: strRef },
-            then: [...loadRef(), { op: "call", funcIdx: dateToStrIdx }],
-            else: objectOrErrorTagInner(loadRef),
-          },
-        ]
-      : objectOrErrorTagInner(loadRef);
-
-  // Arguments objects use the same vec carrier as Arrays, but §10.6's
-  // ordinary Object tag is `[object Arguments]`. Keep this brand check outside
-  // the Error/Date/ordinary-object terminal so every residual ToString route
-  // (dynamic concat, String(), and borrowed String methods) observes the same
-  // class tag. `loadRef` is a factory because the value is consumed once by
-  // the brand query and again by the fallback arm.
   const argumentsVecTypeIdx = getArgumentsVecTypeIdx(ctx);
-  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] => {
-    const brandIdx = ctx.funcMap.get("__args_is_branded");
-    if (brandIdx === undefined || argumentsVecTypeIdx < 0) return objectOrErrorTagBase(loadRef);
-    return [
-      ...loadRef(),
-      { op: "extern.convert_any" },
-      { op: "call", funcIdx: brandIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: strRef },
-        then: litStr("[object Arguments]"),
-        else: objectOrErrorTagBase(loadRef),
-      },
-    ];
-  };
-
-  // #1910/#1472 S2 — recover the string for an externref that is tagged as a
-  // string (tag 5) but is NOT actually a `$AnyString`. The generic
-  // externref→AnyValue boxing tags EVERY externref as tag-5 (see
-  // value-tags.ts:185), so a boxed-primitive WRAPPER (`new String`/`new Number`/
-  // `new Boolean` → a `$Object` carrying the internal [[PrimitiveValue]] slot)
-  // reaches the tag-5 arm; the raw `ref.cast $AnyString` would trap ("illegal
-  // cast"). When the value is a `$Object`, reduce it with `__to_primitive`
-  // (registered by ensureObjectRuntime BEFORE this helper bakes, so its funcIdx
-  // is known here — same no-intervening-shift invariant the rest of this helper
-  // relies on), which reads the wrapper's internal slot and returns its boxed
-  // primitive. That primitive is then a `$AnyString` (string wrapper) or a
-  // `$__box_number_struct`/`$__box_boolean_struct` (number/boolean wrapper), all
-  // of which the existing $AnyString test + residual box-recovery format
-  // correctly — so we route the reduced value back through that recovery
-  // (`stringifyExtern`). Non-`$Object` tag-5 externrefs (boxed primitive carriers
-  // crossing the open-any boundary) skip straight to that recovery unchanged.
   const toPrimitiveIdx = ctx.funcMap.get("__to_primitive");
   const objectRtTypes = ctx.objectRuntimeTypes;
   const boxNumIdxEarly = ctx.nativeBoxNumberTypeIdx;
   const boxBoolIdxEarly = ctx.nativeBoxBooleanTypeIdx;
-  // Format an externref already known NOT to be a $AnyString: recover a
-  // $__box_number_struct / $__box_boolean_struct, else "[object Object]".
-  const stringifyBoxedExtern = (loadExtern: Instr[]): Instr[] =>
-    boxNumIdxEarly >= 0 && boxBoolIdxEarly >= 0
-      ? [
-          ...loadExtern,
-          { op: "any.convert_extern" },
-          { op: "local.tee", index: L_RECOVER },
-          { op: "ref.test", typeIdx: anyStrTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: strRef },
-            then: [
-              { op: "local.get", index: L_RECOVER },
-              { op: "ref.cast", typeIdx: anyStrTypeIdx },
-            ],
-            else: [
-              { op: "local.get", index: L_RECOVER },
-              { op: "ref.test", typeIdx: boxNumIdxEarly },
-              // (#3673) …or an i31-boxed small int.
-              { op: "local.get", index: L_RECOVER },
-              { op: "ref.test", typeIdx: -20 },
-              { op: "i32.or" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: strRef },
-                then: numberArm([
-                  { op: "local.get", index: L_RECOVER },
-                  { op: "ref.test", typeIdx: -20 },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: { kind: "f64" } },
-                    then: [
-                      { op: "local.get", index: L_RECOVER },
-                      { op: "ref.cast", typeIdx: -20 },
-                      { op: "i31.get_s" },
-                      { op: "f64.convert_i32_s" },
-                    ],
-                    else: [
-                      { op: "local.get", index: L_RECOVER },
-                      { op: "ref.cast", typeIdx: boxNumIdxEarly },
-                      { op: "struct.get", typeIdx: boxNumIdxEarly, fieldIdx: 0 },
-                    ],
-                  },
-                ]),
-                else: [
-                  { op: "local.get", index: L_RECOVER },
-                  { op: "ref.test", typeIdx: boxBoolIdxEarly },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: strRef },
-                    then: [
-                      { op: "local.get", index: L_RECOVER },
-                      { op: "ref.cast", typeIdx: boxBoolIdxEarly },
-                      { op: "struct.get", typeIdx: boxBoolIdxEarly, fieldIdx: 0 },
-                      {
-                        op: "if",
-                        blockType: { kind: "val", type: strRef },
-                        then: litStr("true"),
-                        else: litStr("false"),
-                      },
-                    ],
-                    // (#2962) a `$Error_struct` reaching the tag-5 boxed-extern
-                    // recovery (a caught error re-boxed as `any`) renders
-                    // "Name: message" instead of "[object Object]".
-                    else: objectOrErrorTag(() => [{ op: "local.get", index: L_RECOVER }]),
-                  },
-                ],
-              },
-            ],
-          },
-        ]
-      : litStr("[object Object]");
-  const recoverNonStringExtern = (loadExtern: Instr[]): Instr[] =>
-    toPrimitiveIdx !== undefined && objectRtTypes !== undefined
-      ? [
-          // if (value is a $Object wrapper) value = __to_primitive(value, default)
-          ...loadExtern,
-          { op: "any.convert_extern" },
-          { op: "local.tee", index: L_RECOVER },
-          { op: "ref.test", typeIdx: objectRtTypes.objectTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: strRef },
-            then: stringifyBoxedExtern([
-              { op: "local.get", index: L_RECOVER },
-              { op: "extern.convert_any" },
-              { op: "ref.null.extern" }, // default hint
-              { op: "call", funcIdx: toPrimitiveIdx },
-            ]),
-            else: stringifyBoxedExtern([{ op: "local.get", index: L_RECOVER }, { op: "extern.convert_any" }]),
-          },
-        ]
-      : stringifyBoxedExtern(loadExtern);
-
-  const tagEq = (tag: number): Instr[] => [
-    { op: "local.get", index: L_BOX },
-    { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: tag },
-    { op: "i32.eq" },
-  ];
-
-  // tag dispatch as a nested if/else chain producing `ref $AnyString`.
-  const boxDispatch: Instr[] = [
-    ...tagEq(0),
-    {
-      op: "if",
-      blockType: { kind: "val", type: strRef },
-      then: litStr("null"),
-      else: [
-        ...tagEq(1),
-        {
-          op: "if",
-          blockType: { kind: "val", type: strRef },
-          then: litStr("undefined"),
-          else: [
-            ...tagEq(2),
-            {
-              op: "if",
-              blockType: { kind: "val", type: strRef },
-              then: numberArm([
-                { op: "local.get", index: L_BOX },
-                { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 1 },
-                { op: "f64.convert_i32_s" },
-              ]),
-              else: [
-                ...tagEq(3),
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: strRef },
-                  then: numberArm([
-                    { op: "local.get", index: L_BOX },
-                    { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 2 },
-                  ]),
-                  else: [
-                    ...tagEq(4),
-                    {
-                      op: "if",
-                      blockType: { kind: "val", type: strRef },
-                      then: [
-                        { op: "local.get", index: L_BOX },
-                        {
-                          op: "struct.get",
-                          typeIdx: anyValueTypeIdx,
-                          fieldIdx: 1,
-                        },
-                        {
-                          op: "if",
-                          blockType: { kind: "val", type: strRef },
-                          then: litStr("true"),
-                          else: litStr("false"),
-                        },
-                      ],
-                      else: [
-                        ...tagEq(5),
-                        {
-                          op: "if",
-                          blockType: { kind: "val", type: strRef },
-                          // tag 5 (string): the externval is USUALLY a real
-                          // `$AnyString`, but the generic externref boxing also
-                          // tags boxed-primitive WRAPPER objects (new String /
-                          // Number / Boolean → $Object) and other open externrefs
-                          // as tag-5 (#1910/#1472 S2). Test $AnyString first; only
-                          // cast when it really is a string, otherwise recover via
-                          // __extern_toString (reads the wrapper's internal slot
-                          // through ToPrimitive). Without this guard the raw cast
-                          // traps with "illegal cast" for `new String("1") + x`.
-                          then: [
-                            { op: "local.get", index: L_BOX },
-                            {
-                              op: "struct.get",
-                              typeIdx: anyValueTypeIdx,
-                              fieldIdx: 4,
-                            },
-                            { op: "any.convert_extern" },
-                            { op: "local.tee", index: L_RECOVER },
-                            { op: "ref.test", typeIdx: anyStrTypeIdx },
-                            {
-                              op: "if",
-                              blockType: { kind: "val", type: strRef },
-                              then: [
-                                { op: "local.get", index: L_RECOVER },
-                                { op: "ref.cast", typeIdx: anyStrTypeIdx },
-                              ],
-                              else: recoverNonStringExtern([
-                                { op: "local.get", index: L_RECOVER },
-                                { op: "extern.convert_any" },
-                              ]),
-                            },
-                          ],
-                          // tag 6 / unknown → $Error_struct renders
-                          // "Name: message" (#2962), else "[object Object]"
-                          else: objectOrErrorTag(() => [
-                            { op: "local.get", index: L_BOX },
-                            { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 3 },
-                          ]),
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-  ];
-
-  // (#2072) Standalone primitive-box recovery — subsumes the #1988 number-only
-  // arm (which lived at this exact residual location and recovered ONLY
-  // `$__box_number_struct` → number_toString, e.g. the `1` in `1 + {}` after
-  // ToPrimitive). An `any`-held primitive is NOT stored as a $AnyValue box on
-  // the WasmGC/standalone path — `coerceType` boxes f64 via `__box_number`
-  // ($__box_number_struct), bool via `__box_boolean` ($__box_boolean_struct),
-  // then `extern.convert_any` makes it externref (the #1888 externref ABI the
-  // test262 comparator relies on, which is why we recover the shape here rather
-  // than changing the box). So when the value is neither $AnyString nor
-  // $AnyValue, before yielding "[object Object]" we ref.test the boxed-primitive
-  // structs and format them, matching what the $AnyValue tag-2/tag-4 arms above
-  // already do. Without this, String(v) for `const v: any = 42 / true` returned
-  // "[object Object]". The number sub-arm uses `numberArm(...)`, which appends
-  // exactly `call number_toString; any.convert_extern; ref.cast $AnyString` —
-  // byte-identical to #1988's explicit emit (and falls back to "[object Object]"
-  // when `number_toString` is absent), so #1988's `1 + {}` case still holds.
-  // Type indices (not func indices) are read here, so no late-import shift
-  // hazard; the only func index baked in is `numToStrIdx`, which this helper
-  // already bakes for tag 2/3.
-  const boxNumIdx = ctx.nativeBoxNumberTypeIdx;
-  const boxBoolIdx = ctx.nativeBoxBooleanTypeIdx;
-  const residualArm: Instr[] =
-    boxNumIdx >= 0 && boxBoolIdx >= 0
-      ? [
-          // $__box_number_struct (or #3673 i31 small int)? → number_toString(value)
-          { op: "local.get", index: L_V },
-          { op: "ref.test", typeIdx: boxNumIdx },
-          { op: "local.get", index: L_V },
-          { op: "ref.test", typeIdx: -20 },
-          { op: "i32.or" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: strRef },
-            then: numberArm([
-              { op: "local.get", index: L_V },
-              { op: "ref.test", typeIdx: -20 },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "f64" } },
-                then: [
-                  { op: "local.get", index: L_V },
-                  { op: "ref.cast", typeIdx: -20 },
-                  { op: "i31.get_s" },
-                  { op: "f64.convert_i32_s" },
-                ],
-                else: [
-                  { op: "local.get", index: L_V },
-                  { op: "ref.cast", typeIdx: boxNumIdx },
-                  { op: "struct.get", typeIdx: boxNumIdx, fieldIdx: 0 },
-                ],
-              },
-            ]),
-            else: [
-              // $__box_boolean_struct? → "true" / "false"
-              { op: "local.get", index: L_V },
-              { op: "ref.test", typeIdx: boxBoolIdx },
-              {
-                op: "if",
-                blockType: { kind: "val", type: strRef },
-                then: [
-                  { op: "local.get", index: L_V },
-                  { op: "ref.cast", typeIdx: boxBoolIdx },
-                  { op: "struct.get", typeIdx: boxBoolIdx, fieldIdx: 0 },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: strRef },
-                    then: litStr("true"),
-                    else: litStr("false"),
-                  },
-                ],
-                // unknown ref → $Error_struct renders "Name: message"
-                // (#2962), else "[object Object]"
-                else: objectOrErrorTag(() => [{ op: "local.get", index: L_V }]),
-              },
-            ],
-          },
-        ]
-      : // No box types registered — still recognize a raw `$Error_struct`
-        // (#2962) before the "[object Object]" terminal.
-        objectOrErrorTag(() => [{ op: "local.get", index: L_V }]);
-
-  const stringArmAndBelow: Instr[] = [
-    // if (v is a $AnyString) return it directly
-    { op: "local.get", index: L_V },
-    { op: "ref.test", typeIdx: anyStrTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: strRef },
-      then: [
-        { op: "local.get", index: L_V },
-        { op: "ref.cast", typeIdx: anyStrTypeIdx },
-      ],
-      else: [
-        // else if (v is a $AnyValue) dispatch on its tag
-        { op: "local.get", index: L_V },
-        { op: "ref.test", typeIdx: anyValueTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: strRef },
-          then: [
-            { op: "local.get", index: L_V },
-            { op: "ref.cast", typeIdx: anyValueTypeIdx },
-            { op: "local.set", index: L_BOX },
-            ...boxDispatch,
-          ],
-          // else (boxed primitive externref shape, plain object, vec, …) →
-          // recover number/boolean boxes, then "[object Object]"
-          else: residualArm,
-        },
-      ],
-    },
-  ];
-
-  // (#4621 D) §7.1.17 ToString(null) is "null". A RAW null ref never reached
-  // the tag-0 arm above — that arm only fires for an `$AnyValue` BOX carrying
-  // tag 0 — so it fell through `residualArm` to the "[object Object]" terminal.
-  // The residual-arm comment even listed "null ref" among the shapes it
-  // handled; it did not handle it, it rendered it as an object.
-  //
-  // Measured on `language/expressions/addition/S11.6.1_A3.2_T2.4`:
-  // `new String("1") + null` produced `"1[object Object]"`. Any addition with an
-  // OBJECT operand routes through `addition-to-primitive.ts`, which boxes both
-  // sides to anyref and lands here; the all-primitive spellings (`"" + null`)
-  // fold statically and were always right, which is what hid this.
-  //
-  // Scope note: in this representation the null externref IS the JavaScript
-  // `null` (`x === null` lowers to a bare `ref.is_null`, binary-ops.ts) while
-  // `undefined` is the tag-1 box / #4489 singleton, so this arm cannot swallow
-  // an `undefined`. The one other producer of a raw null here is the #1105
-  // nullable-`$AnyString` "undefined sentinel", which now renders "null"
-  // instead of "[object Object]" — both are wrong for that sentinel, and the
-  // spec-correct answer for the value this arm actually exists to serve is
-  // "null".
-  const body: Instr[] = [
-    { op: "local.get", index: L_V },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: strRef },
-      then: litStr("null"),
-      else: stringArmAndBelow,
-    },
-  ];
+  const construction = buildAnyToStringBody({
+    anyStrTypeIdx,
+    anyValueTypeIdx,
+    numToStrIdx,
+    errToStrIdx,
+    errStructTypeIdx,
+    dateToStrIdx,
+    dateStructTypeIdx,
+    classToPrimIdx,
+    boxNumTerminalIdx,
+    boxBoolTerminalIdx,
+    argumentsVecTypeIdx,
+    toPrimitiveIdx,
+    objectRuntimePresent: objectRtTypes !== undefined,
+    boxNumIdxEarly,
+    boxBoolIdxEarly,
+  });
+  let step = construction.next();
+  while (!step.done) {
+    const request = step.value;
+    let response: AnyToStringResponse;
+    switch (request.kind) {
+      case "literal":
+        response = {
+          kind: "literal",
+          value: request.value,
+          instructions: nativeStringLiteralInstrs(ctx, request.value),
+        };
+        break;
+      case "arguments-brand":
+        response = { kind: "arguments-brand", index: ctx.funcMap.get("__args_is_branded") };
+        break;
+      case "object-type":
+        if (objectRtTypes === undefined) throw new Error("AnyToString: missing captured Object layout");
+        response = { kind: "object-type", index: objectRtTypes.objectTypeIdx };
+        break;
+      case "residual-box-types":
+        response = {
+          kind: "residual-box-types",
+          boxNumIdx: ctx.nativeBoxNumberTypeIdx,
+          boxBoolIdx: ctx.nativeBoxBooleanTypeIdx,
+        };
+        break;
+    }
+    step = construction.next(response);
+  }
+  const body = step.value;
 
   const typeIdx = addFuncType(ctx, [anyref], [strRef]);
   const funcIdx = mintDefinedFunc(ctx);

@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { B1_FACTORY_PATH } from "./helpers/native-delay-combinator-b1-inverse.mjs";
+import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
+import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
 import {
   allAdapterPath,
   combinatorPath,
@@ -27,7 +29,8 @@ import {
 } from "./helpers/native-delay-combinator-source-receipts.mjs";
 
 const root = resolve(import.meta.dirname, ".."),
-  read = readerAt(root);
+  rawRead = readerAt(root),
+  read = (path: string): string => beforeEarlierPromiseMain(path, beforePromiseExportMain(path, rawRead(path)));
 const verifyCurrent = (reader: (path: string) => string) => verifyForwardDelayHistorical(reader).historical;
 describe("eight historical combinator bodies reconstructed from mandatory live owners", () => {
   it("retains the eight-donor denominator and separately accounts for delay/vector/dispatch", () => {

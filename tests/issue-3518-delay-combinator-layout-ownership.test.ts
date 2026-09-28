@@ -18,9 +18,15 @@ import { getOrCreateFuncRefWrapperTypes } from "../src/codegen/closures.js";
 import { definedFuncAt } from "../src/codegen/func-space.js";
 import { ensureLateImport, flushLateImportShifts } from "../src/codegen/expressions/late-imports.js";
 import { verifyForwardDelayHistorical, verifyHistorical } from "./helpers/native-delay-combinator-source-receipts.mjs";
+import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
+import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
 
 void compile;
-const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const read = (path: string): string =>
+  beforeEarlierPromiseMain(
+    path,
+    beforePromiseExportMain(path, readFileSync(new URL(`../${path}`, import.meta.url), "utf8")),
+  );
 import {
   B1_DONOR_HASHES as hashes,
   B1_INVERSE_ROWS as inverseRows,

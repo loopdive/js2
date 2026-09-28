@@ -4,7 +4,7 @@ title: "ES2015 standalone: proxy conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-29
+updated: 2026-09-28
 priority: high
 horizon: l
 feasibility: medium
@@ -337,6 +337,113 @@ identically: `logical-conditional-identity` (3 × `void`),
   object-LITERAL target ("called on non-object"): the literal compiles to a
   closed typed struct, which `emitNativeReflectTargetGuard` does not admit.
   Pre-existing, unrelated to the Proxy MOP.
+
+## 2026-09-28 source-only handoff — accessor descriptor through a null-trap Proxy chain (HOLD)
+
+This is an audit handoff, **not an implementation claim or a measured fix**.
+The implementation owner for the `object-ops.ts` accessor path and the Proxy
+runtime boundary is pending a user ownership decision. Do not change this
+issue's status, claim those files, or begin a broad Proxy rewrite from this
+note.
+
+### Frozen observation and corpus identity
+
+The frozen standalone census at compiler commit
+`f924650c6c26237f62b08a362d7003d4d2b1e12d` recorded
+`SameValue(«undefined», «2»)` for
+`test/built-ins/Proxy/defineProperty/trap-is-null-target-is-proxy.js`. Both
+that commit and the current audited source
+`732d9f75e671237c3cdf3abf6ba848bedada9185` point at test262 gitlink
+`b363f29d3c43c626dc852744ad64a0b48a003693`; the original row's SHA-256 is
+`d6928893c8f868ba1e7ed398ddb8d626926d6252e200804755115415c4ecf87d`.
+
+The row constructs an ordinary null-prototype object, wraps it in an inner
+Proxy and then an outer Proxy whose `defineProperty` trap is `null`. It first
+requires the non-configurable `foo` redefinition to throw, then defines
+`bar` with `{ get: function () { return 2; } }` and requires
+`plainObject.bar === 2`. Its final independent phase requires the same
+null-trap forwarding for `RegExp.lastIndex`, including a successful
+`Reflect.defineProperty` and a non-writable result. The cited `2` assertion
+is the row's only `SameValue(..., 2)` assertion, so the frozen result locates
+the observed failure at the accessor read; it does not by itself prove an
+emitter or runtime cause.
+
+### Current-source hypothesis (not runtime proven)
+
+The current source has a narrow, plausible bypass at
+`src/codegen/object-ops.ts::compileObjectDefineProperty` (the standalone
+proxy-receiver routing block around lines 1094–1224). It proves several
+`new Proxy`/revocable/returned-proxy receiver spellings, but deliberately
+calls `emitDefinePropertyDescRuntime` only when
+`isProxyReceiver && !isAccessorLiteral`. The original `{ get: function () {
+return 2; } }` descriptor matches `isAccessorLiteral`, so it remains on the
+inline accessor lowering instead of the proxy-dispatch funnel. The existing
+comment correctly records why simply deleting that predicate is unsafe:
+rerouting an accessor may lose the compiled getter's closure wiring.
+
+That inline lowering calls `__defineProperty_accessor`. In
+`src/codegen/object-runtime-descriptors.ts` (around lines 916–953), its
+ordinary arm starts with `ref.test $Object`; a `$Proxy` fails that test. In a
+host-free standalone module there is no boundary accessor import:
+`src/codegen/object-runtime.ts` enables it only for native-first JavaScript
+host interop and when `strictNoHostImports` is false (lines 938–942 and
+1091–1093). The remaining carrier-bag arm has no Proxy case and can return
+the receiver unchanged. This is a source-path hypothesis, not a measured
+explanation of the frozen result.
+
+The existing Proxy dispatch itself is not shown defective by this audit.
+`src/codegen/object-runtime-proxy.ts::__proxy_define_dispatch` forwards a
+null trap to `__obj_define_from_desc(target, key, desc)`, and the latter has a
+`$Proxy` front guard that re-enters the dispatch (around lines 1061–1148 and
+2629–2657). A repair must preserve that recursive route while preserving the
+standalone compiled accessor closure and receiver semantics. No direct IR
+source seam was identified here; that is not evidence that an implementation
+would be IR-free without emitted-WAT proof.
+
+### Ownership and architecture hold
+
+Historical coordination records are inconsistent: #1355 remains an
+in-progress Proxy umbrella in the assignment registry, #5140 is reserved
+there while this plan is `in-review`, and #6651 records an older occurrence
+of this row. Those are coordination flags, not proof that another worker owns
+or is changing this exact access-path boundary. The user ownership question
+for object operations, accessor closure transport, and Proxy runtime work is
+pending. Until it is resolved, this handoff owns no production files and must
+not alter `object-ops.ts`, descriptor runtime code, Proxy runtime code, or
+shared IR/layout code.
+
+### Required next proof and A/B plan after ownership clearance
+
+1. Reproduce the unchanged original test first in the direct maintained
+   test262 runner, with the exact corpus gitlink and original-row hash above
+   recorded. Preserve all three original phases: the `foo` TypeError, the
+   accessor's `bar === 2` read, and the `RegExp.lastIndex` reflection and
+   non-writable check. Do not substitute a wrapper or simplify the proxy
+   chain.
+2. Before selecting a repair, compile the unchanged original to retained WAT
+   and inventory the actual define call, `$Proxy` test/dispatch, accessor
+   closure construction, and `__defineProperty_accessor` route. A correct
+   runtime value alone is insufficient proof that the intended path was
+   exercised.
+3. Run a matched clean-baseline/candidate pair on the same original source,
+   Node/runtime/provider configuration, exact manifest, and positive
+   neighbors. At minimum include an ordinary accessor define, a null-trap
+   Proxy data-descriptor forward, and the target's Proxy-of-Proxy accessor
+   shape as separately observable controls. These are proposed controls, not
+   recorded passes. Capture compiler/source hashes, corpus gitlink, logs,
+   JSONL, manifest/completeness output, terminal exit codes, and every row
+   transition.
+4. Only if the focused pair shows the expected original transition and no
+   control regression, run the identical maintained original-plus-controls
+   manifest with complete registration/started/settled accounting. Candidate
+   WAT must demonstrate both the native descriptor/proxy dispatch route and
+   preserved compiled getter invocation before any claim beyond this single
+   row.
+
+No baseline/candidate run, WAT capture, compiler build, or source change was
+performed for this handoff. It records a possible accessor-path bypass and a
+safe proof sequence only; it neither establishes a root cause nor retires any
+open Proxy conformance work.
 
 ## References
 
