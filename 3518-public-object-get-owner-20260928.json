@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "public-object-get-owner-20260928",
   "assignee": "ttraenkler/codex-public-object-get-20260928",
-  "requested_by": "ttraenkler/codex-public-object-get-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-public-object-get-20260928",
   "claimed_at": "2026-09-28T05:15:32Z",
-  "updated_at": "2026-09-28T05:15:32Z",
-  "write_id": "80356-ztgd0nhy"
+  "updated_at": "2026-09-28T15:41:06Z",
+  "write_id": "10710-kxslj6mi",
+  "released_at": "2026-09-28T15:41:06Z"
 }
