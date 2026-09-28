@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "boolean-getter-native-resource-delivery-20260928",
   "assignee": "ttraenkler/codex-boolean-getter-delivery-20260928",
-  "requested_by": "ttraenkler/codex-boolean-getter-delivery-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-boolean-getter-delivery-20260928",
   "claimed_at": "2026-09-28T02:50:06Z",
-  "updated_at": "2026-09-28T02:50:06Z",
-  "write_id": "73087-oofw8fy4"
+  "updated_at": "2026-09-28T11:31:49Z",
+  "write_id": "70166-81j5v716",
+  "released_at": "2026-09-28T11:31:49Z"
 }
