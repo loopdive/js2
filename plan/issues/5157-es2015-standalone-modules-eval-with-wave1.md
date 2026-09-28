@@ -1020,3 +1020,23 @@ tuple/iterator-provider work remains required before this can be called a
 complete eval-spread fix. This checkpoint also remains anchored to base
 `1032526dc12302034e558934b60363348e80b8bd`; safe integration of newer
 upstream main is pending and is not implied by these candidate receipts.
+
+### PR #6246 compiler-boundary inventory repair (2026-09-28)
+
+The draft PR's `quality` job reached its compiler-boundaries inventory gate
+after lint, formatting, and typechecking had succeeded. It then failed only
+because the new `src/codegen/expressions/eval-argument-list.ts` module was not
+listed in `scripts/compiler-boundaries.json` (one unclassified module and two
+unclassified import targets). The policy record now classifies that actual
+AST/context-driven eval lowering module alongside `eval-inline.ts` and
+`runtime-eval-provider.ts`: it remains `unmigrated` in the
+`mixed-needs-split` layer, with the existing `backend-wasmgc` destination and
+`3518-coordinator` ownership. This inventories the new module without
+weakening the gate or changing its migration status. It does not alter the
+four explicitly retained generic spread diagnostics or make the draft ready.
+
+The exact CI-equivalent local inventory command,
+`node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode
+inventory --base HEAD^`, exited 0 with
+`inventory-valid-architecture-incomplete`, no inventory errors, and policy
+SHA-256 `d15e1c13e64d31a30d8fb50b0533a86455fe47ee83396497c25e576a74bea557`.
