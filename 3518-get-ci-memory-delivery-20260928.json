@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "get-ci-memory-delivery-20260928",
   "assignee": "ttraenkler/codex-get-ci-memory-delivery-20260928",
-  "requested_by": "ttraenkler/codex-get-ci-memory-delivery-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-public-object-get-20260928",
   "claimed_at": "2026-09-28T09:53:12Z",
-  "updated_at": "2026-09-28T09:53:12Z",
-  "write_id": "49988-4fmy5l22"
+  "updated_at": "2026-09-28T15:41:11Z",
+  "write_id": "10698-qer66nnh",
+  "released_at": "2026-09-28T15:41:11Z"
 }
