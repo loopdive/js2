@@ -1327,6 +1327,58 @@ coercion-sites-allow:
   - src/codegen/ta-to-string.ts
 ---
 
+## 2026-09-28 — fullscope shard-0 TypedArray `[[Set]]` residual: altered receiver identity
+
+**New measured receipt, not a fresh root-cause claim.** The fullscope standalone
+run at `f924650c6c26237f62b08a362d7003d4d2b1e12d` recorded
+`TypedArrayConstructors/internals/Set/key-is-valid-index-reflect-set.js` as an
+executed `assertion_fail`, not a compile refusal. Its first recorded failure is
+the `Float64Array` / `makeArray` assertion that `receiver[0]` be the same
+`value`; `reached_test: true`. The durable shard-0 JSONL is
+`benchmarks/results/test262-standalone-es2015-fullscope-128-results-es2015-fullscope-128-f924650-chunk000-a01.jsonl`
+(`sha256 8ea77faa631251b39194860569dcbec7a2fc6386dc1851eedcb422e9c7144d41`).
+Its execution ledger records 90 registered rows, 90 recorded/canonical
+verdicts, and 90 settled callbacks. This single assertion does **not** establish
+whether the loss happened in the receiver-threaded TypedArray walk, an ordinary
+receiver write, or value representation.
+
+**What the original requires.** The test's `value` has `valueOf`; it calls
+`Reflect.set(target, 0, value, receiver)` with a distinct ordinary receiver,
+requires the target to remain unchanged, `receiver[0] === value`, and finally
+requires `valueOfCalls === 0`. Thus it tests both altered-receiver
+`OrdinarySet` routing and identity/no-coercion; it must not be reduced to a
+typed-array element-conversion assertion.
+
+**Existing evidence and source-supported hypothesis.** E6's existing residual
+table below already groups this exact row with two others and records a prior
+`r4` control: a method-bearing nominal literal crossing to `externref` is
+materialized as a fresh `$Object`, so an ordinary dynamic store cannot preserve
+`r[0] === value`. That is prior measured evidence, not an emitted-route trace
+of the `f924650` module. Current source is consistent with it:
+`call-namespace-static.ts::emitReflectArgumentLocals` compiles all four
+arguments with an `externref` expectation; `type-coercion.ts` routes
+method-bearing nominal literals through
+`materializeStructAsDynamicObject`; and `literals.ts` documents that operation
+as a value-semantics copy. The receiver-aware native and its TypedArray arm are
+present, so the new assertion alone is not evidence that either arm is absent.
+
+**Ownership hold.** #5316's receiver walk and #2358's reification slice are
+both historical `done` work; #2358 explicitly deferred identity-dependent
+round trips. This #6651 umbrella remains in progress, but its historical
+assignee/status is not a current implementation allocation. Do not alter
+representation, `Reflect.set`, or TypedArray code without a fresh collision
+check and dedicated ownership/plan.
+
+**Next bounded check (only under a future execution lease).** Compile one
+small, same-source diagnostic with two independently reported controls and a
+WAT/emitted-route witness: (1) assign this same method-bearing `value` to an
+ordinary dynamic receiver and check identity plus `valueOfCalls`; (2) use the
+exact four-argument `Reflect.set` shape. If control 1 already loses identity,
+the next issue is the cross-cluster representation boundary. If it preserves
+identity while control 2 fails, inspect the receiver/TypedArray path before
+proposing a fix. Neither control may replace or weaken the original Test262
+row.
+
 # #6651 — ES2015 standalone → 100%: cluster execution plan
 
 **Why a new file.** #4444 is the umbrella and its 2,800-line log is the

@@ -21,6 +21,115 @@ func-budget-allow:
   - src/codegen/expressions/calls.ts::emitReflectiveNativeProtoClosureCall
 ---
 
+## 2026-09-28 documentation checkpoint scope
+
+This checkpoint publishes documentation and receipts only. The vnext49 fixture
+and the `stripStaticWrapper` candidate remain uncommitted local diagnostic
+work, are not part of the published compiler, and do not credit a fix gain.
+
+## 2026-09-28 verified host callback controls
+
+The independent undefined-index repair is published as
+[PR 6214](https://github.com/loopdive/js2/pull/6214), but does not repair this
+issue's host Symbol-limit semantics. A corrected, temporary diagnostic ran in
+the separate integration checkout at `47fd894d96cc647cbe637741c98a9a60805eb4ff`
+with only that three-line cache repair in production source. Its imports-file
+SHA256 was `8aae5e7a0e233f06ead2bd6900f9b48bff14650ae8ffd2c129e133a05abac1ca`;
+the frozen historical 47-test fixture remained
+`92bd8d30a494c17e6d1e04c07c0498a51a61311a619303a48c1f5f2c7fc46efc`.
+
+The earlier expanded diagnostic stopped before observation because its tracing
+harness wrongly required a host `__to_primitive` import for a direct compiled
+callback. The corrected harness permits absent host traces only for that
+explicit direct-call control; host cases retain their trace checks. On the
+explicit Node 24.19.0 binary, one fork, and 4096 MiB parent/fork heaps, its one
+diagnostic test passed in 28.32 s. This is diagnostic validation, not a
+five-case conformance success claim:
+
+- Bare Symbol control: result `1`; `__to_primitive` returns a Symbol and
+  `__unbox_number` throws `TypeError`.
+- Direct compiled `Symbol.toPrimitive` call: encoded result `101`, with no
+  host conversion imports/traces, proving the direct callback/counter control.
+- Host number-hint `valueOf` control: encoded result `101`; the host receives
+  the exact `"number"` hint and a numeric primitive reaches numeric conversion.
+- Numeric-returning and Symbol-returning Symbol callbacks: both encoded
+  results remain `0`; host `__to_primitive` receives an object and the exact
+  `"number"` hint, but returns the string `"[object Object]"`. The following
+  numeric conversion receives that string and does not throw.
+
+The positive controls narrow the remaining investigation to Symbol-method
+exposure/lookup across this host boundary. They do not identify the precise
+producer or bridge defect, establish a fix, or authorize shared runtime/IR
+edits. The earlier null-terminal hypothesis remains refuted.
+
+The retained expanded-fixed diagnostic contains only
+`/private/tmp/js2-6715-host-toprimitive-expanded-node24-fixed.OFNWga/receipt.txt`
+(SHA-256 `af41dcd6df0eec9611835d78bfc4b13b3208fea2a172cb0868968fa185eee2a3`)
+and its sibling `vitest.log`
+(`fcd890da5bd3dd9d9fba0b79e71c1d31608bbc79e888142c00285b6116a23a1f`).
+It retains no WAT, Wasm binary, or export-table enumeration. The ignored probe
+SHA256 is `c87e41c60e917847ed9b50dc091f8be8bef028b1504609ace451694cccd3ae00`;
+its runner-visible copy was removed after terminal exit 0. Neither the frozen
+acceptance fixture nor the published index-fix branch was changed.
+
+#### 2026-09-28 source-supported host `Symbol.toPrimitive` export boundary
+
+This is a source-supported handoff, not emitted-module or callback evidence.
+For the host-assisted native-string direct-split arm,
+`captureHostStagedSplitLimitProviders` rebuilds a
+`runtimeHostToPrimitiveInstrs(ctx, "number")` call after staging. Its preflight
+uses `prepareHostRuntimeToPrimitive`, which registers a real host-string
+`"number"` global and the `__to_primitive` import. That import maps the host
+externref hint to `"number"` and invokes runtime `_hostToPrimitive`. In turn,
+the host walker can probe `exports["__call_@@toPrimitive"]` and, when that export
+is a function, call it with the raw struct and host hint before its ordinary
+`valueOf`/`toString` fallback.
+
+There is a material export-admission boundary on that possible route.
+`emitToPrimitiveMethodExport` emits a hint-taking entry only when its second
+compiled parameter is `externref`; it skips a non-externref hint. Under native
+strings, the normal `string` type mapping uses the native `$AnyString` carrier,
+so a declared `hint: string` can be skipped by that filter. Before the v2
+evidence below, source inspection supported a possible missing-export
+explanation but did **not** prove that the exact diagnostic callback was
+skipped, that the export was absent, or that a present export received a wrong
+hint. The retained v1 diagnostic has no WAT, Wasm, or export inventory to decide
+those alternatives.
+
+The historical v1 diagnostic above still has no export inventory. A separate
+v2 inventory has now supplied that missing emitted-module evidence: under Node
+v24.19.0, one fork, and 4096 MiB parent/fork heaps, it exited 0 with one
+diagnostic passing in 18.51 s. Its retained receipt is
+`/private/tmp/js2-6715-export-inventory-v2.D9XsKb/receipt.txt` (SHA-256
+`daaed0cfd62660342b39d5d37a13be1f4afdb523c781992d52fa4eaaae19b518`), its
+Vitest log is SHA-256
+`30abc6ca4d17db4f768febcebc20f3e29a4f35e56f19a8201e4a21b3c933d52c`, and its
+ignored v2 source was SHA-256
+`2e5f671c70220cfde92f3d4762a636d88cde46dd6a739a9cad046f8f622c6cd4` before
+the runner-visible copy was removed.
+
+`WebAssembly.Module.exports` reports no `__call_@@toPrimitive` export for either
+the numeric- or Symbol-returning host computed-**method** callback. Both receive
+the host `"number"` hint and fall through to `"[object Object]"`, yielding the
+recorded result `0`. The direct compiled callback likewise has no bridge export
+but returns `101` without a host trace; it is therefore a control for the direct
+internal route, not evidence that the host bridge works. The independent
+`valueOf` control returns `101` and exposes both `__call_valueOf` and
+`__sget_valueOf`, demonstrating a working adjacent export route. All tested
+method-shorthand modules also lack `__sget_@@toPrimitive`; that absence is
+expected for the field-specific route and is not causal evidence here.
+
+This proves the `__call_@@toPrimitive` export is absent for the exact host
+method fixtures and supports—without isolating it from other entry
+filters—the source-level non-externref-hint hypothesis. It neither proves a
+safe bridge repair nor identifies a removal/insertion site. The next possible
+step is a narrowly owned bridge/export investigation after explicit ownership
+clearance. The computed-field `Symbol.toPrimitive` route remains owned by the
+active #3481 work; #4016 makes no runtime, closure-export, bridge, or
+shared-dispatch implementation claim. This handoff also leaves the separately
+recorded computed-Symbol producer hold and #6716 return-carrier boundary
+unchanged.
+
 ## 2026-09-27 recovery state
 
 The saved implementation checkpoint
@@ -299,6 +408,356 @@ work, the descriptor failure belongs to the existing descriptor-runtime
 boundary, and the two historical `@@split` refusal pins are stale after B6
 protocol dispatch and need positive semantic replacements rather than a
 cosmetic expectation update.
+
+### 2026-09-28 source-only follow-up: real split-protocol acceptance
+
+The two historical refusal pins in the focused fixture were not valid lasting
+acceptance criteria after upstream B6. They asserted a diagnostic for cases
+that current lowering intentionally admits, and thus would keep a repaired
+path red without testing its runtime result. The vnext fixture replaces them
+with four ordinary runtime assertions; its completed candidate receipt is
+recorded below and retains every failure as an ordinary assertion.
+
+1. It preserves the original source `const sep: any = JSON.parse("1")` and
+   original subject `"abc"`, asserting the one-part result from the plain
+   `ToString(1)` fallback. This remains a numeric fallback check rather than
+   silently substituting a different fixture.
+2. It separately uses `JSON.parse('"b"')` and asserts the actual two string
+   parts from `"abc".split(sep)`, so the dynamic fallback proves more than an
+   absence of a diagnostic.
+3. It calls an explicit object `[Symbol.split]` method with a supplied raw
+   string limit and checks exactly one call, protocol `this`, raw subject,
+   raw supplied limit, and returned-marker identity. The current direct
+   protocol route is `tryCompileStringSymbolProtocolDispatch` in
+   `string-symbol-protocol.ts`, wired by `call-receiver-method.ts`; it is
+   distinct from the dynamic no-method fallback in
+   `string-regexp-dynamic.ts`.
+4. It calls the same explicit protocol with an omitted limit and requires both
+   `limit === undefined` and `arguments.length === 2`. ECMAScript calls the
+   method with `[O, undefined]`. Current source inspection shows the direct
+   protocol emitter only appends a limit expression when one was supplied, so
+   this deliberately remains an ordinary assertion: if the formal parameter is
+   filled by the runtime but the call arity is one, it must stay visibly red,
+   not become a skip or expected failure.
+
+The raw-v1 direct-object receiver red remains unchanged in source and expected
+value (`1234`). Its statically native `receiver(): string` annotation admits a
+native string method route, but its returned object has no `.split` member. In
+ordinary JavaScript, separator, limit, and surplus expressions run before the
+eventual non-callable-member `TypeError`; moving the new direct split
+`RequireObjectCoercible` boundary after arguments would incorrectly change
+genuine nullish member-base behavior. The underlying defect is broader static
+member admission/return-carrier handling (`index.ts`, `control-flow.ts`,
+`type-coercion.ts`, and `call-receiver-method.ts`), so it is recorded here as
+a handoff rather than widened under #4016. The dedicated, plan-only
+[#6716 return-carrier follow-up](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6716-erased-object-return-string-method-dispatch)
+captures its evidence, ownership boundary, and future acceptance criteria; it
+does not authorize a carrier or dispatcher edit from this branch.
+
+The native Node reference equivalents for all four new protocol cases and the
+retained raw-receiver case are the prerequisite semantic oracle. Because this
+vnext change initially changes only the fixture and handoff—not compiler
+source—a copied `47fd894d96` baseline would exercise byte-identical compiler
+code and would not be an implementation A/B comparison. After #6715's
+separate historical 47-test cache-relocation pair completed, the appropriate
+next receipt is therefore **one** full vnext candidate run on recorded
+compiler revision `47fd894d96`, with the exact fixture hash and every ordinary
+failure retained. A fresh same-fixture baseline/candidate pair becomes
+mandatory only if a later implementation changes compiler behavior. This
+branch must not alter the separate #6715 registry/global-index worktree or use
+its integration tree as a baseline fixture host.
+
+The source-only reference step completed on Node `v24.19.0`, with no compiler
+imports, bundle build, Vitest process, or project runtime: numeric fallback
+`1`, string-parts assertion `1`, explicit-protocol assertion `1`, omitted-limit
+arity assertion `1`, and retained raw-member TypeError order `1234`. These are
+host-language expectations only; they are not standalone candidate evidence
+and do not change the earlier 42-pass/5-fail checkpoint denominator.
+
+The one permitted vnext candidate receipt then ran under Node `v24.19.0` at
+recorded compiler revision `47fd894d96cc647cbe637741c98a9a60805eb4ff`, fixture
+SHA-256 `4d47dc24d0fefb641727c5e0f203fc2ab90642cfc258c94f7a3ca720dbb24b75`,
+one Vitest fork, `--no-file-parallelism`, and both parent and fork 4 GiB heap
+limits. It is **44 pass / 5 fail**, not a compiler A/B claim. The five ordinary
+failures are retained verbatim: explicit `@@split` raw-argument/result
+identity (`0`, expected `1`); omitted-limit explicit-`undefined` arity (`0`,
+expected `1`); the direct erased-object receiver order (`1`, expected `1234`);
+the separately-owned host stale-global invalid-Wasm error; and the existing
+descriptor-before-split host `TypeError: Cannot convert object to primitive
+value`. The durable receipt is
+`.tmp/4016/vnext49-candidate-47fd894d96-20260928.log`; it neither converts any
+ordinary assertion into an expected failure nor changes the earlier raw-v1
+evidence.
+
+The completed bounded diagnostic replaced neither vnext assertion nor its
+expected result. Its separately named source used an observable bit mask for
+call count, protocol `this`, raw subject, raw supplied limit, result identity,
+and a fallback-`toString` flag for the supplied-limit case; and for
+`arguments.length === 2`, `limit === undefined`, result identity, and the same
+fallback flag for the omitted-limit case. The masks distinguish a missed
+`GetMethod`/fallback from a callable/receiver/vector/result-identity failure
+while preserving the committed ordinary assertions at `1`.
+
+#### 2026-09-28 shape-matched bitmask/WAT receipt
+
+The first temporary mask added a `toString` method solely to observe fallback
+use, so its all-zero result could not establish causality for the acceptance
+literal. A second source copied the acceptance literals' computed
+`[Symbol.split]` method declarations, `unknown` parameters, marker returns,
+`as any` call-site assertions, and direct string receiver **without** a
+`toString` member. Node v24.19.0 gives masks `95` (supplied limit) and `127`
+(omitted limit); the standalone run at
+`47fd894d96cc647cbe637741c98a9a60805eb4ff` gave `0` for both. It retained the
+ordinary acceptance fixture byte-for-byte at SHA-256
+`4d47dc24d0fefb641727c5e0f203fc2ab90642cfc258c94f7a3ca720dbb24b75`.
+
+The matching compile-only WAT artifact is
+`.tmp/4016/protocol-bitmask-no-tostring-standalone-47fd894d96.wat`, SHA-256
+`3d55d80ebe3e2adff1414c9a9368ffb6a678e3fecb0c898514f16482138abb34`.
+With no function imports, both exported test functions call function `358`,
+`$__str_split_dyn`; neither calls `139` (`$__extern_get`) nor `172`
+(`$__apply_closure`). Thus the upstream B6 protocol arm is **not emitted** for
+this exact TypeScript shape: it is a compile-time route decline, not a runtime
+slot-lookup or closure-call failure.
+
+The raw-wrapper admission predicate is now source-proven. The primary checker
+calls `checker.getTypeAtLocation` before `factOfType`, so raw `sep as any` has
+`TypeFlags.Any` and becomes `{ kind: "any" }`. The in-house checker separately
+classifies an assertion from its written type node and reaches the same `any`
+fact. `tryCompileStringSymbolProtocolDispatch` admits only `object` or `class`,
+so the raw wrapper declines before it can emit `__extern_get`. A checker-only
+query over the exact object literal reports that stripped `sep` has
+`TypeFlags.Object` and symbol `__object`; the direct split gate already unwraps
+this same expression with `searchValueOperand`. The #6651 positive Test262
+source instead uses `var separator = {};` followed by
+`separator[Symbol.split] = function () { ... };`, with no assertion wrapper.
+
+The narrow #4016 repair normalizes static wrappers with the existing
+`stripStaticWrapper` utility before **both** the protocol fact check and
+`compileExpression` call. This removes the raw assertion's `any` refusal while
+keeping a truly `any`-typed value declined; calls and property accesses under
+an assertion still fail the existing re-evaluation gate. The only caller is
+`call-receiver-method.ts`, which invokes the protocol helper before the native
+direct split fallback, so the edit is an existing #4016 admission change rather
+than an IR, ABI, or generic dispatch change.
+
+The first candidate after that edit remains **44 pass / 5 fail**, exactly the
+recorded vnext count: both protocol assertions still return `0`. Its receipt
+is `.tmp/4016/protocol-assertion-unwrapping-candidate-47fd894d96-20260928.log`
+at source SHA-256 `9e1634b266bab3c1f7e05c958889abf3bbd3321ae4f2a5d7cfb48245a9cdfa45`;
+the acceptance fixture stays SHA-256
+`4d47dc24d0fefb641727c5e0f203fc2ab90642cfc258c94f7a3ca720dbb24b75`.
+That outcome does **not** prove a remaining admission decline: the protocol arm
+may now be emitted and fail later at lookup, call, receiver/vector construction,
+or result handling. The one exact same-shape candidate trace has now resolved
+that distinction without changing the vnext fixture. At temporary traced source
+SHA-256 `9eb1472784a88954747ad08ece6d6ba23bcf95aced28bcf0877abf8e747674d2`,
+both exports reported raw `AsExpression` fact `any`, unwrapped `Identifier` fact
+`object`, re-evaluability for the receiver and search value, all required
+providers present, and `protocol-emitted`. The durable trace is
+`.tmp/4016/protocol-assertion-admission-wat-trace-47fd894d96-20260928.log`,
+SHA-256 `1259cd00e28811a83ec3ff3cb848ada54eecfee3648dd3f2ec3d4554333f4f35`.
+
+Its WAT artifact is
+`.tmp/4016/protocol-assertion-unwrapping-candidate-47fd894d96.wat`, SHA-256
+`7d87ea3e92ed188b878de1354f0bf92ae20050812ef5283e26cf6b1173dfe676`.
+With no function imports, both exported functions call `139` (`$__extern_get`),
+perform the nullish and callable checks, build the argument vector, and call
+`172` (`$__apply_closure`). `358` (`$__str_split_dyn`) occurs only in the
+nullish-method fallback arm. Therefore the stripped candidate **does emit** the
+protocol route; its still-zero runtime masks cannot be attributed to the former
+static-wrapper admission decline. This is compile/WAT route evidence only: it
+does not identify whether lookup, closure dispatch, receiver/argument transport,
+or result transport causes the later runtime mismatch.
+
+The temporary trace function and one-file WAT runner were removed immediately
+after this terminal capture with the accepted `stripStaticWrapper` change kept.
+The cleaned candidate source SHA-256 is
+`5a648bdc36d6979a6a187367957e5bf5bf9786e3add187270a589969ffccc168`.
+The two ordinary protocol assertions remain scoped regression pins; no Test262
+gain is credited.
+
+The complete pre-edit temporary receipt remains
+`.tmp/4016/protocol-bitmask-no-tostring-wat-analysis-20260928.md`.
+
+#### 2026-09-28 computed `[Symbol.split]` literal representation audit
+
+The post-admission WAT receipt narrows the remaining protocol failure further.
+The acceptance separator is a computed **method literal**,
+`{ [Symbol.split](...) { ... } }`; it is not the form used by the existing
+passing Test262 original
+`built-ins/String/prototype/split/cstm-split-invocation.js`, which first makes
+`var separator = {}` and then performs
+`separator[Symbol.split] = function (...) { ... }`.
+
+Source and WAT inspection show two coupled representation facts, neither of
+which is repaired by the accepted assertion-unwrapping change:
+
+1. `resolveComputedKeyExpression` maps the literal name to the internal
+   `@@split` spelling and `_hasRuntimeComputedKey` intentionally keeps a
+   well-known Symbol key on the closed-struct path. In
+   `compileObjectLiteralForStruct`, however, the per-field `matchingProps`
+   matcher recognizes identifier, string, and numeric method declarations but
+   not a `ComputedPropertyName`. The method body is still compiled, while the
+   corresponding closed field has no matching writer and is initialized with
+   its default undefined value. The captured WAT has the compiled anonymous
+   `@@split` method body but no installation of that body into the literal's
+   `@@split` field.
+2. Correcting only that literal matcher would still not make the protocol
+   lookup work. The emitted protocol arm calls generic `__extern_get` with a
+   real boxed `$Symbol` id `10`. Its closed-struct field arms dispatch numeric
+   and `$AnyString` keys; they do not translate a `$Symbol(10)` key to the
+   internal `@@split` spelling. This limitation is already documented by the
+   narrow `[Symbol.toPrimitive]` open-object precedent: a runtime Symbol-key
+   lookup cannot observe an `@@name` closed-struct field.
+
+The #6651 original avoids both faults because the empty literal remains an
+open `$Object` after the later element assignment. That assignment is emitted
+through the existing real-Symbol `__extern_set` path, so generic
+`__extern_get` can recover the same actual Symbol key. This is a
+source-supported explanation of the current zero protocol masks; it is not a
+claim that the Test262 original itself has been rerun or that either path is
+now fixed.
+
+No literals or object-runtime patch is authorized from this #4016 slice.
+Recognizing computed methods in the closed-field matcher alone is insufficient;
+a valid next slice would need a fresh ownership/claim review for a producer
+representation decision (for example, routing just the relevant literal to
+the proven open-object Symbol-key store) and its carrier consequences. A
+generic `$Symbol`-to-closed-field reader would instead touch shared
+`object-runtime`/closure authority and is explicitly outside this branch.
+The two ordinary protocol assertions remain red until such a separately scoped
+change has direct runtime evidence.
+
+#### Ownership and a bounded producer-only follow-up boundary
+
+The live assignment-ledger read on 2026-09-28 found no live claim for the
+closest historical plans: #5108 (computed-only non-Symbol data keys), #5149
+(object-literal wave), #5269 (`[Symbol.toPrimitive]` open-object precedent),
+and #5270 (computed-key residual wave) are reserved rather than active. They
+are useful history, not current ownership. The ledger still reports #3099 as
+claimed by `ttraenkler/dev-proxy`, but repository ancestry establishes that it
+is a historical claim rather than an active owner: implementation
+`b1097f64e4` is the direct parent of merge `4c305100ca`, and both are
+ancestors of fresh `upstream/main` `37b11b28919ef22a428cb13aa31006850e331ecb`.
+Its completed method-materialization plan expressly excludes
+computed/well-known-Symbol methods; it is useful landed precedent, not an
+ongoing ownership block. Open PR search found no exact computed-`[Symbol.split]`
+literal patch. PR #5753 is open and modifies `literals.ts` only at the adjacent
+`objectLiteralSpreadTakesHostPath` area for indexed spreads, so an eventual
+literal-gate change requires a fresh exact-hunk overlap check even though its
+current diff is not the computed-method matcher.
+
+The existing open-object **writer** is already category-general: when
+`compileObjectLiteralWithAccessors` receives a computed `MethodDeclaration`
+spelled as a recognized `Symbol.X`, it resolves every table entry through
+`getWellKnownSymbolId`, boxes that id, and stores the closure with
+`__extern_set`. A follow-up must reuse that writer rather than add a
+`Symbol.split` special case. The proposed producer predicate is therefore the
+semantic category “a computed object-literal method whose key is a resolved,
+ambient-global well-known `Symbol.X`”, not a test-name or one-id exception.
+
+That category is **not yet safe to route wholesale**. `Symbol.iterator` is a
+documented counterexample: the closed `@@1` field is consumed by dedicated
+iterator dispatch, and `to-primitive-open-object.ts` deliberately says moving
+every well-known key to `$Object` would give up that layout. `Symbol.toPrimitive`
+has its own value-level companion so open representation survives aliases,
+returns, fields, and arrays. Thus existing evidence proves the general writer,
+not that every statically resolved Symbol method can safely use the open
+producer even for a direct local. A future category matrix must preserve each
+static reader before broadening the producer gate; it must include iterator
+and ToPrimitive preservation, rather than treating all ids as interchangeable.
+
+The gate must also be scope-safe. Current literal helpers recognize the text
+`Symbol.X` without checking whether `Symbol` is locally shadowed. A correct
+predicate must ask the checker/oracle whether the particular `Symbol`
+identifier has only declaration-file (ambient-global) declarations, analogous
+to the existing `isAmbientGlobalIdentifier` helper; a local, parameter,
+capture, import, or user declaration must retain ordinary computed-key
+evaluation. File-wide spelling checks alone are insufficient. This oracle-based
+proof can be asked from the shared literal predicate without relying on a
+partially populated function-local map, but needs an explicit source test for
+both a local and a module-level shadow before adoption.
+
+That cannot be implemented as a new producer predicate alone. The same
+name-only recognition currently appears in `resolveComputedKeyExpression`,
+`_hasRuntimeComputedKey`, the data/method Symbol branches of
+`compileObjectLiteralWithAccessors`, the disposal predicate, and the separate
+`to-primitive-open-object.ts` predicate. If only the new gate became
+scope-aware, an already-selected open writer could still box a shadowed
+`Symbol.split` as global id 10; if only the writer changed, the closed path
+could still turn that dynamic key into a synthetic `@@split` field. A future
+implementation needs one shared ambient-global resolver and must make a
+shadowed spelling fall through to the ordinary runtime-computed-key lowering.
+The ToPrimitive helper has no `CodegenContext` today, so its scope check is a
+separate signature/caller review rather than an implicit exception to that
+rule. No such refactor is authorized by this audit.
+
+The narrowest candidate remains **not** a generic closed-struct Symbol reader.
+It would be a standalone-only, scope-proven producer route that selects the
+existing open-object construction before the closed struct is built. The
+existing direct local/module/hoisted slot readers
+(`statements/variables.ts`, `declarations.ts`, and
+`statements/nested-declarations.ts`) already consult
+`objectLiteralForcesHostPath`; they require regression proof, not speculative
+edits. A value crossing a return, parameter, array/field, or any other
+type-led slot still requires the separate value-representation review below.
+
+This remains deliberately smaller than a general value-representation claim.
+If the value crosses a return, parameter, array/field, or any other type-led
+slot that still resolves it as a closed struct, the #5269 lesson applies: a
+producer-only open object can null-cast and be lost. In that case a new,
+separately owned type-level companion near `index.ts::resolveWasmType` (not a
+reuse of the semantically specific `to-primitive-open-object.ts` name) would
+need concrete carrier/IR coordination first. Initial acceptance must therefore
+either prove the existing initializer-local lockstep for the chosen narrow
+shape or stop before broadening. Required controls are the direct local
+supplied/omitted split protocol identity checks, an alias/escape boundary that
+either works or is explicitly outside the first slice, and preservation for
+closed `[Symbol.iterator]` literals and existing `[Symbol.toPrimitive]`
+open-literal behavior. No implementation is authorized by this audit.
+
+### 2026-09-28 raw object return-carrier / static-member handoff
+
+The retained direct-object row is not a `split` coercion-order defect and must
+not be fixed by moving `RequireObjectCoercible` after argument evaluation or by
+silently applying `ToString` to the returned object. In ordinary JavaScript,
+the object has no `.split` property: property lookup and call failure occur
+after the receiver, separator, limit, and surplus expressions run. A genuine
+nullish member base still throws before those arguments, which the current
+staged split boundary correctly preserves.
+
+The measured runtime result is order `1` rather than Node's `1234`. The
+source-supported route starts with a statically declared
+`receiver(): string` whose erased cast returns an object. `resolveWasmType` in
+`src/codegen/index.ts` selects `$AnyString`; `compileReturnStatement` in
+`src/codegen/statements/control-flow.ts` supplies that expected return type;
+`coerceType` in `src/codegen/type-coercion.ts` guarded-casts the object carrier
+to `$AnyString` and yields null; and
+`src/codegen/expressions/call-receiver-method.ts` admits the native string
+method path from the static type. `compileNativeStringMethodCall` then reaches
+the split raw-receiver/ROC boundary with null, so it correctly reports the
+wrong *member-base* result before arguments. The value was already lost before
+that boundary.
+
+No existing issue owns exactly this path. Adjacent #2576 is complete and covers
+opaque externref/`any` native-string guards; #2742 is a separately owned,
+generic borrowed-`String.prototype` receiver task that excludes `split` and
+`search`; #4096 covers a different closed-static-member miss; and #4121 is
+broad numeric carrier work. They are related references, not claims of the
+same cause or authorization to edit their code.
+
+Any future fix needs a dedicated issue, an atomic collision/ownership check,
+and confirmed clearance for the combined producer/ABI/dispatcher surface
+before code changes. It must preserve a native primitive-string fast path while
+keeping an object-valued erased return distinguishable long enough for runtime
+property lookup and callability to decide the direct call. Likely readers and
+mutators include the four files above, return/closure ABI construction, and
+shared `$AnyString`/object carrier coercion consumers; that is broader than the
+owned standalone split helpers and may be IR-sensitive. No active IR agent was
+visible in the local task tree during this audit, but that is not global
+ownership clearance. The #4016 fixture keeps this row red and unchanged until
+that separate work is planned and owned.
 
 ### 2026-09-28 compiler-boundary inventory registration
 
