@@ -34,6 +34,7 @@ import {
 } from "../runtime-eval-callable.js";
 import { buildRuntimeEvalValueUnwrap, ensureRuntimeEvalProviderActiveGlobal } from "../runtime-eval-boundary.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { buildEvalArgumentList } from "./eval-argument-list.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 /** Core-Wasm provider namespace owned by #2928/#2527. */
@@ -607,6 +608,29 @@ function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   refreshRuntimeEvalCallableTrampolines(ctx);
 }
 
+/**
+ * Reserve/fill global-sync helpers without emitting the observable push call.
+ * Dynamic-eval routes use `prepareRuntimeEvalArgumentPhase` before compiling
+ * user expressions, then seed only at the PerformEval boundary after
+ * ArgumentListEvaluation completes.
+ */
+export function prepareRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  ensureRuntimeEvalGlobalBindingSync(ctx);
+  ensureRuntimeEvalProviderActiveGlobal(ctx);
+}
+
+/**
+ * Complete the non-observable runtime-eval setup phase before emitting user
+ * arguments. It reserves/fills the sync helpers and fixes any late import
+ * shifts, but deliberately does not PUSH_GLOBALS or activate the provider.
+ */
+export function prepareRuntimeEvalArgumentPhase(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!ctx.standalone) return;
+  prepareRuntimeEvalGlobalBindingSync(ctx);
+  flushLateImportShifts(ctx, fctx);
+}
+
 /** Materialize source-level script var/function bindings on the native realm
  * object before interpreted global code runs. The AOT compiler normally keeps
  * these values in Wasm locals/globals, while indirect eval and Function bodies
@@ -767,7 +791,8 @@ export function emitStandaloneDirectEvalRuntime(
     ensureLateImport(ctx, "__extern_is_undefined", [externref], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, fctx);
   }
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+
+  prepareRuntimeEvalArgumentPhase(ctx, fctx);
 
   // Register the builders before emitting argument expressions: doing so can
   // mint functions, and keeping that mutation ahead of the call operands makes
@@ -781,18 +806,16 @@ export function emitStandaloneDirectEvalRuntime(
   const functionScopedCaller = directEvalCallerIsFunctionScoped(call);
   if (functionScopedCaller && !reifiedHost) addStringConstantGlobal(ctx, RUNTIME_EVAL_NON_GLOBAL_SENTINEL);
 
-  const sourceLocal = allocLocal(fctx, `__runtime_direct_eval_source_${fctx.locals.length}`, externref);
-  const sourceType = compileExpression(ctx, fctx, args[0]!);
-  if (sourceType === null) {
-    emitUndefined(ctx, fctx);
-  } else if (sourceType.kind !== "externref") {
-    coerceType(ctx, fctx, sourceType, externref);
-  }
-  fctx.body.push({ op: "local.set", index: sourceLocal });
-  for (let i = 1; i < args.length; i++) {
-    const extraType = compileExpression(ctx, fctx, args[i]!);
-    if (extraType !== null) fctx.body.push({ op: "drop" });
-  }
+  const argumentList = buildEvalArgumentList(ctx, fctx, args, "eval_direct_args", ctx.standalone);
+  if (!argumentList) return undefined;
+  const sourceLocal = argumentList.sourceLocal;
+
+  // §13.3.8.1 evaluates every argument before PerformEval. Seed the provider
+  // only after those effects complete, so its eventual PULL_GLOBALS observes
+  // the iterator/ordinary-argument writes rather than replaying an earlier
+  // snapshot. The helper itself was preflighted above, so no failed provider
+  // setup can cause the already-emitted argument effects to run twice.
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
 
   // Argument compilation may add late imports and shift defined function
   // indices. funcMap is the authoritative post-shift lookup.

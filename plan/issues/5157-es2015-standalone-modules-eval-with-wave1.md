@@ -4,7 +4,7 @@ title: "ES2015 standalone: modules-eval-with conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-28
 priority: high
 horizon: l
 feasibility: medium
@@ -64,6 +64,12 @@ Ordered by count descending. "CE" = compile_error.
 | F | Generators reached through module bindings | 8 (2 CE) | Import-aliased / default-export-expression generator calls bypass the native-generator instantiation path → returned value fails the brand check at `src/codegen/generators-native-consumer.ts:338` ("requires that 'this' be a Generator"); anonymous `export default function* () {}` never registers with `nativeGeneratorInfoForDecl` (keyed by name) → #680 CE at `src/codegen/function-body.ts:733` even for an empty body; `instn-uniq-env-rec.js` traps `unreachable` in `__gen_resume_sixth` | `language/module-code/instn-named-bndng-gen.js`, `language/module-code/eval-export-dflt-expr-gen-named.js`, `language/module-code/eval-export-dflt-gen-anon-semi.js` (CE) |
 | G | eval statement-list completion values | 4 | Array/RegExp literals evaluated as an eval completion value (after a `class` decl) come back with `Object.getPrototypeOf(result) === null` — the `eval-inline.ts` completion-value boxing loses prototype linkage (compare `src/codegen/array-object-proto.ts` for the normal path) | `language/statementList/eval-class-array-literal.js`, `language/statementList/eval-class-regexp-literal.js` |
 | H | Reference get/put on primitive bases | 4 | Accessors installed on `Symbol.prototype`/`Number.prototype` etc. are not consulted when the base is a primitive (`Symbol().test262` → `null` instead of running the getter with primitive `this`); `-realm` variants additionally need `$262.createRealm` | `language/types/reference/get-value-prop-base-primitive.js`, `language/types/reference/put-value-prop-base-primitive.js` |
+
+> **Historical diagnosis corrected (2026-09-28):** Cluster G's table entry is
+> retained as the original triage record, not as the current causal claim. A
+> `class` declaration makes this eval source take the separately compiled
+> QuickJS provider rather than the inline splice; see the corrective handoff
+> below and the recorded #5271 X4 routing.
 
 A+B+C+D+E = 65/81 = 80% investigated to root cause; F likewise. Cluster B's
 one CE (`own-property-keys-sort.js`) is a distinct parse defect: escaped
@@ -394,3 +400,623 @@ Still failing in D, with root causes established:
 - Generators: #680, #1665, #3505
 - Modules: #3494 (blocked), #1074
 - Standalone gates: #1472, #2961 (host-import detection)
+
+## 2026-09-28 narrow continuation: eval spread-argument evaluation
+
+Claim `5157:eval-spread-arguments` is verified upstream for
+`ttraenkler/codex-eval-spread-arguments`, branch
+`codex/5157-eval-spread-arguments`, based on freshly fetched main
+`1032526dc12302034e558934b60363348e80b8bd`. The previous landed RegExp branch
+is preserved; its clean worktree is reused. The read-only issue check found
+no live parent owner; a complete one-shot scan of 14 open PRs found no
+overlap in `expressions/eval-inline.ts` or
+`expressions/runtime-eval-provider.ts`. Those files are unchanged since the
+`45ce4a8e` audit. This claims only the named slice, not the broad wave.
+
+### Evidence and implementation plan
+
+Frozen census index 27 fails unchanged
+`test/language/expressions/call/eval-spread-empty-trailing.js`: its final
+`nextCount` assertion observes zero instead of one; the preceding local and
+global `x` assertions pass. Receipt JSONL SHA-256:
+`37345bd261c4baed979361a43a717c9e9565b2fc302c0e734bfd737a644dbdbe`.
+This is historical baseline evidence, not yet a current-source reproduction.
+`eval-inline.ts` compiles and drops extra argument expressions; generic
+SpreadElement compilation unwraps the operand without running its iterator.
+Runtime-eval extra-argument loops need the same semantic audit. Merely
+declining inline eval is not a repair.
+
+1. Establish an unchanged-original current baseline with passing direct-eval
+   lexical-scope and ordinary nonspread argument controls. Retain complete
+   maintained-runner receipts and the exact source/provider/corpus identity.
+2. Reuse existing iterator/argument-list primitives to perform eval's complete
+   ArgumentListEvaluation before execution: preserve callee/argument order,
+   evaluate each once, expand spreads, retain the first resulting value, and
+   evaluate/discard later values only after their required side effects.
+   Preserve direct-eval lexical scope and ordinary non-string eval behavior.
+3. Keep new semantics in a focused helper if needed, with minimal wiring in
+   the two owned eval files. Audit static/direct/runtime/indirect consumers.
+   Do not widen generic expression, iterator, IR, bridge, or runtime code
+   without a new ownership check. No hard-coded original shape or test name.
+4. Add focused controls for empty/nonempty trailing spreads, leading spread
+   and zero resulting arguments, multiple argument ordering, single iterator
+   acquisition/evaluation, noniterable and abrupt iterator/getter failures,
+   skipped eval execution after argument failure, and shadowed/nonintrinsic
+   eval. Follow the iterator protocol's actual abrupt-completion semantics;
+   do not invent IteratorClose where the specification does not require it.
+5. Compare the unchanged original and relevant neighboring originals on
+   baseline/candidate, with complete receipts and no exclusions. Run focused
+   eval neighbors and normal gates. Publish one ready upstream PR for the
+   completed slice, or draft only if acceptance remains genuinely unfinished.
+
+The broad #5157 wave remains in review. Historical budget allowances do not
+grant arbitrary new growth; request a precise justified allowance only if a
+normal gate requires it. The implementation must coordinate the sole heavy
+test/build lease with root; other-machine IR changes remain protected.
+
+### Current-source maintained-runner baseline (2026-09-28)
+
+The exact seven-file manifest was run on this continuation's unmodified source
+through the maintained one-shard Test262 runner (standalone target, QuickJS
+eval tier, one worker; no exclusions). It is a current-source reproduction,
+not the historical census evidence above:
+
+- source commit: `1032526dc12302034e558934b60363348e80b8bd`; source tree:
+  `8a5482d7bb3a411333e7314da99f4770ebe46d7d`;
+- exact manifest:
+  `benchmarks/results/test262-standalone-exact-manifest-20260928-092756.txt`
+  (SHA-256 `0b2242befd25167100edb84ad1d4ece1eb761a4e1054b782e0a2c172a87a837e`);
+- complete JSONL receipt:
+  `benchmarks/results/test262-standalone-results-20260928-092756.jsonl`
+  (SHA-256 `8ca3f545a8c67bfe6d1e20c6fadc0f8f8b5338fb2e63fb5c9ddf914c3be14769`),
+  with report
+  `benchmarks/results/test262-standalone-report-20260928-092756.json`
+  (SHA-256 `8205fcb394ad1f841408455e682c64b3bbcf0030a673bc7ce27ad7d6894d4948`);
+- the retained maintained-runner terminal log was
+  `/tmp/test262-vitest-run.log` (SHA-256
+  `3b118c5f0440cd2bd31573a91fbf85138639b8f26b346eb126ebda40d57edbf6`).
+  It records a fresh compiler/runtime bundle build, adapter cache MISS,
+  adapter compilation, and canary verification rather than reuse of a stale
+  provider artifact;
+- fresh compiler bundle SHA-256:
+  `3be400279eb53978471526fff515a3d886300932bf6c81da7d2a4cba3c57d7cc`;
+  runtime bundle SHA-256:
+  `462296a4366ad4d70f6acfc5d1db876f6dd6ecc431a810f48b63ce84bffa8709`;
+  QuickJS adapter key `ac848c5ba005512d`, artifact key
+  `e9f8d30bc347dbc5`, and adapter SHA-256
+  `9aeb629d4eda26359e5e30ae8803e41740cd6527cb53d0a8f0f09a436fd8f328`.
+
+Result: **3 pass / 4 fail**. The four official spread cases all fail:
+`eval-spread.js`, `eval-spread-empty-leading.js`, `eval-spread-empty.js`, and
+`eval-spread-empty-trailing.js` (the original trailing case is exactly
+`Expected SameValue(0,1)`). The controls pass: `eval-first-arg.js`,
+`eval-no-args.js`, and direct lexical-scope
+`eval-code/direct/var-env-var-non-strict.js`. This establishes both the full
+spread regression surface and a clean direct-eval/nonspread control set before
+the implementation below is measured.
+
+### Intermediate candidate evidence; semantic audit still open
+
+Two maintained-runner candidate attempts are retained rather than overwritten:
+
+- `20260928-093715` records the first helper shape. It preserved all three
+  controls but converted the four spread assertions into compiler
+  stack-balance errors. The cause was a value carried into an empty-typed
+  branch; the repair captures that value in a local before selecting the first
+  expanded argument. Its JSONL/report/completion files remain alongside the
+  later run for review.
+- `20260928-093831` is a complete provisional green run of the same exact
+  seven-file manifest: **7 pass / 7 registered / 0 exclusions**. JSONL SHA-256
+  `88301b4c431ff067044cb4790a4a0203e0d07cf8e3befae4291af0d0ab9b0643`;
+  completion-marker SHA-256
+  `e5eb0e08b11977ec9b812faf39fd76bfb6139e01e8874711b4ecf2a2ed0b1e75`;
+  manifest SHA-256 unchanged
+  `0b2242befd25167100edb84ad1d4ece1eb761a4e1054b782e0a2c172a87a837e`.
+  This is intermediate evidence only, not final acceptance after the audit
+  below.
+
+The first implementation reused `buildSpreadArgList`, but its intentional
+two-phase design captures a vec's backing storage and reads individual values
+only from a later `emitStores` phase. A following argument can therefore
+mutate the source between spread iteration and first-value selection. Its
+compatibility materializer also is not by itself proof that a custom
+`Symbol.iterator` on a native carrier is observed. Eval needs the stricter
+per-argument `ArgumentListEvaluation` timing, so the candidate is being
+reworked in the eval-owned helper to use the existing strict native
+GetIterator/IteratorNext provider and capture each expanded value before the
+next syntactic argument. The helper must preflight that provider and every
+runtime-eval carrier before it emits user argument effects; otherwise a
+decline could cause a fallback to evaluate them twice.
+
+Final focused controls must cover the original four paths plus a mutable spread
+source followed by a mutation argument (`['x=1']`, then `args[0] = 'x=2'`;
+eval must execute `x=1`), the indirect/global counterpart, custom iterator
+override, empty expansion, and abrupt/noniterable no-eval behavior. Do not
+widen the generic spread builder unless separate ownership is granted.
+
+### Focused semantic audit: provider representation boundary (not accepted)
+
+The eval-owned streaming helper is deliberately not final acceptance yet. Its
+first focused split receipt is
+`/private/tmp/5157-focused-split-direct-20260928-1000.log` (SHA-256
+`9766cd98581754a06f487b4afa0e1a5519c256ac91d341453b519c1c0c411085`),
+run on the uncommitted candidate at source commit
+`1032526dc12302034e558934b60363348e80b8bd` with one Vitest worker and the
+QuickJS eval tier:
+
+```text
+VITEST_MAX_FORKS=1 VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 \
+JS2WASM_EVAL_ENGINE=quickjs pnpm exec vitest run \
+  tests/issue-5157-eval-spread-arguments.test.ts --maxWorkers=1 --minWorkers=1
+```
+
+It records five passing controls and one intentionally retained failure:
+
+- source-order snapshot (`args = ['x = 1']`, then a later argument changes
+  `args[0]`) passes;
+- direct lexical eval, non-string first value, and empty custom iterator all
+  pass when their spread source has been bound to a local first;
+- the indirect and global-Script runtime routes pass their source-order
+  controls;
+- the original combined strict-protocol probe returns **23** in Wasm. Its raw
+  Node v22.23.2 isolated-VM spelling historically returned **7**, but that is a
+  V8 direct-eval-with-spread defect and is retained only as a diagnostic. Root
+  independently reran both fresh VM forms in terminal chunk `b483b8` (exit 0,
+  no compiler lease): the narrowly adapted oracle returns the spec value
+  **15**. The prior unsplit receipt (terminal chunk `33ba3b`, before the
+  writable receipt was redirected to `/private/tmp`) also preserves the direct
+  literal failures below.
+
+The persistent focused fixture is
+`tests/issue-5157-eval-spread-arguments.test.ts`. Its
+`ORIGINAL_GROUPED_PROTOCOL_PROBE_BODY` retains the literal original calls
+(`eval(...doneWithoutValue)`, `eval(...abrupt, ...)`, `eval(...nonIterable,
+...)`, and `eval(...array)`) as executable candidate coverage. The sole
+oracle adaptation in `ORIGINAL_GROUPED_PROTOCOL_ADAPTED_ORACLE_BODY` is:
+
+```js
+const expandedOverrideArgs = [...array];
+eval(expandedOverrideArgs[0]);
+```
+
+It deliberately leaves the later ordinary `nonIntrinsic.eval(...["ordinary
+call"])` spread unchanged. Under [ECMAScript 2023
+ArgumentListEvaluation](https://tc39.es/ecma262/2023/multipage/ecmascript-language-expressions.html#sec-function-calls-runtime-semantics-evaluation), direct eval first evaluates the
+complete argument list and then uses its first result. Therefore bits 1, 2, 4,
+and 8 must be true; the later ordinary call observes the overridden iterator
+and does not add bit 16. The acceptance value is **15**. The test asserts only
+the adapted oracle and Wasm result; it does not pin the historical raw-Node 7
+result, so a future host repair will not turn the test into a false failure.
+
+Splitting made two representation gaps concrete rather than allowing a green
+test to hide them:
+
+1. `eval(...['lexical = 7'])` and `eval(...[marker], ...)` throw an opaque
+   Wasm exception, whereas identical values first bound to local arrays pass.
+   `expressions/extern.ts` documents why: an inline static array literal lowers
+   to a tuple struct, not a `vecTypeMap` vector (`extern.ts:1069-1086`). The
+   strict provider admits canonical/vec-family carriers and only the empty
+   tuple, so a non-empty tuple falls to its non-iterable path.
+2. A local array's runtime `Array.prototype[Symbol.iterator]` replacement is
+   ignored. `__iterator_strict` routes canonical and vec-family arrays through
+   its early VEC arm before it reaches the strict object-method branch
+   (`iterator-native.ts:3850+`, especially the arm ordering around 4430+).
+   The original combined probe therefore exposes a generic spread/iterator
+   discrepancy too: after the override, ordinary `nonIntrinsic.eval(...array)`
+   follows a different path from the isolated VM reference. This probe is
+   retained as a diagnostic, not relabelled as expected behavior.
+
+Node's native direct-eval-with-spread special case is itself not an oracle for
+the direct controls (on this Node it leaves `eval(...['x = 1'])` unevaluated),
+so the direct outcomes are specified by the Test262 ArgumentListEvaluation
+requirements; the isolated VM is still used for the indirect/global and
+generic-spread diagnostics. A tuple-field shortcut in the eval helper would
+make the first gap appear green but would silently violate the second required
+`@@iterator` behavior, so it was not added. No final Test262 candidate receipt
+may be claimed from the earlier provisional 7/7 run.
+
+### Provider ownership/dependency audit and held repair decision
+
+The strict provider prerequisite is outside this slice's owned files:
+
+- `src/codegen/iterator-native.ts::ensureNativeStrictSpreadRuntime` registers
+  `__iterator_strict` and `__iterator_next_strict`; its late fill is
+  `fillNativeIteratorLateArms`, which calls `buildIteratorBody` with strict
+  arms. `buildIteratorBody` takes canonical/vec-family arms before strict
+  object-method dispatch, so compiled arrays skip a captured
+  `Array.prototype[Symbol.iterator]` method. `buildEmptyTupleFamilyArms` admits
+  only zero-field tuple structs, leaving non-empty static tuple literals on the
+  non-iterable path.
+- `src/codegen/literals.ts::compileTupleLiteral` creates those static tuple
+  carriers; `src/codegen/expressions/spread-arguments-call.ts::tupleStructFields`
+  is the existing structural decoder. `expressions/extern.ts:1070-1090`
+  records the same non-empty-tuple distinction. Decoding tuple fields here is
+  not safe: it bypasses GetIterator when Array's prototype iterator is
+  overridden.
+- The completed CPR precedent is #1749:
+  `src/codegen/expressions/proto-override.ts::arrayIteratorOverrideGlobalIdx`
+  and `emitArrayProtoIteratorDrive`, rooted by
+  `reserveArrayProtoIteratorOverrideGlobals` and the
+  `sourceOverridesArrayIterator` scan in `src/codegen/index.ts`. #1749 uses
+  that drive from `literals.ts` for array-literal spread. It provides a narrow
+  candidate route for a future eval-owned Array/tuple branch, but its returned
+  iterator is normalized through compatibility `__iterator` /
+  `__iterator_next`, not the strict provider ABI. Whether that bridge preserves
+  all strict malformed-iterator behavior must be decided and proved before it
+  is reused here.
+
+Repository-local ownership evidence: #5131 is `status: done`, PR 5272, and
+listed `iterator-native.ts`/`literals.ts` among its files; it explicitly says
+static array-literal prototype overrides are out of scope. #1749 is also
+`status: done` and is the completed CPR consumer precedent. The live team audit
+found no current strict-provider owner. The parent one-shot scan of 14 open PRs
+only established no overlap in the two eval wiring files; local historical refs
+are not evidence of a currently open provider PR, and no GitHub polling was
+performed. Any generic strict-provider change therefore needs a fresh explicit
+claim and scope grant.
+
+An action-tied exact path scan of the currently open PRs and upstream assignment
+registry was then performed before considering such a grant. It found:
+
+- PR [#5753](https://github.com/loopdive/js2/pull/5753)
+  (`ttraenkler:codex/1058-typescript-standalone`) changes both
+  `src/codegen/iterator-native.ts` and `src/codegen/literals.ts`; #1058 is
+  currently unassigned, but the open PR remains a concrete merge-conflict
+  surface.
+- PR [#6235](https://github.com/loopdive/js2/pull/6235)
+  (`loopdive:claude/es6-6651-a7-gen-self-binding`) changes
+  `src/codegen/literals.ts`; #6651 is actively claimed by
+  `ttraenkler/project-thread-yhj9pp`.
+- PR [#5784](https://github.com/loopdive/js2/pull/5784)
+  (`loopdive:codex/4376-deno-realm-main-sync`) changes
+  `src/codegen/literals.ts`; #4376 has no active lock (last status released).
+  No open PR in that scan changes
+  `src/codegen/expressions/proto-override.ts`.
+
+The upstream assignment check also confirms that
+`5157:eval-spread-arguments` remains claimed by
+`ttraenkler/codex-eval-spread-arguments`; #5131 has no active claim (last
+status done), and #1749 is unassigned. Consequently neither the generic
+provider nor `literals.ts` is safe to modify from this continuation without
+root coordination despite the completed historical issues.
+
+### Read-only generic GetMethod integration audit (2026-09-28)
+
+**Result: there is no existing eval-owned route that gives full Array
+GetMethod/IteratorNext semantics.** This audit made no source edits and ran no
+compiler or test process.
+
+The strict provider already has a correct dynamic path for `$Object` and Proxy
+carriers: `iterator-native.ts::buildIteratorBody`'s `strictObjArm` reads
+`@@iterator` through `__extern_get` and invokes the result through
+`__apply_closure` with the original receiver. That is the path to retain for
+ordinary objects and proxies. It cannot serve compiled arrays, however: the
+same function first takes the canonical vec arm and then
+`buildVecFamilyArms(..., true)` before it reaches `strictObjArm`. The vec arm
+reads/snapshots backing storage and returns a `$IterRec`, so it neither gets an
+own/prototype iterator property nor preserves a user iterator's protocol.
+
+There is a tempting but incomplete vec property primitive:
+`vec-props.ts::VEC_PROP_GET` (`__vec_prop_get`). It reads an actual vec's own
+bag and, on a miss, calls the receiver-aware prototype-companion lookup; a
+future caller could pass that same vec as `this` to `__apply_closure`. It is not
+a complete GetMethod solution for this issue:
+
+1. `assignment.ts` intercepts recognized
+   `Array.prototype[Symbol.iterator] = function ...` writes through
+   `maybeCaptureArrayProtoOverride`, which stores the closure only in
+   `ctx.protoOverrides`. It deliberately does not write the normal native
+   prototype companion, so `__vec_prop_get` cannot observe the captured
+   override at all.
+2. Its inherited companion lookup is demand-gated by the proto-index store and
+   native-prototype seeder. Even the default Array `@@iterator` value is not a
+   universally available generic read. When the reflective Array iterator body
+   is available, `array-proto-iterator-value.ts` explicitly materializes a
+   snapshot vec, which is not a proof of live ArrayIterator behavior under
+   mutation.
+3. It only recognizes vec carriers. Non-empty inline array literals are
+   `__tuple_*` structs: `spread-arg-list.ts` decodes their fields statically,
+   while `buildEmptyTupleFamilyArms` admits only zero-field tuples. A tuple has
+   no vec bag/prototype carrier that this helper can query, so converting it at
+   the eval observation point would lose the source array's property identity.
+
+The existing CPR drive is similarly useful evidence but not a shortcut.
+`proto-override.ts::emitArrayProtoIteratorDrive` correctly converts the actual
+vec/tuple reference and calls its captured closure with that value as `this`.
+Its public result has already been passed through compatibility `__iterator`,
+though, and is intended for compatibility `__iterator_next`. Replacing only
+the later step with `__iterator_next_strict` does not repair the earlier
+compatibility normalization; calling `__iterator_strict` on the raw iterator
+would incorrectly perform GetIterator a second time. The raw driver is private
+and the public CPR path covers only the narrow captured Array-prototype form,
+not own overrides, arbitrary prototype writes, or proxies.
+
+Accordingly, a full repair needs protected ownership rather than an eval-only
+workaround:
+
+1. `src/codegen/iterator-native.ts` needs a strict raw-iterator record adopter
+   (or equivalent strict Array GetMethod branch) which accepts the result of
+   the single `@@iterator` call and validates `next` / IteratorResult without
+   invoking GetIterator again.
+2. `src/codegen/expressions/proto-override.ts` needs a raw/strict CPR export
+   that exposes the existing receiver-preserving driver before compatibility
+   normalization, so the captured Array-prototype override can enter that
+   adopter exactly once.
+3. `src/codegen/literals.ts` (or another representation owner) must make a
+   non-empty array literal observable through the same property-capable
+   representation before iteration; static tuple field expansion is not a
+   valid substitute. This must preserve aliases and leave the existing
+   `$Object`/Proxy strict path untouched.
+
+`iterator-native.ts` and `literals.ts` overlap open PR #5753 (and
+`literals.ts` also overlaps #6235/#5784); `proto-override.ts` had no overlap in
+the completed action-tied scan. The held repair therefore remains blocked on a
+new explicit cross-file scope/ownership decision. The literal-array and
+override controls stay executable expected failures, and the provisional
+seven-row Test262 green receipt remains intermediate evidence only: no heavy
+run, provider edit, commit, or PR is authorized from this resumable handoff
+state.
+
+### Corrective handoff: class-eval completion values (2026-09-28)
+
+The historical Cluster G table and plan wording above are retained for triage
+history but are not the current diagnosis. `eval('class C {}/1/;')` cannot use
+the inline eval splice: `allNodesInlineSupported` rejects `ClassDeclaration`
+in `eval-inline.ts` (the eligibility gate at lines 1250-1252 and class
+rejection at lines 1487-1508). It therefore runs through the separately
+compiled QuickJS runtime-eval provider. This is not an `eval-inline.ts`
+completion-register or boxing repair.
+
+The focused read-only trace refines the RegExp half of the failure. The
+provider result remains usable as a dynamic native carrier: the linked
+cross-provider controls in `tests/issue-4654.test.ts` cover `instanceof
+RegExp`, `source`, `test`, and identity, while
+`identifiers.ts` recognizes a dynamic RegExp through its `ref.test
+$__StandaloneRegExp` dispatch. The failure then reaches the generic
+`__getPrototypeOf` ladder in
+`object-runtime-prototype.ts::buildObjectPrototypeHelpers`. Its current arms
+cover `$Object`, fnctors, Array, and boundary values, but not a standalone
+RegExp; it consequently returns `null` for this carrier. This is an exposed
+generic dynamic-prototype gap, not proof that the provider lost the RegExp
+reference itself.
+
+A future, separately owned RegExp arm would need to preserve the caller realm
+and use existing integration points rather than fabricate a prototype:
+
+1. identify the dynamic value with
+   `regexp-standalone.ts::ensureStandaloneRegExpStruct`;
+2. install/use the caller-owned RegExp native-prototype glue through
+   `regexp-standalone.ts::ensureRegExpNativeProtoGlue` and
+   `native-proto.ts::buildLazyNativeProtoGetInstrs`; and
+3. retain `object-get-prototype-of.ts` as the existing generic ingress, with
+   `builtin-value-read.ts::tryEnsureNativeProtoBrand` as the related native
+   prototype-brand dispatch.
+
+**Historical base-103 full-row status (not a current-main claim).** The same
+dynamic RegExp receiver's `.flags` surface was an explicit
+`tests/issue-4654.test.ts` residual/invalid-module case, and
+`eval-class-regexp-literal.js` checks `flags` after its prototype assertion. At
+that revision, a `__getPrototypeOf` arm alone therefore could not label the
+row green. The Array siblings still need the broader adapter/membrane
+reification route; a RegExp-only branch is not a four-row Cluster G repair.
+
+The existing #5271 X4 routing is retained: all four
+`statementList/eval-class-{array-literal,array-literal-with-item,regexp-literal,regexp-literal-flags}.js`
+rows stay assigned to the QuickJS/eval-engine bridge (Lane A #4242/#2928).
+The refined RegExp trace above narrows one observable dynamic-prototype
+failure within that route; it does not move the complete cluster back to an
+eval-inline owner.
+
+Action-tied ownership check, performed without edits or a heavy run:
+
+- active assignment registry entry #4245 is `in-progress` for
+  `ttraenkler/opus-membrane` on `issue-4245-membrane-slice1`, the adjacent
+  QuickJS outward-membrane lane;
+- open PR #5748 changes the precise RegExp integration file
+  `src/codegen/regexp-standalone.ts`;
+- open PRs #5784, #6237, and #6242 change the prospective repair site
+  `src/codegen/object-runtime-prototype.ts`; and
+- open PR #5753 changes the related generic ingress/brand-dispatch files
+  `src/codegen/expressions/object-get-prototype-of.ts` and
+  `src/codegen/builtin-value-read.ts`.
+
+The one-shot changed-file scan found those positive overlaps; no absence claim
+is made for `native-proto.ts` from paginated PR file lists. Thus this remains a
+resumable ownership handoff, not authorization to modify generic prototype or
+RegExp code. No production file was changed and no compiler/test process was
+started for this audit.
+
+### Source-currency amendment: landed RegExp B10 (2026-09-28)
+
+The preceding RegExp diagnosis was made at
+`1032526dc12302034e558934b60363348e80b8bd` and is historical after upstream
+advanced to `cb50f21b90b90dd8400be9ae8da1f44e74dd9300`. In particular, landed
+B10 commit `fc823b5de3255b2b01a6aee2ab2ce77dc31692db` adds the exact native
+RegExp dynamic-prototype route that the historical handoff identified:
+
+- `regexp-untyped-receiver.ts::unshiftGetPrototypeOfArm` recognizes
+  `$NativeRegExp` and returns the lazy caller-owned `%RegExp.prototype%`;
+- the same demand-gated integration supplies untyped method reads, while
+  `regexp-proto-to-string.ts` supplies the generic
+  `RegExp.prototype.toString` body; and
+- the B10 source and plan cover all six
+  `statementList/eval-{block,class,fn}-regexp-literal{,-flags}` controls.
+
+Consequently the base-103 `.flags` observation above must not be read as a
+current residual or as evidence that current main still fails the original
+class-eval RegExp row. Fresh maintained-runner evidence on a current-source
+integration is required before either a pass or a remaining failure is
+attributed. The #5271 X4 ownership route remains appropriate for the Array
+siblings and for any adapter behavior not covered by B10.
+
+### Draft checkpoint state: eval spread remains unmergeable (2026-09-28)
+
+The current branch still has the eval-spread helper checkpoint, but it is not a
+completed fix. The matched, complete maintained-runner receipt was taken on
+the dirty branch rooted at `1032526dc12302034e558934b60363348e80b8bd`, before
+the upstream B10 integration:
+
+- exact manifest SHA-256:
+  `0b2242befd25167100edb84ad1d4ece1eb761a4e1054b782e0a2c172a87a837e`;
+- complete 7-shard JSONL:
+  `benchmarks/results/test262-standalone-results-20260928-104305.jsonl`
+  (SHA-256 `28f5fc03ee2fb74d2247789de8cb691553b199419d5daae81eb013b050efbed8`);
+- report:
+  `benchmarks/results/test262-standalone-report-20260928-104305.json`
+  (SHA-256 `8a0a0a786009be59305053f01034ff02136bf5b7d821bedb996b5e400e9989e5`);
+- result: **3 pass / 4 fail / 7 registered / 0 exclusions**. The three
+  retained controls are `eval-first-arg.js`, `eval-no-args.js`, and direct
+  `var-env-var-non-strict.js`. The four original spread rows remain executable
+  failures: `eval-spread.js` (`Expected SameValue(0,3)`),
+  `eval-spread-empty-leading.js` (`Expected SameValue(0,1)`),
+  `eval-spread-empty.js` (strict rerun, `Expected SameValue(0,1)`), and
+  `eval-spread-empty-trailing.js` (`Expected SameValue(0,1)`).
+
+This is not stale-bundle behavior. The runner rebuilt the compiler bundle from
+the dirty source before the receipt (bundle SHA-256
+`20bbaad344a6ec28629e64ab2f1be3ec06a03996763dd646952ba1a3b6c6a118`), which
+contains `buildEvalSpreadArgumentList`, all three eval argument-list call
+sites, and both strict iterator calls. The original direct calls are inside
+functions, and standalone `tryStaticEvalInline` declines their
+`SpreadElement`s, so they route to the direct runtime provider.
+
+The zero final `nextCount` values are not evidence that `next()` was never
+called. The likely owned wiring defect is a stale global snapshot:
+`emitStandaloneDirectEvalRuntime` currently emits
+`emitRuntimeEvalGlobalBindingSeed` before `buildEvalSpreadArgumentList`.
+That seed performs the real `__runtime_eval_push_globals` call. A top-level
+`nextCount` can then change during the AOT iterator callback, but
+`emitRuntimeEvalResultUnwrap` immediately calls `__runtime_eval_pull_globals`
+after eval returns and restores the provider's earlier zero. The local `x`
+assertions can still pass because they use the direct-eval binding cells rather
+than that script-global mirror.
+
+The next owned repair must reserve the runtime global-sync helpers before any
+argument expression (to preserve index/preflight safety), stage every direct
+argument list including its spread iteration, then publish/activate the global
+snapshot immediately before `PerformEval`. It must not move that publication
+past the provider call or retry a failed argument. The indirect and global
+Script **spread** paths already build their list before their seed; the
+`Function` route documents and follows the same post-coercion seed order. This
+draft does not claim that all runtime-eval routes share the direct ordering
+defect, and it makes no protected iterator/provider changes.
+
+Focused QuickJS checkpoint session `87595` is retained separately: **5 pass /
+4 fail**. The two inline non-empty tuple controls throw opaque Wasm exceptions,
+the `Array.prototype[Symbol.iterator]` override returns `0` instead of `1`,
+and the grouped strict-protocol probe returns `23` rather than the
+spec-adapted `15`. Those failures remain live executable diagnostics; they are
+neither skipped nor relabelled as accepted behavior. A draft PR may expose this
+checkpoint for review, but it must remain DRAFT/unmergeable until the direct
+snapshot-order repair has a complete current-source cohort and the retained
+strict iterator failures have an explicitly owned resolution.
+
+### Global-snapshot staging implementation (awaiting fresh measurement)
+
+The owned direct, indirect, and global-Script eval routes now separate setup
+from execution. Each calls `prepareRuntimeEvalArgumentPhase` before any user
+argument is emitted. That shared phase reserves both the global-sync helpers
+and the provider-active global, along with their imports and callable
+artifacts, and applies the existing late-index discipline. It does **not**
+invoke the observable push helper at preflight time.
+
+For ordinary arguments, each route stages the first source value in an
+`externref` local (including the `compileExpression(...) === null` →
+`undefined` case), evaluates/drops every trailing expression, then emits
+`emitRuntimeEvalGlobalBindingSeed` and reads that staged source immediately
+before building the provider call. Spread routes receive their first staged
+value from `buildEvalSpreadArgumentList` and use the same seed boundary. Thus
+§13.3.8.1 `ArgumentListEvaluation` completes before the provider snapshot is
+published and before `PerformEval`; an abrupt argument completion neither
+activates the provider nor pulls an obsolete snapshot. This repairs the
+top-level direct-call routing through `emitStandaloneIndirectEvalRuntime` as
+well as the function-scoped direct-provider route. The separately implemented
+`Function` coercion path already follows post-user-effect seed order and is
+unchanged.
+
+`tests/issue-5157-eval-spread-arguments.test.ts` now also compiles literal
+Script records (no synthetic `export`, explicit Script goal, deferred
+initializer) to match the original Test262 global-binding shape. The added
+controls cover: the exact top-level-`var`/dynamically assigned callback shape
+of `eval-spread.js`; a retained nonempty-tuple ordinary-source diagnostic; a
+separate function-returned source for the top-level global-Script route; an
+IIFE control for the direct-provider route; an iterator whose expanded source
+performs nested direct eval; and a throwing spread iterator that must suppress
+its trailing argument and `PerformEval`. They are source-only additions at
+this point: the historical receipts above remain the before evidence, and no
+new pass/fail claim is made until a freshly built, complete maintained-runner
+cohort and focused execution finish under the current source.
+
+### Fresh candidate verification: owned snapshot-order repair (2026-09-28)
+
+This candidate was freshly rebuilt from the dirty #5157 source at base commit
+`1032526dc12302034e558934b60363348e80b8bd`; it is candidate-branch evidence,
+not a claim about newer upstream main. The content-current build recorded:
+
+- compiler bundle SHA-256
+  `e93deb0651b6446c78dd5b06d458dbc648689358229360f29c1f4c6704e24859`;
+- runtime bundle SHA-256
+  `416d0c6d7d5fbf94b141cc8f7437f8dffa06faf292b9547ac788ff3182f58ba4`;
+- QuickJS artifact cache hit `2e2d7736713beeda` (artifact
+  `e9f8d30bc347…`), followed by an **adapter cache miss** and canary-verified
+  adapter build `345fa1d4eabfdd3e` from the compiler bundle above (615,702
+  bytes); and
+- source SHA-256s: `eval-inline.ts`
+  `b38729c359d993a85d9162734cb232b7a3e33bf8e6d9822f66777179b75ec7b6`,
+  `runtime-eval-provider.ts`
+  `9556b2c55fd2c74d747e52d85d5040da9114d60a84a2aff40df6a9cc02360d1e`,
+  `eval-argument-list.ts`
+  `87e8d7205292fb6794ab378bcf20afc9375ebfdf5dca85243a73c0c9b09b70ae`,
+  and the focused fixture
+  `e093194757bef62cfd26b99273397d7ad40191d579d03a0d0e86e86c04435360`.
+
+The maintained runner then rebuilt the worktree again and ran the exact
+seven-original manifest with a single dynamic shard
+(`TEST262_CHUNK_INDEX=0`, `TEST262_CHUNK_TOTAL=1`), standalone target, and
+QuickJS provider. Run `20260928-112151` completed **7 registered / 7 pass / 0
+fail / 0 exclusions**. It validated the original and copied manifest (both
+SHA-256 `0b2242befd25167100edb84ad1d4ece1eb761a4e1054b782e0a2c172a87a837e`)
+and emitted one durable completion record:
+
+- JSONL `benchmarks/results/test262-standalone-results-20260928-112151.jsonl`
+  SHA-256 `53893a482da9d106029a21ef8eafda0e78cef245df4c7fd7b1defe38eb9e2701`;
+- completion
+  `benchmarks/results/test262-standalone-results-20260928-112151.shard-1-of-1.complete.json`
+  SHA-256 `9bc24bb7f7928d38ff4b1ea16c3497632737035f8d5d91bfb4e0aae9bc27f9a5`;
+  and
+- report `benchmarks/results/test262-standalone-report-20260928-112151.json`
+  SHA-256 `fb99bbdfdaef0c36b404117a09de0a6337de9ac92628dfbdfbf612b2515349b5`.
+
+The dedicated focused command was rerun with one worker and QuickJS; its
+terminal receipt is
+`.tmp/5157-focused-final-refactor-20260928-1123.log` (SHA-256
+`cb0455b77ffc38f2630e0839e05d3fb28463bd8d05e59435fd7e9d19d5ca6d59`).
+It reports **11 pass / 4 fail / 15 registered** with no skipped or softened
+controls. The repaired owned controls pass: source snapshot timing, bound
+direct lexical/non-string/empty cases, the exact Script-global Test262 shape,
+ordinary top-level global-Script and function-scoped direct trailing writes,
+nested direct eval, abrupt ordering, and indirect/global spread routing. The
+previously ambiguous nonempty-array-source ordinary control now also passes;
+it remains executable, showing that source construction is not required to
+explain the historical stale-global result.
+
+The four failing focused controls remain **unaccepted generic diagnostics**:
+
+1. inline nonempty tuple literal lexical spread throws an opaque Wasm
+   exception;
+2. inline nonempty tuple literal non-string spread throws the same opaque
+   exception;
+3. an `Array.prototype[Symbol.iterator]` override is ignored (actual `0`,
+   specified `1`); and
+4. the grouped strict-protocol probe returns `23`, not its spec-adapted
+   expected `15`.
+
+Those controls intentionally continue to assert the specified result rather
+than using a skip, expected-failure decorator, or weakened oracle. Therefore
+the focused invocation exits nonzero and this checkpoint is suitable only for
+a **draft, unmergeable** PR. The owned eval ordering defect is repaired and
+the original seven conformance rows are green, but the protected
+tuple/iterator-provider work remains required before this can be called a
+complete eval-spread fix. This checkpoint also remains anchored to base
+`1032526dc12302034e558934b60363348e80b8bd`; safe integration of newer
+upstream main is pending and is not implied by these candidate receipts.
