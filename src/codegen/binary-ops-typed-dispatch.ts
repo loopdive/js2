@@ -35,6 +35,92 @@ import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
 import { emitLooseScalarVsReferenceEquality, emitReferenceEqualityFromStack } from "./strict-eq-reference-arm.js";
 
 /**
+ * Strip type-only wrappers before identifying the direct oracle-classified Map.get result
+ * whose physical `anyref` carrier needs the #3585 equality boundary.
+ */
+function unwrapDirectMapGetOperand(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = (
+      expression as
+        | ts.ParenthesizedExpression
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.SatisfiesExpression
+        | ts.NonNullExpression
+    ).expression;
+  }
+  return expression;
+}
+
+/**
+ * The oracle-classified Map call path is the only producer this leaf repairs. Matching
+ * the receiver through the oracle boundary (rather than
+ * its spelling alone) keeps a user-defined `class Map` and unrelated `.get()`
+ * methods on their existing lowering paths, while retaining ordinary aliases
+ * whose receiver type is classified as `Map`.
+ */
+function isDirectOracleClassifiedMapGet(ctx: CodegenContext, operand: ts.Expression): boolean {
+  const expression = unwrapDirectMapGetOperand(operand);
+  if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return false;
+  const access = expression.expression;
+  if (access.name.text !== "get") return false;
+  // The oracle returns undefined for incomplete/unknown provenance, which is
+  // intentionally a decline rather than a claim for an arbitrary `.get()`.
+  return ctx.oracle.builtinReceiverOf(access.expression) === "Map";
+}
+
+/**
+ * #3585 — dispatch only a direct oracle-classified Map.get raw-anyref result
+ * through the existing native-first equality bridge. Other anyref producers
+ * stay on their established paths until they carry their own representation
+ * proof.
+ */
+function tryCompileDirectOracleMapGetEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  leftType: ValType,
+  rightType: ValType,
+  leftTsType: ts.Type,
+  rightTsType: ts.Type,
+  isLooseEq: boolean,
+  isLooseNeq: boolean,
+  isNeqOp: boolean,
+): InnerResult | undefined {
+  const strictMapGetEquality =
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const oracleMapGetAnyref =
+    (leftType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.left)) ||
+    (rightType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.right));
+  if (
+    !oracleMapGetAnyref ||
+    (ctx.standalone !== true && ctx.wasi !== true) ||
+    !ctx.nativeStrings ||
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    (!strictMapGetEquality && !isLooseEq && !isLooseNeq)
+  ) {
+    return undefined;
+  }
+  return emitReferenceEqualityFromStack(
+    ctx,
+    fctx,
+    leftType,
+    rightType,
+    leftTsType,
+    rightTsType,
+    strictMapGetEquality,
+    isNeqOp,
+  );
+}
+
+/**
  * Type-directed dispatch for a binary expression whose operands have already
  * been compiled onto the stack as leftType/rightType. Always returns (never
  * falls through). See module header for scope.
@@ -59,6 +145,21 @@ export function compileTypedBinaryDispatch(
   arithI32WithToInt32Wrap: boolean,
   bitwiseI32: boolean,
 ): InnerResult {
+  const directMapGetEquality = tryCompileDirectOracleMapGetEquality(
+    ctx,
+    fctx,
+    expr,
+    op,
+    leftType,
+    rightType,
+    leftTsType,
+    rightTsType,
+    isLooseEq,
+    isLooseNeq,
+    isNeqOp,
+  );
+  if (directMapGetEquality) return directMapGetEquality;
+
   // ── Struct ref valueOf coercion (#138/#139) ──
   // When operands are struct refs (objects with valueOf), coerce them to f64
   // before performing numeric/comparison/equality operations.
