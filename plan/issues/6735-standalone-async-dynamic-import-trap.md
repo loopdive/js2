@@ -1,11 +1,10 @@
 ---
 id: 6735
 title: "standalone: `import()` inside an async function body is a hard compile error — jest-util/jest-config, eslint, stylelint, jsdom stop at it; lower it as a rejection"
-status: done
+status: ready
 sprint: Backlog
 created: 2026-09-28
 updated: 2026-09-29
-completed: 2026-09-29
 priority: medium
 horizon: m
 feasibility: medium
@@ -14,7 +13,7 @@ task_type: bug
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [3494, 3509, 6725, 6747]
+related: [3494, 3509, 6725, 6747, 6761]
 files:
   - src/codegen/async-scheduler.ts
   - src/codegen/async-value-sink-unwrap.ts
@@ -162,3 +161,30 @@ throws synchronously —
 - jest standalone-dynamic lane: unchanged by this PR — #3494 had already moved
   it past the `import()` refusal. Before and after:
   `'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage.`
+
+## Reverted — 2026-09-29
+
+#6301's code and its test were reverted in #6313, together with #6299. The
+issue files stay; this issue is `ready` again.
+
+**What broke.** With #6301 on `main`, two ES5 rows fail in standalone, and ES5
+is a completed edition, so the per-edition ratchet blocks every merge group:
+
+- `harness/asyncHelpers-throwsAsync-native.js`
+- `harness/asyncHelpers-throwsAsync-custom-typeerror.js`
+
+**Why.** #6301 is right: `await` of an already-rejected promise must throw. The
+rows were passing vacuously. `assert.throwsAsync` calls its `func` argument
+through an untyped parameter, and in standalone an async closure called that
+way throws synchronously (and returns a raw value, not a promise, on success).
+So `throwsAsync` rejected with "the function threw synchronously", and the test
+body's `await p` used to swallow that. With #6301 the `await` throws and the
+rows fail. The underlying bug is #6761.
+
+**Evidence.** Merge-group run 36542630445 (`main` + #6301 only) already lists
+`asyncHelpers-throwsAsync-native.js` among the ES5 failures; the #6299 and
+#6303 groups before it do not. Locally (`runTest262File`, standalone), both
+rows fail on `main` and pass with #6301's code reverted.
+
+**Re-land.** Re-apply #6301 after #6761 lands, and check both rows pass.
+

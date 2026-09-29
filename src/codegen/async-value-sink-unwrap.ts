@@ -10,7 +10,7 @@
  */
 import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { getOrRegisterPromiseType, isStandalonePromiseActive, rejectedAwaitThrow } from "./async-scheduler.js";
+import { getOrRegisterPromiseType, isStandalonePromiseActive } from "./async-scheduler.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
@@ -32,20 +32,10 @@ import { VOID_RESULT } from "./shared.js";
  * f64 → NaN). Genuinely-pending awaits (a promise that only settles on a later
  * microtask) need true frame suspension — deferred to #2865 AG1 (PATH B).
  *
- * (#6735) With `rejectedThrows` (the `await` consumer), an ALREADY-REJECTED
- * `$Promise` throws its reason instead of yielding it (§27.7.5.3 Await: the
- * rejected continuation resumes the body with a throw completion). This is the
- * synchronous pass-through population — async closures / methods the frame
- * engine does not claim — so the throw reaches the body's own `try`, or the
- * async call-site repair that turns it into the returned promise's rejection.
- * Without it `await import(x)` (a rejected promise in standalone when `x` is
- * not in the compiled graph, #3494) continued with `undefined`. The value sink
- * keeps the plain read (a raw value sink is not an await).
- *
  * `src/ir/lower-generic.ts`'s `await` arm mirrors this EXACTLY — keep the two in
  * lockstep (see `ir/backend/lower-contracts.ts` L272).
  */
-export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionContext, rejectedThrows = false): void {
+export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const tmp = allocTempLocal(fctx, { kind: "externref" });
   // stack: externref(operand) → stash, then test the stashed copy.
@@ -54,7 +44,6 @@ export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionCon
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
   const thenBody: Instr[] = [
-    ...(rejectedThrows ? rejectedAwaitThrow(ctx, promiseTypeIdx, tmp) : []),
     { op: "local.get", index: tmp },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: promiseTypeIdx },

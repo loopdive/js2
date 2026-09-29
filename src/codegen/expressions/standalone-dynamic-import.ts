@@ -23,9 +23,6 @@
  *
  * Argument expressions are still evaluated left to right first, so their side
  * effects and synchronous throws are unchanged (§13.3.10.1 steps 3-6 use `?`).
- * (#6735) A non-literal specifier is then converted with ToString, and an
- * abrupt ToString (a throwing `toString`) rejects with THAT reason
- * (IfAbruptRejectPromise) instead of the "cannot be resolved" TypeError.
  */
 import type { Instr } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
@@ -35,11 +32,8 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { moduleInitHasTopLevelAwait } from "../declarations.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitModuleNamespaceObjectForSource } from "../module-namespace-value.js";
-import { ensureExnTag } from "../registry/imports.js";
-import { compileExpression, VOID_RESULT } from "../shared.js";
+import { compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
-import { ensureSpecArgToString, externalizeObjectLiteralArg } from "../spec-arg-coercion.js";
-import { buildTargetTaggedTry } from "../../ir/try-table.js";
 
 /** An evaluated in-graph target, or the reason the import must reject. */
 type DynamicImportTarget = { readonly sourceFile: ts.SourceFile } | { readonly reason: string };
@@ -90,13 +84,9 @@ export function compileStandaloneDynamicImport(
   expr: ts.CallExpression,
 ): InnerResult {
   const target = resolveEvaluatedTarget(ctx, expr);
-  let specifierLocal: number | undefined;
-  expr.arguments.forEach((argument, index) => {
-    const type = compileExpression(ctx, fctx, argument);
-    if (index === 0 && !isLiteralSpecifier(argument)) specifierLocal = stashStringifiableSpecifier(ctx, fctx, type);
-    else if (type !== null) fctx.body.push({ op: "drop" });
-  });
-  const abrupt = specifierLocal === undefined ? undefined : emitSpecifierToString(ctx, fctx, specifierLocal);
+  for (const argument of expr.arguments) {
+    if (compileExpression(ctx, fctx, argument) !== null) fctx.body.push({ op: "drop" });
+  }
   if ("sourceFile" in target) {
     // An `undefined` answer emits nothing, so the reject path needs no rollback.
     if (tryEmitModuleNamespaceObjectForSource(ctx, fctx, target.sourceFile) !== undefined) {
@@ -107,77 +97,13 @@ export function compileStandaloneDynamicImport(
     }
     return emitRejectedImport(ctx, fctx, "the module namespace cannot be materialized in the standalone module graph");
   }
-  return emitRejectedImport(ctx, fctx, target.reason, abrupt);
+  return emitRejectedImport(ctx, fctx, target.reason);
 }
 
-function isLiteralSpecifier(argument: ts.Expression): boolean {
-  return ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument);
-}
-
-/**
- * Keep an evaluated non-literal specifier whose ToString can run user code — an
- * externref (any / boxed object) or an object literal — in a local; drop any
- * other value (a number / boolean ToString cannot be abrupt).
- */
-function stashStringifiableSpecifier(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  type: InnerResult,
-): number | undefined {
-  if (type === null) return undefined;
-  const stringifiable =
-    type !== VOID_RESULT && (type.kind === "externref" || externalizeObjectLiteralArg(ctx, fctx, type));
-  if (!stringifiable) {
-    fctx.body.push({ op: "drop" });
-    return undefined;
-  }
-  const local = allocLocal(fctx, `__dynimport_spec_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: local });
-  return local;
-}
-
-/** A caught ToString(specifier) completion: `threw` (i32) and its `reason`. */
-interface AbruptSpecifier {
-  readonly threw: number;
-  readonly reason: number;
-}
-
-/** `try { ToString(specifier) } catch (e) { threw = 1; reason = e }` (§13.3.10.1 IfAbruptRejectPromise). */
-function emitSpecifierToString(ctx: CodegenContext, fctx: FunctionContext, specifier: number): AbruptSpecifier {
-  const toStringIdx = ensureSpecArgToString(ctx, fctx);
-  const threw = allocLocal(fctx, `__dynimport_threw_${fctx.locals.length}`, { kind: "i32" });
-  const reason = allocLocal(fctx, `__dynimport_reason_${fctx.locals.length}`, { kind: "externref" });
-  const body: Instr[] = [{ op: "local.get", index: specifier }, { op: "call", funcIdx: toStringIdx }, { op: "drop" }];
-  const handler: Instr[] = [
-    { op: "local.set", index: reason },
-    { op: "i32.const", value: 1 },
-    { op: "local.set", index: threw },
-  ];
-  fctx.body.push(buildTargetTaggedTry(ctx, { kind: "empty" }, body, [{ tagIdx: ensureExnTag(ctx), body: handler }]));
-  return { threw, reason };
-}
-
-function emitRejectedImport(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  reason: string,
-  abrupt?: AbruptSpecifier,
-): InnerResult {
+function emitRejectedImport(ctx: CodegenContext, fctx: FunctionContext, reason: string): InnerResult {
   const errorInstrs: Instr[] = buildThrowJsErrorInstrs(ctx, "TypeError", `import() failed: ${reason}`, { flush: fctx });
   // The builder ends in `throw $exc`; the error VALUE is everything before it.
   if (errorInstrs.pop()?.op !== "throw") throw new Error("standalone import(): TypeError builder shape changed");
-  const reasonInstrs: Instr[] =
-    abrupt === undefined
-      ? errorInstrs
-      : [
-          { op: "local.get", index: abrupt.threw },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: [{ op: "local.get", index: abrupt.reason }],
-            else: errorInstrs,
-          },
-        ];
-  emitStandalonePromiseReject(ctx, fctx, reasonInstrs);
+  emitStandalonePromiseReject(ctx, fctx, errorInstrs);
   return { kind: "externref" };
 }

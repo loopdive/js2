@@ -3413,8 +3413,8 @@ export function lowerIrFunctionBody<S, Slot>(
         //     keep the two in lockstep. `ref.test $Promise` discriminates: a
         //     non-`$Promise` externref (plain value / null / non-native
         //     thenable) passes through unchanged; a `$Promise` yields its
-        //     `value` field (pending → null — the AG0 synchronous-settlement
-        //     model), except an already-REJECTED one throws its reason (#6735). Genuine suspension is the ONE
+        //     `value` field regardless of state (pending → null — the AG0
+        //     synchronous-settlement model). Genuine suspension is the ONE
         //     engine's job; engine-activated fns are never IR-claimed
         //     (`asyncEngineClaims` gate in select.ts), so this arm only ever
         //     sees the sync-model population.
@@ -3449,8 +3449,6 @@ export function lowerIrFunctionBody<S, Slot>(
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
           then: [
-            // (#6735) An already-rejected `$Promise` throws its reason.
-            ...(resolver.rejectedAwaitThrow?.(promiseTypeIdx, awaitScratchPromiseIdx) ?? []),
             { op: "local.get", index: awaitScratchPromiseIdx },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },

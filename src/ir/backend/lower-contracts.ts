@@ -275,13 +275,6 @@ export interface IrLowerResolver {
    *     wrapping/unwrapping).
    */
   nativePromiseCarrierActive?(): boolean;
-  /**
-   * (#6735) Instructions that throw the reason of an ALREADY-REJECTED native
-   * `$Promise` held (as externref) in local `promiseLocal`, and fall through
-   * otherwise — the `await` arm's rejection step, shared with
-   * `emitStandaloneAwaitUnwrap` so the two stay in lockstep.
-   */
-  rejectedAwaitThrow?(promiseTypeIdx: number, promiseLocal: number): Instr[];
 }
 
 export interface IrLowerResult {
