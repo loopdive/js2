@@ -166,6 +166,13 @@ export interface OptimizeOptions {
   exceptionHandling?: boolean;
   /** Preserve function names in the optimized binary for profiling. */
   preserveNames?: boolean;
+  /**
+   * Wall-clock limit for one `wasm-opt` CLI invocation, in ms (#6742).
+   * Default 600000. A caller with its own budget (the npm-compat standalone
+   * lane) passes what it can afford; a run that hits the limit reports
+   * `timedOut: true` instead of an opaque failure.
+   */
+  timeoutMs?: number;
 }
 
 /** Result of {@link optimizeBinaryAsync}. */
@@ -176,6 +183,8 @@ export interface OptimizeResult {
   optimized: boolean;
   /** Warning message if optimization was skipped or an unsupported pass was omitted. */
   warning?: string;
+  /** true when `wasm-opt` was killed at {@link OptimizeOptions.timeoutMs} (#6742). */
+  timedOut?: boolean;
 }
 
 let _binaryenModulePromise: Promise<any | null> | null = null;
@@ -305,7 +314,15 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
 
   // 1. System / bundled wasm-opt CLI — the correct backend (#1941).
   try {
-    const result = optimizeWithSystemBinary(binary, level, gc, referenceTypes, exceptionHandling, preserveNames);
+    const result = optimizeWithSystemBinary(
+      binary,
+      level,
+      gc,
+      referenceTypes,
+      exceptionHandling,
+      preserveNames,
+      options.timeoutMs ?? WASM_OPT_DEFAULT_TIMEOUT_MS,
+    );
     if (result && result.optimized) {
       const validation = validateEmittedBinary(result.binary);
       if (validation.valid) return result;
@@ -580,6 +597,33 @@ function resolveWasmOptPath(n: NonNullable<typeof _nodeImports>): string | null 
   return _resolvedWasmOptPath.path;
 }
 
+// (#4157 entry 31) 600s, was 60s: acorn-scale modules with the inline caches
+// enabled exceed 60s under -O4, and a timeout silently shipped the UNOPTIMIZED
+// binary — measured as a phantom +57% size.
+const WASM_OPT_DEFAULT_TIMEOUT_MS = 600_000;
+
+/**
+ * (#6732) Reduce a failed `wasm-opt` run to the lines a reader can act on.
+ * Binaryen's npm `bin/wasm-opt` is an Emscripten build: an abort makes Node
+ * echo the offending *source line* — the whole minified 10 MB script, several
+ * KB per line — plus a caret line and a JS stack. Kept verbatim, that dump
+ * pushed every later sentence (the #4586 retry's own failure) past the
+ * warning's 800-char cut. A timeout has no useful stderr at all, so it is named.
+ */
+function wasmOptFailure(err: unknown, timeoutMs: number): { text: string; timedOut: boolean } {
+  const e = err as { stderr?: Buffer | string; message?: string; code?: string };
+  if (e.code === "ETIMEDOUT") {
+    return { text: `wasm-opt timed out after ${timeoutMs} ms`, timedOut: true };
+  }
+  const raw = e.stderr ?? e.message ?? "unknown error";
+  const text = (Buffer.isBuffer(raw) ? raw.toString("utf-8") : String(raw))
+    .split("\n")
+    .filter((line) => line.length <= 240 && !/^\s*(\^|at )/.test(line) && !/bin\/wasm-opt:\d+$/.test(line))
+    .join("\n")
+    .trim();
+  return { text: text || "unknown error", timedOut: false };
+}
+
 function optimizeWithSystemBinary(
   binary: Uint8Array,
   level: number,
@@ -587,6 +631,7 @@ function optimizeWithSystemBinary(
   referenceTypes: boolean,
   exceptionHandling: boolean,
   preserveNames: boolean,
+  timeoutMs: number,
 ): OptimizeResult | null {
   const n = getNodeImportsSync();
   if (!n) return null; // Not in Node.js environment (browser)
@@ -634,13 +679,9 @@ function optimizeWithSystemBinary(
     void exceptionHandling;
 
     const execOptions = {
-      // (#4157 entry 31) 600s, was 60s: acorn-scale modules with the inline
-      // caches enabled exceed 60s under -O4, and the catch below silently
-      // shipped the UNOPTIMIZED binary — measured as a phantom +57% size.
-      timeout: 600_000,
+      timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
     };
-    let stderr: Buffer | string = "";
     try {
       n.execFileSync(wasmOptPath, args, execOptions);
     } catch (err) {
@@ -648,9 +689,7 @@ function optimizeWithSystemBinary(
       // the misleading "not available" warning. A validator error here means
       // we emitted something wasm-opt rejected — that's a compiler bug worth
       // seeing, not a missing-binary problem.
-      const e = err as { stderr?: Buffer | string; message?: string };
-      stderr = e.stderr ?? e.message ?? "unknown error";
-      let text = Buffer.isBuffer(stderr) ? stderr.toString("utf-8") : String(stderr);
+      let { text, timedOut } = wasmOptFailure(err, timeoutMs);
 
       // (#4586) Standardized Wasm EH uses `try_table`, which Binaryen 125's
       // O4-only Flatten pass classifies as control flow but does not implement.
@@ -674,10 +713,11 @@ function optimizeWithSystemBinary(
               "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
           };
         } catch (retryError) {
-          const retry = retryError as { stderr?: Buffer | string; message?: string };
-          const retryStderr = retry.stderr ?? retry.message ?? "unknown error";
-          const retryText = Buffer.isBuffer(retryStderr) ? retryStderr.toString("utf-8") : String(retryStderr);
-          text = `${text.trim()}\nRetry without flatten failed: ${retryText.trim()}`;
+          // (#6732) The retry's failure is the actionable one: put it first
+          // so the 800-char cut below cannot drop it.
+          const retry = wasmOptFailure(retryError, timeoutMs);
+          timedOut = retry.timedOut;
+          text = `retry without flatten failed: ${retry.text}\n(first run: ${text})`;
         }
       }
       // (#4157 entry 31) LOUD, unconditionally: the warning field alone was
@@ -687,12 +727,13 @@ function optimizeWithSystemBinary(
       process.stderr.write(
         `[optimize] wasm-opt -O${level} FAILED — shipping UNOPTIMIZED binary (${binary.length} bytes). ` +
           `Perf/size numbers from this build are not comparable to an optimized one. ` +
-          `Cause: ${text.slice(0, 200).trim() || "(no stderr — likely the 600s timeout)"}\n`,
+          `Cause: ${text.slice(0, 200).trim()}\n`,
       );
       return {
         binary,
         optimized: false,
         warning: `wasm-opt -O${level} failed: ${text.slice(0, 800).trim()}`,
+        ...(timedOut ? { timedOut } : {}),
       };
     }
 

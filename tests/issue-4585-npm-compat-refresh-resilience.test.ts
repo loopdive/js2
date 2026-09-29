@@ -81,13 +81,14 @@ describe("#4585 npm compatibility refresh resilience", () => {
     expect(generator).toContain("--reuse-standalone-binary is diagnostic-only");
     expect(generator.match(/failedPerfLane\(/g)).toHaveLength(1);
     expect(generator).toContain("optimizationVerified: false");
-    expect(generator).toContain("lane.optimizationRequested !== true");
+    expect(generator).toContain("optimizationReceiptHolds(lane, expectedLevel)");
     expect(generator).toContain("npmPerfOptimizationFailure(floorResult, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL)");
-    expect(generic).toContain(
-      'optimize: npmCompatOptimizationLevel(target === "standalone" ? "standalone" : "js-host")',
-    );
+    // (#6742) Standalone lanes compile raw and optimize under the size/time
+    // budget; JS-host lanes keep the integrated O4 request.
+    expect(generic).toContain('optimize: target === "standalone" ? false : npmCompatOptimizationLevel("js-host")');
+    expect(generic).toContain("optimizeStandaloneLaneBinary(result.binary");
     expect(generic.indexOf("...(compileOptions ?? {})")).toBeLessThan(
-      generic.indexOf("optimize: npmCompatOptimizationLevel"),
+      generic.indexOf('optimize: target === "standalone"'),
     );
     expect(generic.indexOf("...(compileOptions ?? {})")).toBeLessThan(generic.indexOf("target,"));
     expect(generator).toContain("optimizationLevels: {");

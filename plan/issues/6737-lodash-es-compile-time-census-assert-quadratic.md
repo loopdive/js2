@@ -4,7 +4,7 @@ title: "perf: lodash-es standalone compile takes 10-17 min — 61 % is a whole-p
 status: ready
 sprint: Backlog
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-09-29
 priority: high
 horizon: m
 feasibility: medium
@@ -13,7 +13,7 @@ task_type: performance
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [6720, 6704, 3525]
+related: [6720, 6704, 3525, 6742]
 loc-budget-allow:
   # 2026-09-28 (#6737): +16 — the user-program name sets of
   # collectDeclaredGlobals move into a memoized helper in the same file.
@@ -137,3 +137,13 @@ Measured on the lane driver, `optimize: 0`, main `a08ed30b5c`, same box
 
 Lane after this slice: `measured`, checksum 54 = 54, `compileDurationMs`
 435,879 (O4 included) — still over the 120 s child budget.
+
+## Update 2026-09-29 — remaining item 1 (`wasm-opt -O4`) handled by #6742
+
+The standalone lanes now choose the wasm-opt level from the raw size and the
+lane budget, and record it
+([#6742](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6742-npm-compat-standalone-budget-aware-wasm-opt-level)).
+lodash-es (5.82 MB raw) is still planned at `-O4`: 251.8 CPU-s,
+3,627,787 B. In a 120 s child, the rungs that cannot fit are skipped, down
+to `-O1` (38.4 CPU-s, 4,233,275 B) or to level 0. Items 2 (census syntax
+walk) and 3 (first module-init pass) remain open here.
