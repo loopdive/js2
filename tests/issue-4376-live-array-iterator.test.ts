@@ -44,6 +44,18 @@ describe("Deno native-array iterator live reads", () => {
 
   it.each([
     [
+      "first-class Array.prototype iterator",
+      `
+      const array: any = [1, "2"];
+      const method: any = Array.prototype.values;
+      const iterator: any = method.call(array);
+      array[1] = replacement;
+      if (array[1] !== replacement) return -1;
+      iterator.next();
+      return Number(iterator.next().value);
+    `,
+    ],
+    [
       "growth before exhaustion",
       `
       const array: any = [1];

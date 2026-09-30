@@ -20,6 +20,8 @@ loc-budget-allow:
   # 2026-09-30: live receiver-backed VEC stepping and rest draining reuse the
   # existing native indexed readers instead of normalized element snapshots.
   - src/codegen/iterator-native.ts
+  # First-class values factories create the same live receiver-backed record.
+  - src/codegen/array-proto-iterator-value.ts
   # 2026-09-30: runtime import-alias declaration checks in both typeof forms;
   # type-only imports remain unresolvable at runtime.
   - src/codegen/typeof-delete.ts
@@ -2772,3 +2774,26 @@ the old artifact's stale-iteration failure has not yet been credited as fixed.
 The additional five-file iterator, destructuring, multi-source and bootstrap
 control set passes 39/39, bringing focused checks to 118/118. TypeScript 7
 passes. No user changes were staged.
+
+The first clean native rebuild at compiler `10588f480b59bb19ae72a8d6bdedf641a4301915`
+still fails the adapter live-mutation assertion. This proves the direct family
+fix alone is insufficient. A separate first-class `Array.prototype.values.call`
+control reproduces the same stale 2; its reflective factory has an independent
+snapshot implementation in `array-proto-iterator-value.ts`. The values factory
+now constructs the same receiver-backed record without reading length or
+copying elements at creation. Keys and entries still require live factory
+support and remain explicitly in scope, not credited as complete.
+
+The seven direct controls now pass 7/7. The broader cross-bucket file passes
+11/12 both on baseline `10588f480b59bb19ae72a8d6bdedf641a4301915` and the
+reflective candidate. Its species-constructor assertion pins an old incorrect
+answer of 1, while both revisions produce the spec answer 11; the test was not
+changed. TypeScript 7 passes. The native failed build is preserved at
+`/private/tmp/deno-live-iterator-build.Z5JeM5`: raw core 2,781,038 bytes, SHA-256
+`e843ba62db23c4b7f028d6298c492c14428837e9b8f5fd52b614c01c1758ac3e`,
+precompiled core 52,180,664 bytes, SHA-256
+`b6dea9d5b4eeb4dc7dcb48154d332b54658ff4780529138e1985f54162e10702`.
+Precompilation passes 1/1 in 303.68 seconds; adapter replay fails at the same
+live-mutation assertion. A second clean build is required with the reflective
+factory repair before claiming native success. No graph package was produced
+by the first replay, since it failed before module evaluation.

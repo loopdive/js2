@@ -38,7 +38,8 @@
  * off the family, so the identity against `[][Symbol.iterator]()` holds by
  * construction rather than by a second spelling of the prototype.
  *
- * **Documented residual, deliberate:** the vec is a SNAPSHOT taken when the
+ * The values factory now retains its actual receiver in a live VEC record.
+ * Keys and entries still use the historical SNAPSHOT taken when the
  * factory is called, so a receiver mutated mid-iteration is not observed. That
  * is the same residual IT3 recorded for the dyn-view factories, and it is
  * correct for a live *array* receiver only through the `__iterator` adoption arm
@@ -124,6 +125,21 @@ export function emitArrayProtoIteratorMemberBody(
     fctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
   }
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thisThrow });
+
+  if (member === "values") {
+    // First-class invocation must observe subsequent receiver mutation just
+    // like the direct iterator path. No length read or element copy at create.
+    fctx.body.push(
+      { op: "i32.const", value: ITER_KIND_VEC },
+      { op: "ref.null", typeIdx: canonVecTypeIdx },
+      { op: "i32.const", value: 0 },
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: ITER_FAMILY_ARRAY },
+      { op: "struct.new", typeIdx: iterRecTypeIdx },
+      { op: "extern.convert_any" },
+    );
+    return EXT;
+  }
 
   const lenLocal = allocLocal(fctx, `__api_len_${fctx.locals.length}`, { kind: "i32" });
   const outLocal = allocLocal(fctx, `__api_out_${fctx.locals.length}`, { kind: "ref", typeIdx: canonArrTypeIdx });
