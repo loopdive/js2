@@ -15686,3 +15686,357 @@ held the existing PR before edits. The constructor slice claim remains ours.
 Only its fixture hook now uses the repository's existing35s test budget and
 yields after construction, like the definition fixture. Keep all90 semantic
 checks, production providers, normal hooks and protected gates unchanged.
+
+### Canonical JavaScript value-tag contract delivery — 2026-09-30
+
+Fresh upstream main d4e15d90 and all16 open PRs/all825 file rows verified before
+edits: no tag source/test/seam overlap. Existing claim3518:js-tag-abi-contract-
+20260930 remains with ttraenkler/codex-js-tag-abi-contract-20260930, now tracking
+isolated branchcodex/3518-js-tag-contract-20260930. Preserve all56 pending files
+in the original public Number worktree unchanged, including its22 ABI/primitive
+proof controls and unchanged nine public acceptance/oracle cases.
+
+Deliver the canonical enum and carrier function verbatim in import-free runtime
+contracts/js-value-tags.ts, with the former ir/js-tag API forwarding the same
+objects. Canonical NumberF64/Boolean aliases come from that same enum. Change
+only the existing seam's canonical-leaf exemption; no consumer allowance or
+baseline increases. Append one runtime-contract inventory entry and increment
+its real module floor once, retaining every historical activation and other row.
+
+The independent nine ABI compatibility assertions cover eight numeric/carrier
+partitions and identity of old/new API/domain/aliases. They do not replace the
+original22 Number-specific controls: thirteen primitive-box classifier controls
+still live with that unlanded Number implementation and remain required. Run
+existing tag-domain, non-JavaScript domain, actual dynamic lowering and semantic
+boundary cohorts, source TS7, actual frontend-free leaf resolution/refusal,
+all preservation gates and full normal signed hooks. Publish ready through the
+fork and protected exact-head queue; only actual main delivery counts.
+
+This is a prerequisite component of the original ABI repair, not a completed
+Number provider or full claim. Keep that claim active until its original proof
+integration is delivered. Remaining Number physical gaps and canonical Object
+realm/provider closure must be implemented; keep legacy operational until all
+IR behavior is tested and equal. Do not retire code or certify architecture.
+
+
+ABI first delivery cohort:415/416 passed, one inventory-tail assertion failed,
+zero unexecuted cases or worker errors; all6979 source/test pins unchanged.
+All67 ABI/domain/actual-lowering cases pass. The preserved boundary failure
+rejects the real extra tag contract because its explicit unsigned additions
+still list only builtin-brands/collection-kind. Append the genuine new leaf,
+add it to the actual copied-source fixture, and require135 current modules
+(previous134 plus the import-free leaf), preserving106 historical owners, all
+signed entry digests,612 edges and consumer allowances. Do not change or reseed
+any signed activation history. Focus the two affected positive checks before
+rerunning the complete349 boundary plus67 ABI/domain/lowering cohort.
+
+
+
+ABI relocation validation:416/416 strict assertions, zero skips/failures/worker
+errors, all6979 source/test pins unchanged. Includes349 boundary cases, nine
+ABI compatibility controls,16 tag-domain,26 non-JavaScript domain and16 actual
+dynamic lowering cases. The focused inventory repair passed2/2 positive checks;
+its347 other cases were deliberately filtered, followed by the full416 pass.
+Original415/416 failure is preserved. Current copied-source fixture measures
+135 modules and612 edges; historical106 population and all signed hashes remain.
+Alias mutation8 pass/one expected failure detects the wrong NumberF64 tag; exact
+restoration verified. Fresh leaf census loads three modules/two source modules,
+zero TS/frontend; real from-ast and TypeScript import controls each exit2 and
+block one resolution. This is ABI leaf evidence, not public prepared-IR replay.
+Source TS7 and all seven preservation gates pass; inventory valid, architecture
+incomplete. Independent clean corpusb363f29d/56970 files verified. Shared metadata
+changes sit beside existing contract/plan rows, preserving peer append regions.
+All56 Number pending-file hashes remain unchanged. Full original ABI/Number
+claim, public provider/realm closure and full migration remain incomplete.
+
+
+Publication main refresh: freshc836a50c delivers only six npm compatibility
+artifacts (PR6350); no source/test/compiler dependency changes. It was fetched,
+inspected and immediately reverified before clean merging into this unpushed
+ABI branch. Preserve those artifacts; all measured ABI/lowering/boundary sources
+remain identical. Complete normal signed hooks before fork publication; this is
+prepared evidence, not ABI main delivery or full claim completion.
+
+
+Admission refresh: existing ready PR6353 stayed held when fresh main advanced
+todf9e3e54, delivering PR6351's ES2015 class reflection fixes and regression
+tests. Fetch and exact diff inspection preceded a clean merge. Preserve all
+class source, the new396-line descriptor owner, its issue6767 budget grant,
+compiler rows and regression tests. Native tag sources remain unchanged;
+normal hooks must exercise boundary/ABI and inherited class regression cases.
+Do not create a duplicate PR or release hold/admit an obsolete head.
+
+### Native String DefineOwnProperty join — 2026-09-30
+
+Claim3518:string-define-own-20260930 is held by
+`ttraenkler/codex-string-define-own-20260930` on upstream issue-assignments.
+Worktree/private/tmp/js2-ir-string-define-own-20260930 starts at constructor
+checkpoint7c78d759 (PR6345 armed; do not edit its branch). Fresh all13 open
+PRs/all792 file rows show only the owned parent fixture overlap in6345, no
+competing descriptor body/owner implementation. The canonical issue is present
+and in-progress on verified main54a85ebd, independently checked despite the
+claim-tool's metadata warning.
+
+Implement the actual String property-definition selection in the existing
+native descriptor owner. Require issued String own-descriptor dependencies
+joined to the exact ordinary lookup/layout/String/Symbol pack. Revalidate the
+selection and its nested producer identities through completion. Ordinary-only
+owners cannot grant String definition completion. Keep base ordinary lookup
+independent to avoid a completion cycle.
+
+Primary spec10.4.3.2 checks StringGetOwnProperty FIRST, then compatibility
+without mutation; only absent virtual descriptors use OrdinaryDefineOwnProperty.
+GetOwnProperty itself has a different ordinary-first order. Do not confuse these
+operations or copy the earlier ordinary-first assumption into Define. Reuse
+canonical attribute/SameValue compatibility preflight with the selected virtual
+current descriptor, then return before any table growth, insertion, sequencing
+or detached virtual-entry writes. Reject virtual accessor conversions using the
+same genuine TypeError/exception owner. Preserve existing ordinary data/accessor
+and attributes-only paths, including all unchanged donor tests.
+
+Tests must use completed native construction, values/booleans/BigInt/SameValue,
+errors, closure classification and String descriptor owners. Derive source
+requirements from a canonical codec snapshot of an actual frontend-produced
+getter program; decode and revalidate without frontend imports in replay. Cover
+all descriptor presence/attribute combinations against Node, independently
+allocated SameValue characters, both surrogate halves, lengths, noncanonical
+keys, nonextensible objects, exact table/count/tombstone/nextSeq preservation,
+ordinary properties and accessor cases, wrong/mutated owner selection, shifted
+spaces and actual UTF8/WTF16 payloads. Preserve regression fixtures and native
+TypeError payload evidence. This is native definition wiring, not full realm or
+public IR completion. Legacy stays operational until full equality.
+
+Source: https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-string-exotic-objects-defineownproperty-p-desc.
+
+Initial definition probe: src-only TS7 passes; emitted fixture setup failed
+with a test-helper TypeError before emission because a closure signature row
+was used instead of its issued .binding. Preserve the terminal failure. The
+helper now uses the same authenticated binding shape as the existing ordinary
+descriptor fixture. No production check or descriptor expectation was weakened.
+
+
+String definition validation:962/962 strict tests pass, zero skips/errors
+(new definitions473, ordinary descriptors75, constructor90, String descriptors146,
+wrapper storage178); all6975 source/test pins unchanged. Source-only TS7 passes.
+The first full run failed on the default10s setup hook before descriptor tests;
+only the new hook now uses the repository's existing35s test budget and yields.
+That failure and its464 skipped rows are preserved, not counted as validation.
+Disabling virtual lookup/early return fails8/8 selected semantic regressions;
+all source pins restored. The receipt script initially miscounted filtered
+`skipped` rows; corrected directly from the eight preserved assertion failures.
+No test expectation, production check or existing timeout was relaxed.
+Fresh native resource execution census:168 unique modules,163 repository source
+modules, zero TS/frontend imports; actual forbidden frontend control exits2,
+blocks one resolution and emits zero bytes. Both actual UTF8 and WTF16 variants
+execute compatible definitions and native TypeError refusals. This is native
+resource evidence plus genuine frontend-produced codec data, not full public
+IR/realm completion. Latest upstream main54a85ebd is already an ancestor of the
+constructor dependency checkpoint; no main changes require integration.
+
+
+Seven quality gates pass: LOC/function budgets, oracle/coercion/tag seams,
+boundary inventory and moved-export preservation. The first inventory run
+refused two new rows missing required classification state; metadata corrected,
+failure preserved and all seven rerun. Inventory is valid with zero errors;
+architecture remains incomplete. All6531 TypeScript source/test pins unchanged.
+
+
+Dependency refresh: parent quality failed on its own default10s fixture hooks,
+not production semantics. Parent was held/disarmed with no queue entry, then
+repaired as signed52b389d1656b1a5a26e571f9d6242e6adf490db6; normal hooks
+pass90/90. This unpublished definition branch fast-forwarded to that repair;
+all13 other pending file hashes match and both issue append records are retained.
+The first definition commit attempt passed all normal hooks (90+473) but could
+not sign because the configured SSH agent socket was omitted from the command.
+No commit object was written; staged work retained and the socket is restored.
+Only verified upstream main merges count as delivery. Hold this dependent PR
+until constructor PR6345 is actually merged and its ancestry/content verified.
+
+
+Definition delivery repair (2026-09-30): constructor PR6345 is verified on
+main as5b2210af; its nine checkpoint blobs match mainfe8fecd4. Refresh held,
+unqueued PR6346 against that exact main. Preserve quality job109795406561:
+8/473 passed,1 failed,464 skipped plus one worker error; four complete-runtime
+hooks and one authentication test exceeded35s. Split fresh native fixture
+reservation/fill/emit setup into individually bounded35s phases, following
+the existing native Object Get test pattern. Retain each real owner check,
+all473 tests, original failures, and unchanged production semantics. Require
+strict zero-skip validation and normal signed hooks before existing-PR push.
+
+
+Refreshed definition evidence:962/962 strict assertions pass across five files,
+zero skips/failures, strict Vitest exit0, all6975 source/test pins unchanged.
+The receipt wrapper subsequently asserted against a field absent from Vitest3;
+preserve its failure and reconcile all962 actual assertion records and five
+passed suite records directly, without rerunning or changing tests. Twenty
+real runtime setup phases were measured on the WTF16/unshifted fixture; slowest
+7.430s locally. Every phase keeps35s; other layouts are measured by the full
+cohort, not extrapolated from that profile. Seven preservation quality gates
+pass; inventory valid, architecture incomplete, retirement not certified.
+Fresh process repeats168 modules/163src, zero TS/frontend; real forbidden
+import exits2, blocks one resolution, emits zero bytes. Both UTF8/WTF16 rows
+and byte lengths match the prior census exactly (not a byte-identity claim).
+Constructor delivery independently verified: merge5b2210af,102 successful
+conformance shard jobs, successful regression/CI/differential gates.
+Fresh audit:16 open PRs/827 file rows, only owned6346 overlaps these test files.
+Normal full signed commit/push hooks and exact-head protected admission remain
+required; do not call the definition slice delivered or complete its claim
+until its real main ancestry and content are verified. Downstream key-list
+work and the public Number4/9 root remain preserved; legacy stays operational.
+
+
+### Native String OwnPropertyKeys — 2026-09-30 implementation plan
+
+Claim3518:string-own-keys-20260930 is verified held by
+`ttraenkler/codex-string-own-keys-20260930` on upstream issue-assignments.
+Isolated branchcodex/3518-string-own-keys-20260930 starts at signed86ca8ff1706
+(parent ready/heldPR6346); keep both published dependency branches intact.
+Fresh14 open PRs/all811 file rows show only owned parent fixture overlap.
+No competing implementation touches the new native owner/body paths.
+
+Implement the complete String internal key-list algorithm from10.4.3.3:
+virtual0..length-1 first, ordinary array indices>=length numerically, other
+strings by creation sequence, then symbols by creation sequence. Include all
+own attributes; filter tombstones and duplicate raw-storage virtual indices.
+Use the existing authenticated exact0..2^32-2 array-index parser; do not copy
+legacy's signed-i32/nine-digit approximation. A pure unsigned integer-to-native
+String body suffices for virtual index ToString's exact uint32 domain, without
+claiming a general NumberToString provider. Keep source properties/prototype/
+payload/count/tombstones/flags/nextSeq untouched. Allocate a fresh native key
+list and scratch map, sort the scratch only, and check cardinality overflow
+before allocating/writing the list. Resource exhaustion remains the allocator's
+runtime failure; do not interpret it as a missing property or successful list.
+
+Reserve the actual native list type/functions through the physical ledger.
+Authenticate shared String/Symbol/layout/own-descriptor producer identities,
+source declarations, issued tokens and completed bodies. Grant only internal
+String key-list completion; it cannot grant realm population, general user-array
+ABI, public IR routing or full ToObject. Those joins remain required by the full
+goal; this is their actual String method implementation, not a replacement bar.
+
+Use the genuine frontend-produced codec fixture and real constructor/descriptor
+owners. Compare emitted UTF8/WTF16 and shifted-index results with Node, including
+empty/astral/lone-surrogate payloads, every array-index boundary, noncanonical
+keys, nonenumerable/accessor properties, interleaved equal-description symbols,
+tombstones/reinsertion and raw-shadow duplicate suppression. Reject copied/
+foreign/mutated plans/dependencies/tokens before grants. Mutation controls must
+break measured ordering cases. Run strict full prerequisite cohorts, frontend-
+free fresh-process emission census, all quality gates, full signed hooks and
+protected dependency-first publication. Keep original Number4/9 and seven gaps,
+all prepared work and the legacy path until full migration equality is proved.
+
+Source: https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-string-exotic-objects-ownpropertykeys.
+
+
+Key-list initial strict cohort retained:1056/1061 passed,5 failed, zero skips
+or worker errors; all6980 source/test pins unchanged. Four failures requested
+text index5 from a five-entry literal fixture; replace that absent row with a
+real native offset-view payload, retaining six payload cases per layout. The
+fifth failure froze an already-frozen test transaction; retain the failed-fill
+fixture and verify all three bodies remain empty, then complete a separate
+fresh owner. No production ordering, ownership or phase check is relaxed.
+Delivery takes precedence: held definition PR6346 needs measured phase setup
+repair and current-main refresh before downstream key-list publication.
+
+
+Key-list setup repair validated:1061/1061 strict assertions across six files,
+zero skips/failures, Vitest exit0, all6980 source/test pins unchanged. New
+key-list99; retained definition473, ordinary descriptor75, constructor90,
+String own descriptors146, wrapper storage178. The original1056/1061 failure
+receipt remains preserved. This is prepared-branch native-resource evidence
+on dependency86ca8ff1, not delivery or complete public IR coverage. Definition
+PR6346 refreshed against actual mainfe8fecd4 and published/armed as signed
+6db2eb58. Do not push its armed branch or complete claims before verified main
+delivery. Key-list publication still needs dependency phase helpers, explicit
+declarer type-key data validation, mutation/import controls, quality gates,
+independent pinned test262 checkout and full normal signed hooks. No new
+key-list commit, push or PR yet; legacy remains operational.
+
+
+Key-list dependency refresh and validation plan:consume published signed6db2eb58
+without changing its armed branch. All six disjoint pending file hashes match
+the pre-refresh snapshot; retain both issue histories and reapply the local
+optional extension to the new phase generator. Exercise full key runtime and
+completion lifecycle in bounded35s phases with fresh issued owners. Strengthen
+the declaration's two type keys to plain, exact, nonempty-string data before
+reading fields; reject unknown/getter/prototype/duplicate/nonstring keys with
+zero getter calls. No timeout, production owner check or legacy path is relaxed.
+Require all original99 key tests plus refusal controls, full prerequisites,
+ordering mutation killswitch, actual frontend-import refusal, quality gates,
+independent pinned corpus and full signed hooks before ready publication.
+
+
+Native key-list final validation:1074/1074 strict assertions across six files,
+zero skips/failures and all6980 source/test pins unchanged. Original99 key
+cases retained plus13 declaration boundary controls; actual UTF8 asserted
+in every UTF8 layout and the full phase runtime probe. Source-only TS7 passes.
+Twenty-three real setup phases keep35s each; shifted UTF8 probe's slowest is
+7.793s locally, not a claim of CI timing. Seven preservation gates pass;
+inventory valid with architecture incomplete, retirement not certified.
+Three deliberately wrong ordering operations cause12/12 selected assertions
+to fail in four layouts (100 unrelated rows excluded by explicit filter).
+Array-order case has no symbols or high sequences; symbol case has one
+ordinary array index and low sequences; unsigned-sequence case has neither
+symbols nor multiple ordinary array indices. This isolates each corrupted
+comparison's measured effect. All6980 source/test hashes restored.
+Fresh-process census172 modules/166src, zero TS/frontend; real forbidden
+import exits2, blocks one resolution, emits zero bytes. Both actual UTF8 and
+WTF16 compare key output including high indices/symbol identity and retain
+metadata. Scope remains actual native resources plus genuine prepared data,
+not complete public IR/realm routing or general user Array ABI.
+
+
+Independent pinned test262 corpus verified atb363f29d, real local.git and
+56970 tracked files, clean index/worktree. Preserve the original empty
+directory under .tmp/string-keys/corpus1. An initial composite preflight
+refused before mutation; the same pin/clean-Git-directory/empty-target
+prerequisites were revalidated independently and provisioning succeeded.
+Do not infer an unobserved cause for that initial refusal. No fixtures,
+links, gates or signing/hook requirements were removed.
+
+
+Fresh publication mainaa95a371 integrated cleanly, retaining the delivered
+ES2015 proxy-as-prototype implementation/tests and artifact/budget refreshes.
+No native/IR/planner dependencies of the measured fresh-process fixtures
+changed in that main delta; all eight own file hashes match the pre-merge
+snapshot. Preserve existing main policy rows and reinsert exactly three own
+rows. Two insertion candidates were rejected before writing (multiline and
+non-files anchors); scoped JSON validation confirms1717 main rows retained
+plus the three own rows. Revalidate preservation gates against exact main
+and let normal hooks exercise changed root tests, including the retained
+proxy regression file. Definition parent6346 remains open at6db2eb58; no
+competing open PR touches new owner/body files. Fresh audit14 PRs/all808 file
+rows and upstream claim confirm ownership. Publish ready but held until
+parent delivery is verified; do not push the armed parent.
+
+
+Current-main publication validation: all seven preservation gates passed against
+exact main aa95a371, with6538 source pins unchanged. Conformance synchronization
+reports zero updates and five unchanged artifacts. Full source/native cohort
+1074/1074, ordering mutation12/12 selected failures with exact restoration,
+and fresh-process172-module/zero-frontend census remain valid: the merged main
+delta does not change their native/IR dependencies and own source hashes match.
+Normal signed commit hooks will run the changed-root cohort, including the
+retained ES2015 proxy regression. Parent6346 remains pending as last verified;
+this checkpoint is prepared and must remain held until dependency delivery.
+
+
+Publication update: definition PR6346 “feat(ir): authenticate native String
+definition compatibility” delivered as231a0078b17520e989ea10b5224473bc8d66f21f.
+Exact head6db2eb58 is an ancestor of that real merge, which is an ancestor of
+fresh main d4e15d90. Thirteen scoped file blobs match head/merge/main; the
+combined compiler inventory preserves all1716 parent rows among1717 rows.
+Protected merge Test262 run36694978911 passed102 actual conformance shards
+and its final regression gate; CI36694978994, differential36694978936 and
+CLA36694978916 passed. Only the definition slice claim was completed and its
+upstream effect verified. Full issue3518 remains open.
+
+Signed checkpoint63157f85 retains all normal hooks. Its changed-root runs
+passed473 definition,112 key-list and10 retained proxy regression assertions,
+zero skips/failures. Main d4e15d90 was reverified immediately before merging;
+this subsequent delta delivers the exact parent already tested and refreshes
+conformance artifacts/baseline without changing new native key-list sources.
+The key-list claim remains held until real main delivery. Publish one ready
+fork PR and use exact-head protected admission after normal final hooks.
+The prior prepared/pending-parent records above are chronological evidence,
+not current delivery state. Preserve original failures and every pending root.

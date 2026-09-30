@@ -7,6 +7,12 @@ import type {
 } from "../../../wasm/physical/module-reservations.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  readNativeStringDescriptorSelection,
+  assertNativeStringDescriptorSelectionCurrent,
+  requireCompletedNativeStringDescriptorSelection,
+  type NativeStringDescriptorSelection,
+} from "./native-string-descriptor-selection.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
   assertNativeObjectAccessRequirementsCurrent,
@@ -74,6 +80,7 @@ export const NATIVE_OBJECT_DESCRIPTOR_LITERALS = Object.freeze([
 ]);
 
 export interface NativeObjectDescriptorDependencies {
+  readonly stringOwn?: NativeStringDescriptorSelection;
   readonly access: NativeObjectAccessRequirements;
   readonly storage: NativeObjectStorageReservations;
   readonly storageDependencies: NativeObjectStorageDependencies;
@@ -121,6 +128,7 @@ interface Owner {
   readonly key: string;
   readonly dependencies: NativeObjectDescriptorDependencies;
   readonly identities: NativeObjectDescriptorDependencies;
+  readonly stringOwn: NativeStringDescriptorSelection | undefined;
   readonly sourcePlan: NativeResourceRecipe;
   readonly plan: NativeResourceRecipe;
   readonly functions: readonly FunctionReservation[];
@@ -131,7 +139,7 @@ const owners = new WeakMap<NativeObjectDescriptorReservations, Owner>();
 function fail(detail: string): never {
   throw new Error("native object descriptors: " + detail);
 }
-function requireDependencies(tx: PhysicalModuleReservations, d: NativeObjectDescriptorDependencies): void {
+function requireDependencies(tx: PhysicalModuleReservations, d: NativeObjectDescriptorDependencies) {
   assertNativeObjectAccessRequirementsCurrent(d.access);
   requireNativeObjectStorageReservations(tx, d.storage, d.storageDependencies);
   requireNativeObjectSameValueReservations(tx, d.sameValue, d.sameValueDependencies);
@@ -153,10 +161,15 @@ function requireDependencies(tx: PhysicalModuleReservations, d: NativeObjectDesc
     s.valuePlan.strings,
   );
   NATIVE_OBJECT_DESCRIPTOR_LITERALS.forEach((value) => requireNativeStringLiteral(tx, s.strings, value));
+  return readNativeStringDescriptorSelection(tx, d, d.storageDependencies);
 }
 function requireOwner(tx: PhysicalModuleReservations, pack: NativeObjectDescriptorReservations): Owner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied owner");
+  assertNativeStringDescriptorSelectionCurrent(
+    readNativeStringDescriptorSelection(tx, owner.dependencies, owner.dependencies.storageDependencies),
+    owner.stringOwn,
+  );
   for (const key of Object.keys(owner.identities) as (keyof NativeObjectDescriptorDependencies)[])
     if (owner.dependencies[key] !== owner.identities[key]) fail("substituted dependency identity");
   requireDependencies(tx, owner.dependencies);
@@ -179,7 +192,7 @@ export function reserveNativeObjectDescriptorResources(
   expectedPlan: NativeResourceRecipe,
 ): NativeObjectDescriptorReservations {
   if (tx.state !== "reserving") fail("invalid reservation phase");
-  requireDependencies(tx, dependencies);
+  const stringOwn = requireDependencies(tx, dependencies);
   const plan = declareNativeObjectDescriptorResources(key);
   if (preparedIrDataMismatch(expectedPlan, plan)) fail("substituted declaration plan");
   tx.assertReservationKeysAvailable(plan.declarations.map((row) => row.key));
@@ -196,6 +209,7 @@ export function reserveNativeObjectDescriptorResources(
     tx,
     key,
     dependencies,
+    stringOwn,
     identities: Object.freeze({ ...dependencies }),
     sourcePlan: expectedPlan,
     plan,
@@ -213,6 +227,10 @@ export function requireNativeObjectDescriptorReservations(
   return pack;
 }
 function requireCompletedDependencies(tx: PhysicalModuleReservations, d: NativeObjectDescriptorDependencies): void {
+  requireCompletedNativeStringDescriptorSelection(
+    tx,
+    readNativeStringDescriptorSelection(tx, d, d.storageDependencies),
+  );
   requireCompletedNativeObjectStorage(tx, d.storage, d.storageDependencies);
   requireCompletedNativeObjectSameValue(tx, d.sameValue, d.sameValueDependencies);
   requireCompletedNativeErrors(tx, d.errors, d.errorRequirements, d.errorDependencies);
@@ -248,6 +266,7 @@ export function fillNativeObjectDescriptorResources(
     objectTypeIdx: lookup.layouts.object.typeIndex,
     propEntryTypeIdx: lookup.layouts.propEntry.typeIndex,
     objFindIdx: d.storageDependencies.lookup.findOwn.handle,
+    ...(owner.stringOwn ? { stringVirtualOwnIdx: owner.stringOwn.pack.virtualOwn.handle } : {}),
     objInsertIdx: d.storage.insert.handle,
     objGrowIdx: d.storage.grow.handle,
     sameValueIdx: d.sameValue.sameValue.handle,
@@ -302,5 +321,20 @@ export function nativeObjectDescriptorReservationInventory(
 ) {
   requireNativeObjectDescriptorReservations(tx, pack, expectedDependencies);
   const owner = owners.get(pack)!;
-  return Object.freeze({ plan: owner.plan, functions: owner.functions });
+  return Object.freeze({
+    plan: owner.plan,
+    functions: owner.functions,
+    ownDescriptorMode: owner.stringOwn ? ("string-exotic" as const) : ("ordinary" as const),
+  });
+}
+
+/** A completed ordinary-only owner cannot attest String virtual compatibility. */
+export function requireCompletedNativeStringDefinitions(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectDescriptorReservations,
+  expectedDependencies: NativeObjectDescriptorDependencies,
+): NativeObjectDescriptorReservations {
+  const owner = requireOwner(tx, pack);
+  if (!owner.stringOwn) fail("no issued String descriptor selection");
+  return requireCompletedNativeObjectDescriptors(tx, pack, expectedDependencies);
 }

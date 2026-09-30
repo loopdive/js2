@@ -3,6 +3,7 @@ import { buildOrdinaryObjectLookupDefinition } from "../../src/runtime/wasmgc/va
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
 import { emitBinary } from "../../src/emit/binary.js";
 import { readFileSync } from "node:fs";
+import type { PreparedIrProgram } from "../../src/ir/program/prepared-contracts.js";
 import { decodePreparedIrProgram } from "../../src/ir/program-codec.js";
 import { assertPreparedIrProgram } from "../../src/ir/program-validation.js";
 import { deriveNativeValueResourcePlan } from "../../src/ir/program/native-value-resources.js";
@@ -23,7 +24,7 @@ import {
 import { fillNativeStringOwnDescriptorResources } from "../../src/backend/wasmgc/resources/native-string-exotic-own-descriptors.js";
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import { planNativeStringLiteral } from "../../src/runtime/wasmgc/values/string-literal-bodies.js";
-import { stringExoticFixture, fillStringExoticDependencies, EXOTIC_TEXTS } from "./native-string-exotic-fixture.js";
+import { stringExoticFixture, fillStringExoticDependencyPhases, EXOTIC_TEXTS } from "./native-string-exotic-fixture.js";
 
 const ext: ValType = { kind: "externref" },
   i32: ValType = { kind: "i32" },
@@ -31,11 +32,19 @@ const ext: ValType = { kind: "externref" },
 const get = (index: number): Instr => ({ op: "local.get", index });
 export const CREATE_TEXTS = ["", "a", "😀", "é😀\ud800\0", "0123456789"] as const;
 /** Canonical complete program data passes codec revalidation and the full validator; not frontend driver output. */
-export function stringCreateFixture(utf8 = false, shifted = false, capacity = 2, mutablePlan = false) {
-  const f = stringExoticFixture(utf8, shifted);
-  const program = decodePreparedIrProgram(
-    readFileSync(new URL("../fixtures/issue-3518-string-create-program.codec.txt", import.meta.url), "utf8"),
-  );
+export function stringCreateFixture(
+  utf8 = false,
+  shifted = false,
+  capacity = 2,
+  mutablePlan = false,
+  source?: { readonly program: PreparedIrProgram; readonly additionalLiterals: readonly string[] },
+) {
+  const f = stringExoticFixture(utf8, shifted, false, source?.additionalLiterals);
+  const program =
+    source?.program ??
+    decodePreparedIrProgram(
+      readFileSync(new URL("../fixtures/issue-3518-string-create-program.codec.txt", import.meta.url), "utf8"),
+    );
   assertPreparedIrProgram(program);
   const valuePlan = deriveNativeValueResourcePlan(program, program.runtime[0]!, "native-string");
   const scanner = reserveNativeStringNumberResources(f.tx, valuePlan, f.flatten);
@@ -71,12 +80,21 @@ export function stringCreateFixture(utf8 = false, shifted = false, capacity = 2,
   };
 }
 export type StringCreateFixture = ReturnType<typeof stringCreateFixture>;
-export function fillStringCreateDependencies(f: StringCreateFixture): void {
-  fillStringExoticDependencies(f);
+export function* fillStringCreateDependencyPhases(f: StringCreateFixture): Generator<string, void> {
+  yield* fillStringExoticDependencyPhases(f);
   fillNativeStringOwnDescriptorResources(f.tx, f.pack);
+  yield "String own descriptors";
   fillNativeStringNumberResources(f.tx, f.scanner);
+  yield "String number scanner";
   fillNativeValueResources(f.tx, f.values, f.valueDependencies);
+  yield "native values";
 }
+export function fillStringCreateDependencies(f: StringCreateFixture): void {
+  for (const _phase of fillStringCreateDependencyPhases(f)) {
+    /* Preserve synchronous callers. */
+  }
+}
+
 export function completeStringCreateFixture(f = stringCreateFixture()) {
   f.tx.freezeReservations();
   fillStringCreateDependencies(f);
@@ -113,9 +131,16 @@ export interface StringCreateRuntime {
   header(length: number): object;
   put(object: object, key: object, value: number): void;
 }
-export function stringCreateRuntime(utf8 = false, shifted = false, capacity = 2) {
-  const f = stringCreateFixture(utf8, shifted, capacity),
+export function* stringCreateRuntimePhases(
+  utf8 = false,
+  shifted = false,
+  capacity = 2,
+  source?: Parameters<typeof stringCreateFixture>[4],
+  extension?: (fixture: StringCreateFixture) => () => void | Generator<string, void>,
+) {
+  const f = stringCreateFixture(utf8, shifted, capacity, false, source),
     { tx } = f;
+  const fillExtension = extension?.(f);
   const objectType = f.objects.object.typeIndex,
     entryType = f.objects.propEntry.typeIndex;
   const object = (index: number): Instr[] => [
@@ -167,10 +192,15 @@ export function stringCreateRuntime(utf8 = false, shifted = false, capacity = 2)
     params: [{ kind: "ref", typeIdx: objectType }, ext],
     results: [i32, { kind: "ref_null", typeIdx: entryType }],
   });
+  yield "reserved native runtime";
   tx.freezeReservations();
-  fillStringCreateDependencies(f);
+  yield "frozen reservations";
+  yield* fillStringCreateDependencyPhases(f);
   fillNativeStringCreateResources(tx, f.create);
   requireCompletedNativeStringCreate(tx, f.create, f.createDependencies);
+  yield "completed String constructor";
+  const extensionPhases = fillExtension?.();
+  if (extensionPhases) yield* extensionPhases;
   const literal = (text: string): Instr[] => {
     const binding = requireNativeStringLiteral(tx, f.strings, text, "wtf16");
     return binding.kind === "global"
@@ -357,9 +387,18 @@ export function stringCreateRuntime(utf8 = false, shifted = false, capacity = 2)
     { op: "struct.set", typeIdx: objectType, fieldIdx: 5 },
   ]);
   Object.entries(observers).forEach(([name, fn]) => tx.defineExport("observer:export:" + name, name, fn));
+  yield "filled boundary observers";
   tx.seal();
+  yield "sealed native module";
   const bytes = emitBinary(f.module),
     module = new WebAssembly.Module(new Uint8Array(bytes));
   if (WebAssembly.Module.imports(module).length) throw Error("native fixture contains host semantic imports");
   return { runtime: new WebAssembly.Instance(module, {}).exports as unknown as StringCreateRuntime, bytes, f };
+}
+
+export function stringCreateRuntime(...args: Parameters<typeof stringCreateRuntimePhases>) {
+  const phases = stringCreateRuntimePhases(...args);
+  let step = phases.next();
+  while (!step.done) step = phases.next();
+  return step.value;
 }

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildDescriptorCurrentLookup, buildStringCompatibleDescriptorReturn } from "./string-exotic-define-body.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import {
   descriptorFlagBit,
@@ -8,7 +9,7 @@ import {
 
 /** Validate before any descriptor mutation, including all non-configurable transitions. */
 function buildOrdinaryObjectDataPreflight(d: OrdinaryDescriptorResources): Instr[] {
-  const { objectTypeIdx, propEntryTypeIdx, objFindIdx } = d;
+  const { objectTypeIdx, propEntryTypeIdx } = d;
   const {
     writable: FLAG_WRITABLE,
     enumerable: FLAG_ENUMERABLE,
@@ -22,10 +23,7 @@ function buildOrdinaryObjectDataPreflight(d: OrdinaryDescriptorResources): Instr
   const HOST_HAS_VALUE = 128;
   return [
     // e = __obj_find(o, key)  (local 11)
-    { op: "local.get", index: 4 },
-    { op: "ref.as_non_null" },
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: objFindIdx },
+    ...buildDescriptorCurrentLookup(d, 4, 1, 11),
     { op: "local.tee", index: 11 },
     { op: "ref.is_null" },
     {
@@ -212,6 +210,7 @@ export function buildOrdinaryObjectDataDescriptorBody(
     // #2042 S4 — ValidateAndApplyPropertyDescriptor preflight (throws on an
     // invalid (re)definition before any table mutation).
     ...buildOrdinaryObjectDataPreflight(d),
+    ...buildStringCompatibleDescriptorReturn(d),
     // (#2992 S3) EXISTING live entry → §10.1.6.3 steps 5-10 in-place MERGE.
     // A partial descriptor must PRESERVE every unspecified attribute and the
     // current [[Value]]; the old blanket `__obj_insert` reset unspecified

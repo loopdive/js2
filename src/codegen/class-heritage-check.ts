@@ -215,6 +215,47 @@ export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: t
   return !written && bindings === 1 && ownBinding;
 }
 
+const mathWriteScan = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * (#6767 step 3) True when no code in `sourceFile` can replace a member of
+ * `Math`: every occurrence of the name `Math` is the receiver of a member READ
+ * (`Math.abs`, `Math.abs.prototype = 42` — the write lands on the FUNCTION, not
+ * on `Math`), and the file has no `with` or `eval`. Any other use — `Math.x =
+ * …`, `delete Math.x`, `Math[k]`, passing `Math` to a function (which might
+ * `defineProperty` on it), a local binding named `Math` — declines. Whole-file
+ * and name-based on purpose, like {@link bindingIsUniqueAndNeverWritten}: a
+ * false decline costs a row, a false proof throws on a working program.
+ */
+function mathNamespaceIsNeverWritten(sourceFile: ts.SourceFile): boolean {
+  const cached = mathWriteScan.get(sourceFile);
+  if (cached !== undefined) return cached;
+  let clean = true;
+  const visit = (node: ts.Node): void => {
+    if (!clean) return;
+    if (ts.isWithStatement(node) || (ts.isIdentifier(node) && node.text === "eval")) {
+      clean = false;
+      return;
+    }
+    if (ts.isIdentifier(node) && node.text === "Math") {
+      const parent = node.parent;
+      const isMemberName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node);
+      const isMemberRead =
+        ts.isPropertyAccessExpression(parent) && parent.expression === node && !occurrenceIsWriteTarget(parent);
+      if (!isMemberName && !isMemberRead) {
+        clean = false;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  mathWriteScan.set(sourceFile, clean);
+  return clean;
+}
+
 /**
  * True when this identifier names an AMBIENT GLOBAL — no declaration at all, or
  * one that lives in a `.d.ts` lib file. A module-local binding of the same name
@@ -259,6 +300,20 @@ function heritageIsProvablyNotConstructor(ctx: CodegenContext, expr: ts.Expressi
   ) {
     return true;
   }
+  // (#6767 step 3) `Math.<anything>`: every own property of %Math% is a number
+  // or a built-in FUNCTION that is not a constructor (§21.3 — none is
+  // "identified as a constructor"), and a missing one reads `undefined`; all
+  // three are non-constructors. Provable only while no code in the file can
+  // replace a member — see {@link mathNamespaceIsNeverWritten}.
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Math" &&
+    identifierIsAmbientGlobal(ctx, expr.expression) &&
+    mathNamespaceIsNeverWritten(expr.getSourceFile())
+  ) {
+    return true;
+  }
   if (!ts.isIdentifier(expr)) return false;
   const declaration = ctx.oracle.valueDeclarationOf(expr);
   // A bare `undefined` that resolves to no declaration is the global
@@ -289,7 +344,97 @@ function heritageIsProvablyNotConstructor(ctx: CodegenContext, expr: ts.Expressi
  * declined, like every other heritage this module cannot prove.
  */
 function heritagePrototypeIsProvablyInvalid(ctx: CodegenContext, expr: ts.Expression): boolean {
-  return ts.isIdentifier(expr) && expr.text === "Proxy" && identifierIsAmbientGlobal(ctx, expr);
+  if (ts.isIdentifier(expr) && expr.text === "Proxy" && identifierIsAmbientGlobal(ctx, expr)) return true;
+  // (#6767 step 3) Standalone only, like the IsConstructor arms: the host lane
+  // registers every other runtime heritage through its own bridge.
+  return ctx.standalone === true && heritageIsProvablyPrototypelessBoundFunction(ctx, expr, 0);
+}
+
+/**
+ * `<plain function literal>.bind(…)`: a CONSTRUCTOR (BoundFunctionCreate copies
+ * the target's [[Construct]]) whose `prototype` read is `undefined` —
+ * §10.4.1.3 creates no own `prototype`, and the chain it inherits along
+ * (%Function.prototype% → %Object.prototype%) has none. So §15.7.14 step
+ * 5.g.ii throws (`definition/constructable-but-no-prototype.js`). A NON-
+ * constructor receiver is `heritageIsProvablyNotConstructor`'s, with its own
+ * message, and is left to it.
+ */
+function isPrototypelessBoundFunctionLiteral(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return false;
+  if (expr.expression.name.text !== "bind") return false;
+  const target = unwrapHeritage(expr.expression.expression);
+  return ts.isFunctionExpression(target) && !functionLikeIsProvablyNotConstructor(target);
+}
+
+/**
+ * The bound-function literal above, directly or through a unique, never-written
+ * `var` alias chain (the alias walk of {@link heritageIsProvablyNotConstructor}).
+ * An ALIAS additionally must not escape: every other reference to it in the
+ * file is an `extends` operand or `Object.defineProperty(<alias>, "prototype",
+ * {…})` with no `get`/`value` key — a setter-only accessor still reads
+ * `undefined` (`definition/prototype-setter.js`), while anything that could
+ * install a readable `prototype` (a `value`, a getter, an assignment, the
+ * alias passed anywhere else) declines.
+ */
+function heritageIsProvablyPrototypelessBoundFunction(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+  depth: number,
+): boolean {
+  if (isPrototypelessBoundFunctionLiteral(expr)) return true;
+  if (!ts.isIdentifier(expr) || depth >= 4) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(expr);
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return false;
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return false;
+  if (!bindingIsUniqueAndNeverWritten(expr, declaration)) return false;
+  if (!boundAliasOnlyFeedsHeritage(ctx, expr.text, declaration)) return false;
+  return heritageIsProvablyPrototypelessBoundFunction(ctx, unwrapHeritage(declaration.initializer), depth + 1);
+}
+
+/** See {@link heritageIsProvablyPrototypelessBoundFunction}: the escape scan. */
+function boundAliasOnlyFeedsHeritage(ctx: CodegenContext, name: string, declaration: ts.VariableDeclaration): boolean {
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(node) && node.text === name && node !== declaration.name) {
+      const parent = node.parent;
+      const isPropertyName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node);
+      if (!isPropertyName && !isHeritageOperand(node) && !isSetterOnlyPrototypeDefine(ctx, node)) {
+        escapes = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.getSourceFile());
+  return !escapes;
+}
+
+function isHeritageOperand(node: ts.Node): boolean {
+  let current: ts.Node = node;
+  while (ts.isParenthesizedExpression(current.parent)) current = current.parent;
+  return ts.isExpressionWithTypeArguments(current.parent) && ts.isHeritageClause(current.parent.parent);
+}
+
+/** `Object.defineProperty(<node>, "prototype", { …no get/value… })`. */
+function isSetterOnlyPrototypeDefine(ctx: CodegenContext, node: ts.Node): boolean {
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.arguments[0] !== node || call.arguments.length !== 3) return false;
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "defineProperty") return false;
+  if (!ts.isIdentifier(callee.expression) || callee.expression.text !== "Object") return false;
+  if (!identifierIsAmbientGlobal(ctx, callee.expression)) return false;
+  const key = call.arguments[1]!;
+  const desc = call.arguments[2]!;
+  if (!ts.isStringLiteral(key) || key.text !== "prototype" || !ts.isObjectLiteralExpression(desc)) return false;
+  return desc.properties.every((property) => {
+    if (!ts.isPropertyAssignment(property) && !ts.isMethodDeclaration(property)) return false;
+    const propertyName = property.name;
+    if (!ts.isIdentifier(propertyName) && !ts.isStringLiteral(propertyName)) return false;
+    return propertyName.text !== "get" && propertyName.text !== "value";
+  });
 }
 
 /**

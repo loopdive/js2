@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildDescriptorCurrentLookup } from "./string-exotic-define-body.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import {
   descriptorFlagBit,
@@ -273,10 +274,7 @@ export function buildOrdinaryObjectAccessorDescriptorBody(d: OrdinaryAccessorDes
     { op: "i32.or" },
     { op: "local.set", index: 9 },
     // (#2992 S3) e = __obj_find(o, key) — existing live entry → validate + merge in place.
-    { op: "local.get", index: 5 },
-    { op: "ref.as_non_null" },
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: objFindIdx },
+    ...buildDescriptorCurrentLookup(d, 5, 1, 12),
     { op: "local.tee", index: 12 },
     { op: "ref.is_null" },
     { op: "i32.eqz" },

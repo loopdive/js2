@@ -84,6 +84,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { localGlobalIdx } from "./registry/imports.js";
+import { fillClassStaticReflectiveArms } from "./class-static-descriptor.js"; // (#6767)
 
 /** Per-compilation record: class name → property names assigned at module scope. */
 const cellsByCtx = new WeakMap<CodegenContext, Map<string, Set<string>>>();
@@ -149,6 +150,9 @@ type MopFn = { locals: { name: string; type: ValType }[]; body: Instr[] };
  * prefix, including the proto-cache arm and its call-site inlining.
  */
 export function fillClassObjectExpandoArms(ctx: CodegenContext): void {
+  // (#6767) The DECLARED-static twin of these cells, filled first so a
+  // module-scope assignment's arm (prepended below) answers ahead of it.
+  fillClassStaticReflectiveArms(ctx);
   if (!ctx.standalone || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const cells = collectCells(ctx);
   if (cells.size === 0) return;

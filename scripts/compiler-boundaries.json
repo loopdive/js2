@@ -220,9 +220,10 @@
         "src/runtime/contracts/index.ts",
         "src/runtime/contracts/timer-capability.ts",
         "src/runtime/contracts/builtin-brands.ts",
-        "src/runtime/contracts/collection-kind.ts"
+        "src/runtime/contracts/collection-kind.ts",
+        "src/runtime/contracts/js-value-tags.ts"
       ],
-      "minModules": 7
+      "minModules": 8
     },
     {
       "id": "backend-wasmgc",
@@ -1746,6 +1747,7 @@
     }
   ],
   "files": [
+    { "path": "src/backend/wasmgc/resources/native-string-own-keys.ts", "state": "clean", "layer": "backend-wasmgc" },
     {
       "path": "src/runtime/wasmgc/values/string-create-body.ts",
       "state": "clean",
@@ -1846,6 +1848,8 @@
       "state": "clean",
       "layer": "backend-wasmgc"
     },
+    { "path": "src/runtime/wasmgc/values/string-index-key-body.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/runtime/wasmgc/values/string-own-keys-body.ts", "state": "clean", "layer": "native-runtime" },
     {
       "path": "src/wasm/model/instruction-walk.ts",
       "state": "clean",
@@ -3754,6 +3758,14 @@
     },
     {
       "path": "src/codegen/class-proto-set-arm.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/class-static-descriptor.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -13412,6 +13424,11 @@
       "layer": "runtime-contracts"
     },
     {
+      "path": "src/runtime/contracts/js-value-tags.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
       "path": "src/cjs-standalone-env-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14484,6 +14501,18 @@
       "path": "src/runtime/wasmgc/values/to-object-body.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-descriptor-selection.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc",
+      "note": "Authenticates String virtual descriptor selection against shared ordinary owners."
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-exotic-define-body.ts",
+      "state": "clean",
+      "layer": "native-runtime",
+      "note": "Pure virtual-first String definition lookup and compatible no-op bodies."
     }
   ]
 }

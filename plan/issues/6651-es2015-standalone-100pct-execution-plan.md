@@ -19884,3 +19884,20 @@ bare-identifier callees). Control (643 passing Proxy/Reflect/Object and
 Proxy-mentioning rows): 0 pass → non-pass attributable to the branch. Record,
 walker audit and residual mechanisms:
 `plan/issues/6766-es2015-standalone-proxy-as-prototype-link.md`.
+
+## 2026-09-30 — #6767: class definition reflective residue (pointer)
+
+`language/statements/class/definition/**` (19 standalone rows, 18 non-pass on
+the 2026-09-29 baseline) is #6767's. Measured on `issue-6767-class-definition-
+reflective` with `origin/main` merged: **1 → 10 pass** — the five static
+descriptor rows, `basics.js`, and the three heritage rows
+(`constructable-but-no-prototype`, `prototype-setter`, `invalid-extends`).
+Remaining, with mechanisms in #6767's record: `getters-restricted-ids` and
+`fn-name-accessor-{get,set}` (a static accessor shares the function slot of a
+same-name INSTANCE accessor, #5195 cluster B item 5), `methods-restricted-
+properties` (no %ThrowTypeError% `caller`/`arguments` on method values), and
+the five #5350 `this`-before-`super()` rows. Two shared fixes landed with it
+that reach beyond the cluster: call-site parameter inference no longer narrows
+a parameter to `$C` from a `C.prototype` argument, and `C[k]()` on a class
+identifier no longer pushes a stray receiver (an invalid module when used as a
+call argument).

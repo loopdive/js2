@@ -52,12 +52,18 @@ const BASELINE_PATH = join(ROOT, "scripts", "jstag-seam-baseline.json");
 /**
  * The seam's own leaves. These are the files ALLOWED to speak `JsTag`
  * natively — everything else is measured against them.
- *   - `src/ir/js-tag.ts`        the enum + its Wasm-carrier table.
+ *   - `src/runtime/contracts/js-value-tags.ts` the enum + its Wasm-carrier table.
+ *   - `src/ir/js-tag.ts`        the retained forwarding API.
  *   - `src/ir/js-tag-domain.ts` the ECMAScript `TagDomain` implementation.
  *   - `src/ir/tag-domain.ts`    the neutral interface (has no `JsTag` at all;
  *                               listed so the seam's file set is one list).
  */
-const EXEMPT = new Set(["src/ir/js-tag.ts", "src/ir/js-tag-domain.ts", "src/ir/tag-domain.ts"]);
+const EXEMPT = new Set([
+  "src/runtime/contracts/js-value-tags.ts",
+  "src/ir/js-tag.ts",
+  "src/ir/js-tag-domain.ts",
+  "src/ir/tag-domain.ts",
+]);
 
 const FIELDS = ["valueImports", "refs"];
 const ZERO = { valueImports: 0, refs: 0 };

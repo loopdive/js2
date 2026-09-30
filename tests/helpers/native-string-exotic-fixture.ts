@@ -96,7 +96,12 @@ export const EXOTIC_TEXTS = [
 ];
 
 /** Real layouts/strings/lookup; no source/frontend preparation or host semantic imports. */
-export function stringExoticFixture(utf8 = false, shifted = false, mutablePlan = false) {
+export function stringExoticFixture(
+  utf8 = false,
+  shifted = false,
+  mutablePlan = false,
+  additionalLiterals: readonly string[] = [],
+) {
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
   const prefix = shifted ? tx.reserveFunction("prefix:function", "prefix", { params: [], results: [] }) : undefined;
@@ -107,7 +112,10 @@ export function stringExoticFixture(utf8 = false, shifted = false, mutablePlan =
   const strings = reserveNativeStringLiteralResources(tx, {
     key: "strings",
     utf8Storage: utf8,
-    literals: [...EXOTIC_TEXTS.map((value) => ({ value })), { value: "ppé😀\ud800\0qq", encoding: "wtf16" as const }],
+    literals: [
+      ...[...new Set([...EXOTIC_TEXTS, ...additionalLiterals])].map((value) => ({ value })),
+      { value: "ppé😀\ud800\0qq", encoding: "wtf16" as const },
+    ],
   });
   const flatten = reserveNativeStringFlattenResources(tx, "flatten", strings);
   const equality = reserveNativeStringEqualityResources(tx, "equality", flatten, true);
@@ -194,17 +202,30 @@ export function stringExoticFixture(utf8 = false, shifted = false, mutablePlan =
   };
 }
 export type StringExoticFixture = ReturnType<typeof stringExoticFixture>;
-export function fillStringExoticDependencies(f: StringExoticFixture): void {
+export function* fillStringExoticDependencyPhases(f: StringExoticFixture): Generator<string, void> {
   if (f.prefix) f.tx.fillFunction(f.prefix, { locals: [], body: [] });
   if (f.prefixGlobal) f.tx.fillGlobal(f.prefixGlobal, [{ op: "i32.const", value: 123 }]);
   fillNativeStringLiteralResources(f.tx, f.strings);
+  yield "fillNativeStringLiteralResources";
   fillNativeStringFlattenResources(f.tx, f.flatten);
+  yield "fillNativeStringFlattenResources";
   fillNativeStringEqualityResources(f.tx, f.equality);
+  yield "fillNativeStringEqualityResources";
   fillNativeSymbolCarrierResources(f.tx, f.symbols);
+  yield "fillNativeSymbolCarrierResources";
   fillNativeObjectLookupResources(f.tx, f.lookup);
+  yield "fillNativeObjectLookupResources";
   fillNativeObjectStorageResources(f.tx, f.storage);
+  yield "fillNativeObjectStorageResources";
   fillNativePrimitiveWrapperStorageResources(f.tx, f.wrappers);
+  yield "fillNativePrimitiveWrapperStorageResources";
 }
+export function fillStringExoticDependencies(f: StringExoticFixture): void {
+  for (const _phase of fillStringExoticDependencyPhases(f)) {
+    /* Run identical synchronous phases. */
+  }
+}
+
 export function completeStringExoticFixture(f = stringExoticFixture()) {
   f.tx.freezeReservations();
   fillStringExoticDependencies(f);

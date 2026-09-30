@@ -1429,3 +1429,16 @@ still answers true on such an object — measured identical on a plain
 `undefined`, `Object.keys` already excludes it). Residual, owner: the object
 runtime's own-key predicate; the pins were re-set to 11 in the PR.
 
+
+### 2026-09-30 — definition cluster moved to #6767
+
+The `language/statements/class/definition/**` descriptor cluster this file
+listed as "not attempted" (the reflective own-property surface on the class
+OBJECT, #5195 cluster B, plus the rows that need a definition-time throw)
+moved to #6767, whose claim superseded this one's stale one. #6767 implemented
+it on standalone — a per-class view of the declared statics answering the
+object MOP, base-class `[[Prototype]]` reads, two heritage proofs — and took
+the cluster from 1 to 10 passing of 19; its record names the mechanism of each
+remaining row (same-name static/instance accessor slot collision,
+%ThrowTypeError% on method values, runtime-keyed statics). This issue keeps the
+computed-property-name work it actually did.

@@ -9,6 +9,7 @@
  * `index.ts` — can import it without risking an import cycle.
  */
 import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
 
 /**
  * Class members register in `ctx.funcMap` under `${className}_${member}` keys
@@ -174,4 +175,31 @@ export function resolveMethodOwnerClass(ctx: CodegenContext, start: string, prop
     break;
   }
   return bestOwner;
+}
+
+/**
+ * (#6767) True when `Cls[key](…)` names a static METHOD of the class the
+ * identifier `receiver` spells — exactly the claim condition of the
+ * element-access STATIC arm in `compileTailDispatch`.
+ *
+ * The INSTANCE arm ahead of that one resolves the receiver's type SYMBOL, which
+ * is the class symbol for `typeof Cls` as well, and then finds the static method
+ * under its legacy `Cls_key` funcMap key — so it pushed the class object as a
+ * hidden receiver the static function does not take. At statement level the
+ * stack fixer drops the stray value; as a call ARGUMENT
+ * (`assert.sameValue(C[4](), 4)`) it shifts the operand order and the enclosing
+ * call reads the class object where its callee belongs: "called value is not a
+ * function" (`definition/numeric-property-names.js`). The instance arm yields to
+ * the static arm when this holds.
+ */
+export function elementCallTargetsStaticMethod(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  methodName: string,
+): boolean {
+  if (!ts.isIdentifier(receiver) || !ctx.classSet.has(receiver.text)) return false;
+  const fullName = `${ctx.classExprNameMap.get(receiver.text) ?? receiver.text}_${methodName}`;
+  return (
+    ctx.staticMethodSet.has(fullName) && ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) !== undefined
+  );
 }
