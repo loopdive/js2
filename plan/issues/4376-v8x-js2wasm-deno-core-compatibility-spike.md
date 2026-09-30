@@ -2720,3 +2720,30 @@ native diagnostics were removed. After deleting the unused helpers, the
 dead-export gate exits 0 under its existing preservation-only contract (3543).
 Its dynamic-import targets remain unknown and strict modeled closure is not
 certified; no audit baseline or verifier behavior was weakened.
+
+### Unchanged WebIDL and live iterator checkpoint
+
+Adapter checkpoint `da95a7f` shares NumberValue/IntegerValue ToNumber and lazily
+adopts native arrays on intrinsic iterator lookup into the supplied context's
+compiled realm. The clean `cc835a68c8c02255569b72271dd2527e076351c6` core and
+application artifacts in `/private/tmp/deno-import-release-build.AWkP87` run
+without a runtime compiler. Unchanged Deno WebIDL tests pass 13/17: integers,
+sequence and constrained_sequence_one_of flipped from failure to pass. The
+four remaining tests stop at unknown-classic-script refusal. No Deno tests
+or sources were changed.
+
+A stronger adapter regression finds stale iteration after indexed mutation:
+the adopted array's GetIndex observes 3, while an existing iterator yields the
+old 2. The assertion remains runnable and failing; the current bounded target
+is 30 passing, one failing and six ignored, not green. Existing compiler
+iterator normalization includes snapshot-copy carrier paths, but the exact
+path still needs a compiler-level reproduction before changing it. Preserve
+the actual receiver and read live elements on each step, rebuild clean AOT
+artifacts, then rerun these controls. The adapter PR is explicitly unready.
+
+The wider baseline population contains 431 tests. Its pre-fix Nextest sweep
+has 211 passing, 216 failing, two ignored and two lazy TCP tests still running
+after sandbox network denial. This is not a completed full-suite result.
+All six TCP cases pass with networking permitted. No test processes were
+stopped. General Script execution, application packaging, missing snapshot
+and inspector APIs, and full integration verification remain open.
