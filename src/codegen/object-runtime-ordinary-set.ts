@@ -273,6 +273,7 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
   // 3-argument front guard (`object-runtime-proxy.ts` builds both from the same
   // `buildDispatch`). Absent on a tree without the Proxy carrier ⇒ no arm.
   const proxySetReceiverIdx = proxyCarrierPresent ? ctx.funcMap.get("__proxy_set_receiver_dispatch") : undefined;
+  const isExtensibleObjIdx = ctx.funcMap.get("__object_isExtensible_obj"); // (#5350 r2)
 
   // params 0=target 1=key 2=value 3=receiver
   const O = 4;
@@ -358,6 +359,21 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
               },
             ] satisfies Instr[])
           : []),
+        // (#5350 r2) §10.1.6.3 ValidateAndApplyPropertyDescriptor step 2: a
+        // new property on a NON-EXTENSIBLE receiver fails. `__extern_set`
+        // quietly skips that store, so without this the walk answered `true`
+        // for a write that did not happen — `super.y = 9` on a frozen receiver
+        // raised no strict-mode TypeError, and `Reflect.set({}, k, v, frozen)`
+        // answered `true` (probe a1). The `_obj` predicate is the ordinary-
+        // object variant: an unregistered carrier counts as extensible.
+        ...(isExtensibleObjIdx === undefined
+          ? []
+          : ([
+              { op: "local.get", index: 3 },
+              { op: "call", funcIdx: isExtensibleObjIdx },
+              { op: "i32.eqz" },
+              ...refuseIf(),
+            ] satisfies Instr[])),
         ...ownWriteFirst(),
         { op: "local.get", index: 3 },
         { op: "local.get", index: 1 },

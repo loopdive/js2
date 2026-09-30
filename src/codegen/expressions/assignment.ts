@@ -117,6 +117,7 @@ import {
   emitArrayProtoIteratorDrive,
   maybeCaptureArrayProtoOverride,
 } from "./proto-override.js";
+import { tryCompileStandaloneSuperWrite } from "./super-property-write.js"; // (#5350 r2)
 import {
   buildThrowJsErrorInstrs,
   classifyPrivateMember,
@@ -4239,6 +4240,9 @@ function compilePropertyAssignment(
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
 
+  const superWrite = tryCompileStandaloneSuperWrite(ctx, fctx, target, value); // (#5350 r2) `super.x = v`
+  if (superWrite !== undefined) return superWrite;
+
   // An interface that extends Array (TypeScript's `NodeArray<T>` is the
   // production case) keeps a vec as its physical runtime carrier. Its added
   // named properties therefore live in the dynamic sidecar; the separately
@@ -5657,6 +5661,8 @@ function compileElementAssignment(
   ) {
     return VOID_RESULT;
   }
+  const superWrite = tryCompileStandaloneSuperWrite(ctx, fctx, target, value); // (#5350 r2)
+  if (superWrite !== undefined) return superWrite;
 
   // (#3420) Frozen receiver: `a[i] = v` where `a` was passed to Object.freeze.
   // Per §10.4.2.1 / OrdinarySet EVERY element write on a frozen object fails —

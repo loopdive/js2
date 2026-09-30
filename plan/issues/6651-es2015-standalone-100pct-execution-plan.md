@@ -19901,3 +19901,21 @@ that reach beyond the cluster: call-site parameter inference no longer narrows
 a parameter to `$C` from a `C.prototype` argument, and `C[k]()` on a class
 identifier no longer pushes a stray receiver (an invalid module when used as a
 call argument).
+
+## 2026-09-30 — #5350 r2 (super property WRITES) — pointer
+
+`super.x = v` / `super[k] = v` now lower onto `__reflect_set_receiver` in
+standalone (branch `issue-5350-r2-super-property-write`; full record under
+"2026-09-30 r2 implementation (Opus)" in
+`plan/issues/5350-es2015-standalone-super-property-r1.md`). Cluster C gains 4
+rows (`super/prop-{dot,expr}-obj-ref-non-strict.js`,
+`super/prop-{dot,expr}-cls-ref-strict.js`); p10 37 → 63 (node 127). Two
+findings for this plan's other lanes: (1) the receiver walk now refuses to
+create a key on a NON-EXTENSIBLE receiver, so `Reflect.set`'s 4-argument form
+answers `false` there (it answered `true`); (2) the remaining `super/*-cls-ref-this.js`
+pair is blocked by a class-member `this` that cannot hold a non-instance
+receiver (`P.prototype.getThis() === P.prototype` traps "illegal cast" on main,
+no `super` involved), and `super/call-proto-not-ctor.js` by class objects having
+no runtime [[Prototype]] (`Object.setPrototypeOf(C, f)` is a silent no-op;
+`super()` is inlined from the compile-time parent) — both representation
+questions, neither built.

@@ -1573,7 +1573,7 @@ function compileStandaloneSuperPropertyRead(
  * literal: `super` inside an object-literal method binds to that literal, not
  * to any class the literal happens to sit in.
  */
-function enclosingClassExtendsNull(node: ts.Node): boolean {
+export function enclosingClassExtendsNull(node: ts.Node): boolean {
   let current: ts.Node | undefined = node.parent;
   while (current) {
     if (ts.isObjectLiteralExpression(current)) return false;
@@ -1864,6 +1864,39 @@ export function emitSuperInitializedFlagStore(fctx: FunctionContext): void {
 }
 
 /**
+ * (#5350 step 4b) §13.3.7.1 GetThisBinding for a `super` reference in a derived
+ * constructor — shared by the READ and (#5350 r2) the WRITE, since §13.15.2
+ * evaluates the SuperProperty reference, and so GetThisBinding, before the RHS.
+ * `"runtime"` emits the flag test and returns `false` (fall through to the
+ * ordinary lowering); `"always"` emits the unconditional ReferenceError and
+ * returns `true` — nothing is left on the stack, the caller stops.
+ */
+export function emitSuperUninitializedThisCheck(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): boolean {
+  if (!ctx.standalone) return false;
+  const kind = classifySuperUninitializedRead(fctx, expr);
+  if (kind === "never") return false;
+  const message =
+    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor";
+  if (kind === "runtime") {
+    // (#5350 r3 review, S1) `if (__super_done === 0) throw` — and then fall
+    // through to the ordinary read, which is correct on every iteration where
+    // the flag is set. Returning `false` when the flag was not allocated
+    // keeps r2's behaviour rather than inventing a throw.
+    const flagLocal = fctx.superInitializedFlagLocal;
+    if (flagLocal === undefined) return false;
+    fctx.body.push({ op: "local.get", index: flagLocal });
+    fctx.body.push({ op: "i32.eqz" });
+    const start = fctx.body.length;
+    emitThrowReferenceError(ctx, fctx, message);
+    const throwInstrs = fctx.body.splice(start);
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+    return false;
+  }
+  emitThrowReferenceError(ctx, fctx, message);
+  return true;
+}
+
+/**
  * (#5350 step 4b) Emit that ReferenceError plus a type-shaped (unreachable)
  * value so the enclosing expression stays stack-balanced.
  */
@@ -1873,27 +1906,7 @@ function emitSuperUninitializedThisReadThrow(
   expr: ts.Node,
   accessType: ts.Type,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
-  const kind = classifySuperUninitializedRead(fctx, expr);
-  if (kind === "never") return undefined;
-  const message =
-    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor";
-  if (kind === "runtime") {
-    // (#5350 r3 review, S1) `if (__super_done === 0) throw` — and then fall
-    // through to the ordinary read, which is correct on every iteration where
-    // the flag is set. Returning `undefined` when the flag was not allocated
-    // keeps r2's behaviour rather than inventing a throw.
-    const flagLocal = fctx.superInitializedFlagLocal;
-    if (flagLocal === undefined) return undefined;
-    fctx.body.push({ op: "local.get", index: flagLocal });
-    fctx.body.push({ op: "i32.eqz" });
-    const start = fctx.body.length;
-    emitThrowReferenceError(ctx, fctx, message);
-    const throwInstrs = fctx.body.splice(start);
-    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
-    return undefined;
-  }
-  emitThrowReferenceError(ctx, fctx, message);
+  if (!emitSuperUninitializedThisCheck(ctx, fctx, expr)) return undefined;
   const wasmType = resolveWasmType(ctx, accessType);
   if (wasmType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -1905,21 +1918,40 @@ function emitSuperUninitializedThisReadThrow(
   return wasmType;
 }
 
-function compileStandaloneObjectLiteralSuperPropertyRead(
+/**
+ * (#5350 r2) The two emitters a standalone `super` reference is built from —
+ * where its [[HomeObject]] and its `actualThis` come from. Shared by the READ
+ * (`compileStandaloneSuperPropertyRead`) and the WRITE
+ * (`super-property-write.ts`), so the [[HomeObject]] lookup has one home.
+ *
+ *   - `emitHomeObject` leaves the home object on the stack and returns `true`,
+ *     or leaves GetSuperBase()'s answer itself and returns `"base"` (#6651 A13,
+ *     a closed-struct literal), or returns `false` having emitted NOTHING.
+ *   - `emitReceiver` leaves the §12.3.5.3 step 3 `actualThis` (externref).
+ */
+export interface StandaloneSuperRefEmitters {
+  emitHomeObject: () => boolean | "base";
+  emitReceiver: () => void;
+}
+
+/**
+ * (#4688) An object-literal method: the synthetic home-object capture, `__current_this`.
+ *
+ * (#5350 r2) `closedLiteralTypedSelf`: a CLOSED-struct literal's method (no home
+ * capture) is a struct method whose receiver is its typed `this` param — a
+ * direct `obj.m()` never sets `__current_this`, so the carrier can hold a stale
+ * receiver. The WRITE asks for the typed param (a `super.x = v` must land on
+ * `obj`, p10 bit 2); the read keeps its r1/A13 bytes.
+ */
+export function objectLiteralSuperRefEmitters(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  key: SuperReadKey,
-  accessType: ts.Type | "externref",
   anchor: ts.Node,
-): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  closedLiteralTypedSelf = false,
+): StandaloneSuperRefEmitters {
   const currentThisIdx = ensureCurrentThisGlobal(ctx);
-  return compileStandaloneSuperPropertyRead(
-    ctx,
-    fctx,
-    key,
-    accessType,
-    () => {
+  return {
+    emitHomeObject: () => {
       // A standalone object-literal method must carry its actual
       // [[HomeObject]]. Falling back to __current_this would make a borrowed
       // method resolve `super` against the call-time receiver.
@@ -1929,8 +1961,34 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
       fctx.body.push({ op: "local.get", index: homeObjectLocal });
       return true;
     },
-    () => fctx.body.push(objectLiteralSuperReceiver(fctx, currentThisIdx)),
-  );
+    emitReceiver: () => {
+      const selfIdx = fctx.localMap.get("this");
+      const selfKind = selfIdx === undefined ? undefined : getLocalType(fctx, selfIdx)?.kind;
+      if (
+        closedLiteralTypedSelf &&
+        selfIdx !== undefined &&
+        (selfKind === "ref" || selfKind === "ref_null") &&
+        !fctx.localMap.has(SUPER_HOME_OBJECT_CAPTURE_NAME) &&
+        !fctx.localMap.has("__gen_self")
+      ) {
+        emitTypedThisSuperReceiver(ctx, fctx, selfIdx);
+        return;
+      }
+      fctx.body.push(objectLiteralSuperReceiver(fctx, currentThisIdx));
+    },
+  };
+}
+
+function compileStandaloneObjectLiteralSuperPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: SuperReadKey,
+  accessType: ts.Type | "externref",
+  anchor: ts.Node,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  const refs = objectLiteralSuperRefEmitters(ctx, fctx, anchor);
+  return compileStandaloneSuperPropertyRead(ctx, fctx, key, accessType, refs.emitHomeObject, refs.emitReceiver);
 }
 
 /**
@@ -1990,12 +2048,24 @@ function compileStandaloneClassSuperPropertyRead(
   const selfIdx = fctx.localMap.get("this");
   if (selfIdx === undefined) return undefined;
 
-  return compileStandaloneSuperPropertyRead(
-    ctx,
-    fctx,
-    key,
-    accessType,
-    () => {
+  const refs = classSuperRefEmitters(ctx, fctx, currentClassName, selfIdx);
+  return compileStandaloneSuperPropertyRead(ctx, fctx, key, accessType, refs.emitHomeObject, refs.emitReceiver);
+}
+
+/**
+ * (#5350 step 1) A class instance method: [[HomeObject]] is `C.prototype`
+ * (the #5195 `$Object` singleton), `actualThis` the method's `this`. The
+ * caller has already checked `standaloneClassProtoObjectApplies` for the class
+ * and found the `this` local (`selfIdx`).
+ */
+export function classSuperRefEmitters(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  currentClassName: string,
+  selfIdx: number,
+): StandaloneSuperRefEmitters {
+  return {
+    emitHomeObject: () => {
       // `emitLazyProtoGet` can still decline (the #5195 F1 re-entrancy guard,
       // an accessor store it cannot reach). Capture into a fresh buffer so a
       // decline leaves the real body untouched and the caller keeps its
@@ -2013,33 +2083,37 @@ function compileStandaloneClassSuperPropertyRead(
       fctx.body.push(...captured);
       return true;
     },
-    () => {
-      // §12.3.5.3 step 3 `actualThis` is the receiver the call actually bound.
-      // In a class method that is the `this` LOCAL — except that the local is
-      // typed to the INSTANCE struct, so a call whose receiver is not a `$C`
-      // instance leaves it null. `C.prototype.method()` is exactly that shape
-      // (the #5195 prototype is an `$Object`, and `ref.test` against `$C`
-      // fails), and it is the shape four of these rows use. Measured: the
-      // local reads null there while the standalone call carrier
-      // `__current_this` holds the real receiver, so select at RUNTIME —
-      // typed local when it is bound, carrier otherwise. Never a throw either
-      // way, and an ordinary `new C().method()` keeps the typed local.
-      fctx.body.push({ op: "local.get", index: selfIdx });
-      const selfType = getLocalType(fctx, selfIdx);
-      if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
-        fctx.body.push({ op: "extern.convert_any" });
-      }
-      const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.tee", index: recvLocal });
-      fctx.body.push({ op: "ref.is_null" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [{ op: "global.get", index: ensureCurrentThisGlobal(ctx) }],
-        else: [{ op: "local.get", index: recvLocal }],
-      });
-    },
-  );
+    emitReceiver: () => emitTypedThisSuperReceiver(ctx, fctx, selfIdx),
+  };
+}
+
+/**
+ * §12.3.5.3 step 3 `actualThis` is the receiver the call actually bound. In a
+ * class method (and, #5350 r2, a closed-struct literal's method) that is the
+ * `this` LOCAL — except that the local is typed to the INSTANCE struct, so a
+ * call whose receiver is not a `$C` instance leaves it null.
+ * `C.prototype.method()` is exactly that shape (the #5195 prototype is an
+ * `$Object`, and `ref.test` against `$C` fails). The standalone call carrier
+ * `__current_this` holds the real receiver there (#5350 r2: the direct-call
+ * site publishes it, `publishNonInstanceSuperReceiver`), so select at RUNTIME —
+ * typed local when it is bound, carrier otherwise. Never a throw either way, and
+ * an ordinary `new C().method()` keeps the typed local.
+ */
+function emitTypedThisSuperReceiver(ctx: CodegenContext, fctx: FunctionContext, selfIdx: number): void {
+  fctx.body.push({ op: "local.get", index: selfIdx });
+  const selfType = getLocalType(fctx, selfIdx);
+  if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
+    fctx.body.push({ op: "extern.convert_any" });
+  }
+  const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: recvLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [{ op: "global.get", index: ensureCurrentThisGlobal(ctx) }],
+    else: [{ op: "local.get", index: recvLocal }],
+  });
 }
 
 /**
