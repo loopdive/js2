@@ -3850,8 +3850,8 @@ export function emitStandalonePromiseThen(
           else: [
             // Pending receiver: push a callback node in front of the current
             // callback list. This preserves every continuation needed for
-            // chaining. FIFO append can be added later without changing the
-            // node shape; simple chains have one pending callback per promise.
+            // chaining. Settlement reverses multi-node lists before enqueueing
+            // to restore registration order without changing immutable nodes.
             { op: "local.get", index: promiseLocal },
             { op: "ref.func", funcIdx: fulfillWrapperFuncIdx },
             { op: "local.get", index: fulfilledCapsLocal },

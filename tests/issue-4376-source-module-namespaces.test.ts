@@ -5,6 +5,7 @@ import {
   GRAPH_CAN_ACCESS_EXPORT,
   GRAPH_CAN_CALL_EXPORT,
   GRAPH_CALL_EXPORT,
+  GRAPH_PROMISE_THEN_EXPORT,
   GRAPH_GET_EXPORT,
   GRAPH_SET_EXPORT,
   GRAPH_GET_PROTOTYPE_EXPORT,
@@ -123,3 +124,64 @@ it.each(["closed", "open"])(
     }
   },
 );
+
+it("registers queued reactions in the graph owning an exported Promise", async () => {
+  const graph = prepareNamespaceGraph(
+    new Map([
+      [
+        "ext:promise/main.js",
+        `
+      let resolve;
+      export const pending = new Promise(r => { resolve = r; });
+      export const settled = Promise.resolve(42);
+      export function settle(){ resolve(42); }
+    `,
+      ],
+    ]),
+    "ext:promise/main.js",
+  );
+  graph.files[graph.entry] += `
+    let called=0;
+    export function begin(mode:number):any {
+      const ns=globalThis.${GRAPH_NAMESPACE_REGISTRY}['ext:promise/main.js'];
+      return ${GRAPH_PROMISE_THEN_EXPORT}(mode===0?ns.pending:ns.settled, function(v){ called++; return v+1; }, undefined);
+    }
+    export function calls():number { return called; }
+    export function complete():void { settle(); }
+    export function refuse():number {
+      try { ${GRAPH_PROMISE_THEN_EXPORT}(Promise.resolve(9),undefined,undefined); return 0; }
+      catch(e){ return e instanceof TypeError?1:2; }
+    }
+  `;
+  const result = await compileMultiSource(
+    graph.files,
+    graph.entry,
+    {
+      target: "standalone",
+      platform: "deno",
+      allowJs: true,
+      hostBridge: "always",
+      skipSemanticDiagnostics: true,
+      deferTopLevelInit: true,
+    },
+    undefined,
+    graph.projectResolutions,
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  for (const mode of [0, 1]) {
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject ?? {});
+    (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void })?.__setInstance?.(instance);
+    const e = instance.exports as unknown as Record<string, Function>;
+    e.__module_init();
+    const derived = e.begin(mode);
+    expect(e.calls()).toBe(0);
+    expect(e.__promise_boundary_state(derived)).toBe(0);
+    if (mode === 0) e.complete();
+    expect(e.calls()).toBe(0);
+    e.__drain_microtasks();
+    expect(e.calls()).toBe(1);
+    expect(e.__promise_boundary_state(derived)).toBe(1);
+    expect(e.__promise_boundary_value(derived)).toBe(43);
+    expect(e.refuse()).toBe(1);
+  }
+});

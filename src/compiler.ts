@@ -812,6 +812,12 @@ function buildCodegenOptions(
     if (options.standaloneGlobalThisImport.call !== undefined && !options.standaloneGlobalThisImport.call) {
       throw new Error("Compile option standaloneGlobalThisImport.call must be non-empty when provided.");
     }
+    if (
+      options.standaloneGlobalThisImport.exceptionTag !== undefined &&
+      !options.standaloneGlobalThisImport.exceptionTag
+    ) {
+      throw new Error("Compile option standaloneGlobalThisImport.exceptionTag must be non-empty when provided.");
+    }
   }
   const targetProfile = resolveCompileTargetProfile(options);
   return {

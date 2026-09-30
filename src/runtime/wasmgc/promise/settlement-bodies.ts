@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import { buildRegistrationOrderedCallbacks } from "./reaction-order-bodies.js";
 
 export type PromiseHookResources =
   | undefined
@@ -78,6 +79,7 @@ export function buildPromiseSettleLocals(callbackTypeIdx: TypeHandle): LocalDef[
   return [
     { name: "$callbacks", type: { kind: "externref" } },
     { name: "$callback", type: { kind: "ref", typeIdx: callbackTypeIdx } },
+    { name: "$orderedCallbacks", type: { kind: "externref" } },
   ];
 }
 
@@ -147,6 +149,7 @@ export function buildPromiseSettleBody(
         ] satisfies Instr[])
       : []),
 
+    ...buildRegistrationOrderedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, 4),
     {
       op: "block",
       blockType: { kind: "empty" },

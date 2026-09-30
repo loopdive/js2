@@ -540,12 +540,16 @@ export interface CompileOptions {
    * An optional `call` import provides `(callable, receiver, args) -> result`
    * for values owned by that realm. Module-local closure shapes still use the
    * normal direct dispatcher; only its terminal miss crosses this bridge.
+   * An optional `exceptionTag` names the provider's `(externref)` exception
+   * tag export. Consumers import that same tag so exceptions thrown by linked
+   * realm callables match their native try/catch and Promise rejection handlers.
+   * Omitting it preserves the existing module-local exception tag.
    *
    * This option is valid only with `target: "standalone"`. It is deliberately
    * explicit and has no default, preserving host-free standalone output for
    * all existing callers.
    */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string; exceptionTag?: string };
   /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *

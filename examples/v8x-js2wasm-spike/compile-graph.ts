@@ -1348,6 +1348,7 @@ export interface PreparedManifestGraph {
 export const GRAPH_NAMESPACE_REGISTRY = "__v8x_source_module_namespaces";
 export const GRAPH_CAN_CALL_EXPORT = "__v8x_graph_can_call_export";
 export const GRAPH_CALL_EXPORT = "__v8x_graph_call_export";
+export const GRAPH_PROMISE_THEN_EXPORT = "__v8x_graph_promise_then_export";
 export const GRAPH_CAN_ACCESS_EXPORT = "__v8x_graph_can_access_export";
 export const GRAPH_GET_EXPORT = "__v8x_graph_get_export";
 export const GRAPH_SET_EXPORT = "__v8x_graph_set_export";
@@ -1447,6 +1448,10 @@ export function ${GRAPH_CALL_EXPORT}(callable, receiver, args) {
   if (${GRAPH_CAN_CALL_EXPORT}(callable) !== 1) throw new TypeError("callable is not an export of this graph");
   return ${prefix}_remember(callable.apply(receiver, args));
 }
+export function ${GRAPH_PROMISE_THEN_EXPORT}(promise, fulfilled, rejected) {
+  if (${GRAPH_CAN_ACCESS_EXPORT}(promise) !== 1) throw new TypeError("Promise is not owned by this graph");
+  return ${prefix}_remember(Promise.prototype.then.call(promise, fulfilled, rejected));
+}
 `;
   graph.projectResolutions[entryPath] = { ...graph.projectResolutions[entryPath], ...resolutions };
   // compileMulti initializes every supplied source, not just reachable ones.
@@ -1541,6 +1546,7 @@ async function main(): Promise<void> {
       module: "v8x:context",
       name: "__v8x_context_global_this",
       call: "__v8x_context_call",
+      exceptionTag: "__exn_tag",
     },
     link: ["v8x:context"],
     allowJs: true,
