@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "object-realm-algorithm-bodies-20260930",
   "assignee": "ttraenkler/codex-object-realm-algorithm-bodies-20260930",
-  "requested_by": "ttraenkler/codex-object-realm-algorithm-bodies-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-object-realm-algorithm-bodies-20260930",
   "claimed_at": "2026-09-30T10:53:38Z",
-  "updated_at": "2026-09-30T10:53:38Z",
-  "write_id": "9368-husbjsyg"
+  "updated_at": "2026-09-30T12:40:55Z",
+  "write_id": "99986-57ep60qo",
+  "released_at": "2026-09-30T12:40:55Z"
 }
