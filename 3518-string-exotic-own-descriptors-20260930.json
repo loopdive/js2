@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "string-exotic-own-descriptors-20260930",
   "assignee": "ttraenkler/codex-string-exotic-own-descriptors-20260930",
-  "requested_by": "ttraenkler/codex-string-exotic-own-descriptors-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-string-exotic-descriptors-20260930",
   "claimed_at": "2026-09-30T05:54:12Z",
-  "updated_at": "2026-09-30T05:54:12Z",
-  "write_id": "16924-pdqsrjbe"
+  "updated_at": "2026-09-30T07:03:58Z",
+  "write_id": "65807-0d8vlqxx",
+  "released_at": "2026-09-30T07:03:58Z"
 }
