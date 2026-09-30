@@ -594,6 +594,20 @@ by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
 
+### 2026-09-30 native script completion repaired
+
+Main was fetched from `loopdive/js2` and merged at `aa95a371ac66de545e06c10f428ef2da578be082`; signed merge commit `824a310d172` follows Deno checkpoint `f18f2ff083a`. Unrelated local ABI comments and the Acorn artifact remain untouched.
+
+The remaining result-string trap was a compiler result-carrier defect, not a JSON parser or Deno-source issue. `__v8xEncodeEvalValue` returns `string | undefined`; its nullable native-string result preserved absence on typed calls but generic function-value dispatch converted the null reference into JavaScript null. The native router therefore reported status 1 and stored a null string for the AOT program's undefined completion. Minimal direct/imported controls passed while dynamic invocation failed. The full generated graph reproduced the same defect (`probeUndefined = 1`). Extending the existing function-declaration mixed-undefined result widening to native references preserves the actual undefined value at its producer. The general union/type-mapper rule is unchanged; non-nullish signatures and already-boxed results retain their carriers.
+
+After this repair, 122/122 focused compiler tests pass across 17 test files, including exact-source pending-promise settlement, unchanged full bootstrap, nullable call results, constructor guards and primordial invokers. TS7 typecheck and diff checks pass. The newly repaired concrete-reference residual is now a positive regression; two other stale expected-failure rows were separately confirmed already passing with this repair removed and are not credited as gains. No full test262 population sweep or new throughput comparison has been run.
+
+Native public `Script::Run` integration passes 1/1 (52 filtered), session 83205, 250.62 seconds including Wasmtime precompilation. Artifact `/private/tmp/v8x-deno-resume-20260930.o0sxeO/deno-native-result.wasm` is 2,663,441 bytes, contains six exact pinned Deno sources and 16 host-function imports, and ships no interpreter. Corresponding trusted local artifacts are `deno-native-result.cwasm` and `deno-native-result.attestation.json`. The unchanged hello-world source returns undefined and produces all six expected prints and two sum callbacks, including the original Rust TypeError. Earlier checks in the same test also verify native op stubs, scalar/object fulfilled Promise results, pending op ID 0 and Pending state, three source namespace bindings, and continuation data identity.
+
+The identical native test also passes with `js2wasm_runtime_compile` disabled, loading the trusted precompiled artifact (session 16915, 1/1, 52 filtered, 0.92 seconds). This verifies this path without a runtime compiler or interpreter; that test duration is not an application throughput benchmark. Rust formatting, LOC/function budgets and whitespace checks pass.
+
+This closes the native hello-world completion blocker, not the full integration goal. Next: connect native microtask checkpoints to the compiled graph's queue and settle the real Deno pending-op Promise through the public API, preserving scalar/object identity and exception ordering. General Rust op registration, module loading/live bindings, dynamic imports/TLA, broader shared values, and production artifact packaging remain subject to the unchecked follow-up acceptance below. Runtime changes in `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo` remain uncommitted on `codex/4376-deno-realm-bootstrap`; compiler changes are local on `codex/4376-deno-callback-construction-20260930`. Existing PRs are compiler PR 6341 and runtime PR 2; neither has received this new repair yet.
+
 ### 2026-09-30: source module namespace publication
 
 - Pending-op follow-up isolated and fixed stale uncurrying rewrites. Native
