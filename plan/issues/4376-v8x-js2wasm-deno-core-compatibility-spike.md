@@ -1731,3 +1731,42 @@ control rejects the active compiler branch before compilation. All cited
 processes are terminal. The original broader integration checkboxes remain
 open: general Rust op coverage, rejection events, full module/import semantics,
 general shared-value behavior and production distribution remain unproven.
+
+### 2026-09-30 native Promise rejection callback implementation
+
+Inspection of the pinned Deno exception state confirms that it depends on
+the rusty_v8 rejection callback to retain unhandled Promise/reason identity
+and cancel the pending event when a first handler is added. The js2wasm
+backend's `SetPromiseRejectCallback` was a no-op. Native callback registration
+is now stored on the owning isolate (not thread-global); notification uses
+the existing three-word rusty_v8 message ABI and real getter symbols.
+Native settlement reports unhandled rejection and duplicate settle attempts,
+and first late handler attachment reports the handler event with no value.
+Explicit `MarkAsHandled` remains a silent flag update. Callbacks run without
+retaining Promise/isolate state borrows, allowing reentrant handler attachment.
+
+First three public-API native controls pass 3/3 (session 8438). Added reentrant
+attachment and isolate-local lifecycle controls; the complete compiler-free
+core fixture rerun is now session 81511. This step does not yet deliver Wasm-owned Promise rejection
+events: compiled settle and then/adoption/await paths require an authenticated
+host notification bridge. That work remains part of the original open scope;
+do not mark the general rejection-event acceptance complete on native tests.
+
+The initial full rerun passes 29/29 with three ignores (session 81511).
+Notification-removal negative control (session 27352) produces four failures
+out of five new native tests, with only early-handler suppression passing;
+restoring notification returns 5/5 (session 91378). Added a sixth control for
+fulfillment-only `.then` rejection propagation: the handled parent is not
+reported, the derived Promise is reported at the checkpoint with the original
+reason identity, and later catch attachment sends a no-value handler event.
+Final compiler-free fixture run (session 91400) passes 30/30, three explicit
+ignores, 1.11 seconds. All cited processes are terminal; the removal mutant
+was restored before final validation. Rust formatting and diff whitespace
+checks pass. No compiler or interpreter was enabled in these replay runs.
+
+Next wire compiled events at actual settlement/handler transitions, including
+direct rejected construction, adoption, await and combinators. Polling the
+final Promise state only at checkpoint end is not equivalent: same-turn late
+handlers must cancel the original tracked event and reaction jobs may create
+new rejected derived Promises. Preserve exact owner/realm and reason identity
+and avoid reentering a borrowed Wasmtime runtime during host notification.
