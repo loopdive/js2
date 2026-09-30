@@ -80,7 +80,10 @@ export function test(): number {
   __drain_microtasks();
   return score(p) * 10 + got;
 }`);
-    expect(value).toBe(11117);
+    // (#5197 r3) `p.then` performs SpeciesConstructor(p) = SubPromise and constructs it
+    // (§27.2.5.4), so `log.count` is 2 afterwards — node answers 11017 (was 11117
+    // while the native `then` skipped species).
+    expect(value).toBe(11017);
   });
 
   it("the implicit constructor of `class Custom extends Promise {}` builds a real carrier from its executor", async () => {

@@ -462,6 +462,37 @@ export function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expres
   return name;
 }
 
+/**
+ * (#5197 r3) D1's admission, shared: `arg` (parens / `as` / `!` peeled) is an ordinary function —
+ * a function expression, or an identifier bound to a non-generator, non-async function declaration
+ * or to a variable whose initializer is a non-generator function expression.
+ */
+export function isOrdinaryFunctionCtorArg(ctx: CodegenContext, arg: ts.Expression): boolean {
+  const unwrap = (value: ts.Expression): ts.Expression => {
+    let current = value;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+  const ctorArg = unwrap(arg);
+  const ctorDecl: ts.Node | undefined = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
+  const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
+  const ctorExpr = ctorInit ? unwrap(ctorInit) : ctorDecl;
+  return (
+    (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||
+    (ctorDecl !== undefined &&
+      ts.isFunctionDeclaration(ctorDecl) &&
+      ctorDecl.asteriskToken === undefined &&
+      !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false))
+  );
+}
+
 /** Arm and reserve the one-argument native construct driver (the `new <value>(x)` prelude). */
 export function reserveConstructDriver(ctx: CodegenContext, fctx: FunctionContext): number {
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
@@ -915,7 +946,16 @@ export function tryEmitClassReceiverCombinatorCall(
   const ctorArg = expr.arguments[0];
   if (ctorArg === undefined || expr.arguments.length > 2) return undefined;
   const className = resolveCompiledClassReceiver(ctx, ctorArg);
-  if (className === undefined) return undefined;
+  // (#5197 r3 Step 5) …or an ordinary FUNCTION `C` over a non-literal iterable: D1 drains one
+  // through `__combinator_to_vec`, which cannot step an iterator (an expando `@@iterator` reads
+  // as "not iterable"); an array literal keeps D1. The drive constructs any `C` via the driver.
+  const iterable = expr.arguments[1];
+  const functionCtor =
+    className === undefined &&
+    (iterable === undefined || !ts.isArrayLiteralExpression(iterable)) &&
+    isOrdinaryFunctionCtorArg(ctx, ctorArg) &&
+    !shadowsGlobalValueName(ctorArg);
+  if (className === undefined && !functionCtor) return undefined;
 
   const snap = snapshotSpeculative(ctx, fctx);
   // Registration strictly precedes emission.
@@ -941,7 +981,7 @@ export function tryEmitClassReceiverCombinatorCall(
   }
   // `Get(C, "resolve")` is a runtime-key read of the class OBJECT: record the demand so the
   // class's static sidecar is materialised (#5383 S2i).
-  recordStandaloneRuntimeKeyClassMemberRead(ctx, ctx.structMap.get(className));
+  if (className !== undefined) recordStandaloneRuntimeKeyClassMemberRead(ctx, ctx.structMap.get(className));
   // `Invoke(next, "then", …)` reads `then` off whatever `C.resolve` answers — a native promise
   // included (#6651 D5): demand `%Promise.prototype%.then` so that read finds it.
   demandPromiseDynamicMember(ctx, "then", fctx);
@@ -979,6 +1019,7 @@ export function tryEmitClassReceiverCombinatorCall(
   };
   pushExtern(ctorArg, L.ctor);
   pushExtern(expr.arguments[1], L.arg);
-  emitClassReceiverDrive(ctx, fctx, method, rt, L, resolvePromiseSubclassName(ctx, className) !== undefined);
+  const promiseRooted = className !== undefined && resolvePromiseSubclassName(ctx, className) !== undefined;
+  emitClassReceiverDrive(ctx, fctx, method, rt, L, promiseRooted);
   return EXTERNREF;
 }

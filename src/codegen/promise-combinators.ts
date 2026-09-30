@@ -117,6 +117,7 @@ import {
   isStandalonePromiseActive,
   type PromiseExecutorClosures,
 } from "./async-scheduler.js";
+import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -810,7 +811,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
       stateTypeIdx: ids.stateTypeIdx,
       arrTypeIdx: ids.arrTypeIdx,
       vecTypeIdx: ids.vecTypeIdx,
-      fulfillFuncIdx: rt.fulfillFuncIdx,
+      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
     }),
     exported: false,
   });
@@ -1122,7 +1123,7 @@ function buildAllSettledBody(
         { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },
         { op: "struct.new", typeIdx: ids.vecTypeIdx },
         { op: "extern.convert_any" },
-        { op: "call", funcIdx: rt.fulfillFuncIdx },
+        { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
         { op: "drop" },
       ],
     },
@@ -1481,6 +1482,11 @@ function emitObservableCombinatorState(
  * literal/direct-VEC iteration finishes. The final decrement is intentionally
  * absent when an earlier Get/Call/Invoke rejected the aggregate.
  */
+/** (#5197 r3) `rt` whose fulfil settles an aggregate through Resolve when observable. */
+function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
+  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
+}
+
 function emitObservableAllIterationComplete(
   fctx: FunctionContext,
   ids: CombinatorRuntime,
@@ -1847,7 +1853,7 @@ function emitObservableStandalonePromiseCombinatorLiteral(
       [{ op: "local.get", index: inputLocals[i]! }],
     );
   }
-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
+  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
   return EXTERNREF;
 }
@@ -1933,7 +1939,7 @@ export function emitStandalonePromiseCombinator(
       fctx.body.push({ op: "local.get", index: arrLocal });
       fctx.body.push({ op: "struct.new", typeIdx: ids.vecTypeIdx });
       fctx.body.push({ op: "extern.convert_any" });
-      fctx.body.push({ op: "call", funcIdx: rt.fulfillFuncIdx });
+      fctx.body.push({ op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }); // (#5197 r3)
       fctx.body.push({ op: "drop" });
     } else if (method === "any") {
       fctx.body.push({ op: "local.get", index: resultLocal });
@@ -2105,7 +2111,7 @@ function emitObservableStandalonePromiseCombinatorRuntime(
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
+  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
   return EXTERNREF;
 }
@@ -2201,7 +2207,7 @@ export function emitStandalonePromiseCombinatorRuntime(
       subscribeFuncIdx: ids.subscribeFuncIdx,
       fulfillReactionFuncIdx: reaction.fulfillIdx,
       rejectReactionFuncIdx: reaction.rejectIdx,
-      fulfillFuncIdx: rt.fulfillFuncIdx,
+      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) all/allSettled empty aggregate
       rejectFuncIdx: rt.rejectFuncIdx,
       bagInit: combinatorBagInit(),
       emptyResult:

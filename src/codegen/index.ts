@@ -337,6 +337,7 @@ import { fillNativeGeneratorMethodDispatches } from "./generators-native-consume
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
+import { fillPromiseSpeciesOfClass } from "./promise-species-then.js"; // (#5197 r3)
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
 import { fillOwnShadowWrappers } from "./expressions/own-property-method-shadow.js";
 import { noteRetUnboxStats, retUnboxNumericFilterEnabled } from "./ret-unbox-abi.js"; // (#4406) return-ABI funnel census + the Phase-4 admission filter
@@ -6518,6 +6519,7 @@ export function generateModule(
     // dispatcher the thenable job invokes. Read-only over funcMap. No-op unless
     // the async scheduler's thenable substrate reserved it (standalone/wasi).
     fillPromiseThenableHelpers(ctx);
+    fillPromiseSpeciesOfClass(ctx); // (#5197 r3) Promise-rooted class objects, identity arms
 
     // (#3172) Fill the reserved `__setrec_field_{size,has,keys}` GetSetRecord
     // readers — one ref.test arm per closed struct carrying the field, bottom
@@ -11235,6 +11237,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // after every source has contributed its closed structs and closures, so
     // their finalized ref.test ladders see the complete graph.
     fillPromiseThenableHelpers(ctx);
+    fillPromiseSpeciesOfClass(ctx); // (#5197 r3)
     fillSetRecFieldGetters(ctx);
 
     // (#3493) compileMulti shares the same property-access lowering as the

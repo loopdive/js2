@@ -16095,3 +16095,42 @@ The key-list claim remains held until real main delivery. Publish one ready
 fork PR and use exact-head protected admission after normal final hooks.
 The prior prepared/pending-parent records above are chronological evidence,
 not current delivery state. Preserve original failures and every pending root.
+
+
+### Independent Object.create(null) source admission — 2026-09-30
+
+Claim `3518:object-create-null-source-admission-20260930` remains owned by
+`ttraenkler/codex-object-create-null-source-admission-20260930`; delivery branch
+`codex/3518-object-create-null-main-20260930` starts at exact upstream main
+721d12bf9f11512d7c00eb55b82f3863748b358b. It takes only the four tested frontend
+files from signed checkpoint1d19ffe9ee9a0e0e4bb07f2c7c3960fc1d5ef575, plus
+this plan, one conservative inventory row and its handoff. No prerequisite
+branch ancestry or native builtin/substrate implementation is imported. An
+independent dependency review found the canonical create-null declaration and
+logical provider already on main; all unchanged direct test imports are there.
+
+Plan: prove ambient Object, its library create member and resolved signature;
+retain exact AST membership/currentness with mutation/escape invalidation.
+Admit only direct nonoptional/nonspread one-literal-null calls under whole
+program standalone WasmGC policy. Route selected initializer and discarded
+function/module calls to the existing effectful js.object.create-null intrinsic.
+Pin genuine original/decoded source calls, ABI/provider, zero source closures,
+shadowing/alias/mutation/dynamic constructor/grammar/AST drift controls and
+unselected policy/plain object behavior. Preserve physical typed refusals.
+
+The original combined checkpoint passed65/65 focused tests and505/505 normal
+main-merge hook assertions; strict seven-file evidence was240/248, with all
+eight existing ordinary-object contract failures reproduced exactly at its
+signed base. Those are prior-root evidence; the independent main transplant
+requires fresh strict validation, normal hooks and protected delivery. Source
+bytes are exact, all1728main inventory rows/order/activation/edges retained;
+one frontend-ts/mixed-needs-split debt row is appended. No legacy retirement
+or complete physical public Object/Function/Number readiness is claimed.
+
+
+Fresh independent main-root validation passes TS7 and strict65/65 focused
+assertions, zero skipped/worker errors. All7354 input hashes remained stable.
+All seven preservation gates pass at721d12bf; strict graph closure/retirement
+remain uncertified. Normal signed commit/push checks and protected queue
+conformance are required before counting this slice delivered. Prior inherited
+contract failures remain preserved in the original signed-base evidence.

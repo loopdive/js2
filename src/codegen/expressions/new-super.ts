@@ -94,9 +94,11 @@ import {
 } from "../native-construct.js"; // (#3981 / #1058)
 import {
   markClassValueConstructSite,
+  markPromiseSubclassValueRead,
   moduleHasF64TypedConstructFormal,
   moduleHasRefTypedConstructFormal,
 } from "../standalone-class-construct.js"; // (#5383 S2g, #6615, #6619)
+import { resolvePromiseSubclassName } from "./promise-subclass.js"; // (#5197 r3)
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
 import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
@@ -7157,6 +7159,14 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         }
 
         fctx.body.push({ op: "call", funcIdx });
+        // (#5197 r3 Step 1d) a standalone Promise-rooted class's `<C>_new` answers the
+        // `$Promise` carrier as externref (D4), not the class struct: report what it returns.
+        const promiseRooted = ctx.standalone && resolvePromiseSubclassName(ctx, syntheticName) !== undefined;
+        const ctorResult = promiseRooted ? funcSignatureOf(ctx, funcIdx)?.results[0] : undefined;
+        if (ctorResult?.kind === "externref") {
+          markPromiseSubclassValueRead(ctx);
+          return ctorResult;
+        }
         const structTypeIdx = ctx.structMap.get(syntheticName)!;
         return { kind: "ref", typeIdx: structTypeIdx };
       }

@@ -601,7 +601,8 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
           body: [
             // A throw from Get/then-call before settle rejects the promise
             // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws
-            // are no-ops via the one-shot settle guard.
+            // are no-ops via the shared resolving-pair guard, including when
+            // resolve adopted a thenable and the promise is still pending.
             { op: "local.set", index: reasonLocal },
             ...(execClosures.guardTypeIdx === undefined
               ? ([

@@ -36,7 +36,11 @@ import {
   customCapabilityTypeError,
   ensureCustomCapabilityRuntime,
 } from "./promise-combinators.js";
-import { reserveConstructDriver, resolveCompiledClassReceiver } from "./promise-class-receiver-drive.js";
+import {
+  isOrdinaryFunctionCtorArg,
+  reserveConstructDriver,
+  resolveCompiledClassReceiver,
+} from "./promise-class-receiver-drive.js";
 import { GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES } from "./expressions/non-constructable.js";
 import { isBuiltinConstructorIdentityName } from "./builtin-static-globals.js";
 
@@ -72,10 +76,29 @@ export function tryEmitClassReceiverSettleCall(
   expr: ts.CallExpression,
   settle: "resolve" | "reject",
 ): ValType | undefined {
-  if (!isStandalonePromiseActive(ctx)) return undefined;
   const ctorArg = expr.arguments[0];
   if (ctorArg === undefined || expr.arguments.length > 2) return undefined;
-  if (resolveCompiledClassReceiver(ctx, ctorArg) === undefined || shadowsGlobalValueName(ctorArg)) return undefined;
+  return emitClassReceiverSettle(ctx, fctx, ctorArg, expr.arguments[1], settle);
+}
+
+/**
+ * (#5197 r3 Step 1f) The shared body: `C` is `ctorArg` (the `.call` receiver, or the
+ * `P` of a direct `P.resolve(x)` / `P.reject(r)` on a Promise subclass — a static
+ * inherited from `%Promise%`, so its `this` is `P`), `valueArg` the settled value.
+ */
+export function emitClassReceiverSettle(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ctorArg: ts.Expression,
+  valueArg: ts.Expression | undefined,
+  settle: "resolve" | "reject",
+): ValType | undefined {
+  if (!isStandalonePromiseActive(ctx)) return undefined;
+  // (#5197 r3 Step 5) …or an ordinary function `C` whose closure ABI D1 could not use (held as an
+  // externref value, e.g. once the module reads `Function.prototype`): Construct(C, «executor»)
+  // through the same driver, whose ordinary tail runs the function with a fresh `this`.
+  const admitted = resolveCompiledClassReceiver(ctx, ctorArg) !== undefined || isOrdinaryFunctionCtorArg(ctx, ctorArg);
+  if (!admitted || shadowsGlobalValueName(ctorArg)) return undefined;
 
   const snap = snapshotSpeculative(ctx, fctx);
   // Registration strictly precedes emission.
@@ -116,7 +139,7 @@ export function tryEmitClassReceiverSettleCall(
   // Argument evaluation (C, then x) completes before the builtin runs.
   for (const [arg, into] of [
     [ctorArg, ctorLocal],
-    [expr.arguments[1], valueLocal],
+    [valueArg, valueLocal],
   ] as const) {
     if (arg === undefined) {
       fctx.body.push(...absentValue);

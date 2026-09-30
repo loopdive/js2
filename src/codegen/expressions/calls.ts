@@ -102,6 +102,7 @@ import {
   tryBorrowedPrototypeNullishThisThrow,
 } from "../builtin-prototype-brand.js"; // (#4076, #5143)
 import { tryCompilePromiseCallWithoutNew } from "../promise-newtarget.js"; // (#5143)
+import { isDrainedCombinatorResultHandler } from "../promise-species-then.js"; // (#5197 r3)
 import { isReflectivePromiseMember } from "../promise-finally-invoke.js"; // (#6651 D7)
 import {
   appendDynamicCandidateArgcSetup,
@@ -5753,6 +5754,9 @@ export function compileStandalonePromiseThenCallback(
   const savedWidenTuple = ctx.widenTupleCallbackParams;
   const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);
   ctx.widenTupleCallbackParams = true;
+  // (#5197 r3 Step 7) a drained combinator aggregate is an externref vec, never the typed one.
+  const savedForceExternref = ctx.forceExternrefCallbackParams;
+  if (isDrainedCombinatorResultHandler(ctx, arg)) ctx.forceExternrefCallbackParams = true;
   try {
     const type =
       ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)
@@ -5785,6 +5789,7 @@ export function compileStandalonePromiseThenCallback(
     return { instrs, closureInfo };
   } finally {
     ctx.widenTupleCallbackParams = savedWidenTuple;
+    ctx.forceExternrefCallbackParams = savedForceExternref;
     restoreNativeIteratorResult();
     fctx.savedBodies.pop();
     fctx.body = savedBody;

@@ -87,7 +87,8 @@ import {
 } from "../promise-combinators.js";
 import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
 import { tryEmitClassReceiverCombinatorCall } from "../promise-class-receiver-drive.js"; // (#6651 D3)
-import { tryEmitClassReceiverSettleCall } from "../promise-class-receiver-settle.js"; // (#6651 D4)
+import { emitClassReceiverSettle, tryEmitClassReceiverSettleCall } from "../promise-class-receiver-settle.js"; // (#6651 D4)
+import { isOrdinaryFunctionCtorArg } from "../promise-class-receiver-drive.js"; // (#5197 r3)
 import { emitStandalonePromiseCombinatorDrive } from "../promise-combinator-drive.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
@@ -3164,6 +3165,18 @@ export function compileNamespaceStaticCall(
     }
     if (isResolveReject) {
       const methodName = propAccess.name.text;
+      // (#5197 r3 Step 1f) `P.resolve(x)` on a Promise subclass: the inherited static's
+      // `this` is `P`, so NewPromiseCapability(P) — not the intrinsic `%Promise%` path.
+      if (isPromiseSubclassReceiver && expr.arguments.length <= 1) {
+        const settled = emitClassReceiverSettle(
+          ctx,
+          fctx,
+          propAccess.expression,
+          expr.arguments[0],
+          methodName === "reject" ? "reject" : "resolve",
+        );
+        if (settled !== undefined) return settled;
+      }
       // (#1326 Phase 1B) Standalone-mode `Promise.resolve(v)` /
       // `Promise.reject(r)` — emit Wasm-native `$Promise` struct.new instead
       // of the JS-host `Promise_{resolve,reject}_import` (unsatisfiable in
@@ -3250,15 +3263,7 @@ export function compileNamespaceStaticCall(
   ) {
     const settleKind = propAccess.expression.name.text === "reject" ? "reject" : "resolve";
     const ctorArg = unwrapReflectConstructExpr(expr.arguments[0]!);
-    const ctorDecl = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
-    const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
-    const ctorExpr = ctorInit ? unwrapReflectConstructExpr(ctorInit) : ctorDecl;
-    const isOrdinaryCtorDecl =
-      (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||
-      (ctorDecl !== undefined &&
-        ts.isFunctionDeclaration(ctorDecl) &&
-        ctorDecl.asteriskToken === undefined &&
-        !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false));
+    const isOrdinaryCtorDecl = isOrdinaryFunctionCtorArg(ctx, expr.arguments[0]!); // (#5197 r3) shared with the drive
     if (isOrdinaryCtorDecl) {
       const snap = snapshotSpeculative(ctx, fctx);
       ensurePromiseSettleFunctions(ctx);
@@ -3362,6 +3367,12 @@ export function compileNamespaceStaticCall(
     // unsatisfiable `Promise_all`/`Promise_race` host import. Tried BEFORE the
     // narrow #4682 empty-array arm, which remains the fallback.
     if (isStandalonePromiseActive(ctx) && isCustomCombinatorMethod(methodName)) {
+      // (#5197 r3) A function `C` over a NON-literal iterable takes D3's step-wise drive first.
+      const iterableArg = expr.arguments[1];
+      if (iterableArg === undefined || !ts.isArrayLiteralExpression(iterableArg)) {
+        const driven = tryEmitClassReceiverCombinatorCall(ctx, fctx, expr, methodName);
+        if (driven !== undefined) return driven;
+      }
       const custom = tryEmitCustomCombinatorCall(ctx, fctx, expr, methodName);
       if (custom !== undefined) return custom;
     }

@@ -75,6 +75,26 @@ export function resolvePromiseSubclassName(ctx: CodegenContext, name: string): s
   return undefined;
 }
 
+/**
+ * (#5197 r3) The Promise-subclass class a receiver TYPE denotes: through its symbol name,
+ * its apparent type's, or — for an ANONYMOUS `class extends Promise` instance
+ * (`new class extends Promise {…}(fn)`, whose symbol is the display name `__class`) —
+ * the class expression's synthetic name.
+ */
+export function promiseSubclassNameOfType(
+  ctx: CodegenContext,
+  type: ts.Type,
+  apparent: ts.Type | undefined,
+): string | undefined {
+  const decl = type.getSymbol()?.valueDeclaration;
+  const anon = decl && ts.isClassExpression(decl) ? ctx.anonClassExprNames.get(decl) : undefined;
+  for (const name of [type.getSymbol()?.name, apparent?.getSymbol()?.name, anon]) {
+    const resolved = name === undefined ? undefined : resolvePromiseSubclassName(ctx, name);
+    if (resolved !== undefined) return resolved;
+  }
+  return undefined;
+}
+
 /** Whether a variable statement binds a Promise-subclass class expression. */
 export function variableStatementContainsPromiseSubclass(
   ctx: CodegenContext,

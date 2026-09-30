@@ -37,6 +37,7 @@ import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js"
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
 import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js";
+import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
@@ -669,6 +670,9 @@ function prepareSourceBuiltinResolvers(
   return {
     ...prepareNumberConversionResolver(input.checker, input.sourceFiles, roots),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
+    ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
+      ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
+      : {}),
   };
 }
 

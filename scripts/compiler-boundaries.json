@@ -1750,7 +1750,11 @@
     }
   ],
   "files": [
-    { "path": "src/backend/wasmgc/resources/native-string-own-keys.ts", "state": "clean", "layer": "backend-wasmgc" },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-own-keys.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
     {
       "path": "src/runtime/wasmgc/values/string-create-body.ts",
       "state": "clean",
@@ -1851,8 +1855,16 @@
       "state": "clean",
       "layer": "backend-wasmgc"
     },
-    { "path": "src/runtime/wasmgc/values/string-index-key-body.ts", "state": "clean", "layer": "native-runtime" },
-    { "path": "src/runtime/wasmgc/values/string-own-keys-body.ts", "state": "clean", "layer": "native-runtime" },
+    {
+      "path": "src/runtime/wasmgc/values/string-index-key-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-own-keys-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
     {
       "path": "src/wasm/model/instruction-walk.ts",
       "state": "clean",
@@ -14494,6 +14506,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promise-species-then.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/regexp-untyped-receiver.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14555,6 +14575,14 @@
       "state": "clean",
       "layer": "native-runtime",
       "note": "Pure virtual-first String definition lookup and compatible no-op bodies."
+    },
+    {
+      "path": "src/frontend/builtins/prepare-object-create.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Source-owned AST/checker preparation; isolate checker/library identity dependencies before certifying the complete frontend boundary."
     }
   ]
 }

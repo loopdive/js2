@@ -1,5 +1,6 @@
 import { buildPromisePeelValue } from "../runtime/wasmgc/promise/thenable-bodies.js";
 import { finalizePromiseThenableLookup } from "./promise-thenable-lookup.js";
+import { arrayThenObservable } from "./promise-species-then.js"; // (#5197 r3)
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #2151 — standalone any-receiver method dispatch over CLOSED object-literal
@@ -2100,6 +2101,8 @@ export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
             thenStringInstrs: stringConstantExternrefInstrs(ctx, "then"),
           }
         : null,
+    // (#5197 r3 Step 3) only when the module may install `Array.prototype.then`.
+    vecTypeIdxs: arrayThenObservable(ctx) ? [...new Set(ctx.vecTypeMap.values())].sort((a, b) => a - b) : [],
   };
   finalizePromiseThenableLookup(ctx, predFn, inventory);
 }

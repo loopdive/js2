@@ -46,6 +46,7 @@ import {
 } from "./source-closure-invocation.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
+import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -801,6 +802,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
+  /** Exact current ambient Object.create(null) source call; symbolic provider only. */
+  preparedObjectCreateCall?(call: ts.CallExpression): "null" | undefined;
   /** Source-owned ordinary descriptor read; actual allocation provenance is revalidated downstream. */
   preparedOrdinaryPropertyRead?(
     expression: ts.PropertyAccessExpression,
@@ -1740,6 +1743,10 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
     // as `class.set` or `object.set` based on the receiver's IrType.
     if (ts.isExpressionStatement(s)) {
       if (ts.isCallExpression(s.expression)) {
+        if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
+          void lowerCall(s.expression, cx, /* statementPosition */ true);
+          continue;
+        }
         // (#2856) Method-shaped statement calls go through lowerMethodCall
         // in STATEMENT position so void extern/console methods are legal
         // (`host.appendChild(box);`, `console.log("…");`). Expression
@@ -2015,6 +2022,10 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     return;
   }
   if (ts.isCallExpression(expr)) {
+    if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
+      void lowerCall(expr, cx, /* statementPosition */ true);
+      return;
+    }
     const hostDateGetter = lowerHostDateGetterCall(expr, cx);
     if (hostDateGetter !== undefined) return;
     if (ts.isPropertyAccessExpression(expr.expression) && !expr.questionDotToken) {
@@ -6857,6 +6868,17 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
 }
 
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
+  if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
+    if (!isDirectObjectCreateNullCall(expr))
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: Object.create(null) plan has unsupported call syntax (${cx.funcName})`,
+      );
+    const result = cx.builder.emitCall(irIntrinsicFuncRef("js.object.create-null"), [], irVal({ kind: "externref" }));
+    if (result === null) throw new Error("Object.create(null) contract returned no value");
+    return result;
+  }
   const promiseDelay = tryLowerPromiseDelayCall(expr, statementPosition, cx.promiseDelays, () =>
     makePromiseDelayLoweringHost(cx),
   );
