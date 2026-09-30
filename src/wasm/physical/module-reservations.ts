@@ -721,6 +721,41 @@ export class PhysicalModuleReservations {
     }
   }
 
+  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
+  physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    if (!Array.isArray(tokens)) this.#fail("physical indices require a dense own-data array");
+    const length = Object.getOwnPropertyDescriptor(tokens, "length");
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0)
+      this.#fail("physical indices require an own-data length");
+    const captured: PhysicalReservation[] = [];
+    for (let index = 0; index < length.value; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(tokens, index);
+      if (!descriptor || !("value" in descriptor)) this.#fail("physical indices require dense own-data entries");
+      captured.push(descriptor.value);
+    }
+    // A Proxy descriptor trap can run during capture. Audit only after capture,
+    // then use private frozen tokens/positions without reading public arrays.
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    this.#verifyLayout();
+    const offsets = { function: 0, global: 0, tag: 0 };
+    for (const token of this.#tokens) {
+      if (token.kind === "function-import") offsets.function++;
+      else if (token.kind === "global-import") offsets.global++;
+      else if (token.kind === "tag-import") offsets.tag++;
+    }
+    const indices: number[] = [];
+    for (const token of captured) {
+      this.#owned(token);
+      const offset =
+        token.kind === "function" || token.kind === "global" || token.kind === "tag" ? offsets[token.kind] : 0;
+      // The allocator admits no table/memory imports. Their positions, like
+      // imported resources and flat type coordinates, are already final.
+      indices.push(this.#positions.get(token)! + offset);
+    }
+    return Object.freeze(indices);
+  }
+
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);

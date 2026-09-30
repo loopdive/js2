@@ -16134,3 +16134,128 @@ All seven preservation gates pass at721d12bf; strict graph closure/retirement
 remain uncertified. Normal signed commit/push checks and protected queue
 conformance are required before counting this slice delivered. Prior inherited
 contract failures remain preserved in the original signed-base evidence.
+
+
+### Measured native authentication timeout fix — 2026-09-30
+
+Claim `3518:native-authentication-performance-20260930` is held by
+`ttraenkler/codex-native-authentication-performance-20260930`; isolated branch
+`codex/3518-native-authentication-performance-20260930` starts at exact main
+721d12bf9f11512d7c00eb55b82f3863748b358b. Fresh open-PR census14PRs/487files
+found zero overlap on the four intended production paths. Current6358/6359
+heads have concrete quality timeout failures: builtin28/36 with eight35s/60s
+timeouts; invocation42/45 with three35s timeouts. No armed branch is edited.
+
+Measured real decoded realm replay remains79.800s,94/94,zero imports. Disjoint
+ledger time36.514s/outside43.286s; CPU samples identify collection-slot probes
+and ledger snapshots as major costs, not GC. This is not a fixed-performance
+claim or a clean realm run. Earlier49/50 plus reporter error remains preserved.
+
+Implementation plan for an independent prerequisite fix:
+
+1. Preserve a main-root historical ownership-seam baseline before edits. Add
+   a module-private weak cache only for immutable collection INTERNAL-SLOT
+   brand presence in program/data.ts. Capture genuine intrinsic has probes,
+   Reflect.apply and cache dispatch. A successful probe authenticates slot
+   presence irrespective of its returned membership value. Never cache whole
+   comparison/currentness/prototype/descriptors/content results. Rewalk every
+   actual data field, collection entry and module guard each time.
+2. Add callback-free dense own-data physicalIndices(tokens) to the existing
+   reservation ledger. Copy input before one fresh full layout audit, then
+   authenticate every private-owned token and resolve indices through the
+   existing kind logic. Empty batches still audit. Preserve single-token
+   semantics, phase/failed-state refusal, duplicate order and imported/flat
+   coordinates. No saved audit epoch or new mutable public capability.
+3. Batch only existing native String literal/flatten token-index lookups,
+   retaining completion/type/currentness checks and all full layout evidence.
+4. Add focused mutation, slot-brand/prototype erasure/spoof/cross-realm/proxy,
+   forged token, callback-free input, empty-batch audit and real zero-import
+   Wasm controls. Preserve every prior test timeout and assertion. Retain the
+   original historical data.ts receipt and prove exact reviewed evolution
+   by inverse composition; never blindly refresh historical hashes.
+5. Measure the same decoded real replay before/after with honest instrument
+   limitations, strict focused/preservation suites and unchanged35s/60s
+   builtin/invocation controls on exact prerequisite integrations. An
+   independent main test pass alone cannot certify those CI failures fixed.
+
+Writer owns only data.ts, module-reservations.ts, native-string-literals.ts,
+native-string-flatten.ts, new native-authentication-performance test and the
+explicit ownership-runtime-seam evolution controls. Root owns this issue,
+claims, receipts/inventory/handoff, Git and publication. The four production
+paths are byte-identical to main, and no new source leaf requires an inventory
+row. Preserve realm12files, Number56files and source frontend checkpoint.
+One heavy process at a time; all input hashes recorded before/after. No ignored
+worker errors, global timeout changes, fixture/gate/hook/protection weakening.
+Full IR parity remains required before retirement; only main delivery counts.
+
+
+Strict unchanged-main ownership-seam baseline is14/18, four assertion failures,
+zero skips/worker errors and7335 unchanged input pins. data.ts receipt passes.
+The four failures come from exactly three committed source evolutions:
+input.ts runtimeSupport admission/import/authentication inefe352fee8afc3feb6a28c34d00fc658dc1fb205;
+program.ts stringConcatEmptyIdentity ined15de69a9a301793429adee7b0e610a934b101e
+and numberFormat field/comment in56d9922bc85a0bf1ffb105746b5926a3f0dca9a6.
+Read-only architect and independent root inverse application both reconstruct
+exact extraction-era files at a918265e40e35e0adb9b22d652a1a17e7b471345.
+
+Scoped normal-hook blocker repair is test-only: retain every original receipt
+from3a119a88, authenticate complete current sources and every exact one-time
+reverse/forward hunk/intermediate view, then use the historical view only at
+receipt parsing. Keep raw current import perimeter and actual production
+registry/admission tests. Reject mutated/missing/duplicated/reordered hunks,
+unrelated body changes and already-historical inputs. data.ts cache evolution
+gets its own independent authenticated inverse. Never normalize an unknown
+future source or substitute historical production behavior. Original14/18
+records and exact snapshots remain; this adds reviewable composition evidence,
+not a blind hash refresh, timeout increase or receipt weakening.
+
+
+Performance implementation validation: TS7 passes; strict10-file336/336, final
+focused72/72 (new50/ownership22) and semantic-provider boundary349/349 pass,
+zero skips/worker errors. All7336 input hashes remain unchanged. Seven gates
+pass; full architecture/retirement remain uncertified. Original18 ownership
+assertions pass through reviewed inverse composition, without changing their
+historical receipts. Initial70/71 test-anchor failure and exact pre-fix bytes
+remain preserved. The separate program-data boundary is1/105: all104 setup
+failures reproduce with identical full names/status/errors on exact main721d12bf,
+before graph controls; those controls remain unmeasured, not silently green.
+
+Exact freshly read PR6358 headc90ef2831511026b3c2566f05a371495feda27b1 and
+PR6359 head8f28644290e613f280cd5a73bc4a7bbd506225ea were independently archived
+and overlaid with only four performance production files. Strict original
+suites pass36/36 and45/45 under unchanged35s/60s limits, no skipped/error rows.
+Longest observed controls12.760s and2.163s. Armed branches remain untouched;
+this is local integration proof, not a new CI or main-delivery claim for them.
+
+The same encoded real program/harness on preserved realm12file snapshot plus
+only the four fixes replays in16.718s versus79.800s instrumented baseline. Both
+return94/94, zero imports,78functions,23931-byte output and byte-identical codec
+re-encode. Same output size is measured; emitted binary hash equality and
+uninstrumented matched timings were not measured. All candidate input hashes
+remain stable. Receipts .tmp/authentication-performance/integration/.
+
+Fresh main is78b9cef9026a8001b7bd2c182aa343147714aab7: independent source
+PR6361 is delivered, head878516b36b8f01446dbf51e21703204a2d985912 ancestor, all
+seven blobs exact and entire tested tree identical. Actual merge-group102
+conformance shards (82standalone/20host), final regression gate, CI, CLA and
+differential workflows all passed. Only its source slice claim completes;
+this epic and native realm/Number/full IR parity remain open. Performance
+implementation still requires normal signed commit, fresh main integration,
+fork ready PR and exact protected main delivery.
+
+
+Fresh-main integration record — 2026-09-30: signed implementation commit
+7fb3a544573cd12495c2cfb65ea485259c425f72 passed normal hooks, including72/72,
+and retained7336 pins. Main was freshly read and fetched as
+f32ffc4d919d9653743c53a313f44da9c1957082, including delivered frontend PR6361
+and its subsequent conformance baseline refresh. The sole issue-plan append
+conflict preserves both complete append sequences against exact721d12bf base.
+All six performance code/test hashes remain exact; every incoming non-issue
+file matches freshly fetched main. Main integration validation and publication
+are recorded in the performance handoff; full IR parity remains open.
+
+Performance integration7e2fa0d596e1fdccaa241b0ea3ef0144727e125e passes TS7,
+normal merge hooks137/137 and independent strict137/137, no skipped/worker
+errors. The six owned hashes and every incoming non-issue file remain exact;
+only the eight planned paths differ from mainf32ffc4d. Publish this independent
+prerequisite through the fork/protected queue before downstream refreshes.

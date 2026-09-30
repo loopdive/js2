@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11212,
-    "fail": 463,
-    "ce": 29,
+    "pass": 11229,
+    "fail": 448,
+    "ce": 27,
     "skip": 0,
     "total": 11704,
     "pct": 96,
@@ -93,12 +93,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 774,
-        "fail": 21,
+        "pass": 776,
+        "fail": 19,
         "ce": 0,
         "skip": 0,
         "total": 795,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "Symbol",
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 364,
-        "fail": 37,
-        "ce": 9,
+        "pass": 368,
+        "fail": 35,
+        "ce": 7,
         "skip": 0,
         "total": 410,
-        "pct": 89
+        "pct": 90
       },
       {
         "name": "Reflect",
@@ -156,12 +156,12 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 158,
-        "fail": 26,
+        "pass": 160,
+        "fail": 24,
         "ce": 1,
         "skip": 0,
         "total": 185,
-        "pct": 85
+        "pct": 86
       },
       {
         "name": "destructuring-assignment",
@@ -1507,9 +1507,9 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1137,
-    "fail": 724,
-    "ce": 156,
+    "pass": 1141,
+    "fail": 722,
+    "ce": 154,
     "skip": 18,
     "total": 2035,
     "pct": 56,
@@ -1561,12 +1561,12 @@
       },
       {
         "name": "Promise.allSettled",
-        "pass": 28,
-        "fail": 47,
-        "ce": 27,
+        "pass": 32,
+        "fail": 45,
+        "ce": 25,
         "skip": 0,
         "total": 102,
-        "pct": 27
+        "pct": 31
       },
       {
         "name": "ArrayBuffer",
@@ -1651,12 +1651,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 16,
+        "pass": 17,
         "fail": 34,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 51,
-        "pct": 31
+        "pct": 33
       },
       {
         "name": "Reflect",
@@ -1923,9 +1923,9 @@
   },
   {
     "edition": "ES2021",
-    "pass": 314,
+    "pass": 317,
     "fail": 105,
-    "ce": 53,
+    "ce": 50,
     "skip": 0,
     "total": 472,
     "pct": 67,
@@ -1941,12 +1941,12 @@
       },
       {
         "name": "Promise.any",
-        "pass": 30,
+        "pass": 33,
         "fail": 41,
-        "ce": 21,
+        "ce": 18,
         "skip": 0,
         "total": 92,
-        "pct": 33
+        "pct": 36
       },
       {
         "name": "logical-assignment-operators",
@@ -2022,12 +2022,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 1,
+        "pass": 3,
         "fail": 26,
-        "ce": 3,
+        "ce": 1,
         "skip": 0,
         "total": 30,
-        "pct": 3
+        "pct": 10
       },
       {
         "name": "computed-property-names",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4596,
+    "pass": 4595,
     "fail": 192,
-    "ce": 133,
+    "ce": 134,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
+        "pass": 4496,
         "fail": 107,
-        "ce": 7,
+        "ce": 8,
         "skip": 0,
         "total": 4611,
         "pct": 98
