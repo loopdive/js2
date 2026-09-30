@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11185,
-    "fail": 490,
+    "pass": 11186,
+    "fail": 489,
     "ce": 29,
     "skip": 0,
     "total": 11704,
@@ -102,17 +102,17 @@
       },
       {
         "name": "Symbol",
-        "pass": 557,
-        "fail": 51,
+        "pass": 558,
+        "fail": 50,
         "ce": 1,
         "skip": 0,
         "total": 609,
-        "pct": 91
+        "pct": 92
       },
       {
         "name": "arrow-function",
-        "pass": 434,
-        "fail": 6,
+        "pass": 435,
+        "fail": 5,
         "ce": 0,
         "skip": 0,
         "total": 440,
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 245,
-        "fail": 77,
+        "pass": 246,
+        "fail": 76,
         "ce": 8,
         "skip": 0,
         "total": 330,
-        "pct": 74
+        "pct": 75
       },
       {
         "name": "Symbol.species",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4596,
+    "pass": 4594,
     "fail": 192,
-    "ce": 133,
+    "ce": 135,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
+        "pass": 4495,
         "fail": 107,
-        "ce": 7,
+        "ce": 9,
         "skip": 0,
         "total": 4611,
-        "pct": 98
+        "pct": 97
       },
       {
         "name": "Symbol",
