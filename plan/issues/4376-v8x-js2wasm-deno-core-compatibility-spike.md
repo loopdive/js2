@@ -2816,3 +2816,20 @@ the default shared mode preserves v8x imports, exception identity and deferred
 initialization. Smoke checks pass 4/4 with Wasmtime available, including a
 deliberately incorrect expected result that must fail at runtime. Missing CLI
 availability is reported as skipped instead of silently credited as passing.
+
+### Persistent Script boundary reproduced
+
+Unchanged WebIDL replay against the second clean native artifact remains
+13/17; four failures stop at unknown classic Script refusal. Direct compiler
+probes at `83442252a6d` distinguish property transport from binding persistence:
+explicit globalThis writes are visible in the owning realm, while Script var
+initialization/assignment is not. Lexical declarations are also unavailable
+to later independent Scripts. The regression file has one positive control
+and two explicitly expected failures, which are not conformance credit.
+
+The implementation contract and reader/writer inventory are recorded in
+`plan/agent-context/4376-persistent-script-environment-2026-09-30.md`.
+Canonical Context-owned bindings, declaration validation before effects,
+genuine completion and source-bound AOT packaging are required together.
+Mirroring private globals only at script exit, function wrappers and indirect
+eval do not preserve the required persistent Script semantics.
