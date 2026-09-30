@@ -44,6 +44,134 @@ describe("Deno native-array iterator live reads", () => {
 
   it.each([
     [
+      "first-class entries advances past a throwing indexed getter",
+      `
+      const array: any = {length: 2, 1: replacement};
+      Object.defineProperty(array,"0",{get(){throw new Error("indexed Get");}});
+      const method: any = Array.prototype.entries;
+      const iterator: any = method.call(array);
+      let caught=false;
+      try {iterator.next();} catch {caught=true;}
+      const pair: any = iterator.next().value;
+      return caught && pair[0]===1 ? Number(pair[1]) : -1;
+    `,
+    ],
+    [
+      "first-class entries creates fresh pairs",
+      `
+      const array: any = [1, replacement];
+      const method: any = Array.prototype.entries;
+      const iterator: any = method.call(array);
+      const first: any = iterator.next().value;
+      const second: any = iterator.next().value;
+      return first!==second && first[0]===0 && second[0]===1 ? Number(second[1]) : -1;
+    `,
+    ],
+    [
+      "first-class entries stops after shrinking",
+      `
+      const array: any = [1, "2"];
+      const method: any = Array.prototype.entries;
+      const iterator: any = method.call(array);
+      iterator.next();
+      array.length=1;
+      return iterator.next().done ? replacement : -1;
+    `,
+    ],
+    ...["keys", "entries"].map((member) => [
+      `first-class ${member} defers length and latches exhaustion`,
+      `
+      const array: any = {};
+      let count=0;
+      Object.defineProperty(array,"length",{get(){count++; if(count>1) throw new Error("late length"); return 0;}});
+      const method: any = Array.prototype.${member};
+      const iterator: any = method.call(array);
+      if(count!==0) return -1;
+      if(!iterator.next().done) return -2;
+      return iterator.next().done && count===1 ? replacement : -3;
+    `,
+    ]),
+    ...["keys", "entries"].map((member) => [
+      `first-class ${member} keeps the Array iterator prototype`,
+      `
+      const array: any = [replacement];
+      const method: any = Array.prototype.${member};
+      const iterator: any = method.call(array);
+      const values: any = array[Symbol.iterator]();
+      return Object.getPrototypeOf(iterator)===Object.getPrototypeOf(values) ? replacement : -1;
+    `,
+    ]),
+    [
+      "first-class keys observes growth",
+      `
+      const array: any = [1];
+      const method: any = Array.prototype.keys;
+      const iterator: any = method.call(array);
+      if (iterator.next().value !== 0) return -1;
+      array.push(replacement);
+      return iterator.next().value === 1 ? replacement : -2;
+    `,
+    ],
+    [
+      "first-class entries observes indexed mutation",
+      `
+      const array: any = [1, "2"];
+      const method: any = Array.prototype.entries;
+      const iterator: any = method.call(array);
+      array[1] = replacement;
+      iterator.next();
+      const pair: any = iterator.next().value;
+      return pair[0] === 1 ? Number(pair[1]) : -1;
+    `,
+    ],
+    [
+      "first-class keys does not read indexed getters",
+      `
+      const array: any = {length: 1};
+      Object.defineProperty(array,"0",{get(){throw new Error("indexed Get");}});
+      const method: any = Array.prototype.keys;
+      const iterator: any = method.call(array);
+      return iterator.next().value === 0 ? replacement : -1;
+    `,
+    ],
+    [
+      "first-class entries delays indexed getters until next",
+      `
+      const array: any = {length: 1};
+      let count=0;
+      Object.defineProperty(array,"0",{get(){count++; return replacement;}});
+      const method: any = Array.prototype.entries;
+      const iterator: any = method.call(array);
+      if(count !== 0) return -1;
+      const pair: any = iterator.next().value;
+      return count===1 && pair[0]===0 ? Number(pair[1]) : -2;
+    `,
+    ],
+    [
+      "first-class entries drains current values",
+      `
+      const array: any = [1, "2"];
+      const method: any = Array.prototype.entries;
+      const iterator: any = method.call(array);
+      iterator.next();
+      array[1]=replacement;
+      const rest: any = Array.from(iterator);
+      return rest.length===1 && rest[0][0]===1 ? Number(rest[0][1]) : -1;
+    `,
+    ],
+    [
+      "first-class keys stays exhausted after growth",
+      `
+      const array: any = [1];
+      const method: any = Array.prototype.keys;
+      const iterator: any = method.call(array);
+      iterator.next();
+      if(!iterator.next().done) return -1;
+      array.push(replacement);
+      return iterator.next().done ? replacement : -2;
+    `,
+    ],
+    [
       "first-class Array.prototype iterator",
       `
       const array: any = [1, "2"];

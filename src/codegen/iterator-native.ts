@@ -98,11 +98,15 @@ import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 import { ABRUPT_FIELD, MODE_FIELD } from "./frame-core.js";
 import { walkChildren } from "./walk-instructions.js";
 import { fillForOfIteratorStep } from "./forof-iterator-step.js"; // (#6651 G4)
+import { buildLiveArrayIteratorValue } from "./live-array-iterator-value.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js"; // (#6651 A9)
 import { RUNTIME_EVAL_IMPORT_MODULE } from "./expressions/runtime-eval-provider.js"; // (#6651 A9)
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. (#6651 IT3 exports it: `ta-dyn-proto-methods.ts` `struct.new`s a record, and a bare `3` there would desync on a renumber.) */
 export const ITER_KIND_VEC = 3;
+/** Live array-like records, using the same cursor and receiver slots as VEC. */
+export const ITER_KIND_ARRAY_KEYS = 11;
+export const ITER_KIND_ARRAY_ENTRIES = 12;
 
 /**
  * (#2038) IterRec kind tag for a USER iterator: a general `{next()}`-protocol
@@ -1916,7 +1920,7 @@ function prependIterRecIdentityArm(ctx: CodegenContext): void {
  *   - Armed ONLY when {@link CodegenContext.typedArrayIterRecProtoPending} is
  *     set, i.e. the module actually compiled a typed-array `@@iterator` divert.
  *     Every other module keeps its pre-change `__getPrototypeOf` byte-for-byte.
- *   - `kind == ITER_KIND_VEC` only, so a Map/Set record (`ITER_KIND_MAPSET`)
+ *   - VEC and the live keys/entries kinds only, so a Map/Set record (`ITER_KIND_MAPSET`)
  *     keeps answering through its own singleton and stays distinct.
  *   - The singleton global is consulted at RUNTIME; a null global (never
  *     materialized) falls through to the pre-change answer.
@@ -1951,6 +1955,20 @@ export function prependIterRecPrototypeArm(ctx: CodegenContext): void {
         { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
         { op: "i32.const", value: ITER_KIND_VEC },
         { op: "i32.eq" },
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: iterRecTypeIdx },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: ITER_KIND_ARRAY_KEYS },
+        { op: "i32.eq" },
+        { op: "i32.or" },
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: iterRecTypeIdx },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: ITER_KIND_ARRAY_ENTRIES },
+        { op: "i32.eq" },
+        { op: "i32.or" },
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -3089,7 +3107,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     const stepKinds: number[] = [];
     // Live receiver-backed VEC records must drain through next, not the
     // normalization snapshot. Canonical VEC records also use that same step.
-    if (ctx.funcMap.has("__extern_get_idx")) stepKinds.push(ITER_KIND_VEC);
+    if (ctx.funcMap.has("__extern_get_idx"))
+      stepKinds.push(ITER_KIND_VEC, ITER_KIND_ARRAY_KEYS, ITER_KIND_ARRAY_ENTRIES);
     if (deps) stepKinds.push(ITER_KIND_USER);
     if (objDeps) stepKinds.push(ITER_KIND_OBJ);
     if (hostDeps) stepKinds.push(ITER_KIND_HOSTGEN); // (#3075) drain via __iterator_next
@@ -5152,12 +5171,7 @@ function buildIteratorNextBody(
                       { op: "i32.const", value: 1 },
                       { op: "i32.add" },
                       { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
-                      { op: "local.get", index: 1 },
-                      { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
-                      { op: "local.get", index: 3 },
-                      { op: "f64.convert_i32_s" },
-                      { op: "call", funcIdx: liveGetIdx },
-                      { op: "local.set", index: 5 },
+                      ...buildLiveArrayIteratorValue(strictCtx!, iterRecTypeIdx, liveGetIdx),
                     ],
                     else: [
                       { op: "local.get", index: 1 },

@@ -25,7 +25,8 @@ loc-budget-allow:
   # 2026-09-30: live receiver-backed VEC stepping and rest draining reuse the
   # existing native indexed readers instead of normalized element snapshots.
   - src/codegen/iterator-native.ts
-  # First-class values factories create the same live receiver-backed record.
+  # 2026-10-01: reflective keys/entries use live receiver-backed records too;
+  # next/rest/prototype dispatch recognizes their distinct iteration kinds.
   - src/codegen/array-proto-iterator-value.ts
   # 2026-09-30: runtime import-alias declaration checks in both typeof forms;
   # type-only imports remain unresolvable at runtime.
@@ -36,6 +37,10 @@ loc-budget-allow:
   # 2026-09-30: five instructions mark the native Promise in the existing
   # non-suspending IR await arm. No new driver branch or fallback is added.
   - src/ir/lower-generic.ts
+  # 2026-10-01: against the newly merged main, the existing native Promise
+  # rejection resolver adds one import and a three-line method. Restate this
+  # branch's allowance here rather than relying on an unchanged issue's grant.
+  - src/ir/integration.ts
   # Four public API documentation lines explain the opt-in shared realm tag.
   # No implementation logic is added to this barrel.
   - src/index.ts
@@ -114,6 +119,14 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  - src/ir/integration.ts::makeResolver
+  # 2026-10-01: restate the pre-existing receiver-backed live next/latch arm
+  # against merged main. keys/entries value construction is a separate helper;
+  # rest finalization only admits the two additional native record kinds.
+  - src/codegen/iterator-native.ts::buildIteratorNextBody
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
+  # Existing one-line linked realm property-reader reservation differs from main.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   # 2026-09-30: same five-instruction handler-state write in the existing
   # IR await arm, charged to both nested function counters by the gate.
   - src/ir/lower-generic.ts::lowerIrFunctionBody
@@ -2862,3 +2875,26 @@ This does not enable the route in native Deno packaging or establish general
 Script execution. Private typed slots and flattened module graphs are refused;
 lexical cells, type-proof invalidation, declaration validation and genuine
 completion remain required. No interpreter was added.
+
+### 2026-10-01 Reflective keys and entries remain live
+
+At merge commit `ec1375e79d8`, 4/13 native-array controls fail: reflective
+keys misses growth, entries returns stale elements, indexed getters run at
+factory creation, and draining returns stale entries. Nine controls pass,
+including the existing live values route. These are compiler standalone
+executions with zero host imports, not JS-host emulation.
+
+All three first-class factories now retain their receiver without reading
+length or copying elements at creation. Distinct keys/entries record kinds
+reuse the live next cursor: keys boxes the index without indexed Get, entries
+reads the current value and constructs a fresh pair. Cursor advance precedes
+indexed Get, so an exception consumes that index. Exhaustion stays latched;
+rest draining and prototype dispatch recognize both new kinds. No interpreter
+or Deno source changes are involved.
+
+The candidate passes 20/20 direct controls, including deferred length reads,
+throwing getters, shrink/growth, fresh pair identity, draining and prototype
+identity. The eight-file regression run reports 73/73: 71 ordinary successes
+and two retained expected failures for general Script bindings. This does not
+credit a new native Deno artifact or full deno_core conformance. Persistent
+lexical cells, declaration preflight and completion values remain required.

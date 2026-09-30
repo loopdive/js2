@@ -41,6 +41,13 @@ Deno artifact builder, and does not close the normal inferred-number var or
 lexical expected failures. Typed-boundary planning, persistent declarative
 bindings, global declaration validation and completion values remain required.
 
+The 2026-10-01 follow-up closes the separate reflective keys/entries snapshot
+gap: all three Array.prototype factories now retain their live receiver.
+Iterator next, rest draining and prototype dispatch recognize the two new
+iteration kinds. Direct controls pass 20/20; eight regression files report
+71 ordinary successes and two expected Script failures. No new native Deno
+artifact was built for that change. It does not alter the lexical plan below.
+
 ## Representation and ownership
 
 Each Context needs one GlobalEnvironmentRecord with an object record and a
