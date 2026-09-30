@@ -3,9 +3,10 @@
   "slice": "extensible-self-root-20260928",
   "assignee": "ttraenkler/codex-extensible-self-root-20260928",
   "requested_by": "ttraenkler/codex-extensible-self-root-20260928",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3518-number-bigint-to-f64-20260928",
   "claimed_at": "2026-09-28T14:35:14Z",
-  "updated_at": "2026-09-28T14:35:14Z",
-  "write_id": "85856-5156dm7h"
+  "updated_at": "2026-09-30T02:12:52Z",
+  "write_id": "58779-x2pzisc5",
+  "released_at": "2026-09-30T02:12:52Z"
 }
