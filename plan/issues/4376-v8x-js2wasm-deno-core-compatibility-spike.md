@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-09-30
+updated: 2026-10-01
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -17,6 +17,11 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-01: experimental shared Script var transport adds one config field
+  # and preserves Context bindings rather than resetting private-slot seeds.
+  - src/codegen/context/create-context.ts
+  - src/codegen/context/types.ts
+  - src/codegen/declarations/module-var-undefined-seed.ts
   # 2026-09-30: live receiver-backed VEC stepping and rest draining reuse the
   # existing native indexed readers instead of normalized element snapshots.
   - src/codegen/iterator-native.ts
@@ -2833,3 +2838,27 @@ Canonical Context-owned bindings, declaration validation before effects,
 genuine completion and source-bound AOT packaging are required together.
 Mirroring private globals only at script exit, function wrappers and indirect
 eval do not preserve the required persistent Script semantics.
+
+### 2026-10-01 Context-owned dynamic var prototype
+
+Experimental `standaloneScriptVarBindings` now routes exact dynamic Script
+var storage through native getter/setter helpers using the owning realm's
+actual object record. All emitted global accesses are rewritten before DCE,
+including callback and IR bodies. Both private undefined-seeding paths decline
+so initializer-free redeclaration preserves the existing value. Private dead
+top-level elision also declines because later Scripts can observe the binding.
+GlobalDef identity is retained until late string-global shifts have settled.
+
+Focused verification across four files is 26 ordinary checks passing and two
+expected failures retained. Positive checks include escaping callback reads,
+cross-Script number/string changes, abrupt completion and separate contexts.
+Additional controls preserve repeated global accessor reads and original
+foreign getter exception identity. An untouched JS var without annotations
+also works when its carrier is dynamic. Multi-source/project graph rejection
+is enforced at the common pipeline boundary, not only the sidecar adapter.
+TypeScript 7 and ratchet command exits pass; dead-export output still refuses
+to certify unrelated complete runtime retirement due to open dynamic imports.
+This does not enable the route in native Deno packaging or establish general
+Script execution. Private typed slots and flattened module graphs are refused;
+lexical cells, type-proof invalidation, declaration validation and genuine
+completion remain required. No interpreter was added.

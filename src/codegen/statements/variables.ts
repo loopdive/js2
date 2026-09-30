@@ -1719,7 +1719,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
-        if (globalDef?.type.kind === "externref") {
+        if (
+          globalDef?.type.kind === "externref" &&
+          !(
+            ctx.standaloneScriptVarBindings &&
+            !ctx.sourceIsModule &&
+            (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+          )
+        ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
         }

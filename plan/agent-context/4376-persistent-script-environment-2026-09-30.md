@@ -18,6 +18,29 @@ do not persist into later independently compiled Scripts.
 property-write control and two explicitly expected failures, not three
 conformance passes. Remove `.fails` as each real requirement is implemented.
 
+## 2026-10-01 implementation checkpoint
+
+`standaloneScriptVarBindings` adds experimental single-source Script var
+transport for dynamic externref bindings. Native getter/setter helpers use
+the shared Context object record. The finalizer rewrites all emitted loads
+and stores of those exact GlobalDef objects, including callback/IR bodies.
+It resolves object identity after late string-global shifts and before DCE.
+This uses the existing ownership-aware property reader and canonical realm,
+not a Rust interpreter or end-of-script value copy.
+
+Both private undefined-seeding paths must decline for these bindings, so a
+later initializer-free var declaration preserves the prior value. Private
+dead-top-level-binding elision is disabled for this explicit mode: another
+Script can observe declarations that this source never reads. Default-mode
+binary output remains unchanged in the control.
+
+Private typed slots and flattened module graphs are explicitly refused.
+Their existing type proofs and once-only graph initialization do not establish
+Script semantics. This is not a full Script backend, is not enabled by the
+Deno artifact builder, and does not close the normal inferred-number var or
+lexical expected failures. Typed-boundary planning, persistent declarative
+bindings, global declaration validation and completion values remain required.
+
 ## Representation and ownership
 
 Each Context needs one GlobalEnvironmentRecord with an object record and a

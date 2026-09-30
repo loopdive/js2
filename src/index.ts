@@ -563,6 +563,11 @@ export interface CompileOptions {
     /** Owner's Get(object, key, receiver) -> externref, preserving reference identity. */
     get?: string;
   };
+  /** Experimental Context-owned Script var storage. Requires standalone,
+   * scriptGoal and an ownership-aware shared realm provider/exception tag.
+   * Typed private slots are refused
+   * until cross-Script mutation is incorporated into their planning. */
+  standaloneScriptVarBindings?: boolean;
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;
