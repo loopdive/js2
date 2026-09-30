@@ -2797,3 +2797,22 @@ Precompilation passes 1/1 in 303.68 seconds; adapter replay fails at the same
 live-mutation assertion. A second clean build is required with the reflective
 factory repair before claiming native success. No graph package was produced
 by the first replay, since it failed before module evaluation.
+
+### Verified native replay and standalone realm contract
+
+The second clean artifact at compiler `b37d12382a9a2632130c8b9b2088a1f14470a0fa`
+precompiles successfully (1/1, 279.04 seconds). Native core is 52,164,280 bytes,
+SHA-256 `44fd2f70daf0d403c015555df771f394ba2f449cf1a4692cb2ede625df9fcb5d`,
+under `/private/tmp/deno-reflective-iterator-build.zaaiw7`. The development
+packaging route passes 1/1 in 28.30 seconds. With compiler configuration absent,
+the adapter binary passes 31/31 runnable tests, six ignored, in 1.98 seconds.
+This includes the retained live-mutation assertion and core-import application.
+It does not prove full Deno conformance or general Script execution.
+
+The compiler PR smoke failure was a capability mismatch: the sidecar always
+imported the shared context exception tag, but the CLI supplied no provider.
+Explicit `--realm isolated` now owns its realm/tag and executes initialization;
+the default shared mode preserves v8x imports, exception identity and deferred
+initialization. Smoke checks pass 4/4 with Wasmtime available, including a
+deliberately incorrect expected result that must fail at runtime. Missing CLI
+availability is reported as skipped instead of silently credited as passing.

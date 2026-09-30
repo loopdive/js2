@@ -16,6 +16,7 @@ interface Options {
   manifest: string;
   output: string;
   optimize?: 1 | 2 | 3 | 4;
+  realm: "shared" | "isolated";
 }
 
 function parseArgs(argv: string[]): Options {
@@ -35,11 +36,15 @@ function parseArgs(argv: string[]): Options {
     throw new Error("usage: compile-graph.ts --manifest FILE --entry URL --output FILE [--optimize 1|2|3|4]");
   }
   const rawOptimize = values.get("optimize");
+  const realm = values.get("realm") ?? "shared";
+  if (realm !== "shared" && realm !== "isolated") {
+    throw new Error("--realm must be shared or isolated");
+  }
   const optimize = rawOptimize === undefined ? undefined : Number(rawOptimize);
   if (optimize !== undefined && ![1, 2, 3, 4].includes(optimize)) {
     throw new Error("--optimize must be 1, 2, 3, or 4");
   }
-  return { manifest, entry, output, optimize: optimize as 1 | 2 | 3 | 4 | undefined };
+  return { manifest, entry, output, realm, optimize: optimize as 1 | 2 | 3 | 4 | undefined };
 }
 
 const SCRIPT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] as const;
@@ -1543,16 +1548,22 @@ async function main(): Promise<void> {
     moduleName: "v8x-js2wasm-spike",
     externImportModule: "v8x:deno",
     standaloneAllocationOwnerExport: "__v8x_graph_owns",
-    standaloneGlobalThisImport: {
-      module: "v8x:context",
-      name: "__v8x_context_global_this",
-      call: "__v8x_context_call",
-      owns: "__v8x_context_owns",
-      get: "__v8x_context_get",
-      exceptionTag: "__exn_tag",
-    },
-    link: ["v8x:context", "v8x:deno"],
-    standaloneMicrotaskNotifyImport: { module: "v8x:deno", name: "__v8x_microtask_notify" },
+    // Shared graphs require v8x's context provider. Isolated graphs own their
+    // realm and exception tag and can execute directly in the Wasmtime CLI.
+    ...(options.realm === "shared"
+      ? {
+          standaloneGlobalThisImport: {
+            module: "v8x:context",
+            name: "__v8x_context_global_this",
+            call: "__v8x_context_call",
+            owns: "__v8x_context_owns",
+            get: "__v8x_context_get",
+            exceptionTag: "__exn_tag",
+          },
+          link: ["v8x:context", "v8x:deno"],
+          standaloneMicrotaskNotifyImport: { module: "v8x:deno", name: "__v8x_microtask_notify" },
+        }
+      : {}),
     allowJs: true,
     // v8x is the host for these modules. Keep the exception-rendering ABI
     // (and the rest of the explicit host bridge surface) so it can decode the
@@ -1562,7 +1573,7 @@ async function main(): Promise<void> {
     // the Instance so a standardized Wasm exception can be rendered through
     // its `__exn_render_*` exports and surfaced as Module::Evaluate's rejected
     // Promise instead of losing the payload at InstancePre::instantiate.
-    deferTopLevelInit: true,
+    deferTopLevelInit: options.realm === "shared",
     ...(options.optimize === undefined ? {} : { optimize: options.optimize }),
   };
   const result = await compileMultiSource(
