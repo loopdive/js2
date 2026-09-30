@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "native-builtin-functions-20260930",
   "assignee": "ttraenkler/codex-native-builtin-functions-20260930",
-  "requested_by": "ttraenkler/codex-native-builtin-functions-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-native-builtin-main-delivery-20260930",
   "claimed_at": "2026-09-30T18:57:24Z",
-  "updated_at": "2026-09-30T18:57:24Z",
-  "write_id": "66503-dqzdjnwo"
+  "updated_at": "2026-09-30T20:27:02Z",
+  "write_id": "38750-vplnoan4",
+  "released_at": "2026-09-30T20:27:02Z"
 }
