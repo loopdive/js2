@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "shared-invocation-substrate-20260930",
   "assignee": "ttraenkler/codex-shared-invocation-substrate-20260930",
-  "requested_by": "ttraenkler/codex-shared-invocation-substrate-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-shared-invocation-main-delivery-20260930",
   "claimed_at": "2026-09-30T20:29:44Z",
-  "updated_at": "2026-09-30T20:29:44Z",
-  "write_id": "39746-x5bwakhd"
+  "updated_at": "2026-09-30T22:14:03Z",
+  "write_id": "17323-pxtgnjnc",
+  "released_at": "2026-09-30T22:14:03Z"
 }
