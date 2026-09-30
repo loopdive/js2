@@ -1747,6 +1747,26 @@
   ],
   "files": [
     {
+      "path": "src/runtime/wasmgc/values/string-create-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-create.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-exotic-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-exotic-own-descriptors.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/runtime/wasmgc/values/object-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -13777,6 +13797,14 @@
     },
     {
       "path": "src/codegen/object-runtime-proxy-construct-chain.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-runtime-proxy-chain.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

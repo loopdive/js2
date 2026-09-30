@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-30T06:16:35.467Z",
-  "baseline_generated_at": "2026-09-30T06:16:35.467Z",
-  "baseline_sha": "28abc9a09761a00e11d2ecf5b15ba9b95b9cb5ba",
+  "timestamp": "2026-09-30T09:12:26.780Z",
+  "baseline_generated_at": "2026-09-30T09:12:26.780Z",
+  "baseline_sha": "d161d86c6e16db1d613bf876a75e5a5a6a84d23e",
   "oracle_version": 14,
   "mode": {
     "target": "gc",

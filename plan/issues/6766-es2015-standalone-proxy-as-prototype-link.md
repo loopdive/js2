@@ -1,7 +1,7 @@
 ---
 id: 6766
 title: "ES2015 standalone: a Proxy as [[Prototype]] — link carrier in `$Object.$proto`, per-hop trap dispatch, receiver-threaded [[Set]]"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-30
 updated: 2026-09-30
@@ -31,6 +31,19 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/context/types.ts
   - scripts/compiler-boundaries.json
+func-budget-allow:
+  # 2026-09-30 (#6766 implementation): wiring only — the heavy bodies live in
+  # the new leaf object-runtime-proxy-chain.ts. buildObjectPrototypeHelpers
+  # gains the link-native registration + the canonicalize / getPrototypeOf /
+  # SameValue hooks; ensureObjectRuntime gains the `protoLink` field, the
+  # own-write registration gate, the reserved set-walk hooks and the arm fill
+  # call; fillDynamicProtoHelpers gains the one `protoLink` null its sentinel
+  # `struct.new $Object` needs; ensureProxyRuntime gains the 3-argument
+  # [[Set]] dispatch's call into the leaf's receiver-observable forward.
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/dynamic-proto.ts::fillDynamicProtoHelpers
 ---
 
 ## Problem
@@ -307,3 +320,231 @@ second array/string MOP inside the proxy runtime.
   https://claude.ai/code/session_01FEGi3DmyPRPD5dx4kWU8hs`, `Model: Claude
   Opus 5.5 High`. Never `--no-verify`.
 - No `git stash`; A/B by file copy from `.tmp/6766/base-src`.
+
+### 2026-09-30 — #6766 implementation (Opus)
+
+Branch `issue-6766-proxy-proto-link`, merged with `origin/main` @ `d0e6abb8`
+(every table below), then again @ `54a85ebd`: on that tree typecheck, all
+gates, the pin file plus `issue-1898`/`issue-1837` (19/19) and the 21 core +
+measure rows were re-run — identical verdicts (10 pass: core 6, measure 4).
+The 643-row control was measured on the `d0e6abb8` merge only; the
+`d0e6abb8..54a85ebd` delta touches no file this branch changes (the new
+String-exotic descriptor bodies belong to the unwired native-backend layout).
+All runs standalone, `--isolate`, serialized under the shared lock.
+
+**Result.** Core **6/10** (base 0/10), measure **4/11** (base 1/11), probes
+p1/p3/p4/p5 = node (11/21/15/24; base 0/NaN/6/1). The four core rows still red
+fail on mechanisms OTHER than the link (below, with evidence) — acceptance
+criterion 1 does not hold.
+
+#### What landed (and why)
+
+- **Representation** — `$Object` gains an appended `protoLink` anyref
+  (`PROTO_LINK_FIELD = 6`, guarded against renumbering in `objectFields`). A LINK
+  is a fresh empty `$Object` (`$proto` null, flags 0) holding the `$Proxy`; the
+  non-null field is the discriminator. Every legacy `struct.new $Object` pushes
+  one `ref.null any`: `emitWrapperBuildTail`, `__new_plain_object` (via
+  `withProtoLinkNull`, see deviations), `__object_create`, the dynamic-proto
+  sentinel.
+- **Producers** — `canonicalizeProtoArg` calls `__proto_link_wrap` (a `$Proxy`,
+  trap or no trap → new link; anything else unchanged) instead of
+  `__proxy_get_target_if_absent` (still registered, now unreferenced in the
+  link regime). `__object_create`, `__object_setPrototypeOf{,_status}`, the
+  `__proto__:` literal and the `__proto__` setter all reach it.
+  `__object_setPrototypeOf{,_status}` step 2 compares two links by the Proxy
+  they hold (`__proto_link_same`); the cycle walks stop at a link by
+  construction (its `$proto` is null — §10.1.2.1 8.b).
+- **Consumers** — `fillProtoLinkArms` (new leaf
+  `src/codegen/object-runtime-proxy-chain.ts`) splices one arm after the cursor
+  null check of every prototype walk loop (`local.get C; ref.is_null …; hop
+  struct.get $Object 0; local.set C`), right after `ensureProxyRuntime`:
+  `[[Get]]` → `__proxy_get_dispatch(proxy, ToPropertyKey(P), receiver)` with the
+  `__extern_get` explicit receiver; `[[HasProperty]]` → `__extern_has(proxy,
+  key)`; `[[Set]]` (#4504 decide walk) → `__reflect_set_receiver(proxy, key, V,
+  receiver)` → HANDLED/REFUSED; the terminal predicate answers 0 at a link (the
+  Proxy already answered; no implicit `%Object.prototype%`); `__isPrototypeOf`
+  continues from a link through the Proxy's own `[[GetPrototypeOf]]`
+  (`__proto_link_chain_from`, identity by `ref.eq` on `eq`) and a Proxy RECEIVER
+  is compared as itself (the #4721 target unwrap is dropped there too).
+  `__getPrototypeOf` answers the linked Proxy.
+- **[[Set]] without #4504** — `__extern_set` / `__reflect_set` get a reserved
+  `__proto_link_set_walk(obj, key, V) -> 0|1|2` (first of: a link → the
+  receiver-threaded set, an own entry → 0) at the own-miss position; so a
+  refusing trap throws in strict code and answers `false` to `Reflect.set`
+  in both #4504 modes (pin p9).
+- **Receiver-side write** — §10.1.9.2 3.d-e is OWN-only. `writeOnReceiver`
+  wrote through `__extern_set(receiver)`, a full [[Set]] that walks back into
+  the link → infinite recursion; in the link regime it now writes through
+  `__extern_set_own` first (registration widened from #4504-only to
+  `inheritedSetRuntimeActive || protoLinkActive`); its UNADMITTED (not a
+  `$Object`) answer keeps the old write.
+- **Trap-absent 3-argument [[Set]]** — `__proxy_set_dispatch` forwarded
+  `__extern_set(target, …)`, dropping Receiver = proxy. When the proxy has a
+  `getOwnPropertyDescriptor` or `defineProperty` trap (the only case where the
+  receiver-side [[GetOwnProperty]]/[[DefineOwnProperty]] is observable) it now
+  forwards through `__reflect_set_receiver(target, key, V, proxy)` and publishes
+  the boolean on the #4504 channel (`protoLinkReceiverSetForward`). Fixes
+  `trap-is-missing-receiver-multiple-calls{,-index}.js`.
+- **Keys** — every arm hands the trap `__to_property_key(P)` (`0 in heir` asks
+  `has` for `"0"`; a Symbol passes unchanged).
+
+Deviations from the plan, each deliberate:
+
+1. `src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts` is NOT edited:
+   `buildOrdinaryObjectCreateBody` also serves the native-backend recipe
+   (`ordinary-object-storage-definitions.ts`) whose `$Object` declaration
+   (`object-layouts.ts`, "kept in the legacy storage order") stays 6-field; the
+   legacy caller appends the null via `withProtoLinkNull`. Recorded here so the
+   native-backend layout can adopt the field when it is wired in.
+2. `__proto_link_new` / `__proto_link_of` are folded into `__proto_link_wrap`
+   plus an inline `struct.get $Object 6`; no separate natives.
+3. Arms are spliced at build time right after `ensureProxyRuntime` (bodies are
+   still their builders' output; later finalize fills only unshift), not at the
+   `fillProxyDispatch` finalize site.
+4. No `inheritedSetDescriptorDirty` forcing: both #4504 modes carry their own
+   arm, so non-link modules' [[Set]] lowering is untouched.
+5. Coercion-vocabulary neutral: arms route through existing i32 chokepoints
+   (`__extern_has`, `__reflect_set_receiver`) instead of `__is_truthy`.
+
+#### Walker audit — every `$proto` (field 0) reader
+
+| reader | kind | status |
+| --- | --- | --- |
+| `__extern_get` loop (`object-get-bodies.ts` hop) | walks | arm → `__proxy_get_dispatch` |
+| `__extern_has` main + fnctor loops (`object-runtime.ts`) | walks | arm (both loops) → `__extern_has(proxy)` |
+| `__extern_set_decide` seed + loop | walks | arm → `__reflect_set_receiver` |
+| `__extern_set` / `__reflect_set` without #4504 | own-miss create | reserved `__proto_link_set_walk` |
+| `__extern_set` `inheritedAccessorArm` (vecAccessorDescriptorDirty, no #4504) | walks (accessor only) | ends at a link (null `$proto`); the set walk right after takes the link — no arm needed |
+| `__object_terminal_allows_implicit_proto` | walks | arm → 0 |
+| `__extern_has_with_implicit_object_proto` | via the two above | covered |
+| `__getPrototypeOf` `protoFieldAnswer` | reads once | answers the Proxy |
+| `__object_setPrototypeOf{,_status}` SameValue | reads once | link-aware `__proto_link_same` |
+| `__object_setPrototypeOf{,_status}` cycle loops | walks | stops at a link by construction (§10.1.2.1 8.b) — no arm |
+| `__isPrototypeOf` (`prototype-chain-bodies.ts`) | walks | arm + Proxy-receiver front arm |
+| `__object_keys_forin` (`object-runtime-enumeration.ts:607`) | walks | stops at the link — **residual**: a Proxy prototype's keys are not enumerated (no ES2015 core row) |
+| `dynamic-proto.ts` `__struct_proto_set` cycle walk | walks | stops at a link (the #802 slot stores the raw proxy, never a link) — links only |
+| `vec-proto-link.ts` (4 reads, 3 writes) | bag `$proto` | never holds a link in this slice (no vec producer) — links only |
+| `promise-subclass-proto-link.ts` (3) | walks (Promise-subclass `instanceof`) | ends at a link → false — **residual** (a proxy between an object and a Promise-subclass prototype; no ES2015 row) |
+| `promise-dynamic-member-read.ts` (3) | reads bag `$proto` of a `$Promise` subclass instance | links only |
+| `proto-function-value.ts:457` | null test on a callable's bag `$proto` | links only |
+| `to-primitive-wrapper-bodies.ts` (2) | walks (wrapper ToPrimitive) | ends at a link — **residual** (a wrapper with a Proxy prototype) |
+| `ordinary-object-access-bodies.ts:55` | walks | native-backend pipeline, not wired to production — links only |
+| `native-dynamic-instanceof.ts` | via `__isPrototypeOf` | covered |
+
+#### Core rows (10) — base `eb57f327` vs branch (merged `d0e6abb8`)
+
+| row | base | branch | now fails at / mechanism |
+| --- | --- | --- | --- |
+| `set/call-parameters-prototype.js` | fail L49 | **pass** | |
+| `set/call-parameters-prototype-index.js` | fail L51 | fail L51 | vec receiver (residual R1) |
+| `set/call-parameters-prototype-dunder-proto.js` | fail L52 | **pass** | |
+| `set/trap-is-null-receiver.js` | fail L26 | fail L26 | part 1, before any link (R2); the link half passes alone |
+| `set/trap-is-missing-receiver-multiple-calls.js` | fail L63 | **pass** | |
+| `set/trap-is-missing-receiver-multiple-calls-index.js` | fail L64 | **pass** | |
+| `get/trap-is-undefined-receiver.js` | fail L24 | fail L24 | part 1, before any link (R2); the link half passes alone |
+| `has/call-in-prototype.js` | fail L41 | **pass** | |
+| `has/call-in-prototype-index.js` | fail L43 | fail L43 | vec receiver (R1) |
+| `has/call-object-create.js` | fail L36 | **pass** | |
+
+**The plan's premise does not hold for 4 of the 10**: on base their FIRST
+failing assertion is not the link. `.tmp/6766/t/recv-part2.js` (the second
+halves of `trap-is-null-receiver.js` and `trap-is-undefined-receiver.js`
+alone, through the real runner) passes on the branch.
+
+- **R1 — vec receivers** (`…-prototype-index.js`, `call-in-prototype-index.js`).
+  `Object.setPrototypeOf(array, proxy)` stores nothing: a vec's [[Prototype]]
+  lives in its #3537 bag `$proto` (vec-proto-link.ts), whose
+  `__object_setPrototypeOf`/`__getPrototypeOf` arms exist only when an
+  Array-rooted class linked; and the typed lane never asks a prototype —
+  `1 in array` is an inline `i < length` compare, `array[0] = 1` an inline store
+  (WAT of both rows). Needs a vec slice: link-regime vec arms in the two
+  natives, `in` routed through `__extern_has_idx` (the #4159 overlay hand-off)
+  with a bag-link miss arm, and hole/OOB stores consulting the bag link.
+- **R2 — the proxy binding's slot** (`trap-is-{null,undefined}-receiver.js`
+  part 1). `var p = new Proxy(target, …)` escapes into
+  `assert.sameValue(…, p)`, a PROPERTY-ACCESS callee, which #6637's
+  `calleeParamIsUntyped` (`analysis/proxy-binding-escape.ts`) does not exempt,
+  so the binding takes the target literal's struct slot and the Proxy is
+  MATERIALIZED into a fresh struct at the declaration (`$__mod_p (ref null 84)`;
+  the extern→struct coercion `struct.new 84`s a copy). Candidate fix: accept a
+  property-access callee whose declarations all live in non-`.d.ts` sources and
+  whose matching parameter is implicit-any (lib `.call`/`.apply` receivers, the
+  #2615 class, stay excluded by their `.d.ts` declarations).
+  `trap-is-null-receiver.js` additionally needs the trap-absent 3-argument
+  [[Set]] to keep Receiver = proxy for an ACCESSOR on the target (`set: null`
+  + `set attr(v)`); `protoLinkReceiverSetForward` takes that path only when a
+  gopd/defineProperty trap can observe the receiver.
+
+#### Measure rows (11)
+
+| row | base | branch | mechanism of the first failure |
+| --- | --- | --- | --- |
+| `get/trap-is-missing-target-is-proxy.js` | fail L24 | fail | L24 (`Object.create(regExpProxy).lastIndex`) now PASSES (checked alone, `.tmp/6766/t/getproxy-l24.js`); the reported message is L25's `regExpProxy[Symbol.match]` → `undefined` (F cluster: RegExp `@@match` through a proxy of a proxy — the runner prints L24) |
+| `get/trap-is-null-target-is-proxy.js` | fail L25 | fail L25 | F: `stringProxy.length` (String exotic `length` through a proxy) |
+| `get/trap-is-undefined-target-is-proxy.js` | pass | pass | |
+| `has/trap-is-missing-target-is-proxy.js` | fail L24 | fail L24 | F: `Reflect.has(regExpProxy, "ignoreCase")` (RegExp accessor on a proxy target) |
+| `has/trap-is-undefined-target-is-proxy.js` | fail L33 | **pass** | |
+| `defineProperty/trap-is-null-target-is-proxy.js` | fail | fail (same message) | `plainObject.bar` after defining an accessor through a proxy of a proxy with `defineProperty: null` — not a link |
+| `setPrototypeOf/trap-is-null-target-is-proxy.js` | fail L35 | fail L35 | nested-proxy [[SetPrototypeOf]] forward with V = null does not reach the ordinary target — not a link |
+| `TypedArrayConstructors/internals/Set/key-is-valid-index-prototype-chain-set.js` | fail | fail (same) | a TypedArray in [[Prototype]] position (`Object.create(ta)`, first part — no Proxy): `$Object.$proto` cannot hold a TA carrier either, plus §10.4.5.5 with Receiver ≠ O |
+| `…/key-is-canonical-invalid-index-prototype-chain-set.js` | fail | fail (same) | same |
+| `Object/prototype/__proto__/set-cycle-shadowed.js` | fail L35 | **pass** | |
+| `Function/prototype/Symbol.hasInstance/value-get-prototype-of-err.js` | fail L24 | **pass** | |
+
+#### Pins — `tests/issue-6766-proxy-as-prototype.test.ts`
+
+Seven RED-on-base pins (p1 base 0, p3 NaN, p4 6, p5 1, `in`/heir-write 14,
+keys/revocation 26, strict refusal 1111 — each the node answer on the branch)
+and three guards. Run against the base sources by swapping `src/` for
+`.tmp/6766/base-src` (base `eb57f327`): **7 failed, 3 guards passed**; on the
+branch 10/10.
+
+#### Byte identity outside the Proxy regime
+
+20 rows sampled across `language/expressions/object/**` without `Proxy`,
+compiled through the original harness with the runner's standalone options,
+base `d0e6abb8` vs branch: 19 compile on both (1 is a negative-syntax row that
+fails on both), **0/19 byte-identical, as expected** — every difference is the
+`$Object` type line (`+ (field $protoLink (mut anyref))`) plus one
+`ref.null any` per `struct.new $Object` (43-59 per module: `__new_plain_object`
+is inlined at its call sites), **0 unexplained WAT lines**, +89…+121 bytes per
+module (`.tmp/6766/bytes.log`).
+
+#### Other test files
+
+`issue-1898`/`issue-1837` (the `$Object` arity/field guards), `issue-4721`,
+`issue-4602`, `issue-4749`, `issue-3768`, `issue-6684`, `issue-5239`,
+`issue-5316-r4/r5/r6` green. `issue-2046` (2 failures) and `issue-4504` (14
+failures, after building `scripts/{compiler,runtime}-bundle.mjs`) fail
+IDENTICALLY on the base sources (stale compile-refusal expectations; harness
+variant-count assertions) — its Proxy subtest ("forwards Proxy trap success
+and refusal through Reflect and strict assignment") passes on both.
+
+#### Control — 643 rows, 0 pass → non-pass attributable to the branch
+
+Set (from the 2026-09-29 22:47 UTC standalone baseline artifact
+`.test262-cache/test262-standalone-current.jsonl`, `status:"pass"` only): every
+ES2015 row under `built-ins/{Proxy,Reflect,Object}/**` (567 — the plan's ~900
+estimate counted all editions) ∪ every row of ANY edition whose source
+mentions `Proxy` (362, the `proxyDirty` reach set — these are the modules
+whose layout and walkers the link regime actually changes) = **643** unique
+rows. Run on the branch merged with `d0e6abb8`, standalone, `--isolate`, six
+chunks under the lock.
+
+| | rows |
+| --- | --- |
+| pass on the branch | 635 |
+| non-pass on the branch | 8 |
+| of those, non-pass with the SAME message on base `d0e6abb8` (`.tmp/6766/basetree`) | 8 |
+| **pass → non-pass attributable to the branch** | **0** |
+| gained (baseline-pass set, so none possible) | 0 |
+
+The 8 are `built-ins/Temporal/*/prototype/toJSON/{basic,options}.js` — they
+pass in the CI standalone baseline but not in this container on either tree:
+`Duration/…/options.js` is a compile refusal ("standalone target emitted host
+imports: env::__temporal_duration_to_string (#2961)"), the other 7 throw a
+host `TypeError` at the `toJSON` call. A local-vs-CI environment difference,
+not this change. One further row
+(`built-ins/JSON/stringify/replacer-array-proxy-revoked-realm.js`) first
+failed on "quickjs provider is not built"; after
+`npx tsx scripts/build-quickjs-eval-provider.mjs` it passes.

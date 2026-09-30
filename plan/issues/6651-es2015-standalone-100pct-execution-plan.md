@@ -19866,3 +19866,21 @@ adapter rebuilt, both rows pass.
   make(undefined)` still completes on standalone on this branch, so a plain
   `new Promise(<param>)` does not reach the guarded executor-VALUE lowering in
   that probe's module.
+
+### 2026-09-30 — #6766 a Proxy as [[Prototype]] (Opus implementation lane)
+
+A `$Proxy` in prototype position is now stored as a LINK `$Object` (appended
+`$Object.protoLink`, field 6) instead of being unwrapped or dropped, and every
+prototype walker (`__extern_get` / `__extern_has` / the #4504 decide walk / a
+reserved set walk without #4504 / the terminal predicate / `__isPrototypeOf` /
+`__getPrototypeOf`) hands the Proxy the operation with the original receiver
+(`src/codegen/object-runtime-proxy-chain.ts`). Core rows 6/10 (base 0/10),
+measure rows 4/11 (base 1/11). The 4 core rows still red fail BEFORE any link
+on base: two are vec receivers (a plain array's prototype lives only in its
+#3537 bag, and the typed lane's `in`/element store never consult it) and two
+are the proxy binding materialized into the target's struct slot because it
+escapes into `assert.sameValue` (#6637's escape predicate exempts only
+bare-identifier callees). Control (643 passing Proxy/Reflect/Object and
+Proxy-mentioning rows): 0 pass → non-pass attributable to the branch. Record,
+walker audit and residual mechanisms:
+`plan/issues/6766-es2015-standalone-proxy-as-prototype-link.md`.
