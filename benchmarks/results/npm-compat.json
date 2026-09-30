@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-30T03:36:45.454Z",
+  "generatedAt": "2026-09-30T04:36:36.114Z",
   "measuredRange": {
     "oldest": "2026-09-08T19:13:41.907Z",
-    "newest": "2026-09-30T03:26:25.991Z"
+    "newest": "2026-09-30T04:35:46.760Z"
   },
   "correctness": {
     "definition": {
@@ -149,13 +149,30 @@
   "refresh": {
     "status": "partial",
     "stalePackages": [
+      "acorn",
+      "axios",
+      "clsx",
+      "cookie",
+      "eslint",
+      "hono",
+      "jest",
       "jsdom",
-      "lit",
-      "react-dom",
+      "lodash",
+      "lodash-es",
+      "marked",
+      "moment",
+      "prettier",
+      "react",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
       "typescript",
+      "uuid",
       "webpack"
     ],
-    "freshCount": 19,
+    "freshCount": 2,
     "totalCount": 24
   },
   "packages": [
@@ -945,7 +962,12 @@
         "scannedFiles": 20,
         "externalDependencies": []
       },
-      "weeklyDownloads": 275892096
+      "weeklyDownloads": 275892096,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:13:49.114Z"
+      }
     },
     {
       "name": "typescript",
@@ -3253,7 +3275,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 240886853
+      "weeklyDownloads": 240886853,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:22:17.750Z"
+      }
     },
     {
       "name": "cookie",
@@ -3797,7 +3824,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 173435452
+      "weeklyDownloads": 173435452,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:14:13.488Z"
+      }
     },
     {
       "name": "lodash",
@@ -4370,7 +4402,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 164859858
+      "weeklyDownloads": 164859858,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:22:00.736Z"
+      }
     },
     {
       "name": "react",
@@ -5817,7 +5854,12 @@
         "scannedFiles": 3,
         "externalDependencies": []
       },
-      "weeklyDownloads": 162687688
+      "weeklyDownloads": 162687688,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:16:18.061Z"
+      }
     },
     {
       "name": "eslint",
@@ -6385,7 +6427,12 @@
           "node:worker_threads"
         ]
       },
-      "weeklyDownloads": 152308132
+      "weeklyDownloads": 152308132,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:23:33.178Z"
+      }
     },
     {
       "name": "react-dom",
@@ -6395,7 +6442,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 1618607,
+        "durationMs": 1234095,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -6434,7 +6481,7 @@
           "implementationInvalidTests": 1,
           "compile": {
             "success": false,
-            "durationMs": 136522,
+            "durationMs": 108478,
             "binaryBytes": 4843858,
             "invalidBatches": 3
           },
@@ -6454,7 +6501,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 212449,
+            "durationMs": 165931,
             "binaryBytes": 3493590,
             "invalidBatches": 8
           },
@@ -6474,7 +6521,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 79296,
+            "durationMs": 63444,
             "binaryBytes": 1360983,
             "invalidBatches": 3
           },
@@ -6494,7 +6541,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 14342,
+            "durationMs": 11082,
             "binaryBytes": 223712,
             "invalidBatches": 0
           },
@@ -6518,7 +6565,7 @@
             "status": "fail",
             "passed": 1,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -6555,7 +6602,7 @@
             "status": "fail",
             "passed": 2,
             "total": 44,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -6865,7 +6912,7 @@
             "status": "fail",
             "passed": 2,
             "total": 12,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -7089,7 +7136,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -7108,7 +7155,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -7270,7 +7317,7 @@
             "status": "fail",
             "passed": 8,
             "total": 74,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -8161,7 +8208,7 @@
             "status": "fail",
             "passed": 0,
             "total": 31,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "skipped"
@@ -9844,7 +9891,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -10233,7 +10280,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -10599,7 +10646,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -10900,7 +10947,7 @@
             "status": "fail",
             "passed": 41,
             "total": 54,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at __closure_267 (wasm://wasm/0072d9ce:wasm-function[1483]:0xf8da6)\n    at __call_fn_method_3 (wasm://wasm/0072d9ce:wasm-function[2303]:0x10b9da)\n    at __\u0000js2_call_fn_method_argc_3 (wasm://wasm/0072d9ce:wasm-function[2304]:0x10c842)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)\n    at Proxy.linkedClosureRoute (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:138:20)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2265:13)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at __closure_267 (wasm://wasm/0072dbee:wasm-function[1483]:0xf8e2e)\n    at __call_fn_method_3 (wasm://wasm/0072dbee:wasm-function[2303]:0x10ba62)\n    at __\u0000js2_call_fn_method_argc_3 (wasm://wasm/0072dbee:wasm-function[2304]:0x10c8ca)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)\n    at Proxy.linkedClosureRoute (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:138:20)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:2265:13)",
             "tests": [
               {
                 "status": "fail"
@@ -11409,7 +11456,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -11446,7 +11493,7 @@
             "status": "fail",
             "passed": 5,
             "total": 32,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -12043,7 +12090,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -12059,7 +12106,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -12545,7 +12592,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072d9ce:wasm-function[573]:0xb327f)\n    at scheduleUpdateOnFiber (wasm://wasm/0072d9ce:wasm-function[536]:0xa772b)\n    at updateContainerImpl (wasm://wasm/0072d9ce:wasm-function[658]:0xc6856)\n    at __closure_262 (wasm://wasm/0072d9ce:wasm-function[1478]:0xf7f20)\n    at __call_fn_method_1 (wasm://wasm/0072d9ce:wasm-function[2299]:0x10a461)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072d9ce:wasm-function[2300]:0x10ab68)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at ensureRootIsScheduled (wasm://wasm/0072dbee:wasm-function[573]:0xb3317)\n    at scheduleUpdateOnFiber (wasm://wasm/0072dbee:wasm-function[536]:0xa77c3)\n    at updateContainerImpl (wasm://wasm/0072dbee:wasm-function[658]:0xc68de)\n    at __closure_262 (wasm://wasm/0072dbee:wasm-function[1478]:0xf7fa8)\n    at __call_fn_method_1 (wasm://wasm/0072dbee:wasm-function[2299]:0x10a4e9)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0072dbee:wasm-function[2300]:0x10abf0)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1851:10)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:2208:15)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:140:44)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime/linked-closure-dispatch.ts:185:20)",
             "tests": [
               {
                 "status": "fail"
@@ -12649,54 +12696,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.0013344832255126162,
-            "nodeUs": 0.0005059104153224267,
-            "wasmStdUs": 0.0000016297593102907399,
-            "nodeStdUs": 0.0000021453021542000916,
-            "ratio": 0.3789701818668454,
-            "ratioStd": 0.0017588746181806786,
+            "wasmUs": 0.0009500308071061775,
+            "nodeUs": 0.0004911976337988103,
+            "wasmStdUs": 0.000019223645550314063,
+            "nodeStdUs": 0.00002108314640538502,
+            "ratio": 0.5168560062799317,
+            "ratioStd": 0.023706687790072168,
             "ratioSamples": [
-              0.37823758760472975,
-              0.37928308334030897,
-              0.37960230464200995,
-              0.37960244508746144,
-              0.37851948602596697,
-              0.3789701818668454,
-              0.37825175148961016,
-              0.3842446375565428,
-              0.37856469145304467
+              0.526315505526807,
+              0.5084369880628634,
+              0.5153646850370389,
+              0.48428703477587703,
+              0.5150612468623497,
+              0.5207549423893006,
+              0.5168560062799317,
+              0.5219899517448628,
+              0.5796422105811163
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 5686910,
+            "iters": 7441465,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0013382128431789079,
-              0.001333859688301738,
-              0.0013345343956560312,
-              0.0013331039175932453,
-              0.001334567805715708,
-              0.0013332131157341033,
-              0.0013368722205909526,
-              0.0013335635696715977,
-              0.0013344832255126162
+              0.0009465294804182082,
+              0.0009644325411732348,
+              0.0009500308071061775,
+              0.0010096728265201142,
+              0.0009536683972849603,
+              0.0009471264058893744,
+              0.0009472916959227254,
+              0.0009460272943568492,
+              0.0009633433739186102
             ],
             "nodeSamplesUs": [
-              0.0005061623975056566,
-              0.0005059104153224267,
-              0.0005065923322150614,
-              0.0005060495066740696,
-              0.0005051599198863123,
-              0.0005052480169370167,
-              0.0005056742589563323,
-              0.0005124146504870725,
-              0.0005051882305154474
+              0.0004981731419823352,
+              0.000490353176423933,
+              0.000489612327679759,
+              0.0004889714592492046,
+              0.0004911976337988103,
+              0.0004932207569343065,
+              0.0004896134027367633,
+              0.0004938167417306549,
+              0.0005583944828068541
             ],
-            "compileDurationMs": 25099.947538,
-            "moduleCompileDurationMs": 6.42457099999956,
-            "instantiateDurationMs": 11.395597000002454,
-            "binaryBytes": 808641,
+            "compileDurationMs": 19482.325666,
+            "moduleCompileDurationMs": 6.021714000002248,
+            "instantiateDurationMs": 9.253687000000355,
+            "binaryBytes": 808678,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 6,
@@ -12720,8 +12767,8 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 6231.511275000172,
-            "moduleCompileDurationMs": 1.463945999974385,
+            "compileDurationMs": 4927.132561999839,
+            "moduleCompileDurationMs": 1.5958320000208914,
             "binaryBytes": 187920,
             "moduleImportCount": 16,
             "functionImportCount": 16,
@@ -12734,54 +12781,54 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.06204847424181985,
-            "nodeUs": 0.0005044437658008487,
-            "wasmStdUs": 0.0004344405033962495,
-            "nodeStdUs": 0.00000161040650362218,
-            "ratio": 0.008100814377610961,
-            "ratioStd": 0.00005193107685229225,
+            "wasmUs": 0.0464904465674311,
+            "nodeUs": 0.0004896643338599421,
+            "wasmStdUs": 0.00825433176560671,
+            "nodeStdUs": 0.000021036411343035653,
+            "ratio": 0.010519442781367154,
+            "ratioStd": 0.0014754259384846993,
             "ratioSamples": [
-              0.00809549427306152,
-              0.008090234512624627,
-              0.008140345509225575,
-              0.007981252354993938,
-              0.008100814377610961,
-              0.008113018123260894,
-              0.008129833520722742,
-              0.008185089848006998,
-              0.00808646697183117
+              0.0067985347270749785,
+              0.008566549415755997,
+              0.00981811186349276,
+              0.010105912361676848,
+              0.010596368902576007,
+              0.010538350887197094,
+              0.01164675859658544,
+              0.010519442781367154,
+              0.011908932812956808
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 255414,
+            "iters": 216048,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.06245724196795021,
-              0.06204148950331669,
-              0.06203568324367546,
-              0.06291857533258931,
-              0.06233309450538907,
-              0.06182382719820557,
-              0.06204847424181985,
-              0.061284236572791216,
-              0.062448530620881605
+              0.0721522948603902,
+              0.05697579704510923,
+              0.04987687458342172,
+              0.048286538176696994,
+              0.04621057820485122,
+              0.04629676738502996,
+              0.0464904465674311,
+              0.046368543101537735,
+              0.04510278271494756
             ],
             "nodeSamplesUs": [
-              0.0005056222446627585,
-              0.0005019301995943712,
-              0.0005049918955043938,
-              0.0005021690275460919,
-              0.0005049488281702386,
-              0.0005015778305083916,
-              0.0005044437658008487,
-              0.0005016169826148125,
-              0.0005049879803051466
+              0.0004905298822465163,
+              0.00048808598088901273,
+              0.0004896967340614334,
+              0.0004879795230624632,
+              0.0004896643338599421,
+              0.00048789157964638797,
+              0.0005414630082183242,
+              0.0004877712360119828,
+              0.0005371260090297001
             ],
-            "compileDurationMs": 25211.082358,
-            "moduleCompileDurationMs": 11.543299000000843,
-            "instantiateDurationMs": 16.477708999998868,
-            "binaryBytes": 808587,
+            "compileDurationMs": 19512.317900000002,
+            "moduleCompileDurationMs": 13.366268000001583,
+            "instantiateDurationMs": 15.017598999998881,
+            "binaryBytes": 808624,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 8,
@@ -12801,7 +12848,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-29T21:51:06.743Z",
+      "measuredAt": "2026-09-30T04:35:46.760Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -12961,12 +13008,7 @@
           "scheduler"
         ]
       },
-      "weeklyDownloads": 139740993,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-09-29T21:51:06.743Z"
-      }
+      "weeklyDownloads": 139740993
     },
     {
       "name": "prettier",
@@ -13441,7 +13483,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 117242232
+      "weeklyDownloads": 117242232,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:17:43.442Z"
+      }
     },
     {
       "name": "tailwindcss",
@@ -14071,7 +14118,12 @@
         "scannedFiles": 4,
         "externalDependencies": []
       },
-      "weeklyDownloads": 117155768
+      "weeklyDownloads": 117155768,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:15:41.935Z"
+      }
     },
     {
       "name": "axios",
@@ -15758,7 +15810,12 @@
           "zlib"
         ]
       },
-      "weeklyDownloads": 112353408
+      "weeklyDownloads": 112353408,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:23:01.476Z"
+      }
     },
     {
       "name": "clsx",
@@ -16280,7 +16337,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 104930549
+      "weeklyDownloads": 104930549,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:13:31.205Z"
+      }
     },
     {
       "name": "jsdom",
@@ -17358,7 +17420,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 60496071
+      "weeklyDownloads": 60496071,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:16:08.957Z"
+      }
     },
     {
       "name": "webpack",
@@ -20836,7 +20903,12 @@
         "scannedFiles": 24,
         "externalDependencies": []
       },
-      "weeklyDownloads": 53123258
+      "weeklyDownloads": 53123258,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:17:35.118Z"
+      }
     },
     {
       "name": "jest",
@@ -23782,7 +23854,12 @@
           "jest-config"
         ]
       },
-      "weeklyDownloads": 46631732
+      "weeklyDownloads": 46631732,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:20:22.845Z"
+      }
     },
     {
       "name": "lodash-es",
@@ -24493,7 +24570,12 @@
         "externalDependencies": [],
         "graphTruncated": true
       },
-      "weeklyDownloads": 42294984
+      "weeklyDownloads": 42294984,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:25:25.072Z"
+      }
     },
     {
       "name": "redux",
@@ -25367,7 +25449,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 40344956
+      "weeklyDownloads": 40344956,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:15:09.372Z"
+      }
     },
     {
       "name": "moment",
@@ -26766,7 +26853,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 34294671
+      "weeklyDownloads": 34294671,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:17:10.618Z"
+      }
     },
     {
       "name": "three",
@@ -28355,7 +28447,12 @@
         "scannedFiles": 2,
         "externalDependencies": []
       },
-      "weeklyDownloads": 12487515
+      "weeklyDownloads": 12487515,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:26:25.991Z"
+      }
     },
     {
       "name": "styled-components",
@@ -28964,7 +29061,12 @@
           "stylis"
         ]
       },
-      "weeklyDownloads": 11029759
+      "weeklyDownloads": 11029759,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:15:45.678Z"
+      }
     },
     {
       "name": "stylelint",
@@ -31305,7 +31407,12 @@
           "write-file-atomic"
         ]
       },
-      "weeklyDownloads": 10427988
+      "weeklyDownloads": 10427988,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-30T03:23:58.536Z"
+      }
     },
     {
       "name": "lit",
@@ -31315,7 +31422,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 10890,
+        "durationMs": 9920,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -33569,51 +33676,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.6657429088563513,
-            "nodeUs": 0.005292261881603622,
-            "wasmStdUs": 0.0014129150917228002,
-            "nodeStdUs": 0.0000189148736457149,
-            "ratio": 0.007945546406477166,
-            "ratioStd": 0.000029649598998595296,
+            "wasmUs": 0.674429584995035,
+            "nodeUs": 0.005310140917020167,
+            "wasmStdUs": 0.0019183993024178315,
+            "nodeStdUs": 0.000050045370919721606,
+            "ratio": 0.007886062407798477,
+            "ratioStd": 0.0000714924033878643,
             "ratioSamples": [
-              0.007993245896172807,
-              0.00793059605518642,
-              0.008005365349723046,
-              0.007955385549599056,
-              0.007974800432024268,
-              0.007936465854225727,
-              0.007934605329138858,
-              0.007909324358446894,
-              0.007945546406477166
+              0.007828255776093574,
+              0.00790441614663379,
+              0.008074444257744492,
+              0.007890939841522471,
+              0.007886062407798477,
+              0.00783520789261035,
+              0.007872920067837793,
+              0.007849657039612944,
+              0.00795162839029608
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 359674,
+            "iters": 356309,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.6658347197740248,
-              0.6673220833310013,
-              0.6647152171132662,
-              0.6644199747549114,
-              0.664307831536336,
-              0.6664494875915098,
-              0.6646400073399791,
-              0.6657429088563513,
-              0.668727581087341
+              0.6783300225366439,
+              0.6736866764521856,
+              0.674429584995035,
+              0.67633386190077,
+              0.6723377349435263,
+              0.6722735125972391,
+              0.6734247829832989,
+              0.6752306733761816,
+              0.676373759854501
             ],
             "nodeSamplesUs": [
-              0.005322180641363095,
-              0.005292261881603622,
-              0.0053212881665121725,
-              0.005285717066030192,
-              0.005297722381933077,
-              0.00528925360183625,
-              0.0052736561441986875,
-              0.0052655766054808305,
-              0.0053134060288206894
+              0.005310140917020167,
+              0.005325099843120709,
+              0.005445644089816162,
+              0.005336909817043543,
+              0.00530209733688252,
+              0.005267402731894772,
+              0.005301819488128525,
+              0.005300329208629933,
+              0.005378272791310354
             ],
-            "compileDurationMs": 741.4169649999967,
+            "compileDurationMs": 743.1214920000057,
             "binaryBytes": 1801,
             "moduleImportCount": 7,
             "functionImportCount": 7,
@@ -33649,53 +33756,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.6657429088563513,
-        "nodeUs": 0.005292261881603622,
-        "wasmStdUs": 0.0014129150917228002,
-        "nodeStdUs": 0.0000189148736457149,
-        "ratio": 0.007945546406477166,
-        "ratioStd": 0.000029649598998595296,
+        "wasmUs": 0.674429584995035,
+        "nodeUs": 0.005310140917020167,
+        "wasmStdUs": 0.0019183993024178315,
+        "nodeStdUs": 0.000050045370919721606,
+        "ratio": 0.007886062407798477,
+        "ratioStd": 0.0000714924033878643,
         "ratioSamples": [
-          0.007993245896172807,
-          0.00793059605518642,
-          0.008005365349723046,
-          0.007955385549599056,
-          0.007974800432024268,
-          0.007936465854225727,
-          0.007934605329138858,
-          0.007909324358446894,
-          0.007945546406477166
+          0.007828255776093574,
+          0.00790441614663379,
+          0.008074444257744492,
+          0.007890939841522471,
+          0.007886062407798477,
+          0.00783520789261035,
+          0.007872920067837793,
+          0.007849657039612944,
+          0.00795162839029608
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 359674,
+        "iters": 356309,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.6658347197740248,
-          0.6673220833310013,
-          0.6647152171132662,
-          0.6644199747549114,
-          0.664307831536336,
-          0.6664494875915098,
-          0.6646400073399791,
-          0.6657429088563513,
-          0.668727581087341
+          0.6783300225366439,
+          0.6736866764521856,
+          0.674429584995035,
+          0.67633386190077,
+          0.6723377349435263,
+          0.6722735125972391,
+          0.6734247829832989,
+          0.6752306733761816,
+          0.676373759854501
         ],
         "nodeSamplesUs": [
-          0.005322180641363095,
-          0.005292261881603622,
-          0.0053212881665121725,
-          0.005285717066030192,
-          0.005297722381933077,
-          0.00528925360183625,
-          0.0052736561441986875,
-          0.0052655766054808305,
-          0.0053134060288206894
+          0.005310140917020167,
+          0.005325099843120709,
+          0.005445644089816162,
+          0.005336909817043543,
+          0.00530209733688252,
+          0.005267402731894772,
+          0.005301819488128525,
+          0.005300329208629933,
+          0.005378272791310354
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-29T21:09:41.524Z",
+      "measuredAt": "2026-09-30T04:11:58.286Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -33723,12 +33830,7 @@
           "lit-html/is-server.js"
         ]
       },
-      "weeklyDownloads": 6829692,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-09-29T21:09:41.524Z"
-      }
+      "weeklyDownloads": 6829692
     }
   ]
 }
