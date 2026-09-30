@@ -1591,6 +1591,21 @@ export function exportDrainMicrotasksIfRegistered(ctx: CodegenContext): void {
     name: "__drain_microtasks",
     desc: { kind: "func", index: state.drainFuncIdx },
   });
+  // Native embedders must observe quiescence rather than guessing that a
+  // drain of one graph did not enqueue work in another graph or host queue.
+  const pendingIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, pendingIdx, {
+    name: "__microtasks_pending",
+    typeIdx: addFuncType(ctx, [], [{ kind: "i32" }], "$__mt_pending_type"),
+    locals: [],
+    body: [
+      { op: "global.get", index: state.microtaskTailGlobalIdx },
+      { op: "global.get", index: state.microtaskHeadGlobalIdx },
+      { op: "i32.sub" },
+    ],
+    exported: false,
+  });
+  ctx.mod.exports.push({ name: "__microtasks_pending", desc: { kind: "func", index: pendingIdx } });
   state.drainExported = true;
 }
 

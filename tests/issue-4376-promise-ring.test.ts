@@ -103,11 +103,16 @@ it.each(["eager", "staged"])("runs a pending op through unchanged Deno infrastru
     const readState = instance.exports.__promise_boundary_state as (promise: unknown) => number;
     expect(typeof readState).toBe("function");
     expect(readState(promise)).toBe(0);
+    const pendingCount = instance.exports.__microtasks_pending as () => number;
+    expect(typeof pendingCount).toBe("function");
+    expect(pendingCount()).toBe(0);
     (instance.exports.settlePending as () => void)();
     expect(readState(promise)).toBe(0);
+    expect(pendingCount()).toBeGreaterThan(0);
     const drain = instance.exports.__drain_microtasks as () => void;
     expect(typeof drain).toBe("function");
     drain();
+    expect(pendingCount()).toBe(0);
     expect(readState(promise)).toBe(1);
     const readValue = instance.exports.__promise_boundary_value as (promise: unknown) => unknown;
     expect(typeof readValue).toBe("function");
