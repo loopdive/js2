@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "native-realm-source-integration-20260930",
   "assignee": "ttraenkler/codex-native-realm-source-integration-20260930",
-  "requested_by": "ttraenkler/codex-native-realm-source-integration-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-native-realm-source-integration-20260930",
   "claimed_at": "2026-09-30T15:04:02Z",
-  "updated_at": "2026-09-30T15:04:02Z",
-  "write_id": "4486-7tygatfq"
+  "updated_at": "2026-09-30T22:51:15Z",
+  "write_id": "79543-31086uv9",
+  "released_at": "2026-09-30T22:51:15Z"
 }
