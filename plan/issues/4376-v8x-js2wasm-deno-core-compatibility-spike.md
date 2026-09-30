@@ -1679,3 +1679,55 @@ diff whitespace checks pass. No compiler behavior was changed in this step.
 Full Deno integration remains incomplete. Next advance the runtime packaging
 compiler pin to the committed scheduler ABI and verify a clean detached
 artifact build, then continue the broader unchecked acceptance requirements.
+
+### 2026-09-30 pinned clean runtime packaging attempt
+
+Runtime checkpoint 59ec036 is signed and contains the accumulated native
+realm/graph bridge and FIFO work. Runtime packaging now independently pins
+compiler 54eaa2239acd5eb1f383a500bd4d4a3b9dbdb3b2; the historical POC
+compiler pin and compile-options commitment are unchanged. Pin/options
+contracts pass 7/7 and the compiler-free pinned core rerun (session 21842)
+passes 24/24 with three explicit ignores. No broad Deno baseline changed.
+
+Prepared clean detached inputs under /private/tmp/deno-release-build.cGYWlK:
+runtime clone `v8x` at 59ec036, compiler worktree `compiler` at 54eaa2239a,
+and sparse Deno checkout `deno` at 1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44.
+Compiler dependencies are shared through an ignored node_modules symlink.
+Local compiler clones failed because shallow/promisor history requested an
+unavailable historical object; the detached worktree succeeded without
+altering the active compiler checkout. The AOT production builder is running
+as session 12622 against these inputs. Do not claim packaging success until
+its output and provenance are inspected. An initial test-staged-core command
+was invoked without its mandatory compiler argument and only reported usage;
+that invocation is not a test result or evidence of a runtime regression.
+
+The clean builder (session 12622) completed successfully. Inspected the actual
+provenance and recomputed the output and compile-options digests: artifact
+2,666,543 bytes, SHA-256 2376bb786df65caa199091ae6b32ff0ff992ae579324e0b0ed25006d747a327d,
+17 native function imports, null runtime-eval provider, exact committed
+runtime/compiler/Deno revisions. `cmp` confirms byte identity with the already
+verified ordered native development artifact. All three input checkouts are
+still clean. This proves the clean raw-artifact build, not production release
+execution or broader Deno conformance. Fresh trusted Wasmtime precompilation
+of this exact packaged raw file is running as session 62847; follow with
+compiler-free replay against its output and paired attestation.
+
+Fresh trusted precompilation passes 1/1 (session 62847, 244.43 seconds).
+The generated native artifact is 47,328,568 bytes for aarch64-apple-darwin,
+Wasmtime 47.0.3, SHA-256 1b877a293a239f03e78eb52707d3d8589ca4306d165736a6a9c301794b5f9e84.
+Recomputed the native hash and verified its attestation binds the exact
+raw artifact hash above. This is a development native artifact, not a
+normalized distribution payload or a new comparative footprint benchmark.
+Compiler-free replay of this freshly packaged artifact passes 24/24 with
+three explicit ignores (session 37601, 1.02 seconds). No runtime compiler
+feature or interpreter provider is configured for that replay.
+
+Separately reran the compiler-free source-namespace/two-graph FIFO test
+against the existing trusted ordered graph artifacts: 1/1 passes, 25 filtered,
+0.59 seconds. Those graph artifacts were not rebuilt in the clean production
+packaging step; do not confuse this distinct test with packaging them.
+Raw artifact structural/unknown-script controls pass 2/2. A negative build
+control rejects the active compiler branch before compilation. All cited
+processes are terminal. The original broader integration checkboxes remain
+open: general Rust op coverage, rejection events, full module/import semantics,
+general shared-value behavior and production distribution remain unproven.
