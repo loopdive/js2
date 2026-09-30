@@ -820,6 +820,14 @@ function buildCodegenOptions(
     }
   }
   const targetProfile = resolveCompileTargetProfile(options);
+  if (options.standaloneMicrotaskNotifyImport !== undefined) {
+    const { module, name } = options.standaloneMicrotaskNotifyImport;
+    if (options.target !== "standalone" || !module || !name || !options.link?.includes(module)) {
+      throw new Error(
+        "standaloneMicrotaskNotifyImport requires standalone, non-empty module/name, and its namespace in link.",
+      );
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -838,6 +846,7 @@ function buildCodegenOptions(
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
     standaloneGlobalThisImport: options.standaloneGlobalThisImport,
+    standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport,
     directEval: options.directEval,
     runtimeEvalProvider: options.runtimeEvalProvider,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).

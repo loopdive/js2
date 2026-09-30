@@ -174,6 +174,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   standalone?: boolean;
   /** Linked zero-argument getter for a canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string; exceptionTag?: string };
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   runtimeEvalProvider?: boolean; // see CompileOptions.runtimeEvalProvider (#6676)
@@ -4241,6 +4242,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string; exceptionTag?: string };
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
   /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
    *  is under construction, so a re-entrant realm-global read inside the seed
    *  itself takes the legacy inline splice instead of calling a function whose

@@ -7,6 +7,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as bodies from "../src/runtime/wasmgc/promise/settlement-bodies.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
+import { movedResolutionNames, assertMovedResolutionReceipt } from "./helpers/promise-resolution-receipts.js";
 
 const root = resolve(import.meta.dirname, "..");
 const canonicalPath = "src/runtime/wasmgc/promise/settlement-bodies.ts";
@@ -404,6 +405,106 @@ function once(text: string, before: string, after: string): string {
   assert.equal(text.split(before).length, 2, "exact resource adaptation " + before);
   return text.replace(before, after);
 }
+function undoDenoRetainedDelta(name: string, text: string): string {
+  // Each substitution must occur exactly once. Everything else is still
+  // authenticated against the original digest, including unrelated body edits.
+  // The observable then/finally changes arrived on main and are separately
+  // exercised by the D5/D7 runtime behavior suites.
+  if (name === "getOrRegisterPromiseType") {
+    text = once(text, '      { name: "$handled", type: { kind: "i32" }, mutable: true },\n', "");
+    text = once(text, '    { name: "$handled", type: { kind: "i32" as const }, mutable: true },\n', "");
+  }
+  if (
+    [
+      "emitStandalonePromiseResolve",
+      "emitStandalonePromiseReject",
+      "emitStandalonePromiseThen",
+      "emitStandalonePromiseFinally",
+    ].includes(name)
+  ) {
+    const indent = name === "emitStandalonePromiseResolve" ? "    " : "  ";
+    text = once(
+      text,
+      `${indent}fctx.body.push(closureBagInitInstr());\n${indent}fctx.body.push({ op: "i32.const", value: 0 });`,
+      `${indent}fctx.body.push(closureBagInitInstr());`,
+    );
+  }
+  if (name === "emitStandalonePromiseResolve") {
+    // Its second constructor is the mutable resolve/adoption branch.
+    text = once(
+      text,
+      '      closureBagInitInstr(),\n      { op: "i32.const", value: 0 },',
+      "      closureBagInitInstr(),",
+    );
+  }
+  if (name === "ensurePromiseFinallyRuntime") {
+    text = once(
+      text,
+      '      closureBagInitInstr(),\n      { op: "i32.const", value: 1 },',
+      "      closureBagInitInstr(),",
+    );
+  }
+  if (name === "emitStandalonePromiseThen" || name === "emitStandalonePromiseFinally") {
+    text = once(
+      text,
+      '  fctx.body.push(\n    { op: "local.get", index: promiseLocal },\n    { op: "i32.const", value: 1 },\n    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n  );\n',
+      "",
+    );
+  }
+  if (name === "emitStandalonePromiseThen") {
+    text = once(
+      text,
+      "  intrinsic = false, // (#6651 D7) %Promise.prototype.then% itself: never re-dispatches to an own `then`\n",
+      "",
+    );
+    text = once(
+      text,
+      'if (intrinsic || !ctx.funcMap.has("__carrier_bag_has") || !ctx.funcMap.has("__extern_get"))',
+      'if (ctx.funcMap.get("__carrier_bag_has") === undefined || ctx.funcMap.get("__extern_get") === undefined)',
+    );
+    text = once(
+      text,
+      "            // chaining. Settlement reverses multi-node lists before enqueueing\n            // to restore registration order without changing immutable nodes.",
+      "            // chaining. FIFO append can be added later without changing the\n            // node shape; simple chains have one pending callback per promise.",
+    );
+  }
+  if (name === "emitStandalonePromiseFinally") {
+    text = once(
+      text,
+      "  // (#6651 D7) §27.2.5.3 step 7: Get `then` first; only an intrinsic `then` on a\n" +
+        "  // native `$Promise` re-enters here for the lowering below (promise-finally-invoke.ts).\n" +
+        "  if (tryEmitObservablePromiseFinally(ctx, fctx, promiseInstrs, onFinally, emitStandalonePromiseFinally)) return;\n",
+      "",
+    );
+  }
+  if (name === "exportPromiseBoundaryIfRegistered") {
+    text = once(text, "  exportPromiseHandlerBoundary(ctx, promiseTypeIdx, state.markRejectionHandledFuncIdx);\n", "");
+    text = once(
+      text,
+      '      { op: "local.get", index: 2 },\n      { op: "i32.const", value: 1 },\n      { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n',
+      "",
+    );
+  }
+  if (name === "exportDrainMicrotasksIfRegistered") {
+    text = once(text, "  exportOneMicrotaskDrain(ctx, state, MICROTASK_QUEUE_INITIAL_SLOTS);\n", "");
+    text = once(
+      text,
+      "  // Native embedders must observe quiescence rather than guessing that a\n" +
+        "  // drain of one graph did not enqueue work in another graph or host queue.\n" +
+        "  const pendingIdx = mintDefinedFunc(ctx);\n" +
+        "  pushDefinedFunc(ctx, pendingIdx, {\n" +
+        '    name: "__microtasks_pending",\n' +
+        '    typeIdx: addFuncType(ctx, [], [{ kind: "i32" }], "$__mt_pending_type"),\n' +
+        "    locals: [],\n    body: [\n" +
+        '      { op: "global.get", index: state.microtaskTailGlobalIdx },\n' +
+        '      { op: "global.get", index: state.microtaskHeadGlobalIdx },\n' +
+        '      { op: "i32.sub" },\n    ],\n    exported: false,\n  });\n' +
+        '  ctx.mod.exports.push({ name: "__microtasks_pending", desc: { kind: "func", index: pendingIdx } });\n',
+      "",
+    );
+  }
+  return text;
+}
 function originalText(node: ts.FunctionDeclaration): string {
   const name = node.name!.text;
   assert.equal(node.asteriskToken, undefined, "canonical builder must not become a generator");
@@ -418,7 +519,24 @@ function originalText(node: ts.FunctionDeclaration): string {
     "exact canonical signature before original-header reconstruction: " + name,
   );
   let body = node.body!.getText();
+  if (name === "buildPromiseSettleLocals") {
+    body = once(body, '    { name: "$orderedCallbacks", type: { kind: "externref" } },\n', "");
+  }
   if (name === "buildPromiseSettleBody") {
+    // Independently reverse only the registration-order and persistent-handler
+    // deltas. The historical declaration digest remains the authenticated donor.
+    body = once(
+      body,
+      "    ...buildRegistrationOrderedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, 4),\n",
+      "",
+    );
+    body = once(
+      body,
+      '          { op: "local.get", index: promiseLocal },\n' +
+        '          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n' +
+        '          { op: "i32.eqz" },\n          { op: "i32.and" },\n',
+      "",
+    );
     body = once(body, "\n  const { promiseTypeIdx, callbackTypeIdx } = state;", "");
     body = once(
       body,
@@ -628,6 +746,78 @@ const resource = {
   unhandledNodeTypeIdx: -1,
 };
 describe("native Promise settlement canonical ownership (not full runtime closure)", () => {
+  it.each([
+    [
+      "buildPromiseSettleClosureInstrs",
+      "buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs)",
+      "buildPromiseSettleClosureValue(closures, clFuncIdx + 1, promiseInstrs)",
+    ],
+    [
+      "ensurePromiseExecutorClosures",
+      "capPromiseFieldIdx }, settleFuncIdx)",
+      "capPromiseFieldIdx }, settleFuncIdx + 1)",
+    ],
+    [
+      "ensurePromiseThenableSubstrate",
+      "capsFields: { callback: 0, chained: 1 }",
+      "capsFields: { callback: 0, chained: 2 }",
+    ],
+    [
+      "buildPromiseResolveValueBody",
+      "promiseFields: { state: 0, value: 1, callbacks: 2 }",
+      "promiseFields: { state: 0, value: 2, callbacks: 2 }",
+    ],
+  ])("refuses an altered current moved-body adapter %s", (name, before, after) => {
+    const source = read(schedulerPath);
+    const adapter = fn(source, name!).getText();
+    const changed = once(source, adapter, once(adapter, before!, after!));
+    const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name)!;
+    expect(() => assertMovedResolutionReceipt(name!, receipt[2], changed)).toThrow();
+  });
+  it("refuses a changed resolution-local import and wrong historical digest", () => {
+    const name = "buildPromiseResolveValueLocals";
+    const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name)!;
+    const source = read(schedulerPath);
+    const changed = once(
+      source,
+      "  buildPromiseResolveValueLocals,",
+      "  buildPromiseResolveValueLocals as unrelatedLocals,",
+    );
+    expect(() => assertMovedResolutionReceipt(name, receipt[2], changed)).toThrow();
+    expect(() => assertMovedResolutionReceipt(name, "0".repeat(64), source)).toThrow();
+    expect(() => assertMovedResolutionReceipt(name, receipt[2], "")).toThrow();
+  });
+  it.each([
+    [
+      "getOrRegisterPromiseType",
+      '{ name: "$handled", type: { kind: "i32" }, mutable: true }',
+      '{ name: "$handled", type: { kind: "i32" }, mutable: false }',
+    ],
+    [
+      "emitStandalonePromiseThen",
+      '{ op: "i32.const", value: 1 },\n    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 }',
+      '{ op: "i32.const", value: 2 },\n    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 }',
+    ],
+    [
+      "exportDrainMicrotasksIfRegistered",
+      '{ op: "global.get", index: state.microtaskTailGlobalIdx }',
+      '{ op: "global.get", index: state.microtaskHeadGlobalIdx }',
+    ],
+  ])("refuses mutation of explicitly accounted Deno delta %s", (name, before, after) => {
+    const current = fn(read(schedulerPath), name!).getText();
+    const changed = once(current, before!, after!);
+    const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name);
+    expect(receipt).toBeDefined();
+    expect(() => {
+      expect(sha(undoDenoRetainedDelta(name!, changed))).toBe(receipt![2]);
+    }).toThrow();
+  });
+  it.each([
+    "    ...buildRegistrationOrderedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, 4),\n",
+    '          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n',
+  ])("requires the deliberate settlement delta instead of accepting its removal %#", (delta) => {
+    expect(() => requireDeclarationReceipt(once(read(canonicalPath), delta, ""))).toThrow();
+  });
   it("requires six executable declarations and all seven original constant receipts", () => {
     requireDeclarationReceipt(read(canonicalPath));
     expect(Object.keys(bodies).sort()).toEqual([...constantNames, ...functionNames].sort());
@@ -754,15 +944,32 @@ describe("native Promise settlement canonical ownership (not full runtime closur
   it("keeps the canonical owner on the one import-free instruction-model leaf", () => {
     const sf = parse(read(canonicalPath));
     const imports = sf.statements.filter(ts.isImportDeclaration);
-    expect(imports).toHaveLength(1);
+    expect(imports).toHaveLength(2);
     expect(imports[0]!.importClause!.isTypeOnly).toBe(true);
     expect((imports[0]!.moduleSpecifier as ts.StringLiteral).text).toBe("../../../wasm/model/instructions.js");
+    expect(imports[1]!.getText()).toBe(
+      'import { buildRegistrationOrderedCallbacks } from "./reaction-order-bodies.js";',
+    );
     const leaf = parse(read("src/wasm/model/instructions.ts"));
     expect(leaf.statements.filter((n) => ts.isImportDeclaration(n) || ts.isExportDeclaration(n))).toEqual([]);
     expect(read(canonicalPath)).not.toMatch(/CodegenContext|AsyncSchedulerState|=>\s*Instr|import\(/);
   });
-  it.each(retained)("retains %s :: %s unchanged", (path, name, hash) => {
-    expect(sha(fn(read(path), name).getText())).toBe(hash);
+  it.each(retained)("retains the authenticated %s :: %s receipt after explicit deltas", (path, name, hash) => {
+    if (path === schedulerPath && movedResolutionNames.has(name)) {
+      assertMovedResolutionReceipt(name, hash, read(path));
+      return;
+    }
+    let text = fn(read(path), name).getText();
+    if (path === schedulerPath && name === "ensureMicrotaskQueue") {
+      // Preserve the authenticated donor. Account only for the two deliberate
+      // opt-in notification edits, rather than blessing a new function hash.
+      const registration = "  const notification = registerMicrotaskNotification(ctx);\n";
+      const enqueue = "body: [...buildEnqueueBody(queueResources), ...notification]";
+      expect(text.split(registration)).toHaveLength(2);
+      expect(text.split(enqueue)).toHaveLength(2);
+      text = text.replace(registration, "").replace(enqueue, "body: buildEnqueueBody(queueResources)");
+    }
+    expect(sha(undoDenoRetainedDelta(name, text))).toBe(hash);
   });
   it("does not allocate undefined when dispatcher is absent, even with parent operands", () => {
     let calls = 0;

@@ -550,6 +550,12 @@ export interface CompileOptions {
    * all existing callers.
    */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string; exceptionTag?: string };
+  /** Optional native-host notification `() -> void` after each Wasm-owned
+   * microtask enqueue. The host can combine notifications from multiple
+   * graphs with its native queue and call `__drain_one_microtask` in order.
+   * Requires standalone and an explicitly linked import namespace.
+   */
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
   /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *

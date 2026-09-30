@@ -418,6 +418,9 @@ export function createCodegenContext(
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
+    ...(options?.standaloneMicrotaskNotifyImport
+      ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
+      : {}),
     directEvalMode: options?.directEval ?? "legacy",
     runtimeEvalProviderAbsent: targetProfile.target === "standalone" && options?.runtimeEvalProvider === false,
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5

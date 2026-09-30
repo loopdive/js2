@@ -1548,7 +1548,8 @@ async function main(): Promise<void> {
       call: "__v8x_context_call",
       exceptionTag: "__exn_tag",
     },
-    link: ["v8x:context"],
+    link: ["v8x:context", "v8x:deno"],
+    standaloneMicrotaskNotifyImport: { module: "v8x:deno", name: "__v8x_microtask_notify" },
     allowJs: true,
     // v8x is the host for these modules. Keep the exception-rendering ABI
     // (and the rest of the explicit host bridge surface) so it can decode the

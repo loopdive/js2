@@ -31,6 +31,8 @@ import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { exportPromiseHandlerBoundary } from "./promise-handler-boundary.js";
+import { exportOneMicrotaskDrain } from "./microtask-drain-boundary.js";
+import { registerMicrotaskNotification } from "./microtask-notification.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 // (#3125) Thenable-assimilation helpers use the physical wrapper registry and
@@ -511,6 +513,7 @@ function getOrRegisterThenCapsType(ctx: CodegenContext): number {
 export function ensureMicrotaskQueue(ctx: CodegenContext): void {
   const state = getOrInitState(ctx as CodegenContextWithScheduler);
   if (state.enqueueFuncIdx !== -1) return; // already registered
+  const notification = registerMicrotaskNotification(ctx);
 
   // 1. Type registration.
   //    Args/captures arrays share `__arr_externref` (already registered for
@@ -630,7 +633,7 @@ export function ensureMicrotaskQueue(ctx: CodegenContext): void {
       "$__mt_enqueue_type",
     ),
     locals: [],
-    body: buildEnqueueBody(queueResources),
+    body: [...buildEnqueueBody(queueResources), ...notification],
     exported: false,
   });
   ctx.funcMap.set("__microtask_enqueue", state.enqueueFuncIdx);
@@ -1591,6 +1594,7 @@ export function emitDrainMicrotasks(ctx: CodegenContext, fctx: FunctionContext):
 export function exportDrainMicrotasksIfRegistered(ctx: CodegenContext): void {
   const state = (ctx as CodegenContextWithScheduler).asyncScheduler;
   if (!state || state.drainFuncIdx === -1 || state.drainExported) return;
+  exportOneMicrotaskDrain(ctx, state, MICROTASK_QUEUE_INITIAL_SLOTS);
   ctx.mod.exports.push({
     name: "__drain_microtasks",
     desc: { kind: "func", index: state.drainFuncIdx },

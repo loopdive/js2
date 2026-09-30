@@ -1440,3 +1440,219 @@ cross-graph/native queue ordering, broader real Rust-op and Deno suites,
 compiler-free cross-graph replay, complete module/import coverage and actual
 distribution packaging. This closes the focused handler-state bridge gap,
 not the overall Deno integration acceptance criteria.
+
+## 2026-09-30 shared native/compiled microtask queue checkpoint
+
+Merged fresh `loopdive/js2` main `2255e91c9831764120943201fbd52b03267033f5`
+without conflicts in signed local merge `b92a8c66ca`. Existing work was
+preserved; this merge has not been pushed.
+
+The compiler exports `__drain_one_microtask` over the existing Wasm-owned
+queue. It advances the head before invoking the callback and returns after
+one job. Empty queues are no-ops and the batch-drain API is retained. An
+opt-in `standaloneMicrotaskNotifyImport` adds a `() -> void` host notification
+after each real enqueue. Its namespace must be explicitly linked. Registration
+flushes late import shifts before emitting the imported call and refuses a
+same-named local function or an incompatible imported signature.
+
+The runtime clone at `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`
+now accepts `v8x:deno.__v8x_microtask_notify`. It records the actual calling
+graph's single-job drain in the isolate's native FIFO, with realm ownership
+and captured continuation data. The native queue uses a deque rather than
+shifting a vector. Realm IDs are assigned before instantiation. Standalone
+Stores without an isolate maintain their own notification FIFO. Older
+non-notifying artifacts still use the previous batch fallback; mixed legacy
+and notifying graphs do not establish unified ordering.
+
+Compiler verification: TS7 passes; 143/143 focused tests across six files
+(session 34787), including fulfillment, rejection, reentrant chains, an
+8,193-job grown queue, invalid option refusals, and two separately compiled
+graphs interleaved with a host job. The latter uses a Node host coordinator,
+not the Rust adapter. The deliberate `ensureMicrotaskQueue` receipt change
+is independently reversed before checking the unchanged donor hash; the
+focused receipt passes 1/1, with 128 skipped (session 91814). The wider
+settlement ownership receipt suite was not green: its initial run had 16/129
+failures. Raw retained-function comparison found 13/66 mismatches already
+in HEAD and 14/66 in the working tree, with the enqueue change accounting for
+the extra mismatch. Canonical receipt failures and earlier retained-function
+changes still require reconciliation, not replacement hashes.
+Final rerun of that wider receipt suite terminates at 114/129 passing,
+15 failing (session 68519), with the enqueue receipt now passing.
+LOC/function budget commands pass using their default base resolution; the supplied
+`--base` argument is not an implemented override, so no exact-main-base
+claim is made. Earlier whole-branch publication gate failures remain open.
+
+New native artifact `deno-native-ordered.wasm` has 2,666,543 bytes, six
+authenticated source fixtures and 17 native function imports, with no
+interpreter added. Build-time precompile and public pinned-core acceptance
+pass 1/1 (session 72346, 250.92 seconds). The acceptance requires the order
+compiled reaction 1, native callback 2, chained compiled reaction 3, with
+no synchronous callback execution. Compiler-free replay using matching
+`deno-native-ordered.cwasm` and `deno-native-ordered.attestation.json` passes
+24/24 with two explicit ignores (session 98522, 1.01 seconds). All three
+artifacts are in the owned parent directory of the runtime clone. Rust
+formatting and focused cargo check pass. Typst remains unavailable.
+
+Compiler and runtime scheduler edits are local and uncommitted at this
+checkpoint. The development fixture builder enables notifications; the
+historically locked production builder options are unchanged. Next enable
+the notification consistently in application/context graph builds, rebuild
+their artifacts and verify actual Rust multi-graph/native interleaving and
+compiler-free replay. Do not substitute the Node multi-graph check for that
+acceptance. Production packaging, general rejection events, broader real
+Deno/Rust-op suites and complete module/import coverage remain open.
+
+## 2026-09-30 compiler-free multi-graph ordering acceptance
+
+Application `compile-graph.ts` and the development shared-context fixture
+builder now enable the same explicitly linked enqueue notification as the
+pinned-core development fixture. The native namespace test loads two
+independently compiled application graphs into the shared Store, queues
+their settled-Promise reactions, chains more reactions, inserts a Rust
+microtask, and requires `[1,2,3,11,12]`. It checks no synchronous callbacks,
+no duplicate jobs at a second checkpoint, and preserves its existing live
+namespace, object/prototype and exception-identity assertions.
+
+Build-time native acceptance passes 1/1 (session 15866, 171.68 seconds).
+A second build-time run passes 1/1 (session 96340, 126.82 seconds) while
+serializing the context and publishing both source-bound graph artifacts.
+A hidden test attachment helper loads a trusted, immutable precompiled
+context using the existing deployment deserialization path. The test now
+also compiles into compiler-free builds; raw Wasm attachment is explicitly
+refused there. Attachment configures the owning isolate before subsequent
+compiled enqueues.
+
+Compiler-free native replay passes 1/1, with 25 filtered (session 81100,
+0.55 seconds), enabling only `engine_js2wasm,js2wasm_gc_copying,simdutf`.
+It uses `namespace-context-ordered.cwasm` and `ordered-graphs/` in the owned
+artifact directory `/private/tmp/v8x-deno-resume-20260930.o0sxeO`. That
+directory contains two distinct `.cwasm` graph artifacts and their exact
+graph/byte-binding sidecars; no graph compiler environment is configured
+for replay. The context artifact has 23,455,064 bytes. This is an unoptimized
+development fixture size, not a new footprint comparison or production
+package estimate. Runtime-eval instantiations are unchanged by the test.
+Dependency-tree controls contain 267 rows and no Wasmtime Cranelift package
+for the compiler-free profile, versus 360 rows including
+`wasmtime-internal-cranelift v47.0.3` for the build-time profile.
+
+The negative control is real execution: the same current pinned-core
+ordering test against the previous `deno-native-handlers.cwasm` fails 0/1
+with actual `[2,1,3]` versus required `[1,2,3]` (session 8183). This isolates
+the old batch scheduling defect rather than merely asserting an export
+exists. Its failure is intentional and is not a failure of the new artifact.
+
+Compiler namespace/queue/tag controls pass 16/16 across four files (session
+5191). Additional notification-collision controls refuse local-function and
+wrong-signature import reuse; the expanded queue suite passes 11/11 (session
+33526). TS7, default-base LOC/function gates, rustfmt and whitespace checks
+pass. The 15 wider source-receipt failures from the preceding checkpoint
+remain unresolved; no donor hashes or gate thresholds were regenerated to
+hide them. Typst remains unavailable.
+
+All new edits remain local/uncommitted. This closes the focused native
+multi-graph/compiler-free replay ordering gap, not full Deno integration.
+Production artifact/profile commitments still need the notification ABI,
+general rejection-event delivery and module/import coverage remain open,
+and the full Deno/Rust-op test population has not been proven.
+
+Final new-artifact compiler-free pinned-core target rerun passes 24/24
+executed, with three explicit ignores (session 10572, 1.17 seconds).
+The namespace case is one of those default ignores and was separately
+executed successfully in session 81100 above. All processes cited in this
+checkpoint are terminal. Compiler Prettier checks and both worktrees'
+whitespace checks pass on the final files.
+
+## 2026-09-30 runtime packaging scheduler contract
+
+The runtime production builder and native development fixture now share
+`runtimeCompileOptions(execution)`. AOT mode exports Symbol state and links
+only `v8x:deno`, including the verified enqueue notification. Explicit dynamic
+fallback preserves both that notification and shared provider Symbol state;
+this option test does not establish ordering inside an interpreter provider.
+The historically frozen POC compile options and their commitment are unchanged.
+
+Runtime packaging now checks exactly one native notification function import
+and all three scheduler function exports before publishing bytes. Empty
+modules, uninspectable values, and a real module with only the notification
+import are negative controls. The native artifact check invokes the existing
+binary-level linear-memory detector, so its GC-only assertion also excludes
+unexported defined memories rather than relying only on import descriptors.
+
+Node option/contract tests pass 6/6. Real rebuilt native-artifact controls pass
+2/2, including refusing unknown scripts without native op calls. Rebuilding
+the authenticated six-source fixture with the shared production options yields
+2,666,543 bytes and 17 native imports, byte-identical by `cmp` to the already
+native/compiler-free verified `deno-native-ordered.wasm`. New copy:
+`/private/tmp/v8x-deno-resume-20260930.o0sxeO/deno-native-production-options.wasm`,
+SHA-256 `2376bb786df65caa199091ae6b32ff0ff992ae579324e0b0ed25006d747a327d`.
+These are shared-option/development-artifact checks, not a clean-checkout
+production packaging proof.
+
+Production release remains incomplete. The builder currently pins compiler
+`8fd489a918dee3be51bb1e75d191f9815a830eb0`; this must advance to a committed
+revision containing the new ABI after reconciling the branch's publication
+gates. A real detached clean-checkout build, revised runtime provenance and
+deployment validation remain required. The runtime source edits and new
+`tools/js2wasm/test-runtime-compile-options.mjs` remain local/uncommitted.
+Docs explicitly preserve that distinction. Whitespace checks pass; Typst is
+still unavailable. All commands in this checkpoint are terminal.
+
+Next reconcile the 15 wider ownership/source-receipt failures against the
+deliberate Promise-carrier/handler-state and queue changes without blindly
+replacing donor hashes, then checkpoint the compiler ABI so runtime pins can
+reference actual committed code. Full integration, broader Deno conformance,
+general rejection events and complete import/module coverage remain open.
+
+## 2026-09-30 settlement receipt reconciliation, 15 to 5 failures
+
+The wider settlement ownership suite initially fails 15/129 (session 97367).
+Its original constant, declaration and retained-function digests remain
+unchanged. Reconciliation explicitly reverses the exactly-once deliberate
+callback-list reversal, persistent handler field/initialization/writes,
+pending-count export and single-job drain additions before authenticating
+the old declarations. The instruction-model leaf import is still type-only;
+the new reaction-order helper import is separately checked by its exact
+name and path. Main's independently introduced intrinsic-then and observable
+finally changes are also accounted for explicitly, with their D5/D7 runtime
+behavior tests included in verification. No runtime compiler behavior or
+donor fixture is changed in this checkpoint.
+
+Five new negative controls refuse changed field mutability, a wrong handled
+flag value, a corrupted pending-count operand, deletion of the ordered-list
+call and deletion of the persistent handler read. They prove these approved
+deltas cannot silently be altered or removed while retaining a green receipt.
+
+Final combined verification (session 56683) executes 228 tests across six
+files: 223 pass and five fail. The only remaining failures are the historical
+receipts for `buildPromiseSettleClosureInstrs`, `ensurePromiseExecutorClosures`,
+`ensurePromiseThenableSubstrate`, `buildPromiseResolveValueLocals` and
+`buildPromiseResolveValueBody`. Their code was moved/delegated in the already
+merged resolution-body refactor, not changed by this turn. The independent
+52-test resolution preservation suite passes, as do notification/handler
+and D5/D7 behavior suites. The old five donor function texts in
+`issue-3518-promise-resolution-donors.json` match these exact historical
+digests, but merely substituting those texts would not authenticate current
+delegation and is not used as a shortcut.
+
+Next connect those receipts to authenticated moved owners and verify their
+current adapters/canonical bodies through the existing operand-sensitive
+resolution controls. Preserve donor hashes and the distinction between
+source identity and behavior preservation. TS7 passes. Edits remain local
+and uncommitted; this is partial gate reconciliation, not a ready-to-land or
+complete-integration claim. All cited processes are terminal.
+
+### 2026-09-30 checkpoint before requested main merge
+
+Extracted reusable authenticated resolution receipt helpers without changing
+the donor fixture or its digests. The independent resolution suite remains
+52/52. Current adapter checks reduce the outstanding settlement receipt
+failures from five to one. TS7 passes; the combined focused run (session
+78801) passes 232/233 tests across six files. The remaining failure exercises
+capture field indices other than 5, which the canonical settle closure builder
+explicitly refuses. Investigate the actual registered layout and historical
+builder contract before changing either the guard or the receipt matrix.
+This checkpoint is incomplete and not a ready-to-merge claim.
+
+Fetched loopdive/js2 main at ee6828f1ef2f6dd7dc26c1eabe699ed8e8a12e50
+for the user's requested merge. Its two new commits refresh npm compatibility
+artifacts. Unrelated working-tree changes are excluded from the checkpoint.
