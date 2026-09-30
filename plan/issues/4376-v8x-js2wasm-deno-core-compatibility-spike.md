@@ -2227,3 +2227,72 @@ behavior with this latch. General nested active-Store reentry, native/compiled
 notification ordering, broader Rust ops, full upstream conformance, imports,
 TLA and production packaging remain in scope. Commits remain local; no PR
 push or external comment was made in this follow-up.
+
+### Resolving-pair packaged replay and general-op audit
+
+Native precompile 71472 is now terminal: 1/1 passed in 240.75 seconds.
+The native artifact is 47,460,032 bytes, SHA-256
+`a2a2f9e59deb8da144dfc836fddc2ba233d0088f057cba2fbc6588db1237582c`.
+Both raw and native hashes were recomputed from disk and match the attestation.
+Compiler-free replay 53463 passed 30/30 with six ignored in 1.08 seconds,
+using the artifact root and commands above without js2wasm_runtime_compile.
+This supersedes the prior live-handle handoff, not the broader remaining scope.
+
+Merged newly fetched loopdive/js2 main ad10f2e8605692cd8baf0a884be0ab6cd305dab5
+into the compiler branch as signed merge 310b266bd9. Incoming changes are
+benchmark/baseline documentation, not the compiler artifact pin. Unrelated
+local edits remain preserved.
+
+The runtime profile does not use the hardcoded seed op table: graph construction
+replaces it with __v8x_attach_context, which transfers the real Rust global
+object and ops through realm_host_callbacks. Legacy print/sum binding code alone
+is therefore not evidence that general Rust ops are unavailable. The application
+packager is still restricted to the pinned hello-world source; expanding general
+AOT application/module packaging remains required. Do not replace this restriction
+with arbitrary classic scripts wrapped in a function, which would change scope,
+completion values and repeat-execution semantics.
+
+Added native integration controls for every argument-bearing generated upstream
+async stub (one through nine user arguments), checking argument order, receiver
+identity and returned object identity. Initial focused replay 41536 passed 1/1.
+Added a callback-count floor and an unsupported ten-argument refusal control;
+final full-target verification is pending below. Deno wrapper sources remain
+unmodified and no interpreter/compiler feature is enabled for replay.
+
+Full-target 92180 is terminal: 29/30 passed, six ignored. The new upstream
+ten-user-argument rejection control fails: instead of the expected core Error,
+the adapter exposes a diagnostic ending in `exception length outside diagnostic
+limit: -1`. Diagnostic rerun 18466 reproduces 0/1. Wasm backtrace points to
+__runtime_eval_unwrap_call_result through __apply_closure/__closure_method_call.
+This is a new observed boundary failure, not evidence the arity cap can be removed.
+
+Local adapter candidate in src/js2wasm_graph_calls.rs now retains the single
+externref exception payload for bootstrap-realm calls, mirroring existing
+application-graph dispatch, instead of rendering a new diagnostic Error.
+Full-target 62392 remains 29/30, six ignored: the same refusal now exposes
+`null`, still not the required Error. Thus exception transport alone does not
+finish the repair. Next investigate whether the compiled call-result failure
+envelope already carries null (including the explicit runtime-eval refusal
+provider path), and prove the actual source error reaches native TryCatch.
+Do not weaken the error assertion or modify upstream Deno wrappers. Nine
+argument-bearing branches and their exact callback-count floor pass before
+this failure; the broader integration test stops at the new negative control.
+The adapter candidate and tests remain uncommitted pending that repair.
+
+Compiler isolation reproduces the same null before any native adapter runs.
+New issue-4376-core-error-constructor controls pass two direct/captured Error
+controls but fail the actual unchanged 00_primordials.js + 00_infra.js refusal
+with -1 (caught null). Constructor-value tracing did not recognize a const
+object binding element, so the dynamic-new miss returned null. Added candidate
+tracing for const { Error } and renamed const { TypeError: Alias } bindings.
+This only prepares the existing identity-guarded constructor helper; it does
+not infer intrinsic identity from a name or replace arbitrary bag functions.
+No new shared context field or instruction array is introduced. Readers of
+the trace are helper preparation, shadowed extern-name selection and alias
+invoke selection; their runtime carrier identity guards remain intact.
+
+Compiler run 94098 passes 34/34 across five suites, including all seven Error
+families, renamed bindings, one-time source/message side effects, a negative
+user-class-under-Error-key control, and the unchanged upstream scripts. The
+upstream refusal control is now 42, not null. Native replay still needs a new
+artifact built from the committed repair; old artifacts cannot prove this fix.

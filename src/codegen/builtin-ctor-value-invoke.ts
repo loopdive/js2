@@ -119,6 +119,32 @@ export function tracedBuiltinCtorValueName(
       if (!isSingleAssignmentBinding(ctx, e)) return undefined;
       return tracedBuiltinCtorValueName(ctx, init, depth + 1);
     }
+    // Deno captures primordials with const { Error, TypeError: Alias } = bag.
+    // This is only a candidate name: dispatch still compares the evaluated
+    // constructor with the canonical carrier. Never infer intrinsic identity
+    // from a property name (the bag may contain an arbitrary user function).
+    const declarations = ctx.oracle.declarationsOf(e);
+    if (declarations.length === 1) {
+      const binding = declarations[0]!;
+      if (
+        ts.isBindingElement(binding) &&
+        !binding.dotDotDotToken &&
+        !binding.initializer &&
+        ts.isObjectBindingPattern(binding.parent)
+      ) {
+        const declaration = binding.parent.parent;
+        const property = binding.propertyName ?? binding.name;
+        if (
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          ts.isVariableDeclarationList(declaration.parent) &&
+          (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+          (ts.isIdentifier(property) || ts.isStringLiteralLike(property)) &&
+          isInvokeCtorName(property.text)
+        )
+          return property.text;
+      }
+    }
     return isInvokeCtorName(e.text) && resolvesToAmbientGlobal(ctx, e) ? e.text : undefined;
   }
   if (ts.isPropertyAccessExpression(e)) return isInvokeCtorName(e.name.text) ? e.name.text : undefined;
