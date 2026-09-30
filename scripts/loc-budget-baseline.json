@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-30",
   "threshold": 1500,
-  "totalCeiling": 979553,
+  "totalCeiling": 979803,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -47,7 +47,7 @@
     "src/codegen/generators-native-consumer.ts": 1901,
     "src/codegen/generators-native.ts": 7129,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15220,
+    "src/codegen/index.ts": 15225,
     "src/codegen/ir-inline.ts": 1570,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 6162,

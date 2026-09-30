@@ -2684,8 +2684,8 @@
   {
     "edition": "ES2023",
     "pass": 178,
-    "fail": 154,
-    "ce": 2,
+    "fail": 156,
+    "ce": 0,
     "skip": 0,
     "total": 334,
     "pct": 53,
@@ -2711,8 +2711,8 @@
       {
         "name": "array-find-from-last",
         "pass": 93,
-        "fail": 14,
-        "ce": 2,
+        "fail": 16,
+        "ce": 0,
         "skip": 0,
         "total": 109,
         "pct": 85
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4594,
+    "pass": 4598,
     "fail": 192,
-    "ce": 135,
+    "ce": 131,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4495,
+        "pass": 4499,
         "fail": 107,
-        "ce": 9,
+        "ce": 5,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "Symbol",
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4544,
-    "fail": 830,
-    "ce": 71,
+    "fail": 831,
+    "ce": 70,
     "skip": 0,
     "total": 5445,
     "pct": 83

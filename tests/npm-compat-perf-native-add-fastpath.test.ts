@@ -8,6 +8,10 @@ import { expect, it } from "vitest";
 import ts from "typescript";
 import { compile } from "../src/index.js";
 import { isPrimitiveConcatProducer } from "../src/codegen/native-addition.js";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 async function compileStandalone(source: string, fn: string) {
   const result = await compile(source, {

@@ -17,6 +17,10 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 async function build(source: string, env?: Record<string, string>) {
   const saved: Record<string, string | undefined> = {};

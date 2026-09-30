@@ -61,6 +61,7 @@
   "codegen/fixups.ts": 1,
   "codegen/fnctor-ctor-arguments.ts": 1,
   "codegen/function-body.ts": 1,
+  "codegen/function-reachability-sweep.ts": 1,
   "codegen/hof-native.ts": 1,
   "codegen/host-import-allowlist.ts": 2,
   "codegen/index.ts": 6,
