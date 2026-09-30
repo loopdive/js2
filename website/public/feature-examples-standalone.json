@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4407,
+      "passCount": 4408,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 702,
+          "pass": 703,
           "total": 752
         },
         {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 402,
+      "passCount": 404,
       "totalCount": 461
     },
     {
