@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "object-create-null-source-admission-20260930",
   "assignee": "ttraenkler/codex-object-create-null-source-admission-20260930",
-  "requested_by": "ttraenkler/codex-object-create-null-source-admission-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-object-create-null-main-20260930",
   "claimed_at": "2026-09-30T16:58:24Z",
-  "updated_at": "2026-09-30T16:58:24Z",
-  "write_id": "79395-9tkqdd3u"
+  "updated_at": "2026-09-30T17:34:33Z",
+  "write_id": "7099-zozyu7y3",
+  "released_at": "2026-09-30T17:34:33Z"
 }
