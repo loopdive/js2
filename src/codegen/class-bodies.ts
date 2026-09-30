@@ -2592,6 +2592,7 @@ function compileClassBodiesInner(
       savedBodies: [],
       isConstructor: true,
       isDerivedConstructor: ctx.classParentMap.has(className),
+      enclosingClassName: className,
     };
     fctx.activationEntryBody = fctx.body;
 
@@ -4012,6 +4013,7 @@ function emitPromiseSubclassOnHostCtor(
     savedBodies: [],
     isConstructor: true,
     isDerivedConstructor: ctx.classParentMap.has(className),
+    enclosingClassName: className,
     // The host installs the capability promise into `__current_this` before
     // dispatching this body via `__call_fn_method_1`; `this` reads that global.
     readsCurrentThis: true,

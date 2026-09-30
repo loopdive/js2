@@ -212,6 +212,11 @@ function canBoxBindingInDominatingParent(
   let owner: ts.Node | undefined = closure.parent;
   while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
   if (!owner || ts.isSourceFile(owner)) return false;
+  // An inlined IIFE's preceding declarations live in its detached block,
+  // not in the caller's activation-entry buffer. Moving the cell there
+  // would read the raw slot before initialization and leave the initializer
+  // writing behind the cell's back. Keep construction-site boxing instead.
+  if (fctx.inlinedIifeNodes?.has(owner)) return false;
   const ownerBody = (owner as ts.FunctionLikeDeclarationBase).body;
   if (!ownerBody || !ts.isBlock(ownerBody)) return false;
   let region: ts.Node = closure;

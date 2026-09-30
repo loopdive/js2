@@ -2247,13 +2247,26 @@ export function computeClosureWrapperSig(
   if (closureReturnType === null && checkerReturnWasNever && !ts.isFunctionDeclaration(arrow)) {
     closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
   }
+  // `undefined` is a value, not a void callback contract. In particular the
+  // checker can infer it for a getter of an initially-undefined binding that
+  // another retained closure later writes. Dropping the getter's result then
+  // hides those writes forever. Preserve the runtime value on the open carrier.
+  if (
+    closureReturnType === null &&
+    !ts.isFunctionDeclaration(arrow) &&
+    sig &&
+    (ctx.checker.getReturnTypeOfSignature(sig).flags & ts.TypeFlags.Undefined) !== 0 &&
+    unboundClosureReturnsAValue(arrow)
+  ) {
+    closureReturnType = { kind: "externref" };
+  }
   if (closureReturnType !== null && !ts.isFunctionDeclaration(arrow)) {
     const ctxType = ctx.checker.getContextualType(arrow);
     if (ctxType) {
       const ctxCallSigs = ctxType.getCallSignatures?.();
       if (ctxCallSigs && ctxCallSigs.length > 0) {
         const ctxRetType = ctx.checker.getReturnTypeOfSignature(ctxCallSigs[0]!);
-        if (isVoidType(ctxRetType) && !isAssignedToSymbolIterator(arrow)) {
+        if ((ctxRetType.flags & ts.TypeFlags.Void) !== 0 && !isAssignedToSymbolIterator(arrow)) {
           closureReturnType = null;
         }
       }

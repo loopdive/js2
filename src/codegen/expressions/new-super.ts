@@ -103,6 +103,7 @@ import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
+import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "../builtin-native-dyn-construct.js";
 import {
   emitBuiltinCollectionConstructOnNull,
   reserveBuiltinCollectionDynConstruct,
@@ -5156,6 +5157,8 @@ function emitDynamicNewFallback(
     emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
     bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, calleeExpr, descLocal, argLocals);
     emitBuiltinCollectionConstructOnNull(ctx, fctx, descLocal, argLocals); // (#6720)
+    emitBuiltinArrayConstructOnNull(ctx, fctx, descLocal, argLocals);
+    emitBuiltinPromiseConstructOnNull(ctx, fctx, descLocal, argLocals);
     fctx.body = savedBase;
     noMatchBase = base;
   } else if (noJsHost(ctx) && useRuntimeArgv) {
@@ -8085,6 +8088,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           emitRuntimeEvalConstructOnNull(ctx, fctx, expr, taDescLocal, taArgLocals);
           bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, dynCallee, taDescLocal, taArgLocals);
           emitBuiltinCollectionConstructOnNull(ctx, fctx, taDescLocal, taArgLocals); // (#6720) Map/Set carrier value
+          emitBuiltinArrayConstructOnNull(ctx, fctx, taDescLocal, taArgLocals);
+          emitBuiltinPromiseConstructOnNull(ctx, fctx, taDescLocal, taArgLocals);
           return { kind: "externref" };
         }
       }

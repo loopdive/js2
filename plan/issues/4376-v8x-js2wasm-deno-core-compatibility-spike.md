@@ -82,6 +82,7 @@ loc-budget-allow:
   # name-keyed box guard, plus env-gated standalone debug facilities
   # (JS2WASM_DUMP_TYPES / JS2WASM_TRACE_LAST_STMT).
   - src/codegen/closures.ts
+  - src/codegen/closures/funcref-as-closure.ts
   - src/emit/binary.ts
   - src/codegen/statements.ts
   - src/link/linker.ts
@@ -91,6 +92,10 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # Canonical Array identity fallback delegates to a separate constructor helper.
+  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
+  # Keep constructor lexical class identity explicit for nested SuperCall.
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
   # Native Map's carrier must not be mistaken for a user class layout merely
   # because an earlier value read already registered it.
   - src/codegen/class-bodies.ts::collectClassDeclaration
@@ -590,6 +595,251 @@ by 3,006 bytes; the larger artifact size predates it.
 ## Handover
 
 ### 2026-09-30: source module namespace publication
+
+- Pending-op follow-up isolated and fixed stale uncurrying rewrites. Native
+  callback tracing in session **78317** received numeric promise id **0**,
+  correctly: the unchanged source advances nextPromiseId only for pending
+  operations. The initial assertion expecting 2 after two immediate ops was
+  a test assumption, corrected to the source's actual contract. Exact-source
+  JavaScript controls then reproduced the null property failure without Rust
+  for both eager and staged initialization. A temporary, explicitly modified
+  diagnostic copy showed `new Array` length 4096 but ArrayPrototypeFill returned
+  nullish. The smaller descriptor-copy matrix isolated captured
+  `uncurry = bind.bind(call)`: inlining the copy or freshly constructing
+  `Function.prototype.call.bind(value)` passed, while the stored helper failed.
+  The compiler rewrote uncurry/applyBind calls to outer call/apply aliases,
+  inventing free variables absent from nested capture plans. Both obsolete
+  rewrites are removed; current native Function.prototype invokers execute
+  the actual stored bound helper and preserve its identity. Deno sources are
+  unchanged. All temporary diagnostic source edits/dumps were removed.
+  Promise/ring/descriptor/exact-source matrix **31/31**, invoker regression
+  **6/6**, prior uncurry regression **3/3**, unchanged bootstrap **1/1** pass,
+  **41/41** total in session **77256**; TS7/LOC/function gates pass. Captured
+  applyBind inline/nested controls pass **2/2** in session **48209**. Stronger
+  exact-source tests confirm returned values are genuinely branded pending
+  Promises (guarded state reader returns 0), **2/2** in session **65443**.
+  New six-source AOT artifact `deno-native-uncurry.wasm` is **2,663,571 bytes**,
+  16 host imports, no interpreter. Native run now includes initial ring
+  hasPromise checks and the pending-op numeric id assertion; previous ring
+  probe session **4810** failed in a runtime-eval result unwrap, before the
+  pending call. Fresh artifact native/precompile session **51658** finished
+  **0/1**, 52 filtered, **243.19s** including compilation. It passes real
+  startup ops, scalar fulfillment 42, fulfilled original Rust object identity,
+  both empty-ring probes, and the pending native op with correct numeric id 0
+  and Promise Pending state. Module namespace publication/identity and
+  async-context/native continuation checks also pass; unchanged hello-world
+  executes its print and sum callbacks. Remaining failure is a null-reference
+  trap in `__v8x_script_result_utf16_length`, before native script.run returns.
+  The compiler-free local precompile is now
+  `/private/tmp/v8x-deno-resume-20260930.o0sxeO/deno-native-uncurry.cwasm` with
+  its matching `.attestation.json`; reuse it for cheap adapter iterations.
+  Next inspect runHostScript status, encoder return, and scriptResult global
+  stores rather than bypassing the result decoder. Full integration remains
+  incomplete. Session **93226** passes **2/2** pending-to-fulfilled transition
+  and explicit-drain checks against unchanged infrastructure, including value
+  42 read through the native Promise ABI. All processes are terminal. Current
+  changes are local/uncommitted on the existing compiler and v8x branches.
+
+- Staged pending-op reproductions isolate a further defect: aliased Promise
+  construction returned null without executing the executor. The canonical
+  Promise slot may not exist when the lifted function compiles before its
+  initializer. Dynamic native construction now reserves that identity slot,
+  checks runtime carrier identity, and delegates to the existing synchronous
+  executor machinery. Detached instruction buffers are registered for late
+  import relocation. Direct Array construction shares the identity guard.
+  New controls cover ring read, executor execution, catch, symbol publication,
+  single evaluation, invalid/missing executors, and an unrelated constructor.
+  Promise/ring **17/17**, direct Promise regression **9/9**, unchanged bootstrap
+  **1/1** pass, total **27/27**. LOC/function and format/diff gates pass.
+  Rebuilt native artifact `deno-native-promise.wasm` is **2,657,877 bytes**, six
+  pinned sources, 16 host imports, no interpreter. Native session **65929** is
+  finished **0/1**, 52 filtered, **242.31s** including precompilation. The
+  unchanged full graph still fails in setPromise with a null property read;
+  reduced controls are not evidence of full pending-op success. Trusted local
+  precompile was produced at
+  `/private/tmp/v8x-deno-resume-20260930.o0sxeO/deno-native-promise.cwasm`.
+  Additional capture/Promise controls pass **38/38** in session **54696**;
+  repository TS7 passes. Deferred resolver test also passes, giving Promise/
+  ring **18/18**, including queued (not synchronous) reaction execution.
+  Constructor-acquisition matrix now passes **22/22** including the direct
+  builtin and dynamic globalThis paths; constructor acquisition alone does
+  not explain the remaining full-graph failure. Next inspect actual promiseId
+  numeric transport and the full graph's captured ring/sentinel values after
+  the prior immediate wrappers run. All sessions are terminal. The latest
+  compiler changes remain local/uncommitted. `npx tsgo` was the wrong command and attempted a
+  network package lookup; use repository `npm run typecheck` instead.
+
+- Follow-up ring initialization fixes add first-class Array.prototype.fill
+  with optional bounds/coercion and canonical aliased Array construction.
+  Focused compiler controls pass **27/27**; LOC gate passes. Native rebuilt
+  six-source artifact is **2,656,122 bytes**, 16 host imports, no interpreter.
+  Native session **45466** finished **0/1**, 52 filtered, **239.41s** including
+  Wasmtime precompilation. Pending setPromise still throws on a null/undefined
+  property read, so ring-only controls do not prove the full pending path.
+  Next isolate Promise construction, catch, and symbol publication separately.
+
+- Native Promise transport now reuses the compiler's existing guarded
+  `__promise_boundary_state` / `__promise_boundary_value` exports. The v8x
+  graph dispatcher unwraps the same-store GC value, checks loaded graph/realm
+  readers (-1 is explicitly not a Promise), validates states 0–2, and retains
+  the actual result in the realm's handle table. Realm conversion allocates
+  only a stable Rust Promise wrapper; native State/Result re-read live Wasm
+  state instead of reporting the wrapper's placeholder settlement. No compiler
+  ABI addition, raw artifact rebuild, or interpreter was needed. Native
+  Then/Catch and handler tracking fail explicitly while unimplemented rather
+  than acting on an unrelated native placeholder promise.
+  Targeted Cargo check and diff gates pass; existing native Promise/microtask
+  and synthetic-module controls pass **2/2**, 51 filtered.
+- Exact native run **23120** passed boot, fulfilled result 42, module namespace
+  identity/write rejection, and async-context/native continuation identity.
+  It reached the unchanged hello-world usage, then failed **0/1** in **0.54s**
+  at `__v8x_script_result_utf16_length` with a null-reference trap. The print
+  fixture was corrected to use V8 boolean conversion for Deno's omitted
+  `isErr` argument (unchanged core forwards undefined); the earlier Boolean-only
+  fixture assertion aborted session **80632** inside the C callback. This
+  correction does not alter Deno source or compiler behavior. Next inspect
+  the AOT `runHostScript` status and `scriptResult` stores before assuming the
+  JSON/result decoder itself is the cause.
+- Stronger async controls now invoke distinct compiled wrappers returning a
+  scalar, the original Rust object, and a pending native op. Latest native
+  session **18415** finished **0/1**, 52 filtered, **0.58s**: scalar fulfillment
+  and fulfilled-object identity pass, then the pending op throws
+  `TypeError: Cannot access property on null or undefined` in `setPromise`.
+  Stack includes `setPromise → __call_fn_method_0 → __apply_closure →
+  __proto_method_-1073741805_apply → … → __v8x_value_call`.
+  The pending native callback itself executes. Inspect the unchanged
+  infrastructure's `promiseRing`, `NO_PROMISE`, `promiseMap` captures and
+  oldPromise lookup, plus its Promise constructor/catch path. Do not bypass
+  the pending test to claim complete async integration. Object control is
+  intentionally before the pending control so its independent evidence is
+  observable; pending remains mandatory. Rejected state, live pending-to-settled
+  transitions, owning-graph reactions, handler tracking, and microtask ordering
+  still require implementation/verification. Namespace/usage assertions after
+  this new pending control have not run in this latest test. No native test
+  remains live; all progress is local/uncommitted in the existing compiler and
+  v8x branches/PRs. Full integration remains in progress.
+- Follow-up native execution exposed two compiler defects in the unchanged
+  primordial getter/setter. An inlined IIFE's initialized local was eagerly
+  boxed in the caller's root buffer, before the initializer in the detached
+  IIFE block. Eager boxing now declines that owner and uses construction-site
+  boxing with the existing conditional-cell repair. Separately, an inferred
+  `undefined` getter return was compiled as void and discarded even after a
+  sibling setter changed the binding. Value-bearing closures inferred as
+  `undefined` now retain an externref result; contextual `void` contracts still
+  retain their existing behavior. The two staged fixtures cover same-named and
+  differently named core functions and invoke the retained function through
+  the getter. Capture/TDZ/sibling/unchanged bootstrap controls pass **51/51**;
+  primordial and ordinary callback controls pass **24/24**. TS7 typecheck and
+  LOC/function gates pass. The wider ambient host-callback suite is **29/30**:
+  its non-void IR-claim rejection fails identically with the return fix removed
+  (session 7057), so it is not attributed to this change.
+- The previous missing-op failure was resolved by registering three real Rust
+  startup capabilities: extras/continuation state, import-meta prototype, and
+  retained captured bootstrap. No pinned Deno source or artifact-only fallback
+  was substituted. Native sessions **81840** and **5202** then failed with
+  `queueMicrotask is already defined`; the latter reported all three startup
+  callbacks in order and passed the pre-core undefined getter check. This led
+  to the compiler fixes above. The latest six-source artifact build **62639**
+  completed with **2,654,606 bytes**, **16 imports**. Native session **59276**
+  finished **0/1**, 52 filtered, in **249.26s**. All four unchanged classic
+  bootstrap scripts pass, all three startup op events match, and native print
+  and sum function identity checks pass. The next assertion failed when
+  calling `setUpAsyncStub` with an invalid length-zero native op: the exact
+  source dispatches on `originalOp.length - 1` and requires at least the
+  promise-id argument. Its old fixture also incorrectly expected the original
+  op back rather than the new wrapper. The corrected fixture uses a real
+  length-one Rust callback returning 42, checks distinct wrapper identity,
+  invokes it, then requires a fulfilled Rust-visible Promise carrying 42.
+  Session **45734** finishes **0/1**, 52 filtered, in **0.48s** at that Promise
+  classification assertion: callback execution succeeds, but its returned
+  compiled Promise is wrapped as a generic native object. No test remains
+  live. Next implement owning-graph Promise classification/state/result and
+  continuation/microtask transport, not an object-as-Promise heuristic.
+  `realm_objects::from_realm` currently supports generic object/function/array
+  kinds only, while `__v8x_value_kind` never distinguishes promises. Namespace,
+  async-context, and hello-world assertions after this new check have not
+  executed in the latest native run. Do not claim the full example passes.
+  Saved precompile output/attestation are at the existing
+  `deno-native-namespace.cwasm` and `.attestation.json` paths. Final compiler
+  rebuild **16551** is byte-identical to the native-tested artifact, SHA-256
+  `9f37cd6fb2a944d2b4d5849b66a8d7f8e31cecebadf15664727a3e81f7023840`.
+  Completion remains unproven.
+- Resolved the native graph's next validation error: immutable
+  `scopeAsyncContext` captures `getAsyncContext` / `setAsyncContext` read
+  promotion globals that hold mutable cells shared with other closures. The
+  immutable function-value emitter treated those as plain value globals.
+  Added a narrow promoted-value helper that extracts field zero only when
+  the box and value registries identify the same global and the expected
+  value type matches both registered metadata and physical cell layout.
+  Missing globals or disagreeing physical metadata fail loudly; consumers
+  expecting a cell and foreign same-named registrations remain on the old
+  path. Seven new positive/negative helper controls pass. Capture ABI,
+  sibling, shadow/TDZ controls pass **36/36**, and unchanged bootstrap,
+  infrastructure, namespaces, Map constructors and optional strings pass
+  **12/12**. TS7 typecheck and LOC/function budget gates pass.
+- Exact six-source runtime/AOT artifact now validates, with **2,654,629
+  bytes**, **16 imports**, all functions in `v8x:deno`, no interpreter imports,
+  and the native namespace handle export. Builds 28571 and 54211 completed
+  successfully. Production packaging now requires that handle export too;
+  strict clean pinned production packaging has not yet been executed. The
+  staged-core tool control passes deferred scripts, host registration gap,
+  namespace publication and rejected reorder/retry (session 64864).
+- Exact native public Script::Run test ran in exec session **63991**
+  (`routes_exact_deno_core_scripts_through_public_script_run`, runtime clone
+  `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`). It uses the validated
+  raw artifact `/private/tmp/v8x-deno-resume-20260930.o0sxeO/deno-native-namespace.wasm`
+  and `namespace-context-v2.wasm`, with cache dir `namespace-cache`, all under
+  the same temporary root. Intentional wrong-order/modified-source controls
+  printed expected rejections. It finished **0/1**, 52 filtered, in 245.73s,
+  terminal exit 101: phases 0–2 advance, but phase 3 (`01_core.js`) throws
+  `TypeError: called value is not a function`, stack
+  `__runtime_eval_unwrap_call_result → __apply_closure → __dyn_call_55 → runScript`.
+  This is execution evidence, not a Wasm validation failure. Before finishing,
+  process 69307 was alive after 3m51s at 99.6% CPU, RSS 1,246,976 KiB; do not
+  infer failure from such timing in future runs. No native test remains live.
+  Next identify that phase-3 call and inspect host-op registration: the Rust
+  fixture installs only `op_print` and `op_sum`, while the exact core startup
+  also calls `op_get_extras_binding_object`, `op_get_ext_import_meta_proto`,
+  `op_set_captured_bootstrap`; the standalone artifact scaffold supplies those
+  three locally. Verify whether exposing the Rust-owned ops object replaces
+  these capabilities before deciding whether the fixture or adapter is wrong.
+  Do not insert no-op behavior or modify pinned Deno source to mask this.
+  Goal remains incomplete until exact native core behavior and the wider
+  integration requirements are actually verified.
+
+- After merging main `88c33c80a89` as `afe06b5c6e1`, fixed the prewarmed
+  collection regression's actual remaining cause: constructor contexts did
+  not carry their lexical class name. Nested `super()` guessed it from the
+  generated function name; anonymous names such as `__anonClass_0_new`
+  cannot satisfy that naming heuristic, so the call never initialized `this`.
+  Constructor contexts now carry `enclosingClassName`, like method contexts.
+  The original explicit `super(); return;` fixture is retained and expanded
+  to anonymous, named, and underscore-containing named class expressions.
+  All three pass; builtin subclasses, optional strings, and source namespace
+  controls pass **20/20** combined. Main's host-key overlap controls plus
+  optional strings passed **51/51** with fork-level Wasm exception support.
+  Exact six-source staged graph rebuild still fails on the timers wrapper's
+  undefined local index (position 147, 209 locals). Diagnostic WAT captured
+  at `/private/tmp/deno-timers-emit-types.txt.wat`; no validation bypass or
+  upstream source edits. Sessions 41720 and 59174 are terminal. Exact native
+  core execution remains unverified, and the integration is not complete.
+
+- Located the undefined-local producer in mutable function-value capture
+  reification. `boxedCaptures` retained `timerListId` / `getAsyncContext`
+  metadata while `localMap` had no binding, and a non-null assertion emitted
+  `local.get undefined`. The pending repair accepts a live box only when its
+  actual local type agrees with its ref-cell type; otherwise existing global
+  or recorded-slot sourcing runs. The exact graph now emits but fails native
+  Wasm validation in `script3`: `struct.new[3] expected externref, found
+  ref.as_non_null (ref 850)` at byte 575211. Type 850 is the externref ref-cell;
+  next inspect value-versus-cell sourcing for this closure operand. No cast
+  or validator weakening was introduced. Diagnostic WAT/types are at
+  `/private/tmp/deno-core-capture-types.txt{,.wat}`. Capture ABI/sibling controls,
+  infrastructure and unchanged bootstrap pass **16/16**; constructor return,
+  Promise and super-property controls pass **61/61**. Artifact sessions 56458
+  and 32411 failed terminally; test sessions 14660 and 17720 passed terminally.
+  This capture repair is still pending exact native graph validation, not a
+  claim that prelinked native core boots.
 
 - Exact runtime graph rebuild continuation: factored the strict v8x builder's
   source-graph construction into `createDenoSourceGraph`, retaining all clean
