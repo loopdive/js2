@@ -2296,3 +2296,69 @@ families, renamed bindings, one-time source/message side effects, a negative
 user-class-under-Error-key control, and the unchanged upstream scripts. The
 upstream refusal control is now 42, not null. Native replay still needs a new
 artifact built from the committed repair; old artifacts cannot prove this fix.
+
+TS7 40587 passed. Signed compiler repair is
+`11e0185184b8bc7b6baf538d3c1b539307885283`; fast commit hooks passed after a
+lint-only test variable rename, while slow hooks were explicitly skipped.
+Signed adapter checkpoint is `8e6b777b420c50868abacdbafa1193d49a8a825b`,
+including exception retention, nine argument controls and the new compiler
+pin. Runtime compile-options contracts pass 8/8. No PR push has been made.
+
+New clean detached root is
+`/private/tmp/deno-primordial-error-release-build.2XCUVn`, with compiler/v8x
+subdirectories at those commits, ignored compiler dependency symlink and exact
+unchanged rusty_v8 gitlink. Deno input remains the clean pinned checkout used
+above. Raw build 72048 passed with 2,676,273 bytes, SHA-256
+`461c03d4100948585735bef1f44a138a8cf90e50e93e7ed65d9c0cfb2dce9147`.
+Provenance retains unchanged source hashes/options, 18 native imports and no
+interpreter provider. Native precompile 5923 is live and uses this root's raw,
+native and attestation paths with the same command/features as 71472 above.
+Do not restart that handle after an observation timeout. Native refusal behavior
+is not yet verified for this compiler pin.
+
+Precompile 5923 is terminal 1/1 in 248.45 seconds. Native size is
+47,476,520 bytes, SHA-256
+`87024a93f0eaaabbded62c0e6d7977bebd5b6b3e269dfe08712fe50ce732fe58`.
+Both raw/native hashes match attestation. Compiler suite 31055 passes 37/37
+across six Deno bootstrap/primordial/coercion suites (overlaps 94098; do not
+sum the selections). Native replay 97397 still reports 29/30, six ignored,
+but the refusal is now `[object Object]`, not null. That isolates a third
+gap: native Value::ToString ignores bound realm objects and prints its Rust
+placeholder. The compiled Error and exception transport repairs are not a
+complete native string-conversion repair.
+
+A trial calling the realm's String carrier failed 90637 with no string result.
+It was removed. New __v8x_value_to_string performs the compiler's spec-string
+argument coercion and returns a success/value envelope. Rust reads it using
+the owning realm, preserves thrown-value identity and records it in native
+TryCatch. A trial template substitution accepted Symbol in 90821, exposing
+an existing compiler template-coercion gap; no pass was claimed. The bridge
+instead uses the native String.prototype.concat argument operation, whose
+spec ToString walk handles the string hint and Symbol rejection. Node bridge
+95917 passes Error text, string-hint coercion, thrown identity and direct
+Symbol refusal, alongside its existing scalar/buffer/callback controls.
+Added a Symbol-producing object coercion control; 62206 is pending. Native
+replay needs another artifact containing this new export. No Deno source or
+wrapper is modified.
+
+String conversion bridge control 62206 is terminal and passes, including a
+Symbol returned from object @@toPrimitive("string"). Signed adapter checkpoint
+`e3f0223f8f246a1fdbd37508d71ccee647ffdb17` includes the native conversion,
+compiled export, controls and accurately limited public documentation. Typst
+is unavailable; no render result is claimed. The clean validation v8x checkout
+was advanced to this checkpoint; the previous artifact files were retained.
+
+Raw rebuild 82262 is terminal success, producing deno-core-string.wasm under
+the same build root: 2,678,030 bytes, SHA-256
+`74b35e573c2e107d19d267b874ca31d4eb2df9d45b81ea0f30e6f1de31e6f270`.
+The source-graph digest changed to
+`d854c4626d1e320f6e62b14d7dcc856f09aa976f4731379b02f6ac4aa10d83c5`
+because the conversion bridge/export changed, not because upstream scripts
+were edited. The runtime compiler remains 11e0185184, 18 native imports and
+no interpreter provider. Native precompile 97481 is live. Its configured
+output/attestation files are deno-core-string.cwasm and
+deno-core-string.attestation.json, in this same root. Resume that handle;
+after success verify both hashes and run the full compiler-free target with
+the new string artifact. Do not use the earlier deno-core.cwasm to test this
+new bridge export. Native conversion/brand conformance remains unproven beyond
+the bounded tests; full Deno compatibility and general app routing remain open.
