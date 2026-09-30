@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "later-main-preservation-layer-20260930",
   "assignee": "ttraenkler/codex-later-main-preservation-layer-20260930",
-  "requested_by": "ttraenkler/codex-later-main-preservation-layer-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-later-main-preservation-layer-20260930",
   "claimed_at": "2026-09-30T19:43:53Z",
-  "updated_at": "2026-09-30T19:43:53Z",
-  "write_id": "509-ffsp3ox1"
+  "updated_at": "2026-09-30T22:51:07Z",
+  "write_id": "79446-jomf0kkq",
+  "released_at": "2026-09-30T22:51:07Z"
 }
