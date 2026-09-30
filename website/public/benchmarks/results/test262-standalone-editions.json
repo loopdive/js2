@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11185,
-    "fail": 490,
+    "pass": 11198,
+    "fail": 477,
     "ce": 29,
     "skip": 0,
     "total": 11704,
@@ -102,17 +102,17 @@
       },
       {
         "name": "Symbol",
-        "pass": 557,
-        "fail": 51,
+        "pass": 558,
+        "fail": 50,
         "ce": 1,
         "skip": 0,
         "total": 609,
-        "pct": 91
+        "pct": 92
       },
       {
         "name": "arrow-function",
-        "pass": 434,
-        "fail": 6,
+        "pass": 435,
+        "fail": 5,
         "ce": 0,
         "skip": 0,
         "total": 440,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 329,
-        "fail": 99,
+        "pass": 340,
+        "fail": 88,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 76
+        "pct": 79
       },
       {
         "name": "Reflect.construct",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 245,
-        "fail": 77,
+        "pass": 249,
+        "fail": 73,
         "ce": 8,
         "skip": 0,
         "total": 330,
-        "pct": 74
+        "pct": 75
       },
       {
         "name": "Symbol.species",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 54,
-        "fail": 74,
+        "pass": 56,
+        "fail": 72,
         "ce": 0,
         "skip": 0,
         "total": 128,
-        "pct": 42
+        "pct": 44
       },
       {
         "name": "Symbol.toPrimitive",
@@ -444,12 +444,12 @@
       },
       {
         "name": "Symbol.hasInstance",
-        "pass": 13,
-        "fail": 4,
+        "pass": 14,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 17,
-        "pct": 76
+        "pct": 82
       },
       {
         "name": "symbols-as-weakmap-keys",
@@ -689,8 +689,8 @@
   },
   {
     "edition": "ES2016",
-    "pass": 105,
-    "fail": 11,
+    "pass": 106,
+    "fail": 10,
     "ce": 8,
     "skip": 0,
     "total": 124,
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 25,
-        "fail": 3,
+        "pass": 26,
+        "fail": 2,
         "ce": 1,
         "skip": 0,
         "total": 29,
-        "pct": 86
+        "pct": 90
       },
       {
         "name": "u180e",
@@ -734,12 +734,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 5,
-        "fail": 1,
+        "pass": 6,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 6,
-        "pct": 83
+        "pct": 100
       },
       {
         "name": "arrow-function",
@@ -752,21 +752,21 @@
       },
       {
         "name": "Proxy",
-        "pass": 1,
-        "fail": 1,
+        "pass": 2,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 2,
-        "pct": 50
+        "pct": 100
       },
       {
         "name": "Reflect",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 1,
         "skip": 0,
         "total": 2,
-        "pct": 0
+        "pct": 50
       },
       {
         "name": "generators",
@@ -3789,12 +3789,12 @@
   },
   {
     "edition": "ES2027",
-    "pass": 354,
-    "fail": 335,
+    "pass": 358,
+    "fail": 331,
     "ce": 208,
     "skip": 0,
     "total": 897,
-    "pct": 39,
+    "pct": 40,
     "features": [
       {
         "name": "explicit-resource-management",
@@ -3852,21 +3852,21 @@
       },
       {
         "name": "__getter__",
-        "pass": 24,
-        "fail": 3,
+        "pass": 26,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 89
+        "pct": 96
       },
       {
         "name": "__setter__",
-        "pass": 24,
-        "fail": 3,
+        "pass": 26,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 89
+        "pct": 96
       },
       {
         "name": "Reflect.construct",
@@ -3933,12 +3933,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 4,
-        "fail": 6,
+        "pass": 8,
+        "fail": 2,
         "ce": 6,
         "skip": 0,
         "total": 16,
-        "pct": 25
+        "pct": 50
       },
       {
         "name": "cross-realm",

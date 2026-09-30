@@ -37,7 +37,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { registerHostPropertyKey, staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { registerLateReadStringConstant } from "./registry/imports.js";
 import { addFuncType, isVecBaseSubtype } from "./registry/types.js";
@@ -115,6 +115,7 @@ export function reserveMemberSetDispatch(
   if (setIdx === undefined) return undefined;
   // The fallback's string key + the union box/unbox helpers the arm coercions need.
   registerLateReadStringConstant(ctx, propName);
+  registerHostPropertyKey(ctx, propName);
   addUnionImportsViaRegistry(ctx);
 
   // (#2681) Settle the import shifts staged above BEFORE reserving this
@@ -228,7 +229,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       fallbackIdx !== undefined
         ? [
             { op: "local.get", index: 0 }, // recv
-            ...stringConstantExternrefInstrs(ctx, propName),
+            ...staticHostPropertyKeyInstrs(ctx, propName),
             { op: "local.get", index: 1 }, // val
             { op: "call", funcIdx: fallbackIdx },
           ]

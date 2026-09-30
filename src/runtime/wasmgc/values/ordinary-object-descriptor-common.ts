@@ -40,6 +40,8 @@ export interface OrdinaryDescriptorResources {
   readonly objectTypeIdx: TypeHandle;
   readonly propEntryTypeIdx: TypeHandle;
   readonly objFindIdx: FuncHandle;
+  /** Only an issued String descriptor selection supplies this virtual-first provider. */
+  readonly stringVirtualOwnIdx?: FuncHandle;
   readonly objInsertIdx: FuncHandle;
   readonly objGrowIdx: FuncHandle;
   readonly sameValueIdx: FuncHandle;

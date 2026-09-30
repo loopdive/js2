@@ -25,6 +25,12 @@ import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js"; // (#5270 step 2)
 import { buildLazyNativeProtoGetInstrs } from "./native-proto.js"; // (#5270 step 2)
 import { buildIsPrototypeOfBody, type PrototypeChainSeed } from "../runtime/wasmgc/values/prototype-chain-bodies.js";
+import {
+  protoLinkAnswerOr,
+  protoLinkNull,
+  protoLinkSameValueArm,
+  registerProtoLinkNatives,
+} from "./object-runtime-proxy-chain.js"; // (#6766)
 
 /**
  * (#5270 step 2) Name of the reserve-then-fill helper that answers the
@@ -419,10 +425,22 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       },
     ];
   }
+  // (#6766) A `$Proxy` in [[Prototype]] position is stored as a LINK `$Object`
+  // (trap or no trap) instead of being unwrapped to its target.
+  const protoLink =
+    proxyTypeIdx === undefined
+      ? undefined
+      : registerProtoLinkNatives(ctx, registerNative, {
+          objectTypeIdx,
+          propMapTypeIdx,
+          proxyTypeIdx,
+          initialCapacity: INITIAL_CAP,
+        });
   /** Map a callable in a `[[Prototype]]` POSITION to the `$Object` view of it. */
   const canonicalizeProtoArg = (paramIdx: number): Instr[] => {
     const proto: Instr[] = [{ op: "local.get", index: paramIdx }];
-    if (proxyGetTargetIdx !== undefined) proto.push({ op: "call", funcIdx: proxyGetTargetIdx });
+    if (protoLink !== undefined) proto.push({ op: "call", funcIdx: protoLink.wrapIdx });
+    else if (proxyGetTargetIdx !== undefined) proto.push({ op: "call", funcIdx: proxyGetTargetIdx });
     if (protoFromFunctionIdx !== undefined) proto.push({ op: "call", funcIdx: protoFromFunctionIdx });
     return proto;
   };
@@ -534,6 +552,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         ...devirtualizeProtoResult(),
       ];
       if (objectProtoSingletonIdx === undefined) return raw;
+      // (#6766) A LINK in `$proto` answers the `$Proxy` it stands for.
+      const linked = protoLink === undefined ? raw : protoLinkAnswerOr(objectTypeIdx, 1, raw);
       return [
         { op: "local.get", index: 1 },
         { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -558,7 +578,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
               else: [{ op: "call", funcIdx: objectProtoSingletonIdx }],
             },
           ],
-          else: raw,
+          else: linked,
         },
       ];
     };
@@ -633,6 +653,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [{ op: "i32.const", value: 0 }],
       },
       { op: "i32.const", value: 0 }, // nextSeq (#1837)
+      protoLinkNull(), // protoLink (#6766)
       { op: "struct.new", typeIdx: objectTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -739,7 +760,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       },
       { op: "local.set", index: 3 },
       // step 2: SameValue includes the explicit-null-prototype bit when both
-      // encoded proto references are null.
+      // encoded proto references are null. (#6766) Two links compare by Proxy.
+      ...protoLinkSameValueArm(protoLink, objectTypeIdx, () => [{ op: "local.get", index: 0 }, { op: "return" }]),
       ...returnIfSameEncodedPrototype(() => [{ op: "local.get", index: 0 }, { op: "return" }]),
       // step 3: if o.flags & OBJ_FLAG_NONEXTENSIBLE → refuse (return obj, no write)
       { op: "local.get", index: 2 },
@@ -871,7 +893,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       },
       { op: "local.set", index: 3 },
       // step 2: SameValue includes the explicit-null-prototype bit when both
-      // encoded proto references are null.
+      // encoded proto references are null. (#6766) Two links compare by Proxy.
+      ...protoLinkSameValueArm(protoLink, objectTypeIdx, () => [{ op: "i32.const", value: 1 }, { op: "return" }]),
       ...returnIfSameEncodedPrototype(() => [{ op: "i32.const", value: 1 }, { op: "return" }]),
       // step 3: non-extensible → false.
       { op: "local.get", index: 2 },
@@ -943,7 +966,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     const body = buildIsPrototypeOfBody({
       objectTypeIdx,
       objRefNull,
-      proxyGetTargetIdx,
+      // (#6766) With links, a Proxy RECEIVER is compared as itself (the loop
+      // arm spliced by `fillProtoLinkArms`), never as its target.
+      proxyGetTargetIdx: protoLink === undefined ? proxyGetTargetIdx : undefined,
       protoFromFunctionIdx,
       fnctor: fnctorIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5),
       classInstance: classInstanceIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5 + fnctorProtoLocal(ctx).length, 1),

@@ -86,6 +86,7 @@ import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
 import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import {
   emitBuiltinConstructorIdentity,
@@ -5291,8 +5292,7 @@ export function finalizeStructAndDynamicMemberGet(
 
         // No struct candidates — use __extern_get directly
         fctx.body.push({ op: "local.get", index: objTmp });
-        addStringConstantGlobal(ctx, propName);
-        compileStringLiteral(ctx, fctx, propName);
+        fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx });
         if (ctx.runtimeEvalGlobalFunctionBindings === true) {
           emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
@@ -5454,7 +5454,7 @@ export function finalizeStructAndDynamicMemberGet(
           fctx.body.push({ op: "extern.convert_any" });
         }
         registerLateReadStringConstant(ctx, propName);
-        fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+        fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
         if (ctx.runtimeEvalGlobalFunctionBindings === true) {
           emitRuntimeEvalSharedValueUnwrap(ctx, fctx);

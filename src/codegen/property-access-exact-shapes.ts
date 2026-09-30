@@ -11,7 +11,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureExternrefToNumberProvider } from "./coercion-engine.js";
 import { allocLocal } from "./context/locals.js";
 import { emitPrivateBrandPredicate } from "./expressions/helpers.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import {
   emitExternrefToStructGet,
   emitNullCheckThrow,
@@ -81,7 +81,7 @@ function emitStructuralExternrefFieldGet(
   if (getIdx === undefined) return undefined;
   if (!receiverAlreadyNullChecked) emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr);
   registerLateReadStringConstant(ctx, propName);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
   if (ctx.runtimeEvalGlobalFunctionBindings === true) {
     emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
