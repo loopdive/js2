@@ -168,6 +168,11 @@ export function declareNativePromiseResources(
   fn("identity-fulfill", "__then_identity_fulfill", callbackSignature);
   fn("identity-reject", "__then_identity_reject", callbackSignature);
   fn("resolve-value", "__promise_resolve_value", settle);
+  type("resolving-pair", {
+    kind: "struct",
+    name: "$__promise_resolving_pair",
+    fields: [{ name: "alreadyResolved", type: I32, mutable: true }],
+  });
   const metadata = createBuiltinFunctionMetadataShape("", {
     kind: "resource" as const,
     typeKey: dependencies.settleMetadataKey,
@@ -176,7 +181,11 @@ export function declareNativePromiseResources(
     kind: "struct",
     name: "$__promise_settle_cap",
     parent: metadata.parent,
-    fields: [...metadata.fields, { name: "cap_promise", type: promiseRef, mutable: false }],
+    fields: [
+      ...metadata.fields,
+      { name: "cap_promise", type: promiseRef, mutable: false },
+      { name: "cap_guard", type: { kind: "ref", typeKey: key("resolving-pair") }, mutable: false },
+    ],
   });
   const trampoline = { params: [{ kind: "ref" as const, typeKey: dependencies.closureRootKey }, EXTERN], results: [] };
   fn("resolve-closure", "__promise_resolve_cl", trampoline);
@@ -209,6 +218,7 @@ export interface NativePromiseReservations {
     readonly callback: TypeReservation;
     readonly captures: TypeReservation;
     readonly settleCapture: TypeReservation;
+    readonly resolvingPair: TypeReservation;
   };
   readonly globals: {
     readonly head: GlobalReservation;
@@ -413,7 +423,8 @@ export function reserveNativePromiseResources(
     promise = type("carrier"),
     callback = type("callback"),
     captures = type("captures"),
-    settleCapture = type("settle-capture");
+    settleCapture = type("settle-capture"),
+    resolvingPair = type("resolving-pair");
   const head = global("queue:head"),
     tail = global("queue:tail"),
     capacity = global("queue:capacity"),
@@ -443,6 +454,7 @@ export function reserveNativePromiseResources(
       callback,
       captures,
       settleCapture,
+      resolvingPair,
     }),
     globals: Object.freeze({
       head,
@@ -476,6 +488,7 @@ export function reserveNativePromiseResources(
     callback,
     captures,
     settleCapture,
+    resolvingPair,
     closureRoot,
     settleMetadata.type,
   ].map((token) => ({ token, descriptor: freezePreparedIrValue(token.object) as TypeDef }));
@@ -761,6 +774,7 @@ export function fillNativePromiseResources(
     capTypeIdx: t.settleCapture.typeIndex,
     capMetaTypeIdx: owner.settleMetadata.type.typeIndex,
     capPromiseFieldIdx: 5,
+    guardTypeIdx: t.resolvingPair.typeIndex,
   };
   const target = { wasi: false, standalone: true };
   const resolution = buildNativePromiseResolveValueBody({
@@ -868,8 +882,14 @@ export function fillNativePromiseResources(
   tx.fillFunction(f.classifier, classifier);
   tx.fillFunction(f.lookupThen, lookupThen);
   tx.fillFunction(f.thenableJob, job);
-  tx.fillFunction(f.resolveClosure, { locals: [], body: buildPromiseSettleClosureBody(cap, f.resolveValue.handle) });
-  tx.fillFunction(f.rejectClosure, { locals: [], body: buildPromiseSettleClosureBody(cap, f.reject.handle) });
+  tx.fillFunction(f.resolveClosure, {
+    locals: [],
+    body: buildPromiseSettleClosureBody({ ...cap, duplicateEvent: 3 }, f.resolveValue.handle),
+  });
+  tx.fillFunction(f.rejectClosure, {
+    locals: [],
+    body: buildPromiseSettleClosureBody({ ...cap, duplicateEvent: 2 }, f.reject.handle),
+  });
   for (const fn of [f.identityFulfill, f.identityReject, f.thenableJob, f.resolveClosure, f.rejectClosure])
     tx.declareFunctionReference(fn);
   owner.filled = true;

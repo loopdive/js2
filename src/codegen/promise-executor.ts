@@ -124,7 +124,16 @@ export function emitStandalonePromiseFromExecutor(
     ctx.liveBodies.delete(execInstrs);
     return false;
   }
-  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx } = closures;
+  const guardLocal = allocLocal(fctx, `__pexec_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: closures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: closures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
 
   // 2. Allocate the pending $Promise: {state: PENDING, value: null, callbacks: null}.
   const pLocal = allocLocal(fctx, `__pexec_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
@@ -142,7 +151,14 @@ export function emitStandalonePromiseFromExecutor(
   //    upcast to externref. (#5197) The metadata slots make the escaped
   //    `resolve`/`reject` real §27.2.1.3 function objects.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+    fctx.body.push(
+      ...buildPromiseSettleClosureInstrs(
+        closures,
+        clFuncIdx,
+        [{ op: "local.get", index: pLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
+    );
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -202,10 +218,11 @@ export function emitStandalonePromiseFromExecutor(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: pLocal },
+          { op: "local.get", index: rjLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: closures.capTypeIdx },
           { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: rejectFuncIdx },
-          { op: "drop" },
+          { op: "call", funcIdx: rejectClFuncIdx },
         ],
       },
     ]),
@@ -271,7 +288,16 @@ export function emitStandalonePromiseFromExecutorValue(
   const exnTag = ensureExnTag(ctx);
   const closures = ensurePromiseExecutorClosures(ctx);
   if (!closures) return false;
-  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx } = closures;
+  const guardLocal = allocLocal(fctx, `__pexecv_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: closures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: closures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
 
   // Open-`any` closure bridge + the boxed-any args vec builders.
   ensureObjectRuntime(ctx);
@@ -313,7 +339,14 @@ export function emitStandalonePromiseFromExecutorValue(
 
   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+    fctx.body.push(
+      ...buildPromiseSettleClosureInstrs(
+        closures,
+        clFuncIdx,
+        [{ op: "local.get", index: pLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
+    );
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -349,10 +382,11 @@ export function emitStandalonePromiseFromExecutorValue(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: pLocal },
+          { op: "local.get", index: rjLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: closures.capTypeIdx },
           { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: rejectFuncIdx },
-          { op: "drop" },
+          { op: "call", funcIdx: rejectClFuncIdx },
         ],
       },
     ]),

@@ -782,6 +782,7 @@ export interface PromiseExecutorClosures {
    * capture. Every read/write of the capture derives from this, never a literal.
    */
   capPromiseFieldIdx: number;
+  guardTypeIdx: number;
   /**
    * (#5197 Slice B) The `$__promise_settle_meta` typeIdx — the shared
    * builtin-function metadata subtype (`{name: "", length: 1}`) both settle
@@ -809,8 +810,9 @@ export function buildPromiseSettleClosureInstrs(
   closures: PromiseExecutorClosures,
   clFuncIdx: number,
   promiseInstrs: readonly Instr[],
+  guardInstrs: readonly Instr[] = [],
 ): Instr[] {
-  return buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs);
+  return buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs, guardInstrs);
 }
 
 /**
@@ -866,6 +868,12 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   );
   const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
   const capPromiseFieldIdx = capMetaFields.length;
+  const guardTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_resolving_pair",
+    fields: [{ name: "alreadyResolved", type: { kind: "i32" }, mutable: true }],
+  });
   const capTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
@@ -875,6 +883,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
       // header + `bfnstate` + `bfnid`); the capture is appended after them.
       ...capMetaFields.map((f) => ({ ...f })),
       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
+      { name: "cap_guard", type: { kind: "ref", typeIdx: guardTypeIdx }, mutable: false },
     ],
     superTypeIdx: capMetaTypeIdx,
   });
@@ -887,17 +896,27 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   // Body: recover captured promise from self (downcast to the cap subtype),
   // then settle it with the incoming value. resolve routes through
   // __promise_resolve_value (assimilation: resolve(aPromise) chains); reject
-  // routes through __promise_reject. The already-settled guard lives in the
-  // settle helpers (buildPromiseSettleBody), so double-settle / settle-after-
-  // throw is a spec-correct no-op by construction.
-  const makeBody = (settleFuncIdx: number): Instr[] =>
-    buildPromiseSettleClosureBody({ capTypeIdx, capMetaTypeIdx, capPromiseFieldIdx }, settleFuncIdx);
+  // routes through __promise_reject. The shared resolving-pair latch is set
+  // before either helper runs: pending adoption is already resolved even
+  // though the Promise's settlement state has not changed yet.
+  const makeBody = (settleFuncIdx: number, duplicateEvent: 2 | 3): Instr[] =>
+    buildPromiseSettleClosureBody(
+      {
+        capTypeIdx,
+        capMetaTypeIdx,
+        capPromiseFieldIdx,
+        guardTypeIdx,
+        rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
+        duplicateEvent,
+      },
+      settleFuncIdx,
+    );
 
   pushDefinedFunc(ctx, resolveClFuncIdx, {
     name: "__promise_resolve_cl",
     typeIdx: wrapper.liftedFuncTypeIdx,
     locals: [],
-    body: makeBody(resolveValueFuncIdx),
+    body: makeBody(resolveValueFuncIdx, 3),
     exported: false,
   });
   ctx.funcMap.set("__promise_resolve_cl", resolveClFuncIdx);
@@ -906,7 +925,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     name: "__promise_reject_cl",
     typeIdx: wrapper.liftedFuncTypeIdx,
     locals: [],
-    body: makeBody(rejectFuncIdx),
+    body: makeBody(rejectFuncIdx, 2),
     exported: false,
   });
   ctx.funcMap.set("__promise_reject_cl", rejectClFuncIdx);
@@ -916,6 +935,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     rejectClFuncIdx,
     capTypeIdx,
     capPromiseFieldIdx,
+    guardTypeIdx,
     capMetaTypeIdx,
     promiseTypeIdx,
     rejectFuncIdx,

@@ -669,6 +669,7 @@ function executorFixture(source: string, fields: number) {
   };
   const functions = evaluate(source, ["ensurePromiseExecutorClosures"], {
     buildPromiseSettleClosureBody,
+    promiseRejectionDispatcher: () => undefined,
     ensurePromiseSettleFunctions: () => calls.push("settle"),
     getOrRegisterPromiseType: () => 1,
     getOrCreateFuncRefWrapperTypes: () => ({ structTypeIdx: 2, liftedFuncTypeIdx: 3, closureInfo: {} }),
@@ -680,6 +681,39 @@ function executorFixture(source: string, fields: number) {
   expect(functions.ensurePromiseExecutorClosures(ctx)).toBe(result);
   expect(funcs).toHaveLength(2);
   return plain({ result, funcs, types: ctx.mod.types, registrations: [...ctx.funcMap], calls });
+}
+
+/** Exact intentional delta to the authenticated donor, not a new donor hash. */
+function expectedResolvingPair(receipt: ReturnType<typeof executorFixture>, fields: number) {
+  expect(receipt.result.capTypeIdx).toBe(1);
+  expect(receipt.types).toHaveLength(2);
+  receipt.result.capTypeIdx = 2;
+  receipt.result.guardTypeIdx = 1;
+  receipt.types.splice(1, 0, {
+    kind: "struct",
+    name: "$__promise_resolving_pair",
+    fields: [{ name: "alreadyResolved", type: { kind: "i32" }, mutable: true }],
+  });
+  receipt.types[2].fields.push({ name: "cap_guard", type: { kind: "ref", typeIdx: 1 }, mutable: false });
+  for (const [, fn] of receipt.funcs) {
+    expect(fn.body).toHaveLength(6);
+    expect(fn.body[1]).toEqual({ op: "ref.cast", typeIdx: 1 });
+    fn.body[1].typeIdx = 2;
+    fn.body[2].typeIdx = 2;
+    fn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "ref.cast", typeIdx: 2 },
+      { op: "struct.get", typeIdx: 2, fieldIdx: fields + 1 },
+      { op: "struct.get", typeIdx: 1, fieldIdx: 0 },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      { op: "local.get", index: 0 },
+      { op: "ref.cast", typeIdx: 2 },
+      { op: "struct.get", typeIdx: 2, fieldIdx: fields + 1 },
+      { op: "i32.const", value: 1 },
+      { op: "struct.set", typeIdx: 1, fieldIdx: 0 },
+    );
+  }
+  return receipt;
 }
 
 /** Authenticate the unchanged source donor AND exercise its moved owner and
@@ -732,7 +766,8 @@ export function assertMovedResolutionReceipt(
         );
       }
   } else if (name === "ensurePromiseExecutorClosures") {
-    for (const fields of [2, 5, 17]) expect(executorFixture(source, fields)).toEqual(executorFixture(original, fields));
+    for (const fields of [2, 5, 17])
+      expect(executorFixture(source, fields)).toEqual(expectedResolvingPair(executorFixture(original, fields), fields));
   } else {
     const old = evaluate(original, [name], { closureBagInitInstr: () => ({ op: "ref.null.extern" }) });
     const current = evaluate(source, [name], { buildPromiseSettleClosureValue: closureBuilder });

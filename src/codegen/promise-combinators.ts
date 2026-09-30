@@ -1347,19 +1347,34 @@ export function emitObservableCombinatorPreparation(
     { op: "local.set", index: abortedLocal },
   );
 
+  const guardLocal = allocLocal(fctx, `__comb_resolving_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: observable.settleClosures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: observable.settleClosures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
   if (method === "race") {
     fctx.body.push(
-      ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_resolve_cl")!, [
-        { op: "local.get", index: resultLocal },
-      ]),
+      ...buildPromiseSettleClosureInstrs(
+        observable.settleClosures,
+        ctx.funcMap.get("__promise_resolve_cl")!,
+        [{ op: "local.get", index: resultLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
       { op: "extern.convert_any" },
       { op: "local.set", index: raceFulfillLocal },
     );
   }
   fctx.body.push(
-    ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_reject_cl")!, [
-      { op: "local.get", index: resultLocal },
-    ]),
+    ...buildPromiseSettleClosureInstrs(
+      observable.settleClosures,
+      ctx.funcMap.get("__promise_reject_cl")!,
+      [{ op: "local.get", index: resultLocal }],
+      [{ op: "local.get", index: guardLocal }],
+    ),
     { op: "extern.convert_any" },
     { op: "local.set", index: rejectLocal },
   );

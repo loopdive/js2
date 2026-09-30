@@ -3,6 +3,7 @@ import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/mode
 import { buildTargetTaggedTry } from "../../../wasm/physical/exception-control.js";
 import { PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
 import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
+import { buildPromiseResolvingPairGuard } from "./resolving-pair-bodies.js";
 
 export interface PromiseResolutionBindings {
   readonly hasCallableThenFuncIdx: FuncHandle;
@@ -414,14 +415,23 @@ export interface PromiseSettleClosureResources {
   readonly capTypeIdx: TypeHandle;
   readonly capMetaTypeIdx: TypeHandle;
   readonly capPromiseFieldIdx: number;
+  /** Shared by one resolving pair; fresh for each assimilation job. */
+  readonly guardTypeIdx?: TypeHandle;
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
+  readonly duplicateEvent?: 2 | 3;
 }
 export function buildPromiseSettleClosureValue(
   closures: PromiseSettleClosureResources,
   clFuncIdx: FuncHandle,
   promiseInstrs: readonly Instr[],
+  guardInstrs: readonly Instr[] = [],
 ): Instr[] {
   if (closures.capPromiseFieldIdx !== 5)
     throw new Error("Promise settle closure requires function/arity/bag/state/metadata/capture layout");
+  if (closures.guardTypeIdx !== undefined && guardInstrs.length === 0)
+    throw new Error("Promise settle closure requires its shared resolving-pair guard");
+  if (closures.guardTypeIdx === undefined && guardInstrs.length !== 0)
+    throw new Error("Legacy Promise settle closure cannot carry a resolving-pair guard");
   return [
     { op: "ref.func", funcIdx: clFuncIdx },
     { op: "i32.const", value: 1 }, // (#3673) $arity — settle fns take 1 arg
@@ -433,6 +443,7 @@ export function buildPromiseSettleClosureValue(
     { op: "i32.const", value: 0 },
     { op: "i32.const", value: closures.capMetaTypeIdx },
     ...promiseInstrs,
+    ...guardInstrs,
     { op: "struct.new", typeIdx: closures.capTypeIdx },
   ];
 }
@@ -443,6 +454,7 @@ export function buildPromiseSettleClosureBody(
 ): Instr[] {
   const { capTypeIdx, capPromiseFieldIdx } = resources;
   return [
+    ...(resources.guardTypeIdx === undefined ? [] : buildPromiseResolvingPairGuard(resources)),
     { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
     { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: capPromiseFieldIdx }, // captured (ref $Promise)
@@ -486,6 +498,8 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
   const reasonLocal = 3;
   const vecLocal = 4;
   const capturedThenLocal = 5;
+  const rejectClosureLocal = 6;
+  const guardLocal = 7;
   // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call
   // bridge. Reserved here so the funcIdx is stable before this body bakes it.
   const jobLocals: LocalDef[] = [
@@ -493,12 +507,20 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
     { name: "$reason", type: { kind: "externref" } },
     { name: "$argvec", type: { kind: "externref" } },
     { name: "$capturedThen", type: { kind: "externref" } },
+    ...(execClosures.guardTypeIdx === undefined
+      ? []
+      : ([
+          { name: "$rejectClosure", type: { kind: "externref" } },
+          { name: "$resolvingPair", type: { kind: "ref", typeIdx: execClosures.guardTypeIdx } },
+        ] satisfies LocalDef[])),
   ];
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
-    ...buildPromiseSettleClosureValue(execClosures, clFuncIdx, [
-      { op: "local.get", index: promiseLocal },
-      { op: "ref.as_non_null" },
-    ]),
+    ...buildPromiseSettleClosureValue(
+      execClosures,
+      clFuncIdx,
+      [{ op: "local.get", index: promiseLocal }, { op: "ref.as_non_null" }],
+      execClosures.guardTypeIdx === undefined ? [] : [{ op: "local.get", index: guardLocal }],
+    ),
     { op: "extern.convert_any" },
   ];
   const jobTryBody: Instr[] = [
@@ -509,7 +531,9 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
     ...emitSettleCap(execClosures.resolveClFuncIdx),
     { op: "call", funcIdx: objVecPushIdx },
     { op: "local.get", index: vecLocal },
-    ...emitSettleCap(execClosures.rejectClFuncIdx),
+    ...(execClosures.guardTypeIdx === undefined
+      ? emitSettleCap(execClosures.rejectClFuncIdx)
+      : ([{ op: "local.get", index: rejectClosureLocal }] satisfies Instr[])),
     { op: "call", funcIdx: objVecPushIdx },
     // __call_m_then_vararg(peel(thenable), argvec) — `then.call(thenable,
     // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
@@ -562,6 +586,15 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
       { op: "ref.cast", typeIdx: capsTypeIdx },
       { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: capsFields.chained },
       { op: "local.set", index: promiseLocal },
+      ...(execClosures.guardTypeIdx === undefined
+        ? []
+        : ([
+            { op: "i32.const", value: 0 },
+            { op: "struct.new", typeIdx: execClosures.guardTypeIdx },
+            { op: "local.set", index: guardLocal },
+            ...emitSettleCap(execClosures.rejectClFuncIdx),
+            { op: "local.set", index: rejectClosureLocal },
+          ] satisfies Instr[])),
       buildTargetTaggedTry(target, { kind: "empty" }, jobTryBody, [
         {
           tagIdx: exnTag,
@@ -570,11 +603,21 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
             // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws
             // are no-ops via the one-shot settle guard.
             { op: "local.set", index: reasonLocal },
-            { op: "local.get", index: promiseLocal },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: reasonLocal },
-            { op: "call", funcIdx: state.promiseRejectFuncIdx },
-            { op: "drop" },
+            ...(execClosures.guardTypeIdx === undefined
+              ? ([
+                  { op: "local.get", index: promiseLocal },
+                  { op: "ref.as_non_null" },
+                  { op: "local.get", index: reasonLocal },
+                  { op: "call", funcIdx: state.promiseRejectFuncIdx },
+                  { op: "drop" },
+                ] satisfies Instr[])
+              : ([
+                  { op: "local.get", index: rejectClosureLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: execClosures.capTypeIdx },
+                  { op: "local.get", index: reasonLocal },
+                  { op: "call", funcIdx: execClosures.rejectClFuncIdx },
+                ] satisfies Instr[])),
           ],
         },
       ]),

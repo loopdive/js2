@@ -33,13 +33,17 @@ it("refuses an uninspectable target instead of guessing its signature", () => {
   expect(() => promiseRejectionDispatcher(ctx)).toThrow("rejection dispatcher must be");
 });
 
-async function fixture(body: string) {
+async function fixture(body: string, notify = true) {
   const events: { event: number; promise: unknown; reason: unknown }[] = [];
   const result = await compile(
     `
     declare function recordEvent(event:number, promise:any, reason:any):void;
-    export function __v8x_deno_promise_reject_dispatch(event:number, promise:any, reason:any):void {
+    ${
+      notify
+        ? `export function __v8x_deno_promise_reject_dispatch(event:number, promise:any, reason:any):void {
       recordEvent(event,promise,reason);
+    }`
+        : ""
     }
     const marker={token:42};
     export function original():any { return marker; }
@@ -163,6 +167,142 @@ it("ordinary graphs without a dispatcher receive no event instructions", () => {
   expect(
     buildPromiseRejectionEvent(undefined, 0, [{ op: "local.get", index: 0 }], [{ op: "local.get", index: 1 }]),
   ).toEqual([]);
+});
+
+it("locks an executor resolving pair while adopting a pending Promise", async () => {
+  const { e, events } = await fixture(`
+    let complete:any;
+    const inner=new Promise(resolve=>{complete=resolve;});
+    let resolveOuter:any, rejectOuter:any;
+    const outer=new Promise((resolve,reject)=>{resolveOuter=resolve;rejectOuter=reject;});
+    export function promise():any {return outer;}
+    export function adopt():void {resolveOuter(inner);}
+    export function duplicate():void {rejectOuter(marker);resolveOuter(marker);}
+    export function finish():void {complete(marker);}
+  `);
+  e.adopt();
+  e.duplicate();
+  expect(e.__promise_boundary_state(e.promise())).toBe(0);
+  expect(events).toEqual([
+    { event: 2, promise: e.promise(), reason: e.original() },
+    { event: 3, promise: e.promise(), reason: e.original() },
+  ]);
+  e.finish();
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(e.promise())).toBe(1);
+});
+
+it("does not read a second resolution's then getter", async () => {
+  const { e, events } = await fixture(`
+    let reads=0;
+    let resolveOuter:any;
+    const outer=new Promise(resolve=>{resolveOuter=resolve;});
+    const other={get then():any {reads++;throw marker;}};
+    export function promise():any {return outer;}
+    export function run():void {resolveOuter(marker);resolveOuter(other);}
+    export function count():number {return reads;}
+    export function attempted():any {return other;}
+  `);
+  e.run();
+  expect(e.count()).toBe(0);
+  expect(e.__promise_boundary_state(e.promise())).toBe(1);
+  expect(events).toEqual([{ event: 3, promise: e.promise(), reason: e.attempted() }]);
+});
+
+it("ignores an executor throw after resolution adopts a pending Promise", async () => {
+  const { e, events } = await fixture(`
+    let complete:any;
+    const inner=new Promise(resolve=>{complete=resolve;});
+    export function run():any {return new Promise(resolve=>{resolve(inner);throw marker;});}
+    export function finish():void {complete(marker);}
+  `);
+  const promise = e.run();
+  expect(e.__promise_boundary_state(promise)).toBe(0);
+  expect(events.filter((event) => event.event === 0)).toEqual([]);
+  e.finish();
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(promise)).toBe(1);
+});
+
+it("gives a thenable job a fresh resolving pair, locked through pending adoption and a subsequent throw", async () => {
+  const { e, events } = await fixture(`
+    let complete:any;
+    const inner=new Promise(resolve=>{complete=resolve;});
+    const thenable={then(resolve:any,reject:any):void {resolve(inner);reject(marker);throw marker;}};
+    const outer=new Promise(resolve=>resolve(thenable));
+    export function promise():any {return outer;}
+    export function finish():void {complete(marker);}
+  `);
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(e.promise())).toBe(0);
+  expect(events).toEqual([
+    { event: 2, promise: e.promise(), reason: e.original() },
+    { event: 2, promise: e.promise(), reason: e.original() },
+  ]);
+  e.finish();
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(e.promise())).toBe(1);
+});
+
+it("locks before a then getter can reenter the sibling reject function", async () => {
+  const { e, events } = await fixture(`
+    let resolveOuter:any,rejectOuter:any;
+    const outer=new Promise((resolve,reject)=>{resolveOuter=resolve;rejectOuter=reject;});
+    const thenable={get then():any {rejectOuter(marker);return (resolve:any)=>resolve(marker);}};
+    export function promise():any {return outer;}
+    export function run():void {resolveOuter(thenable);}
+  `);
+  e.run();
+  expect(e.__promise_boundary_state(e.promise())).toBe(0);
+  expect(events).toEqual([{ event: 2, promise: e.promise(), reason: e.original() }]);
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(e.promise())).toBe(1);
+});
+
+it("each nested thenable assimilation receives a new latch", async () => {
+  const { e, events } = await fixture(`
+    const next={then(resolve:any):void {resolve(marker);}};
+    const first={then(resolve:any):void {resolve(next);}};
+    export function run():any {return new Promise(resolve=>resolve(first));}
+  `);
+  const promise = e.run();
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(promise)).toBe(1);
+  expect(events).toEqual([]);
+});
+
+it("the any-valued executor route shares the resolving pair", async () => {
+  const { e, events } = await fixture(`
+    let complete:any;
+    const inner=new Promise(resolve=>{complete=resolve;});
+    const executor:any=(resolve:any,reject:any):void=>{resolve(inner);reject(marker);};
+    export function run():any {return new Promise(executor);}
+    export function finish():void {complete(marker);}
+  `);
+  const promise = e.run();
+  expect(e.__promise_boundary_state(promise)).toBe(0);
+  expect(events).toEqual([{ event: 2, promise, reason: e.original() }]);
+  e.finish();
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(promise)).toBe(1);
+});
+
+it("pending adoption is one-shot in ordinary graphs without a Deno dispatcher", async () => {
+  const { e, events } = await fixture(
+    `
+    let complete:any;
+    const inner=new Promise(resolve=>{complete=resolve;});
+    const outer=new Promise((resolve,reject)=>{resolve(inner);reject(marker);});
+    export function promise():any {return outer;}
+    export function finish():void {complete(marker);}
+  `,
+    false,
+  );
+  expect(e.__promise_boundary_state(e.promise())).toBe(0);
+  e.finish();
+  e.__drain_microtasks();
+  expect(e.__promise_boundary_state(e.promise())).toBe(1);
+  expect(events).toEqual([]);
 });
 
 it.each(["then(()=>42)", "catch(()=>42)", "finally(()=>42)"])(

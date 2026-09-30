@@ -2122,3 +2122,68 @@ untracked `.tmp/` remains. Existing compiler PR 6341 and adapter PR 2 have not
 been updated by a push in this follow-up. Next work should test nested Store
 reentry and native/compiled notification interleaving, then audit the compiler's
 resolve-value once-only guard and adoption paths against actual emitted code.
+
+### 2026-09-30 resolving-function once-only audit
+
+Auditing executor and thenable resolving pairs against pending adoption, not
+only settled Promise state. Current closure trampolines capture just the
+Promise; the state guard lives in fulfillment/rejection helpers. Resolution
+can enqueue adoption and leave that state pending, so a subsequent reject
+or executor throw can still win incorrectly. A second resolve also reaches
+Get(then) before the eventual settlement guard. Added three emitted-Wasm
+controls for pending adoption followed by duplicate reject/resolve, ignored
+second-resolution getter, and executor throw after pending adoption. Run
+14378 is pending. The intended repair is a shared per-resolving-pair latch,
+distinct from Promise state and fresh for each thenable-assimilation job;
+adding a Promise-state check alone is not a complete fix. No pass is claimed.
+
+Baseline emitted-Wasm controls 14378 fail 0/3: duplicate rejection overrides
+pending adoption (state 2 instead of 0), a second resolve reads the poisoned
+then getter (1 instead of 0 reads), and executor throw overrides pending
+adoption. The implementation adds one mutable i32 resolving-pair cell shared
+by both closure values. Each trampoline locks that cell before resolution can
+read user properties or enqueue adoption. Duplicate attempts return without
+settling and optionally report their original attempted value as event 2/3.
+Executor and thenable throw catches invoke the same reject closure, not a
+low-level Promise-state-only reject. Each thenable job allocates a fresh pair.
+Both executor routes and the observable aggregate capability route are wired.
+
+The explicit native resource planner declares the same cell and extra capture
+field, increasing its exact inventory from 25 resources/26 operations to
+26/27. Inventory tests retain exact row and role assertions rather than
+weakening the denominator. Frozen donor hashes are unchanged. Source receipts
+account for the exact new cell, field, shifted type index and guard prefix,
+and the updated live mutation controls still fail on wrong settle targets.
+Pure legacy-resource builder fixtures retain their original instruction shape;
+actual native graphs intentionally change behavior and bytes for this fix,
+including ordinary standalone programs without a Deno dispatcher.
+
+After import/type repairs, 36658 passed all 33 event controls but exposed
+outdated exact resource counts and a multi-occurrence receipt mutation site.
+The guard has a separate instruction builder so canonical settle-body operand
+mutants retain one authentic target. Reconciled run 61747 passes 280/280:
+38 emitted event controls, 53 resolution receipts, 47 native resource controls
+and 142 settlement ownership controls. New behavioral tests cover thenable
+pending adoption followed by reject and throw, getter reentry, fresh nested
+thenable jobs, any-valued executors and ordinary graphs without notifications.
+Broader run 92594 passes 96/96 across nine executor/thenable/combinator,
+closure reservation, handler, scheduler and IR suites. TS7 passes (91316 and
+59704). These are two disjoint selections, not one 376-test invocation.
+
+Semantics checked against CreateResolvingFunctions, which consumes the shared
+pair before Get(then), and the definition of resolved-but-pending promises:
+https://tc39.es/ecma262/multipage/control-abstraction-objects.html#sec-createresolvingfunctions
+The prior one-shot comment relying only on settled state is superseded.
+Default merge-base LOC gates pass. An attempted check:function-budget command
+does not exist; the real check:func-budget invocation is 75699/pending below
+and must not be represented as passed until its actual output is available.
+Compiler commit, runtime pin advancement and complete-core artifact rebuild
+are still pending for this latch implementation.
+
+Final unified selection 85008 passes 376/376 in 13 suites after reusing the
+same reject closure for the thenable job's call arguments and throw catch.
+TS7 passes in that invocation. Function-budget 75699 is now terminal and
+passes against default merge-base(origin); it is not an exact-base gate claim.
+All compiler test commands cited above are terminal. Next checkpoint should
+pin only the resulting committed compiler SHA and rebuild from clean detached
+worktrees before reporting packaged Deno behavior with the latch enabled.

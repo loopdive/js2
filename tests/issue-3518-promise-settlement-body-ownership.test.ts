@@ -809,14 +809,10 @@ describe("native Promise settlement canonical ownership (not full runtime closur
   it.each([
     [
       "buildPromiseSettleClosureInstrs",
-      "buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs)",
-      "buildPromiseSettleClosureValue(closures, clFuncIdx + 1, promiseInstrs)",
+      "buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs, guardInstrs)",
+      "buildPromiseSettleClosureValue(closures, clFuncIdx + 1, promiseInstrs, guardInstrs)",
     ],
-    [
-      "ensurePromiseExecutorClosures",
-      "capPromiseFieldIdx }, settleFuncIdx)",
-      "capPromiseFieldIdx }, settleFuncIdx + 1)",
-    ],
+    ["ensurePromiseExecutorClosures", "makeBody(resolveValueFuncIdx, 3)", "makeBody(resolveValueFuncIdx + 1, 3)"],
     [
       "ensurePromiseThenableSubstrate",
       "capsFields: { callback: 0, chained: 1 }",
