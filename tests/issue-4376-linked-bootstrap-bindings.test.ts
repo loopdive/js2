@@ -19,8 +19,7 @@ it("reads core bindings from the owning bootstrap realm in a separately compiled
     Object.defineProperty(bootstrap,"failure",{get(){throw failure;}});
     export function originalFailure():any {return failure;}
     export function get(object:any,key:any,receiver:any):any {
-      const value=Reflect.get(object,key,receiver);
-      return value;
+      return Reflect.get(object,key,receiver);
     }
     export function realm():any {return globalThis;}
     `,
@@ -30,12 +29,14 @@ it("reads core bindings from the owning bootstrap realm in a separately compiled
   const owner = new WebAssembly.Instance(new WebAssembly.Module(provider.binary), provider.importObject);
   (provider.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(owner);
   const sources = prepareNamespaceGraph(
-    new Map([
-      ["ext:core/mod.js", readFileSync(new URL("./fixtures/deno-core-0.407.0/mod.js", import.meta.url), "utf8")],
+    new Map<string, string>(
       [
-        "ext:///main_module.js",
-        `
+        ["ext:core/mod.js", readFileSync(new URL("./fixtures/deno-core-0.407.0/mod.js", import.meta.url), "utf8")],
+        [
+          "ext:///main_module.js",
+          `
       import {core,internals,primordials} from "ext:core/mod.js";
+      if (typeof core==="undefined") throw new Error("core missing during application initialization");
       export function run() {
         if (core===undefined) return -1;
         if (internals===undefined) return -2;
@@ -56,8 +57,9 @@ it("reads core bindings from the owning bootstrap realm in a separately compiled
         catch (reason) { return reason; }
       }
       `,
-      ],
-    ]),
+        ],
+      ].reverse() as [string, string][],
+    ),
     "ext:///main_module.js",
   );
   const graph = await compileMultiSource(

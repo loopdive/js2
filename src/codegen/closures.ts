@@ -2201,11 +2201,13 @@ export function computeClosureWrapperSig(
   const sig = yieldKeyedGenerator ? undefined : ctx.checker.getSignatureFromDeclaration(arrow);
   let closureReturnType: ValType | null = null;
   let checkerReturnWasNever = false;
+  let checkerReturnWasUndefined = false;
   if (isGenerator || yieldKeyedGenerator) {
     closureReturnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
     checkerReturnWasNever = (retType.flags & ts.TypeFlags.Never) !== 0;
+    checkerReturnWasUndefined = (retType.flags & ts.TypeFlags.Undefined) !== 0;
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
@@ -2254,8 +2256,7 @@ export function computeClosureWrapperSig(
   if (
     closureReturnType === null &&
     !ts.isFunctionDeclaration(arrow) &&
-    sig &&
-    (ctx.checker.getReturnTypeOfSignature(sig).flags & ts.TypeFlags.Undefined) !== 0 &&
+    checkerReturnWasUndefined &&
     unboundClosureReturnsAValue(arrow)
   ) {
     closureReturnType = { kind: "externref" };

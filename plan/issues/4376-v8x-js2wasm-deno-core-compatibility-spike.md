@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-30: runtime import-alias declaration checks in both typeof forms;
+  # type-only imports remain unresolvable at runtime.
+  - src/codegen/typeof-delete.ts
   # 2026-09-30: one-line read guard prevents the native Promise handler slot
   # from participating in alternate physical-field property dispatch.
   - src/codegen/property-access-exact-shapes.ts
@@ -2605,8 +2608,8 @@ This is a compiler-stage module, not a native deployment footprint measurement.
 Adapter wiring and native compiler-free replay remain open. Native shared
 string readers inspect physical fields directly: AnyString's owner slot will
 shift flat/rope suffix fields. Their ABI must be updated explicitly before
-accepting stamped artifacts; shared buffer length/data prefix slots are
-unchanged when the token is appended after the vector root's prefix. All
+accepting stamped artifacts. Shared buffer roots are also length-only, so the
+owner token shifts their concrete data-array slot from 1 to 2. All
 linked graph artifacts must use the same stamped runtime type layouts.
 
 Final focused run 30799 passes 17/17 across allocation provenance, linked
@@ -2614,3 +2617,106 @@ bootstrap bindings, shared exception identity, realm carriers, and the exact
 upstream core-stage probe with and without stamps. TypeScript check 21214 is
 the final check for this checkpoint. Native core/application packages have not
 been rebuilt with stamps, and no full upstream harness completion is claimed.
+
+### Adapter allocation-owner wiring checkpoint
+
+Merged loopdive/js2 main 2ef807a68e in signed merge 141bb4dae9 without
+overwriting unrelated local changes. TypeScript passes after the merge.
+Focused allocation-owner, linked-bootstrap, and exact core-stage checks pass
+8/8 (run 83542). The graph builder now opts into allocation stamping and
+imports the core instance's ownership predicate and Reflect.get entrypoint.
+
+The adapter runtime packager and namespace fixture now stamp allocations;
+historical POC options stay immutable. Explicit dynamic providers receive the
+same physical-layout transform, while AOT still packages no interpreter.
+Native context import validation permits the ownership and getter functions.
+Native string and transfer-buffer readers select stamped suffix offsets using
+the generated context ownership export as an explicit ABI marker.
+
+The first native value-transfer run (43183) failed loudly at the packet-array
+slot, exposing the vector root's one-field prefix. It also used the namespace
+fixture instead of the complete value-transfer fixture. Both were corrected;
+the full value-transfer generator now supports --allocation-owner and its
+Node assertions pass (59048). Corrected native run 42187 passes 1/1, checking
+UTF-16 slices, ropes, deep concatenation, lone surrogates, packet retirement,
+ordered property packets, and values surviving moving GC. This loads raw Wasm
+using the build-time compilation feature; it is not compiler-free replay.
+
+Adapter packaging tests pass 9/9, including loud rejection of an unstamped or
+uninspectable runtime module, and cargo fmt --check passes. The source LOC,
+function, and coercion gates pass, but the broader branch still fails the
+dead-export/moved-runtime gate (three unused primordial-alias helpers and two
+uninspectable dynamic import targets). An added return-type checker query was
+replaced with the already-computed signature flag; TypeScript and the
+checker-usage ratchet pass (83539). Clean core/application artifact rebuilding,
+actual awaited application evaluation, compiler-free replay, the complete
+upstream harness, and performance remeasurement remain outstanding.
+
+### Clean stamped artifact and actual application-evaluation failure
+
+Adapter checkpoint e075f68f8ddda05737031325c3b7e0c3c49a879a is signed and
+committed. Clean detached build inputs are under
+/private/tmp/deno-owner-release-build.tyjx9A, with compiler 694a8a51df and
+unchanged Deno pin 1d4e6c1cb8. Raw AOT core generation 93851 passes with
+18 native imports and no interpreter provider. Raw bytes: 2,770,538;
+SHA-256 ccba4931c9aec828f2437929cb83e2964d85b796715cbf1a1b76eff97d3809c9.
+Wasmtime precompile 82085 passes 1/1 in 285.87s. Precompiled bytes: 52,016,768;
+SHA-256 e04081dd01a7a7a9358eb73b3f68e77e2aa271ae494c918b3f4616ee8f444dc2.
+The attestation binds both hashes, Wasmtime 47.0.3 and macOS aarch64.
+
+The adapter native core-routing test now evaluates an additional application
+importing core, primordials and internals, asserts fulfilled evaluation, and
+checks an exported ArrayPrototypeReduce result of 6. Run 59079 fails 0/1 with
+Error: core missing during application __module_init. This is the same real
+failure previously hidden by the upstream dropped evaluation future. The
+application graph was built from the current working tree, not a clean pinned
+compiler revision, and its source/byte binding is in module-graphs beneath the
+build root. Do not claim compiler-free application integration from this run.
+
+Temporary owner probe 18101 confirms the linked core global is owned (i32 1),
+but application initialization still fails. The diagnostic probe was removed.
+The compiler-level linked test now checks bindings at application top level,
+uses entry-before-dependency manifest order and the adapter's direct-return
+Reflect.get helper spelling; these strengthened checks pass 3/3 (54031), and
+TypeScript passes. Thus manifest insertion order alone is not sufficient to
+reproduce the native-core failure. Next inspect the actual core getter and
+returned bootstrap value across the native linked boundary.
+
+The compiler-free adapter binary passes 29/29 ordinary checks, with six ignored
+and the failing core-routing/application test explicitly excluded. These do
+not establish boot or application evaluation. The stronger native test remains
+uncommitted and deliberately failing; do not weaken it. General classic Script
+execution, full upstream conformance and performance remain open.
+
+### Imported typeof alias fix and compiler-free application replay
+
+Native getter probes 93493 and 9809 show that the owner getter returns real
+objects for __bootstrap, core, internals and primordials. The failure was a
+separate compiler defect: typeof importAlias was classified as undeclared
+because TypeScript import-alias symbols have no valueDeclaration. Checking
+core === undefined in the previous compiler test did not cover this spelling.
+Changing it to typeof core === "undefined" reproduced the failure (53815).
+
+Both materialized and comparison typeof paths now recognize runtime named,
+default and namespace import declarations through the existing oracle.
+Erased type-only imports remain unresolvable. New gc/standalone controls cover
+renamed, default, namespace, undefined-valued, type-only and live-changing
+imports plus genuinely undeclared names. Initial focused checks pass 5/5;
+the broader typeof/import/provenance run passes 31/31 (90482). Removing three
+unreferenced primordial-alias analysis helpers left by the main merge passes
+24/24 Deno primordial/destructuring/import checks (48114). TypeScript passes.
+
+Native build-time application packaging 60158 passes 1/1. Compiler-free binary
+js2wasm_spike-a7f0ba6d34fa178f replays the source-bound application graph with
+all compiler environment variables removed: 30/30, six ignored, no filtered
+tests (59793). The additional application checks fulfilled evaluation and a
+real imported ArrayPrototypeReduce result of 6. This is bounded adapter
+verification, not the full upstream Deno harness or general Script support.
+The application artifact used working-tree compiler changes, so a clean
+release pin must still replace that development packaging checkpoint.
+
+Adapter regression and replay notes are signed commit e8dfeb6. Temporary
+native diagnostics were removed. After deleting the unused helpers, the
+dead-export gate exits 0 under its existing preservation-only contract (3543).
+Its dynamic-import targets remain unknown and strict modeled closure is not
+certified; no audit baseline or verifier behavior was weakened.

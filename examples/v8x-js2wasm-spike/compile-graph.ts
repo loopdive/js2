@@ -1542,10 +1542,13 @@ async function main(): Promise<void> {
     emitWat: false,
     moduleName: "v8x-js2wasm-spike",
     externImportModule: "v8x:deno",
+    standaloneAllocationOwnerExport: "__v8x_graph_owns",
     standaloneGlobalThisImport: {
       module: "v8x:context",
       name: "__v8x_context_global_this",
       call: "__v8x_context_call",
+      owns: "__v8x_context_owns",
+      get: "__v8x_context_get",
       exceptionTag: "__exn_tag",
     },
     link: ["v8x:context", "v8x:deno"],
