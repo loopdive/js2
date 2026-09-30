@@ -144,6 +144,7 @@ import {
   classStaticOwnPropertyNames,
   hasClassStaticMethod,
 } from "../class-static-metadata.js";
+import { isClassStaticReflectiveMember } from "../class-static-descriptor.js"; // (#6767)
 import { standaloneClassProtoObjectApplies } from "../class-proto-object.js";
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
@@ -3333,10 +3334,9 @@ export function compileBuiltinStaticCall(
             !ctx.staticAccessorSet.has(`${classIdentity}_${propLiteral}`) &&
             !ctx.staticProps.has(`${classIdentity}_${propLiteral}`);
           const methodNames = ctx.classMethodNames.get(structName);
-          const staticMethodNames = ctx.classStaticMethodNames.get(structName);
-          const isMethodLookup =
-            (methodNames && methodNames.includes(propLiteral)) ||
-            (staticMethodNames && staticMethodNames.includes(propLiteral));
+          // (#6767) …and, standalone, a static ACCESSOR: the native's class-object view answers both.
+          const isStaticMember = isClassStaticReflectiveMember(ctx, structName, propLiteral);
+          const isMethodLookup = (methodNames && methodNames.includes(propLiteral)) || isStaticMember;
           if (isMethodLookup || isClassIntrinsicLookup) {
             // Skip the fast-path null-return; let the dynamic fallback below
             // handle the method case via the host import.

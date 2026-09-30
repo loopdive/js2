@@ -12,6 +12,7 @@ import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../.
 import { forEachChild, ts } from "../../ts-api.js";
 import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { isStandaloneClassProtoObjectExpression } from "../class-proto-object.js"; // (#6767) C.prototype is an $Object
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { getVecInfo } from "../type-coercion.js";
@@ -594,7 +595,7 @@ export function inferParamTypeFromCallSites(
       if (!conflict) {
         const arg = callArgs?.[paramIndex];
         if (arg) {
-          if (isStandaloneCollectionNativeProtoArgument(ctx, arg)) {
+          if (isStandaloneCollectionNativeProtoArgument(ctx, arg) || isStandaloneClassProtoObjectExpression(ctx, arg)) {
             sawStandaloneCollectionNativeProtoArg = true;
             return;
           }

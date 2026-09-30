@@ -19884,3 +19884,38 @@ bare-identifier callees). Control (643 passing Proxy/Reflect/Object and
 Proxy-mentioning rows): 0 pass → non-pass attributable to the branch. Record,
 walker audit and residual mechanisms:
 `plan/issues/6766-es2015-standalone-proxy-as-prototype-link.md`.
+
+## 2026-09-30 — #6767: class definition reflective residue (pointer)
+
+`language/statements/class/definition/**` (19 standalone rows, 18 non-pass on
+the 2026-09-29 baseline) is #6767's. Measured on `issue-6767-class-definition-
+reflective` with `origin/main` merged: **1 → 10 pass** — the five static
+descriptor rows, `basics.js`, and the three heritage rows
+(`constructable-but-no-prototype`, `prototype-setter`, `invalid-extends`).
+Remaining, with mechanisms in #6767's record: `getters-restricted-ids` and
+`fn-name-accessor-{get,set}` (a static accessor shares the function slot of a
+same-name INSTANCE accessor, #5195 cluster B item 5), `methods-restricted-
+properties` (no %ThrowTypeError% `caller`/`arguments` on method values), and
+the five #5350 `this`-before-`super()` rows. Two shared fixes landed with it
+that reach beyond the cluster: call-site parameter inference no longer narrows
+a parameter to `$C` from a `C.prototype` argument, and `C[k]()` on a class
+identifier no longer pushes a stray receiver (an invalid module when used as a
+call argument).
+
+## 2026-09-30 — #5350 r2 (super property WRITES) — pointer
+
+`super.x = v` / `super[k] = v` now lower onto `__reflect_set_receiver` in
+standalone (branch `issue-5350-r2-super-property-write`; full record under
+"2026-09-30 r2 implementation (Opus)" in
+`plan/issues/5350-es2015-standalone-super-property-r1.md`). Cluster C gains 4
+rows (`super/prop-{dot,expr}-obj-ref-non-strict.js`,
+`super/prop-{dot,expr}-cls-ref-strict.js`); p10 37 → 63 (node 127). Two
+findings for this plan's other lanes: (1) the receiver walk now refuses to
+create a key on a NON-EXTENSIBLE receiver, so `Reflect.set`'s 4-argument form
+answers `false` there (it answered `true`); (2) the remaining `super/*-cls-ref-this.js`
+pair is blocked by a class-member `this` that cannot hold a non-instance
+receiver (`P.prototype.getThis() === P.prototype` traps "illegal cast" on main,
+no `super` involved), and `super/call-proto-not-ctor.js` by class objects having
+no runtime [[Prototype]] (`Object.setPrototypeOf(C, f)` is a silent no-op;
+`super()` is inlined from the compile-time parent) — both representation
+questions, neither built.

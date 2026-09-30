@@ -163,11 +163,16 @@ export interface StringDefineRuntime extends StringCreateRuntime {
   sameValue(a: unknown, b: unknown): number;
   exception: WebAssembly.Tag;
 }
-export function* stringDefineRuntimePhases(utf8 = false, shifted = false) {
+export function* stringDefineRuntimePhases(
+  utf8 = false,
+  shifted = false,
+  extend?: (fixture: StringDefineFixture) => () => void | Generator<string, void>,
+) {
   let fixture: StringDefineFixture | undefined;
   const result = yield* stringCreateRuntimePhases(utf8, shifted, 2, stringDefineSource(), (base) => {
     const f = reserveDefinition(base);
     fixture = f;
+    const fillExtra = extend?.(f);
     const tx = f.tx,
       objectType = f.objects.object.typeIndex;
     const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
@@ -239,6 +244,11 @@ export function* stringDefineRuntimePhases(utf8 = false, shifted = false) {
       fill("setFlags", [...object(0), get(1), { op: "struct.set", typeIdx: objectType, fieldIdx: 4 }]);
       const exports = { ...observers, ...f.descriptors, sameValue: f.sameValue.sameValue, exception: f.exception };
       for (const [name, token] of Object.entries(exports)) tx.defineExport("define-export:" + name, name, token);
+      if (fillExtra) {
+        yield "definition boundary observers";
+        const phases = fillExtra();
+        if (phases) yield* phases;
+      }
     };
   });
   if (!fixture) throw Error("missing issued definition fixture");

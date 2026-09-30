@@ -224,6 +224,7 @@ const semanticCallableAdditions = [
 ];
 const liveFixtureGroups = {
   ...groups,
+  "runtime-contracts": [...groups["runtime-contracts"], "src/runtime/contracts/js-value-tags.ts"],
   "ir-runtime": [
     ...groups["ir-runtime"],
     ...semanticCallableAdditions,
@@ -946,6 +947,13 @@ describe("semantic verification and provider ownership boundary", () => {
           "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
         );
       if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/to-object-body.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+          "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+          "src/runtime/wasmgc/values/object-constructor-body.ts",
+        );
+      if (id === "runtime-contracts") additions.push("src/runtime/contracts/js-value-tags.ts");
       const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
       if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
       const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
@@ -967,9 +975,9 @@ describe("semantic verification and provider ownership boundary", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
     expect(required).toHaveLength(106);
-    expect(liveRequired).toHaveLength(134);
-    expect(new Set(liveRequired).size).toBe(134);
-    expect(r.report.counts.total).toBe(134);
+    expect(liveRequired).toHaveLength(135);
+    expect(new Set(liveRequired).size).toBe(135);
+    expect(r.report.counts.total).toBe(135);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
@@ -986,6 +994,7 @@ describe("semantic verification and provider ownership boundary", () => {
     // The getter/Boolean join adds eleven actual dependencies with 100 edges
     // (40 type-only / 60 runtime), plus six imports in existing owners
     // (two type-only / four runtime). Every copied dependency remains real source.
+    // The import-free canonical tag leaf adds one real module and zero edges.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
       edges: 612,

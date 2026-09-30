@@ -79,7 +79,7 @@ import { resolveStructName } from "./misc.js";
 import { resolvePlainCallThisTrampoline, tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203, #6436)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./stored-member-closure-call.js";
-import { classMemberFuncKey } from "../class-member-keys.js";
+import { classMemberFuncKey, elementCallTargetsStaticMethod } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
@@ -1073,7 +1073,7 @@ export function compileTailDispatch(
       if (receiverClassName && ctx.classSet.has(receiverClassName)) {
         const fullName = `${receiverClassName}_${methodName}`;
         const funcIdx = ctx.funcMap.get(fullName);
-        if (funcIdx !== undefined) {
+        if (funcIdx !== undefined && !elementCallTargetsStaticMethod(ctx, elemAccess.expression, methodName)) {
           // Push self (the receiver) as first argument
           compileExpression(ctx, fctx, elemAccess.expression);
           // Push remaining arguments with type hints
@@ -1117,7 +1117,7 @@ export function compileTailDispatch(
       if (structTypeName) {
         const fullName = `${structTypeName}_${methodName}`;
         const funcIdx = ctx.funcMap.get(fullName);
-        if (funcIdx !== undefined) {
+        if (funcIdx !== undefined && !elementCallTargetsStaticMethod(ctx, elemAccess.expression, methodName)) {
           const recvType = compileExpression(ctx, fctx, elemAccess.expression);
           // Check if receiver went through emitGuardedRefCast — null may mean
           // "wrong struct type" rather than genuinely null (#789)

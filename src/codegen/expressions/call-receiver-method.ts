@@ -266,6 +266,7 @@ import { resolvePromiseSubclassName } from "./promise-subclass.js";
 import { ensureTaToStringHelper, taToStringApplies } from "../ta-to-string.js"; // (#6651 E7)
 import { reserveTaToLocaleString, taToLocaleStringApplies } from "../to-locale-string-element.js"; // (#6651 TA1)
 import { isHostResolvedBuiltinReceiver } from "../standalone-unavailable-globals.js"; // (#1472)
+import { guardedCastBackup, publishNonInstanceSuperReceiver } from "./super-receiver-publish.js"; // (#5350 r2)
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -2178,7 +2179,9 @@ export function compileReceiverMethodCall(
         receiverMaybeNull && methodParamTypes0?.[0]?.kind === "ref"
           ? { kind: "ref_null", typeIdx: (methodParamTypes0[0] as { typeIdx: number }).typeIdx }
           : methodParamTypes0?.[0];
+      const castBackupBefore = guardedCastBackup(fctx); // (#5350 r2)
       let recvType = compileExpression(ctx, fctx, propAccess.expression, recvHint0);
+      publishNonInstanceSuperReceiver(ctx, fctx, fullName, recvType, castBackupBefore); // (#5350 r2) `C.prototype.m()`
       // Track whether receiver went through emitGuardedRefCast — if so, null
       // means "wrong struct type" (not genuinely null), so we should NOT throw
       // TypeError on null after cast.

@@ -36,6 +36,17 @@ loc-budget-allow:
   # 2026-09-06 (r3): +1 line — the nested-`super(...)` arm's flag store. The
   # mechanism lives in new-super.ts; only the one-line call site is here.
   - src/codegen/expressions/calls.ts
+  # 2026-09-30 (r2, super WRITES): call sites only — the lowering lives in the
+  # new leaf `expressions/super-property-write.ts`. assignment.ts +6 (import +
+  # one two-line arm each in the dot and element assignment paths);
+  # call-receiver-method.ts +3 (import + the `C.prototype.m()` receiver publish,
+  # mechanism in `expressions/super-receiver-publish.ts`); object-ops.ts +3
+  # (import + the `hasOwnProperty` fold's decline for a key a `super` write can
+  # add, predicate in `super-write-grown-keys.ts`). new-super.ts (granted above)
+  # grows by the shared [[HomeObject]]/receiver emitter factories the write reuses.
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/object-ops.ts
 # 2026-09-06 (r3 review round): the S1 runtime this-initialised flag adds two
 # call sites outside the two modules already granted above — one line each,
 # storing 1 into `__super_done` right after a `super(...)` lowering returns.
@@ -51,6 +62,13 @@ func-budget-allow:
   - src/codegen/dynamic-proto.ts
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/expressions/calls.ts::compileCallExpression
+  # 2026-09-30 (r2): the same four call sites as the loc grant above, +2..+3
+  # lines each in functions already far over the threshold; every mechanism is
+  # in a new leaf module.
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
 ---
 
 ## Problem
@@ -1169,3 +1187,212 @@ author `Thomas Tränkler <git@thomas.traenkler.com>`, committer `Claude
 https://claude.ai/code/session_01FEGi3DmyPRPD5dx4kWU8hs`, `Model: Claude Opus
 5.5 High`; never `--no-verify`; no `git stash`.
 
+## 2026-09-30 r2 implementation (Opus)
+
+Branch `issue-5350-r2-super-property-write`: `25cf4d41` (this plan), `fe00364a`
+(step 1), `c60b0a30ad` (catch-up merge of `origin/main` @ `c72cb7be`; no
+conflict, none of main's 44 files overlaps the change-set). "Base" below is
+`origin/main` @ `eb57f327` (`.tmp/5350/base-src`, and for the merged-tree A/B
+the five edited source files copied back over the merged tree — main did not
+touch any of them). Node oracle: 22.22.2.
+
+### What landed (step 1)
+
+| Piece | File | Why |
+| --- | --- | --- |
+| the write | `expressions/super-property-write.ts` (new) | `super.x = v` / `super[k] = v` → `__reflect_set_receiver(base, key, V, actualThis)`, standalone only, for object-literal methods/accessors and NON-STATIC class members whose class (and, if derived, parent) owns a #5195 prototype `$Object`; everything else declines with nothing emitted. Wired from `compilePropertyAssignment` (after the poison arm) and `compileElementAssignment` (after the #2709 guard). |
+| shared emitters | `expressions/new-super.ts` | r1's inline [[HomeObject]]/receiver closures became `objectLiteralSuperRefEmitters` / `classSuperRefEmitters` (+ `emitTypedThisSuperReceiver`), reused by the write — read bytes unchanged; `emitSuperUninitializedThisCheck` is the shared GetThisBinding check. |
+| non-extensible receiver | `object-runtime-ordinary-set.ts` | the receiver walk created an ABSENT key with `__extern_set` and answered `true` even on a non-extensible receiver (§10.1.6.3 step 2 says false): the frozen-prototype strict write raised no TypeError, and `Reflect.set({}, k, v, Object.freeze({}))` answered `true` (probe `a1`: 10 → 30, node 29 — the remaining bit is the pre-existing base-class `getPrototypeOf(C.prototype)` answer). |
+| `C.prototype.m()` receiver | `expressions/super-receiver-publish.ts` (new) + one call in `compileReceiverMethodCall` | a class method's self param is typed `(ref null $C)`, so `C.prototype.m()` passes null, and this direct call path never set `__current_this` — the r1 fallback read a stale carrier (probe `b2` threw its strict TypeError on the FIRST write, receiver null). The pre-cast receiver is published when the cast produced null AND the callee has a `super` property reference. |
+| `hasOwnProperty` fold | `super-write-grown-keys.ts` (new) + `object-ops.ts` | `(X).hasOwnProperty('x')` folds from the static type; a key a super write added (closed-literal sidecar, own key of `C.prototype`) folded to `false` (probes `c2`, `b2`). Declines to the runtime `__hasOwnProperty` for an UNDECLARED literal key on a receiver whose literal / class hierarchy writes through `super`; a declared key keeps the fold. |
+
+Order, per §13.15.2 / §13.3.7.1 / §6.2.5.6 PutValue: GetThisBinding →
+`super[Expression]` key GetValue → GetSuperBase → RHS → ToObject(base) (a
+null/undefined base throws only now, AFTER the RHS — `assignment/target-super-*-reference-null.js`;
+node 22 agrees, probe `order.js` `rTrTkrT`) → ToPropertyKey → [[Set]] → strict
+`false` ⇒ TypeError. **Deviation from the plan, deliberate:** the plan listed
+ToPropertyKey before the RHS; PutValue step 3.c puts it after. Both keep
+GetSuperBase ahead of ToPropertyKey, which is what that plan step protects
+(`prop-expr-getsuperbase-before-topropertykey-putvalue.js`). A base class's
+nullish `__getPrototypeOf(C.prototype)` answer is replaced by
+`OBJECT_PROTO_SINGLETON`; the write registers the `Object` brand glue
+(`ensureObjectNativeProtoGlue`) so that singleton is filled — without it an
+ordinary literal's base read null and the ToObject step threw on a valid write
+(probe `c10`: "Cannot set properties of null or undefined (super base)").
+`extends null` evaluates the RHS, then throws. A closed-struct literal's
+method uses its typed self param as the receiver (a direct `obj.m()` sets no
+carrier); the READ keeps `__current_this` (flag `closedLiteralTypedSelf`).
+
+### Rows (`run-test262-paths.mts --isolate --standalone`)
+
+| Row | base | lane (merged `c60b0a30ad`) |
+| --- | --- | --- |
+| `prop-dot-obj-ref-non-strict.js` | fail (x not own) | **pass** |
+| `prop-expr-obj-ref-non-strict.js` | fail (x not own) | **pass** |
+| `prop-dot-cls-ref-strict.js` | fail (no TypeError) | **pass** |
+| `prop-expr-cls-ref-strict.js` | fail (no TypeError) | **pass** |
+| `prop-dot-cls-ref-this.js` | fail («null» via CallExpression) | fail — same |
+| `prop-expr-cls-ref-this.js` | fail («null» via CallExpression) | fail — same |
+| `call-proto-not-ctor.js` (step 2) | fail | fail — same (not built, see below) |
+| 5 measure-only rows (`prop-{dot,expr}-obj-val-from-eval`, `prop-dot-cls-val-from-eval`, `call-bind-this-value{,-twice}`, `call-expr-value`) | fail | fail — identical messages |
+
+**Step-1 rows: 4 of 6.** The two `-this` rows are not a write: they READ
+`super.getThis()` / `super.This` inside `C.prototype.method()`. Measured as the
+plan asked: the r1 `__reflect_get_receiver` read is not on their path — both
+resolve through the static parent tables (`Parent_getThis(this)`,
+`Parent_get_This(this)`), and with the receiver published the callee's own
+body still cannot hold it: a class member's `this` is `(ref null $C)`, so a
+non-instance receiver reaches the body as null and `return this` answers null.
+It is not a `super` defect — without `super` at all, `P.prototype.getThis() ===
+P.prototype` TRAPS "illegal cast" on base and lane alike (probe `d1`), and
+`Reflect.get(Parent.prototype, 'This', {})` throws on both (probe `d2`). The
+fix is a representation decision (an externref `this` for members whose body
+uses `this` as a value, or a second entry for non-instance receivers), not a
+narrowing in the `super` lowering, so it was not built.
+
+### p10
+
+| bit | base | lane | node |
+| --- | --- | --- | --- |
+| 1 `obj.method() === obj` | 1 | 1 | 1 |
+| 2 own `x` on the literal | 0 | **2** | 2 |
+| 4 prototype untouched | 4 | 4 | 4 |
+| 8 frozen `C.prototype`, strict TypeError | 0 | **8** | 8 |
+| 16 own `x` on `C.prototype` | 0 | **16** | 16 |
+| 32 `super.m()` receiver (guard) | 32 | 32 | 32 |
+| 64 `super()` on a non-constructor | 0 | 0 | 64 |
+| **sum** | **37** | **63** | **127** |
+
+### Step 2 — measured, not built
+
+`class C extends Object`, `Object.setPrototypeOf(C, parseInt)`, `new C()`.
+The class object's [[Prototype]] is not runtime-mutable in standalone today
+(probe `s2b`): `Object.setPrototypeOf(K, parseInt)` returns `K` and
+`Reflect.setPrototypeOf(E, parseInt)` answers `true`, yet
+`Object.getPrototypeOf(E)` is neither `parseInt` afterwards nor the parent
+class `D` BEFORE the call (node: 23, standalone: 18). The class value is the
+legacy class-object carrier — not an `$Object`, and not one of the #802
+marked INSTANCE roots whose `$__proto__` arm `dynamic-proto.ts` prepends to
+`__object_setPrototypeOf` — so the store is a silent no-op. And `super(...)` is
+`compileSuperCall` (`class-bodies.ts:4154`), which inlines the parent
+constructor chosen from `ctx.classParentMap` at compile time: GetSuperConstructor
+(§13.3.7.2, `activeFunction.[[GetPrototypeOf]]()`) has no runtime operand to
+read. Making the row pass needs a runtime [[Prototype]] slot on class objects
+plus a dynamic super-constructor dispatch — #3371's construct/NewTarget
+territory, which this step must not widen into. Left red.
+
+### Pins — `tests/issue-5350-r2-super-property-write.test.ts` (10 cases)
+
+Lane 10/10. Base (the five source files swapped back): **8 fail, 2 pass** —
+the two green-on-base cases are guards by design: `super.m()` keeps the
+instance receiver, and a derived-class write through an inherited setter / onto
+the instance (the legacy lowering wrote `super.x = v` as `this.x = v`, which
+answers the same wherever the receiver has no own `x`). The red-on-base cases:
+literal own property; frozen `C.prototype` strict TypeError + own `x`; sloppy
+frozen literal (no throw, no own `y`); `super[k]` with a dynamic and a literal
+key; null super base throws after the RHS (dot and element); `extends null`
+after the RHS; derived-ctor write before `super()` is a ReferenceError and
+lands after it; `Reflect.set` with a non-extensible receiver answers false.
+
+### Controls
+
+- **super + object** (every ES2015 row under `language/expressions/super/` and
+  `language/expressions/object/` that passes on the standalone baseline fetched
+  2026-09-30 03:12 UTC: 43 + 533 = 576), `--isolate`, on `fe00364a`: 573 pass,
+  3 fail — all three "quickjs provider is not built" (the worktree had no
+  provider yet). Re-run on the merged tree with the provider built:
+  `method-definition/name-prototype.js` passes;
+  `method-definition/yield-star-after-newline.js` and `yield-weak-binding.js`
+  fail "This statement should not be evaluated." — and fail IDENTICALLY with
+  the five source files swapped back to `origin/main` (provider rebuilt for that
+  tree), so they are local-vs-baseline drift, not this change. **Zero lost.**
+  (The 576 were measured on the pre-merge tree; the merge added no file this
+  lowering reaches.)
+- **class** (every ES2015 row under `language/statements/class/` +
+  `language/expressions/class/` passing on that baseline: 2,203), merged tree:
+  queued behind two other lanes' controls on the shared runner lock when this
+  record was first committed; the result is appended below ("Class control").
+- **Suites**: `issue-5350-super-property-r1` (40), `issue-2709`,
+  `issue-3522-super-accessor`, `issue-3024-static-super-arity`,
+  `issue-5195-r3-heritage-check`, `issue-5195-r3-restricted-properties`,
+  `issue-1824-super-as-value`, `issue-4688`, `issue-5316-r4-invariants`,
+  `issue-5316-r5-attribute-model`, `issue-5316-r6-nonextensible-existing-key-accessor`,
+  `hasownproperty-call`, `issue-3021`, `issue-4187-hasown-fold-vs-delete`,
+  `issue-2934-hasown-function-receiver-coerce`, `issue-6482-r6-linked-uncurried-hasown`,
+  `issue-6651-a10-gen-host-leaks`, `issue-6651-a13-gen-singles`,
+  `issue-6651-e6-typedarray-set-detach` — green. Red, and red identically on
+  the base swap: `issue-5195-es2015-class-r2` (1: Step 9K
+  `constructor-can-be-generator`), `issue-5195-r3-review` (1: the mixin-factory
+  heritage). `issue-2046` fails 2 cases that expect a compile-time REFUSAL of
+  `Reflect.set(o, k, v, receiver)` and `Reflect.apply`; both shapes compile on
+  base too (`.tmp/5350/t2046.mts`: `success=true` on base and lane) — #5316 r5
+  replaced the first refusal, so the expectations are stale on main.
+- **Byte identity**: `target` omitted (host) and `wasi`, sha256 of `.binary`,
+  base vs lane, on p10, b1, b2, w1, w2, w6, w7, c4, a1 — **identical on every
+  probe, both targets.** Standalone bytes move for every module that registers
+  the object runtime, not only for super writers: `__reflect_set_receiver` is
+  reserved and filled in every such module, and its body gains the
+  extensibility arm.
+- `src/ir/select.ts` untouched.
+
+### Gates
+
+Run bare, exit status read directly, before each commit: `check-loc-budget`,
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet` (net
+`getTypeAtLocation` +0, `ctx.checker` +0), `check:dead-exports`, and `npm run
+-s typecheck` — all 0, on `fe00364a` and again on the merged tree. LOC/func
+also with `LOC_GATE_BASE=` `origin/main` (`d0e6abb8` at step 1, `c72cb7be` on
+the merged tree) — 0. `biome lint` on the three new modules and the pin file —
+0. Growth grants (this file's frontmatter, dated 2026-09-30):
+`assignment.ts` +6, `call-receiver-method.ts` +3, `object-ops.ts` +3,
+`new-super.ts` +74 (already granted since r1), and the four touched functions
+(+2..+3 each). No `scripts/*-baseline.json` touched.
+
+### Residuals, with mechanisms
+
+- **`prop-{dot,expr}-cls-ref-this.js`** — class member bodies have no
+  non-instance `this` (above; probes d1, d2).
+- **Step 2 / `call-proto-not-ctor.js`** — class objects have no runtime
+  [[Prototype]]; `super()` is statically inlined (above).
+- **Compound and update forms** (`super.x += v`, `super.x++`) keep the legacy
+  lowering, as the plan said to record: probe `cmp` answers 8 on base and lane,
+  node 15 (the write lands nowhere). No row in the list needs them.
+- **Static methods** decline (their [[HomeObject]] is the constructor, which the
+  write does not model), so `assignment/target-super-{identifier,computed}-reference-null.js`
+  (static `m`) are not reached by this lowering.
+- **Closed-literal super READ receiver** stays `__current_this` (r1/A13 bytes
+  kept); a direct struct-method call does not set it, so an inherited accessor
+  read through `super` there can see a stale receiver. The write uses the
+  typed self param.
+- **`Object.keys` of a closed-struct literal** does not list a key a super
+  write put in its sidecar (probe c4 bit 16; the sidecar is not in the
+  closed-struct own-key enumeration) — pre-existing, not needed by any row.
+- **Receiver publish scope**: only the `compileReceiverMethodCall` instance arm
+  publishes; the virtual-dispatch cascade and IR-lowered calls were not audited.
+
+### Status: `in-progress`, deliberately
+
+Acceptance criterion **"the six step-1 rows pass" does NOT hold — 4 of 6** (the
+two `-this` rows, mechanism above). p10 ≥ 63 holds (63). Zero rows lost on
+the super + object controls; host and wasi bytes identical; gates green;
+`src/ir/select.ts` untouched. The class control is recorded separately below.
+
+
+### Class control (merged tree `758905cb`, same source as `c60b0a30ad`)
+
+Every ES2015 row under `language/statements/class/` and
+`language/expressions/class/` that passes on the standalone baseline (2,203),
+run IN-PROCESS (`run-test262-paths.mts --standalone`, no `--isolate`: 2,203
+isolated rows is ~3 h of runner lock on a box shared with two other lanes):
+**2,201 pass, 2 fail** —
+`class/definition/methods-gen-yield-star-after-newline.js` and
+`methods-gen-yield-weak-binding.js`, both "This statement should not be
+evaluated." Both are NEGATIVE parse tests (`yield 3 + yield 4`), the same
+family as the two object rows above that fail identically on `origin/main`
+through the runner. Attribution measured at the parse phase instead of a
+second locked run: `.tmp/5350/negparse.mts` compiles each row's source with the
+base tree and with the lane — identical on all three rows checked (the two
+class rows and `object/method-definition/yield-weak-binding.js`): both trees
+report "Expression expected." as a non-fatal diagnostic and return
+`success=true`, which is why the body runs. Not this change. **Zero class rows
+lost.** The in-process peak was ~6.3 GB RSS.

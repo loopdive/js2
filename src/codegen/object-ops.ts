@@ -61,6 +61,7 @@ import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descrip
 import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./define-properties-map.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import { isDirectProxyBinding } from "./proxy-value-provenance.js"; // (#5268 step 2 / review F1+F2)
+import { superWriteMayAddKey } from "./super-write-grown-keys.js"; // (#5350 r2)
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -4991,7 +4992,9 @@ export function compilePropertyIntrospection(
 
   // For externref/any receivers (e.g. Object.create result), delegate to runtime
   // since we can't statically know their properties
-  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv) {
+  // (#5350 r2) …and an undeclared key a `super` write may have added.
+  const superGrownKey = superWriteMayAddKey(ctx, recvExpr, receiverType, expr.arguments[0]);
+  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv || superGrownKey) {
     const isHOP = propAccess.name.text === "hasOwnProperty";
     const importName = isHOP ? "__hasOwnProperty" : "__propertyIsEnumerable";
     const hopIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);

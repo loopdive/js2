@@ -22,6 +22,7 @@ import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
 import { allocLocal } from "../context/locals.js"; // (#6609)
 import { popBody, pushBody } from "../context/bodies.js"; // (#6630 fallback)
+import { isStandaloneBaseClassOrPrototype } from "../class-proto-object.js"; // (#6767 step 2)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -249,6 +250,47 @@ function emitEs5IntrinsicConstructor(
 }
 
 /**
+ * (#6767 step 2) `Object.getPrototypeOf(C.prototype)` / `Object.getPrototypeOf(C)`
+ * for a standalone BASE class read the real [[Prototype]] at runtime.
+ *
+ * The class folds in `call-builtin-static.ts` predate the prototype `$Object`
+ * (#3976): `C.prototype` folded to `null` ("Object.prototype not modeled") and
+ * the class OBJECT took the class-INSTANCE arm and answered `C.prototype`
+ * (`definition/basics.js`; p11 bits 8/16). The runtime already answers both —
+ * the native `__getPrototypeOf` gives `%Object.prototype%` for the null-`$proto`
+ * prototype object, and the #6609 callable arm gives `%Function.prototype%` for
+ * the class-object carrier (measured through an untyped parameter,
+ * `.tmp/6767/q2.js`) — so this is the generic fallback's own lowering minus its
+ * iterator-record branch and its all-classes demand record, neither of which a
+ * class operand needs. A later `Object.setPrototypeOf(C.prototype, …)` stays
+ * observable, which no fold could.
+ *
+ * DERIVED classes keep their folds: `D.prototype` already answers the parent
+ * prototype, and the runtime answers the class object `D` wrongly too (neither
+ * the parent class nor `%Function.prototype%`, `.tmp/6767/q3.js`).
+ */
+function tryEmitStandaloneBaseClassGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!isStandaloneBaseClassOrPrototype(ctx, arg0)) return null;
+  const argType = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+  if (!argType) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+  if (tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg0)) return { kind: "externref" };
+  // Declined: the receiver is still on the stack.
+  const gpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (gpoIdx === undefined) fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+  else fctx.body.push({ op: "call", funcIdx: gpoIdx });
+  return { kind: "externref" };
+}
+
+/**
  * Handle ES5 errors and intrinsic constructor/namespace relations before the
  * specialized generator, class, and typed-array getPrototypeOf cases.
  */
@@ -293,6 +335,11 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // READ, not folded — see `tryEmitDynamicProtoRuntimeRead`.
   const dynamicProtoRead = tryEmitDynamicProtoRuntimeRead(ctx, fctx, arg0);
   if (dynamicProtoRead) return dynamicProtoRead;
+
+  // (#6767 step 2) A standalone BASE class and its prototype read their real
+  // [[Prototype]] instead of the class folds below — see the helper.
+  const baseClassProto = tryEmitStandaloneBaseClassGetPrototypeOf(ctx, fctx, arg0);
+  if (baseClassProto) return baseClassProto;
 
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {

@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1118,
+      "passCount": 1122,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -468,7 +468,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 61,
+          "pass": 65,
           "total": 77
         }
       ]
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4407,
+      "passCount": 4408,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 702,
+          "pass": 703,
           "total": 752
         },
         {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 402,
+      "passCount": 404,
       "totalCount": 461
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4494,
+      "passCount": 4493,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4494,
+          "pass": 4493,
           "total": 4603
         }
       ]

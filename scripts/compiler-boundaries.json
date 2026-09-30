@@ -220,9 +220,10 @@
         "src/runtime/contracts/index.ts",
         "src/runtime/contracts/timer-capability.ts",
         "src/runtime/contracts/builtin-brands.ts",
-        "src/runtime/contracts/collection-kind.ts"
+        "src/runtime/contracts/collection-kind.ts",
+        "src/runtime/contracts/js-value-tags.ts"
       ],
-      "minModules": 7
+      "minModules": 8
     },
     {
       "id": "backend-wasmgc",
@@ -366,9 +367,12 @@
         "src/runtime/wasmgc/values/prototype-chain-bodies.ts",
         "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
         "src/runtime/wasmgc/values/primitive-wrapper-bodies.ts",
-        "src/runtime/wasmgc/values/to-object-body.ts"
+        "src/runtime/wasmgc/values/to-object-body.ts",
+        "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+        "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+        "src/runtime/wasmgc/values/object-constructor-body.ts"
       ],
-      "minModules": 86
+      "minModules": 89
     },
     {
       "id": "standalone-platform",
@@ -1746,6 +1750,7 @@
     }
   ],
   "files": [
+    { "path": "src/backend/wasmgc/resources/native-string-own-keys.ts", "state": "clean", "layer": "backend-wasmgc" },
     {
       "path": "src/runtime/wasmgc/values/string-create-body.ts",
       "state": "clean",
@@ -1846,6 +1851,8 @@
       "state": "clean",
       "layer": "backend-wasmgc"
     },
+    { "path": "src/runtime/wasmgc/values/string-index-key-body.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/runtime/wasmgc/values/string-own-keys-body.ts", "state": "clean", "layer": "native-runtime" },
     {
       "path": "src/wasm/model/instruction-walk.ts",
       "state": "clean",
@@ -3761,6 +3768,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/class-static-descriptor.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/class-static-metadata.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5386,6 +5401,22 @@
     },
     {
       "path": "src/codegen/expressions/stored-member-closure-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/super-property-write.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/super-receiver-publish.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9226,6 +9257,14 @@
     },
     {
       "path": "src/codegen/struct-hierarchy-layout.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/super-write-grown-keys.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -13412,6 +13451,11 @@
       "layer": "runtime-contracts"
     },
     {
+      "path": "src/runtime/contracts/js-value-tags.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
       "path": "src/cjs-standalone-env-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14238,6 +14282,21 @@
     },
     {
       "path": "src/runtime/wasmgc/values/prototype-singleton-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-constructor-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
