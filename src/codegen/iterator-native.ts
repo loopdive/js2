@@ -501,7 +501,8 @@ export function getOrRegisterIterRecType(ctx: CodegenContext): number {
 
   // Field order is load-bearing: fieldIdx kind=0, vec=1, idx=2 (the vec path).
   // (#2038) userIter=3 — a mutable externref holding the user `{next()}`
-  // iterator object for the USER carrier (null on the vec path).
+  // iterator object for USER, or the original array-like receiver for a live
+  // VEC carrier. Canonical snapshot VEC records leave this slot null.
   const fields = [
     { name: "kind", type: { kind: "i32" as const }, mutable: false },
     { name: "vec", type: { kind: "ref_null" as const, typeIdx: vecTypeIdx }, mutable: false },
@@ -2992,7 +2993,10 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       undefined,
       ITER_FAMILY_LOCAL,
     );
-  if ((deps || objDeps || hostDeps || agDeps || sgDeps || argumentDeps) && iteratorNextFn) {
+  if (
+    (deps || objDeps || hostDeps || agDeps || sgDeps || argumentDeps || ctx.funcMap.has("__extern_get_idx")) &&
+    iteratorNextFn
+  ) {
     // (#3164) The GENSTATE step's sentinel-aware f64 boxing needs an f64
     // scratch local; append it at fill time (locals are read at emit, after
     // this fill — same discipline as the #3100 S5 `__iterator_rest` locals
@@ -3009,7 +3013,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       sgDeps,
       false,
       undefined,
-      undefined,
+      ctx,
       undefined,
       argumentDeps,
       iteratorNextFn.locals,
@@ -3081,8 +3085,11 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // (#3119) OBJ records drain through the SAME step-to-exhaustion arm (the
   // kind dispatch lives inside `__iterator_next`), so the guard admits every
   // step-driven kind the GetIterator ladder can produce in this module.
-  if (deps || objDeps || hostDeps || agDeps || sgDeps) {
+  if (deps || objDeps || hostDeps || agDeps || sgDeps || ctx.funcMap.has("__extern_get_idx")) {
     const stepKinds: number[] = [];
+    // Live receiver-backed VEC records must drain through next, not the
+    // normalization snapshot. Canonical VEC records also use that same step.
+    if (ctx.funcMap.has("__extern_get_idx")) stepKinds.push(ITER_KIND_VEC);
     if (deps) stepKinds.push(ITER_KIND_USER);
     if (objDeps) stepKinds.push(ITER_KIND_OBJ);
     if (hostDeps) stepKinds.push(ITER_KIND_HOSTGEN); // (#3075) drain via __iterator_next
@@ -4562,11 +4569,13 @@ function collectVecFamilyCarriers(ctx: CodegenContext, types: IterRuntimeTypes, 
 
 /**
  * (#3100) Build the `__iterator` vec-family normalization arms (ladder arm 2).
- * Each arm: `ref.test <carrier>` → copy the carrier's elements into a FRESH
+ * With native indexed readers, each arm retains the actual receiver in
+ * userIter, and next reads that receiver live without a normalization copy.
+ * The compatibility fallback: `ref.test <carrier>` → copy elements into a FRESH
  * canonical externref `$Vec` (boxing each element per kind) → return
  * $IterRec{VEC, freshVec, 0, null}. Downstream (`__iterator_next` /
  * `__iterator_rest`) then reads the canonical vec unchanged — the whole dynamic
- * iteration fix lives in this one normalize step.
+ * iteration fallback lives in this one normalize step.
  *
  * A COPY (not an aliased rewrap of the carrier's data array) is deliberate:
  * the canonical `$Vec.data` array type and a carrier's array type (e.g.
@@ -4593,6 +4602,31 @@ function buildVecFamilyArms(
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
   const arms: Instr[] = [];
   for (const carrier of collectVecFamilyCarriers(ctx, types, strict)) {
+    if (ctx.funcMap.has("__extern_length") && ctx.funcMap.has("__extern_get_idx")) {
+      // Keep the actual array-like receiver, not a boxed element snapshot.
+      // The existing readers own element boxing, holes and indexed bounds.
+      arms.push(
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: carrier.typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "i32.const", value: ITER_KIND_VEC },
+            { op: "ref.null", typeIdx: vecTypeIdx },
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: 1 },
+            { op: "extern.convert_any" },
+            iterFamilyOperand(ITER_FAMILY_ARRAY, familyLocal),
+            { op: "struct.new", typeIdx: iterRecTypeIdx },
+            { op: "extern.convert_any" },
+            { op: "return" },
+          ],
+          else: [],
+        },
+      );
+      continue;
+    }
     const arrDef = ctx.mod.types[carrier.arrTypeIdx];
     const strictBoxOps = (): Instr[] => {
       if (!strict || !arrDef || arrDef.kind !== "array") return carrier.boxOps.map((instr) => ({ ...instr }));
@@ -5038,7 +5072,7 @@ function buildIteratorNextBody(
           },
         ];
 
-  const vecStep: Instr[] =
+  const canonicalVecStep: Instr[] =
     argsDeps === undefined
       ? buildOrdinaryVecStep()
       : [
@@ -5064,6 +5098,76 @@ function buildIteratorNextBody(
             blockType: { kind: "empty" },
             then: argumentsVecStep,
             else: buildOrdinaryVecStep(),
+          },
+        ];
+
+  // Family normalization retains its receiver in the otherwise-unused VEC
+  // userIter slot. Read its current length and indexed value instead of the
+  // normalized copy. Cursor advance precedes Get, and exhaustion is one-way.
+  const liveLengthIdx = strictCtx?.funcMap.get("__extern_length");
+  const liveGetIdx = strictCtx?.funcMap.get("__extern_get_idx");
+  const vecStep: Instr[] =
+    liveLengthIdx === undefined || liveGetIdx === undefined
+      ? canonicalVecStep
+      : [
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: canonicalVecStep,
+            else: [
+              { op: "local.get", index: 1 },
+              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+              { op: "local.set", index: 3 },
+              { op: "ref.null.extern" },
+              { op: "local.set", index: 5 },
+              { op: "local.get", index: 3 },
+              { op: "i32.const", value: 0x7fffffff },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 1 },
+                  { op: "local.set", index: 4 },
+                ],
+                else: [
+                  { op: "local.get", index: 3 },
+                  { op: "f64.convert_i32_s" },
+                  { op: "local.get", index: 1 },
+                  { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+                  { op: "call", funcIdx: liveLengthIdx },
+                  { op: "f64.ge" },
+                  { op: "local.set", index: 4 },
+                  { op: "local.get", index: 4 },
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 1 },
+                      { op: "local.get", index: 3 },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+                      { op: "local.get", index: 1 },
+                      { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+                      { op: "local.get", index: 3 },
+                      { op: "f64.convert_i32_s" },
+                      { op: "call", funcIdx: liveGetIdx },
+                      { op: "local.set", index: 5 },
+                    ],
+                    else: [
+                      { op: "local.get", index: 1 },
+                      { op: "i32.const", value: 0x7fffffff },
+                      { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+                    ],
+                  },
+                ],
+              },
+            ],
           },
         ];
 

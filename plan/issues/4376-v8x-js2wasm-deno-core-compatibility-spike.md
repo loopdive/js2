@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-30: live receiver-backed VEC stepping and rest draining reuse the
+  # existing native indexed readers instead of normalized element snapshots.
+  - src/codegen/iterator-native.ts
   # 2026-09-30: runtime import-alias declaration checks in both typeof forms;
   # type-only imports remain unresolvable at runtime.
   - src/codegen/typeof-delete.ts
@@ -2747,3 +2750,25 @@ after sandbox network denial. This is not a completed full-suite result.
 All six TCP cases pass with networking permitted. No test processes were
 stopped. General Script execution, application packaging, missing snapshot
 and inspector APIs, and full integration verification remain open.
+
+### Live receiver compiler repair
+
+The direct standalone compiler control initially passes mixed arrays and fails
+numeric arrays (iterator yields old 2 after indexed Get observes replacement 3).
+Receiver-backed VEC records now retain the actual receiver in field 3, read
+current length and indexed values through existing runtime readers, advance
+before indexed Get, and latch exhaustion. Rest draining uses the same next
+path instead of copying the old normalization. When those readers are present,
+family construction no longer allocates the element snapshot. Canonical VEC
+records and argument-object logical-length behavior retain their existing path.
+
+Six direct controls cover mixed/numeric receivers, empty-array construction,
+growth, exhaustion and remaining elements. The combined iterator suite passes
+79/79 (five files). An earlier run lacked the exnref flag in Vitest's fork and
+hit its default 512 MiB heap; that run is not regression evidence. The verified
+run passes the flag through fork execArgv and uses a 4096 MiB heap. Native
+adapter replay still requires rebuilding clean core artifacts with this repair;
+the old artifact's stale-iteration failure has not yet been credited as fixed.
+The additional five-file iterator, destructuring, multi-source and bootstrap
+control set passes 39/39, bringing focused checks to 118/118. TypeScript 7
+passes. No user changes were staged.
