@@ -27,6 +27,11 @@ loc-budget-allow:
   - src/checker/usage-inference.ts
   - src/codegen/map-runtime.ts
   - src/codegen/apply-closure-variadic-builtin.ts
+  - src/codegen/ordinary-new-target.ts
+  - src/codegen/rest-only-apply.ts
+  - src/codegen/closures/arrow-phases.ts
+  - src/codegen/native-construct.ts
+  - src/codegen/function-body.ts
   # 2026-08-28: PR #5148 checkpoint (Deno runtime integration — linked
   # shared-realm/callable boundaries, runtime-eval + exception transport,
   # Promise/reflection/buffer-view/finalizer behavior). Broad, measured
@@ -85,6 +90,14 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # Construction activation state and lexical arrow capture delegate to the
+  # shared helper; allocate rest expressions with the existing rest marker so
+  # shared wrapper metadata cannot conflate ordinary array-formal declarations.
+  - src/codegen/expressions.ts::compileExpressionInner
+  - src/codegen/closures.ts::compileArrowAsClosure
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/closures/arrow-phases.ts::mintClosureStructTypes
   # Hash the logical native-string view instead of the backing allocation.
   - src/codegen/map-runtime.ts::ensureMapHelpers
   # Runtime operand validation reuses the shared Reflect object classifier.
@@ -565,6 +578,46 @@ without the composed patch (10,007,948 bytes), the patch reduces the artifact
 by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
+
+### 2026-09-30: dynamic callback construction state
+
+- Ordinary lifted functions lower `new.target` to `undefined` in
+  `expressions.ts`; native ordinary construction invokes the same receiver
+  dispatcher as a call and supplies no construction state. The bridge's host
+  rejection guard therefore reaches the host import instead of throwing first.
+- Add regressions for exact guard rejection, constructor identity, lexical
+  arrows, ordinary nested calls, and cleanup after throwing. Plan a one-shot
+  construction operand consumed into the callee activation's local before
+  parameter initialization. Arrows capture that local; ordinary calls consume
+  the cleared operand. Protect the native driver operand against exception
+  exits and preserve the existing class constructor path.
+- Initial four regressions were 0/4 on `31237a90fb8` and 4/4 with activation
+  state. Native callback test now passes 1/1, including constructor rejection
+  and caught host exceptions (previously 0/1).
+- Additional default-parameter probe exposed a missing zero-arity dispatcher;
+  when absent, ordinary construction now uses the existing widening vector
+  bridge. A nine-argument rest probe exposed the fixed dispatcher cap; add a
+  full-vector zero-fixed-formal rest arm, guarded by zero declared arity and
+  the actual vec funcref signature. Preserve receiver and exception cleanup,
+  and test every argument plus a non-rest array-formal control.
+- The coexistence control exposed declaration-order-dependent overwrite of
+  shared wrapper metadata. A registration-only fix passed the forward order
+  but failed the reverse order (1/3 result). Rest function expressions now
+  allocate the existing rest-marker subtype, matching declaration singletons;
+  the ordinary array formal retains its distinct calling convention. Added
+  both source orders and full-vector receiver/thrown-identity controls.
+- Checkpoint on main base `ccc5de16cbd`: 25/25 focused compiler tests
+  (nine new construction tests, exact Deno bootstrap, callback receivers,
+  namespace destructuring, wide construction, runtime argv, and collections),
+  20/20 callback/array controls, and 16/16 existing rest-carrier/dispatch tests.
+  TS7, source/function budgets, and formatting pass. A fresh full bridge
+  artifact passes all eight JS assertion groups and the native Rust/Wasmtime
+  nested-callback test, 1/1 (48 other tests filtered out, 125.54 seconds).
+- Handoff: this closes the host callback construction guard failure, not the
+  full Deno integration acceptance list. Next verify typed ordinary constructor
+  drivers and broader constructor paths, then implement source-text namespace
+  publication/live bindings in v8x and general Rust-op/promise ordering. The
+  existing class new.target path is preserved rather than redefined here.
 
 ### 2026-09-30: callback receiver isolation
 

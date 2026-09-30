@@ -216,6 +216,7 @@ import {
   emitClosureParamDestructuring,
   emitClosureConstruction,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import { initializeOrdinaryNewTarget, ORDINARY_NEW_TARGET, arrowReadsLexicalNewTarget } from "./ordinary-new-target.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -2840,6 +2841,7 @@ export function compileLiftedClosureBody(
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
+  if (!ts.isArrowFunction(arrow)) initializeOrdinaryNewTarget(ctx, liftedFctx);
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
   // is live for every subsequent statement. Since S3 this emits NO instructions
   // at all — the receiver arrives as param 0 — see typed-this.ts.
@@ -3689,7 +3691,10 @@ export function compileArrowAsClosure(
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
-  const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
+  const additionalCaptureNames = new Set(planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval));
+  if (ts.isArrowFunction(arrow) && fctx.localMap.has(ORDINARY_NEW_TARGET) && arrowReadsLexicalNewTarget(arrow)) {
+    additionalCaptureNames.add(ORDINARY_NEW_TARGET);
+  }
   // Ordinary function frames do not bind `this` in localMap: their receiver
   // is resolved through __current_this at each source read.  An arrow must
   // snapshot that value at creation, however. Keep the snapshot in a private

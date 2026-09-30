@@ -25,6 +25,7 @@ import {
   closureBagInitInstr,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
+  ensureRestFnWrapSubtype,
 } from "./funcref-wrapper-types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
@@ -982,6 +983,27 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
       liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      // Rest and ordinary array formals can share a Wasm signature, but not
+      // their calling convention. Preserve the existing rest marker at the
+      // allocation site, as function-declaration singletons already do.
+      if (
+        opts.decl &&
+        (ts.isArrowFunction(opts.decl) || ts.isFunctionExpression(opts.decl)) &&
+        runtimeParameters(opts.decl).some((param) => param.dotDotDotToken !== undefined)
+      ) {
+        structTypeIdx = ensureRestFnWrapSubtype(ctx, structTypeIdx);
+        if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+        return {
+          structTypeIdx,
+          liftedFuncTypeIdx,
+          liftedSelfTypeIdx,
+          liftedParams,
+          meta: {
+            allocTypeIdx: (metaSlot && ensureFnMetaSubtype(ctx, structTypeIdx)) ?? structTypeIdx,
+            init: [{ op: "f64.const", value: 0 }, ...(metaSlot?.init ?? [])],
+          },
+        };
+      }
       // (#4437) Shared wrapper ⇒ the metadata slot needs a per-base subtype.
       const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
       if (metaSlot && allocTypeIdx !== undefined) {

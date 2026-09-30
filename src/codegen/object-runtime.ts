@@ -63,6 +63,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  * `ensureLateImport` for these names.
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
+import { buildRestOnlyApply } from "./rest-only-apply.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -6325,6 +6326,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
   const variadicBuiltinArm = buildVariadicBuiltinApplyArm(ctx, locals, 3, argcGlobalIdx);
+  const restOnlyApply = buildRestOnlyApply(ctx, locals, 3, argcGlobalIdx);
 
   // (#3673) Read the in-module $ObjVec argument carrier directly, avoiding a
   // dynamic `__extern_get_idx` per argument. Non-$ObjVec args keep the generic
@@ -6496,6 +6498,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...variadicBuiltinArm, // (#6701) Math.max/min, String.fromCharCode values
+    ...restOnlyApply,
     ...widen,
     // A compiled closure above the module's TOP dispatcher arity must fail
     // loudly rather than falling through to the undefined sentinel (#1058).

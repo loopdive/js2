@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { initializeOrdinaryNewTarget } from "./ordinary-new-target.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
@@ -479,6 +480,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   }
 
   ctx.currentFunc = fctx;
+  initializeOrdinaryNewTarget(ctx, fctx);
   initializeFunctionPoisonPillContext(ctx, fctx, decl);
 
   const funcPos = getSourcePos(ctx, decl);
