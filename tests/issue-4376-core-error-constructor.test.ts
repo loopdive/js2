@@ -4,6 +4,51 @@ import { compile, compileMulti } from "../src/index.js";
 import { readFileSync } from "node:fs";
 import { buildRuntimeEvalRefusalProviderSource } from "../scripts/runtime-eval-provider.mjs";
 
+it.each(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"])(
+  "preserves %s constructed through a function parameter",
+  async (name) => {
+    const result = await compile(
+      `
+      let reads=0; let conversions=0;
+      function message():any {reads++;return {toString():string {conversions++;return "native op failure";}};}
+      function construct(errorClass:any, message:any):any {return new errorClass(message);}
+      export function run():number {
+        const error=construct(${name}, message());
+        if (error === null || error === undefined) return -1;
+        if (error.name !== "${name}") return -2;
+        if (reads !== 1 || conversions !== 1) return -4;
+        return error.message === "native op failure" ? 42 : -3;
+      }
+      `,
+      { target: "standalone", platform: "deno" },
+    );
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject);
+    (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    expect((instance.exports.run as Function)()).toBe(42);
+  },
+);
+
+it("keeps a user constructor passed through a parameter and evaluates its argument once", async () => {
+  const result = await compile(
+    `
+    let reads=0; let calls=0;
+    class Custom {value:number;constructor(value:number){calls++;this.value=value+1;}}
+    function argument():number {reads++;return 41;}
+    function construct(ctor:any,value:number):any {return new ctor(value);}
+    export function run():number {
+      const result=construct(Custom,argument());
+      return result instanceof Custom && reads===1 && calls===1 ? result.value : -1;
+    }
+    `,
+    { target: "standalone", platform: "deno" },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject);
+  (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(instance);
+  expect((instance.exports.run as Function)()).toBe(42);
+});
+
 it.each(["Error", "(globalThis as any).Error"])(
   "preserves errors constructed through a captured primordial %s",
   async (constructorSource) => {

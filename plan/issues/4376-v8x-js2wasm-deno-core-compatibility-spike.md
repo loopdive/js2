@@ -2362,3 +2362,86 @@ after success verify both hashes and run the full compiler-free target with
 the new string artifact. Do not use the earlier deno-core.cwasm to test this
 new bridge export. Native conversion/brand conformance remains unproven beyond
 the bounded tests; full Deno compatibility and general app routing remain open.
+
+Native precompile 97481 is terminal success: 1/1 in 243.19 seconds.
+deno-core-string.cwasm is 47,509,488 bytes, SHA-256
+`74f9ae2e55393bea826697ccf40cd51b8b257844f086d25df2d2e608e35ebf7d`.
+Both raw/native hashes recomputed from disk match its attestation. Compiler-free
+full-target replay 10607 passes 30/30, six ignored, in 1.25 seconds with
+js2wasm_deno_poc,js2wasm_gc_copying,simdutf only. The upstream oversized async
+stub now reaches native TryCatch with the expected Error text, completing the
+three-part construction/transport/string-conversion repair for this control.
+
+Extended native full-target replay 44543 passes 30/30, six ignored, in 1.34
+seconds using that same trusted artifact. A Rust-owned object's toString is
+called from compiled spec coercion with the exact receiver identity and zero
+arguments; changing that method to throw a Rust object makes Value::ToString
+return None and native TryCatch observe that exact object. The callback event
+floor is exactly [string, throw], excluding a vacuous native placeholder path.
+These controls do not prove full cross-graph coercion, Error branding or Deno
+conformance. All handles in this repair are terminal; no live precompile remains.
+
+### Full upstream harness preparation after main merge
+
+Merged loopdive/js2 main 721d12bf9f11512d7c00eb55b82f3863748b358b as signed
+9dc3f4fe56, preserving unrelated local changes. The refreshed rejection context
+precompile passes 1/1 in 128.18 seconds. Compiler-free rejection replay passes
+3/3 in 0.11 seconds, covering late handlers, native callback reentry and
+cross-realm enqueue order. This is separate from the 30-test bootstrap target.
+
+Full upstream Deno checkout: /private/tmp/deno-upstream-conformance.H6HA4g/deno,
+pinned at 1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44. Only Cargo.toml and
+Cargo.lock are adapted, selecting the v8x path dependency with compiler-free
+js2wasm, copying GC and fail-loud diagnostic ABI. Deno sources and tests remain
+unchanged. The initial offline dependency resolution refused the older bumpalo
+lock; the documented seven-package Cargo update succeeded offline and resolved
+Wasmtime 47.0.3. Full deno_core unit-test compilation is now running in session
+74438. No upstream conformance result or baseline change is claimed yet.
+
+Session 74438 failed before adapter compilation: Deno's configured ld64.lld
+cannot parse the installed macOS 27 SDK's arm64e.x1 TAPI architecture. Retrying
+with RUSTFLAGS='--cfg tokio_unstable' selects the host linker without editing
+upstream files. Session 3468 then built the unchanged deno_core unit-test binary
+in 57.15 seconds. Enumeration reports 431 tests, not a test pass count.
+
+Using the trusted deno-core-string AOT artifact and its attestation, upstream
+runtime::tests::misc::test_heap_limit_cb_remove passes 1/1 (430 filtered) in
+1.40 seconds. test_execute_script_return_value and test_pump_message_loop each
+fail 0/1 after successful JsRuntime construction when their first arbitrary
+script is refused by the closed-world artifact. General classic-script AOT
+global lexical environments and completion values remain required; do not
+relax the refusal by treating arbitrary scripts as function bodies.
+
+The unchanged upstream hello_world example builds and runs compiler-free in
+session 82439, returning exit 0 and printing sum 6. Its negative case prints
+only TypeError, missing the expected serde_v8 diagnostic. This contradicts
+the manual callback fixture's full error text and must be fixed rather than
+called complete. A new direct upstream buildCustomError message assertion in
+tests/issue-4376-core-error-constructor.test.ts is under test in session 96337
+to separate compiler construction from native callback transport. No baseline
+was changed, and no upstream source/test was modified.
+
+The standalone diagnostic experiment is terminal: 96337 fails 10/11 with an
+opaque Wasm exception from buildCustomError. It does not isolate construction
+from ErrorCaptureStackTrace and was removed from the unrelated existing async
+refusal test. The native upstream example remains the acceptance check for the
+missing error message, not this discarded instrument.
+
+Seven focused constructor-through-parameter controls fail before the repair:
+43035 passes 10/18, with all seven Error families returning objects with the
+wrong name. Adding a retry only to the dynamic-new null fallback does not help
+(25433, same 10/18); the earlier function-constructor lane intercepts the site.
+The repair guards canonical Error-family carrier identity before that lane,
+uses spec message conversion, and preserves the original user-constructor
+lowering for every other value. No new shared context field or aliased Instr
+object is introduced. Untraced any/unknown new sites now include seven small
+Error dispatch arms; RegExp's expensive compiler is not added for those sites.
+
+Final focused validation 86725 passes 42/42 across five suites, including seven
+parameter constructors with argument/conversion counts exactly one, a user
+constructor with one argument evaluation and one constructor call, and the
+existing capture, shadowing, identity and RegExp controls. TS7 session 81972
+passes. This is a compiler checkpoint, not proof the real Deno message is
+repaired: rebuild the pinned runtime core and its native artifact, then rerun
+the unchanged upstream example and full-target controls. All sessions in this
+checkpoint are terminal; no native build or compiler check is still running.

@@ -267,6 +267,14 @@ export function prepareBuiltinCtorValueInvoke(
   if (ctx.standalone !== true || ctx.wasi === true) return undefined;
   const name = tracedBuiltinCtorValueName(ctx, callee);
   if (name === undefined) return undefined;
+  return prepareNamedBuiltinCtorValueInvoke(ctx, fctx, name);
+}
+
+function prepareNamedBuiltinCtorValueInvoke(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: InvokeCtorName,
+): InvokeCtorName | undefined {
   if (ctx.funcMap.has(helperName(name))) return name;
   const ok = name === "RegExp" ? prepareRegExpHelper(ctx, fctx) : prepareErrorHelper(ctx, fctx, name);
   if (!ok) return undefined;
@@ -442,15 +450,22 @@ export function tryCompileBuiltinCtorAliasInvoke(
   const callee = unwrap(expr.expression);
   if (!ts.isIdentifier(callee) || resolvesToAmbientGlobal(ctx, callee)) return undefined;
   const fact = ctx.oracle.typeFactOf(callee);
-  // `any` / `unknown` callees already take the dynamic call / `new` lanes.
-  if (fact.kind === "any" || fact.kind === "unknown") return undefined;
+  const dynamic = fact.kind === "any" || fact.kind === "unknown";
+  // Generic construction of an Error carrier through a parameter cannot rely
+  // on name tracing. Guard canonical identities before the function-constructor
+  // lane, which can otherwise manufacture a plain object for that carrier.
+  if (dynamic && !ts.isNewExpression(expr)) return undefined;
   const args = expr.arguments ?? [];
   if (args.some((a) => ts.isSpreadElement(a) || containsFunctionLike(a))) return undefined;
-  if (tracedBuiltinCtorValueName(ctx, callee) === undefined) return undefined;
-  const name = prepareBuiltinCtorValueInvoke(ctx, fctx, callee);
-  if (name === undefined) return undefined;
-  const globalIdx = ctx.builtinObjectGlobals.get(carrierKey(name));
-  if (globalIdx === undefined) return undefined;
+  const traced = tracedBuiltinCtorValueName(ctx, callee);
+  if (!dynamic && traced === undefined) return undefined;
+  const names: readonly InvokeCtorName[] = traced === undefined ? ERROR_CTOR_NAMES : [traced];
+  const candidates = names.flatMap((name) => {
+    if (prepareNamedBuiltinCtorValueInvoke(ctx, fctx, name) === undefined) return [];
+    const globalIdx = ctx.builtinObjectGlobals.get(carrierKey(name));
+    return globalIdx === undefined ? [] : [{ name, globalIdx }];
+  });
+  if (candidates.length === 0) return undefined;
 
   const calleeLocal = allocLocal(fctx, `__bcv_callee_${fctx.locals.length}`, EXTERNREF);
   const calleeTy = compileExpression(ctx, fctx, callee);
@@ -476,8 +491,19 @@ export function tryCompileBuiltinCtorAliasInvoke(
     const missing = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
     const argOf = (k: number): Instr[] =>
       k < argLocals.length ? [{ op: "local.get", index: argLocals[k]! }] : missing();
-    const call = helperCallInstrs(ctx, name, argOf, ts.isCallExpression(expr));
-    fctx.body.push(...(call ?? [{ op: "ref.null.extern" as const }]));
+    let dispatch: Instr[] = [{ op: "ref.null.extern" }];
+    for (const { name, globalIdx } of candidates.slice().reverse()) {
+      dispatch = [
+        ...carrierIdentityTest(() => [{ op: "local.get", index: calleeLocal }], globalIdx),
+        {
+          op: "if",
+          blockType: { kind: "val", type: EXTERNREF },
+          then: helperCallInstrs(ctx, name, argOf, ts.isCallExpression(expr)) ?? [{ op: "ref.null.extern" }],
+          else: dispatch,
+        },
+      ];
+    }
+    fctx.body.push(...dispatch);
 
     fctx.savedBodies.push(thenBody);
     fctx.body = elseBody;
@@ -497,7 +523,12 @@ export function tryCompileBuiltinCtorAliasInvoke(
     fctx.body = outer;
     fctx.savedBodies.pop(); // outer
   }
-  outer.push(...carrierIdentityTest(() => [{ op: "local.get", index: calleeLocal }], globalIdx), {
+  const matches: Instr[] = [];
+  for (const [index, { globalIdx }] of candidates.entries()) {
+    matches.push(...carrierIdentityTest(() => [{ op: "local.get", index: calleeLocal }], globalIdx));
+    if (index > 0) matches.push({ op: "i32.or" });
+  }
+  outer.push(...matches, {
     op: "if",
     blockType: { kind: "val", type: EXTERNREF },
     then: thenBody,
