@@ -1345,6 +1345,127 @@ export interface PreparedManifestGraph {
   runtimeDynamicImportsLowered: number;
 }
 
+export const GRAPH_NAMESPACE_REGISTRY = "__v8x_source_module_namespaces";
+export const GRAPH_CAN_CALL_EXPORT = "__v8x_graph_can_call_export";
+export const GRAPH_CALL_EXPORT = "__v8x_graph_call_export";
+export const GRAPH_CAN_ACCESS_EXPORT = "__v8x_graph_can_access_export";
+export const GRAPH_GET_EXPORT = "__v8x_graph_get_export";
+export const GRAPH_SET_EXPORT = "__v8x_graph_set_export";
+export const GRAPH_GET_PROTOTYPE_EXPORT = "__v8x_graph_get_prototype_export";
+export const GRAPH_SET_PROTOTYPE_EXPORT = "__v8x_graph_set_prototype_export";
+
+/** Publish native live namespaces without eagerly importing disconnected/lazy files. */
+export function prepareNamespaceGraph(
+  modules: ReadonlyMap<string, string>,
+  entrySpecifier: string,
+): PreparedManifestGraph {
+  const graph = prepareManifestGraph(modules, entrySpecifier);
+  const known = new Set(modules.keys());
+  const reachable = new Set<string>();
+  const visit = (specifier: string): void => {
+    if (reachable.has(specifier)) return;
+    reachable.add(specifier);
+    for (const request of staticModuleRequests(modules.get(specifier)!, compilerPath(specifier))) {
+      const dependency = resolveManifestSpecifier(request, specifier, known);
+      if (dependency !== undefined) visit(dependency);
+    }
+  };
+  visit(entrySpecifier);
+  const entryPath = graph.entry;
+  let prefix = "__v8x_ns";
+  while (graph.files[entryPath]!.includes(prefix)) prefix += "_";
+  const resolutions: Record<string, string> = {};
+  const imports: string[] = [];
+  const publications: string[] = [];
+  const callableChecks: string[] = [];
+  const objectChecks: string[] = [];
+  const namespaceWriteChecks: string[] = [];
+  const namespacePrototypeChecks: string[] = [];
+  const namespaceSetPrototypeChecks: string[] = [];
+  for (const [index, specifier] of [...reachable].entries()) {
+    const request = `v8x:namespace:${index}`;
+    resolutions[request] = compilerPath(specifier);
+    imports.push(`import * as ${prefix}${index} from ${JSON.stringify(request)};`);
+    publications.push(`${prefix}_registry[${JSON.stringify(specifier)}] = ${prefix}${index};`);
+    objectChecks.push(`if (value === ${prefix}${index}) return 1;`);
+    namespaceWriteChecks.push(`if (value === ${prefix}${index}) return false;`);
+    namespacePrototypeChecks.push(`if (value === ${prefix}${index}) return null;`);
+    namespaceSetPrototypeChecks.push(`if (value === ${prefix}${index}) return prototype === null;`);
+    for (const name of collectManifestExportNames(specifier, modules)) {
+      callableChecks.push(`if (callable === ${prefix}${index}[${JSON.stringify(name)}]) return 1;`);
+      objectChecks.push(`if (value === ${prefix}${index}[${JSON.stringify(name)}]) return 1;`);
+    }
+  }
+  graph.files[entryPath] =
+    `${imports.join("\n")}\nlet ${prefix}_ready = false;\nconst ${prefix}_observed = [];\n${graph.files[entryPath]}
+const ${prefix}_host = globalThis;
+if (${prefix}_host.${GRAPH_NAMESPACE_REGISTRY} === undefined) ${prefix}_host.${GRAPH_NAMESPACE_REGISTRY} = Object.create(null);
+const ${prefix}_registry = ${prefix}_host.${GRAPH_NAMESPACE_REGISTRY};
+${publications.join("\n")}
+${prefix}_ready = true;
+function ${prefix}_remember(value) {
+  if (value !== null && (typeof value === "object" || typeof value === "function")) {
+    for (let i = 0; i < ${prefix}_observed.length; i++) if (${prefix}_observed[i] === value) return value;
+    ${prefix}_observed.push(value);
+  }
+  return value;
+}
+export function ${GRAPH_CAN_ACCESS_EXPORT}(value) {
+  if (!${prefix}_ready || value === null || (typeof value !== "object" && typeof value !== "function")) return 0;
+  ${objectChecks.join("\n")}
+  for (let i = 0; i < ${prefix}_observed.length; i++) if (${prefix}_observed[i] === value) return 1;
+  return 0;
+}
+export function ${GRAPH_GET_EXPORT}(value, key) {
+  if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
+  return ${prefix}_remember(value[key]);
+}
+export function ${GRAPH_SET_EXPORT}(value, key, assigned): any {
+  if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
+  // Module namespace [[Set]] rejects writes, including writes of the same value.
+  ${namespaceWriteChecks.join("\n")}
+  return Reflect.set(value, key, assigned);
+}
+export function ${GRAPH_GET_PROTOTYPE_EXPORT}(value): any {
+  if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
+  ${namespacePrototypeChecks.join("\n")}
+  return ${prefix}_remember(Object.getPrototypeOf(value));
+}
+export function ${GRAPH_SET_PROTOTYPE_EXPORT}(value, prototype): any {
+  if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
+  ${namespaceSetPrototypeChecks.join("\n")}
+  return Reflect.setPrototypeOf(value, prototype);
+}
+export function ${GRAPH_CAN_CALL_EXPORT}(callable) {
+  if (!${prefix}_ready) return 0;
+  if (typeof callable !== "function") return 0;
+  ${callableChecks.join("\n")}
+  for (let i = 0; i < ${prefix}_observed.length; i++) if (${prefix}_observed[i] === callable) return 1;
+  return 0;
+}
+export function ${GRAPH_CALL_EXPORT}(callable, receiver, args) {
+  if (${GRAPH_CAN_CALL_EXPORT}(callable) !== 1) throw new TypeError("callable is not an export of this graph");
+  return ${prefix}_remember(callable.apply(receiver, args));
+}
+`;
+  graph.projectResolutions[entryPath] = { ...graph.projectResolutions[entryPath], ...resolutions };
+  // compileMulti initializes every supplied source, not just reachable ones.
+  // Follow the lowered graph (including required dynamic-import helpers) and
+  // omit disconnected manifest files from the compilation entirely.
+  const compiledPaths = new Set<string>();
+  const include = (path: string): void => {
+    if (compiledPaths.has(path)) return;
+    compiledPaths.add(path);
+    for (const dependency of Object.values(graph.projectResolutions[path] ?? {})) include(dependency);
+  };
+  include(entryPath);
+  graph.files = Object.fromEntries(Object.entries(graph.files).filter(([path]) => compiledPaths.has(path)));
+  graph.projectResolutions = Object.fromEntries(
+    Object.entries(graph.projectResolutions).filter(([path]) => compiledPaths.has(path)),
+  );
+  return graph;
+}
+
 export function prepareManifestGraph(
   modules: ReadonlyMap<string, string>,
   entrySpecifier: string,
@@ -1409,7 +1530,7 @@ async function main(): Promise<void> {
     modules.set(specifier, readFileSync(sourcePath, "utf8"));
   }
 
-  const graph = prepareManifestGraph(modules, options.entry);
+  const graph = prepareNamespaceGraph(modules, options.entry);
   const compileOptions: CompileOptions = {
     target: "standalone",
     platform: "deno",

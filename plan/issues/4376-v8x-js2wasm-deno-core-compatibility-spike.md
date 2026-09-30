@@ -29,6 +29,7 @@ loc-budget-allow:
   - src/codegen/apply-closure-variadic-builtin.ts
   - src/codegen/ordinary-new-target.ts
   - src/codegen/rest-only-apply.ts
+  - src/codegen/object-runtime-prototype.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/native-construct.ts
   - src/codegen/function-body.ts
@@ -90,6 +91,15 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # Native Map's carrier must not be mistaken for a user class layout merely
+  # because an earlier value read already registered it.
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  # Freeze/prototype guards are factored into small builders. These grants
+  # cover only the wiring into the existing physical-store and prototype
+  # provider owners, not a new inline semantic implementation.
+  - src/codegen/closed-struct-extern-set.ts::fillClosedStructExternSetArms
+  - src/codegen/closed-struct-extern-set.ts::buildReceiverArms
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
   # Construction activation state and lexical arrow capture delegate to the
   # shared helper; allocate rest expressions with the existing rest marker so
   # shared wrapper metadata cannot conflate ordinary array-formal declarations.
@@ -578,6 +588,280 @@ without the composed patch (10,007,948 bytes), the patch reduces the artifact
 by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
+
+### 2026-09-30: source module namespace publication
+
+- Exact runtime graph rebuild continuation: factored the strict v8x builder's
+  source-graph construction into `createDenoSourceGraph`, retaining all clean
+  detached/pinned checks in the production entrypoint. Added a separate local
+  native-test builder that hashes all six pinned Deno fixture sources and
+  uses that same runtime/AOT graph generator. Its outputs are explicitly
+  labeled test-only, not certified production packages. It refuses non-host
+  imports and requires the namespace handle export.
+- Rebuilding that exact staged runtime graph found a compiler ordering defect:
+  when Map's native carrier is registered before `class SafeMap extends Map`,
+  class collection treated it as an ordinary user-class parent, whose field
+  table is absent, producing an empty subtype of the five-field Map carrier.
+  Class collection now recognizes this exact native carrier and uses the
+  existing builtin-subclass construction route; a shadowed user Map class is
+  not matched. The hierarchy validator remains intact. Diagnostic logging was
+  removed after observing the parent/child layouts.
+- The rebuilt graph advances past that hierarchy error but remains **not
+  emitted**: `script2` (the unchanged 02_timers wrapper) contains a local.get
+  with undefined index at position 147, 209 declared locals. Next locate that
+  instruction's producer; do not bypass binary validation or change Deno's
+  source. Native exact-core namespace assertions have still NOT executed.
+  Artifact build sessions 3139, 10594 and 67156 are terminal failures, not
+  running jobs. The prewarmed Map regression compiles but is **0/1** at runtime:
+  rendered exception is `TypeError: Cannot read properties of undefined
+  (reading 'set')`. Its explicit constructor follows Deno's null-input branch
+  `super(); return;`, so next verify the constructor's implicit-this return
+  behavior rather than weakening the fixture to a default constructor.
+  Builtin-subclass compatibility tests pass **11/11**; combined **11/12**.
+  TS7 typecheck and function budget pass. Sessions 50533, 37986 and 57981 are
+  terminal; no tests remain live. These changes are not ready to publish.
+
+- Prelinked namespace implementation checkpoint (native exact-core execution
+  still pending): runtime artifact generation now places the three live core
+  bindings in a private initializer module and re-exports only `core`,
+  `internals`, `primordials` through a compiler-native namespace facade. The
+  unchanged `mod.js` body still captures bootstrap fields at the explicit
+  module stage. Private initializer functions are not public namespace keys.
+  Both runtime and POC artifacts expose a phase-guarded numeric namespace
+  handle; runtime provenance includes both generated namespace sources.
+- Rust prelinked Module::Evaluate now binds its original stable namespace
+  wrapper to that artifact value and retains the runtime owner. Object::Set
+  refuses writes to module namespace handles before ordinary realm dispatch,
+  also covering synthetic namespaces with no graph-local setter. The native
+  synthetic regression passes **1/1**, 50 filtered out. Staged compiler
+  verification passes exact three-key enumeration, null prototype, live object
+  reads, namespace write refusal, host-registration gap and failed/reordered
+  stage refusal. The numeric-handle ABI continuation also passes: namespace
+  kind is object, its prototype handle is null, and exported core.answer is
+  observed live as 43. No process from these checks remains live.
+- Targeted `cargo check --test js2wasm_spike` with the Deno POC/runtime compile
+  features passes. The broader `cargo check --tests` fails in vendored V8
+  tests on missing `third_party/icu/common/icudtl.dat` and an unrelated
+  `Vec::new()` inference ambiguity; it is not a passing broad gate. Added
+  exact-core native assertions for export identity/refusal, but these have NOT
+  executed with a rebuilt exact runtime artifact. The strict artifact builder
+  requires clean detached pinned checkouts; do not bypass its provenance rules
+  or report the lightweight staged fixture as exact Deno native verification.
+
+- Mixed-union continuation supersedes the red control below. The original
+  receiver retains the actual string/array identity. The defect is later:
+  an indexed read returns raw externref, then the typed union local uses the
+  legacy externref boxing default and tags a boxed numeric element as string.
+  Native string union reads now use the existing honest classifier only when
+  the contextual sink is `$AnyValue`; generic boxing policy is unchanged.
+  Missing classifier support refuses compilation instead of mis-tagging.
+  Both mixed alternatives now pass (97 for string, 4 for numeric array).
+- Candidate optional-string controls pass **4/4**; infrastructure **2/2** and
+  unchanged Deno bootstrap **1/1**, **7/7** combined. Detached baseline
+  `31237a90fb8`, same standalone/deno lane and explicit exnref Vitest harness,
+  fails the identical minimal mixed-union control **0/1**, returning NaN for
+  the string alternative before reaching its numeric assertion. TS7 typecheck,
+  function/LOC budget, formatting and diff whitespace checks pass. Broader
+  carrier/class replay is terminal **70/70** across seven files: dynamic
+  element-read identity 15/15, class prototypes 17/17, dynamic native strings
+  12/12, source namespace publication 2/2, numeric-any equality 9/9, mixed
+  array tags 9/9, primitive-string indexing 6/6. No process remains live.
+  This still does not establish native prelinked Deno namespace publication
+  or complete graph-to-core/op/promise integration. Next work those actual
+  integration paths; avoid replacing the original three-export core namespace
+  with an ordinary snapshot object or a namespace containing adapter helpers.
+
+- Latest infrastructure continuation fixes the baseline `getNewKey` trap.
+  Deno's narrowed symbol `.description` receiver must use the symbol-branded
+  i32 boundary, not numeric unboxing. Its `string | undefined` result also
+  needs native-string runtime dispatch; the previous gate only admitted
+  any/unknown and excluded unions containing strings. Updated the shared
+  predicate used by indexed reads and guarded method calls. Indexed reads now
+  check undefined singleton identifiers too, producing TypeError rather than
+  falling through to an unsafe native-string cast.
+- The exact infrastructure fixture now passes **2/2**. Combined replay of
+  infrastructure, unchanged bootstrap, source namespaces and the new optional
+  string controls is **8/9**. The new file passes symbol renaming, undefined
+  refusal, and canonical bounds controls (**3/4**); its `string | number[]`
+  control remains red at `mixed(1)` with `__str_flatten` null-pointer trap.
+  That control is retained, not skipped or weakened. Baseline attribution for
+  this newly added mixed-union case has NOT been measured yet. Next inspect
+  its conditional/local carrier and narrowed element read rather than claiming
+  all unions are supported. LOC/function budget gates, TS7 typecheck,
+  formatting and whitespace checks pass after the fixes. Existing string
+  compatibility tests pass **18/18 executed**, with **9 skipped** in the
+  indexed-read file; skipped tests are not verification. All runs are terminal.
+
+- Latest checkpoint supersedes the red prototype controls recorded below.
+  Closed and open donor objects now pass **2/2** namespace regressions, and
+  class prototype controls pass **17/17** (19/19 combined). The compiler
+  stores identity-preserving prototype edges rather than snapshots, retains
+  live inherited reads, supports null terminals, and refuses cycles and
+  frozen-carrier mutation. Class intrinsic slots are synchronized so typed
+  reads agree with dynamic reads. The old class-cycle test expected a silent
+  no-op; it now checks the required TypeError and unchanged prototype, with
+  native Node returning the same score 11.
+- Property-walk wiring now validates its cursor shape and explicit-receiver
+  local, and refuses compilation when the insertion point is missing rather
+  than silently omitting inherited reads. TS7 typecheck, LOC budget and
+  function budget gates pass after these changes.
+- Native namespace run 65166 passed **1/1**, 49 filtered out, 148.01 s using
+  an explicit fresh compiler identity. Earlier stale native output was traced
+  to cache identity hashing the graph driver but not compiler sources. The
+  runtime now hashes the compiler source tree, follows symlink aliases with
+  cycle detection, and refuses broken inputs. Its integration test passes
+  **1/1**, 50 filtered out. Native rerun 71073 is terminal **1/1 passed**,
+  50 filtered out, 149.57 s, with the default cache identity and no override.
+  It covers actual Rust namespace handles, calls, live prototype mutation,
+  cycle refusal, frozen writes, original thrown-object identity, and no
+  interpreter-provider instantiation.
+- Broader compiler rerun is **19/20**: unchanged Deno bootstrap **1/1**,
+  primordial substrate **17/17**, infrastructure destructuring **1/2**.
+  The failing infrastructure fixture traps with `illegal cast` in
+  `getNewKey`, called by `copyPropsRenamed`, during module initialization.
+  Detached baseline `31237a90fb8`, same standalone/deno lane and explicit
+  exnref Vitest harness, reproduces **1/2** with the same stack. This remains
+  a real integration defect, not a regression attributed to this edge change.
+  Latest diff whitespace and Prettier checks also pass. No test process from
+  these runs remains live.
+- Main was merged again at `669adddc31c` in signed merge `9e04306b9f6`.
+  New source namespace/compiler edge work remains uncommitted in the compiler
+  and `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo` runtime checkout.
+  Unrelated local edits were preserved. Remaining full-integration gaps include
+  prelinked Deno namespace binding, internal graph-to-core calls, descriptor
+  operations, arbitrary cross-graph provenance/lifetimes, and broader async
+  and module semantics. Strong-root edge/handle registries also still need a
+  production lifetime and footprint audit. This is not full Deno completion.
+
+- Prototype continuation: added graph-local get/set-prototype ABI, boxed
+  boolean completion, native exception-preserving routing, and explicit
+  module namespace null-prototype semantics. Rust Cargo check passes; this
+  prototype slice is NOT verified working yet.
+- Native prototype control run 62544 is terminal **0/1**, 49 filtered out,
+  147.82 s (binary predates the new Rust prototype routes). Initial graph
+  prototype identity and inherited value 7 pass, but setting otherProto
+  reports true while subsequent prototype identity fails.
+- Direct standalone compiler matrix run 74407 is terminal **0/2**: closed
+  otherProto fails identity check -54; an open Object.create(null) control
+  gets past prototype replacement, inherited-value update, and cycle refusal,
+  then fails frozen-marker prototype refusal -56. Keep BOTH controls: do not
+  change the failing closed case into an open object and declare completion.
+- Relevant substrate: `$Object.$proto` stores `(ref null $Object)`.
+  `object-runtime-prototype.ts` canonicalizes callable/builtin proto views but
+  converts an unadmitted closed literal prototype into null. Dynamic-proto
+  prescan promotes known identifier donors, not arbitrary runtime prototype
+  values. Its status helper also returns permissive 1 for non-$Object
+  receivers, bypassing a frozen closed carrier's bag flags. Next implement
+  identity-preserving, live closed-object prototype support and correct
+  integrity refusal in the compiler, not a source-fixture promotion workaround.
+  The function/builtin proto-view registry is a possible substrate, but a
+  snapshot copy of physical fields would lose live reads and is not acceptable.
+- No native test remains running. The stronger prototype assertions currently
+  leave the namespace regression red; prior read/write native passes apply
+  only to their stated controls, not to the expanded prototype acceptance.
+
+- Added graph-local `Reflect.set` routing with separate success/refusal/
+  exception results in the Rust Object::Set API. Module namespace writes are
+  explicitly refused without altering live bindings. A write completion must
+  use the boxed-value ABI (`: any`), not an inferred raw i32 boolean.
+- The frozen exported-object control exposed a real compiler defect:
+  `Object.isFrozen` says true, but Reflect.set through a closed struct's raw
+  physical-field arm reports success. Freeze records flags in the carrier
+  bag; the physical store was bypassing it. Added lookup-only frozen-bag
+  refusal before physical writes in `closed-struct-extern-set.ts`; no bag is
+  allocated by this check. The namespace regression now passes 1/1 including
+  ordinary mutation, frozen-write refusal, and namespace-write refusal.
+- Wider standalone verification: 32/33 pass (26 non-extensible accessor,
+  3 inherited setter gate, 2 computed-write, 1 unchanged Deno bootstrap).
+  Remaining computedWriteCtorField returns 1 instead of 11, reproduced
+  identically on baseline `31237a90fb8` in the same exnref Vitest lane (2/3).
+  Reflect subset suite passes 3/4, and its stale assertion that Reflect.apply
+  must refuse compilation fails identically on that baseline (targeted 0/1).
+  These remain recorded failures, not green coverage. TS7, LOC gate, and
+  diff whitespace checks pass.
+- Native write run 42853 is terminal 0/1 (133.66 s), failing the ordinary
+  write completion before the helper's boxed ABI correction. Strengthened
+  native run 72318 is terminal **1/1**, 49 filtered out, 146.75 s: successful
+  ordinary writes, frozen-object refusal, namespace-write refusal, original
+  setter exception identity, and prior namespace/call controls all pass.
+  Interpreter-provider instantiations remain unchanged. No native runs remain
+  live. Source and adapter changes are still local and uncommitted.
+
+- Merged `loopdive/js2` main `c72cb7bee00` into the active branch with signed
+  merge `e3ea1b7e2e7`; no conflicts or overlapping dirty files. All unrelated
+  local edits remain untouched. Merge is local, not pushed.
+- Native AOT call routing run 13643 is terminal 0/1: `bump()` updates the live
+  binding to 42, but reading graph-local `default.answer` returns undefined.
+  Added identity-admitted graph-local property reads rather than interpreting
+  foreign object layouts in the core realm. Nested object/function results of
+  reads and calls are retained for subsequent graph dispatch.
+- Native run 5003 is terminal **1/1**, 49 filtered out, 137.15 s: stable native
+  namespace and callable identity, live binding update, legitimate undefined
+  call completion, default object property read, original thrown object
+  identity through Rust TryCatch, and zero additional interpreter-provider
+  instantiations all pass. Uses namespace-context-v2.wasm, Wasmtime 47.0.3,
+  same-store raw unwrap/keep ABI, and the local graph compiler.
+- After the merge, standalone compiler namespace regression and unchanged
+  exact Deno core bootstrap pass **2/2** using
+  `.tmp/deno-resume-vitest.config.ts` (required exnref flag). Namespace controls
+  also reject unrelated same-shaped objects/functions, exercise receiver and
+  argument forwarding, and call an escaped closure returned from a graph
+  method. TS7, Cargo check, and main `git diff --check` pass. An initial run
+  without the exnref configuration failed on unsupported opcode, not runtime
+  semantics; corrected harness is the evidence above.
+- This does not complete module interoperability: graph-local setters,
+  descriptor/prototype operations, internal graph-to-core calls, prelinked
+  Deno namespace publication, and arbitrary cross-graph provenance/lifetimes
+  still need implementation and verification. Observed-value tracking retains
+  strong references and is not yet a production lifetime strategy. The known
+  synthetic JSON/text/bytes test remains an unresolved baseline failure.
+
+- Continuing the verified native foreign-call failure: add a graph-local
+  matcher comparing callable identity with actual live exports, plus a
+  graph-local AOT apply entry. Add private same-store unwrap/keep bridge
+  exports; Rust roots the transient GC values, routes a matching call to its
+  compiled graph, and transports normal/exception completions separately.
+  A `void` result must not be used as evidence that dispatch missed. Nested
+  host reentry uses the same Store-owned graph list through CallerRealm.
+  This first tier covers graph exports, not yet every escaped factory closure.
+- Audited v8x `Module__Evaluate` and `Module__GetModuleNamespace`: source
+  modules allocate a stable branded Rust object but evaluation never publishes
+  their compiled exports. Existing source namespace coverage checks branding
+  and identity only, not export values or live updates.
+- Plan: publish compiler-native namespaces for the statically reachable graph
+  into the shared realm, then bind each stable Rust namespace wrapper to its
+  corresponding realm value. Do not parse exports with regex or copy scalar
+  values: callable/object identity and mutable live bindings must survive.
+- Preserve lazy/disconnected manifest modules: namespace publication must not
+  turn every known module into an eagerly executed dependency.
+- Compiler implementation keeps the original entry and its export ABI, adds
+  native namespace imports/publication, and supplies only reachable lowered
+  source files. Verified live scalar updates, callable/default identity, and
+  disconnected-module non-execution, 1/1. TS7 passes; exact Deno bootstrap
+  passes 1/1. Broader graph suite passes 7/8; synthetic JSON/text/bytes global
+  calls fail with `TypeError: called value is not a function` on both current
+  candidate and original `31237a90fb8` baseline (same standalone Vitest lane).
+- v8x source namespace binding and graph-owner retention implemented; Cargo
+  check passes. Non-eval linked graphs with an existing context now skip
+  interpreter-provider instantiation, with a native counter assertion added.
+  Native namespace verification is not yet passing: first run hit sandboxed
+  default cache path; second proved the generic callback fixture lacked
+  `__v8x_context_global_this`. Added a dedicated context fixture with the
+  required shared-realm exports. Third run (42240) is terminal 0/1: initial
+  scalar 41, namespace identity, function identity, and callable brand pass,
+  but calling `bump()` through the core realm silently leaves the live binding
+  at 41 instead of 42. Its owning graph executes the same function correctly
+  in the compiler test. Next implement a source-proven AOT foreign-call route
+  rather than accepting undefined dispatcher fallthrough as a completed call.
+- The first compiler probe's missing function brand was an instrument defect:
+  its JavaScript graph lacked `allowJs: true`. With that corrected, the actual
+  compiler failure was disconnected-module execution, fixed by pruning the
+  compile inputs. Do not attribute the initial brand miss to codegen.
+- Uncommitted checkpoint: graph publication helper and one regression test in
+  js2; namespace binding, graph ownership, optional interpreter-provider
+  selection, native test, and namespace context fixture generator in v8x.
+  No native namespace changes have been pushed to PR #2. Cargo formatting
+  reports both new and pre-existing differences; do not claim it passes.
 
 ### 2026-09-30: dynamic callback construction state
 

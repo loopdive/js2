@@ -291,6 +291,7 @@ import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
+import { fillClosedObjectPrototypeEdges } from "./closed-object-prototype-edges.js";
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
@@ -6845,6 +6846,7 @@ export function generateModule(
     fillStandaloneClassInstanceProtoArm(ctx);
     fillVecProtoLinkArms(ctx); // (#2917)
     fillDynamicProtoHelpers(ctx);
+    fillClosedObjectPrototypeEdges(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
     // functions through the canonical carrier and must also read their own
@@ -11431,6 +11433,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
     profilePhase("fill-vec-proto-link-arms", () => fillVecProtoLinkArms(ctx)); // (#2917)
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
+    profilePhase("fill-closed-object-prototype-edges", () => fillClosedObjectPrototypeEdges(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.

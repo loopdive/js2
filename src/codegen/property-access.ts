@@ -87,6 +87,7 @@ import {
   ab4519RevertsToBase,
   emitIsNullishAnyAt,
   ensureAnyFromExternHelper,
+  isAnyValue,
   nullishExternTestInstrs,
   undefinedExternInstrs,
   undefinedSingletonActive,
@@ -2815,15 +2816,18 @@ export function receiverIsNativeStringValType(
  * {@link emitGuardedNativeStringLength} and `compileGuardedNativeStringMethodCall`)
  * and keep the prior behaviour in the else arm for non-string values.
  *
- * Narrow scope: `any`/`unknown` only (NOT `object`/`{}`, NOT unions containing
- * `string`), native-string mode only (host/gc mode's generic `__extern_get`
+ * Narrow scope: `any`/`unknown` or unions containing string (NOT `object`/`{}`),
+ * native-string mode only (host/gc mode's generic `__extern_get`
  * already returns the correct length from the real JS value).
  */
 export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
   if (!(ctx.wasi || ctx.standalone)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   const t = ctx.checker.getTypeAtLocation(recv);
-  return (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  return (
+    (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    (t.isUnion() && t.types.some((part) => (part.flags & ts.TypeFlags.StringLike) !== 0))
+  );
 }
 
 /**
@@ -5344,7 +5348,17 @@ export function compileElementAccess(
       receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
     ) {
       const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
-      if (guarded) return guarded;
+      if (guarded) {
+        // The string/array arms return raw externrefs. A heterogeneous union
+        // sink must classify those values, not label a boxed number "string".
+        if (expectedType && isAnyValue(expectedType, ctx)) {
+          const classify = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+          if (classify === undefined) throw new Error("native string union read requires honest value classification");
+          fctx.body.push({ op: "call", funcIdx: classify });
+          return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
+        }
+        return guarded;
+      }
     }
   }
 

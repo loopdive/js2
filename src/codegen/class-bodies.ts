@@ -1073,6 +1073,16 @@ export function collectClassDeclaration(
             break;
           }
           parentStructTypeIdx = ctx.structMap.get(parentClassName);
+          // The native collection carrier is not a user class layout. Its
+          // registration timing must not turn `extends Map` into an empty GC
+          // subtype; builtin super construction owns the actual instance.
+          if (
+            ctx.nativeStrings &&
+            isNativeCollectionBuiltin(parentClassName) &&
+            parentStructTypeIdx === ctx.mapTypeIdx
+          ) {
+            parentStructTypeIdx = undefined;
+          }
           parentFields = ctx.structFields.get(parentClassName) ?? [];
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
