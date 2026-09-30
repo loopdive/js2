@@ -367,9 +367,12 @@
         "src/runtime/wasmgc/values/prototype-chain-bodies.ts",
         "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
         "src/runtime/wasmgc/values/primitive-wrapper-bodies.ts",
-        "src/runtime/wasmgc/values/to-object-body.ts"
+        "src/runtime/wasmgc/values/to-object-body.ts",
+        "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+        "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+        "src/runtime/wasmgc/values/object-constructor-body.ts"
       ],
-      "minModules": 86
+      "minModules": 89
     },
     {
       "id": "standalone-platform",
@@ -14255,6 +14258,21 @@
     },
     {
       "path": "src/runtime/wasmgc/values/prototype-singleton-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-constructor-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

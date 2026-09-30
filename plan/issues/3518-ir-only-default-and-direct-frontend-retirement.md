@@ -15572,6 +15572,61 @@ artifacts only, no src/tests changes. Fast-forward preserved all seven pending
 file hashes; the measured validation source graph remains identical.
 
 
+### Native Object realm algorithm bodies — implementation plan, 2026-09-30
+
+Claim `3518:object-realm-algorithm-bodies-20260930`, owner
+`ttraenkler/codex-object-realm-algorithm-bodies-20260930`, was verified on upstream
+issue-assignments before editing the isolated branch of that name. Fresh main is
+`a2546f6fc5c3fb1bff7ca95c1db365afb4c264de`; complete open-PR census found no
+overlap with this slice's new source/test files. Shared inventory changes add
+only actual native-runtime leaves and retain all historical signed receipts.
+
+Implement full Wasm instruction recipes for Object(value, newTarget), the five
+Object.prototype methods other than toString, the four legacy accessor methods,
+and both __proto__ accessors. The ten-member existing catalog includes the
+separately preserved complete toString recipe in the Number integration root.
+Required semantic bindings explicitly include general ToObject/ToPropertyKey,
+IsObject/IsCallable, complete internal property/prototype operations, canonical
+undefined/Boolean values, Call with the original receiver and subclass creation
+from the actual NewTarget. Do not infer callability from invoking a value,
+convert unresolved prototypes into absence, or bypass coercion ordering.
+
+Validate actual emitted Wasm against the untouched native Object oracle with
+primitives, symbols, accessors, proxies, mutation, inherited shadowing, revoked
+proxies, abrupt identity and alternate NewTarget. Imported semantic operations
+are explicit controls, never native-provider completion evidence. Check normal
+and displaced physical indices. Include paired order/abrupt controls and a
+mutation which the suite must reject. Keep all original Number fixtures and
+failures, public IR acceptance requirements and legacy behavior unchanged.
+
+Next ownership work must reuse authenticated native closure root/signature/meta
+tokens, join builtin receiver invocation with that same root, materialize
+singletons and real function property/prototype operations, and then close the
+canonical Object realm before public acceptance. Existing `$bag` means own
+property storage, not [[Prototype]]; nativeClosureMeta has no live reader.
+Descriptor-only seeder completion is insufficient. This body implementation
+does not authorize an incomplete provider grant or any legacy retirement.
+
+Final body checkpoint: strict current-source validation passed563/563 (214 actual
+Wasm algorithm assertions plus349 unchanged boundary assertions), zero skipped,
+failed or suite-error rows. SourceTS7 and all seven preservation gates pass;
+all6984 pinned inputs are unchanged through final tests and controls. The valid
+Wasm order mutation fails4/4 selected controls (210 deliberately unselected).
+Fresh process emits12 actual bodies and matches12 rows,18 modules/14 source,
+zeroTS/frontend. Each real forbidden-import control exits2, blocks one resolution
+and emits zero modules. Independent pinned corpus has56970 tracked files.
+Independent review added12 assertions covering nullish isPrototypeOf with object
+arguments, successful/abrupt lookup key conversion and actual active-function
+identity. Normal lint passes after private helper renaming and safe export invocation; no
+expectation or production algorithm was weakened. All56 pending Number paths
+remain byte-identical, and the original712 fixture SHA remainsc0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9.
+
+Evidence: `.tmp/object-realm-bodies/reviewed/{full-tests.json,controls-terminal.json,
+mutation-proof.json}`, corpus/verified.json and preserved-number-root.json.
+Tracked handoff: plan/log/ir-object-realm-algorithm-bodies-handoff-2026-09-30.md.
+This is local implementation evidence pending normal publication/protected
+main delivery; native realm/provider closure and public Number remain incomplete.
+
 ### Native StringCreate implementation — 2026-09-30
 
 Claim `3518:string-create-factory-20260930` is held on upstream
