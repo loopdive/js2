@@ -2187,3 +2187,43 @@ passes against default merge-base(origin); it is not an exact-base gate claim.
 All compiler test commands cited above are terminal. Next checkpoint should
 pin only the resulting committed compiler SHA and rebuild from clean detached
 worktrees before reporting packaged Deno behavior with the latch enabled.
+
+Signed compiler checkpoint is
+`f3e92a6179d54984bbe1f5e63ab2caaa329a66cc`. Its commit hooks passed
+Prettier, Biome and default merge-base LOC/function gates; slow hooks were
+explicitly skipped. Unrelated lower-contracts documentation and acorn binary
+edits remain uncommitted and unchanged. Adapter checkpoint
+`26a8fbaab839ba886e3bc478ac340e1817e2b001` pins that exact compiler,
+retaining historical POC options; runtime option contracts pass 8/8.
+
+Clean detached build root:
+`/private/tmp/deno-resolving-pair-release-build.MTZesR`, with compiler and
+v8x subdirectories at the two checkpoints. Compiler node_modules is an
+ignored link to the existing main dependencies. Deno source is the unchanged
+clean checkout `/private/tmp/deno-release-build.cGYWlK/deno` at
+`1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44`. Initialized rusty_v8 locally
+at the exact unchanged gitlink dd1b4e9c743b7a11dbeb99d4d0dc55979218b905.
+Raw build 10711 passed: 2,675,207 bytes, SHA-256
+`6fa9f40507353e0dd7538c19b3f8abe3153b4b59d089e455ec415475d230d2e6`.
+Recomputed bytes/hash match deno-core.provenance.json, which retains 18 native
+imports, the exact three source commits and no runtime-eval provider.
+
+Native precompile **71472 is confirmed live** at this handoff. Do not restart
+it based on an observation timeout. It uses the clean v8x directory,
+`CARGO_TARGET_DIR=/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo/target`,
+V8X_JS2WASM_DENO_CORE_WASM pointing to this root's deno-core.wasm,
+V8X_JS2WASM_DENO_CORE_AOT_OUTPUT to deno-core.cwasm and
+V8X_JS2WASM_DENO_CORE_AOT_ATTESTATION to deno-core.attestation.json.
+Command: cargo test --offline --no-default-features --features
+js2wasm_deno_poc,js2wasm_gc_copying,simdutf,js2wasm_runtime_compile
+--test js2wasm_spike precompiles_exact_deno_core_artifact -- --exact --nocapture.
+
+After the same handle reports terminal success, recompute raw/native hashes
+against the new attestation and run the whole js2wasm_spike integration target
+without js2wasm_runtime_compile, using the new AOT module/attestation and main's
+tests/fixtures/deno-core-0.407.0. That replay has not run yet. The prior 30/30
+core result used the earlier compiler pin, so it does not prove packaged
+behavior with this latch. General nested active-Store reentry, native/compiled
+notification ordering, broader Rust ops, full upstream conformance, imports,
+TLA and production packaging remain in scope. Commits remain local; no PR
+push or external comment was made in this follow-up.
