@@ -1663,6 +1663,7 @@ export function findAlternateStructsForField(
     // (#6651 B6) A RegExp's `lastIndex` is two slots (f64 + deferred raw); a field arm sees only the f64.
     // (B9) Its `flags` slot is the i32 bitfield, not §22.2.6.4's string: `__extern_get` runs the accessor.
     if ((propName === "lastIndex" || propName === "flags") && typeName === "__StandaloneRegExp") continue;
+    if (typeName === "$Promise" && propName === "$handled") continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);

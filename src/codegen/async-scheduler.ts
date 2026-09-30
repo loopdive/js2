@@ -30,6 +30,7 @@ import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
+import { exportPromiseHandlerBoundary } from "./promise-handler-boundary.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 // (#3125) Thenable-assimilation helpers use the physical wrapper registry and
@@ -409,12 +410,13 @@ export type CodegenContextWithScheduler = CodegenContext & { asyncScheduler?: As
 
 /**
  * #1326 — Get or register the `$Promise` WasmGC struct type. The struct
- * has four fields:
+ * has five fields:
  *   - state: i32 (0=pending, 1=fulfilled, 2=rejected)
  *   - value: externref (fulfilled value or rejection reason)
  *   - callbacks: externref (nullable `$PromiseCallback` linked list for
  *     pending `.then` continuations)
  *   - $bag: externref (nullable own-property bag, allocated on first expando)
+ *   - $handled: i32 slot 4 (persistent handling state, not a JS property)
  *
  * Returns the registered struct's typeIdx, cached for re-use.
  */
@@ -430,6 +432,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
       { name: "value", type: { kind: "externref" }, mutable: true },
       { name: "callbacks", type: { kind: "externref" }, mutable: true },
       closureBagField(),
+      { name: "$handled", type: { kind: "i32" }, mutable: true },
     ],
   });
   // Mirror the bookkeeping that other struct registrations do so the
@@ -441,6 +444,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
     { name: "value", type: { kind: "externref" as const }, mutable: true },
     { name: "callbacks", type: { kind: "externref" as const }, mutable: true },
     closureBagField(),
+    { name: "$handled", type: { kind: "i32" as const }, mutable: true },
   ]);
   state.promiseTypeIdx = typeIdx;
   return typeIdx;
@@ -1636,6 +1640,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
   if (ctx.mod.exports.some((entry) => entry.name === "__promise_boundary_state")) return;
 
   const promiseTypeIdx = state.promiseTypeIdx;
+  exportPromiseHandlerBoundary(ctx, promiseTypeIdx, state.markRejectionHandledFuncIdx);
   const stateFuncIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, stateFuncIdx, {
     name: "__promise_boundary_state",
@@ -1748,6 +1753,9 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 2 },
+      { op: "local.get", index: 2 },
+      { op: "i32.const", value: 1 },
+      { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
       { op: "local.get", index: 1 },
       { op: "struct.new", typeIdx: capsTypeIdx },
       { op: "extern.convert_any" },
@@ -1810,7 +1818,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
  * async frame driver reuses them rather than forking a parallel scheduler.
  */
 export interface AsyncDriveRuntime {
-  /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref, $bag externref}`). */
+  /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref, $bag externref, $handled i32}`). */
   promiseTypeIdx: number;
   /** `$PromiseCallback` reaction-node typeIdx ({@link getOrRegisterPromiseCallbackTypeIdx}). */
   callbackTypeIdx: number;
@@ -3562,7 +3570,7 @@ export function getRunLoopFuncIdxForWasiStart(ctx: CodegenContext): number | nul
  *   - <valueInstrs>                (value = caller's pushed externref)
  *   - ref.null extern              (callbacks placeholder — Phase 1C-B
  *                                   will upgrade to a typed pending list)
- *   - struct.new $Promise          (consumes 4 stack values, including null `$bag`)
+ *   - struct.new $Promise          (consumes 5 stack values, including null `$bag` and zero `$handled`)
  *   - extern.convert_any           (lift (ref $Promise) → externref so
  *                                   downstream consumers keep working)
  *
@@ -3588,6 +3596,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
     for (const instr of valueInstrs) fctx.body.push(instr);
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push(closureBagInitInstr());
+    fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });
     return;
@@ -3615,6 +3624,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: pLocal },
       ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]),
@@ -3645,6 +3655,7 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
   for (const instr of reasonInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
   fctx.body.push(
@@ -3778,12 +3789,18 @@ export function emitStandalonePromiseThen(
   const nativeBody: Instr[] = [];
   fctx.savedBodies.push(outerBody);
   fctx.body = nativeBody;
+  fctx.body.push(
+    { op: "local.get", index: promiseLocal },
+    { op: "i32.const", value: 1 },
+    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+  );
 
   // Chained promise starts pending with no callbacks.
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: chainedLocal });
   fctx.body.push(
@@ -4105,6 +4122,7 @@ function ensurePromiseFinallyRuntime(ctx: CodegenContext): void {
       { op: "struct.new", typeIdx: callbackTypeIdx },
       { op: "extern.convert_any" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 1 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 5 },
       ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: 5 }]),
@@ -4416,6 +4434,7 @@ export function emitStandalonePromiseFinally(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: chainedLocal });
   fctx.body.push(
@@ -4436,6 +4455,11 @@ export function emitStandalonePromiseFinally(
   fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
   fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "local.set", index: capsLocal });
+  fctx.body.push(
+    { op: "local.get", index: promiseLocal },
+    { op: "i32.const", value: 1 },
+    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+  );
 
   fctx.body.push(
     { op: "local.get", index: promiseLocal },

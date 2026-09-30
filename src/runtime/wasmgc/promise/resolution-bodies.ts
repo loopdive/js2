@@ -335,6 +335,9 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
         { op: "local.set", index: innerLocal },
         ...selfCheck,
         ...ownThenArm,
+        { op: "local.get", index: innerLocal },
+        { op: "i32.const", value: 1 },
+        { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
         // caps = $__then_caps{ callback: null, chained: promise }
         { op: "ref.null.extern" },
         { op: "local.get", index: promiseLocal },

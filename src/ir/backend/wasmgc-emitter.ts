@@ -351,10 +351,11 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // ---- Promise aggregate family (#2953) — byte-identical to the prior
   // inline struct.new/get pushes in lower.ts. The canonical WasmGC Promise
   // layout is { state: i32, value: externref, callbacks: externref,
-  // $bag: externref }. The first three operands are already on the stack;
-  // every new Promise starts without an expando bag.
+  // $bag: externref, $handled: i32 }. The first three operands are already on
+  // the stack; every new Promise starts without an expando bag or handler.
   emitPromiseNew(promiseTypeIdx: number, out: Instr[]): void {
     out.push({ op: "ref.null.extern" });
+    out.push({ op: "i32.const", value: 0 });
     out.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
 

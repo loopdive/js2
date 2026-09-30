@@ -701,6 +701,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
         { name: "value", mutable: true },
         { name: "callbacks", mutable: true },
         { name: "$bag", mutable: true },
+        { name: "$handled", type: { kind: "i32" }, mutable: true },
       ],
     });
     expect(pack.types.callback.object).toMatchObject({

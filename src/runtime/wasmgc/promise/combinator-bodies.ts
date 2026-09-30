@@ -103,6 +103,7 @@ export function buildSubscribeBody(ids: CombinatorSubscriptionResources): Instr[
           { op: "ref.null.extern" },
           { op: "ref.null.extern" },
           { op: ids.bagInit.op },
+          { op: "i32.const", value: 0 },
           { op: "struct.new", typeIdx: ids.promiseTypeIdx },
           { op: "local.set", index: P },
           { op: "local.get", index: P },
@@ -125,6 +126,9 @@ export function buildSubscribeDispatchBody(ids: CombinatorSubscriptionDispatchRe
   const CAPS = 6;
   const cbTypeIdx = ids.callbackTypeIdx;
   return [
+    { op: "local.get", index: P },
+    { op: "i32.const", value: 1 },
+    { op: "struct.set", typeIdx: ids.promiseTypeIdx, fieldIdx: 4 },
     // caps = $CombinatorElemCaps{ state, index } (boxed to externref).
     { op: "local.get", index: STATE },
     { op: "any.convert_extern" },
@@ -329,6 +333,7 @@ export function buildNativePromiseCombinatorVectorBody(
   body.push({ op: "ref.null.extern" });
   body.push({ op: "ref.null.extern" });
   body.push({ op: ids.bagInit.op });
+  body.push({ op: "i32.const", value: 0 });
   body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   body.push({ op: "local.set", index: resultLocal });
 

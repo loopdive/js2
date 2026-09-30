@@ -488,6 +488,7 @@ function emitPlainPreparation(fctx: FunctionContext, ids: CombinatorRuntime): Ob
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: ids.promiseTypeIdx },
     { op: "local.set", index: resultLocal },
     { op: "i32.const", value: 0 },

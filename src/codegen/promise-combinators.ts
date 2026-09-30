@@ -1015,6 +1015,7 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, reso
         { op: "local.get", index: INPUT },
         { op: "ref.null.extern" },
         closureBagInitInstr(),
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: ids.promiseTypeIdx },
         { op: "local.set", index: P },
       ] satisfies Instr[],
@@ -1338,6 +1339,7 @@ export function emitObservableCombinatorPreparation(
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: ids.promiseTypeIdx },
     { op: "local.set", index: resultLocal },
     { op: "i32.const", value: 0 },
@@ -1886,6 +1888,7 @@ export function emitStandalonePromiseCombinator(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: resultLocal });
 

@@ -17,6 +17,12 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-30: one-line read guard prevents the native Promise handler slot
+  # from participating in alternate physical-field property dispatch.
+  - src/codegen/property-access-exact-shapes.ts
+  # 2026-09-30: five instructions mark the native Promise in the existing
+  # non-suspending IR await arm. No new driver branch or fallback is added.
+  - src/ir/lower-generic.ts
   # Four public API documentation lines explain the opt-in shared realm tag.
   # No implementation logic is added to this barrel.
   - src/index.ts
@@ -95,6 +101,10 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-09-30: same five-instruction handler-state write in the existing
+  # IR await arm, charged to both nested function counters by the gate.
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
   # Canonical Array identity fallback delegates to a separate constructor helper.
   - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
   # Keep constructor lexical class identity explicit for nested SuperCall.
@@ -1366,3 +1376,67 @@ The five acquisition tests subsequently passed (session 23374, exit 0, 1.86 seco
 ## 2026-09-30 upstream-main sync
 
 Merged `loopdive/js2` main at `eb57f327340aaecb4ffd664417ff15fe4ba13905` into `codex/4376-deno-followup-20260908`. The sole conflict was this handover: retained both the branch's Deno parameter-reservation guard record and main's Temporal acquisition race repair record. Compiler source merged automatically. Existing uncommitted documentation beside `IrLoweredSignature` is preserved at its new declaration location in `src/ir/backend/lower-contracts.ts`; the uncommitted Acorn Wasm artifact and unrelated untracked files remain outside the merge commit. This synchronization does not establish completion of Deno integration.
+
+## 2026-09-30 persistent compiled Promise handler state
+
+Current checkout: `codex/4376-deno-callback-construction-20260930`. Checkpoint
+`8350144928` preserves cross-graph reactions/shared exception tags and pending
+reaction FIFO. Merge `a64e50a23e` then incorporates main
+`8245fc8ea121909a81d98cce003340c7c55e1296` without conflicts. Unrelated local
+Acorn bytes, the lower-contracts documentation edit and untracked files remain
+untouched. No publication is claimed for these local commits.
+
+The native Promise carrier now appends an internal mutable i32 handler flag at
+slot 4, preserving state/value/callback/property-bag slots 0–3. Both reservation
+and codegen layouts agree, and all 25 mint sites initialize the new slot
+(including the IR emitter). Then/catch/finally, boundary observation, await,
+combinators and native adoption mark handling independently of the callback
+list, which settlement clears. The internal finally restoration Promise starts
+handled because its reaction is pre-attached. Own-then overrides do not mark
+the receiver. Explicit host marking also marks any existing WASI rejection
+tracking node, and marking before rejection suppresses an unhandled note.
+
+Guarded `__promise_boundary_has_handler` and
+`__promise_boundary_mark_handled` return -1 for non-carriers. v8x dispatches
+these against compiled graphs and the realm in the shared store, with explicit
+errors for outdated artifacts lacking this ABI. Native `HasHandler` and
+`MarkAsHandled` no longer refuse bound compiled Promises. A direct-read test
+caught physical-field leakage; exact/alternate field reads now exclude this
+internal slot, with dot/bracket and empty-string user-expando controls. No
+interpreter is added.
+
+Verification on the final source: 185/185 compiler tests across nine files
+(session 4372); TS7 typecheck passes. Exact-base resolution receipt tests retain
+the authenticated donor and independently account for exactly one intentional
+adoption handler write, rather than regenerating the donor. LOC/function
+budgets against the fetched main, coercion gate, and checker gate against the
+current commit pass. The whole branch still has the previously reported raw
+checker increase in closures and unused-export/dynamic-import audit failures;
+this scoped pass does not clear those publication gates.
+
+Runtime clone remains `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`,
+branch `codex/4376-deno-realm-bootstrap`; runtime edits are uncommitted. The
+native pinned-core acceptance passes 1/1 (session 88246, 247.69s). Final source
+rebuild `deno-native-handlers-final.wasm` is byte-identical to
+`deno-native-handlers.wasm`: 2,666,341 bytes, SHA-256
+`48d110221d3e5ecb6958238110a96549efe27fb29f7f2a7931d97470a6d2f8b7`.
+Use matching `deno-native-handlers.cwasm` and
+`deno-native-handlers.attestation.json` in the same owned artifact directory.
+Compiler-free focused runtime target with only
+`js2wasm_deno_poc,js2wasm_gc_copying,simdutf` passes 24/24, with 2 explicitly
+ignored cases (session 33130, 1.69s); assertions cover handler state before and
+after native reaction checkpoints and explicit marking. Rust formatting and
+focused cargo check pass. Full vendor cargo check still fails on missing ICU
+data and its existing ambiguous Vec assertion; vendor tests are unmodified.
+Typst is unavailable, so the edited runtime docs are not render-verified.
+
+An intermediate empty-name carrier experiment was rejected. Its separately
+precompiled native check also terminated successfully (session 39955, 1/1),
+but `deno-native-handlers-private.*` are historical experiment artifacts, not
+the final-source replay inputs. No processes from these runs remain live.
+
+Full integration remains open: general host rejection events, unified
+cross-graph/native queue ordering, broader real Rust-op and Deno suites,
+compiler-free cross-graph replay, complete module/import coverage and actual
+distribution packaging. This closes the focused handler-state bridge gap,
+not the overall Deno integration acceptance criteria.

@@ -3452,6 +3452,11 @@ export function lowerIrFunctionBody<S, Slot>(
             { op: "local.get", index: awaitScratchPromiseIdx },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },
+            { op: "i32.const", value: 1 },
+            { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+            { op: "local.get", index: awaitScratchPromiseIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: promiseTypeIdx },
             // $Promise field 1 = `value` (externref). See getOrRegisterPromiseType.
             { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
           ],

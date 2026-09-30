@@ -139,6 +139,7 @@ export function declareNativePromiseResources(
       { name: "value", type: EXTERN, mutable: true },
       { name: "callbacks", type: EXTERN, mutable: true },
       { name: "$bag", type: EXTERN, mutable: true },
+      { name: "$handled", type: I32, mutable: true },
     ],
   });
   type("callback", {

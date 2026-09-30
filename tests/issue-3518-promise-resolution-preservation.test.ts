@@ -598,10 +598,31 @@ describe("Promise lookup reservation and actual-object finalization", () => {
 function expectedCaptureDelta(receipt: ReturnType<typeof resolutionFixture>, native: boolean) {
   let calls = 0;
   let captures = 0;
+  let handled = 0;
   function visit(value: any): void {
     if (Array.isArray(value)) {
       for (let i = 0; i < value.length; i++) {
         const instr = value[i];
+        // Intentional #4376 ABI delta: adoption handles the inner Promise,
+        // including already-settled carriers. Keep the authenticated donor
+        // immutable and require exactly one independently located insertion.
+        if (
+          instr?.op === "ref.null.extern" &&
+          value[i + 1]?.op === "local.get" &&
+          value[i + 1].index === 0 &&
+          value[i + 2]?.op === "struct.new" &&
+          value[i + 2].typeIdx === 3
+        ) {
+          value.splice(
+            i,
+            0,
+            { op: "local.get", index: 2 },
+            { op: "i32.const", value: 1 },
+            { op: "struct.set", typeIdx: 1, fieldIdx: 4 },
+          );
+          i += 3;
+          handled++;
+        }
         if (instr?.op === "call" && instr.funcIdx === 20) {
           expect(value[i + 1]).toEqual({ op: "local.set", index: 4 });
           instr.funcIdx = 24;
@@ -621,6 +642,7 @@ function expectedCaptureDelta(receipt: ReturnType<typeof resolutionFixture>, nat
   }
   visit(receipt.body);
   expect([calls, captures]).toEqual(native ? [1, 1] : [0, 0]);
+  expect(handled).toBe(1);
   return receipt;
 }
 

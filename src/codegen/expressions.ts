@@ -540,6 +540,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
         { op: "local.get", index: valueLocal },
         { op: "ref.null.extern" },
         closureBagInitInstr(),
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "extern.convert_any" },
       ],
@@ -588,6 +589,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "local.get", index: reasonLocal },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -596,6 +598,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];

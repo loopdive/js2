@@ -141,6 +141,10 @@ export function buildPromiseSettleBody(
       ? ([
           { op: "local.get", index: callbacksLocal },
           { op: "ref.is_null" },
+          { op: "local.get", index: promiseLocal },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
           {
             op: "if",
             blockType: { kind: "empty" },
