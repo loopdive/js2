@@ -46,6 +46,7 @@ import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-W
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
+import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
 import { prepareBuiltinCtorValueInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
 import {
@@ -5556,8 +5557,29 @@ function buildInlineDynamicDispatch(
     }
   }
 
-  return dispatch;
+  return wantTaCtorArm ? wrapTaIntrinsicCallThrow(ctx, fctx, anyLocal, dispatch) : dispatch; // (#6769 S7d)
 }
+
+/**
+ * (#6769 S7d) §23.2.1.1: the `%TypedArray%` intrinsic throws TypeError when
+ * CALLED too. It is an ordinary `$Object` carrier here, so the `$__ta_ctor` /
+ * Int8Array-carrier arms cannot see it and `TypedArray()` returned normally.
+ * The existing identity match (`ta-static-from-of-spec.ts`) reserves the
+ * carrier's global itself, so a `__dyn_call_N` helper built from harness code
+ * before the intrinsic is first materialized still recognises it.
+ */
+function wrapTaIntrinsicCallThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anyLocal: number,
+  dispatch: Instr[],
+): Instr[] {
+  const abstractThrow = buildThrowJsErrorInstrs(ctx, "TypeError", TA_INTRINSIC_ABSTRACT_MSG, { flush: fctx });
+  return [...buildTypedArrayIntrinsicCarrierMatch(ctx, anyLocal, abstractThrow), ...dispatch];
+}
+
+/** (#6769 S7d) §23.2.1.1 — the message `dataview-native.ts` already uses for this throw. */
+export const TA_INTRINSIC_ABSTRACT_MSG = "TypeError: Abstract class TypedArray not directly constructable";
 
 /**
  * Statically flatten an array literal's elements into a positional argument

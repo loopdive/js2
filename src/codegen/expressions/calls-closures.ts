@@ -65,6 +65,7 @@ import {
   emitWrapperDynamicMethodCall,
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
+  tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
 
 /**
@@ -2648,7 +2649,7 @@ export function tryExternClassMethodOnAny(
   // unsatisfiable standalone (e.g. `(Object.values(o) as any).join(",")`). Route
   // to the native externref `join` (host-free under noJsHost since #3155); host
   // lane keeps the existing binding (byte-identical).
-  if (noJsHost(ctx) && methodName === "join") {
+  if (noJsHost(ctx) && methodName === "join" && !joinOnTypedArrayIntrinsicProto(ctx, propAccess)) {
     const nativeJoin = compileArrayJoinExtern(ctx, fctx, propAccess, expr);
     if (nativeJoin !== null) return nativeJoin;
   }
@@ -2731,4 +2732,14 @@ export function tryExternClassMethodOnAny(
     return sig.results[0]!;
   }
   return null;
+}
+
+/**
+ * (#6769 S7b) `%TypedArray%.prototype.join()` called on the prototype object
+ * itself must reach the closed-method dispatcher's `$NativeProto` arm and its
+ * brand TypeError (§23.2.3.18 step 1, as for the eight sibling methods), so the
+ * `any`-receiver native `join` above declines it.
+ */
+function joinOnTypedArrayIntrinsicProto(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
+  return ctx.standalone === true && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
 }

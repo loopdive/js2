@@ -301,6 +301,107 @@ function reserveFunctionPrototypeTargetHelper(ctx: CodegenContext): number {
 }
 
 /**
+ * (#6769 S3) §7.3.20 steps 6-7 for a `prototype` value that is a
+ * TypedArray-family `$NativeProto` glue (`%TypedArray%.prototype` or a per-kind
+ * `<View>.prototype`) — an arm of the `__instanceof_object_prototype` probe,
+ * which already receives `(proto, value)` at exactly this step and already
+ * answers the tri-state for the one `$NativeProto` it knew (the Object brand).
+ *
+ * `__isPrototypeOf` walks `$Object.$proto` only, and a glue is not an
+ * `$Object`, so `view instanceof TA` (a `$__ta_ctor` target, whose `prototype`
+ * is the per-kind glue) and `view instanceof %TypedArray%` both answered the
+ * conservative `false` — while `Object.getPrototypeOf(view) === TA.prototype`
+ * already held. This walk asks `__getPrototypeOf` hop by hop (it has the
+ * dyn-view arm and the glue → parent-glue edge) and `ref.eq`s each hop against
+ * the glue: an exact identity, so it can only turn a miss into a hit. Any other
+ * brand falls through to the probe's UNKNOWN.
+ *
+ * Slots: params 0=proto 1=value; `protoAny` holds proto (already proven a
+ * `$NativeProto`); `cur`/`curAny`/`hops` are the walk's scratch.
+ */
+/** Scratch locals {@link taProtoWalkArm} needs after the probe's `protoAny` (slots 3-5). */
+const TA_WALK_LOCALS = [
+  { name: "cur", type: EXTERNREF },
+  { name: "curAny", type: { kind: "anyref" } as ValType },
+  { name: "hops", type: I32 },
+];
+
+function taProtoWalkArm(
+  ctx: CodegenContext,
+  nativeProtoTypeIdx: number,
+  slots: { protoAny: number; cur: number; curAny: number; hops: number },
+): Instr[] {
+  const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
+  const loBrand = BUILTIN_BRAND_TABLE["%TypedArray%"];
+  const hiBrand = BUILTIN_BRAND_TABLE.BigUint64Array;
+  if (getProtoIdx === undefined || loBrand === undefined || hiBrand === undefined) return [];
+  // Only a module that minted a TA-family glue can hold one as a `prototype`;
+  // every other module keeps the probe byte-identical.
+  const minted = [...(ctx.nativeProtoGlobals?.keys() ?? [])].some((b) => b >= loBrand && b <= hiBrand);
+  if (!minted) return [];
+  const walk: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "local.set", index: slots.cur },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: slots.cur },
+            { op: "call", funcIdx: getProtoIdx },
+            { op: "local.tee", index: slots.cur },
+            { op: "ref.is_null" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: slots.cur },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: slots.curAny },
+            { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: slots.curAny },
+                { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                { op: "local.get", index: slots.protoAny },
+                { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                { op: "ref.eq" },
+                { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+              ],
+            },
+            // A chain is finite by construction ([[SetPrototypeOf]] refuses a
+            // cycle); the cap only bounds a representation this walk does not
+            // model, answering `false` rather than spinning.
+            { op: "local.get", index: slots.hops },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.tee", index: slots.hops },
+            { op: "i32.const", value: 10000 },
+            { op: "i32.lt_u" },
+            { op: "br_if", depth: 0 },
+          ],
+        },
+      ],
+    },
+    { op: "i32.const", value: 0 },
+    { op: "return" },
+  ];
+  // brand ∈ [%TypedArray%, BigUint64Array] — the contiguous TA-family range.
+  return [
+    { op: "local.get", index: slots.protoAny },
+    { op: "ref.cast", typeIdx: nativeProtoTypeIdx },
+    { op: "struct.get", typeIdx: nativeProtoTypeIdx, fieldIdx: NATIVE_PROTO_BRAND_FIELD },
+    { op: "i32.const", value: loBrand },
+    { op: "i32.sub" },
+    { op: "i32.const", value: hiBrand - loBrand },
+    { op: "i32.le_u" },
+    { op: "if", blockType: { kind: "empty" }, then: walk },
+  ];
+}
+
+/**
  * (#6644) `Get(C, "prototype")` for an `instanceof` target the LINKED PROVIDER
  * owns — the last-resort arm of {@link ensureNativeDynamicInstanceOf}'s body.
  *
@@ -779,7 +880,9 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
   const objectProtoFn = objectProtoFnIdx === undefined ? undefined : definedFuncAt(ctx, objectProtoFnIdx);
   if (objectProtoFn && nativeProtoTypeIdx !== undefined) {
     const protoAny = 2;
+    const taWalk = taProtoWalkArm(ctx, nativeProtoTypeIdx, { protoAny, cur: 3, curAny: 4, hops: 5 }); // (#6769 S3)
     objectProtoFn.locals = [{ name: "protoAny", type: { kind: "anyref" } }];
+    if (taWalk.length > 0) objectProtoFn.locals.push(...TA_WALK_LOCALS);
     objectProtoFn.body = [
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
@@ -806,6 +909,7 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: [...objectValueResult(1, typeofObjectIdx, typeofFunctionIdx), { op: "return" }],
           },
+          ...taWalk,
         ],
       },
       { op: "i32.const", value: UNKNOWN_RESULT },

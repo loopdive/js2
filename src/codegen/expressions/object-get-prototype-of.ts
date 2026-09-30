@@ -7,8 +7,9 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
-import { emitLazyNativeProtoGet } from "../native-proto.js";
+import { buildLazyNativeProtoGetInstrs, emitLazyNativeProtoGet } from "../native-proto.js";
 import {
+  ensureArrayBufferNativeProtoGlue,
   ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
   isTypedArrayViewProtoName,
@@ -926,4 +927,37 @@ export function tryCompileGetPrototypeOfIsPrototypeOf(
     fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
   }
   return { kind: "i32", boolean: true };
+}
+
+/**
+ * (#6769 S10) `__getPrototypeOf(<ArrayBuffer carrier>)` is `ArrayBuffer.prototype`.
+ *
+ * An ArrayBuffer is the packed byte vec `$__vec_i32_byte` — a `$__vec_base`
+ * subtype — so the dynamic native answered the vec default, `Array.prototype`,
+ * for every buffer that reached it through a dynamic value: `new
+ * TA(sample).buffer`, `view.buffer`, and a statically created buffer passed
+ * through `any`. §25.1.3.1 AllocateArrayBuffer creates it from
+ * `%ArrayBuffer.prototype%`; the arm answers the same lazily-built glue
+ * singleton `ArrayBuffer.prototype` reads, so the identity holds by `ref.eq`.
+ *
+ * Finalize-time (called from `fillTaDynViewMopArms`, i.e. only in a module that
+ * builds dynamic TypedArray views): prepended, so it precedes the generic vec
+ * answer. Residual: a buffer re-parented with `Object.setPrototypeOf` still
+ * answers `ArrayBuffer.prototype` here (#2917's vec proto link is not
+ * consulted for this carrier).
+ */
+export function fillArrayBufferGetPrototypeOfArm(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const byteVecIdx = ctx.vecTypeMap.get("i32_byte");
+  const fn = ctx.mod.functions.find((f) => f.name === "__getPrototypeOf");
+  if (byteVecIdx === undefined || !fn) return;
+  const brand = ensureArrayBufferNativeProtoGlue(ctx);
+  const read = brand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, brand);
+  if (!read) return;
+  fn.body.unshift(
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: byteVecIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [...read, { op: "return" }] },
+  );
 }

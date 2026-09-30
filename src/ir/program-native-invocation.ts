@@ -40,6 +40,7 @@ import type { IrLowerResolver } from "./backend/lower-contracts.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { LinearEmitter } from "./backend/linear-emitter.js";
 import type { IrBackendKind } from "./backend/legality.js";
+import type { NativeBuiltinFunctionRequests } from "../backend/wasmgc/resources/native-builtin-function-requests.js";
 
 export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
@@ -51,6 +52,7 @@ interface SourceOwner {
   readonly completed: Set<IrUnitId>;
   callables?: NativeSourceClosureCallables;
   bound: boolean;
+  readonly builtins: NativeBuiltinFunctionRequests | undefined;
 }
 const owners = new WeakMap<NativeSourceClosureEmission, SourceOwner>();
 function fail(detail: string): never {
@@ -78,12 +80,13 @@ export function beginNativeSourceClosureEmission(
   tx: PhysicalModuleReservations,
   requirements: NativeSourceClosureRequirements,
   carriers: NativeSourceClosureCarriers,
+  builtins?: NativeBuiltinFunctionRequests,
 ): NativeSourceClosureEmission {
   assertPreparedIrProgram(requirements.demands.program);
   assertNativeSourceClosureRequirementsCurrent(requirements);
-  const types = reserveNativeSourceClosureTypes(tx, requirements, carriers);
+  const types = reserveNativeSourceClosureTypes(tx, requirements, carriers, builtins);
   const pack = Object.freeze({ requirements, types });
-  owners.set(pack, { tx, units: new Map(), completed: new Set(), bound: false });
+  owners.set(pack, { tx, units: new Map(), completed: new Set(), bound: false, builtins });
   return pack;
 }
 

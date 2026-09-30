@@ -2794,7 +2794,7 @@ function compileBoundIdentifierCall(
             if (reservedVecMaterializer) flushLateImportShifts(ctx, fctx);
           }
           const unmatchedClosureHostCall =
-            funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr.arguments.length) : undefined;
+            funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr) : undefined;
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one

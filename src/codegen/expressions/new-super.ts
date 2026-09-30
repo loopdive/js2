@@ -174,6 +174,8 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js"; // (#5350 r2, R2) super-call callable guard
+import { TA_INTRINSIC_ABSTRACT_MSG } from "./calls.js"; // (#6769 S7d)
+import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { holeToUndefinedInstrs } from "../array-holes.js";
@@ -4534,6 +4536,19 @@ export function emitNativeConstructRuntimeArgv(
  * construction.
  */
 /**
+ * (#6769 S7d) §23.2.1.1: `new %TypedArray%(…)` throws TypeError. The intrinsic
+ * is an ordinary `$Object` carrier, so the construct arms below built an object
+ * from it and returned normally. Only in a module that deals in TypedArray
+ * constructor values (the match reserves the carrier's global); every other
+ * dynamic `new` keeps its bytes. `descLocal` holds the evaluated callee (anyref).
+ */
+function emitTaIntrinsicConstructThrow(ctx: CodegenContext, fctx: FunctionContext, descLocal: number): void {
+  if (ctx.taCtorTypeIdx < 0 && !ctx.moduleUsesDynTaView) return;
+  const abstractThrow = buildThrowJsErrorInstrs(ctx, "TypeError", TA_INTRINSIC_ABSTRACT_MSG, { flush: fctx });
+  fctx.body.push(...buildTypedArrayIntrinsicCarrierMatch(ctx, descLocal, abstractThrow));
+}
+
+/**
  * (#5197 Slice B) §7.2.4 IsConstructor for a runtime callee that turned out to
  * be one of the compiler's own §17 built-in function objects — a promise
  * `resolve`/`reject`, a GetCapabilitiesExecutor, a reified `Array.isArray`, …
@@ -4553,6 +4568,7 @@ export function emitNativeConstructRuntimeArgv(
  * `descLocal` is the `anyref` slot already holding the evaluated callee.
  */
 function emitBuiltinFnNotAConstructorGuard(ctx: CodegenContext, fctx: FunctionContext, descLocal: number): void {
+  emitTaIntrinsicConstructThrow(ctx, fctx, descLocal); // (#6769 S7d) `%TypedArray%` has a throwing [[Construct]]
   const isBuiltinIdx = ctx.funcMap.get("__builtinfn_is_builtin");
   if (isBuiltinIdx === undefined) return;
   const guardBody: Instr[] = [];
@@ -8118,6 +8134,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             const dtav = emitDynamicTaViewConstruct(ctx, fctx, ctorAnyLocal, args[0]!, args[1], args[2], (e, h) =>
               compileExpression(ctx, fctx, e, h),
             );
+            // (#6769 S7d) …after the arguments are evaluated (the view arm
+            // declines for a non-`$__ta_ctor` callee, so it built nothing).
+            if (dtav) emitTaIntrinsicConstructThrow(ctx, fctx, ctorAnyLocal);
             if (dtav) return dtav;
           }
         }

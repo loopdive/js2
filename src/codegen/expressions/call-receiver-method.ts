@@ -3803,6 +3803,18 @@ export function compileReceiverMethodCall(
       } else if (recvType.kind !== "externref") {
         fctx.body.push({ op: "extern.convert_any" });
       }
+      // (#6769 S9) §23.2.3.32 step 1 is ValidateTypedArray: a DETACHED dyn view
+      // throws TypeError before any element is read. This lowering answered
+      // `__extern_toString` straight away, which joins a post-detach length 0
+      // and returns "" (`toLocaleString/detached-buffer.js`). The receiver stays
+      // on the stack; the guard is stack-neutral.
+      if (ctx.standalone && ctx.taDynViewTypeIdx >= 0 && ctx.funcMap.has("__new_TypeError")) {
+        const recvLocal = allocLocal(fctx, `__tls_recv_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push(
+          { op: "local.tee", index: recvLocal },
+          ...taDynDetachedGuardPrologue(ctx, fctx, "toLocaleString", recvLocal),
+        );
+      }
       // (#6651 TA1) §23.2.3.29 is NOT `toString`: ValidateTypedArray runs first
       // (a detached view throws) and the element step is
       // `ToString(? Invoke(elem, "toLocaleString"))`. This is the spelling

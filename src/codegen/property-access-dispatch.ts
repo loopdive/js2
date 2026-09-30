@@ -68,6 +68,7 @@ import {
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
+import { tracesToTypedArrayIntrinsicProto } from "./expressions/calls.js"; // (#6769 S7a) `%TypedArray%.prototype` receiver
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
@@ -246,6 +247,23 @@ export function tryDynamicReceiverRuntimeDispatchReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // (#6769 S7a) `%TypedArray%.prototype.length` / `.byteLength` read directly
+  // off the prototype object (test262's `TypedArrayPrototype.length`, traced
+  // through the harness aliases): the getter's RequireInternalSlot throws
+  // TypeError for that receiver (§23.2.3.21 / .3 step 2). The generic reads
+  // answered normally. `byteOffset`/`buffer` already throw on their own path.
+  if (
+    (propName === "length" || propName === "byteLength") &&
+    ctx.standalone &&
+    tracesToTypedArrayIntrinsicProto(ctx, expr.expression)
+  ) {
+    emitThrowTypeError(
+      ctx,
+      fctx,
+      `TypeError: get %TypedArray%.prototype.${propName} called on an incompatible receiver`,
+    );
+    return { kind: "externref" };
+  }
   // (#3054 D) `ctor.BYTES_PER_ELEMENT` where `ctor` is a first-class `$__ta_ctor`
   // value (the kind is only known at runtime — `for (c of ctors) … c.BYTES_PER_ELEMENT`,
   // `CreateRabForTest(ctor)`'s `4 * ctor.BYTES_PER_ELEMENT`). Placed at the TOP so

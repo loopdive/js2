@@ -5938,7 +5938,23 @@ function emitTaDynCtorConstructInline(
 
   // Allocate a FRESH ZEROED buffer of dstN elements and publish the view.
   // Reads dstNLocal/esLocal/kindLocal; sets dstBlLocal/dstArrLocal/resultLocal.
+  //
+  // (#6769 S8) §23.2.5.1.1 AllocateTypedArrayBuffer → CreateByteDataBlock: a
+  // byte length that cannot be allocated is a RangeError, not a trap. Every
+  // arm narrows its length with `i32.trunc_sat_f64_s`, so `{length: 2 ** 53}`
+  // arrived here as 2^31-1 and `array.new_default` trapped "requested new array
+  // is too large". The product is formed in i64, so it cannot wrap.
   const emitAllocViewFromN = (): void => {
+    fctx.body.push(
+      { op: "local.get", index: dstNLocal },
+      { op: "i64.extend_i32_u" },
+      { op: "local.get", index: esLocal },
+      { op: "i64.extend_i32_u" },
+      { op: "i64.mul" },
+      { op: "i64.const", value: 0x7ffffff0n },
+      { op: "i64.gt_u" },
+    );
+    emitThrowRangeErrorIf(ctx, fctx, "RangeError: Invalid typed array length");
     fctx.body.push({ op: "local.get", index: dstNLocal });
     fctx.body.push({ op: "local.get", index: esLocal });
     fctx.body.push({ op: "i32.mul" });
@@ -6214,10 +6230,28 @@ function emitTaDynCtorConstructInline(
                 { op: "call", funcIdx: typeofFnIdx },
                 { op: "i32.or" },
               ];
+        // (#6769 S8) …and so is a CLOSED-struct object literal
+        // (`var obj = { length: 2 ** 53 }` at module scope): it is no `$Object`
+        // either, so it fell to the count form — ToIndex(obj) = 0, an empty view
+        // where §23.2.5.1 reads `length` and throws the RangeError. The arms
+        // above (views, vecs, buffers) have already claimed their carriers.
+        const typeofObjIdx = iterablePrelude
+          ? ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }])
+          : undefined;
+        const isOtherObject: Instr[] =
+          typeofObjIdx === undefined
+            ? []
+            : [
+                { op: "local.get", index: a0CandidateLocal },
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: typeofObjIdx },
+                { op: "i32.or" },
+              ];
         chain = trackChain([
           { op: "local.get", index: a0CandidateLocal },
           { op: "ref.test", typeIdx: objTypeIdx },
           ...isCallable,
+          ...isOtherObject,
           // (#6651 A13) …and so is a native generator object (a state struct, no `$Object`).
           ...(iterablePrelude ? orNativeGeneratorCarrierInstrs(ctx, a0CandidateLocal) : []),
           { op: "if", blockType: { kind: "empty" }, then: objArm, else: chain },
@@ -6289,12 +6323,17 @@ function emitTaDynCtorConstructInline(
     // became 0 (probes p8/m01, p5/g04). Reading it as a typed-array source is
     // both the fix and the spec-correct behaviour.
     for (const [carrierKey, vIdx] of Array.from(ctx.vecTypeMap.entries())) {
+      // (#6769 S8) `i16_byte` — the packed Int16/Uint16 carrier — is a
+      // typed-array SOURCE exactly like `i8_byte`: without its arm a static
+      // `new Int16Array(7)` fell to the count form and `new Int8Array(it)` was
+      // empty (ToIndex of a carrier is 0).
       if (
         carrierKey !== "f64" &&
         carrierKey !== "i32" &&
         carrierKey !== "i32_elem" &&
         carrierKey !== "externref" &&
-        carrierKey !== "i8_byte"
+        carrierKey !== "i8_byte" &&
+        carrierKey !== "i16_byte"
       )
         continue;
       const srcArrIdx = getArrTypeIdxFromVec(ctx, vIdx);
@@ -6316,7 +6355,7 @@ function emitTaDynCtorConstructInline(
       fctx.body.push({ op: "local.get", index: srcVecLocal });
       fctx.body.push({ op: "struct.get", typeIdx: vIdx, fieldIdx: 1 });
       fctx.body.push({ op: "local.set", index: srcDataLocal });
-      if (carrierKey === "i8_byte") {
+      if (carrierKey === "i8_byte" || carrierKey === "i16_byte") {
         // (#5349 r3) §23.2.5.1.2 step 5: a content-type mismatch between the
         // source TypedArray and the destination is a TypeError. This carrier is
         // ALWAYS a non-BigInt typed array, so a BigInt destination (kinds 9/10 —
@@ -7036,6 +7075,7 @@ export function emitTaDynSpeciesCreate(
   const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
   const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const externLengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]); // (#6769 S5)
   const symbolBoxIdx = ctx.funcMap.get("__box_symbol");
   const isConstructorIdx = ensureReflectIsConstructor(ctx);
   const driverIdx = reserveNativeConstructDriver(
@@ -7165,24 +7205,24 @@ export function emitTaDynSpeciesCreate(
   // TypedArrayCreate validates the constructed result before the producer
   // writes to it. This catches ordinary objects, null, and too-short custom
   // views with the required TypeError.
+  //
+  // (#6769 S5) A species constructor may return ANY TypedArray — including a
+  // statically-carried one (`return new Int8Array([1, 0, 1])`, a packed
+  // `$__vec_i8_byte`), which the dyn-view-only test rejected as "a
+  // non-TypedArray". The static arm accepts the carriers
+  // `staticTypedArrayCarrierTestInstrs` names and length-checks through
+  // `__extern_length`; producers store into it through the generic
+  // `__extern_set` (see `taDynResultStoreInstrs`).
+  const dynArm: Instr[] = [];
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = dynArm;
   fctx.body.push(
-    { op: "local.get", index: resultLocal },
-    { op: "any.convert_extern" },
-    { op: "local.tee", index: resultAnyLocal },
-    { op: "ref.test", typeIdx: dynIdx },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: typeErrorArm("TypedArray species constructor returned a non-TypedArray"),
-      else: [],
-    },
     { op: "local.get", index: resultAnyLocal },
     { op: "ref.cast", typeIdx: dynIdx },
     { op: "local.set", index: resultDvLocal },
   );
   emitTaDynViewValidate(ctx, fctx, resultDvLocal);
-
   if (options.requestedLengthLocal !== undefined) {
     fctx.body.push(
       { op: "local.get", index: resultDvLocal },
@@ -7203,7 +7243,65 @@ export function emitTaDynSpeciesCreate(
       },
     );
   }
+  fctx.body = saved;
+  fctx.savedBodies.pop();
+  const staticArm: Instr[] = [
+    ...staticTypedArrayCarrierTestInstrs(ctx, resultAnyLocal),
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: typeErrorArm("TypedArray species constructor returned a non-TypedArray"),
+      else: [],
+    },
+  ];
+  if (options.requestedLengthLocal !== undefined && externLengthIdx !== undefined) {
+    staticArm.push(
+      { op: "local.get", index: resultLocal },
+      { op: "call", funcIdx: externLengthIdx },
+      { op: "local.get", index: options.requestedLengthLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "f64.lt" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("TypedArray species constructor returned too short"),
+        else: [],
+      },
+    );
+  }
+  fctx.body.push(
+    { op: "local.get", index: resultLocal },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: resultAnyLocal },
+    { op: "ref.test", typeIdx: dynIdx },
+    { op: "if", blockType: { kind: "empty" }, then: dynArm, else: staticArm },
+  );
   return resultLocal;
+}
+
+/**
+ * (#6769 S5) i32: is the anyref in `anyLocalIdx` a STATICALLY-carried
+ * TypedArray — a buffer-backed `$__ta_view_<K>` or one of the packed element
+ * vecs no ordinary array shares (`i8_byte` / `i16_byte` / `i32_elem` / `f32`)?
+ * The `$__vec_f64` carrier is deliberately absent: it IS `number[]`, so
+ * accepting it would let a species constructor return a plain Array (the
+ * `fillOrdinarySetTypedArrayArm` carrier set makes the same exclusion).
+ * Enumerated at emit time: a carrier type the module registers only later is
+ * not recognised here (it keeps the TypeError it had).
+ */
+export function staticTypedArrayCarrierTestInstrs(ctx: CodegenContext, anyLocalIdx: number): Instr[] {
+  const carriers = new Set<number>(ctx.taViewTypeMap.values());
+  for (const key of ["i8_byte", "i16_byte", "i32_elem", "f32"]) {
+    const idx = ctx.vecTypeMap.get(key);
+    if (idx !== undefined) carriers.add(idx);
+  }
+  const out: Instr[] = [];
+  for (const typeIdx of carriers) {
+    out.push({ op: "local.get", index: anyLocalIdx }, { op: "ref.test", typeIdx });
+    if (out.length > 2) out.push({ op: "i32.or" });
+  }
+  return out.length > 0 ? out : [{ op: "i32.const", value: 0 }];
 }
 
 /**

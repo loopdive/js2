@@ -90,6 +90,7 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
+import { emitTaDynProducerCall, ensureTaDynProtoMethodHelper } from "./ta-dyn-proto-methods.js"; // (#6769 S4)
 import { flatMapReturnIsDynamic, flatMapSpeciesResult } from "./array-flatmap.js";
 import { compileArrayFlatNativeCall, emitFlattenDepth1Extern } from "./array-flat-native.js"; // (#2717)
 // (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
@@ -1613,6 +1614,14 @@ function emitDynViewSpeciesMethodTwoArm(
     return { kind: "externref" };
   }
   const dynIdx = getOrRegisterTaDynViewType(ctx);
+  // (#6769 S4) map/filter/slice run on the LIVE receiver through their native
+  // producer (ta-dyn-proto-methods.ts); the materialize-and-rebind lowering
+  // below stays only as the fallback when the producer is unavailable.
+  const producerIdx =
+    methodName === "subarray" || callExpr.arguments.some((a) => ts.isSpreadElement(a))
+      ? undefined
+      : ensureTaDynProtoMethodHelper(ctx, methodName);
+  flushLateImportShifts(ctx, fctx);
 
   const rt = compileExpression(ctx, fctx, receiverExpr);
   if (rt && rt.kind !== "externref") coerceType(ctx, fctx, rt, { kind: "externref" });
@@ -1651,7 +1660,7 @@ function emitDynViewSpeciesMethodTwoArm(
   // other producer methods do validate and materialize their source first.
   let f64VecIdx: number | undefined;
   let matLocal: number | undefined;
-  if (methodName !== "subarray") {
+  if (methodName !== "subarray" && producerIdx === undefined) {
     emitTaDynViewValidate(ctx, fctx, dvLocal);
     f64VecIdx = emitTaDynViewToVec(ctx, fctx, dvLocal);
     matLocal = allocLocal(fctx, `__dvs_mat_${fctx.locals.length}`, { kind: "ref", typeIdx: f64VecIdx });
@@ -1721,7 +1730,11 @@ function emitDynViewSpeciesMethodTwoArm(
     );
 
   let outputSpecies: number | undefined;
-  if (methodName === "map") {
+  if (producerIdx !== undefined) {
+    outputSpecies =
+      emitTaDynProducerCall(ctx, fctx, recvExt, callExpr, producerIdx, methodName !== "slice") ?? undefined;
+    if (outputSpecies === undefined) return abandon();
+  } else if (methodName === "map") {
     if (f64VecIdx === undefined || matLocal === undefined) return abandon();
     const sourceLen = allocLocal(fctx, `__dvs_map_len_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push(

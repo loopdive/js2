@@ -31,6 +31,17 @@ import type { NativeDeclaredValType } from "../../../runtime/wasmgc/values/nativ
 import { requireNativeRefCells, resolveNativeRefCell, type NativeRefCellReservations } from "./native-ref-cells.js";
 import { nativeRefCellScalarInner } from "../../../ir/program/native-ref-cell-requirements.js";
 import type { AllocSiteId } from "../../../ir/core/nodes.js";
+import {
+  requireNativeBuiltinFunctionRequests,
+  type NativeBuiltinFunctionRequests,
+} from "./native-builtin-function-requests.js";
+
+/** A future mixed dispatcher may exclude metadata only while these actual fields are disjoint. */
+function requireSourceMetadataSeparation(type: TypeReservation): void {
+  const shape = type.object;
+  if (shape.kind !== "struct" || shape.fields.slice(CLOSURE_CAPTURE_FIELD_BASE).some((field) => field.mutable))
+    fail("source capture layout may overlap the mutable builtin metadata family");
+}
 
 export interface NativeSourceClosureCarriers {
   readonly refCells?: NativeRefCellReservations;
@@ -60,6 +71,7 @@ interface Owner {
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly strings: NativeSourceClosureCarriers["strings"];
   readonly stringTypes: NativeStringLiteralTypeReservations | undefined;
+  readonly builtins: NativeBuiltinFunctionRequests | undefined;
   readonly shapeTypes: readonly {
     readonly id: string;
     readonly captures: readonly ValType[];
@@ -107,6 +119,7 @@ function physicalPlan(
   tx: PhysicalModuleReservations,
   requirements: NativeSourceClosureRequirements,
   carriers: NativeSourceClosureCarriers,
+  builtins?: NativeBuiltinFunctionRequests,
 ) {
   if (requirements.gaps.length) fail(requirements.gaps.map((row) => `${row.unitId}: ${row.detail}`).join("; "));
   const available = new Map<number, TypeReservation>(
@@ -133,10 +146,18 @@ function physicalPlan(
     results: row.signature.returnType ? [declared(row.signature.returnType)] : [],
     minimumArgumentCount: row.signature.defaultParamStart ?? row.signature.params.length,
   }));
+  if (builtins) {
+    requireNativeBuiltinFunctionRequests(tx, builtins);
+    for (const token of builtins.referenceTypes) {
+      const existing = references.get(token.key);
+      if (existing && existing !== token) fail("conflicting builtin reference token");
+      references.set(token.key, token);
+    }
+  }
   const closurePlan = declareNativeClosureResources({
     key: requirements.key,
     startingClosureCounter: 0,
-    requests,
+    requests: builtins ? [...requests, ...builtins.requests] : requests,
     referenceTypeKeys: [...references.keys()],
   });
   const shapeTypes = requirements.shapes.map((shape) => ({
@@ -153,10 +174,11 @@ export function reserveNativeSourceClosureTypes(
   tx: PhysicalModuleReservations,
   requirements: NativeSourceClosureRequirements,
   carriers: NativeSourceClosureCarriers,
+  builtins?: NativeBuiltinFunctionRequests,
 ): NativeSourceClosureTypes {
   assertNativeSourceClosureRequirementsCurrent(requirements);
   authenticateCarriers(tx, carriers, requirements);
-  const { closurePlan, references, shapeTypes } = physicalPlan(tx, requirements, carriers);
+  const { closurePlan, references, shapeTypes } = physicalPlan(tx, requirements, carriers, builtins);
   // Check the complete connected allocation before consuming any wrapper/capture prefix.
   tx.assertReservationKeysAvailable([
     ...closurePlan.declarations.map((row) => row.key),
@@ -187,6 +209,7 @@ export function reserveNativeSourceClosureTypes(
         return capture + CLOSURE_CAPTURE_FIELD_BASE;
       },
     });
+    if (builtins) requireSourceMetadataSeparation(type);
     return Object.freeze({ id: shape.id, type, lowering });
   });
   const pack = Object.freeze({ requirements, closures, closurePlan, shapes: Object.freeze(shapes) });
@@ -198,6 +221,7 @@ export function reserveNativeSourceClosureTypes(
     vectorPlan: carriers.vectorPlan,
     strings: carriers.strings,
     stringTypes: carriers.strings?.types,
+    builtins,
     shapeTypes: structuredClone(shapeTypes),
   });
   return pack;
@@ -222,7 +246,7 @@ export function requireNativeSourceClosureTypes(
     fail("changed physical carrier identities");
   authenticateCarriers(tx, owner.carriers, expectedRequirements);
   nativeClosureReservationInventory(tx, pack.closures, pack.closurePlan);
-  const fresh = physicalPlan(tx, expectedRequirements, owner.carriers);
+  const fresh = physicalPlan(tx, expectedRequirements, owner.carriers, owner.builtins);
   same(fresh.closurePlan, pack.closurePlan, "changed source signature plan");
   same(fresh.shapeTypes, owner.shapeTypes, "changed capture plan");
   for (const [index, row] of pack.shapes.entries()) {
@@ -239,6 +263,7 @@ export function requireNativeSourceClosureTypes(
         "changed capture layout",
       );
     else if (row.type !== base.type) fail("zero-capture shape is not its actual wrapper");
+    if (owner.builtins) requireSourceMetadataSeparation(row.type);
   }
   return pack;
 }

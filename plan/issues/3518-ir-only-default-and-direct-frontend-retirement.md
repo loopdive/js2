@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-20
+updated: 2026-09-30
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -16259,3 +16259,655 @@ normal merge hooks137/137 and independent strict137/137, no skipped/worker
 errors. The six owned hashes and every incoming non-issue file remain exact;
 only the eight planned paths differ from mainf32ffc4d. Publish this independent
 prerequisite through the fork/protected queue before downstream refreshes.
+
+
+## Native builtin function objects — implementation plan (2026-09-30)
+
+Planning base: `8245fc8ea121909a81d98cce003340c7c55e1296`, isolated branch
+`codex/3518-native-builtin-functions-20260930`. This section records source
+inspection and a proposed implementation; no compiler edit or runtime test was
+performed for this plan. The coordinator owns integration and publication.
+The Object algorithm-body dependency was inspected read-only at
+`d2eb19f770650d17a7b467557d7c39d0879d32c0` (PR 6355, pending at dispatch).
+Reconcile its actual delivery before implementation; do not edit its checkout.
+Keep all 56 pending Number paths in
+`/private/tmp/js2-ir-public-number-712-20260928` byte-identical. This is another
+IR prerequisite, with the September 20 full-parity-before-retirement sequencing
+unchanged.
+
+### Root cause and required semantic boundary
+
+`native-closures.ts` owns real closure types and builtin metadata but not builtin
+function objects, their property storage, executable intrinsic singletons, or a
+realm. `native-invocation.ts` authenticates only source callables. Consequently,
+neither a matching signature nor a metadata reservation can make the Object
+algorithm bodies into native callable realm members.
+
+There is a second representation gap: `object-layouts.ts:26`
+`createOpenObjectDeclaration` declares `$Object.proto` as `ref_null $Object`.
+`Function.prototype` is a function carrier, not an ordinary-storage carrier.
+Setting a function's `$bag.proto` to `Function.prototype` is ill-typed; setting
+it to `Function.prototype.$bag` changes object identity and is semantically
+wrong. The carrier's actual prototype must be represented separately.
+
+The normative basis is [Built-in Function Objects / CreateBuiltinFunction,
+ECMA-262 2026 §10.3](https://tc39.es/ecma262/2026/multipage/ordinary-and-exotic-objects-behaviours.html#sec-built-in-function-objects):
+builtins have ordinary object methods, their own realm and initial name, an
+actual prototype, and callable behavior; constructors need distinct construct
+behavior. Creation installs length before name. The [standard builtin
+conventions](https://tc39.es/ecma262/2026/multipage/ecmascript-standard-built-in-objects.html)
+require missing arguments to behave as undefined while preserving absence,
+and do not make excess arguments an arity error. Default name/length attributes
+are nonwritable, nonenumerable and configurable. Public length excludes hidden
+transport operands. [Function.prototype, §20.2.3](https://tc39.es/ecma262/2026/multipage/fundamental-objects.html#sec-properties-of-the-function-prototype-object)
+is callable, returns undefined, is not constructible, has no own prototype
+property, and inherits from the actual Object.prototype singleton.
+
+### Existing contracts and readers, before any shared edit
+
+Line numbers below refer to the planning base; locate by function as well.
+
+| Contract / issuer | Actual readers or constraints | Decision |
+| --- | --- | --- |
+| `runtime/wasmgc/values/closure-layouts.ts:146–208`, five-field metadata and `buildBuiltinClosureValueInstrs` | `native-closures.ts`, `native-promises.ts`, legacy `builtin-fn-meta.ts`; closure header also feeds source capture layouts, Promise/delay layouts, arity probes and header validators through `codegen/closures/closure-header-layout.ts` | Keep the three-field root and five-field metadata unchanged. Add a subtype factory in a new file. Do not add a field to every source closure. |
+| `backend/wasmgc/resources/native-closures.ts:481`, `reserveNativeClosureResources`; `:698`, `requireClosureOwner` | `native-source-closures.ts`, `native-promises.ts`, `native-delay-combinator.ts`, `native-object-descriptors.ts`; prefix/resume and declaration inventory consumers | Consume the exact issued pack, metadata binding and lifted signature. No copied pack or hand-reserved lookalike metadata. No allocator change is needed for the first increment. |
+| `backend/wasmgc/resources/native-source-closures.ts:104`, `physicalPlan`; `:152`, `reserveNativeSourceClosureTypes`; `:206`, `requireNativeSourceClosureTypes` | `program-native-invocation.ts` owns source association; `native-source-closure-callables.ts`, `native-invocation.ts`, and source resolver readers authenticate it | It currently reserves a source-only pack internally. Implement the narrow genuine composition input in the first increment; public realm admission remains later. |
+| `runtime/wasmgc/values/closure-method-body.ts:90`, `buildNativeClosureMethodMatch`; `:117`, `buildNativeClosureMethodDefinition` | `native-invocation.ts:334` supplies source entries; `closure-vector-apply-body.ts` reuses the match helper. Every `entry.params[i]` denotes user argument `i`. | Do not insert hidden this into these entries. Implement a dedicated builtin transport adapter. Keep these functions byte-identical initially. |
+| `runtime/wasmgc/values/closure-invocation-bodies.ts`, arity and argument-state helpers | Source and legacy method/apply dispatch read root field 1; the source setup clamps argc and splits extras using source formals | Do not reuse that clamping as the builtin's actual argument count. Keep user arity, physical signature and mutable own length distinct. |
+| `runtime/wasmgc/values/ordinary-object-access-bodies.ts:5–7`, lookup/Get status; `native-object-get.ts:38–50`, owner dependencies | Lookup, Get, source getter dispatch and public property joins rely on status 0/1/2 and the original receiver | Reuse storage/entry semantics, not a bag's prototype walk. Preserve unresolved status and abrupt values. General Get needs a later genuine heterogeneous-prototype join. |
+| `native-object-storage.ts:40`, `:118`, `:160`; `native-object-descriptors.ts:82`, `:238`, `:317` | Storage/layout/lookup owners; descriptor access requirements, same-value, errors, closure classification; prototype-seeder bindings use the authenticated internal descriptor inventory | Seed actual ordinary entries and use the real descriptor bodies. Neither arbitrary handles nor a manufactured source descriptor demand proves a builtin dependency. |
+| Legacy `builtinFnMetaByTypeIdx` / `bfnstate` / `bfnid` | `object-runtime.ts:11473` `fillBuiltinFnMeta`; `char-at-transfer.ts`; `apply-closure-variadic-builtin.ts`; `closures/transferred-native-proto.ts`; `ta-dyn-mop.ts`; Promise/async allocation sites; context metadata registries | The old reflection layer synthesizes name/length before bag lookup. Do not register native rows there or route new native objects through it. Its behavior and all old consumers remain intact. |
+
+Before any later edit to those shared contracts, re-run the reader/mutator
+inventory, including compatibility re-exports and tests. A structurally matching
+field prefix is not proof of origin. The current staged closure issuer also
+forbids leaving metadata requests after a reservation pause (`validateCut:226`);
+do not bypass that rule with late appends to a frozen pack.
+
+### Carrier, prototype and identity representation
+
+Add `src/runtime/wasmgc/values/builtin-function-layouts.ts`. Its factory takes
+the **issued metadata type** as parent, copies its five-field prefix exactly,
+and appends native-only fields:
+
+| Field | Storage | Meaning |
+| --- | --- | --- |
+| 0 | immutable funcref | The issued lifted builtin entry. |
+| 1 | immutable i32 | Declared user-formal metadata, excluding self/this/vector transport; not the mutable own length property. |
+| 2 | mutable externref | A real ordinary own-property bag, allocated during intrinsic initialization. |
+| 3 | mutable i32 | Preserved legacy `bfnstate` slot. Native property operations do not synthesize metadata from it. |
+| 4 | immutable i32 | `metadataBinding.metadata.id`, equal to the **five-field metadata type's** issued type index, not the appended subtype index. |
+| 5 | mutable externref | The actual `[[Prototype]]` object or null. |
+| 6 | immutable reference | The owner-created realm identity record; a per-instance object, not a magic integer brand. |
+| 7 | immutable native string reference | The resolved initial name. Own-property edits never change it. |
+
+Use canonical constants/factories for fields 0–4. The new fields are private
+slots, excluded from own keys; symbol/prefix name processing must produce a
+real native string before allocation. For the initial static-name catalog,
+authenticate its literal tokens; refuse unsupported dynamic naming demands
+explicitly. Do not silently narrow generic CreateBuiltinFunction to strings or
+finite lengths: the existing metadata request only admits integer lengths,
+so dynamic/+Infinity cases need an explicit later extension, not a fake value.
+
+Create bags with `native-object-storage.createNull`: their ordinary prototype
+is explicitly null, solely because they store **own** properties. The function
+carrier's field 5 determines inheritance. This preserves `$Object`'s layout,
+old roots, current storage/descriptors, and callable Function.prototype identity.
+The default function link is the actual callable Function.prototype global;
+Function.prototype's link is the actual Object.prototype global. Return those
+objects from GetPrototypeOf; never return a companion or bag.
+
+Because Wasm canonicalization aliases same-shaped metadata families, recognition
+must nest safe `ref.test`/`ref.cast`, compare field 4 with the issued metadata
+ID, and verify realm and actual singleton identity using `ref.eq` on GC
+references. Match the expected lifted function signature too. Put the identity
+check in the lifted thunk as well as the dispatcher, so an alternative call
+path cannot invoke an owned body with a copied carrier as self. Do not use
+`ref.eq` on funcref; the authenticated construction and immutable field 0 bind
+the actual body, while GC object identity supplies the runtime check.
+Static intrinsic aliases deliberately share the same singleton; different
+intrinsics, even with identical name/length/signature, retain different objects.
+Fresh stateful builtin factories will need per-instance authority and capture
+ownership; a singleton comparison must not be presented as supporting them.
+
+### Invocation ABI: self, this and arguments are separate
+
+Use the existing native argument-vector owner for transport. The builtin
+lifted signature is:
+
+```text
+(ref canonicalClosureRoot self,
+ externref thisArgument,
+ ref issuedArgumentVector argumentsList) -> externref
+```
+
+This is an internal transport ABI, not the source-function method ABI. The
+closure declaration request contains the two transport parameters after self;
+its vector type comes from a real same-ledger prerequisite. A builtin entry
+records `userFormalCount`, `initialLength`, behavior identity and the exact
+signature separately. It must never be passed as a source `NativeClosureMethodEntry`.
+
+Concretely, the issued signature binding's `info.paramTypes` is
+`[externref, ref argumentVector]` and has length **2**, while its lifted Wasm
+signature has **3** parameters including self. Neither number initializes
+field 1: that field receives `userFormalCount` because generic root arity
+probes read it directly. Own length is seeded from `initialLength`, which may
+differ from userFormalCount and can later be redefined. Do not reuse
+`info.paramTypes.length` as `closureArity`, and do not feed builtin transport
+requests into source minimum-argument observations. Authenticate all four
+quantities rather than deriving one from another.
+
+`callVector(callee,thisArgument,argumentsList)` authenticates the owned object,
+extracts field 0 through the authentic root, pushes self, **the unchanged this
+argument**, then the full vector, and emits typed `call_ref`. Null and the
+canonical undefined carrier remain distinct. Method-N bridges construct the
+same complete vector after the caller has evaluated arguments once, in order.
+Do not use a JS array-like as an internal vector without a real conversion owner.
+
+The lifted entry calls a dedicated algorithm-body function with its documented
+semantic operands. For PR 6355's Object prototype methods, pass receiver first,
+then any named user operand; their bodies already assume receiver local 0.
+Keep those bodies as separate function definitions instead of relocating all
+their local indices into the lifted thunk. Load absent operands by a checked
+vector-length comparison and emit the canonical undefined singleton, never
+externref null. Keep the complete actual count/vector available to algorithms
+which distinguish omission or consume rest arguments. Ordinary fixed-parameter
+algorithms can ignore already-evaluated extras. Changing/deleting own length
+cannot change argument delivery or dispatch.
+
+Reuse the logic of `buildClosureInvocationBoundary` (`closure-method-body.ts:48`)
+for any shared invocation state that a bridge changes: save prior state before
+installation; restore on normal return; catch-all, restore, and rethrow the
+original exception on abrupt return. Do not replace the thrown value/tag. The
+explicit transport does not require changing source argc/this/extras at all;
+where the mixed-source bridge does change them, its exact existing globals
+must be authenticated and restored. Any introduced active-function/realm/
+NewTarget state receives the same treatment. Per-call locals retain receiver,
+vector and property presence across nested callbacks.
+
+Nonconstructor entries have no construct token; attempting construction routes
+to the genuine TypeError path. Object's later constructor entry requires a
+separate construct adapter carrying the exact NewTarget and active singleton,
+including PR 6355's alternate-NewTarget branch. Do not infer constructibility
+from a prototype property or implement Function's constructor with a refusal
+body. Async builtin demands remain explicit unfinished work until their real
+Promise/context owner exists.
+
+### Property operations and heterogeneous prototype traversal
+
+Add pure definitions in `builtin-function-bodies.ts`, splitting substantial
+property logic into `builtin-function-property-bodies.ts` if necessary. They
+receive immutable operand data, never CodegenContext, AST, callbacks which
+allocate resources, or authority booleans.
+
+Initialization calls the existing authenticated ordinary data-descriptor body
+with **length first, then name**. Its input mask is `0xbc` (has-value, all three
+attribute-presence bits, configurable true); stored entry flags are `0x04`.
+Obtain the internal return-target descriptor reservation through
+`nativeObjectDescriptorReservationInventory`, then drop its result; do not
+confuse that ABI with the public void wrapper. Use real native string and
+number-box owners. Seed overrides such as nonconfigurable thrower metadata
+through explicit subsequent descriptor operations, not a different fake bag.
+
+Own lookup, HasOwn, GetOwnProperty, definition/redefinition, deletion,
+extensibility and own-key order all consult those live entries. Definition
+routes the carrier to its bag while retaining the logical target/receiver for
+return values and errors. Descriptor absence bits remain distinct from false.
+Accessor conversion/redefinition uses the actual same-value and descriptor
+owners. Nonwritable assignment and throwing versus Boolean-return operations
+must obey their corresponding operation contract. The mutable own name may
+become an accessor or arbitrary value without altering field 7.
+
+Deletion needs an actual native own-delete kernel; no authenticated one exists
+in the inspected storage owner. Implement the narrow ordinary-entry operation
+in the new property leaf, following the ordinary branch of
+`codegen/object-runtime.ts:3474–3576`: find a live entry, return true for a miss,
+return false for a nonconfigurable entry, otherwise tombstone it, release its
+stored references, decrement live count and increment tombstones. Preserve
+insertion sequence behavior through delete/re-add and growth. Do not call or
+copy the legacy synthetic builtin-name deletion path. If promoting this kernel
+to general storage later, inventory those new callers separately.
+
+For Get, separate `cursor` (where to search) from `receiver` (the original
+language value). At an owned function cursor, inspect only its own bag. A
+present data entry returns its value even when null or undefined; a present
+accessor without a getter returns undefined and stops; an accessor call uses
+the exact original receiver. On a real own miss, load field 5 and dispatch on
+the actual next carrier. At an ordinary cursor, reuse genuine ordinary lookup/
+Get and preserve its three states. Status 2 means the actual Object.prototype
+owner is still required. Resolve it to that singleton or retain an explicit
+gap; never turn it into absent/undefined. Has must not execute a getter.
+
+The first native function-own operation can be completed without claiming a
+complete public Get. A general Get/GetPrototypeOf/SetPrototypeOf join needs all
+admitted carrier operations. SetPrototypeOf must check extensibility and cycles
+through those real carrier operations before storing field 5. It cannot use a
+bag as a shortcut or silently stop at an unfamiliar carrier. The ordinary
+Object.prototype root additionally needs its specified immutable-prototype
+behavior. Arbitrary ordinary objects inheriting from a function also remain
+a representation obligation: `$Object.proto` cannot express that link. Before
+such objects are admitted, add an authenticated carrier-specific override or
+compatible ordinary-object extension and route **all** its prototype readers;
+do not silently widen `$Object.proto` in this slice.
+
+### Backend ownership API and reservation lifecycle
+
+Add `src/backend/wasmgc/resources/native-builtin-functions.ts`. Proposed public
+entry points are `declareNativeBuiltinFunctionResources`,
+`reserveNativeBuiltinFunctionResources`, `fillNativeBuiltinFunctionResources`,
+`requireNativeBuiltinFunctionReservations`,
+`requireCompletedNativeBuiltinFunctionKernel`, and an authenticated inventory/
+singleton-binding accessor. Names can follow the surrounding modules; retain
+the distinctions between reservation, body completion and realm completion.
+
+The requirement rows identify exact intrinsic behavior, closure signature and
+metadata request IDs, initial metadata, prototype role, user arity, singleton
+aliases and call/construct capabilities. A private issuer chooses a closed set
+of canonical body recipes. For delegated algorithms it retains the actual
+native body-owner pack and validates its role and dependencies. An arbitrary
+FunctionReservation, matching signature, caller-provided instruction array or
+test observer is not a completed builtin behavior owner.
+
+Dependencies carry authentic closure pack/plan, argument vectors, ordinary
+layout/lookup/storage/descriptors, strings, values/number boxing, errors and
+exception tag, plus exact realm-anchor identity. Keep original dependency
+objects and a data-only snapshot; reject accessor-bearing input records,
+substituted equal-looking records, changed plans and stale token associations.
+If descriptor issuance still requires a genuine selected source access plan,
+use that actual plan for supported fixtures and retain the production gap.
+Do not invent source syntax/demand records for intrinsic properties; a later
+canonical intrinsic-descriptor requirement must have its own real issuer.
+
+1. **Preflight:** enumerate the entire resource key set and the nonempty
+   intrinsic/alias population before reserving anything. Authenticate every
+   external token and ensure source/builtin entries use the same closure root.
+   Reject unavailable algorithm bodies, unknown prototype roles, conflicting
+   aliases or capabilities. Consume existing signature/metadata bindings from
+   the single `native-closures.ts` pack; only the appended subtype belongs to
+   this new owner.
+2. **Reserve:** obtain real subtype, algorithm, lifted-entry, singleton-getter,
+   initializer, property-operation, global and exception references from the
+   same physical ledger. Register all actual `ref.func` targets. No dummy type,
+   hardcoded coordinate, imported completion surrogate or direct module-array
+   mutation is allowed. Keep declaration order deterministic.
+3. **Freeze once:** the coordinator freezes the whole connected ledger after
+   all cyclic realm/source slots are reserved. Obtain physical function/global/
+   tag coordinates from the tokens after freeze; type coordinates are the
+   issuer's flattened indices, not outer recursive-group positions.
+4. **Fill:** validate the canonical dependencies before generating any owned
+   body. Emit fresh instruction graphs per function. Fill each owned slot once;
+   external filling of a lookalike body does not mark this issuer complete.
+   Cyclic calls may reference authentic reserved slots during fill, but not
+   authorize exports or execution before the complete graph check.
+5. **Authenticate completion:** validate retained inputs, exact token identity,
+   layouts, globals, declaration graph, every actual body and all dependency
+   owners with `assertCompletedReservation`. Traverse cycles with a visited
+   set only after each node's local checks; revisiting a reserved node does not
+   certify its unfilled body. Missing/stale bodies refuse module emission and
+   public binding. Inventory is descriptive, not a completion grant.
+
+### Genuine first increment and subsequent joins
+
+**First increment: a complete synchronous intrinsic-object kernel.** Deliver
+real allocated objects, own-property operations, prototype slots, singleton
+access, builtin call transport and exact identity validation together. Include
+the callable Function.prototype kernel, and native normal/abrupt execution
+controls with the real value/error providers. It must execute zero-host-import
+Wasm, including descriptor mutation and invocation; a type factory, descriptive
+catalog, body list or always-true completion checker alone is insufficient.
+
+Bootstrap needs real anchor identities before all members exist. Reserve one
+realm identity, one ordinary null-prototype Object.prototype identity and one
+callable Function.prototype identity through the new owner (or a subsequently
+introduced single canonical realm owner). Allocate and publish these internally
+before seeding cyclic member links. Use an initialization state distinct from
+the externally visible realm-ready state. Do not allocate a second placeholder
+Function.prototype and replace it later. Reentry sees the same objects; failed
+initialization must not expose a completed realm. Their remaining member and
+constructor obligations stay explicit, so kernel completion is not attestation
+that either standard prototype is fully populated.
+
+Additional nonconstructor intrinsic bodies can be admitted only with closed
+native dependencies. For example, the genuine %ThrowTypeError% body is useful
+for the abrupt path, but it also requires its special nonextensible and
+nonconfigurable metadata behavior; account for that entire obligation if it
+is selected. Native Wasm operand-observer functions may test transport mechanics
+without host imports, but they are explicitly test controls and cannot be
+installed as standard builtin behavior or counted as native realm completion.
+Do not add incomplete Object methods as successful callable entries.
+
+**Single-root source join, included in the first increment:**
+`native-source-closures.ts` currently creates its own pack, so change
+`physicalPlan`, `reserveNativeSourceClosureTypes` and its currentness check to
+accept a separately issued immutable builtin-request input. Combine source
+requests first and builtin signature/metadata requests afterward, reserve once,
+then publish exact source and builtin views of that same pack. With no source
+rows, a builtin signature may establish the sole root. With no builtin input,
+preserve today's exact request order and shape. `program-native-invocation.ts`
+must forward and retain that input at `beginNativeSourceClosureEmission`; its
+source requirements and source units are not relabeled as builtin provenance.
+Revalidate all readers listed above. This avoids changing the closure allocator
+or inventing a disconnected root.
+
+Issue the builtin-request input before closure reservation from the new builtin
+owner's declaration/currentness API, backed by a private WeakMap and the exact
+requirement/literal/argument-vector inputs. It carries symbolic requests and
+their real external type tokens, not completed function bindings. The source
+issuer authenticates that input on both plan construction and every subsequent
+currentness check. After the combined reservation, the builtin owner binds
+only its exact rows from that pack. Avoid a source-owner import back into the
+builtin owner; split this small request protocol into a dedicated backend leaf
+only if needed to keep the dependency graph acyclic. Test the actual
+`reserveNativeSourceClosureTypes`/`beginNativeSourceClosureEmission` interface
+with genuine source requirements, both with and without the issued extension.
+A test-assembled parallel pack is not sufficient evidence for this seam.
+
+**Mixed invocation and realm join:** keep source entry emission unchanged and
+add an authenticated dispatch composition which recognizes owned builtin
+singletons before source signature dispatch. Builtin identity failures must
+not become successes through a permissive source fallback. Retain the lifted
+entry's self check. The exact source/builtin population, method bridges and
+getter-call closure must all be proven before it can satisfy the property
+owner. This join will require a narrow change to `native-invocation.ts` (or a
+new composing owner which it explicitly accepts) and the pinned getter
+dependency in `native-object-get.ts`; a raw replacement method-0 handle is not
+an acceptable shortcut. Refresh the source-only invocation tests unchanged.
+
+Make the dispatch decision concrete: (1) an exact owned singleton, matching
+metadata ID/realm and lifted signature selects its builtin entry; (2) an
+unrecognized metadata carrier cannot fall into a broad source-wrapper row,
+even when that source has identical `[externref, ref argumentVector]` physical
+parameters; (3) only then run the selected source dispatcher. A metadata
+`ref.test` alone cannot decide that an object is a builtin. For the current
+genuine source issuer, safe exclusion has a checkable invariant:
+`createClosureCaptureField` in `closure-capture-layouts.ts:12` makes every
+source capture immutable, while metadata field 3 is mutable. Authenticate
+that distinction from each actual issued source layout; bare three-field
+source allocations cannot be five-field metadata objects. The exclusion may
+then reject unknown metadata before a broad three-field source wrapper test.
+Check all admitted metadata families, not just known IDs or entries whose
+bodies happened to be selected.
+
+If a future source carrier really can overlap that family, the combined
+dispatcher must obtain positive runtime source identity evidence (for example,
+an issuer-owned source-allocation registration) or decline that combined
+population before emission. It must not reinterpret the legitimate source
+object as a builtin, or accept an unowned metadata object as source. Add the
+overlap/admission negative and an unchanged legitimate-source positive to the
+same test; matching physical parameter types alone is never authority.
+
+Only then fill and authenticate the complete demanded Object/Function realm:
+constructors, method bodies, accessor halves, aliases, tags, canonical parents,
+own-property seeds and source/builtin callbacks. Bind PR 6355's real algorithm
+functions with their full semantic dependencies, including ToObject,
+ToPropertyKey, ordinary/exotic descriptors, heterogeneous Get/prototype methods,
+IsCallable/IsConstructor, canonical Boolean/undefined values and exceptions.
+Object's constructor must receive its actual singleton as activeFunction.
+Function's constructor, apply array-like conversion, bind behavior and other
+missing members remain implementation work, never refusal stubs described as
+complete. Full cross-realm/factory/async support is still part of the epic.
+
+The public joins are later changes to
+`backend/wasmgc/program/native-invocation-abi.ts`, `ir/program-physical-plan.ts`
+and `ir/program-consumer.ts`, plus the genuine realm requirement/binding owner
+identified at that time. Their existing source-only contracts are not widened
+in the first kernel change. Bind public property/callable providers only after
+the **whole selected realm dependency closure** is authentic, and refuse
+unresolved/general property demands instead of treating an unimplemented
+member as absent. Only that integrated graph can replay the unchanged Number
+fixture returning 712 in original/decoded views and both string encodings.
+
+### Exact proposed footprint and verification
+
+The first implementation writes the new backend owner and the two new runtime
+files above; split the property bodies into the named third runtime leaf when
+needed for existing size limits. Its only existing compiler edits are the
+explicit composed-input/currentness changes to `native-source-closures.ts`
+and the forwarding/retention seam in `ir/program-native-invocation.ts`.
+If a separate builtin-request leaf is needed, it is part of this same issuer
+contract, not a generic registry. Add dedicated
+`tests/issue-3518-native-builtin-functions.test.ts` and
+`tests/helpers/native-builtin-functions.ts`. The implementation worker owns
+these kernel/source/test paths. Root alone owns the actual new file rows
+and counts in `scripts/compiler-boundaries.json` and the corresponding explicit
+addition set in `tests/issue-3518-semantic-provider-boundary.test.ts`, retaining
+all previous rows/order and signed receipts. This issue remains append-only.
+No first-increment edit is required to `closure-method-body.ts`,
+`closure-layouts.ts`, `native-closures.ts`, `object-layouts.ts`, legacy
+`builtin-fn-meta.ts`, `native-proto.ts`, Object body donors or the pending Number
+checkout. The subsequent mixed-dispatch, property and public realm joins above
+are real prerequisites, separately scoped rather than hidden inside an
+expanded first change.
+
+The implementer/coordinator must execute, with explicit nonzero denominators:
+
+- **Physical/ownership controls:** normal and displaced type/function/global/
+  tag indices; unrelated recursive groups and earlier function types; exact
+  common root; inherited prefix and finality; same-shaped metadata with distinct
+  IDs; correct field-4 metadata ID when the allocation subtype has another
+  index. Reject copied/forged/foreign-ledger packs, stale plans/dependencies,
+  wrong signature/body/singleton bindings, late key collisions without partial
+  reservation, duplicate fills, unfilled or externally filled bodies, and
+  post-fill body/global/layout mutation before emission.
+- **Real call controls:** emitted Wasm, exact null/undefined/object/primitive
+  this values, zero/missing/excess arguments, omission versus explicit
+  undefined, rest-vector order, and own length different from both user-formal
+  count and physical transport arity. Exercise nested calls, getter reentry,
+  recursion and abrupt exit with all touched state restored and the original
+  thrown reference/tag retained. Check nonconstructible rejection separately.
+  Use real operand observers only as labeled test controls; retain authentic
+  intrinsic behavior tests as separate completion evidence.
+- **Real object controls:** name/length flags and insertion order; deletion,
+  repeated deletion, redefine, data/accessor conversion, undefined-valued own
+  shadowing, nonwritable writes, nonconfigurable rejection, preventExtensions,
+  delete/re-add sequence and map growth. InitialName and call behavior survive
+  all own-name/length edits. Own keys expose no private slots. Has/HasOwn never
+  invoke getters. Getter calls receive the original function/primitive receiver
+  after inheritance. Actual prototype identity is callable Function.prototype,
+  its parent is Object.prototype, and bags are unequal to both. Status-2 and
+  unknown-carrier controls remain unresolved rather than successful absence.
+- **Runtime identity controls:** two identical-looking but distinct builtin
+  singleton families; explicit aliases; equal-shaped foreign module values;
+  forged/copied GC carriers with copied metadata ID and body reference. Only
+  the actual owned object can enter its singleton-bound lifted behavior.
+  Ordinary/source objects must not be accidentally claimed by a family test.
+- **No-host/preservation controls:** inspect actual module imports (zero for
+  completed native-owner executions), run the current closure-resource/staged,
+  source-invocation, descriptor/storage, prototype, builtin-metadata and
+  boundary cohorts appropriate to the changed files. Keep positive controls
+  when testing refusal paths. For the later public join, use fresh-process
+  original/decoded prepared-program replay, both string backends, blocked
+  frontend/TypeScript resolution controls and exact 712 output, plus unchanged
+  existing acceptance assertions and input hashes. Passing kernel tests cannot
+  stand in for that replay or the full conformance/parity requirements.
+
+This plan does not grant a test lane, weaken a gate, change a baseline, complete
+the issue or authorize retirement. Root coordinates actual implementation,
+runtime verification and evidence of delivery on main.
+
+### Draft review and hook prerequisites (2026-09-30)
+
+Fresh upstream ownership census contains 14 open PRs and 803 file rows, with no
+overlap for the two existing source-issuer files or the planned builtin leaves.
+The slice claim remains held by this lane. An independent clean test262 checkout
+is pinned to b363f29d3c43c626dc852744ad64a0b48a003693, 56,970 tracked files and a
+real `.git` directory. Its object store references the preserved tag-contract
+corpus; retain that source. Normal commit hooks remain required without bypass.
+
+The architect's focused read-only draft review found a dependency-authentication
+hole: the record validator admits non-enumerable own data fields, while spreading
+dependencies and comparing `Object.keys` omits those roles. Swapping non-enumerable
+arguments/vector-plan fields to another genuine same-ledger pair could pass
+currentness while retaining the original carrier reference. Snapshot and compare
+each mandatory role explicitly (and reject unexpected keys), or require canonical
+enumerable fields. A regression must pair the original valid owner with a genuine
+replacement vector owner. The implementer owns this correction and its evidence.
+This finding is recorded before runtime verification; it is not a claimed pass.
+
+Root also identified an invalid-key coercion path: a truthy object key with a
+data `toString` function could reach key concatenation. Validate a nonempty string
+key and reject callable values before any allocation or coercion; preserve a
+callback-count negative. The native execution fixture must additionally exercise
+the same transport builders with a separate operand-observer control. Standard
+Function.prototype and ThrowTypeError ignore all arguments, so their return/throw
+results alone cannot prove exact receiver, omission, vector length or extra order.
+The observer stays outside the intrinsic catalog and actual kernel recognition
+must refuse it. Only a terminal, input-pinned final run can certify these controls.
+
+The root-owned boundary composition appends six actual implementation leaves:
+two backend and four native-runtime modules, including bounded prototype bodies.
+All 1,722 base inventory rows/order and prior layer entry order are preserved;
+the resulting inventory has 1,728 rows, backend floor 41 to 43 and native-runtime
+floor 86 to 90. Signed activation history and allowed edges remain unchanged.
+The historical bounded live fixture remains independently pinned to its actual
+135-module/612-edge closure; the new kernel receives a separate runtime cohort.
+
+### Builtin kernel review and preservation attribution (2026-09-30)
+
+Object constructor/prototype bodies PR6355 are now verified delivered as
+f028d5344e13fda37f02493962dcdc8d286bfed6. Exact head d2eb19f770 is ancestral
+to the merge and fresh main2255e91c; nine scoped blobs match. Actual protected
+merge_group CI36711250712, Test26236711250806 (102 actual shards plus final
+regression gate), CLA36711250725 and Differential36711250820 passed. The scoped
+Object-body claim was completed and its effect verified upstream.
+
+The frozen fourteen-file compatibility cohort is terminal at710/722 collected
+assertions, twelve failures, no pending/todo assertions. Two further suites
+stopped during collection; eleven of fourteen files passed. New kernel29/29 and
+boundary349/349 passed. All7342 pinned inputs remained unchanged. Retain exact
+failed rows and diagnostics under .tmp/native-builtin-functions/final-cohort*.
+The storage failures and closure/prototype-chain collection failures are in
+historical donor/receipt reconstruction, not a permissive runtime fallback.
+Ten relevant failing donor/helper/test inputs are byte-identical to base8245fc8e;
+a separate clean-base reproduction is pending before final attribution.
+
+Read-only review found two real kernel defects: completed reservation tokens
+alone accepted noncanonical externally filled argument-vector bodies, and
+ordinary-only prototype lookup accepted a native String subtype while silently
+missing virtual character properties. Require full canonical vector locals and
+bodies from reauthenticated layouts, plus effective finality of the authentic
+ordinary Object carrier before any kernel reservation and on currentness.
+Unknown/exotic carriers must yield explicit gaps before false absence/mutation.
+The later whole-realm join must implement authenticated heterogeneous dispatch;
+simply relaxing this finality gate would recreate the defect.
+
+Pre-fix diagnostic43670 reproduced six intended acceptance defects. Its seventh
+actual StringCreate row reached the measured35s deadline after38.449s; it is an
+unmeasured semantic row, not a passing control. All seven failure rows and29
+deliberately unselected original kernel rows remain. The heavier StringCreate
+row now has a60s deadline with identical expectations. Corrected source typecheck
+passed; the full corrected36-row kernel and seven preservation gates are pending
+on newly frozen inputs. The broader census includes eleven already-existing
+ignored fixture/debug files and the new String control helper; it is7354 pins,
+not an unexplained increase in implementation files.
+
+The source capture-mutability guard refuses a faulty provider layout before
+publishing the composed owner or emission. Its fault-injected negative does not
+promise rollback of earlier reservation allocation; genuine capture shapes are
+immutable. Allocation-free key-collision preflight remains a separate contract.
+
+Fresh open-PR census:14 PRs,800 actual file rows, zero overlap for the eight
+owned production files. Preserve unrelated ES2015/Proxy/rest callback fixes and
+every original historical hash. Public Number still5/9 with four genuine IR
+unsupported outcomes. No whole-realm completion or legacy retirement is claimed.
+
+Corrected kernel48772 is terminal36/36, zero skipped/todo/failures or worker
+errors. All7354 pinned inputs stayed unchanged. Both StringOwn selection states
+reject extensible ordinary dependencies without kernel allocation; an actual
+same-ledger StringCreate control proves virtual index presence, explicit kernel
+Get/Has/SetPrototypeOf status3, unchanged prototype, preserved ordinary positive
+and zero module imports. Full wrong-vector body/local controls pass. Independent
+review confirmed both exact corrections close the reported defects. Seven
+existing preservation gates are running serially; do not call them passed before
+terminal evidence. Claim sole ownership was reverified against upstream.
+
+Historical preservation follow-up plan, scoped separately from this kernel:
+read-only provenance identifies four delivered changes already in8245fc8e:
+31237a90fb8461617dd1314843989e27de83c0dc (variadic receiver),
+86ca8ff1706d8e537653d52695ed403a1c1c3690 (String descriptor hooks),
+854b5d2aba919ea97ba007f2846a3c4b1c124151 (Proxy array-like operations), and
+d71b6e53ab23ac25bc810efd83c6a8ea1a6493ee (Proxy prototype links). Each commit's
+parent file hash matches the existing historical pin; the commits contain SSH
+signatures and are ancestors of the current base. Existing receipt hashes remain
+valid for their original era. Preserve those fixes and historical expectations.
+
+Add strict reciprocal post-array-main composition around source and dependency
+readers, including all three recorded sources (calls.ts, object-runtime.ts,
+closure-exports.ts) and apply-closure-variadic-builtin.ts. Reverse Proxy additions
+to object-runtime-enumeration.ts before descriptor-adapter offset authentication.
+Reverse String changes in all three ordinary-object-descriptor modules before
+descriptor-undefined correction. Reverse/replay Proxy prototype changes around
+prototype-chain extraction. New receipts must pin full before/after blobs, exact
+unique ordered spans and imported dependencies; existing receipts stay untouched.
+Fixing only the first dependency hash would expose further mismatches from later
+RegExp/Error, Promise.finally, GeneratorFunction, dynamic import, nullable
+dispatcher, String length and Proxy changes. The historical prototype recorder
+also needs an explicitly authenticated extraction-era view because the current
+canonicalizeProtoArg refers to protoLink outside its captured bindings. Verify
+round-trip replay to raw current bytes independently; never substitute historical
+whole files as runtime/compiler operands. Original failures stay retained.
+
+Final pre-integration evidence: all seven preservation gates passed at exact
+base8245fc8e, typecheck passed, corrected kernel36/36 passed, and7354/7354 pins
+remained unchanged. The dead-export result certifies the configured core and
+preservation contract; it does not certify strict whole-compiler closure or
+retirement. Inventory1728 is valid while architectureComplete remains false.
+
+Exact-base control at8245fc8e ran the same three failing suites unfiltered:
+storage39/51 with the same12 failures; closure/prototype-chain each stopped
+during collection with the identical error. Every assertion status and first
+failure text matches the candidate cohort. Zero skips and7326 input pins stayed
+unchanged. Receipt: /private/tmp/js2-ir-builtin-preservation-baseline-20260930/
+.tmp/native-builtin-preservation-baseline/terminal.json. This establishes those
+observed failures predate the bounded kernel; it does not certify the uncollected
+runtime assertions. Follow up the historical composition repair separately.
+
+Only two encoding/index scenarios were measured: normal UTF-16 and displaced
+actual UTF-8. The genuine StringCreate exotic-refusal control is normal UTF-16.
+Do not extrapolate to four encoding/index cross-products or whole public replay.
+
+Fresh-main integration: signed implementation520a52bd024e85abe37191a7d58835302dbd1189
+passed normal hooks385/385. Stable freshly fetched main
+ee6828f1ef2f6dd7dc26c1eabe699ed8e8a12e50 is merged with all incoming source,
+tests and artifacts preserved. All1725maininventoryrows/order remain; six owned
+leaves yield1731rows, backend43/native-runtime93. Signed activation history and
+allowed edges stay unchanged; unsigned boundary additions retain main order.
+All12worker-owned files are byte-identical to corrected final validation.
+
+Integrated pre-commit validation passed: source TS7, strict boundary349/349 with
+zero skips/failures/suite errors, and all seven preservation gates at fresh main
+ee6828f1. All7359 input hashes remained unchanged. Native kernel source/test
+content is unchanged from its strict36/36 run; incoming Object body content is
+unchanged from its main-verified214/214 component evidence. Normal merge hooks
+remain required before fork publication; full issue and legacy retirement remain
+incomplete. Receipt: .tmp/native-builtin-functions/publication/integrated/terminal.json.
+
+
+### Existing builtin PR6358 current-main refresh — 2026-09-30
+
+Root refresh uses a separate claimed checkout from exact current fork head
+c90ef2831511026b3c2566f05a371495feda27b1, preserving the original clean
+58c6f064 checkout. Verified performance prerequisite PR6364 is now delivered
+asdd38a24abfb57cfc6c43ae4d5324777b38cd8f75 with exact8blobs/ancestry and
+102real conformance shards/regression/CI/CLA/differential checks. Main was
+freshly fetched as2ef807a68eb09eb8e8ef27f66447374caf5a26e4 before this merge.
+The existing PR is held and auto-merge disabled during refresh; no duplicate PR.
+
+Both complete issue suffixes are retained; all1730main inventory rows/order
+and six original builtin leaves are retained, combined1736, unchanged signed
+history/edges/evidence and backend43/native-runtime93 floors. Every12 original
+worker source/test hash remains exact. All incoming nonmetadata main files,
+including Promise fixes, frontend Object.create(null) and performance changes,
+remain byte-identical. No implementation conflict or source edit. Validation,
+signed commit, normal fast-forward fork publication, protected queue admission
+and exact main delivery still remain; local refresh is not delivery or full
+public realm/IR completion.
+
+
+Current-main refresh validation: strict385/385 (36builtin+349boundary),
+zero skipped/pending/todo or unhandled errors; TS7exit0 and all seven
+preservation gates pass against exact main2ef807a68. All7370 source/test/
+script/config pins remained unchanged. Original builtin twelve hashes and
+all63 incoming nonmetadata main files remain exact. Normal signed merge
+hooks and fork publication follow; this record grants no main-delivery or
+full-public-realm/IR completion. Scoped receipts .tmp/builtin-main-delivery/.

@@ -86,6 +86,8 @@ export const TA_DYN_METHOD_CALL_NAMES: readonly string[] = [
   // `ensureTaDynSubarrayHelper` for the two residuals that stay with the
   // two-arm (SpeciesConstructor and the §7.1.4 Symbol-index throw).
   "subarray",
+  // (#6769 S4) the live-receiver producer (`map`/`filter` are listed above).
+  "slice",
 ];
 
 /**
