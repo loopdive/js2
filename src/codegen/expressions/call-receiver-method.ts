@@ -100,6 +100,7 @@ import { isTaViewTypeIdx, taCtorIdentityTestInstrs } from "../registry/types.js"
 import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { staticHostPropertyKeyInstrs } from "../host-property-key.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
 import { ensureStandaloneRegExpCarrierExecHelper } from "../regexp-exec-carrier.js";
@@ -4796,8 +4797,7 @@ export function compileReceiverMethodCall(
 
           // Push receiver, method name, args array → call __extern_method_call
           fctx.body.push({ op: "local.get", index: recvLocal });
-          addStringConstantGlobal(ctx, methodName);
-          fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+          fctx.body.push(...staticHostPropertyKeyInstrs(ctx, methodName));
           fctx.body.push({ op: "local.get", index: argsLocal });
           fctx.body.push({ op: "call", funcIdx: methodCallIdx });
           return { kind: "externref" };

@@ -156,6 +156,7 @@ import { tryEmitErrorInstanceFieldWrite } from "../error-instance-field-write.js
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { staticHostPropertyKeyInstrs } from "../host-property-key.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
 import { classObjectRestrictedProperty } from "../class-static-metadata.js"; // (#5195 r3-7)
@@ -5369,9 +5370,8 @@ function compilePropertyAssignmentExternSet(
   if (!dispatched) {
     // Dispatcher could not be reserved — emit the bare host write with the
     // same strictness as the source Reference.
-    addStringConstantGlobal(ctx, propName);
     fctx.body.push({ op: "local.get", index: objLocal });
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
     fctx.body.push({ op: "local.get", index: valLocal });
     if (setIdx !== undefined) fctx.body.push({ op: "call", funcIdx: setIdx });
   }

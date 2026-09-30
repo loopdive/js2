@@ -47,6 +47,7 @@ import { closureBagInitInstr } from "./closures/funcref-wrapper-types.js"; // (#
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isNativeGeneratorResultStruct, sentinelAwareF64BoxInstrs } from "./generators-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { registerHostPropertyKey, staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { FLAG_ACCESSOR, FLAG_TOMBSTONE } from "./object-runtime.js"; // (#4157)
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4157)
@@ -423,6 +424,7 @@ export function reserveMemberGetDispatch(
   );
   if (getIdx === undefined) return undefined;
   registerLateReadStringConstant(ctx, propName);
+  registerHostPropertyKey(ctx, propName);
   addUnionImportsViaRegistry(ctx);
   // (#3032 W6) A `value` dispatcher may grow a sentinel-canonicalizing arm for
   // the native-generator IteratorResult structs at fill time; under a JS host
@@ -585,7 +587,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         getIdx !== undefined
           ? [
               { op: "local.get", index: 0 }, // recv
-              ...stringConstantExternrefInstrs(ctx, propName),
+              ...staticHostPropertyKeyInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
             ]
           : [{ op: "ref.null.extern" }];
@@ -627,7 +629,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         : getIdx !== undefined
           ? [
               { op: "local.get", index: 0 }, // recv
-              ...stringConstantExternrefInstrs(ctx, propName),
+              ...staticHostPropertyKeyInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
             ]
           : [{ op: "ref.null.extern" }];

@@ -7,6 +7,7 @@ import { BUILTIN_CLASS_NAMES } from "./expressions/builtin-class-names.js";
 import { maybeStampCompiledFunctionArgName } from "./expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { compileExpression } from "./shared.js";
 
@@ -84,7 +85,7 @@ export function tryEmitFixedHostMethodCall(
 
   fctx.body.push({ op: "local.get", index: recvLocal });
   addStringConstantGlobal(ctx, methodName);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+  fctx.body.push(...staticHostPropertyKeyInstrs(ctx, methodName));
   for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? methodCallIdx });
   return true;

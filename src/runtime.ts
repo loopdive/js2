@@ -4345,15 +4345,13 @@ function _hostToPrimitive(
   // represents the spec violation in §7.1.1.1 step 6 and must throw TypeError
   // (#1253).
   let methodInvokedReturnedObject = false;
+  const rawOpaque = obj === raw && !_userProxies.has(obj) && _isWasmStruct(obj);
   const methodNames = hint === "string" ? ["toString", "valueOf"] : ["valueOf", "toString"];
   for (const mName of methodNames) {
     // Check real JS property first (goes through proxy which may wrap closures)
-    let fn: any;
-    try {
-      fn = obj[mName];
-    } catch {
-      /* property access on opaque struct */
-    }
+    // Raw Wasm carriers use the sidecar/export fallbacks below. A genuine
+    // host or proxy Get can run an accessor and must preserve its abrupt result.
+    const fn = rawOpaque ? undefined : obj[mName];
     if (typeof fn === "function") {
       const result = fn.call(obj);
       if (result == null || typeof result !== "object") return result;

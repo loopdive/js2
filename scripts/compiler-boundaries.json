@@ -7477,6 +7477,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/host-property-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-owned host key imports from native property-key carriers; legacy helper is not an IR provider."
+    },
+    {
       "path": "src/codegen/object-proto-annex-b-accessors.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

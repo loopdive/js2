@@ -28,6 +28,7 @@ import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
@@ -1371,18 +1372,8 @@ function compileObjectLiteralWithAccessors(
         compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
       } else {
         if (propName === undefined) continue;
-        // (#51) Materialize the data-property key via the dual-mode helper, not a
-        // bare `global.get <stringGlobalMap.get(propName)>`. Under
-        // standalone/nativeStrings `addStringConstantGlobal` records the `-1`
-        // sentinel (there is no host string-constant global), so a bare
-        // `global.get -1` reaches binary emit as "global index out of range — -1".
-        // `stringConstantExternrefInstrs` emits the NativeString inline (externref)
-        // path under standalone and the host `global.get` only when a real import
-        // global exists — exactly the fix already applied to the accessor-key path
-        // below (#1888 S5c).
-        addStringConstantGlobal(ctx, propName);
         fctx.body.push({ op: "local.get", index: objLocal });
-        for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
+        for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
           fctx.body.push(instr);
         }
       }
@@ -1467,13 +1458,8 @@ function compileObjectLiteralWithAccessors(
         continue;
       }
       if (methodName === undefined) continue;
-      // (#2194) Same dual-mode key fix as the data-property arm above: the raw
-      // `global.get <stringGlobalMap.get(method)>` baked `global.get -1` in
-      // standalone for a method key on a literal that also takes the accessor
-      // path. Route through the guarded helper.
-      addStringConstantGlobal(ctx, methodName);
       fctx.body.push({ op: "local.get", index: objLocal });
-      for (const instr of stringConstantExternrefInstrs(ctx, methodName)) {
+      for (const instr of staticHostPropertyKeyInstrs(ctx, methodName)) {
         fctx.body.push(instr);
       }
       const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
@@ -1513,15 +1499,9 @@ function compileObjectLiteralWithAccessors(
 
       // Stack: [obj, key, getterCb | null, setterCb | null, flags]
       fctx.body.push({ op: "local.get", index: objLocal });
-      // (#1888 S5c / C5) Materialize the accessor key via the dual-mode helper.
-      // Under standalone/nativeStrings, `addStringConstantGlobal` records the
-      // `-1` sentinel (no host string-constant global), so the old
-      // `global.get <stringGlobalMap.get(prop)>` emitted `global.get -1` →
-      // "u32 out of range: -1" at serialize time (the objlit-accessor standalone
-      // defect). `stringConstantExternrefInstrs` emits the native-string inline
-      // path under standalone and the host `global.get` under GC.
-      addStringConstantGlobal(ctx, propName);
-      for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
+      // Host imports require real String keys even with native string storage.
+      // Native targets retain their existing native key representation.
+      for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
         fctx.body.push(instr);
       }
 

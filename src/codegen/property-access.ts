@@ -123,6 +123,7 @@ import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8
 import { resolveUserFnctorName, tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
+import { compileHostPropertyKey, staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
@@ -949,8 +950,7 @@ export function emitRuntimeDescriptorGet(
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
 
-  addStringConstantGlobal(ctx, propName);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
   if (resultType.kind === "f64" && unboxIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx: unboxIdx });
@@ -6034,7 +6034,7 @@ export function compileElementAccessBody(
       }
       return null;
     }
-    compileExpression(ctx, fctx, expr.argumentExpression, { kind: "externref" });
+    compileHostPropertyKey(ctx, fctx, expr.argumentExpression);
     // Lazily register __extern_get if not already registered
     const funcIdx = ensureLateImport(
       ctx,
@@ -6078,7 +6078,7 @@ export function compileElementAccessBody(
       return null;
     }
     // Compile key as externref and call __extern_get
-    compileExpression(ctx, fctx, expr.argumentExpression, { kind: "externref" });
+    compileHostPropertyKey(ctx, fctx, expr.argumentExpression);
     const funcIdx = ensureLateImport(
       ctx,
       "__extern_get",
