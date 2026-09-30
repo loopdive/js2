@@ -14,9 +14,85 @@ rules out missing realm linkage as the var failure's explanation. The live
 var value is still held in a private Wasm global. Lexical declarations also
 do not persist into later independently compiled Scripts.
 
-`tests/issue-4376-persistent-script-environment.test.ts` has one positive
-property-write control and two explicitly expected failures, not three
-conformance passes. Remove `.fails` as each real requirement is implemented.
+At that initial checkpoint, the persistent-environment regression file had
+one positive property-write control and two explicitly expected failures.
+It now has 12 ordinary controls and those two expected failures. Remove
+`.fails` only when each real requirement is implemented.
+
+## Resume checkpoint: 2026-10-01
+
+Compiler branch: `codex/4376-deno-callback-construction-20260930`.
+Open, non-draft PR: https://github.com/loopdive/js2/pull/6341.
+Implementation tip: `96c4d6f833a2473317a7b7b6fb8b86fccb98aec6`.
+The signed merge `ec1375e79d8` includes main
+`e303c5c7946e92d66d89b0a18e2632905b1a0dde`.
+
+The current turn inspected lexical implementation sites but made no lexical
+implementation changes. No provider ABI has been selected or wired. The next
+work must implement canonical cells and declaration preflight, not widen the
+existing runtime-eval map into a substitute for persistent Script semantics.
+
+Relevant inspected seams:
+
+- `declarations.ts`: declaration preflight must precede private var seeds,
+  function seeds and `emitScriptGlobalVarBindings`, before user code runs.
+- `statements/variables.ts` and `statements/tdz.ts`: initialization must be
+  distinct from assignment. Rewriting every global.set as initialization, or
+  inferring initialization from a private flag, permits illegal TDZ writes.
+- `expressions/identifiers.ts`: local and captured shadows precede global
+  lookup. A later Script's unresolved name must consult the declarative record
+  without exposing let/const as object properties.
+- `expressions/unresolvable-assign.ts`: resolve the target before evaluating
+  the RHS; writes must retain that Reference. Include increments, compound
+  assignment, destructuring and IR stores, not only simple assignment.
+- `global-environment.ts`: its runtime-eval lexical map lacks the required
+  shared declaration/TDZ/const protocol and must not be credited as that record.
+
+Preflight must validate the entire declaration manifest before creating any
+new cells. Checking and creating one declaration at a time leaves partial
+bindings behind if a later declaration conflicts. Preserve module separation,
+typed computation specialization, shared thrown-value identity and AOT-only
+deployment for known sources.
+
+Latest compiler verification: TypeScript 7 passed; eight regression files
+reported 73 tests, comprising 71 ordinary passes and two expected failures.
+The 20 direct iterator controls all pass. Pre-push checks also passed 18/18
+numeric-local tests, lint, formatting and issue integrity. Size checks were
+additionally run against the merged main SHA, with allowances for existing
+branch changes documented in the issue. Dead-export command exits zero but
+still explicitly refuses complete runtime-retirement certification because
+two dynamic-import targets remain open; do not report that certification.
+
+Last verified native Deno artifact is older than the current compiler:
+`/private/tmp/deno-reflective-iterator-build.zaaiw7`, compiler
+`b37d12382a9a2632130c8b9b2088a1f14470a0fa`, adapter
+`2a1ca8426b59596df4d3ad8111aa08b5273c8260`. Compiler-free adapter replay was
+31/31 runnable tests, six ignored. Unchanged WebIDL was 13/17, with four
+unknown classic Scripts refused before assertions. Do not credit these
+artifacts with the latest var or keys/entries changes; rebuild clean artifacts
+and rerun unchanged Deno tests after the persistent Script path is wired.
+
+Adapter checkout: `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`, branch
+`codex/4376-deno-realm-bootstrap`, PR https://github.com/loopdive/v8x/pull/2.
+That PR remains draft because general integration is incomplete.
+The previously hung conformance run is not completed evidence. Revalidate its
+process before acting; do not kill or restart it without user approval.
+
+Preserved unrelated user changes: `src/ir/backend/lower-contracts.ts`,
+`website/public/acorn/acorn.wasm` and all existing untracked files/worktrees.
+No cleanup, pruning or Deno source/test edits were performed.
+
+Focused test invocation:
+
+```sh
+VITEST_MAX_FORKS=1 VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 \
+node node_modules/vitest/vitest.mjs run \
+  tests/issue-4376-persistent-script-environment.test.ts \
+  tests/issue-4376-live-array-iterator.test.ts \
+  --poolOptions.forks.execArgv=--experimental-wasm-exnref \
+  --poolOptions.forks.execArgv=--max-old-space-size=4096
+node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+```
 
 ## 2026-10-01 implementation checkpoint
 
