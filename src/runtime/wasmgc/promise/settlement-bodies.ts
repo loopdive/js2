@@ -2,6 +2,7 @@
 
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { buildRegistrationOrderedCallbacks } from "./reaction-order-bodies.js";
+import { buildPromiseRejectionEvent } from "./rejection-event-bodies.js";
 
 export type PromiseHookResources =
   | undefined
@@ -17,6 +18,7 @@ export interface PromiseSettleResources {
   readonly resolveHook: PromiseHookResources;
   readonly unhandledHeadGlobalIdx: number;
   readonly unhandledNodeTypeIdx: number;
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
 }
 
 export interface IdentityReactionResources {
@@ -112,7 +114,16 @@ export function buildPromiseSettleBody(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: valueLocal }, { op: "return" }],
+      then: [
+        ...buildPromiseRejectionEvent(
+          state.rejectionDispatchFuncIdx,
+          settledState === PROMISE_STATE_REJECTED ? 2 : 3,
+          [{ op: "local.get", index: promiseLocal }],
+          [{ op: "local.get", index: valueLocal }],
+        ),
+        { op: "local.get", index: valueLocal },
+        { op: "return" },
+      ],
     },
 
     // promise.state = fulfilled/rejected; promise.value = value
@@ -122,6 +133,24 @@ export function buildPromiseSettleBody(
     { op: "local.get", index: promiseLocal },
     { op: "local.get", index: valueLocal },
     { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+
+    ...(settledState === PROMISE_STATE_REJECTED && state.rejectionDispatchFuncIdx !== undefined
+      ? ([
+          { op: "local.get", index: promiseLocal },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildPromiseRejectionEvent(
+              state.rejectionDispatchFuncIdx,
+              0,
+              [{ op: "local.get", index: promiseLocal }],
+              [{ op: "local.get", index: valueLocal }],
+            ),
+          },
+        ] satisfies Instr[])
+      : []),
 
     // Detach callbacks before enqueueing so re-entrant `.then` calls append to
     // the settled promise's normal immediate-enqueue path.

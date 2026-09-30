@@ -6,6 +6,7 @@ import ts from "typescript";
 import { expect } from "vitest";
 import { createBuiltinFunctionMetadataType } from "../../src/runtime/wasmgc/values/closure-layouts.js";
 import { buildTargetTaggedTry } from "../../src/wasm/physical/exception-control.js";
+import { promiseRejectionDispatcher } from "../../src/codegen/promise-rejection-dispatch.js";
 import {
   buildPromiseResolveValueBody as buildResolutionBody,
   buildNativePromiseResolveValueBody,
@@ -176,6 +177,7 @@ export function resolutionFixture(
       }
     : null;
   const fn = evaluate(source, ["buildPromiseResolveValueBody"], {
+    promiseRejectionDispatcher,
     buildResolutionBody,
     buildTargetTaggedTry,
     PROMISE_STATE_FULFILLED: 1,

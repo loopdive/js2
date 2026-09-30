@@ -2,6 +2,7 @@
 
 import type { FuncHandle, Instr, LocalDef, TypeHandle, ValType } from "../../../wasm/model/instructions.js";
 import { PROMISE_STATE_PENDING, PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
+import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
 
 export interface CombinatorCaptureTypes {
   readonly elemCapsTypeIdx: TypeHandle;
@@ -9,6 +10,7 @@ export interface CombinatorCaptureTypes {
 }
 
 export interface CombinatorSubscriptionDispatchResources extends CombinatorCaptureTypes {
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
   readonly promiseTypeIdx: TypeHandle;
   readonly callbackTypeIdx: TypeHandle;
   readonly enqueueFuncIdx: FuncHandle;
@@ -126,9 +128,7 @@ export function buildSubscribeDispatchBody(ids: CombinatorSubscriptionDispatchRe
   const CAPS = 6;
   const cbTypeIdx = ids.callbackTypeIdx;
   return [
-    { op: "local.get", index: P },
-    { op: "i32.const", value: 1 },
-    { op: "struct.set", typeIdx: ids.promiseTypeIdx, fieldIdx: 4 },
+    ...buildPromiseReactionHandled(ids.rejectionDispatchFuncIdx, ids.promiseTypeIdx, P),
     // caps = $CombinatorElemCaps{ state, index } (boxed to externref).
     { op: "local.get", index: STATE },
     { op: "any.convert_extern" },

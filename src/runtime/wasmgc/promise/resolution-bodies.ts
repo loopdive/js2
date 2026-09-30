@@ -2,6 +2,7 @@
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { buildTargetTaggedTry } from "../../../wasm/physical/exception-control.js";
 import { PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
+import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
 
 export interface PromiseResolutionBindings {
   readonly hasCallableThenFuncIdx: FuncHandle;
@@ -11,6 +12,7 @@ export interface PromiseResolutionBindings {
   readonly newTypeErrorFuncIdx: FuncHandle;
 }
 export interface PromiseResolveValueResources {
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
   readonly target: { wasi: boolean; standalone: boolean };
   readonly state: {
     readonly promiseFulfillFuncIdx: FuncHandle;
@@ -335,9 +337,7 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
         { op: "local.set", index: innerLocal },
         ...selfCheck,
         ...ownThenArm,
-        { op: "local.get", index: innerLocal },
-        { op: "i32.const", value: 1 },
-        { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+        ...buildPromiseReactionHandled(resources.rejectionDispatchFuncIdx, promiseTypeIdx, innerLocal),
         // caps = $__then_caps{ callback: null, chained: promise }
         { op: "ref.null.extern" },
         { op: "local.get", index: promiseLocal },

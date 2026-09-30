@@ -1770,3 +1770,258 @@ final Promise state only at checkpoint end is not equivalent: same-turn late
 handlers must cancel the original tracked event and reaction jobs may create
 new rejected derived Promises. Preserve exact owner/realm and reason identity
 and avoid reentering a borrowed Wasmtime runtime during host notification.
+
+### 2026-09-30 compiled rejection producer checkpoint
+
+Enumerated persistent handler writes in then/finally, boundary observation,
+await, adoption and combinator subscription. The existing unhandled list is
+WASI-only and is an exit reporter, not a Deno rejection event stream. Its
+final handled flags cannot reconstruct same-turn reject/handle transitions.
+
+Added a byte-inert optional same-graph dispatcher instruction builder, wired
+pending settlement and direct `Promise.reject` construction to it, with
+unhandled suppression based on the persistent handler flag. Duplicate settle
+branches carry attempted-value events without changing the original result.
+The dispatcher name is `__v8x_deno_promise_reject_dispatch` with signature
+`(number, any, any) -> void`. Ordinary graphs without this function emit no
+event instructions. This is a compiler producer, not yet a native adapter
+connection: no runtime artifact pin or packaging claim has advanced.
+
+Added executable Wasm controls for direct/pending rejection, attempted
+duplicate reject, early handlers, async/reaction throws and the absent
+dispatcher. Typecheck and focused tests are running as session 43141.
+Still required: first late-handler event across all listed consumers,
+resolve-value duplicate paths, dispatcher signature authentication and native
+event retention/flush without borrowing reentrancy. Existing source receipt
+checks must account for deliberate opt-in deltas without regenerating donors.
+
+First focused run (43141) passes 29/30. The raw exported async function
+control initially exercised the unwrapped Wasm ABI rather than a compiled
+JavaScript call. Correcting that test exposes a separate real producer gap:
+`wrapAsyncCallInTryCatch` constructs a rejected Promise directly, bypassing
+both the settle helper and `emitStandalonePromiseReject`. This arm is now
+instrumented only when the dispatcher exists, including both tagged and
+foreign catch arms, with fresh instructions and a temporary local released
+after emission. No dispatcher allocates no new local. The test still verifies
+the original reason and Promise identity, not merely absence of a trap.
+
+Final TS7 and focused compiler run (4120) pass: 6/6 rejection controls plus
+13 handler and 11 queue controls, 30/30 across three files. Scoped Biome and
+whitespace checks pass. A/B against clean compiler 54eaa2239a confirms exact
+byte identity for three ordinary dispatcher-free programs (session 55690):
+direct reject 149,080 bytes, pending reject/early catch 164,426 bytes, reaction
+chain 161,826 bytes. That comparison preceded the async-wrapper instrumentation;
+repeat it with that final edit before claiming the final full default-output
+contract. The wrapper likewise gates its new local/instructions on dispatcher
+presence, but this reasoning alone is not measured byte identity.
+
+Wider ownership verification (52050) has four remaining settlement receipt
+failures: canonical opt-in source deltas, the new instruction-leaf import,
+the direct reject emitter delta and the extra dispatcher lookup ordering.
+Resolution preservation passes 53/53. The transient fifth failure in that
+combined run was the async control subsequently fixed above. Do not regenerate
+historical hashes or present the new focused behavior controls as a clean
+publication gate. Compiler changes remain local and uncommitted; no runtime
+pin, compiled native-event transport or general rejection claim has advanced.
+All processes cited here are terminal. Next implement late-handler events,
+authenticate the dispatcher signature and reconcile explicit source deltas.
+
+### 2026-09-30 rejection dispatcher authentication
+
+Replaced bare reserved-name lookups with a shared physical target validator.
+It resolves through the allocator-aware function lookup, rejects imports and
+uninspectable targets, requires `(f64, externref, externref) -> void`, and
+rejects asynchronous dispatchers. Absence remains the deliberate opt-out;
+presence with an unknown or incompatible signature is an explicit compiler
+error rather than invalid Wasm or silently missing notifications.
+
+Added six incompatible declaration controls (arity, event carrier, Promise
+carrier, result carrier, async function and imported function) plus an
+uninspectable-target control. Typecheck and the expanded event suite are
+running as session 81343. Native event transport, first late-handler
+notifications and explicit source-receipt reconciliation still remain open.
+
+### 2026-09-30 late subscription events and receipt reconciliation
+
+Fetched loopdive/js2 main again: ee6828f1ef2f6dd7dc26c1eabe699ed8e8a12e50
+is already an ancestor of the current branch. Merge reports already up to date;
+unrelated dirty changes are preserved, no stash or cleanup was performed.
+
+Dispatcher authentication completed successfully (81343: 13/13). First-late
+reaction notifications for then/catch/finally and boundary observation passed
+with existing handler and queue controls (18611: 41/41). Extended the same
+helper to native Promise adoption, frame-driver await classification, and both
+combinator subscription adapters. It marks the persistent handler before event
+dispatch, suppresses repeat handle events, and leaves explicit MarkAsHandled
+silent. New executable controls cover both already-rejected and pending inputs
+for adoption, await, all, race, allSettled and any. Derived Promise events are
+kept distinct from source identity rather than discarded globally.
+
+Reconciled authenticated source receipts using exact, single-occurrence delta
+reversal, not replacement historical hashes. Adapter fixtures now bind the
+real dispatcher validator. Added refusal controls for changed dispatcher,
+boundary observer local and rejection reason field. Updated the result-mutation
+control to the actual multiline guard, requiring one live mutation site; its
+old replacement had become a no-op. The new instruction leaf is constrained
+to one type-only model import.
+
+Final run 50654 is terminal: 248/248 across settlement ownership (142),
+resolution preservation (53), compiled rejection events (29), persistent
+handler state (13) and one-job queue controls (11). TS7 passes. Scoped Biome
+lint-only passes with five existing explicit-any warnings in the receipt
+helper; full Biome formatting is not claimed because the repo uses Prettier.
+Whitespace checks pass.
+
+Dispatcher-free A/B (98674), standalone/deno/hostBridge-always, compares clean
+pinned compiler 54eaa2239acd5eb1f383a500bd4d4a3b9dbdb3b2 against the current
+working candidate after all producer and subscription changes: byte-identical
+direct rejection (149,080), pending rejection/early catch (164,612), then chain
+(161,826) and async throw through a compiled JS wrapper (149,209 bytes).
+
+All changes remain local and uncommitted. The native runtime is unchanged at
+2140dde; runtime compiler pin and trusted packaged artifacts have not advanced.
+Next: retain and flush compiled events through the native adapter with exact
+owner/realm identity and without reentering a borrowed Wasmtime store. Also
+audit non-suspending IR await and resolve-value duplicate/thenable paths before
+claiming complete reaction/rejection coverage. Broader Rust ops, module and
+application conformance requirements remain open; this is not full integration.
+
+### 2026-09-30 non-suspending IR await event coverage
+
+Audited the additional native-carrier await path in `ir/lower-generic.ts`.
+It previously marked field 4 directly without emitting a late reaction event.
+Added an optional authenticated dispatcher resolver to the IR integration and
+extended the pure reaction helper to accept an externref scratch local. Each
+use builds fresh conversion instructions, preserving the no-shared-mutable-node
+rule. Dispatcher absence preserves the original cast/mark sequence exactly.
+The existing unrelated documentation edit in lower-contracts.ts is preserved.
+
+Added a direct IR-builder executable Wasm control, not a compiled-source test
+that might silently select the frame driver. It exercises the actual generic
+lowerer, constructs a rejected carrier and checks exact reason identity,
+first-only handle events, repeated awaits and plain-value passthrough, with
+dispatcher enabled and disabled. Both controls pass (2003: 2/2).
+
+Final 5338 is terminal: 250/250 across six suites (the earlier five plus the
+two IR-await controls). TS7 89445 passes. Dispatcher-free A/B 67739 against
+clean compiler 54eaa2239acd5eb1f383a500bd4d4a3b9dbdb3b2 confirms byte identity
+for a fulfilled await program in standalone (159,457 bytes) and WASI (118,748).
+An earlier compiled WASI probe (82020) was not behavioral evidence: instantiation
+failed for missing WASI imports and it claimed zero IR functions. The direct
+builder test avoids that routing ambiguity and does execute the IR body.
+
+Native transport investigation: the runtime already has realm-rooted numeric
+value handles, a same-graph `__v8x_value_keep`, and a central mutable runtime
+borrow in `with_deno_core_runtime`. The dispatcher can retain Promise/reason
+handles and enqueue events during Wasm execution, but native notification must
+occur only after releasing the RefCell borrow. Compiled microtasks also use
+separate borrow paths and need the same flush semantics. Events must bind the
+owning realm and isolate, not depend on whichever context happens to be current.
+No native transport implementation or artifact pin advancement is claimed.
+
+Remaining producer audit includes IR `async.throw`'s directly minted rejected
+carrier and resolve-value duplicate/thenable paths. Changes remain local and
+uncommitted; the full integration objective is still active.
+
+### 2026-09-30 IR direct rejection and native transport implementation
+
+Instrumented generic IR `async.throw`'s directly minted rejected carrier with
+event 0. Only a validated dispatcher allocates its scratch local; no dispatcher
+leaves the original emission unchanged. Extended the direct IR Wasm test to
+exercise both await and async.throw with/without a dispatcher. First run 40210
+failed on a Vitest negative equality matcher inspecting an opaque Wasm object,
+not on compilation or execution. A boolean identity comparison fixes that
+instrument defect; 70366 passes 4/4. Final 67022 is terminal: 252/252 across
+six compiler suites and TS7 passes.
+
+Runtime worktree `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo` now has
+uncommitted native transport changes. New pure `js2wasm_rejection_events.rs`
+retains ordered numeric root handles with owning realm/isolate metadata;
+unknown events and non-integral/non-finite/out-of-range handles are refused.
+The `v8x:deno/__v8x_promise_reject_notify` import only enqueues, never invokes
+user callbacks while Wasmtime runs. Captured continuation data travels with
+the event. A realm flusher converts exact Promise/reason wrappers under a
+borrow, ends the borrow, restores continuation data, then notifies the native
+callback. First-late-handler events retain a null native value. Non-Promise
+carriers and wrong owner identities are explicit errors, not fabricated events.
+
+The common Deno execution wrapper, compiled microtask paths and non-active
+realm-value access use the post-borrow flush boundary. Callback-active access
+continues to defer delivery to its outer execution boundary. Same-realm
+recursive flushes are guarded so reentrant notifications append behind earlier
+events. Cross-realm global ordering is not yet proven by this per-realm queue
+and must be covered before a general ordering claim.
+
+Runtime builder source now defines the same-graph dispatcher and roots values
+with its context bridge before calling the numeric host import. **The compiler
+pin remains 54eaa2239a and that older compiler does not produce these events.**
+Do not publish/rebuild a claimed event-capable artifact from that pin. Advance
+the pin only to a committed, verified compiler checkpoint and add an actual
+compiled-event artifact control; import presence or an exported dispatcher is
+not proof that compiler producer sites emitted calls.
+
+Native cargo check passes (62436, 69749, 32089). Direct dependency-free Rust
+queue tests pass 2/2; runtime option contracts pass 7/7 (69749). `cargo test
+--lib` 51553 is terminal and failed to link existing missing DisallowJavascript-
+ExecutionScope, sandbox and inspector symbols. No vendor code was changed.
+The direct Rust leaf test was used as a bounded alternative, not a replacement
+claim for a full library suite. Existing trusted core artifact regression run
+40146 passes 30/30 with three explicit ignored tests; that artifact predates
+compiled event producers and cannot prove the new transport end to end.
+Final regression repeat after continuation capture (4316) is terminal and
+passes 30/30, three ignored, in 1.12 seconds. All cited processes are terminal.
+
+Next: committed compiler pin, fresh compiler-free event artifact, exact reason/
+Promise identity and callback reentry tests for the transport, cross-realm
+notification ordering, and resolve-value/thenable duplicate-path coverage.
+No PR push, artifact pin advancement or full-integration completion occurred.
+
+### 2026-09-30 compiled event transport end-to-end verification
+
+Added two public rusty_v8 integration controls against a freshly compiled
+context: exact Promise/reason identity with first-only late registration, and
+callback reentry that attaches a handler to the Wasm-owned Promise. The fixture
+does not synthesize native rejection events. It calls compiled Promise.reject
+and catch, whose compiler-generated dispatcher reaches the queued host import.
+The native tests assert exact wrapper addresses, absent value on the handle
+event, persistent handler state and no duplicate events after checkpoint.
+
+Runtime tooling now shares `contextPromiseRejectionDispatcherSource` between
+the core artifact builder and the namespace fixture builder. It validates the
+root-keeper identifier and roots both values. Namespace builder opt-in flags
+`--rejection-events` and `--rejection-events-disabled` produce the positive
+fixture and the same workload without the dispatcher. These are local test
+artifacts from the working compiler, not a claim that the production compiler
+pin has advanced.
+
+Positive raw build 8966: `/private/tmp/v8x-events-context-20260930.wasm`,
+1,153,382 bytes, SHA-256
+`ad1c418de50e732660dabd3fa635c48ab27c166306d0b8e8df61f44e168dc36d`.
+Raw replay 20570 passes 2/2 in 125.64 seconds including native compilation.
+Precompile 94502 passes 1/1 in 126.71 seconds with Wasmtime 47.0.3, producing
+`/private/tmp/v8x-events-context-20260930.cwasm`, 23,521,584 bytes, SHA-256
+`68a1bd8a7e41dc29fc597a765919008321fc111011d26996554d00e88f81a743`.
+These development artifact sizes are not a normalized deployment benchmark.
+
+Compiler-free replay 77384 passes 2/2 in 0.04 seconds with features
+engine_js2wasm/js2wasm_gc_copying/simdutf and no runtime-compile feature.
+Dependency A/B confirms wasmtime-internal-cranelift is absent under those
+features and present as version 47.0.3 when js2wasm_runtime_compile is added.
+This proof concerns the selected Wasmtime compilation dependency, not a full
+binary size or linker audit.
+
+Negative raw build 37214: 1,152,720 bytes, then negative precompile 17077
+passes 1/1 in 121.82 seconds. Running the same compiler-free delivery tests on
+`/private/tmp/v8x-events-disabled-context-20260930.cwasm` fails 2/2 at the
+expected missing callback count (0 instead of 1) and missing reentrant handler
+(false instead of true). Positive artifact replay immediately afterward passes
+2/2 again in 0.08 seconds. No source rollback or removal of expected assertions
+was needed. Runtime option/source contracts now pass 8/8. All cited processes
+are terminal. Updated site/callbacks.typ to describe only this measured opt-in
+behavior; Typst is unavailable, so rendering is unverified.
+
+Open scope is unchanged: compiler pin/checkpoint and complete-core artifact
+rebuild, multi-graph producer verification, cross-realm global event ordering,
+resolve-value/thenable duplicate paths and the broader Deno integration gates.
+The per-realm transport now has actual compiler-free behavioral evidence;
+that evidence is not full Deno conformance. All changes remain local.

@@ -988,6 +988,7 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, reso
     callbackTypeIdx: rt.callbackTypeIdx,
     enqueueFuncIdx: rt.enqueueFuncIdx,
     markRejectionHandledFuncIdx: rt.markRejectionHandledFuncIdx >= 0 ? rt.markRejectionHandledFuncIdx : undefined,
+    rejectionDispatchFuncIdx: rt.rejectionDispatchFuncIdx,
   };
   if (resolveValueFuncIdx >= 0) {
     return buildResolvedSubscribeBody({ ...dispatch, resolveValueFuncIdx, bagInit: combinatorBagInit() });

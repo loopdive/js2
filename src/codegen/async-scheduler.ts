@@ -58,6 +58,11 @@ import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 // module; the inline hooks in this file (settle-body note, Promise.reject mint)
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
 import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
+import {
+  buildPromiseRejectionEvent,
+  buildPromiseReactionHandled,
+} from "../runtime/wasmgc/promise/rejection-event-bodies.js";
+import { promiseRejectionDispatcher } from "./promise-rejection-dispatch.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { tryEmitObservablePromiseFinally } from "./promise-finally-invoke.js"; // (#6651 D7)
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
@@ -144,6 +149,7 @@ function bindPromiseSettleResources(
     promiseTypeIdx,
     callbackTypeIdx,
     resolveHook,
+    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
     unhandledHeadGlobalIdx: state.unhandledHeadGlobalIdx,
     unhandledNodeTypeIdx: state.unhandledNodeTypeIdx,
     enqueueFuncIdx: state.enqueueFuncIdx,
@@ -1089,6 +1095,7 @@ function buildPromiseResolveValueBody(
   const thenStringInstrs = hasOwnThenArm ? stringConstantExternrefInstrs(ctx, "then") : [];
   const thenGetStringInstrs = hasOwnThenArm ? stringConstantExternrefInstrs(ctx, "then") : [];
   return buildResolutionBody({
+    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
     target: { wasi: ctx.wasi, standalone: ctx.standalone },
     state,
     promiseTypeIdx,
@@ -1757,9 +1764,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 2 },
-      { op: "local.get", index: 2 },
-      { op: "i32.const", value: 1 },
-      { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+      ...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 2),
       { op: "local.get", index: 1 },
       { op: "struct.new", typeIdx: capsTypeIdx },
       { op: "extern.convert_any" },
@@ -1822,6 +1827,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
  * async frame driver reuses them rather than forking a parallel scheduler.
  */
 export interface AsyncDriveRuntime {
+  rejectionDispatchFuncIdx?: number;
   /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref, $bag externref, $handled i32}`). */
   promiseTypeIdx: number;
   /** `$PromiseCallback` reaction-node typeIdx ({@link getOrRegisterPromiseCallbackTypeIdx}). */
@@ -1865,6 +1871,7 @@ export function ensureAsyncDriveRuntime(ctx: CodegenContext): AsyncDriveRuntime 
     enqueueFuncIdx: state.enqueueFuncIdx,
     drainFuncIdx: state.drainFuncIdx,
     markRejectionHandledFuncIdx: state.markRejectionHandledFuncIdx,
+    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
   };
 }
 
@@ -3671,6 +3678,17 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
       fctx.body.push(instr);
     }
   }
+  fctx.body.push(
+    ...buildPromiseRejectionEvent(
+      promiseRejectionDispatcher(ctx),
+      0,
+      [{ op: "local.get", index: pLocal }],
+      [
+        { op: "local.get", index: pLocal },
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+      ],
+    ),
+  );
   fctx.body.push({ op: "local.get", index: pLocal });
   fctx.body.push({ op: "extern.convert_any" });
 }
@@ -3793,11 +3811,7 @@ export function emitStandalonePromiseThen(
   const nativeBody: Instr[] = [];
   fctx.savedBodies.push(outerBody);
   fctx.body = nativeBody;
-  fctx.body.push(
-    { op: "local.get", index: promiseLocal },
-    { op: "i32.const", value: 1 },
-    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
-  );
+  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));
 
   // Chained promise starts pending with no callbacks.
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
@@ -4459,11 +4473,7 @@ export function emitStandalonePromiseFinally(
   fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
   fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "local.set", index: capsLocal });
-  fctx.body.push(
-    { op: "local.get", index: promiseLocal },
-    { op: "i32.const", value: 1 },
-    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
-  );
+  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));
 
   fctx.body.push(
     { op: "local.get", index: promiseLocal },

@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { Instr } from "../../../wasm/model/instructions.js";
+import { buildPromiseReactionHandled } from "../promise/rejection-event-bodies.js";
 
 export interface NativeAwaitClassificationOptions {
+  readonly rejectionDispatchFuncIdx?: number;
   readonly alwaysAsync: boolean;
   readonly awaitedLocal: number;
   readonly promiseLocal: number;
@@ -93,9 +95,7 @@ export function buildNativeAwaitClassification(options: NativeAwaitClassificatio
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: promiseTypeIdx },
         { op: "local.set", index: promiseLocal },
-        { op: "local.get", index: promiseLocal },
-        { op: "i32.const", value: 1 },
-        { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+        ...buildPromiseReactionHandled(options.rejectionDispatchFuncIdx, promiseTypeIdx, promiseLocal),
         { op: "local.get", index: promiseLocal },
         { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
         { op: "i32.const", value: 1 },

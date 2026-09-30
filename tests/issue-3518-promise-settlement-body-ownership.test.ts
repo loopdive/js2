@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import * as bodies from "../src/runtime/wasmgc/promise/settlement-bodies.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
 import { movedResolutionNames, assertMovedResolutionReceipt } from "./helpers/promise-resolution-receipts.js";
+import { promiseRejectionDispatcher } from "../src/codegen/promise-rejection-dispatch.js";
 
 const root = resolve(import.meta.dirname, "..");
 const canonicalPath = "src/runtime/wasmgc/promise/settlement-bodies.ts";
@@ -406,6 +407,26 @@ function once(text: string, before: string, after: string): string {
   return text.replace(before, after);
 }
 function undoDenoRetainedDelta(name: string, text: string): string {
+  if (name === "emitStandalonePromiseReject") {
+    text = once(
+      text,
+      `  fctx.body.push(
+    ...buildPromiseRejectionEvent(
+      promiseRejectionDispatcher(ctx),
+      0,
+      [{ op: "local.get", index: pLocal }],
+      [
+        { op: "local.get", index: pLocal },
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+      ],
+    ),
+  );\n`,
+      "",
+    );
+  }
+  if (name === "ensureAsyncDriveRuntime") {
+    text = once(text, "    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),\n", "");
+  }
   // Each substitution must occur exactly once. Everything else is still
   // authenticated against the original digest, including unrelated body edits.
   // The observable then/finally changes arrived on main and are separately
@@ -447,7 +468,7 @@ function undoDenoRetainedDelta(name: string, text: string): string {
   if (name === "emitStandalonePromiseThen" || name === "emitStandalonePromiseFinally") {
     text = once(
       text,
-      '  fctx.body.push(\n    { op: "local.get", index: promiseLocal },\n    { op: "i32.const", value: 1 },\n    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n  );\n',
+      "  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));\n",
       "",
     );
   }
@@ -481,7 +502,7 @@ function undoDenoRetainedDelta(name: string, text: string): string {
     text = once(text, "  exportPromiseHandlerBoundary(ctx, promiseTypeIdx, state.markRejectionHandledFuncIdx);\n", "");
     text = once(
       text,
-      '      { op: "local.get", index: 2 },\n      { op: "i32.const", value: 1 },\n      { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n',
+      "      ...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 2),\n",
       "",
     );
   }
@@ -523,6 +544,44 @@ function originalText(node: ts.FunctionDeclaration): string {
     body = once(body, '    { name: "$orderedCallbacks", type: { kind: "externref" } },\n', "");
   }
   if (name === "buildPromiseSettleBody") {
+    body = once(
+      body,
+      `        ...buildPromiseRejectionEvent(
+          state.rejectionDispatchFuncIdx,
+          settledState === PROMISE_STATE_REJECTED ? 2 : 3,
+          [{ op: "local.get", index: promiseLocal }],
+          [{ op: "local.get", index: valueLocal }],
+        ),\n`,
+      "",
+    );
+    body = once(
+      body,
+      `    ...(settledState === PROMISE_STATE_REJECTED && state.rejectionDispatchFuncIdx !== undefined
+      ? ([
+          { op: "local.get", index: promiseLocal },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildPromiseRejectionEvent(
+              state.rejectionDispatchFuncIdx,
+              0,
+              [{ op: "local.get", index: promiseLocal }],
+              [{ op: "local.get", index: valueLocal }],
+            ),
+          },
+        ] satisfies Instr[])
+      : []),
+
+`,
+      "",
+    );
+    body = once(
+      body,
+      '      then: [\n        { op: "local.get", index: valueLocal },\n        { op: "return" },\n      ],',
+      '      then: [{ op: "local.get", index: valueLocal }, { op: "return" }],',
+    );
     // Independently reverse only the registration-order and persistent-handler
     // deltas. The historical declaration digest remains the authenticated donor.
     body = once(
@@ -734,8 +793,9 @@ function adapters(undefinedInstructions: (ctx: any) => Instr[]) {
     "canonicalUndefinedExternInstrs",
     "buildPromiseHookInstructions",
     "DENO_PROMISE_HOOK_DISPATCH",
+    "promiseRejectionDispatcher",
     js + "\nreturn { " + names.join(",") + " };",
-  )(undefinedInstructions, bodies.buildDenoPromiseHookCall, "__v8x_dispatch_promise_hook");
+  )(undefinedInstructions, bodies.buildDenoPromiseHookCall, "__v8x_dispatch_promise_hook", promiseRejectionDispatcher);
 }
 const resource = {
   promiseTypeIdx: 11,
@@ -789,14 +849,25 @@ describe("native Promise settlement canonical ownership (not full runtime closur
   });
   it.each([
     [
+      "ensureAsyncDriveRuntime",
+      "rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx)",
+      "rejectionDispatchFuncIdx: 42",
+    ],
+    [
+      "exportPromiseBoundaryIfRegistered",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 2)",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 3)",
+    ],
+    ["emitStandalonePromiseReject", "fieldIdx: 1", "fieldIdx: 0"],
+    [
       "getOrRegisterPromiseType",
       '{ name: "$handled", type: { kind: "i32" }, mutable: true }',
       '{ name: "$handled", type: { kind: "i32" }, mutable: false }',
     ],
     [
       "emitStandalonePromiseThen",
-      '{ op: "i32.const", value: 1 },\n    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 }',
-      '{ op: "i32.const", value: 2 },\n    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 }',
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal)",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal + 1)",
     ],
     [
       "exportDrainMicrotasksIfRegistered",
@@ -840,9 +911,10 @@ describe("native Promise settlement canonical ownership (not full runtime closur
     ["changed branch", read(canonicalPath).replace('op: "br_if", depth: 1', 'op: "br_if", depth: 0')],
     [
       "changed result",
-      read(canonicalPath).replace(
-        'then: [{ op: "local.get", index: valueLocal }',
-        'then: [{ op: "local.get", index: promiseLocal }',
+      once(
+        read(canonicalPath),
+        '        { op: "local.get", index: valueLocal },\n        { op: "return" },',
+        '        { op: "local.get", index: promiseLocal },\n        { op: "return" },',
       ),
     ],
   ])("rejects declaration mutation: %s", (_name, changed) =>
@@ -944,12 +1016,19 @@ describe("native Promise settlement canonical ownership (not full runtime closur
   it("keeps the canonical owner on the one import-free instruction-model leaf", () => {
     const sf = parse(read(canonicalPath));
     const imports = sf.statements.filter(ts.isImportDeclaration);
-    expect(imports).toHaveLength(2);
+    expect(imports).toHaveLength(3);
     expect(imports[0]!.importClause!.isTypeOnly).toBe(true);
     expect((imports[0]!.moduleSpecifier as ts.StringLiteral).text).toBe("../../../wasm/model/instructions.js");
     expect(imports[1]!.getText()).toBe(
       'import { buildRegistrationOrderedCallbacks } from "./reaction-order-bodies.js";',
     );
+    expect(imports[2]!.getText()).toBe('import { buildPromiseRejectionEvent } from "./rejection-event-bodies.js";');
+    const eventImports = parse(read("src/runtime/wasmgc/promise/rejection-event-bodies.ts")).statements.filter(
+      ts.isImportDeclaration,
+    );
+    expect(eventImports).toHaveLength(1);
+    expect(eventImports[0]!.importClause!.isTypeOnly).toBe(true);
+    expect((eventImports[0]!.moduleSpecifier as ts.StringLiteral).text).toBe("../../../wasm/model/instructions.js");
     const leaf = parse(read("src/wasm/model/instructions.ts"));
     expect(leaf.statements.filter((n) => ts.isImportDeclaration(n) || ts.isExportDeclaration(n))).toEqual([]);
     expect(read(canonicalPath)).not.toMatch(/CodegenContext|AsyncSchedulerState|=>\s*Instr|import\(/);
@@ -987,8 +1066,9 @@ describe("native Promise settlement canonical ownership (not full runtime closur
     const events: string[] = [];
     const ctx = {
       funcMap: {
-        get() {
+        get(name: string) {
           events.push("lookup");
+          if (name === "__v8x_deno_promise_reject_dispatch") return undefined;
           return 20;
         },
       },
@@ -1001,7 +1081,7 @@ describe("native Promise settlement canonical ownership (not full runtime closur
       return [{ op: "ref.null.extern" }];
     });
     const bound = adapter.bindPromiseSettleResources(ctx, state, 11, 12);
-    expect(events).toEqual(["lookup", "undefined"]);
+    expect(events).toEqual(["lookup", "undefined", "lookup"]);
     expect(bound).toMatchObject({
       promiseTypeIdx: 11,
       callbackTypeIdx: 12,

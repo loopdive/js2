@@ -2256,6 +2256,7 @@ export function ensureAsyncResumeFunction(
               fulfillStepFuncIdx: info.stepFulfillFuncIdx ?? -1,
               rejectStepFuncIdx: info.stepRejectFuncIdx ?? -1,
               markRejectionHandledFuncIdx: rt?.markRejectionHandledFuncIdx ?? -1,
+              rejectionDispatchFuncIdx: rt?.rejectionDispatchFuncIdx,
               setThrowMode: setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
             }),
           );

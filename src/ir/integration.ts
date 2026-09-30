@@ -76,6 +76,7 @@ import {
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
 import { getOrRegisterPromiseType, isStandalonePromiseActive } from "../codegen/async-scheduler.js";
+import { promiseRejectionDispatcher } from "../codegen/promise-rejection-dispatch.js";
 import {
   addGeneratorImports,
   addForInImports,
@@ -8151,6 +8152,9 @@ function makeResolver(
     // -------------------------------------------------------------------
     resolvePromiseType(): number {
       return getOrRegisterPromiseType(ctx);
+    },
+    resolvePromiseRejectionDispatcher(): number | undefined {
+      return promiseRejectionDispatcher(ctx);
     },
     // (#1373b C-1) Lane discriminator for the `await` lowering: native
     // `$Promise` carrier (wasi) → one-level unwrap; JS-host → identity.

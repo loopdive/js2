@@ -83,6 +83,10 @@ import {
 } from "./effects.js";
 import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag crossings at the frozen IrDynamicLowering contract
 import { IrInvariantError } from "./outcomes.js";
+import {
+  buildPromiseReactionHandled,
+  buildPromiseRejectionEvent,
+} from "../runtime/wasmgc/promise/rejection-event-bodies.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { stackifyMovableNestedValues } from "./nested-stackification.js";
@@ -838,6 +842,7 @@ export function lowerIrFunctionBody<S, Slot>(
   // like `emitStandaloneAwaitUnwrap`'s temp local). Allocated lazily on the
   // first await in the function; reused across subsequent awaits.
   let awaitScratchPromiseIdx: number | null = null;
+  let rejectedScratchPromiseIdx: number | null = null;
   // #1804 — scratch locals for `vec.new_fixed`: one per (array typeIdx) to stash
   // the `array.new_fixed` data ref while the length is pushed below it for the
   // (length, data) struct.new field order. Keyed by arrayTypeIdx so distinct
@@ -3396,6 +3401,29 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitNull({ kind: "val", val: { kind: "externref" } }, out);
         emitter.emitPromiseNew(promiseTypeIdx, out);
         emitter.emitToExternref(out);
+        const dispatch = resolver.resolvePromiseRejectionDispatcher?.();
+        if (dispatch !== undefined) {
+          if (rejectedScratchPromiseIdx === null) {
+            rejectedScratchPromiseIdx = func.params.length + locals.length;
+            locals.push({
+              name: "$rejected_promise",
+              type: { kind: "externref" },
+              logicalType: { kind: "val", val: { kind: "externref" } },
+            });
+          }
+          const promise = (): Instr[] => [
+            { op: "local.get", index: rejectedScratchPromiseIdx! },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: promiseTypeIdx },
+          ];
+          emitter.pushRaw(out, { op: "local.set", index: rejectedScratchPromiseIdx });
+          for (const instruction of buildPromiseRejectionEvent(dispatch, 0, promise(), [
+            ...promise(),
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          ]))
+            emitter.pushRaw(out, instruction);
+          emitter.pushRaw(out, { op: "local.get", index: rejectedScratchPromiseIdx });
+        }
         return;
       }
       case "await": {
@@ -3449,11 +3477,12 @@ export function lowerIrFunctionBody<S, Slot>(
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
           then: [
-            { op: "local.get", index: awaitScratchPromiseIdx },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: promiseTypeIdx },
-            { op: "i32.const", value: 1 },
-            { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+            ...buildPromiseReactionHandled(
+              resolver.resolvePromiseRejectionDispatcher?.(),
+              promiseTypeIdx,
+              awaitScratchPromiseIdx,
+              "extern",
+            ),
             { op: "local.get", index: awaitScratchPromiseIdx },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },

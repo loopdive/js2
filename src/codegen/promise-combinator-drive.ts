@@ -168,6 +168,7 @@ function ensureDriveAllRuntime(
         callbackTypeIdx: rt.callbackTypeIdx,
         enqueueFuncIdx: rt.enqueueFuncIdx,
         markRejectionHandledFuncIdx: rt.markRejectionHandledFuncIdx >= 0 ? rt.markRejectionHandledFuncIdx : undefined,
+        rejectionDispatchFuncIdx: rt.rejectionDispatchFuncIdx,
         resolveValueFuncIdx: resolveValueIdx,
         bagInit: { op: "ref.null.extern" },
       }),
