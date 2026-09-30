@@ -563,6 +563,9 @@ export interface CompileOptions {
     /** Owner's Get(object, key, receiver) -> externref, preserving reference identity. */
     get?: string;
   };
+  /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
+   * owner-token field to GC structs; all linked graph artifacts must opt in. */
+  standaloneAllocationOwnerExport?: string;
   /** Optional native-host notification `() -> void` after each Wasm-owned
    * microtask enqueue. The host can combine notifications from multiple
    * graphs with its native queue and call `__drain_one_microtask` in order.

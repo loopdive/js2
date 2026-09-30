@@ -18,18 +18,13 @@ it("reads core bindings from the owning bootstrap realm in a separately compiled
     const failure={token:42};
     Object.defineProperty(bootstrap,"failure",{get(){throw failure;}});
     export function originalFailure():any {return failure;}
-    const owned=new Map<any,number>();
-    owned.set(globalThis,1);
-    owned.set(bootstrap,1);
-    export function owns(value:any):boolean { return owned.has(value); }
     export function get(object:any,key:any,receiver:any):any {
       const value=Reflect.get(object,key,receiver);
-      if (typeof value==='object' && value!==null) owned.set(value,1);
       return value;
     }
     export function realm():any {return globalThis;}
     `,
-    { target: "standalone", platform: "deno", hostBridge: "always" },
+    { target: "standalone", platform: "deno", hostBridge: "always", standaloneAllocationOwnerExport: "owns" },
   );
   expect(provider.success, JSON.stringify(provider.errors)).toBe(true);
   const owner = new WebAssembly.Instance(new WebAssembly.Module(provider.binary), provider.importObject);
@@ -70,6 +65,7 @@ it("reads core bindings from the owning bootstrap realm in a separately compiled
     sources.entry,
     {
       target: "standalone",
+      standaloneAllocationOwnerExport: "localOwns",
       platform: "deno",
       hostBridge: "always",
       allowJs: true,
@@ -107,15 +103,15 @@ it("delegates foreign argument reads without requiring a globalThis expression",
     Object.assign(object,{answer:42});
     export function original():any {return object;}
     export function realm():any {return globalThis;}
-    export function owns(value:any):boolean {return value===object;}
     export function get(value:any,key:any,receiver:any):any {return Reflect.get(value,key,receiver);}
   `,
-    { target: "standalone" },
+    { target: "standalone", standaloneAllocationOwnerExport: "owns" },
   );
   expect(provider.success, JSON.stringify(provider.errors)).toBe(true);
   const owner = new WebAssembly.Instance(new WebAssembly.Module(provider.binary), provider.importObject);
   const consumer = await compile(`export function read(value:any):any {return value.answer;}`, {
     target: "standalone",
+    standaloneAllocationOwnerExport: "localOwns",
     standaloneGlobalThisImport: { module: "context", name: "realm", owns: "owns", get: "get" },
     link: ["context"],
   });

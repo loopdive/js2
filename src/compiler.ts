@@ -58,6 +58,7 @@ import {
   widenNonDefaultableTypes,
   type FailureTelemetry,
 } from "./compiler/output.js";
+import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
 import {
   detectEarlyErrors,
   pushSourceAnchoredDiagnostic,
@@ -823,6 +824,12 @@ function buildCodegenOptions(
       throw new Error("Compile option standaloneGlobalThisImport.exceptionTag must be non-empty when provided.");
     }
   }
+  if (
+    options.standaloneAllocationOwnerExport !== undefined &&
+    (options.target !== "standalone" || !options.standaloneAllocationOwnerExport)
+  ) {
+    throw new Error("standaloneAllocationOwnerExport requires standalone and a non-empty export name.");
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   if (options.standaloneMicrotaskNotifyImport !== undefined) {
     const { module, name } = options.standaloneMicrotaskNotifyImport;
@@ -1146,6 +1153,19 @@ function finalizePipelineModule(
   // Step 2c: Widen non-defaultable ref types to ref_null in locals, params, and
   // results. Avoids "uninitialized non-defaultable local" and struct.get/set
   // type errors.
+  if (options.standaloneAllocationOwnerExport !== undefined) {
+    try {
+      stampAllocationOwners(mod, options.standaloneAllocationOwnerExport);
+    } catch (error) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `Allocation provenance: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+      return failResult(errors, telemetry);
+    }
+  }
   widenNonDefaultableTypes(mod);
 
   // #4401 — An explicitly selected native-first profile is a

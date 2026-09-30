@@ -2559,3 +2559,58 @@ Promise/Deno checks passed 70/71 after resolving the five conflicts and adding
 the new Promise carrier field in main's species path. One existing inline
 Promise-subclass test throws with species-aware construction; it was not
 weakened or removed. This remains a follow-up, not a fully passing merge claim.
+
+### Allocation provenance implementation plan
+
+The adapter handle table cannot certify allocation provenance. Prototype an
+opt-in final physical-module transform that adds an immutable owner-token slot
+to GC structs and initializes it at every allocation. One immutable GC token
+is created per module instance before other globals; it does not hold reverse
+references to any allocated objects. An exported predicate compares the token
+by reference identity after validating the carrier. This avoids an unbounded
+strong-reference registry and keeps provenance unchanged when a foreign value
+is rooted, returned, or inserted in another module's containers.
+
+All physical readers/writers and subtype field prefixes must shift together.
+The pass must handle constant global allocations, nested allocations, packed
+fields, and subtype constructors; unsupported constant forms must fail loudly.
+Identical module binaries instantiated twice are the key negative control:
+their Wasm types are identical, but their owner tokens must differ. Validate
+this before wiring Deno artifacts or making performance claims.
+
+The opt-in standaloneAllocationOwnerExport pass is implemented. Each original
+GC struct carries an immutable reference to a fresh per-instance token. The
+pass remaps subtype field indices and defined-global indices, spills subtype
+constructor suffix operands into reused locals, and reconstructs constant
+initializer operand boundaries. It creates no allocation registry or reverse
+references. Shared export descriptors are cloned before remapping, fixing a
+double-shift exposed by the explicit host bridge's aliased global exports.
+
+The same-module/two-instance negative control passes even after a foreign
+object is inserted into the other instance's Map. Controls cover newly
+allocated objects, captured closures, arrays, Promise/Error carriers, inherited
+field reads, constant subtype constructors, packed fields, and exported globals.
+Class enumeration is compared against unstamped output; simple-literal
+enumeration retains its exact two-property positive control. The compiled
+provenance predicate replaces the hand-maintained ownership Map in the linked
+bootstrap test, so newly returned child objects do not need ad-hoc registration.
+
+The unchanged pinned core bootstrap/hello-world stage checks pass both with
+and without stamps (2/2). Stamped probe 87450 completes with no deferred provider
+calls and preserves the full serde_v8 error diagnostic. Its raw module is
+2,856,164 bytes, SHA-256
+10e70545e609f5cfcaca594520f452d075b91e2df389d2f21af0fd83dc477cd7.
+This is a compiler-stage module, not a native deployment footprint measurement.
+
+Adapter wiring and native compiler-free replay remain open. Native shared
+string readers inspect physical fields directly: AnyString's owner slot will
+shift flat/rope suffix fields. Their ABI must be updated explicitly before
+accepting stamped artifacts; shared buffer length/data prefix slots are
+unchanged when the token is appended after the vector root's prefix. All
+linked graph artifacts must use the same stamped runtime type layouts.
+
+Final focused run 30799 passes 17/17 across allocation provenance, linked
+bootstrap bindings, shared exception identity, realm carriers, and the exact
+upstream core-stage probe with and without stamps. TypeScript check 21214 is
+the final check for this checkpoint. Native core/application packages have not
+been rebuilt with stamps, and no full upstream harness completion is claimed.
