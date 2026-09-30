@@ -959,6 +959,7 @@ describe("semantic verification and provider ownership boundary", () => {
           "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
           "src/backend/wasmgc/resources/native-builtin-functions.ts",
         );
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-invocation-substrate.ts");
       if (id === "native-runtime")
         additions.push(
           "src/runtime/wasmgc/values/builtin-function-layouts.ts",

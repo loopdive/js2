@@ -6,7 +6,6 @@ import type {
   PhysicalModuleReservations,
   TagReservation,
   TagImportReservation,
-  TypeReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import { assertNativeInvocationRequirementsCurrent } from "../../../ir/program/native-invocation-requirements.js";
@@ -31,24 +30,17 @@ import {
   requireCompletedNativeStringLiterals,
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
+import type { NativeArgumentVectorReservations } from "./native-argument-vectors.js";
+import type { NativeErrorReservations } from "./native-errors.js";
 import {
-  declareNativeArgumentVectorResources,
-  reserveNativeArgumentVectorResources,
-  nativeArgumentVectorReservationInventory,
-  fillNativeArgumentVectorResources,
-  type NativeArgumentVectorReservations,
-  type NativeArgumentVectorDeclarationPlan,
-} from "./native-argument-vectors.js";
-import {
-  reserveNativeErrorResources,
-  fillNativeErrorResources,
-  requireCompletedNativeErrors,
-  requireNativeErrorReservations,
-  type NativeErrorReservations,
-  type NativeErrorDependencies,
-  type NativeErrorRequirements,
-} from "./native-errors.js";
-import { createVectorBaseType } from "../../../runtime/wasmgc/values/vector-grow-store.js";
+  declareNativeInvocationSubstrateResources,
+  reserveNativeInvocationSubstrateResources,
+  requireNativeInvocationSubstrateReservations,
+  fillNativeInvocationSubstrateResources,
+  requireCompletedNativeInvocationSubstrate,
+  nativeInvocationSubstrateReservationInventory,
+  type NativeInvocationSubstrateReservations,
+} from "./native-invocation-substrate.js";
 import { buildClosureUndefinedTest } from "../../../runtime/wasmgc/values/closure-receiver-bodies.js";
 import {
   buildNativeClosureMethodDefinition,
@@ -73,6 +65,7 @@ export interface NativeInvocationDependencies {
   readonly vectors: NativeVectorTypeReservations;
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly booleanBoxes?: NativeBooleanBoxReservations;
+  readonly substrate?: NativeInvocationSubstrateReservations;
 }
 export interface NativeInvocationReservations {
   readonly requirements: NativeInvocationRequirements;
@@ -93,11 +86,9 @@ interface Owner {
   readonly dependencies: NativeInvocationDependencies;
   readonly dependenciesSnapshot: NativeInvocationDependencies;
   readonly layout: ClosureInvocationLayout;
-  readonly argumentPlan: NativeArgumentVectorDeclarationPlan;
-  readonly errorRequirements: NativeErrorRequirements;
-  readonly errorDependencies: NativeErrorDependencies;
+  readonly substrate: NativeInvocationSubstrateReservations;
+  readonly borrowedSubstrate: ReturnType<typeof substrateSelection>;
   readonly functions: readonly FunctionReservation[];
-  readonly ownedBase?: TypeReservation;
   callables?: NativeSourceClosureCallables;
   filled: boolean;
 }
@@ -105,11 +96,27 @@ const owners = new WeakMap<NativeInvocationReservations, Owner>();
 function fail(detail: string): never {
   throw new Error(`native invocation resources: ${detail}`);
 }
+function substrateSelection(dependencies: NativeInvocationDependencies) {
+  const field = Object.getOwnPropertyDescriptor(dependencies, "substrate");
+  if (!field) {
+    if ("substrate" in dependencies) fail("inherited substrate selection");
+    return { present: false, value: undefined } as const;
+  }
+  if (!Object.hasOwn(field, "value") || !field.enumerable) fail("non-data or hidden substrate selection");
+  if (field.value === undefined || field.value === null) fail("present substrate selection requires an issued owner");
+  return { present: true, value: field.value as NativeInvocationSubstrateReservations | undefined } as const;
+}
+function substrateDependencies(dependencies: NativeInvocationDependencies) {
+  return { vectors: dependencies.vectors, vectorPlan: dependencies.vectorPlan, strings: dependencies.strings };
+}
 function authenticate(
   tx: PhysicalModuleReservations,
   requirements: NativeInvocationRequirements,
   dependencies: NativeInvocationDependencies,
 ): void {
+  const selected = substrateSelection(dependencies);
+  if (selected.value !== undefined)
+    requireNativeInvocationSubstrateReservations(tx, selected.value, substrateDependencies(dependencies));
   assertNativeInvocationRequirementsCurrent(requirements);
   if (requirements.gaps.length) fail(requirements.gaps.map((gap) => `${gap.unitId}: ${gap.detail}`).join("; "));
   requireNativeSourceClosureTypes(tx, dependencies.source, requirements.source);
@@ -184,34 +191,28 @@ export function reserveNativeInvocationResources(
   authenticate(tx, requirements, dependencies);
   const layout = invocationLayout(dependencies.source);
   const key = (role: string) => `${requirements.key}:${role}`;
-  const argumentPlan = declareNativeArgumentVectorResources(
-    { key: key("arguments") },
-    {
-      vectorBaseKey: dependencies.vectors.base?.key ?? key("vector-base"),
-    },
+  const borrowedSubstrate = substrateSelection(dependencies);
+  const substrateRequirements = Object.freeze({ key: requirements.key });
+  const substratePlan = declareNativeInvocationSubstrateResources(
+    substrateRequirements,
+    dependencies.vectors.base ? { vectorBaseKey: dependencies.vectors.base.key } : {},
   );
-  const errorRequirements = Object.freeze({ key: key("errors") });
-  const errorDependencies = Object.freeze({ strings: dependencies.strings, typeErrorTag: -11 });
   // The complete connected owner is preflighted before even its first base type.
   tx.assertReservationKeysAvailable([
-    ...(dependencies.vectors.base ? [] : [key("vector-base")]),
-    ...argumentPlan.declarations.map((row) => row.key),
-    `${errorRequirements.key}:type`,
-    `${errorRequirements.key}:new-TypeError`,
+    ...(borrowedSubstrate.value === undefined ? substratePlan.reservationKeys : []),
     ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
   ]);
-  const ownedBase = dependencies.vectors.base ? undefined : tx.reserveType(key("vector-base"), createVectorBaseType());
-  const args = reserveNativeArgumentVectorResources(
-    tx,
-    { key: key("arguments") },
-    {
-      vectorBase: dependencies.vectors.base ?? ownedBase!,
-    },
-    argumentPlan,
-  );
-  const errors = reserveNativeErrorResources(tx, errorRequirements, errorDependencies);
+  const substrate =
+    borrowedSubstrate.value ??
+    reserveNativeInvocationSubstrateResources(
+      tx,
+      substrateRequirements,
+      substrateDependencies(dependencies),
+      substratePlan,
+    );
+  const { arguments: args, errors } = substrate;
   const globals = Object.freeze({
     currentThis: tx.reserveGlobal(key("this"), "__current_this", { kind: "externref" }, true),
     argc: tx.reserveGlobal(key("argc"), "__argc", { kind: "i32" }, true),
@@ -263,15 +264,13 @@ export function reserveNativeInvocationResources(
     dependencies,
     dependenciesSnapshot: Object.freeze({ ...dependencies }),
     layout,
-    argumentPlan,
-    errorRequirements,
-    errorDependencies,
-    ...(ownedBase ? { ownedBase } : {}),
+    substrate,
+    borrowedSubstrate,
     filled: false,
     functions: Object.freeze([
-      args.newVector,
-      args.push,
-      errors.newTypeError,
+      ...(borrowedSubstrate.value === undefined
+        ? nativeInvocationSubstrateReservationInventory(tx, substrate).functions
+        : []),
       undefinedValue,
       isUndefined,
       ...methods.map((row) => row.function),
@@ -284,13 +283,15 @@ export function reserveNativeInvocationResources(
 function requireOwner(tx: PhysicalModuleReservations, pack: NativeInvocationReservations): Owner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied invocation owner");
+  const selected = substrateSelection(owner.dependencies);
+  if (selected.present !== owner.borrowedSubstrate.present || selected.value !== owner.borrowedSubstrate.value)
+    fail("changed substrate selection");
   for (const key of Object.keys(owner.dependenciesSnapshot) as (keyof NativeInvocationDependencies)[])
     if (owner.dependencies[key] !== owner.dependenciesSnapshot[key]) fail("substituted dependency identity");
   authenticate(tx, pack.requirements, owner.dependencies);
   if (preparedIrDataMismatch(invocationLayout(owner.dependencies.source), owner.layout))
     fail("changed closure ancestry");
-  nativeArgumentVectorReservationInventory(tx, pack.arguments, owner.argumentPlan);
-  requireNativeErrorReservations(tx, pack.errors, owner.errorRequirements, owner.errorDependencies);
+  requireNativeInvocationSubstrateReservations(tx, owner.substrate, substrateDependencies(owner.dependencies));
   return owner;
 }
 
@@ -415,8 +416,8 @@ export function fillNativeInvocationResources(
         ? { kind: "global" as const, index: tx.physicalIndex(literal.global) }
         : { kind: "callable" as const, handle: literal.function.handle },
   };
-  fillNativeArgumentVectorResources(tx, pack.arguments);
-  fillNativeErrorResources(tx, pack.errors);
+  if (owner.borrowedSubstrate.value === undefined) fillNativeInvocationSubstrateResources(tx, owner.substrate);
+  else requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
   tx.fillGlobal(pack.globals.currentThis, [{ op: "ref.null.extern" }]);
   tx.fillGlobal(pack.globals.argc, [{ op: "i32.const", value: -1 }]);
   tx.fillGlobal(pack.globals.extras, [{ op: "ref.null", typeIdx: pack.arguments.carrier.typeIndex }]);
@@ -457,7 +458,7 @@ export function requireCompletedNativeInvocation(
     owner.dependencies.valuePlan,
     owner.dependencies.valueDependencies,
   );
-  requireCompletedNativeErrors(tx, pack.errors, owner.errorRequirements, owner.errorDependencies);
+  requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
   for (const token of owner.functions) tx.assertCompletedReservation(token);
   for (const token of Object.values(pack.globals)) tx.assertCompletedReservation(token);
 }

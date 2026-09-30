@@ -273,9 +273,10 @@
         "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
         "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
-        "src/backend/wasmgc/resources/native-builtin-functions.ts"
+        "src/backend/wasmgc/resources/native-builtin-functions.ts",
+        "src/backend/wasmgc/resources/native-invocation-substrate.ts"
       ],
-      "minModules": 43
+      "minModules": 44
     },
     {
       "id": "native-runtime",
@@ -14619,6 +14620,11 @@
       "path": "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-invocation-substrate.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     }
   ]
 }
