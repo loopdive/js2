@@ -2485,3 +2485,77 @@ gap remains general AOT classic-script compilation with shared global lexical
 environments and completion values; the shipped source allowlist remains
 deliberately narrow. The full 431-test upstream suite has not been run to
 completion and must not be represented as passing from these bounded results.
+
+### Ordinary upstream module packaging and Script-route investigation
+
+The compiler already records global object var and lexical binding names
+(codegen/index.ts recordSourceGlobalEnvironment), and threads a real completion
+register through statement lowering (statements/eval-completion-value.ts).
+However, emitStandaloneGlobalScriptEvalRuntime in expressions/eval-inline.ts
+unconditionally calls __runtime_script_eval in the provider. ScriptGoal only
+selects grammar checks; entryScriptGoal selects script strictness/global behavior
+for the entry, not independent persistent Script execution across calls.
+The multi-file path currently accumulates one initializer for the whole graph.
+Thus simply wrapping sources, or using indirect eval's isolated lexical scope,
+would not implement the required persistent global Script environment.
+
+Unchanged upstream test_get_module_namespace baseline 16560 fails 0/1 (430
+filtered): bootstrap succeeds, but no trusted AOT graph is configured. This is
+a packaging input failure, not evidence namespaces themselves fail. Packaging
+run 56866 completed 1/1 with the development-only js2wasm_runtime_compile
+feature and clean e6a8f compiler sidecar. Compiler-free replay 5768 also passed
+the same unchanged upstream test 1/1 with runtime_compile and compiler
+configuration removed. The packaged application graph is 5,066,608 bytes,
+SHA-256 1defe8b589284a4acaa80cb162b5d7889ad99dc9218ff233f51e206697995d6a,
+under the owned Vy1d5l release directory; its source-binding sidecar matched.
+
+The development compile initially failed Cargo resolution because the upstream
+workspace pins semver 1.0.25 while Wasmtime's Cranelift feature needs >=1.0.27.
+Only root Cargo.toml/lock metadata is adapted to semver 1.0.28; no Deno source
+or test is changed. Cargo resolves the packaging feature offline. This feature
+is never evidence of a compiler-free deployment and must be removed for replay.
+
+### Ownership-aware cross-graph property reads, 2026-09-30
+
+Upstream modules::tests::builtin_core_module packaging run 79868 reported
+libtest 1/1 but logged a thrown "core missing" during module initialization.
+The test does not await its evaluation future. This is not a passing Deno
+application evaluation. A separately compiled consumer using the exact pinned
+ext:core/mod.js reproduced the failure: provider bootstrap starts with only
+primordials, then Object.assign adds core and internals. Consumer run returned
+-1 (missing core). A provider with all physical fields present at construction
+was a positive control. The added properties live in the owner's module-local
+property side tables, not in the consumer's matching physical struct.
+
+The explicit standaloneGlobalThisImport ABI now optionally pairs an ownership
+predicate with Get(object,key,receiver). __extern_get checks ownership before
+every graph-local carrier, property bag, and cache arm. Reflect.get's receiver
+is passed through and consumed before invoking the owner's getter. Inlined
+graph-local getter cache arms are disabled only for this opted-in ABI; ordinary
+standalone modules retain their current code paths. Both single-source and
+multi-source finalizers install the owner guard. Incomplete ownership ABI
+configuration fails validation.
+
+The reproduction now returns 42. Controls verify independently added local
+properties return 83, a foreign accessor receives its explicit receiver, and a
+foreign argument can be read without any globalThis expression. Focused linked
+getter exception control preserves the original thrown object's identity
+through the shared tag; the final linked-getter suite passed 3/3.
+Focused linked
+realm/namespace/exception tests passed 13/13; the subsequent linked bootstrap,
+real core bootstrap, primordials, and infra suites passed 23/23. TypeScript
+checking passed. These are compiler-side checks, not a native upstream replay.
+
+The adapter is not wired to this ABI yet. Its shared numeric handle table is
+not an ownership registry: it can root values allocated by other application
+graphs. Treating every rooted reference as core-owned would misroute foreign
+objects. The adapter needs proven provenance, including returned child objects,
+before the ordinary Deno module import can be claimed fixed. Rebuild both core
+and application artifacts, then assert the actual evaluation result rather
+than relying on the false-green upstream test.
+
+Merge checkpoint 3400f570b5 incorporates loopdive/js2 main f6ff83a26c. Focused
+Promise/Deno checks passed 70/71 after resolving the five conflicts and adding
+the new Promise carrier field in main's species path. One existing inline
+Promise-subclass test throws with species-aware construction; it was not
+weakened or removed. This remains a follow-up, not a fully passing merge claim.

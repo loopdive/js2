@@ -544,12 +544,25 @@ export interface CompileOptions {
    * tag export. Consumers import that same tag so exceptions thrown by linked
    * realm callables match their native try/catch and Promise rejection handlers.
    * Omitting it preserves the existing module-local exception tag.
+   * Optional paired `owns` and `get` imports delegate property reads to the
+   * proven owner before inspecting consumer-local property tables. The owner
+   * must distinguish its own objects from references it merely roots for
+   * another graph. Getter exceptions use the shared exceptionTag when set.
    *
    * This option is valid only with `target: "standalone"`. It is deliberately
    * explicit and has no default, preserving host-free standalone output for
    * all existing callers.
    */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string; exceptionTag?: string };
+  standaloneGlobalThisImport?: {
+    module: string;
+    name: string;
+    call?: string;
+    exceptionTag?: string;
+    /** Ownership predicate (externref) -> i32, paired with get below. */
+    owns?: string;
+    /** Owner's Get(object, key, receiver) -> externref, preserving reference identity. */
+    get?: string;
+  };
   /** Optional native-host notification `() -> void` after each Wasm-owned
    * microtask enqueue. The host can combine notifications from multiple
    * graphs with its native queue and call `__drain_one_microtask` in order.

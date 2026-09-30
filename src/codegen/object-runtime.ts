@@ -133,6 +133,7 @@ import {
 } from "./closures/transferred-native-proto.js";
 import type { TransferredNativeReceiverEntry } from "./closures/transferred-native-proto.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { reserveLinkedRealmPropertyRead } from "./linked-realm-property-read.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
@@ -2005,6 +2006,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // body bakes its `call`. The driver body is filled in finalize once
     // `__call_fn_method_0` exists (fillAccessorDrivers). Routing through funcMap
     // keeps the late-import shifter in sync (#329/#1899).
+    reserveLinkedRealmPropertyRead(ctx);
     const callAccessorGetIdx = reserveAccessorGetDriver(ctx);
     // (#2106 S1) Under the `undefinedSingleton` regime a MISSING property read
     // answers the extern-wrapped tag-1 `$undefined` singleton — the value JS

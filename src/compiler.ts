@@ -800,6 +800,10 @@ function buildCodegenOptions(
     throw new Error('Compile option runtimeEvalProvider: false requires target: "standalone".');
   }
   if (options.standaloneGlobalThisImport !== undefined) {
+    const { owns, get } = options.standaloneGlobalThisImport;
+    if ((owns !== undefined || get !== undefined) && (!owns || !get)) {
+      throw new Error("standaloneGlobalThisImport.owns and get must be provided together and non-empty.");
+    }
     if (options.target !== "standalone") {
       throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
     }

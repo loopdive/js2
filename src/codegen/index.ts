@@ -44,6 +44,7 @@ import { fillRuntimeEvalConstructDriver } from "./runtime-eval-construct.js"; //
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
+import { fillLinkedRealmPropertyRead } from "./linked-realm-property-read.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import {
   isBigIntType,
@@ -6639,7 +6640,8 @@ export function generateModule(
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
-    inlineExternGetCallSites(ctx);
+    // A graph-local cache must not bypass the foreign ownership check installed below.
+    if (!ctx.standaloneGlobalThisImport?.owns) inlineExternGetCallSites(ctx);
     inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
@@ -6860,6 +6862,7 @@ export function generateModule(
     // point for the same reason: the marker type index exists only once a
     // boundary site has minted it.
     fillRuntimeEvalIntrinsicFunctionOwnProps(ctx);
+    fillLinkedRealmPropertyRead(ctx);
 
     // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
     // `__extern_length`/`__extern_get_idx` (filled just above) and the native
@@ -11322,7 +11325,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
-    profilePhase("inline-extern-get-call-sites", () => inlineExternGetCallSites(ctx));
+    if (!ctx.standaloneGlobalThisImport?.owns) {
+      profilePhase("inline-extern-get-call-sites", () => inlineExternGetCallSites(ctx));
+    }
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
     // sites — multi-source parity with the generateModule call above (same
@@ -11439,6 +11444,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-closed-object-prototype-edges", () => fillClosedObjectPrototypeEdges(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
+    profilePhase("fill-linked-realm-property-read", () => fillLinkedRealmPropertyRead(ctx));
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     profilePhase("emit-vec-access-exports", () => emitVecAccessExports(ctx));
 
