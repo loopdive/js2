@@ -2445,3 +2445,43 @@ passes. This is a compiler checkpoint, not proof the real Deno message is
 repaired: rebuild the pinned runtime core and its native artifact, then rerun
 the unchanged upstream example and full-target controls. All sessions in this
 checkpoint are terminal; no native build or compiler check is still running.
+
+### Clean parameter-constructor artifact rebuild
+
+Adapter checkpoint 9ee8ba94840978337db4dcdd778b0f18682f35a5 advances only the
+runtime compiler pin to e6a8f950b10165106d37b80e7bcc247f802a2128; historical
+POC remains unchanged. Runtime option contracts pass 8/8. Clean detached
+packaging inputs are /private/tmp/deno-parameter-error-release-build.Vy1d5l/
+compiler and v8x, with the original clean pinned Deno checkout. Builder 74173
+is terminal success: deno-core.wasm is 2,687,026 bytes, SHA-256
+`8a71883a3675fb798dc75f8b17db3c895c661218dacefad323ea1d4c68775844`.
+Its provenance reports 18 native function imports and no interpreter provider.
+
+New native controls call the actual compiled core.buildCustomError for six
+upstream registered Error families. Old-artifact baseline 95822 fails 0/1:
+Error ToString is "Error", expected "Error: native op failure". This reproduces
+the upstream example's missing-message problem independently of the sum op.
+The new native precompile is still live in session 7832; poll this same handle,
+do not restart it. Replay must use the new artifact and paired attestation.
+No claim is made that the native error message is repaired until that replay
+and the unchanged upstream example pass with full diagnostic text.
+
+Native precompile 7832 is terminal success, 1/1 in 248.54 seconds. The new
+deno-core.cwasm is 47,689,992 bytes, SHA-256
+`9a42a3f1c4ca44af05bc0267a64e0f6d3bc44d02f66fc863649c972ab9a83062`.
+Raw/native disk hashes match the paired Wasmtime 47.0.3 attestation for
+aarch64-apple-darwin. Compiler-free full target 63199 passes 30/30, six ignored,
+in 1.47 seconds, including all six real upstream error-builder message checks.
+This contrasts with the same new native control on the previous artifact,
+which failed before any sum-op execution. The unchanged upstream hello_world
+binary replay 69532 exits 0 and prints the complete expected diagnostic:
+TypeError: serde_v8 error: invalid type; expected: array, got: Number.
+No upstream Deno source or tests were edited and no interpreter was loaded.
+
+Broader compiler bootstrap/coercion validation 91517 passes 26/26 across five
+suites in 23.36 seconds. These are separate from the earlier 42/42 constructor
+controls. All sessions in this rebuild are terminal. The next major acceptance
+gap remains general AOT classic-script compilation with shared global lexical
+environments and completion values; the shipped source allowlist remains
+deliberately narrow. The full 431-test upstream suite has not been run to
+completion and must not be represented as passing from these bounded results.
