@@ -3,9 +3,10 @@
   "slice": "to-object-body-20260928",
   "assignee": "ttraenkler/codex-to-object-body-20260928",
   "requested_by": "ttraenkler/codex-to-object-body-20260928",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3518-to-object-body-20260928",
   "claimed_at": "2026-09-28T17:06:14Z",
-  "updated_at": "2026-09-28T17:06:14Z",
-  "write_id": "48874-aa1j46dg"
+  "updated_at": "2026-09-30T02:48:50Z",
+  "write_id": "1152-avuorcpc",
+  "released_at": "2026-09-30T02:48:50Z"
 }
