@@ -2025,3 +2025,100 @@ rebuild, multi-graph producer verification, cross-realm global event ordering,
 resolve-value/thenable duplicate paths and the broader Deno integration gates.
 The per-realm transport now has actual compiler-free behavioral evidence;
 that evidence is not full Deno conformance. All changes remain local.
+
+### 2026-09-30 clean artifact and cross-realm ordering follow-up
+
+Compiler checkpoint `23d2e6cda9e58e1ee4da95b62719d6cdc03cd14a`
+contains the authenticated event producer and an executable multi-file
+dispatcher test. The pre-merge focused compiler run passed 253/253 and TS7.
+Adapter checkpoint `89c8b0761047fb86c8c3f365e7e2a509dbd74a5b`
+advances the runtime compiler pin to that checkpoint. Both commits are signed.
+
+Clean detached worktrees under
+`/private/tmp/deno-event-release-build.X2rntG` produced the complete pinned
+Deno core raw AOT module: 2,675,441 bytes, SHA-256
+`4eaf0ee70ebe0e8e0b26f188c1680f3912d9411c6d394b3fdbf5a6cf5260dafb`.
+Raw provenance matches the two checkpoints and Deno
+`1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44`, with 18 native imports and
+no interpreter provider. The first native precompile attempt terminated
+because the fresh adapter checkout lacked its submodule and DNS failed.
+Initialized rusty_v8 from the verified local checkout at its exact gitlink
+`dd1b4e9c743b7a11dbeb99d4d0dc55979218b905`; no vendor source was changed.
+Replacement native precompile is session 76363, still running at this entry.
+Compiler-free replay remains pending and must use this artifact's attestation.
+
+Latest loopdive/js2 main `9df21d402cd7d9a4e7cafb5e78880338c41a2c6b`
+is merged in signed commit `8ad96ad65f8526538dfb8d31a9805f91cbc3c554`.
+Unrelated local source documentation and acorn binary edits were preserved.
+Post-merge TS7 passes; focused regression run 38998 is pending.
+
+Cross-realm delivery is now being tested rather than inferred from the
+per-realm reentry guard. A new actual compiled fixture queues a rejection
+and its late-handler notification in realm A. The native rejection callback
+enters realm B and rejects a different Promise. The public API test requires
+A's already queued handler event to precede B's new rejection, with exact
+Promise and reason identities. Raw fixture build 63206 passed (1,154,062
+bytes); native fixture precompile 29528 is running. No ordering fix or passing
+ordering result is claimed yet. Full integration acceptance remains open.
+
+Clean full-core precompile 76363 finished 1/1 in 243.95 seconds. Native
+artifact: 47,460,024 bytes, SHA-256
+`8373919144fb41c0f3b7ca476fb6ebbc962d5d72e4730994676da129f8a49237`.
+Recomputed raw and native hashes match the paired attestation (Wasmtime
+47.0.3, aarch64-apple-darwin). Compiler-free full-core integration target
+86988 passes 30/30, with five explicitly ignored artifact-specific controls,
+in 1.02 seconds. This includes exact core Script::Run bootstrap and host
+effects, not the complete upstream deno_core test suite. No runtime compiler
+feature or interpreter provider is enabled in this replay. Public callback
+docs now reflect the advanced pin; Typst rendering remains unverified.
+Post-merge compiler run 38998 passes 252/252 across six selected suites,
+including ten upstream super-write controls. The single-microtask suite was
+not part of that invocation; the earlier 253 count is a different selection.
+
+The missing post-merge single-microtask selection passed 11/11 (12337).
+Together the two post-merge invocations cover 263 tests, not one 263-test run.
+
+Cross-realm fixture precompile 29528 passed 1/1 in 124.04 seconds. The
+compiler-free public API ordering test against the pre-fix adapter failed
+0/1 (97096): realm B's unhandled event preceded realm A's already queued
+handler-added event. This directly attributes the defect to per-realm delivery,
+not artifact import presence. The repair moves native-attached compiled
+notifications into an isolate-local queue and reentry guard. Each event
+retains its stable Rc owner identity, realm id, isolate, rooted value handles
+and captured continuation data. Owner lookup compares identities without
+borrowing an executing Store. An executing head owner defers the queue rather
+than skipping it; an unavailable owner is a loud error. Delivery enters the
+event's context and releases the Store borrow before invoking user code.
+Standalone contexts without a native isolate retain their existing local queue.
+
+The initial repair replay failed 0/3 (26745) because test-realm attachment
+does not use production's publish-before-initialize path and had no stable
+owner identity. The common runtime-entry boundary now authenticates and
+initializes its Rc identity, refusing any subsequent change. The same trusted
+artifact then passes 3/3 compiler-free controls (29249), including exact
+cross-realm Promise/reason identity and unchanged same-realm handler reentry.
+No compiler or interpreter was needed for that replay. Full-core replay on
+the repaired adapter is session 7748, pending at this entry. Runtime option
+contracts pass 8/8; cargo formatting and diff checks pass. Typst is absent.
+
+Remaining scope includes resolve-value/thenable duplicate paths, nested
+cross-realm execution while an outer Store is still running, native/compiled
+notification interleaving, broader real Rust ops and upstream Deno conformance,
+complete module/dynamic-import/TLA behavior and production packaging. The
+ordering control closes one measured gap, not the full acceptance checklist.
+
+Repaired-adapter compiler-free full-core replay 7748 passes 30/30 in 1.12
+seconds, with six ignored explicit artifact controls (the additional one is
+the new cross-realm control separately executed above). No baseline file was
+changed from this bounded integration target. All processes cited in this
+follow-up are terminal. The complete core artifact still records the clean
+89c8 adapter build inputs; the repaired-adapter run is a subsequent host A/B
+using the exact same trusted native module, not a newly attributed artifact.
+
+Signed local adapter checkpoint:
+`6bf28ba17ae66c4d35190ea1b08213265091c511` on
+`codex/4376-deno-realm-bootstrap`. Tracked adapter files are clean; only its
+untracked `.tmp/` remains. Existing compiler PR 6341 and adapter PR 2 have not
+been updated by a push in this follow-up. Next work should test nested Store
+reentry and native/compiled notification interleaving, then audit the compiler's
+resolve-value once-only guard and adoption paths against actual emitted code.
