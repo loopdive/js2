@@ -1,11 +1,10 @@
 {
   "id": "6771",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-architect",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-30T18:50:13Z",
-  "updated_at": "2026-09-30T18:50:13Z",
-  "write_id": "9801-sl0lkrzb",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/opus-6771",
+  "requested_by": "ttraenkler/opus-6771",
+  "status": "in-progress",
+  "branch": "issue-6771-array-residue",
+  "claimed_at": "2026-09-30T19:47:32Z",
+  "updated_at": "2026-09-30T19:47:32Z",
+  "write_id": "25422-6avjptnu"
 }
