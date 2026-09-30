@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "number-current-main-integration-20260930",
   "assignee": "ttraenkler/codex-number-current-main-integration-20260930",
-  "requested_by": "ttraenkler/codex-number-current-main-integration-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-number-current-main-integration-20260930",
   "claimed_at": "2026-09-30T11:45:15Z",
-  "updated_at": "2026-09-30T11:45:15Z",
-  "write_id": "62502-mp8d8lj9"
+  "updated_at": "2026-09-30T22:51:11Z",
+  "write_id": "79497-6fdzyep6",
+  "released_at": "2026-09-30T22:51:11Z"
 }
