@@ -1656,3 +1656,26 @@ This checkpoint is incomplete and not a ready-to-merge claim.
 Fetched loopdive/js2 main at ee6828f1ef2f6dd7dc26c1eabe699ed8e8a12e50
 for the user's requested merge. Its two new commits refresh npm compatibility
 artifacts. Unrelated working-tree changes are excluded from the checkpoint.
+
+### 2026-09-30 resolution receipts reconciled after main merge
+
+Signed merge 1461355fb5 includes fetched loopdive/js2 main ee6828f1ef.
+The remaining receipt failure was an invalid synthetic constructor layout,
+not a runtime compiler defect: `createBuiltinFunctionMetadataType` emits
+`func`, `$arity`, `$bag`, `bfnstate`, `bfnid`, then the Promise capture is
+appended at slot 5. The authenticated donor constructor always emitted
+these five metadata operands and ignored the supplied capture-field index.
+The canonical moved constructor intentionally refuses other capture slots.
+
+The verifier now checks the actual metadata field inventory, retains exact
+donor output comparison for valid layouts, and explicitly accounts for
+refusal of slots 1 and 17 rather than dropping those matrix cases. Live-owner
+negative controls remove or alter the guard and must fail verification.
+Neither donor fixture nor historical digest changed. Settlement receipts
+pass 139/139 and resolution preservation passes 53/53. Combined post-merge
+run (session 44471) passes 234/234 across six files; TS7, scoped Biome and
+diff whitespace checks pass. No compiler behavior was changed in this step.
+
+Full Deno integration remains incomplete. Next advance the runtime packaging
+compiler pin to the committed scheduler ABI and verify a clean detached
+artifact build, then continue the broader unchecked acceptance requirements.

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { expect } from "vitest";
+import { createBuiltinFunctionMetadataType } from "../../src/runtime/wasmgc/values/closure-layouts.js";
 import { buildTargetTaggedTry } from "../../src/wasm/physical/exception-control.js";
 import {
   buildPromiseResolveValueBody as buildResolutionBody,
@@ -682,7 +683,12 @@ function executorFixture(source: string, fields: number) {
 /** Authenticate the unchanged source donor AND exercise its moved owner and
  * current compiler adapter. A historical-text substitution alone is not proof.
  */
-export function assertMovedResolutionReceipt(name: string, digest: string, source = newAsync): void {
+export function assertMovedResolutionReceipt(
+  name: string,
+  digest: string,
+  source = newAsync,
+  closureBuilder = buildPromiseSettleClosureValue,
+): void {
   expect(movedResolutionNames.has(name)).toBe(true);
   const original = authenticateDonors(donorText).get(asyncPath)!;
   const parsed = ts.createSourceFile("donor.ts", original, ts.ScriptTarget.Latest, true);
@@ -727,12 +733,24 @@ export function assertMovedResolutionReceipt(name: string, digest: string, sourc
     for (const fields of [2, 5, 17]) expect(executorFixture(source, fields)).toEqual(executorFixture(original, fields));
   } else {
     const old = evaluate(original, [name], { closureBagInitInstr: () => ({ op: "ref.null.extern" }) });
-    const current = evaluate(source, [name], { buildPromiseSettleClosureValue });
+    const current = evaluate(source, [name], { buildPromiseSettleClosureValue: closureBuilder });
+    const metadata = createBuiltinFunctionMetadataType(5, 3);
+    expect(metadata.fields.map((field) => field.name)).toEqual(["func", "$arity", "$bag", "bfnstate", "bfnid"]);
+    expect(metadata.fields).toHaveLength(5);
     for (const capTypeIdx of [4, 37])
       for (const capPromiseFieldIdx of [1, 5, 17]) {
         const resources = { capTypeIdx, capMetaTypeIdx: 5, capPromiseFieldIdx };
         const instructions = [{ op: "local.get", index: 2 }];
-        expect(plain(current[name](resources, 6, instructions))).toEqual(plain(old[name](resources, 6, instructions)));
+        // The donor ignores the supplied capture slot and always emits five
+        // metadata operands. Keep that historical evidence, but explicitly
+        // account for the moved owner's new refusal of incompatible layouts.
+        const historical = plain(old[name](resources, 6, instructions));
+        expect(historical).toEqual(plain(old[name]({ ...resources, capPromiseFieldIdx: 5 }, 6, instructions)));
+        if (capPromiseFieldIdx === metadata.fields.length) {
+          expect(plain(current[name](resources, 6, instructions))).toEqual(historical);
+        } else {
+          expect(() => current[name](resources, 6, instructions)).toThrow("metadata/capture layout");
+        }
       }
   }
 }

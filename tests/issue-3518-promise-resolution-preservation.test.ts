@@ -41,9 +41,23 @@ import {
   verifyIndependentLookupBody,
   expectedCaptureDelta,
   expectedLookupReservation,
+  assertMovedResolutionReceipt,
+  declaration,
+  sha256,
 } from "./helpers/promise-resolution-receipts.js";
 
 describe("Promise lookup independent instruction contract", () => {
+  it("detects removal or alteration of the explicit settle capture-layout refusal", () => {
+    const name = "buildPromiseSettleClosureInstrs";
+    const digest = sha256(declaration(oldAsync, name).replace(/^function /, "export function "));
+    assertMovedResolutionReceipt(name, digest);
+    const source = current("src/runtime/wasmgc/promise/resolution-bodies.ts");
+    for (const condition of ["false", "closures.capPromiseFieldIdx !== 17"]) {
+      const mutated = replaceOnce(source, "closures.capPromiseFieldIdx !== 5", condition);
+      const builder = evaluate(mutated, ["buildPromiseSettleClosureValue"], {}).buildPromiseSettleClosureValue;
+      expect(() => assertMovedResolutionReceipt(name, digest, newAsync, builder)).toThrow();
+    }
+  });
   it("checks independent result pairs and read ordering before four live builder mutants", () => {
     verifyIndependentLookupBody(buildPromiseThenableLookup);
     const source = current("src/runtime/wasmgc/promise/thenable-bodies.ts");
