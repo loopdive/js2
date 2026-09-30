@@ -3,9 +3,10 @@
   "slice": "primitive-wrapper-layouts-20260928",
   "assignee": "ttraenkler/codex-primitive-wrapper-layouts-20260928",
   "requested_by": "ttraenkler/codex-primitive-wrapper-layouts-20260928",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3518-public-number-object-get-712-20260928",
   "claimed_at": "2026-09-28T14:33:38Z",
-  "updated_at": "2026-09-28T14:33:38Z",
-  "write_id": "85210-wb7bf3wq"
+  "updated_at": "2026-09-30T02:12:57Z",
+  "write_id": "58871-hntavxek",
+  "released_at": "2026-09-30T02:12:57Z"
 }
