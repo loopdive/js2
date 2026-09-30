@@ -3,9 +3,10 @@
   "slice": "primitive-wrapper-storage-owner-20260928",
   "assignee": "ttraenkler/codex-primitive-wrapper-storage-owner-20260928",
   "requested_by": "ttraenkler/codex-primitive-wrapper-storage-owner-20260928",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3518-number-bigint-to-f64-20260928",
   "claimed_at": "2026-09-28T15:24:45Z",
-  "updated_at": "2026-09-28T15:24:45Z",
-  "write_id": "4908-m8e5lgx6"
+  "updated_at": "2026-09-30T02:13:08Z",
+  "write_id": "59043-3odos4zf",
+  "released_at": "2026-09-30T02:13:08Z"
 }
