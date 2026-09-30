@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "function-prototype-invokers-20260930",
   "assignee": "ttraenkler/codex-function-prototype-invokers-20260930",
-  "requested_by": "ttraenkler/codex-function-prototype-invokers-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-function-prototype-main-delivery-20261001",
   "claimed_at": "2026-09-30T22:16:56Z",
-  "updated_at": "2026-09-30T22:16:56Z",
-  "write_id": "23736-movd2238"
+  "updated_at": "2026-09-30T22:50:58Z",
+  "write_id": "79327-2577y22t",
+  "released_at": "2026-09-30T22:50:58Z"
 }
