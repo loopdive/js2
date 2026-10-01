@@ -23,7 +23,9 @@ import {
 } from "./helpers/ir-runtime-program-relocation.js";
 import { historicalIrValidationPolicyView } from "./helpers/ir-validation-policy-evolution.js";
 import {
-  authenticateIrRuntimeProgramPolicy,
+  authenticateNumberPrerequisitePolicy,
+  beforeNumberPrerequisitePolicy,
+  beforeWellKnownSymbolPolicy,
   beforeIrRuntimeProgramPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 
@@ -131,7 +133,7 @@ const newModules = [
 const policy = () => {
   const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
   // Authenticate the whole current policy before any bounded historical view.
-  authenticateIrRuntimeProgramPolicy(actual);
+  authenticateNumberPrerequisitePolicy(actual);
   return actual;
 };
 const scratch: string[] = [];
@@ -352,7 +354,9 @@ describe("complete canonical program-data dependency boundary", () => {
       "wasm-physical:1",
       "native-runtime:1",
     ];
-    const historical = historicalIrValidationPolicyView(beforeIrRuntimeProgramPolicy(p)).activationHistory;
+    const historical = historicalIrValidationPolicyView(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(p))),
+    ).activationHistory;
     expect(historical).toHaveLength(keys.length);
     expect(historical.map((row) => `${row.layer}:${row.minModules}`)).toEqual(keys);
     expect(digest(historical)).toBe("820a39c3d3b05a1a20d030ae10b1e19621802cfed5cf9a29ccb5dccb80b3d6ee");
@@ -439,7 +443,9 @@ describe("complete canonical program-data dependency boundary", () => {
     );
     expect(ownershipModules).toHaveLength(4);
     expect(new Set(ownershipModules).size).toBe(4);
-    const historical = historicalIrValidationPolicyView(beforeIrRuntimeProgramPolicy(p));
+    const historical = historicalIrValidationPolicyView(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(p))),
+    );
     for (const [id, entries] of Object.entries(currentGroups)) {
       const layer = historical.layers.find((x) => x.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
