@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "runtime-program-c1-policy-inverse-20261001",
   "assignee": "ttraenkler/codex-runtime-program-c1-policy-inverse-20261001",
-  "requested_by": "ttraenkler/codex-runtime-program-c1-policy-inverse-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-runtime-program-c1-integration-20261001",
   "claimed_at": "2026-10-01T08:57:06Z",
-  "updated_at": "2026-10-01T08:57:06Z",
-  "write_id": "59798-ftpvuv9g"
+  "updated_at": "2026-10-01T13:53:03Z",
+  "write_id": "92539-ufv08ge4",
+  "released_at": "2026-10-01T13:53:03Z"
 }
