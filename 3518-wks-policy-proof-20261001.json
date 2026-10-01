@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "wks-policy-proof-20261001",
   "assignee": "ttraenkler/codex-wks-policy-proof-20261001",
-  "requested_by": "ttraenkler/codex-wks-policy-proof-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-wks-policy-proof-20261001",
   "claimed_at": "2026-10-01T13:34:02Z",
-  "updated_at": "2026-10-01T13:34:02Z",
-  "write_id": "82008-b2m289vl"
+  "updated_at": "2026-10-01T15:21:26Z",
+  "write_id": "33540-cwffd3ou",
+  "released_at": "2026-10-01T15:21:26Z"
 }
