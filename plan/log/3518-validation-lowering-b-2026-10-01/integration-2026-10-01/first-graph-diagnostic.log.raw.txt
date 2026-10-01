@@ -1,0 +1,47 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ❯ .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts (2 tests | 2 failed) 5ms
+   × diagnoses the actual40-module graph without accepting changed historical edges 3ms
+     → ENOENT: no such file or directory, open '/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/scripts/compiler-boundaries.json'
+   × diagnoses the actual44-module graph without accepting changed historical edges 1ms
+     → ENOENT: no such file or directory, open '/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/scripts/compiler-boundaries.json'
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts > diagnoses the actual40-module graph without accepting changed historical edges
+Error: ENOENT: no such file or directory, open '/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/scripts/compiler-boundaries.json'
+ ❯ policy .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:120:29
+    118| ];
+    119| const policy = () => {
+    120|   const actual = JSON.parse(readFileSync(resolve(repository, "scripts/…
+       |                             ^
+    121|   // Authenticate the whole current policy before any bounded historic…
+    122|   authenticateIrValidationPolicy(actual);
+ ❯ fixture .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:139:13
+ ❯ .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:241:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts > diagnoses the actual44-module graph without accepting changed historical edges
+Error: ENOENT: no such file or directory, open '/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/scripts/compiler-boundaries.json'
+ ❯ policy .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:120:29
+    118| ];
+    119| const policy = () => {
+    120|   const actual = JSON.parse(readFileSync(resolve(repository, "scripts/…
+       |                             ^
+    121|   // Authenticate the whole current policy before any bounded historic…
+    122|   authenticateIrValidationPolicy(actual);
+ ❯ fixture .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:139:13
+ ❯ ownershipFixture .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:223:13
+ ❯ .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts:246:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  08:44:15
+   Duration  371ms (transform 61ms, setup 0ms, collect 255ms, tests 5ms, environment 0ms, prepare 40ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.json

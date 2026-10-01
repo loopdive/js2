@@ -1,0 +1,4 @@
+coercion-sites: intentional growth allowed by this change-set's issue file:
+  codegen/function-reachability-sweep.ts: 0 → 1 granted by plan/issues/6768-standalone-runtime-floor-per-test.md
+  codegen/ta-hof-map-filter.ts: 3 → 4 granted by plan/issues/6769-es2015-standalone-typedarray-residue.md
+coercion-sites gate: OK (no net vocabulary growth across 64 changed codegen file(s); base: merge-base(origin)).

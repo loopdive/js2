@@ -8,6 +8,19 @@ import { dirname, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { historicalIntrinsicSource, liveSourceReader } from "./helpers/ir-historical-runtime-reconstruction.js";
+import {
+  reconstructRuntimeContractReceiptSources,
+  runtimeContractCurrentPaths,
+} from "./helpers/ir-runtime-contract-evolution.js";
+import {
+  programInitialGraphPaths,
+  reconstructProgramInitialGraph,
+} from "./helpers/ir-program-initial-graph-evolution.js";
+import { programCoreTypePath, reconstructProgramCoreTypeEvolution } from "./helpers/ir-program-core-type-evolution.js";
+import {
+  authenticateIrValidationPolicy,
+  historicalIrValidationPolicyView,
+} from "./helpers/ir-validation-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
 // Independent, fixed population: never derive required files from discovered
@@ -75,7 +88,8 @@ const ownershipGroups = {
     "src/ir/program/input.ts",
   ],
 };
-// These twelve additions describe today's policy, not either historical fixture.
+// These twelve additions describe the fixed historical56-entry policy checkpoint,
+// independent of both the40/44 fixtures and today's fully authenticated policy.
 const currentGroups = {
   ...ownershipGroups,
   "ir-core": [
@@ -109,7 +123,12 @@ const newModules = [
   ...groups["runtime-contracts"].slice(1),
   ...groups["ir-runtime"],
 ];
-const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+const policy = () => {
+  const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  // Authenticate the whole current policy before any bounded historical view.
+  authenticateIrValidationPolicy(actual);
+  return actual;
+};
 const scratch: string[] = [];
 afterEach(async () => {
   for (const root of scratch.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -117,7 +136,7 @@ afterEach(async () => {
   await setImmediate();
 });
 
-function fixture() {
+function fixture(includeOwnership = false) {
   const root = mkdtempSync(resolve(tmpdir(), "js2-program-data-boundary-"));
   scratch.push(root);
   const put = (path: string, source: string) => {
@@ -145,13 +164,35 @@ function fixture() {
   p.nonModules = [];
   p.externalPackages = [];
   p.externalAssets = [];
-  for (const path of clean)
-    put(
-      path,
-      path === "src/ir/runtime/contracts/intrinsics.ts"
-        ? historicalIntrinsicSource(liveSourceReader(repository))
-        : readFileSync(resolve(repository, path), "utf8"),
-    );
+  // Fresh complete live inputs are authenticated once for this initial copy.
+  // The maps are never used by run/append/put or after mutant injection.
+  const rawRead = liveSourceReader(repository);
+  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(rawRead);
+  const historicalRuntimeRead = (path: string): string => {
+    if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
+    const source = initialRuntimeSources.get(path);
+    if (source === undefined) throw new Error(`missing authenticated runtime source ${path}`);
+    return source;
+  };
+  const initialIntrinsic = historicalIntrinsicSource(historicalRuntimeRead);
+  const initialProgramSources = reconstructProgramInitialGraph(rawRead);
+  // Each inverse authenticates raw current inputs independently. This source
+  // selection applies only to the initial copy, never to later fixture mutants.
+  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(rawRead);
+  for (const path of includeOwnership ? [...clean, ...ownershipModules] : clean) {
+    let source: string;
+    if (path === "src/ir/runtime/contracts/intrinsics.ts") source = initialIntrinsic;
+    else if (path === programCoreTypePath) {
+      const projected = initialCoreTypeSources.get(path);
+      if (projected === undefined) throw new Error(`missing authenticated core type source ${path}`);
+      source = projected;
+    } else if (programInitialGraphPaths.includes(path)) {
+      const projected = initialProgramSources.get(path);
+      if (projected === undefined) throw new Error(`missing authenticated initial program source ${path}`);
+      source = projected;
+    } else source = rawRead(path);
+    put(path, source);
+  }
   put(
     "tsconfig.json",
     JSON.stringify({
@@ -193,9 +234,8 @@ function fixture() {
 }
 
 function ownershipFixture() {
-  const f = fixture();
+  const f = fixture(true);
   for (const path of ownershipModules) {
-    f.put(path, readFileSync(resolve(repository, path), "utf8"));
     const layer = path.startsWith("src/ir/analysis/") ? "ir-analysis" : "ir-program";
     f.p.files.push({ path, layer, state: "clean" });
   }
@@ -300,13 +340,9 @@ describe("complete canonical program-data dependency boundary", () => {
       "wasm-physical:1",
       "native-runtime:1",
     ];
-    const historical = keys.map((key) => {
-      const matches = p.activationHistory.filter(
-        (row: { layer: string; minModules: number }) => `${row.layer}:${row.minModules}` === key,
-      );
-      expect(matches).toHaveLength(1);
-      return matches[0];
-    });
+    const historical = historicalIrValidationPolicyView(p).activationHistory;
+    expect(historical).toHaveLength(keys.length);
+    expect(historical.map((row) => `${row.layer}:${row.minModules}`)).toEqual(keys);
     expect(digest(historical)).toBe("820a39c3d3b05a1a20d030ae10b1e19621802cfed5cf9a29ccb5dccb80b3d6ee");
     for (const [layer, minModules] of [
       ["ir-analysis", 1],
@@ -319,8 +355,13 @@ describe("complete canonical program-data dependency boundary", () => {
       expect([...matches[0].entries].sort()).toEqual([...groups[layer]].sort());
       expect(matches[0].entries).toHaveLength(minModules);
     }
+    for (const path of ["lattice", "ownership", "encoding", "escape", "dominance"])
+      expect(p.files.find((row: { path: string }) => row.path === `src/ir/analysis/${path}.ts`)).toEqual({
+        path: `src/ir/analysis/${path}.ts`,
+        state: "clean",
+        layer: "ir-analysis",
+      });
     for (const [path, destination] of [
-      ["src/ir/analysis/dominance.ts", "ir-analysis"],
       ["src/ir/passes/constant-fold.ts", "ir-passes"],
       ["src/ir/runtime-program-producers.ts", "ir-program"],
       ["src/ir/runtime-program-manifest.ts", "ir-program"],
@@ -386,19 +427,21 @@ describe("complete canonical program-data dependency boundary", () => {
     );
     expect(ownershipModules).toHaveLength(4);
     expect(new Set(ownershipModules).size).toBe(4);
+    const historical = historicalIrValidationPolicyView(p);
     for (const [id, entries] of Object.entries(currentGroups)) {
-      const layer = p.layers.find((x: { id: string }) => x.id === id);
+      const layer = historical.layers.find((x) => x.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
       expect([...layer.entries].sort()).toEqual([...entries].sort());
-      const history = p.activationHistory.filter(
-        (row: { layer: string; minModules: number }) => row.layer === id && row.minModules === entries.length,
+      const history = historical.layerActivations.filter(
+        (row) => row.layer === id && row.minModules === entries.length,
       );
       expect(history).toHaveLength(1);
       expect([...history[0].entries].sort()).toEqual([...entries].sort());
       for (const path of entries)
         expect(p.files.filter((x: { path: string }) => x.path === path)).toEqual([{ path, layer: id, state: "clean" }]);
     }
-    expect(p.layers.find((x: { id: string }) => x.id === "ir-analysis").roots).toEqual([
+    // Whole current roots were authenticated above; preserve the exact old5 prefix.
+    expect(p.layers.find((x: { id: string }) => x.id === "ir-analysis").roots.slice(0, 5)).toEqual([
       "src/ir/analysis/contracts",
       "src/ir/analysis/alloc-registry.ts",
       "src/ir/analysis/effects.ts",

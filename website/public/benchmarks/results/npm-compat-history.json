@@ -22013,6 +22013,58 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-10-01T05:12:31.108Z",
+      "sourceRevision": "812df1624f9b2aeb5f21203b08b3d8cae21060e8",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.3786399273512477,
+            "dynamic": 0.008066583417267051
+          }
+        },
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.00796752121626931
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-10-01T10:32:16.444Z",
+      "sourceRevision": "2030fafc70e46a135aec9c1efa372942d917b62c",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.3755642678893455,
+            "dynamic": 0.007616988074449682
+          }
+        },
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.009249705225281925
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

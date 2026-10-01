@@ -1,0 +1,1085 @@
+{
+  "mode": "syntax-and-import-text-only; no Program/checker/compiler/gate run",
+  "projectedNewOwnerClassifications": [
+    {
+      "path": "src/ir/analysis/lattice.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/dominance.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/verify.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/class-layouts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    }
+  ],
+  "modules": 81,
+  "edges": 311,
+  "parseErrors": [],
+  "unresolved": [],
+  "blockers": [],
+  "perRoot": [
+    {
+      "root": "src/ir/analysis/lattice.ts",
+      "modules": 1,
+      "paths": [
+        "src/ir/analysis/lattice.ts"
+      ]
+    },
+    {
+      "root": "src/ir/analysis/ownership.ts",
+      "modules": 20,
+      "paths": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/analysis/encoding.ts",
+      "modules": 19,
+      "paths": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/analysis/escape.ts",
+      "modules": 21,
+      "paths": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/analysis/dominance.ts",
+      "modules": 17,
+      "paths": [
+        "src/ir/analysis/dominance.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/analysis/alloc-verification.ts",
+      "modules": 21,
+      "paths": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-preparation-errors.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/runtime/verify.ts",
+      "modules": 55,
+      "paths": [
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/core/declared-types.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-abi.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-callables.ts",
+        "src/ir/core/string-runtime.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-domain.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/intrinsic-verification.ts",
+        "src/ir/runtime/js-tag-domain.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/number-conversion-callable.ts",
+        "src/ir/runtime/ordinary-object-callables.ts",
+        "src/ir/runtime/producer.ts",
+        "src/ir/runtime/vector-callables.ts",
+        "src/ir/runtime/verify.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/js-value-tags.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-counted-string-site-id.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/program/allocations.ts",
+      "modules": 62,
+      "paths": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/type-key.ts",
+        "src/ir/core/type-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/passes/contracts/gvn.ts",
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/allocations.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/number-conversion-callable.ts",
+        "src/ir/runtime/ordinary-object-callables.ts",
+        "src/ir/runtime/vector-callables.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-preparation-errors.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "root": "src/ir/program/class-layouts.ts",
+      "modules": 55,
+      "paths": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/type-key.ts",
+        "src/ir/core/type-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/passes/contracts/gvn.ts",
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/class-layouts.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/number-conversion-callable.ts",
+        "src/ir/runtime/ordinary-object-callables.ts",
+        "src/ir/runtime/vector-callables.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    }
+  ],
+  "graph": [
+    {
+      "from": "src/ir/analysis/lattice.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/analysis/ownership.ts",
+      "to": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/analysis/lattice.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/alloc-registry.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/contracts/allocations.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/nodes.ts",
+      "to": [
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/types.ts",
+        "src/wasm/model/instructions.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/value-references.ts",
+        "src/wasm/model/instructions.ts",
+        "src/ir/core/dialect/js.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/async-plan.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts"
+      ]
+    },
+    {
+      "from": "src/shared/contracts/ir-identity.ts",
+      "to": [
+        "src/shared/contracts/source-origin.ts"
+      ]
+    },
+    {
+      "from": "src/shared/contracts/source-origin.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/core/async-intents.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/core/types.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/wasm/model/instructions.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/binding-key-primitives.ts"
+      ]
+    },
+    {
+      "from": "src/wasm/model/instructions.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/core/fnctor-shapes.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/value-references.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/capability-provenance.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/capability-provenance.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/tag-refinement.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/core/binding-key-primitives.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/dialect/js.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/string-types.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/string-types.ts",
+      "to": []
+    },
+    {
+      "from": "src/shared/contracts/ir-counted-string-identity.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/intrinsic-vocabulary.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/analysis/contracts/allocations.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/encoding.ts",
+      "to": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/string-types.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/escape.ts",
+      "to": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/analysis/ownership.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/dominance.ts",
+      "to": [
+        "src/ir/core/nodes.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/alloc-verification.ts",
+      "to": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/core/nodes.ts",
+        "src/shared/contracts/ir-preparation-errors.ts"
+      ]
+    },
+    {
+      "from": "src/shared/contracts/ir-preparation-errors.ts",
+      "to": [
+        "src/shared/contracts/ir-preparation-failure.ts"
+      ]
+    },
+    {
+      "from": "src/shared/contracts/ir-preparation-failure.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/runtime/verify.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/declared-types.ts",
+        "src/wasm/model/instructions.ts",
+        "src/ir/runtime/producer.ts",
+        "src/ir/core/tag-domain.ts",
+        "src/ir/runtime/intrinsic-verification.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/core/fnctor-abi.ts",
+        "src/ir/core/string-runtime.ts",
+        "src/shared/contracts/ir-counted-string-site-id.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/nodes.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/contracts/prepared.ts",
+      "to": [
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/runtime/contracts/manifest.ts"
+      ]
+    },
+    {
+      "from": "src/runtime/contracts/async-provider-schema.ts",
+      "to": [
+        "src/runtime/contracts/host-capability-schema.ts"
+      ]
+    },
+    {
+      "from": "src/runtime/contracts/host-capability-schema.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/runtime/contracts/manifest.ts",
+      "to": [
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/runtime/contracts/intrinsics.ts"
+      ]
+    },
+    {
+      "from": "src/runtime/contracts/provider-policy.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/runtime/contracts/intrinsics.ts",
+      "to": [
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsic-contracts.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/intrinsic-contracts.ts",
+      "to": [
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/types.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/declared-types.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/producer.ts",
+      "to": [
+        "src/ir/runtime/js-tag-domain.ts",
+        "src/ir/core/tag-domain.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/js-tag-domain.ts",
+      "to": [
+        "src/runtime/contracts/js-value-tags.ts",
+        "src/ir/core/tag-domain.ts"
+      ]
+    },
+    {
+      "from": "src/runtime/contracts/js-value-tags.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/core/tag-domain.ts",
+      "to": [
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/tag-refinement.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/intrinsic-verification.ts",
+      "to": [
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/manifest.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/intrinsics.ts",
+      "to": [
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/analysis/effects.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/intrinsics.ts",
+      "to": [
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/intrinsic-vocabulary.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/effects.ts",
+      "to": [
+        "src/ir/core/nodes.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/callable-bindings.ts",
+      "to": [
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/value-references.ts"
+      ]
+    },
+    {
+      "from": "src/shared/contracts/identity-values.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/host-capabilities.ts",
+      "to": [
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/host-capability-schema.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/manifest.ts",
+      "to": [
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/core/types.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/runtime/contracts/intrinsics.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/callable-declarations.ts",
+      "to": [
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/vector-callables.ts",
+        "src/ir/runtime/number-conversion-callable.ts",
+        "src/ir/runtime/ordinary-object-callables.ts",
+        "src/runtime/contracts/provider-policy.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/closure-invocation-callables.ts",
+      "to": [
+        "src/ir/core/value-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/runtime/callable-declarations.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/closure-invocation-callables.ts",
+      "to": [
+        "src/ir/core/callable-bindings.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/native-async-callables.ts",
+      "to": [
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/async-callables.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/runtime/vector-callables.ts",
+      "to": [
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/native-async-callables.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/vector-runtime.ts",
+      "to": [
+        "src/ir/core/types.ts",
+        "src/wasm/model/instructions.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/number-conversion-callable.ts",
+      "to": [
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/runtime/callable-declarations.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/ordinary-object-callables.ts",
+      "to": [
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/runtime/contracts/provider-policy.ts"
+      ]
+    },
+    {
+      "from": "src/ir/runtime/async-providers.ts",
+      "to": [
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/async-intents.ts"
+      ]
+    },
+    {
+      "from": "src/ir/analysis/async-plan.ts",
+      "to": [
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/async-plan.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/fnctor-abi.ts",
+      "to": [
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/fnctor-shapes.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/string-runtime.ts",
+      "to": [
+        "src/ir/core/string-callables.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/string-callables.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/string-callables.ts",
+      "to": []
+    },
+    {
+      "from": "src/shared/contracts/ir-counted-string-site-id.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts"
+      ]
+    },
+    {
+      "from": "src/shared/contracts/ir-unit-inventory.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-preparation-failure.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/allocations.ts",
+      "to": [
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/controls.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/abi-signatures.ts",
+      "to": [
+        "src/ir/core/types.ts",
+        "src/ir/core/type-key.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/errors.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/type-key.ts",
+      "to": [
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/types.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/abi.ts",
+      "to": [
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/core/binding-key-primitives.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/abi-inventory.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/errors.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/program/prepared-contracts.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/runtime-support.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/abi-lookup.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/program/abi.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/startup.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/runtime-support.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/input-contracts.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/data.ts",
+      "to": [
+        "src/ir/core/types.ts",
+        "src/ir/program/errors.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/formatter-support.ts",
+      "to": [
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/type-references.ts",
+        "src/ir/core/types.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/runtime-support.ts"
+      ]
+    },
+    {
+      "from": "src/ir/core/type-references.ts",
+      "to": [
+        "src/ir/core/binding-key-primitives.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/ir/core/types.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/input-contracts.ts",
+      "to": [
+        "src/ir/core/nodes.ts",
+        "src/ir/core/types.ts",
+        "src/ir/core/value-references.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/ir/program/runtime-support.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/callable-bindings.ts",
+      "to": [
+        "src/shared/contracts/ir-identity.ts"
+      ]
+    },
+    {
+      "from": "src/ir/program/controls.ts",
+      "to": [
+        "src/ir/passes/contracts/gvn.ts"
+      ]
+    },
+    {
+      "from": "src/ir/passes/contracts/gvn.ts",
+      "to": []
+    },
+    {
+      "from": "src/ir/program/class-layouts.ts",
+      "to": [
+        "src/ir/core/types.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/prepared-contracts.ts"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ✓ tests/issue-3518-validation-policy-evolution.test.ts (63 tests) 1289ms
+ ✓ tests/issue-3518-verifier-body-relocation.test.ts (39 tests) 269ms
+
+ Test Files  2 passed (2)
+      Tests  102 passed (102)
+   Start at  09:23:26
+   Duration  2.22s (transform 209ms, setup 0ms, collect 464ms, tests 1.56s, environment 0ms, prepare 40ms)
+

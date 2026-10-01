@@ -1,0 +1,6 @@
+
+> @loopdive/js2@0.71.0 check:loc-budget /private/tmp/js2-ir-source-contracts-main-20261001
+> node scripts/check-loc-budget.mjs
+
+
+LOC budget gate: OK — no unallowed growth in 25 changed src file(s) (base: env:LOC_GATE_BASE, net +117 LOC).

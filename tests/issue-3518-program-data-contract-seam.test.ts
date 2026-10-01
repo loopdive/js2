@@ -6,9 +6,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { historicalSource } from "./helpers/ir-ownership-evolution.js";
+import { readBeforeIrSourceContractRelocation } from "./helpers/ir-source-contract-relocation.js";
+import { readBeforeProgramPreAEvolution } from "./helpers/ir-program-pre-a-evolution.js";
 
 const root = resolve(import.meta.dirname, "..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const rawRead = (path: string) => readFileSync(resolve(root, path), "utf8");
+const phaseARead = (path: string) => readBeforeIrSourceContractRelocation(path, rawRead);
+const read = (path: string) => historicalSource(path, readBeforeProgramPreAEvolution(path, phaseARead));
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
 // Complete declaration/documentation and retained-statement receipts measured
@@ -500,7 +505,7 @@ async function compileFixtures(sources: ReadonlyMap<string, string>): Promise<Fi
   return await new Promise((resolveCompilation, reject) => {
     const child = spawn(
       process.execPath,
-      ["--max-old-space-size=2048", "--input-type=commonjs", "-e", compilerFixtureChild],
+      ["--max-old-space-size=4096", "--input-type=commonjs", "-e", compilerFixtureChild],
       { cwd: root, stdio: ["pipe", "pipe", "pipe"] },
     );
     let stdout = "";

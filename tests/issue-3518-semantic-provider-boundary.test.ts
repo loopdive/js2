@@ -8,6 +8,11 @@ import { dirname, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import ts from "typescript";
+import {
+  authenticateIrValidationPolicy,
+  beforeIrValidationPolicyActivations,
+  irValidationPolicyActivations,
+} from "./helpers/ir-validation-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
 // Fixed specification population, independent of discovered imports and policy.
@@ -774,8 +779,42 @@ const mergedInvocationActivations = [
     minModules: 8,
   },
 ];
+const sourceContractActivations = [
+  {
+    layer: "foundation",
+    entries: [
+      "src/shared/contracts/ir-preparation-errors.ts",
+      "src/shared/contracts/ir-counted-string-site-id.ts",
+      "src/shared/contracts/string-surrogate.ts",
+    ],
+    minModules: 3,
+  },
+  {
+    layer: "ir-core",
+    entries: [
+      "src/ir/core/global-binding-keys.ts",
+      "src/ir/core/declared-types.ts",
+      "src/ir/core/fnctor-abi.ts",
+      "src/ir/core/tag-domain.ts",
+      "src/ir/core/string-runtime.ts",
+      "src/ir/core/runtime-symbols.ts",
+      "src/ir/core/date-callables.ts",
+    ],
+    minModules: 7,
+  },
+  {
+    layer: "ir-runtime",
+    entries: ["src/ir/runtime/js-tag-domain.ts", "src/ir/runtime/producer.ts"],
+    minModules: 2,
+  },
+];
+
 // Authenticate the additive prefix before examining the unchanged old history.
 function assertCurrentActivations(history: unknown[]) {
+  history = beforeIrValidationPolicyActivations(history);
+  expect(history).toHaveLength(91);
+  expect(history.slice(88)).toEqual(sourceContractActivations);
+  history = history.slice(0, 88);
   expect(history).toHaveLength(88);
   expect(history.slice(85)).toEqual(mergedInvocationActivations);
   expect(history.slice(75, 81)).toEqual(interveningActivations);
@@ -947,6 +986,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ])
       expect(required).toContain(path);
     const p = policy();
+    authenticateIrValidationPolicy(p);
     assertCurrentActivations(p.activationHistory);
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     for (const [id, entries] of Object.entries(currentLayerGroups)) {
@@ -1038,6 +1078,10 @@ describe("semantic verification and provider ownership boundary", () => {
       if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-object-realm.ts");
       if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/mixed-object-access-bodies.ts");
       if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-mixed-object-access.ts");
+      const contracts = sourceContractActivations.find((record) => record.layer === id);
+      if (contracts) additions.push(...contracts.entries);
+      const validation = irValidationPolicyActivations.find((record) => record.layer === id);
+      if (validation) additions.push(...validation.entries);
       const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
       if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
       const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
@@ -1116,6 +1160,13 @@ describe("semantic verification and provider ownership boundary", () => {
   });
 
   it.each([85, 86, 87])("rejects changed merged invocation record %i", (index) => {
+    const history = policy().activationHistory;
+    assertCurrentActivations(history);
+    history[index].entries[0] += ".lookalike";
+    expect(() => assertCurrentActivations(history)).toThrow();
+  });
+
+  it.each([88, 89, 90])("rejects changed source contract activation %i", (index) => {
     const history = policy().activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
