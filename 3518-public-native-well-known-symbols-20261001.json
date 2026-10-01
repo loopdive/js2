@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "public-native-well-known-symbols-20261001",
   "assignee": "ttraenkler/codex-public-native-well-known-symbols-20261001",
-  "requested_by": "ttraenkler/codex-public-native-well-known-symbols-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-native-well-known-symbols-resume-20261001",
   "claimed_at": "2026-10-01T09:39:26Z",
-  "updated_at": "2026-10-01T09:39:26Z",
-  "write_id": "97141-0noccnk7"
+  "updated_at": "2026-10-01T15:21:18Z",
+  "write_id": "33281-h0h20vv4",
+  "released_at": "2026-10-01T15:21:18Z"
 }
