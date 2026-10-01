@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "c1-historical-helper-types-20261001",
   "assignee": "ttraenkler/codex-c1-historical-helper-types-20261001",
-  "requested_by": "ttraenkler/codex-c1-historical-helper-types-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-runtime-program-c1-integration-20261001",
   "claimed_at": "2026-10-01T08:58:55Z",
-  "updated_at": "2026-10-01T08:58:55Z",
-  "write_id": "60229-g9hekvei"
+  "updated_at": "2026-10-01T13:53:07Z",
+  "write_id": "92794-skt0ra3l",
+  "released_at": "2026-10-01T13:53:07Z"
 }
