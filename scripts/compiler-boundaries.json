@@ -377,9 +377,11 @@
         "src/runtime/wasmgc/values/builtin-function-layouts.ts",
         "src/runtime/wasmgc/values/builtin-function-bodies.ts",
         "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
-        "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts"
+        "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
+        "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+        "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts"
       ],
-      "minModules": 93
+      "minModules": 95
     },
     {
       "id": "standalone-platform",
@@ -14633,6 +14635,16 @@
       "path": "src/backend/wasmgc/resources/native-invocation-substrate.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     }
   ]
 }
