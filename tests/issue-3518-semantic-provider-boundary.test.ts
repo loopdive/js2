@@ -9,10 +9,14 @@ import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import ts from "typescript";
 import {
-  authenticateIrValidationPolicy,
   beforeIrValidationPolicyActivations,
   irValidationPolicyActivations,
 } from "./helpers/ir-validation-policy-evolution.js";
+import {
+  authenticateIrRuntimeProgramPolicy,
+  beforeIrRuntimeProgramPolicy,
+  type MutableIrRuntimeProgramPolicy,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
 // Fixed specification population, independent of discovered imports and policy.
@@ -390,7 +394,11 @@ const additions = [
   "src/ir/runtime/async-attachment.ts",
   "src/ir/runtime/intrinsic-verification.ts",
 ];
-const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+const policy = () => {
+  const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  authenticateIrRuntimeProgramPolicy(actual);
+  return actual;
+};
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 // Preserve the exact published prerequisite composition as an ordered subsequence,
 // alongside the complete delivered-main history. The first two records retain
@@ -986,8 +994,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ])
       expect(required).toContain(path);
     const p = policy();
-    authenticateIrValidationPolicy(p);
-    assertCurrentActivations(p.activationHistory);
+    authenticateIrRuntimeProgramPolicy(p);
+    assertCurrentActivations(beforeIrRuntimeProgramPolicy(p).activationHistory);
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     for (const [id, entries] of Object.entries(currentLayerGroups)) {
       const layer = p.layers.find((row: { id: string }) => row.id === id);
@@ -1082,6 +1090,13 @@ describe("semantic verification and provider ownership boundary", () => {
       if (contracts) additions.push(...contracts.entries);
       const validation = irValidationPolicyActivations.find((record) => record.layer === id);
       if (validation) additions.push(...validation.entries);
+      if (id === "ir-program")
+        additions.push(
+          "src/ir/program/owner.ts",
+          "src/ir/program/draft-abi-lookup.ts",
+          "src/ir/program/runtime-support-dependencies.ts",
+        );
+      if (id === "ir-runtime") additions.push("src/ir/runtime/generator-support.ts");
       const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
       if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
       const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
@@ -1138,7 +1153,7 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(["delete", "reorder", "layer", "entries", "minimum", "extra"] as const)(
     "rejects %s corruption of the independently pinned twelve-record prefix",
     (mutation) => {
-      const history = policy().activationHistory;
+      const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
       assertCurrentActivations(history);
       const before = digest(history);
       if (mutation === "delete") history.splice(0, 1);
@@ -1153,21 +1168,21 @@ describe("semantic verification and provider ownership boundary", () => {
   );
 
   it.each([81, 82, 83, 84])("rejects a changed primitive composition record %i", (index) => {
-    const history = policy().activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
   });
 
   it.each([85, 86, 87])("rejects changed merged invocation record %i", (index) => {
-    const history = policy().activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
   });
 
   it.each([88, 89, 90])("rejects changed source contract activation %i", (index) => {
-    const history = policy().activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
@@ -1213,7 +1228,9 @@ describe("semantic verification and provider ownership boundary", () => {
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ index, mutation })),
     ),
   )("rejects $mutation corruption of formatter activation record $index", ({ index, mutation }) => {
-    const history = assertCurrentActivations(policy().activationHistory);
+    const history = assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+    ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
@@ -1228,7 +1245,9 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
     "rejects %s corruption of the new activation records",
     (mutation) => {
-      const history = assertCurrentActivations(policy().activationHistory);
+      const history = assertCurrentActivations(
+        beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+      ) as MutableIrRuntimeProgramPolicy["activationHistory"];
       assertNewActivations(history);
       const before = digest(history);
       if (mutation === "delete") history.splice(5, 1);
@@ -1256,7 +1275,9 @@ describe("semantic verification and provider ownership boundary", () => {
       })),
     ),
   )("rejects $mutation corruption of the $owner activation record", ({ index, mutation }) => {
-    const history = assertCurrentActivations(policy().activationHistory);
+    const history = assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+    ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
@@ -1273,7 +1294,9 @@ describe("semantic verification and provider ownership boundary", () => {
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ offset, mutation })),
     ),
   )("rejects $mutation corruption of original prerequisite activation records at $offset", ({ offset, mutation }) => {
-    const history = assertCurrentActivations(policy().activationHistory);
+    const history = assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+    ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const index = 3 + originalCompositionOffsets[offset]!;
     const next = 3 + originalCompositionOffsets[offset + 1]!;

@@ -10,6 +10,7 @@ import {
   irValidationPolicyActivations,
   irValidationPolicyReceiptPath,
 } from "./helpers/ir-validation-policy-evolution.js";
+import { beforeIrRuntimeProgramPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 
 interface MutablePolicy {
   layers: { id: string; entries: string[]; roots: string[]; minModules: number; status: string; required: boolean }[];
@@ -23,7 +24,7 @@ const digest = (value: unknown): string => createHash("sha256").update(JSON.stri
 const receiptText = read(irValidationPolicyReceiptPath);
 const receipt = authenticateIrValidationPolicyEvolution(receiptText);
 function actual(): MutablePolicy {
-  const policy = JSON.parse(read("scripts/compiler-boundaries.json")) as MutablePolicy;
+  const policy = beforeIrRuntimeProgramPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))) as MutablePolicy;
   // Every negative begins with a genuinely passing current-policy control.
   authenticateIrValidationPolicy(policy);
   return policy;

@@ -1275,7 +1275,7 @@
       "skip": 0
     }
   },
-  "built-ins/encodeURI": {
+  "built-ins/decodeURI": {
     "ES2015": {
       "pass": 1,
       "fail": 0,
@@ -1283,7 +1283,7 @@
       "skip": 0
     }
   },
-  "built-ins/decodeURI": {
+  "built-ins/encodeURI": {
     "ES2015": {
       "pass": 1,
       "fail": 0,
@@ -1521,14 +1521,6 @@
       "skip": 0
     }
   },
-  "built-ins/FinalizationRegistry": {
-    "ES2021": {
-      "pass": 13,
-      "fail": 34,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/module-code": {
     "ES2015": {
       "pass": 54,
@@ -1561,6 +1553,14 @@
       "skip": 0
     }
   },
+  "built-ins/FinalizationRegistry": {
+    "ES2021": {
+      "pass": 13,
+      "fail": 34,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/AsyncFromSyncIteratorPrototype": {
     "ES2018": {
       "pass": 6,
@@ -1577,24 +1577,18 @@
       "skip": 0
     }
   },
-  "built-ins/ThrowTypeError": {
-    "ES2015": {
-      "pass": 0,
+  "language/directive-prologue": {
+    "ES5": {
+      "pass": 61,
       "fail": 1,
       "ce": 0,
       "skip": 0
     }
   },
-  "built-ins/AsyncGeneratorFunction": {
+  "built-ins/ThrowTypeError": {
     "ES2015": {
       "pass": 0,
       "fail": 1,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2018": {
-      "pass": 6,
-      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1627,10 +1621,16 @@
       "skip": 0
     }
   },
-  "language/directive-prologue": {
-    "ES5": {
-      "pass": 61,
+  "built-ins/AsyncGeneratorFunction": {
+    "ES2015": {
+      "pass": 0,
       "fail": 1,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2018": {
+      "pass": 6,
+      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1751,17 +1751,17 @@
       "skip": 0
     }
   },
-  "language/punctuators": {
+  "language/line-terminators": {
     "ES5": {
-      "pass": 11,
+      "pass": 41,
       "fail": 0,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/line-terminators": {
+  "language/punctuators": {
     "ES5": {
-      "pass": 41,
+      "pass": 11,
       "fail": 0,
       "ce": 0,
       "skip": 0

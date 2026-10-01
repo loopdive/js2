@@ -113,7 +113,7 @@ function declarations(path: string, text: string): Declaration[] {
     if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) return [];
     const name = ts.isVariableStatement(statement)
       ? statement.declarationList.declarations.map((row) => row.name.getText(source)).join(",")
-      : (statement as ts.NamedDeclaration).name?.getText(source);
+      : (statement as ts.Statement & { readonly name?: ts.Node }).name?.getText(source);
     if (!name) return fail(`unnamed executable declaration: ${path}`);
     const kind = ts.SyntaxKind[statement.kind],
       identity = `${kind}:${name}`;

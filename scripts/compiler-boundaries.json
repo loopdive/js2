@@ -183,9 +183,10 @@
         "src/ir/runtime/closure-invocation-callables.ts",
         "src/ir/runtime/js-tag-domain.ts",
         "src/ir/runtime/producer.ts",
-        "src/ir/runtime/verify.ts"
+        "src/ir/runtime/verify.ts",
+        "src/ir/runtime/generator-support.ts"
       ],
-      "minModules": 18
+      "minModules": 19
     },
     {
       "id": "ir-program",
@@ -232,9 +233,12 @@
         "src/ir/program/native-prototype-requirements.ts",
         "src/ir/program/native-realm-requirements.ts",
         "src/ir/program/allocations.ts",
-        "src/ir/program/class-layouts.ts"
+        "src/ir/program/class-layouts.ts",
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts"
       ],
-      "minModules": 40
+      "minModules": 43
     },
     {
       "id": "runtime-contracts",
@@ -1754,6 +1758,20 @@
       "layer": "ir-program",
       "entries": ["src/ir/program/allocations.ts", "src/ir/program/class-layouts.ts"],
       "minModules": 2
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": ["src/ir/runtime/generator-support.ts"],
+      "minModules": 1
     }
   ],
   "nonModules": [
@@ -14840,6 +14858,26 @@
       "path": "src/ir/program/class-layouts.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/owner.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/draft-abi-lookup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-support-dependencies.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/generator-support.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
     }
   ]
 }

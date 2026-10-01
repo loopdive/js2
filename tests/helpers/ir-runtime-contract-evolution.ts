@@ -199,7 +199,7 @@ function analyze(path: string, source: string): Analysis {
       const kind = ts.SyntaxKind[node.kind];
       const name = ts.isVariableStatement(node)
         ? node.declarationList.declarations.map((d) => d.name.getText(tree)).join(",")
-        : (node as ts.NamedDeclaration).name?.getText(tree);
+        : (node as ts.Statement & { readonly name?: ts.Node }).name?.getText(tree);
       if (!name) return fail(`unnamed declaration: ${path}`);
       const key = `${kind}:${name}`,
         occurrence = occurrences.get(key) ?? 0;

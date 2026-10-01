@@ -18,9 +18,14 @@ import {
 } from "./helpers/ir-program-initial-graph-evolution.js";
 import { programCoreTypePath, reconstructProgramCoreTypeEvolution } from "./helpers/ir-program-core-type-evolution.js";
 import {
-  authenticateIrValidationPolicy,
-  historicalIrValidationPolicyView,
-} from "./helpers/ir-validation-policy-evolution.js";
+  reconstructRuntimeProgramRelocationSources,
+  runtimeProgramRelocationPairs,
+} from "./helpers/ir-runtime-program-relocation.js";
+import { historicalIrValidationPolicyView } from "./helpers/ir-validation-policy-evolution.js";
+import {
+  authenticateIrRuntimeProgramPolicy,
+  beforeIrRuntimeProgramPolicy,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
 // Independent, fixed population: never derive required files from discovered
@@ -126,7 +131,7 @@ const newModules = [
 const policy = () => {
   const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
   // Authenticate the whole current policy before any bounded historical view.
-  authenticateIrValidationPolicy(actual);
+  authenticateIrRuntimeProgramPolicy(actual);
   return actual;
 };
 const scratch: string[] = [];
@@ -175,7 +180,14 @@ function fixture(includeOwnership = false) {
     return source;
   };
   const initialIntrinsic = historicalIntrinsicSource(historicalRuntimeRead);
-  const initialProgramSources = reconstructProgramInitialGraph(rawRead);
+  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructRuntimeProgramRelocationSources(rawRead);
+  const initialPreCProgramRead = (path: string): string => {
+    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return rawRead(path);
+    const source = initialC1ProgramSources.get(path);
+    if (source === undefined) throw new Error(`missing authenticated pre-C program source ${path}`);
+    return source;
+  };
+  const initialProgramSources = reconstructProgramInitialGraph(initialPreCProgramRead);
   // Each inverse authenticates raw current inputs independently. This source
   // selection applies only to the initial copy, never to later fixture mutants.
   const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(rawRead);
@@ -340,7 +352,7 @@ describe("complete canonical program-data dependency boundary", () => {
       "wasm-physical:1",
       "native-runtime:1",
     ];
-    const historical = historicalIrValidationPolicyView(p).activationHistory;
+    const historical = historicalIrValidationPolicyView(beforeIrRuntimeProgramPolicy(p)).activationHistory;
     expect(historical).toHaveLength(keys.length);
     expect(historical.map((row) => `${row.layer}:${row.minModules}`)).toEqual(keys);
     expect(digest(historical)).toBe("820a39c3d3b05a1a20d030ae10b1e19621802cfed5cf9a29ccb5dccb80b3d6ee");
@@ -427,11 +439,11 @@ describe("complete canonical program-data dependency boundary", () => {
     );
     expect(ownershipModules).toHaveLength(4);
     expect(new Set(ownershipModules).size).toBe(4);
-    const historical = historicalIrValidationPolicyView(p);
+    const historical = historicalIrValidationPolicyView(beforeIrRuntimeProgramPolicy(p));
     for (const [id, entries] of Object.entries(currentGroups)) {
       const layer = historical.layers.find((x) => x.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
-      expect([...layer.entries].sort()).toEqual([...entries].sort());
+      expect([...layer!.entries].sort()).toEqual([...entries].sort());
       const history = historical.layerActivations.filter(
         (row) => row.layer === id && row.minModules === entries.length,
       );

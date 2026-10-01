@@ -142,8 +142,9 @@ export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> })
       if (recursive) lines.push("  )");
     }
   } else {
+    // Inline function signatures do not remove numeric type slots: later
+    // functions, imports, tags and instructions still use the original indices.
     for (let i = 0; i < mod.types.length; i++) {
-      if (inlineableTypes.has(i)) continue;
       lines.push(`${indent(1)}${formatTypeDef(mod.types[i]!, i)}`);
     }
   }

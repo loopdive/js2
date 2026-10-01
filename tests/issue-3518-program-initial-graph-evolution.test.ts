@@ -20,6 +20,28 @@ import {
 } from "./helpers/ir-program-initial-graph-evolution.js";
 import { programPreAReceiptPath, reconstructProgramPreA } from "./helpers/ir-program-pre-a-evolution.js";
 
+import {
+  reconstructRuntimeProgramRelocationSources,
+  runtimeProgramRelocationPairs,
+  runtimeProgramRelocationPopulationPaths,
+  runtimeProgramRelocationReceiptPath,
+} from "./helpers/ir-runtime-program-relocation.js";
+
+function beforeC1(readLive: (path: string) => string = actual, captureCalls?: string[]): (path: string) => string {
+  const sources = reconstructRuntimeProgramRelocationSources((path) => {
+    captureCalls?.push(path);
+    return readLive(path);
+  });
+  return (path) => {
+    if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
+      const source = sources.get(path as Parameters<typeof sources.get>[0]);
+      if (source === undefined) throw new Error(`missing checked C1 output: ${path}`);
+      return source;
+    }
+    return readLive(path);
+  };
+}
+
 function actual(path: string): string {
   const value = readProgramInitialGraphActual(path);
   if (typeof value !== "string") throw new Error(`missing actual control input: ${path}`);
@@ -31,8 +53,8 @@ const input = "src/ir/program/input.ts";
 const handles = "src/wasm/physical/function-handles.ts";
 const inputContract = "src/ir/program/input-contracts.ts";
 const preparedContract = "src/ir/program/prepared-contracts.ts";
-function changed(path: string, text: string | undefined): ProgramInitialGraphReader {
-  return (requested) => (requested === path ? text : actual(requested));
+function changed(read: (path: string) => string, path: string, text: string | undefined): ProgramInitialGraphReader {
+  return (requested) => (requested === path ? text : read(requested));
 }
 function replaceOnce(source: string, before: string, after: string): string {
   const at = source.indexOf(before);
@@ -74,8 +96,8 @@ function reorderDeclarations(path: string, firstName: string, secondName: string
     source.subarray(second.endByte),
   ]).toString("utf8");
 }
-function positive(): ReadonlyMap<string, string> {
-  const output = reconstructProgramInitialGraph();
+function positive(read: (path: string) => string): ReadonlyMap<string, string> {
+  const output = reconstructProgramInitialGraph(read);
   expect([...output.keys()]).toEqual(programInitialGraphPaths);
   expect(output.size).toBe(4);
   return output;
@@ -247,6 +269,7 @@ const mutations: readonly [string, string, () => string][] = [
 
 describe("authenticated initial program graph evolution", () => {
   it("fixes four outputs and seventeen actual source inputs without adding graph modules", () => {
+    const initialRead = beforeC1();
     expect(receipt.outputs.map((p) => p.path)).toEqual(programInitialGraphPaths);
     expect(receipt.inputs.map((p) => p.path)).toEqual(programInitialGraphInputPaths);
     expect(receipt.inputs).toHaveLength(17);
@@ -261,30 +284,35 @@ describe("authenticated initial program graph evolution", () => {
       "receiver",
       "requiredFields",
     ]);
-    expect(positive().has("src/wasm/model/module-records.ts")).toBe(false);
-    expect(positive().has("src/ir/program/runtime-support.ts")).toBe(false);
+    expect(positive(initialRead).has("src/wasm/model/module-records.ts")).toBe(false);
+    expect(positive(initialRead).has("src/ir/program/runtime-support.ts")).toBe(false);
   });
 
   it.each(receipt.outputs)("reconstructs the fixed full prior $path from current inputs", (output) => {
-    const sources = positive(),
+    const initialRead = beforeC1();
+    const sources = positive(initialRead),
       original = sources.get(output.path)!;
     expect(programInitialGraphPin(original)).toEqual({
       bytes: output.bytes,
       sha256: output.sha256,
       gitBlob: output.gitBlob,
     });
-    expect(original).not.toBe(actual(output.path));
+    expect(original).not.toBe(initialRead(output.path));
     expect(original).not.toContain('"./runtime-support.js"');
     const r = receipt.records.find((r) => r.path === output.path);
-    if (r) expect(() => verifyProgramInitialGraphReciprocal(output.path, actual(output.path), original)).not.toThrow();
+    if (r)
+      expect(() =>
+        verifyProgramInitialGraphReciprocal(output.path, initialRead(output.path), original, initialRead),
+      ).not.toThrow();
   });
 
   it("uses the existing complete pre-A owner rather than a second contract recipe", () => {
-    const old = reconstructProgramPreA(actual),
-      initial = positive();
+    const initialRead = beforeC1();
+    const old = reconstructProgramPreA(initialRead),
+      initial = positive(initialRead);
     for (const path of [inputContract, preparedContract]) expect(initial.get(path)).toBe(old.get(path));
     expect(receipt.preAReceipt.path).toBe(programPreAReceiptPath);
-    expect(programInitialGraphPin(actual(programPreAReceiptPath))).toEqual({
+    expect(programInitialGraphPin(initialRead(programPreAReceiptPath))).toEqual({
       bytes: receipt.preAReceipt.bytes,
       sha256: receipt.preAReceipt.sha256,
       gitBlob: receipt.preAReceipt.gitBlob,
@@ -292,8 +320,9 @@ describe("authenticated initial program graph evolution", () => {
   });
 
   it("keeps both original physical declarations and their bodies as exact live AST text", () => {
-    const old = positive().get(handles)!,
-      current = actual(handles);
+    const initialRead = beforeC1();
+    const old = positive(initialRead).get(handles)!,
+      current = initialRead(handles);
     const sf = ts.createSourceFile(handles, old, ts.ScriptTarget.Latest, true),
       live = ts.createSourceFile(handles, current, ts.ScriptTarget.Latest, true);
     expect(sf.statements).toHaveLength(2);
@@ -307,87 +336,102 @@ describe("authenticated initial program graph evolution", () => {
   });
 
   it.each(receipt.inputs)("authenticates every full current $path after a genuine paired positive", (p) => {
-    positive();
-    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(p.path, `${actual(p.path)}\n`)));
+    const initialRead = beforeC1();
+    positive(initialRead);
+    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(initialRead, p.path, `${initialRead(p.path)}\n`)));
   });
   it.each(receipt.inputs)("requires the actual live $path rather than an empty or historical substitute", (p) => {
-    positive();
-    rejectsWith("missing-source", () => reconstructProgramInitialGraph(changed(p.path, undefined)));
-    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(p.path, "")));
+    const initialRead = beforeC1();
+    positive(initialRead);
+    rejectsWith("missing-source", () => reconstructProgramInitialGraph(changed(initialRead, p.path, undefined)));
+    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(initialRead, p.path, "")));
   });
   it.each(mutations)(
     "refuses %s even when projection would remove or rewrite the changed bytes",
     (_label, path, mutate) => {
-      positive();
+      const initialRead = beforeC1();
+      positive(initialRead);
       const bad = mutate();
-      expect(bad).not.toBe(actual(path));
-      rejectsWith("pin", () => reconstructProgramInitialGraph(changed(path, bad)));
+      expect(bad).not.toBe(initialRead(path));
+      rejectsWith("pin", () => reconstructProgramInitialGraph(changed(initialRead, path, bad)));
     },
   );
   it.each(receipt.outputs)("refuses prior and mutated prior $path as current-source operands", (p) => {
-    const original = positive().get(p.path)!;
-    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(p.path, original)));
-    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(p.path, `${original}\n`)));
+    const initialRead = beforeC1();
+    const original = positive(initialRead).get(p.path)!;
+    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(initialRead, p.path, original)));
+    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(initialRead, p.path, `${original}\n`)));
   });
   it.each(receipt.records)("validates both complete reciprocal sides for $path", (r) => {
-    const old = positive().get(r.path)!,
-      current = actual(r.path);
-    expect(() => verifyProgramInitialGraphReciprocal(r.path, current, old)).not.toThrow();
-    rejectsWith("pin", () => verifyProgramInitialGraphReciprocal(r.path, `${current}\n`, old));
-    rejectsWith("pin", () => verifyProgramInitialGraphReciprocal(r.path, current, `${old}\n`));
+    const initialRead = beforeC1();
+    const old = positive(initialRead).get(r.path)!,
+      current = initialRead(r.path);
+    expect(() => verifyProgramInitialGraphReciprocal(r.path, current, old, initialRead)).not.toThrow();
+    rejectsWith("pin", () => verifyProgramInitialGraphReciprocal(r.path, `${current}\n`, old, initialRead));
+    rejectsWith("pin", () => verifyProgramInitialGraphReciprocal(r.path, current, `${old}\n`, initialRead));
   });
 
   it("captures exactly seventeen sources and one nested receipt per fresh operation", () => {
+    const c1Calls: string[] = [];
+    const initialRead = beforeC1(actual, c1Calls);
+    expect(c1Calls).toEqual([runtimeProgramRelocationReceiptPath, ...runtimeProgramRelocationPopulationPaths]);
     const calls: string[] = [],
       reader = (path: string) => {
         calls.push(path);
-        return actual(path);
+        return initialRead(path);
       };
     for (let i = 0; i < 2; i++) expect(reconstructProgramInitialGraph(reader).size).toBe(4);
     const one = [...programInitialGraphInputPaths, programPreAReceiptPath];
     expect(calls).toEqual([...one, ...one]);
-    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(handles, `${actual(handles)}\n`)));
-    positive();
+    rejectsWith("pin", () =>
+      reconstructProgramInitialGraph(changed(initialRead, handles, `${initialRead(handles)}\n`)),
+    );
+    positive(initialRead);
+    expect(c1Calls).toEqual([runtimeProgramRelocationReceiptPath, ...runtimeProgramRelocationPopulationPaths]);
   });
   it("does not retain successful source authority after a caller changes its backing map", () => {
-    const backing = new Map(programInitialGraphInputPaths.map((p) => [p, actual(p)]));
-    backing.set(programPreAReceiptPath, actual(programPreAReceiptPath));
+    const initialRead = beforeC1();
+    const backing = new Map(programInitialGraphInputPaths.map((p) => [p, initialRead(p)]));
+    backing.set(programPreAReceiptPath, initialRead(programPreAReceiptPath));
     const reader = (path: string) => backing.get(path);
     const initial = reconstructProgramInitialGraph(reader);
     expect(initial.size).toBe(4);
-    backing.set(handles, `${actual(handles)}\n`);
-    expect(initial.get(handles)).toBe(positive().get(handles));
+    backing.set(handles, `${initialRead(handles)}\n`);
+    expect(initial.get(handles)).toBe(positive(initialRead).get(handles));
     rejectsWith("pin", () => reconstructProgramInitialGraph(reader));
   });
   it("keeps unowned reader paths raw, including appended back edges, and fails on missing paths", () => {
+    const initialRead = beforeC1();
     const path = "src/wasm/model/instructions.ts",
-      initial = createProgramInitialGraphReader();
-    expect(initial(path)).toBe(actual(path));
-    const appended = `${actual(path)}\nexport type { Foreign } from "./foreign.js";\n`;
-    let raw = actual(path);
-    const reader = createProgramInitialGraphReader((p) => (p === path ? raw : actual(p)));
+      initial = createProgramInitialGraphReader(initialRead);
+    expect(initial(path)).toBe(initialRead(path));
+    const appended = `${initialRead(path)}\nexport type { Foreign } from "./foreign.js";\n`;
+    let raw = initialRead(path);
+    const reader = createProgramInitialGraphReader((p) => (p === path ? raw : initialRead(p)));
     raw = appended;
     expect(reader(path)).toBe(appended);
-    expect(reader(handles)).toBe(positive().get(handles));
+    expect(reader(handles)).toBe(positive(initialRead).get(handles));
     rejectsWith("missing-source", () => initial("src/absent-initial-graph-owner.ts"));
   });
   it("leaves copied fixture mutations raw after initial construction", () => {
-    const initial = createProgramInitialGraphReader(),
+    const initialRead = beforeC1();
+    const initial = createProgramInitialGraphReader(initialRead),
       copied = new Map(programInitialGraphPaths.map((p) => [p, initial(p)]));
     const old = copied.get(handles)!,
       mutation = `${old}\nexport type { Foreign } from "../model/foreign.js";\n`;
     copied.set(handles, mutation);
     expect(copied.get(handles)).toBe(mutation);
     expect(copied.get(handles)).not.toBe(initial(handles));
-    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(handles, copied.get(handles))));
+    rejectsWith("pin", () => reconstructProgramInitialGraph(changed(initialRead, handles, copied.get(handles))));
   });
   it("preserves caller missing-read diagnostics as a typed fail-closed cause", () => {
+    const initialRead = beforeC1();
     const missing = new Error("actual source missing"),
       reader: ProgramInitialGraphReader = (p) => {
         if (p === handles) throw missing;
-        return actual(p);
+        return initialRead(p);
       };
-    positive();
+    positive(initialRead);
     try {
       reconstructProgramInitialGraph(reader);
       throw new Error("unexpected success");
@@ -398,23 +442,37 @@ describe("authenticated initial program graph evolution", () => {
     }
   });
   it.each(["missing", "changed"] as const)("requires the %s nested pre-A receipt", (kind) => {
-    positive();
+    const initialRead = beforeC1();
+    positive(initialRead);
     rejectsWith(kind === "missing" ? "missing-source" : "pin", () =>
       reconstructProgramInitialGraph(
-        changed(programPreAReceiptPath, kind === "missing" ? undefined : `${actual(programPreAReceiptPath)}\n`),
+        changed(
+          initialRead,
+          programPreAReceiptPath,
+          kind === "missing" ? undefined : `${initialRead(programPreAReceiptPath)}\n`,
+        ),
       ),
     );
   });
   it("refuses an unknown reciprocal record instead of using a name-shaped fallback", () => {
-    positive();
+    const initialRead = beforeC1();
+    positive(initialRead);
     rejectsWith("receipt", () =>
-      verifyProgramInitialGraphReciprocal("src/foreign.ts", actual(handles), positive().get(handles)!),
+      verifyProgramInitialGraphReciprocal(
+        "src/foreign.ts",
+        initialRead(handles),
+        positive(initialRead).get(handles)!,
+        initialRead,
+      ),
     );
   });
 
   it.each(receipt.inputs)("independently authenticates the Git blob for $path", (p) => {
-    expect(() => assertProgramInitialGraphPin(actual(p.path), p, p.path)).not.toThrow();
-    rejectsWith("pin", () => assertProgramInitialGraphPin(actual(p.path), { ...p, gitBlob: "0".repeat(40) }, p.path));
+    const initialRead = beforeC1();
+    expect(() => assertProgramInitialGraphPin(initialRead(p.path), p, p.path)).not.toThrow();
+    rejectsWith("pin", () =>
+      assertProgramInitialGraphPin(initialRead(p.path), { ...p, gitBlob: "0".repeat(40) }, p.path),
+    );
   });
   it.each(["negative start", "beyond source", "length mismatch", "partial UTF8", "span SHA", "span blob"] as const)(
     "rejects %s through the independent live-span guard",
@@ -577,12 +635,13 @@ describe("authenticated initial program graph evolution", () => {
   it.each(recipeMutations)(
     "independently refuses malformed %s recipe before fixed digest authority",
     (_label, mutate, code) => {
+      const initialRead = beforeC1();
       const good = copiedReceipt();
       expect(() => assertProgramInitialGraphRecipe(good)).not.toThrow();
       const bad = copiedReceipt();
       mutate(bad);
       rejectsWith(code, () => assertProgramInitialGraphRecipe(bad));
-      rejectsWith("receipt", () => reconstructProgramInitialGraph(actual, JSON.stringify(bad)));
+      rejectsWith("receipt", () => reconstructProgramInitialGraph(initialRead, JSON.stringify(bad)));
     },
   );
   it.each([
@@ -591,7 +650,8 @@ describe("authenticated initial program graph evolution", () => {
     `${receiptText}\n`,
     receiptText.replace("authenticated-live-program-initial-graph-evolution", "untrusted-old-body"),
   ])("rejects malformed receipt operand %#", (bad) => {
-    positive();
-    rejectsWith("receipt", () => reconstructProgramInitialGraph(actual, bad));
+    const initialRead = beforeC1();
+    positive(initialRead);
+    rejectsWith("receipt", () => reconstructProgramInitialGraph(initialRead, bad));
   });
 });

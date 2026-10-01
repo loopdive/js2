@@ -16,6 +16,31 @@ import {
   reconstructProgramPreA,
 } from "./helpers/ir-program-pre-a-evolution.js";
 
+import {
+  reconstructRuntimeProgramRelocationSources,
+  runtimeProgramRelocationPairs,
+  runtimeProgramRelocationPopulationPaths,
+  runtimeProgramRelocationReceiptPath,
+} from "./helpers/ir-runtime-program-relocation.js";
+
+function beforeC1(
+  readLive: (path: string) => string = readProgramPreAActual,
+  captureCalls?: string[],
+): (path: string) => string {
+  const sources = reconstructRuntimeProgramRelocationSources((path) => {
+    captureCalls?.push(path);
+    return readLive(path);
+  });
+  return (path) => {
+    if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
+      const source = sources.get(path as Parameters<typeof sources.get>[0]);
+      if (source === undefined) throw new Error(`missing checked C1 output: ${path}`);
+      return source;
+    }
+    return readLive(path);
+  };
+}
+
 const receiptText = readProgramPreAActual(programPreAReceiptPath);
 const receipt = authenticateProgramPreAEvolution(receiptText);
 const population = [...receipt.records.map((r) => ({ path: r.path, ...r.current })), ...receipt.dependencies];
@@ -25,8 +50,8 @@ const dependencies = "src/ir/prepared-component-dependencies.ts";
 const input = "src/ir/program/input-contracts.ts";
 const prepared = "src/ir/program/prepared-contracts.ts";
 
-function changed(path: string, source: string): (requested: string) => string {
-  return (requested) => (requested === path ? source : readProgramPreAActual(requested));
+function changed(read: (path: string) => string, path: string, source: string): (requested: string) => string {
+  return (requested) => (requested === path ? source : read(requested));
 }
 function replaceOnce(source: string, before: string, after: string): string {
   const at = source.indexOf(before);
@@ -34,8 +59,13 @@ function replaceOnce(source: string, before: string, after: string): string {
     throw new Error("mutation requires one changed exact span");
   return source.slice(0, at) + after + source.slice(at + before.length);
 }
-function editBytes(path: string, span: { startByte: number; endByte: number }, edit: (text: string) => string): string {
-  const source = Buffer.from(readProgramPreAActual(path));
+function editBytes(
+  read: (path: string) => string,
+  path: string,
+  span: { startByte: number; endByte: number },
+  edit: (text: string) => string,
+): string {
+  const source = Buffer.from(read(path));
   const text = source.subarray(span.startByte, span.endByte).toString("utf8"),
     replacement = edit(text);
   if (text === replacement) throw new Error("mutation did not alter live bytes");
@@ -68,48 +98,49 @@ function swappedInterfaces(): string {
   ]).toString("utf8");
 }
 
-const mutations: readonly [string, string, () => string][] = [
-  ["missing first lifted interface", canonicalIdentity, () => editBytes(canonicalIdentity, liveInterface(2), () => "")],
+const mutations: readonly [string, string, (read: (path: string) => string) => string][] = [
+  [
+    "missing first lifted interface",
+    canonicalIdentity,
+    (read) => editBytes(read, canonicalIdentity, liveInterface(2), () => ""),
+  ],
   [
     "duplicate second lifted interface",
     canonicalIdentity,
-    () => editBytes(canonicalIdentity, liveInterface(3), (s) => s + s),
+    (read) => editBytes(read, canonicalIdentity, liveInterface(3), (s) => s + s),
   ],
   ["reordered lifted interfaces", canonicalIdentity, swappedInterfaces],
   [
     "removed lifted readonly",
     canonicalIdentity,
-    () => editBytes(canonicalIdentity, liveInterface(2), (s) => replaceOnce(s, "readonly parentId", "parentId")),
+    (read) =>
+      editBytes(read, canonicalIdentity, liveInterface(2), (s) => replaceOnce(s, "readonly parentId", "parentId")),
   ],
   [
     "changed lifted optionality",
     canonicalIdentity,
-    () => editBytes(canonicalIdentity, liveInterface(2), (s) => replaceOnce(s, "sourceUnit?:", "sourceUnit:")),
+    (read) =>
+      editBytes(read, canonicalIdentity, liveInterface(2), (s) => replaceOnce(s, "sourceUnit?:", "sourceUnit:")),
   ],
   [
     "changed second interface documentation",
     canonicalIdentity,
-    () =>
-      editBytes(canonicalIdentity, liveInterface(3), (s) =>
+    (read) =>
+      editBytes(read, canonicalIdentity, liveInterface(3), (s) =>
         replaceOnce(s, "Exact lowering-side provenance", "Changed lowering-side provenance"),
       ),
   ],
   [
     "changed retained identity factory body",
     "src/shared/contracts/identity-values.ts",
-    () =>
-      replaceOnce(
-        readProgramPreAActual("src/shared/contracts/identity-values.ts"),
-        "value.toString(10)",
-        "value.toString(16)",
-      ),
+    (read) => replaceOnce(read("src/shared/contracts/identity-values.ts"), "value.toString(10)", "value.toString(16)"),
   ],
   [
     "redirected identity forwarding link",
     "src/ir/identity-values.ts",
-    () =>
+    (read) =>
       replaceOnce(
-        readProgramPreAActual("src/ir/identity-values.ts"),
+        read("src/ir/identity-values.ts"),
         '"../shared/contracts/identity-values.js"',
         '"../shared/contracts/wrong-identity-values.js"',
       ),
@@ -117,9 +148,9 @@ const mutations: readonly [string, string, () => string][] = [
   [
     "missing identity insertion anchor",
     identity,
-    () =>
+    (read) =>
       replaceOnce(
-        readProgramPreAActual(identity),
+        read(identity),
         "export interface IrLiftedFunctionArtifactOwner",
         "export interface ChangedLiftedFunctionArtifactOwner",
       ),
@@ -127,114 +158,98 @@ const mutations: readonly [string, string, () => string][] = [
   [
     "redirected donor identity import",
     identity,
-    () =>
-      editBytes(identity, change(identity, 0).current, (s) =>
+    (read) =>
+      editBytes(read, identity, change(identity, 0).current, (s) =>
         replaceOnce(s, '"../shared/contracts/ir-identity.js"', '"../shared/contracts/wrong-identity.js"'),
       ),
   ],
   [
     "missing added support function",
     dependencies,
-    () => editBytes(dependencies, change(dependencies, 1).current, () => ""),
+    (read) => editBytes(read, dependencies, change(dependencies, 1).current, () => ""),
   ],
   [
     "duplicate added support function",
     dependencies,
-    () => editBytes(dependencies, change(dependencies, 1).current, (s) => s + s),
+    (read) => editBytes(read, dependencies, change(dependencies, 1).current, (s) => s + s),
   ],
   [
     "changed added support body",
     dependencies,
-    () =>
-      editBytes(dependencies, change(dependencies, 1).current, (s) =>
+    (read) =>
+      editBytes(read, dependencies, change(dependencies, 1).current, (s) =>
         replaceOnce(s, "anchors.length !== 1", "anchors.length !== 2"),
       ),
   ],
   [
     "changed support documentation",
     dependencies,
-    () =>
-      editBytes(dependencies, change(dependencies, 1).current, (s) =>
+    (read) =>
+      editBytes(read, dependencies, change(dependencies, 1).current, (s) =>
         replaceOnce(s, "Semantic dependency proof", "Changed dependency proof"),
       ),
   ],
   [
     "changed new support-ref arm",
     dependencies,
-    () =>
-      editBytes(dependencies, change(dependencies, 2).current, (s) =>
+    (read) =>
+      editBytes(read, dependencies, change(dependencies, 2).current, (s) =>
         replaceOnce(s, "recordSupportTypeReference(", "wrongSupportTypeReference("),
       ),
   ],
   [
     "duplicate new support-ref arm",
     dependencies,
-    () => editBytes(dependencies, change(dependencies, 2).current, (s) => s + s),
+    (read) => editBytes(read, dependencies, change(dependencies, 2).current, (s) => s + s),
   ],
   [
     "redirected support import",
     dependencies,
-    () =>
-      editBytes(dependencies, change(dependencies, 0).current, (s) =>
+    (read) =>
+      editBytes(read, dependencies, change(dependencies, 0).current, (s) =>
         replaceOnce(s, '"./program/formatter-support.js"', '"./program/wrong-support.js"'),
       ),
   ],
   [
     "removed input readonly",
     input,
-    () => replaceOnce(readProgramPreAActual(input), "readonly runtimeSupport?:", "runtimeSupport?:"),
+    (read) => replaceOnce(read(input), "readonly runtimeSupport?:", "runtimeSupport?:"),
   ],
-  [
-    "removed input optionality",
-    input,
-    () => replaceOnce(readProgramPreAActual(input), "runtimeSupport?:", "runtimeSupport:"),
-  ],
+  ["removed input optionality", input, (read) => replaceOnce(read(input), "runtimeSupport?:", "runtimeSupport:")],
   [
     "changed input documentation",
     input,
-    () =>
-      replaceOnce(
-        readProgramPreAActual(input),
-        "Internal preparation data produced",
-        "Changed preparation data produced",
-      ),
+    (read) => replaceOnce(read(input), "Internal preparation data produced", "Changed preparation data produced"),
   ],
   [
     "removed prepared readonly",
     prepared,
-    () => replaceOnce(readProgramPreAActual(prepared), "readonly runtimeSupport?:", "runtimeSupport?:"),
+    (read) => replaceOnce(read(prepared), "readonly runtimeSupport?:", "runtimeSupport?:"),
   ],
   [
     "removed prepared optionality",
     prepared,
-    () => replaceOnce(readProgramPreAActual(prepared), "runtimeSupport?:", "runtimeSupport:"),
+    (read) => replaceOnce(read(prepared), "runtimeSupport?:", "runtimeSupport:"),
   ],
   [
     "changed prepared documentation",
     prepared,
-    () =>
-      replaceOnce(
-        readProgramPreAActual(prepared),
-        "The single source-to-backend handoff",
-        "The changed source-to-backend handoff",
-      ),
+    (read) =>
+      replaceOnce(read(prepared), "The single source-to-backend handoff", "The changed source-to-backend handoff"),
   ],
-  [
-    "unreviewed executable declaration",
-    prepared,
-    () => `${readProgramPreAActual(prepared)}\nexport const unreviewed = true;\n`,
-  ],
-  ["shifted donor offsets", identity, () => `\n${readProgramPreAActual(identity)}`],
+  ["unreviewed executable declaration", prepared, (read) => `${read(prepared)}\nexport const unreviewed = true;\n`],
+  ["shifted donor offsets", identity, (read) => `\n${read(identity)}`],
 ];
 
 describe("live program pre-A historical evolution transport", () => {
   it.each(receipt.records)("recovers the exact original $path and replays current bytes", (record) => {
-    const original = readBeforeProgramPreAEvolution(record.path);
+    const initialRead = beforeC1();
+    const original = readBeforeProgramPreAEvolution(record.path, initialRead);
     expect(programPreASha256(original)).toBe(record.original.sha256);
     expect(programPreAGitBlob(original)).toBe(record.original.gitBlob);
     expect(Buffer.byteLength(original)).toBe(record.original.bytes);
-    expect(original).not.toBe(readProgramPreAActual(record.path));
-    expect([...reconstructProgramPreA().keys()]).toEqual(programPreAPaths);
+    expect(original).not.toBe(initialRead(record.path));
+    expect([...reconstructProgramPreA(initialRead).keys()]).toEqual(programPreAPaths);
   });
 
   it("pins the entire live population and keeps only non-executable literal scaffold", () => {
@@ -256,7 +271,8 @@ describe("live program pre-A historical evolution transport", () => {
     [identity, 62, 34, "085e2c77ab3f040ea2aa9b4b215a751bdbef69761c1812687f5fed4f16ff0879"],
     [dependencies, 41, 28, "7645e249fd03cedd881938e7844535d71b333b8679194e7a5d2eaabba6842121"],
   ] as const)("preserves the unchanged declaration/function floor for %s", (path, declarations, functions, sha256) => {
-    expect(programPreARetainedReceipt(path, readBeforeProgramPreAEvolution(path))).toEqual({
+    const initialRead = beforeC1();
+    expect(programPreARetainedReceipt(path, readBeforeProgramPreAEvolution(path, initialRead))).toEqual({
       declarations,
       functions,
       sha256,
@@ -267,7 +283,13 @@ describe("live program pre-A historical evolution transport", () => {
     [input, "TypedIrProgramInput", "1dc69663b93552c16a75cac76486906801e697cb33dcc3cfe1201f1717824805"],
     [prepared, "PreparedIrProgram", "83eff15645a15944208dbc46f9dd83bace7fc7f74fca8fcfdf450568c6381392"],
   ] as const)("retains the original documented %s interface receipt", (path, name, expected) => {
-    const source = ts.createSourceFile(path, readBeforeProgramPreAEvolution(path), ts.ScriptTarget.Latest, true);
+    const initialRead = beforeC1();
+    const source = ts.createSourceFile(
+      path,
+      readBeforeProgramPreAEvolution(path, initialRead),
+      ts.ScriptTarget.Latest,
+      true,
+    );
     const nodes = source.statements.filter((s) => ts.isInterfaceDeclaration(s) && s.name.text === name);
     expect(nodes).toHaveLength(1);
     const documented = nodes[0]!
@@ -278,28 +300,31 @@ describe("live program pre-A historical evolution transport", () => {
   });
 
   it.each(population)("requires unmodified live $path for every supported read", (record) => {
-    expect(reconstructProgramPreA().size).toBe(4);
+    const initialRead = beforeC1();
+    expect(reconstructProgramPreA(initialRead).size).toBe(4);
     const missing = new Error(`missing current ${record.path}`);
     expect(() =>
       readBeforeProgramPreAEvolution(identity, (path) => {
         if (path === record.path) throw missing;
-        return readProgramPreAActual(path);
+        return initialRead(path);
       }),
     ).toThrow(missing);
     expect(() =>
-      readBeforeProgramPreAEvolution(identity, changed(record.path, `${readProgramPreAActual(record.path)}\n`)),
+      readBeforeProgramPreAEvolution(identity, changed(initialRead, record.path, `${initialRead(record.path)}\n`)),
     ).toThrow(/SHA256\/length mismatch/);
   });
 
   it.each(mutations)("refuses %s after the genuine positive control", (_label, path, mutate) => {
-    expect(reconstructProgramPreA().size).toBe(4);
-    const bad = mutate();
-    expect(bad).not.toBe(readProgramPreAActual(path));
-    expect(() => reconstructProgramPreA(changed(path, bad))).toThrow(/SHA256\/length mismatch/);
+    const initialRead = beforeC1();
+    expect(reconstructProgramPreA(initialRead).size).toBe(4);
+    const bad = mutate(initialRead);
+    expect(bad).not.toBe(initialRead(path));
+    expect(() => reconstructProgramPreA(changed(initialRead, path, bad))).toThrow(/SHA256\/length mismatch/);
   });
 
   it.each(population)("independently checks the Git blob for $path", (record) => {
-    const source = readProgramPreAActual(record.path);
+    const initialRead = beforeC1();
+    const source = initialRead(record.path);
     expect(() => assertProgramPreAPin(source, record, record.path)).not.toThrow();
     expect(() => assertProgramPreAPin(source, { ...record, gitBlob: "0".repeat(40) }, record.path)).toThrow(
       /Git blob mismatch/,
@@ -317,6 +342,7 @@ describe("live program pre-A historical evolution transport", () => {
     "change order",
     "executable scaffold",
   ])("rejects fixed receipt corruption: %s", (kind) => {
+    const initialRead = beforeC1();
     expect(authenticateProgramPreAEvolution(receiptText).records).toHaveLength(4);
     const bad = JSON.parse(receiptText);
     const first = bad.records[0],
@@ -350,45 +376,58 @@ describe("live program pre-A historical evolution transport", () => {
         first.changes[0].replacement.text += "export const substitute = true;\n";
         break;
     }
-    expect(() => reconstructProgramPreA(readProgramPreAActual, JSON.stringify(bad))).toThrow("receipt digest mismatch");
+    expect(() => reconstructProgramPreA(initialRead, JSON.stringify(bad))).toThrow("receipt digest mismatch");
   });
 
   it("reauthenticates every complete current input after warm reads", () => {
+    const c1Requested: string[] = [];
+    const initialRead = beforeC1(readProgramPreAActual, c1Requested);
+    expect(c1Requested).toEqual([runtimeProgramRelocationReceiptPath, ...runtimeProgramRelocationPopulationPaths]);
     const requested: string[] = [];
     const reader = (path: string) => {
       requested.push(path);
-      return readProgramPreAActual(path);
+      return initialRead(path);
     };
     for (let i = 0; i < 2; i++) expect(reconstructProgramPreA(reader).size).toBe(4);
     expect(requested).toEqual([...population, ...population].map((r) => r.path));
     const path = programPreADependencies[0]!;
-    expect(() => reconstructProgramPreA(changed(path, `${readProgramPreAActual(path)}\n`))).toThrow(
+    expect(() => reconstructProgramPreA(changed(initialRead, path, `${initialRead(path)}\n`))).toThrow(
       /SHA256\/length mismatch/,
     );
-    expect(reconstructProgramPreA().size).toBe(4);
+    expect(reconstructProgramPreA(initialRead).size).toBe(4);
+    expect(c1Requested).toEqual([runtimeProgramRelocationReceiptPath, ...runtimeProgramRelocationPopulationPaths]);
   });
 
   it.each(receipt.records)("refuses already historical and mutated historical $path", (record) => {
-    const original = beforeProgramPreAEvolution(record.path, readProgramPreAActual(record.path));
+    const initialRead = beforeC1();
+    const original = beforeProgramPreAEvolution(record.path, initialRead(record.path), initialRead);
     expect(programPreASha256(original)).toBe(record.original.sha256);
-    expect(() => beforeProgramPreAEvolution(record.path, original)).toThrow(/SHA256\/length mismatch/);
-    expect(() => beforeProgramPreAEvolution(record.path, `${original}\n`)).toThrow(/SHA256\/length mismatch/);
+    expect(() => beforeProgramPreAEvolution(record.path, original, initialRead)).toThrow(/SHA256\/length mismatch/);
+    expect(() => beforeProgramPreAEvolution(record.path, `${original}\n`, initialRead)).toThrow(
+      /SHA256\/length mismatch/,
+    );
   });
 
   it("leaves current compiler-facing contracts and support validation raw", () => {
+    const initialRead = beforeC1();
     const before = population.map((r) => readProgramPreAActual(r.path));
-    expect(reconstructProgramPreA().size).toBe(4);
+    expect(reconstructProgramPreA(initialRead).size).toBe(4);
     expect(population.map((r) => readProgramPreAActual(r.path))).toEqual(before);
     for (const path of [input, prepared]) {
       expect(readProgramPreAActual(path)).toContain("readonly runtimeSupport?: IrRuntimeSupport;");
-      expect(readBeforeProgramPreAEvolution(path)).not.toContain("runtimeSupport");
+      expect(readBeforeProgramPreAEvolution(path, initialRead)).not.toContain("runtimeSupport");
     }
-    expect(readProgramPreAActual(dependencies)).toContain(
+    expect(readProgramPreAActual("src/ir/program/runtime-support-dependencies.ts")).toContain(
       "export function assertPreparedIrRuntimeSupportDependencies(",
     );
+    expect(readProgramPreAActual(dependencies)).toContain(
+      'export { assertPreparedIrRuntimeSupportDependencies } from "./program/runtime-support-dependencies.js";',
+    );
     expect(readProgramPreAActual(dependencies)).toContain('case "support-ref":');
-    expect(readBeforeProgramPreAEvolution(dependencies)).not.toContain("assertPreparedIrRuntimeSupportDependencies");
-    expect(readBeforeProgramPreAEvolution(dependencies)).not.toContain('case "support-ref":');
+    expect(readBeforeProgramPreAEvolution(dependencies, initialRead)).not.toContain(
+      "assertPreparedIrRuntimeSupportDependencies",
+    );
+    expect(readBeforeProgramPreAEvolution(dependencies, initialRead)).not.toContain('case "support-ref":');
   });
 
   it("passes unknown paths through raw without reading the receipt population", () => {
