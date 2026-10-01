@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "6371-canonical-audit-performance-20261001",
   "assignee": "ttraenkler/codex-6371-canonical-audit-performance-20261001",
-  "requested_by": "ttraenkler/codex-6371-canonical-audit-performance-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-6371-canonical-audit-performance-20261001",
   "claimed_at": "2026-10-01T01:38:56Z",
-  "updated_at": "2026-10-01T01:38:56Z",
-  "write_id": "27149-m6wwua1k"
+  "updated_at": "2026-10-01T02:37:54Z",
+  "write_id": "56147-y1aj04k4",
+  "released_at": "2026-10-01T02:37:54Z"
 }
