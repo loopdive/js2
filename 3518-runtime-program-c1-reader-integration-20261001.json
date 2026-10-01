@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "runtime-program-c1-reader-integration-20261001",
   "assignee": "ttraenkler/codex-runtime-program-c1-reader-integration-20261001",
-  "requested_by": "ttraenkler/codex-runtime-program-c1-reader-integration-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-runtime-program-c1-integration-20261001",
   "claimed_at": "2026-10-01T08:47:29Z",
-  "updated_at": "2026-10-01T08:47:29Z",
-  "write_id": "53742-1jeff89k"
+  "updated_at": "2026-10-01T13:52:59Z",
+  "write_id": "92281-x7jnvlhu",
+  "released_at": "2026-10-01T13:52:59Z"
 }
