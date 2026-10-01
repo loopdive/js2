@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "well-known-symbol-policy-integration-20261001",
   "assignee": "ttraenkler/codex-well-known-symbol-policy-integration-20261001",
-  "requested_by": "ttraenkler/codex-well-known-symbol-policy-integration-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-well-known-symbol-integration-20261001",
   "claimed_at": "2026-10-01T13:24:10Z",
-  "updated_at": "2026-10-01T13:24:10Z",
-  "write_id": "76211-yb24vxpx"
+  "updated_at": "2026-10-01T15:21:22Z",
+  "write_id": "33414-buyktfz1",
+  "released_at": "2026-10-01T15:21:22Z"
 }
