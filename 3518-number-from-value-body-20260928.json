@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "number-from-value-body-20260928",
   "assignee": "ttraenkler/codex-number-from-value-body-20260928",
-  "requested_by": "ttraenkler/codex-number-from-value-body-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-number-prerequisite-integration-20261001",
   "claimed_at": "2026-10-01T15:27:12Z",
-  "updated_at": "2026-10-01T15:27:12Z",
-  "write_id": "34478-vkxqgtac"
+  "updated_at": "2026-10-01T17:55:35Z",
+  "write_id": "94941-xp7vk1rm",
+  "released_at": "2026-10-01T17:55:35Z"
 }
