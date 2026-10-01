@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "number-prerequisite-policy-integration-20261001",
   "assignee": "ttraenkler/codex-number-prerequisite-policy-integration-20261001",
-  "requested_by": "ttraenkler/codex-number-prerequisite-policy-integration-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-number-prerequisite-integration-20261001",
   "claimed_at": "2026-10-01T15:23:23Z",
-  "updated_at": "2026-10-01T15:23:23Z",
-  "write_id": "33852-hlkfxbcv"
+  "updated_at": "2026-10-01T17:55:46Z",
+  "write_id": "95340-kbfbxb5j",
+  "released_at": "2026-10-01T17:55:46Z"
 }
