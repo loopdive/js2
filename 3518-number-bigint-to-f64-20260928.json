@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "number-bigint-to-f64-20260928",
   "assignee": "ttraenkler/codex-number-bigint-to-f64-20260928",
-  "requested_by": "ttraenkler/codex-number-bigint-to-f64-20260928",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-number-prerequisite-integration-20261001",
   "claimed_at": "2026-10-01T15:27:07Z",
-  "updated_at": "2026-10-01T15:27:07Z",
-  "write_id": "34353-8z7gpbsn"
+  "updated_at": "2026-10-01T17:55:30Z",
+  "write_id": "94806-vju8welf",
+  "released_at": "2026-10-01T17:55:30Z"
 }
