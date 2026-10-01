@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "genuine-mixed-get-call-20261001",
   "assignee": "ttraenkler/codex-genuine-mixed-get-call-20261001",
-  "requested_by": "ttraenkler/codex-genuine-mixed-get-call-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-genuine-mixed-get-call-20261001",
   "claimed_at": "2026-10-01T01:05:38Z",
-  "updated_at": "2026-10-01T01:05:38Z",
-  "write_id": "16245-rzrf2mxx"
+  "updated_at": "2026-10-01T01:37:11Z",
+  "write_id": "26652-2v0mgn0g",
+  "released_at": "2026-10-01T01:37:11Z"
 }
