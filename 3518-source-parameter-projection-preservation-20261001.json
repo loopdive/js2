@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "source-parameter-projection-preservation-20261001",
   "assignee": "ttraenkler/codex-source-parameter-projection-preservation-20261001",
-  "requested_by": "ttraenkler/codex-source-parameter-projection-preservation-20261001",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-source-parameters-main-20261001",
   "claimed_at": "2026-10-01T01:24:16Z",
-  "updated_at": "2026-10-01T01:24:16Z",
-  "write_id": "20307-wegodsml"
+  "updated_at": "2026-10-01T01:37:07Z",
+  "write_id": "26597-fkkogc4n",
+  "released_at": "2026-10-01T01:37:07Z"
 }
