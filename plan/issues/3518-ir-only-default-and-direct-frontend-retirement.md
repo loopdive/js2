@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-30
+updated: 2026-10-01
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -17193,3 +17193,1651 @@ graph remains OPEN and strict modeled closure FAIL; retirement/deletion is
 NOT CERTIFIED. Host semantic observer imports are still component instruments.
 Full public provider/Number/45-catalog and backend-equality work remains open.
 Normal signed commit and fork push hooks are required before ready PR publication.
+## Public native object/Number graph implementation plan — 2026-09-30
+
+Claim:3518:public-native-object-number-graph-20260930, owner
+ttraenkler/codex-public-native-object-number-graph-20260930, branch
+codex/3518-public-native-object-number-graph-20260930. Root owns integration,
+issue/inventory metadata, claims and publication. Existing Astra writer owns
+implementation/tests only in this isolated worktree. Main and every frozen or
+armed worktree are read-only. Dependencies must land through protected queue;
+local development ancestry never counts as delivery.
+
+The unchanged original nine rows are mandatory regression evidence, presently5/9: oracle, four
+legacy host/standalone UTF16/UTF8 rows, four public native original/decoded
+UTF16/UTF8 rows. Preserve original fixture SHA
+c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9 and suite SHA
+afc3885f51522cec10d5eccac536636b104b9a01b8c5e5c139b8dbd5fef35d37.
+The actual path is create-default, install two genuine source accessor
+closures, Number conversion, absent inherited@@toPrimitive, Get(valueOf)
+invokes getter(trace1), its returned closure invokes(trace12,value7), result712
+without Get(toString). Preserve repeated calls and two fresh instances.
+Number({}) adds default-prototype coverage; it replaces no row.
+
+### Reviewed reuse and ownership
+
+Reuse realm12 by exact recorded manifest: requirement/catalog/literal/source
+issuer/substrate joins, coordinator, tests/helpers. Select Number components
+explicitly, no56-file overlay. Required source/provider hunks are
+prepare-number-conversion/from-ast/program-source, number-conversion-callable,
+callable-declarations/runtime manifest/contracts. Required semantic hunks are
+native-object-access/getter-invocation/invocation/prototype requirements and
+native-source-closure-callables/native-invocation/primitive-boundary ABI.
+Reuse Number coverage/invocation/method-effects analyses; pure NumberFromValue,
+BigIntToNumber and ObjectPrototypeToString bodies plus genuine primitive/BigInt
+owners and canonical well-known Symbol contract/owner/source/provider hooks.
+Inspect each against current merged main/dependencies before copying/hunk
+composition; preserve current stronger Object.create(null) resolver and all
+statement/lowering hooks. Retain old Number classifier's bounded tests/contract;
+it cannot become generic IsCallable. Existing ordinary status/value Get cannot
+be bound directly as scalar Get. Unused original prepared components stay
+preserved, not deleted or weakened.
+
+New owned modules:
+- runtime/wasmgc/values/realm-object-layouts.ts: stateful layout variants.
+- runtime/wasmgc/values/mixed-object-access-bodies.ts: heterogeneous property,
+  Get/Has and prototype algorithms.
+- backend/wasmgc/resources/native-mixed-object-access.ts: authentic owner.
+- runtime/wasmgc/values/mixed-invocation-bodies.ts: mixed dispatch/ABI bodies.
+- backend/wasmgc/resources/native-mixed-invocation.ts: authentic call population.
+- backend/wasmgc/resources/native-object-realm.ts: real singleton/descriptor
+  population and algorithm bindings.
+- backend/wasmgc/resources/native-number-from-value.ts: canonical conversion.
+- backend/wasmgc/program/native-object-number-abi.ts: public ABI reconciliation.
+Paths above are under src/. Extend existing program/native-realm coordinator,
+realm requirements/catalog/literals, builtin requests/owner/pure builders,
+source closures/capture/closure layouts/WasmGC allocation emitter, String and
+wrapper factory seams, program-consumer/program-physical-plan and retained
+source invocation adapter only where this graph requires. No physical
+coordination in semantic src/ir/. Worker may propose a better coherent module
+split before writing it; root owns inventory/claim records for any extra paths.
+
+### Implementation sequence and invariants
+
+1. Derive/authenticate complete accepted program/projection demands, catalog
+   obligations, actual carrier population and supplemental literals. Do not
+   infer absence from an unrecognizable carrier or incomplete population.
+2. Introduce immutable private state reference after all existing fields,
+   wrapper payloads or source captures. Mutable actual externref prototype is
+   in that state. Keep closure fields0–2/captures3+, builtin metadata3–4,
+   wrapper payload6 unchanged. Initialize genuine state after captures even
+   for zero-capture closures, with an issued initializer binding. Audit every
+   reader/issuer/currentness/callable/allocation/generic closure/capture adapter;
+   legacy registries, DOM tails and other backends retain default layouts.
+3. Reserve strings/vectors/canonical TypeError and one authenticated exception
+   tag, then state prerequisites. Builtin owner may borrow authentic tag while
+   its existing default lifecycle stays intact. Source calls, descriptors,
+   mixed operations and Number use the SAME tag and payload; no caught rebox.
+4. Issue real builtin algorithm requests before ONE combined source/native
+   closure pack. Reserve source slots, mixed dispatchers, property algorithms,
+   realm initialization and public adapters before sole freeze. Bind original
+   consumer source slots/cyclic refs, fill canonical leaves/algorithm/source
+   bodies/population, authenticate complete graph before output.
+5. Mixed lookup: String virtual-own first, genuine native/source carrier
+   authority before bag/state reads, original receiver throughout traversal,
+   present undefined/getter-less accessor stops traversal, unknown remains
+   unresolved. Validate proposed chains before mutation (cycles, immutable
+   Object.prototype). Keep bounded kernel's ordinary-final layout/finality
+   refusal intact; stateful heterogeneous families use their own dispatcher.
+6. Complete real Object prototype/catalog singleton identities/descriptors,
+   constructor links/accessor halves/aliases and native algorithm dependencies.
+   Canonical default is accepted only for the same actual completed singleton
+   and issued realm population. Reject fake/copied/foreign/partial owners,
+   unresolved implicit links or substituted prototypes. A property bag cannot
+   stand in for a prototype. Reuse actual Object constructor/prototype/accessor
+   bodies and complete their ToObject/ToPropertyKey/descriptor/prototype/Call
+   bindings. ObjectToString needs real slots/String concat/@@toStringTag Get.
+7. Mixed invocation authenticates builtin metadataID/realm/singleton BEFORE
+   source fallback, refuses unknown metadata, accepts legitimate same-shaped
+   source transport. Keep(this,argv) separate from user formals/own.length;
+   explicit method0(receiver,method)→call0(callee,receiver). Preserve receivers,
+   missing/excess arguments, capture cells and normal/abrupt state restoration.
+8. Number owner binds scalar mixed Get, genuine IsCallable, mixed method0/1,
+   canonical primitive classification/StringToNumber, BigInt conversion,
+   actual@@toPrimitive Symbol/literals and shared TypeError/tag. Reconcile
+   js.number.from-value, js.object.create-default and js.object.define-accessor
+   with genuine canonical manifest/signatures/occurrences/reservation tokens.
+   Extend coverage through real realm evidence, not deleting default-prototype
+   refusal. Reauthenticate retained exact requirements/types/slots/owners/tag/
+   program/projection, bodies/locals/currentness and completion. Equal counts
+   or signatures do not authorize wrong/external fills. Per-owner collision
+   preflight reserves none of that owner; earlier owners need not roll back.
+
+### Validation and full-scope limits
+
+Run unchanged original9/9 first, genuine original/decoded bothencodings, two
+instances/repeated712. Fresh child of that exact prepared fixture must prove
+codec byteidentity, no TypeScript/frontend resolutions and no host imports.
+Add default Number({}) and inherited native/source valueOf/toString/getters,
+String-exotic traversal, present undefined vs absence, getter-less descriptor,
+exact abrupt getter/method payloads/no toString after successful valueOf,
+cross-family prototype/cycle/immutable identity, source/native accessors,
+redefinition/deletion/order, missing/excess args/receivers, same-shaped distinct
+metadataIDs/unknown metadata/genuine source closures, forged/cloned/foreign/
+stale/wrong-body owners and normal/displaced indices. Preserve old ABI/primitive,
+bootstrap/source/default consumer controls and original failures. No fake
+closures/providers/packet splicing or selected easier substitute fixture.
+One heavy process; explicit parent/fork4GB/maxforks1, strict unhandled errors,
+no timeout/assertion/fixture/hook/gate/protection changes. Normal required
+checks, signed Thomas/Codex/actual-model commits and exact protected main
+ancestry/content/conformance are mandatory before counting delivery.
+
+Passing9 is a required milestone, not full IR completion or realmReady grant.
+All45catalog intrinsics remain obligations; no placeholders/disappearing IDs.
+Remaining full Object/Function includes call/apply/bind/toString/@@hasInstance,
+bound functions, constructor semantics/CreateDynamicFunction and transitive
+array/iterator/exotic operations. Complete remaining backends/program/full
+conformance and native Number primitive/Symbol/BigInt/general coercions.
+Legacy retirement waits for full IR scope tested and equal.
+
+
+### Reviewed state-owner and population refinements
+
+NEW ninth source leaf backend/wasmgc/resources/native-realm-object-layouts.ts
+privately issues/authenticates the shared state type, concrete state-bearing
+ordinary/wrapper variants and source initializer reservations before closures.
+It does not depend on eventual full singleton population. The pure runtime
+layout leaf stays separate. State belongs after EACH concrete carrier's
+existing fields/captures, never inserted in a shared ordinary root. Generic
+lowering already resolves subtype even for zero captures; preserve lower-
+generic/legacy registry behavior unless a real shared reader requires opt-in.
+The mixed define-accessor adapter authenticates genuine source/native
+IsCallable before delegating unchanged canonical descriptor/storage donors.
+
+The Object.prototype.constructor→Object→static population→Function.prototype
+transitive graph is a real completion obligation. Current incomplete catalog
+cannot authorize a canonical full population. No fake/empty algorithm bodies,
+null constructor aliases, marker-only completeness, or silent missing inherited
+keys. Implement real transitive providers/anchors or keep admission explicitly
+unsupported; passing selected scalar cases never grants population completion.
+State/layout/mixed owners can advance toward that whole graph independently,
+with honest tests and old failures retained. Public admission is gated by the
+genuine completed transitive Object/Function realm; no property-selected or
+Number-only readiness is permitted. Incomplete owners may be reserved/built/
+tested internally but expose no completed public provider.
+
+
+### Unrestricted public population and completion sequence
+
+Public and bootstrap modes have mutually exclusive population owners. The new
+native-object-realm reuses the genuine builtin-request issuer and single
+combined source closure population, but instantiates no bounded kernel. It
+owns the sole actual Object.prototype/Function.prototype and every public
+intrinsic singleton. Preserve bounded-kernel finality guards and defaults.
+Mixed actual-prototype access is authoritative for public carriers; reusable
+own-storage leaves must not use old field-zero prototype walking for them.
+
+Reserve complete catalog/dependency declarations, state/carrier layouts,
+strings/vectors/errors/one shared tag, genuine builtin requests and the sole
+source/native closure pack. Reserve real source/native/bound/dynamic Call and
+Construct entries, mixed property operations, all algorithm owners and the
+initializer before one freeze. Bind exact slots and fill canonical bodies;
+cyclic reservations or a visited dependency never certify completion. Audit
+every required dependency edge, owner and exact locals/body. Startup allocates
+anchors/functions before linking actual prototypes/constructor aliases and
+seeding complete descriptors, publishing readiness only after success. Only
+then issue public create-default/define-accessor/Get/Call/Number bindings.
+
+The chain includes all 45 catalog entries and transitive Object statics,
+ToObject wrappers/prototypes, ToPropertyKey/descriptor objects, ownKeys/order/
+extensibility/integrity/Set, arrays/lists/iterables and IteratorClose; Function
+call/apply/bind/toString/@@hasInstance, restricted properties, bound Call/
+Construct, source text/newTarget and genuine CreateDynamicFunction parsing,
+execution/global-environment/SyntaxError semantics. Missing dynamic compilation
+cannot become a throwing substitute or host import. Add genuine source
+regressions for catalog descriptors/aliases, every method family, dynamic
+Function, wrappers/exotics/abrupt iteration, mutation and incomplete-final-role
+rejection. The original nine rows are mandatory, not the completion boundary.
+Helper-only completion never grants authentic public source admission.
+
+
+### Public graph baseline and performance delivery — 2026-09-30
+
+The isolated graph branch initialization is signed8a730516ced8ace5da216cbb8f5b5c54c064d421,
+with genuine dependency/performance histories and freshly read mainf6ff83a26c.
+TS7passed and normal second-main hooks535/535, including both unchanged Promise
+regression suites21+12. Those normal hooks are separate from independent strict
+validation; no independent strict535 run is claimed. Every31incoming noninventory
+file and all1730main inventory rows remain exact, combined inventory1737.
+
+The unchanged original712suite baseline on this initialized lane plus exact
+realm12seed is5/9: oracle and all four legacy controls pass; four public
+original/decoded UTF16/UTF8 controls fail in preparation with invariant
+`runtime feature js.number.from-value has no provider`. Terminal91532exit1,
+10.07seconds, zero skipped/pending/todo or worker errors; all7407pins unchanged.
+Receipts .tmp/public-native-object-number-graph/baseline-vkacxnna preserve those
+failures. Actual fixture/suite hashes remain exactly those recorded above.
+
+Performance PR6364 is delivered atdd38a24abfb57cfc6c43ae4d5324777b38cd8f75.
+Exacthead9909c96e489c4285a26800541320fc494caf6d58 is an ancestor of that merge,
+which is an ancestor of freshly fetched main2ef807a68eb09eb8e8ef27f66447374caf5a26e4.
+All eight files match both merge/currentmain. Its protected merge-group actual
+82standalone+20host shards, final regression/report gates, CI36757376482,
+CLA36757376580, Differential36757376513 and Test26236757376477 passed.
+Skipped templates and later push-main workflows are separate. Only the
+performance slice claim is completed; this epic/public population stays open.
+The new graph writer exclusively owns implementation/tests; root owns
+metadata/Git/publication and coordinates any later main merge with source freeze.
+
+Four actual seeded realm source leaves are registered, adding4rows and raising
+matching layer floors by4 without changing any existing row/activation/edge
+policy. Signed historical entry checks remain unchanged, with explicit exact
+new-entry tail accounting. New graph leaves will be registered only after they
+exist and are reviewed. Registration is prepared; no new validation result is
+claimed until gates run against frozen implementation.
+
+
+### State/carrier checkpoint and full public declaration plan — 2026-09-30
+
+The authentic carrier state/layout increment changes eleven production paths
+and four tests/helpers. State tails follow each concrete ordinary/wrapper
+payload/source capture layout; shared roots and default paths stay intact.
+Canonical source initialization reads the exact realm and Function.prototype
+anchors and refuses uninitialized anchors. Wrapper/StringCreate prototype
+state uses the actual supplied prototype. This is carrier-state evidence,
+not a complete or publicly populated realm.
+
+Independent review found no concrete implementation defect in the reviewed
+state draft. The retained first diagnostic stopped on two missing empty
+blockType annotations; after those production fixes TS7 passed and 53/56
+controls passed. Three observer/expected-message defects were corrected in
+tests only. Corrected state checkpoint TS7 and 56/56 actual emitted-Wasm
+controls passed with no skipped/pending/todo or unhandled worker errors and
+all 7,413 frozen inputs unchanged. The original nine-row public Number suite
+and fixture remain byte-identical; their last measured baseline stays 5/9.
+
+Broad preservation terminal evidence is 874/876 assertions, ten passed and
+two failed files. Two boundary assertions failed on the copied fixture's
+missing realm dependency closure. A separate native-closure-resources suite
+failed at collection before producing any rows because its array-main
+receipt mismatches apply-closure-variadic-builtin.ts. Do not combine that
+zero-row collection failure with the two assertion failures or report this
+cohort as complete. Its full terminal report, failures, file-level counts
+and 7,413 unchanged inputs remain in state-preservation-_vaujycx. Hash
+receipt correction requires provenance/behavior review, never blind repinning.
+
+The root-owned boundary fixture expands its fixed, reviewed live import
+population from 135 to 174 real modules, adding the realm requirements,
+literals and actual transitive dependencies. Historical 106-module roots,
+signed activation receipts, all policy edges/floors remain unchanged. A
+focused two-row diagnostic resolves the new closure and passes the formatter
+control; its historical edge-count expectation then fails against the actual
+780 edges (402 type-only/378 runtime). That diagnostic is retained. The
+complete 349-row boundary validation is pending at this checkpoint.
+
+Next source responsibility stays with the graph writer. Use the approved
+native-object-realm.ts owner for private public-catalog declarations and
+singleton reservations. Existing seams native-builtin-function-requests.ts,
+native-source-closures.ts, program-native-invocation.ts and
+native-source-closure-callables.ts gain narrow authenticated joins; the last
+must provide a distinct genuine all-source association from original bound
+unit slots while preserving selected default invocation/getter binding.
+Root owns inventory/issue/Git/publication. Register new source leaves only
+after they exist. No production edits during a frozen validation run.
+
+Keep bootstrap request authentication bootstrap-only. A private common
+issuer family authenticator may accept genuine bootstrap or full-catalog
+public packets after validating original program/projection/catalog,
+carriers, vectors and argument-plan identities. No structural equivalent,
+caller-authored catalog subset, selected call/apply demand or casted algorithm
+becomes issuer authority. Public requests retain every actual catalog row,
+canonical names/lengths/aliases/prototype roles and distinct Call/Construct
+capabilities. Lifted Call is (self, originalThis, argv); algorithms take
+(originalThis, argv). Construct retains a separate newTarget and tokens.
+
+Reuse the state owner's exact Object.prototype type and realm/Function.prototype
+anchors, with Function.prototype's entry using the borrowed singleton slot.
+Private ownership must reject a second public population claimant before
+allocation. The layout owner alone supplies canonical null module initializers;
+public population alone supplies runtime allocation/links. Authenticate the
+current source owner before returning its private exact state packet. Keep
+one combined source/native closure pack and one shared externref exception tag.
+
+Pending declarations may supply exact authenticated reservations for internal
+mixed body construction. They cannot bind public providers or prove realm
+readiness through counts, null slots, visited dependencies or declarations.
+Final graph completion audits canonical filled bodies, real dependencies,
+source lowering and population without a recursive completed-realm prerequisite.
+Native singleton/metadata/realm recognition precedes source fallback; unknown
+metadata refuses and unresolved property links never become absence. Full
+all-45-entry transitive algorithms, wrappers/exotics/iterators/bound and dynamic
+Function semantics remain obligations before public admission. No legacy
+retirement is authorized by these component results.
+
+Native builtin callable PR6358 is now in the protected merge queue at reviewed
+head bb5d0b22af5c49461b7ef86db75593038277babc, base
+2ef807a68eb09eb8e8ef27f66447374caf5a26e4, queue group
+ a37e18b9197bcdf8ef6f2888881468112f5640bf. Queue entry was position one awaiting
+checks; this is admission, not delivery. The armed branch is immutable. Shared
+invocation PR6359 remains prepared until its dependency is verified on main.
+
+
+The corrected full boundary cohort completed 349/349 with no deselected,
+skipped, pending, todo or worker-error rows; all 7,413 pins stayed exact
+(boundary-complete-bl6827fu, terminal99024,135.105seconds). Seven gates then
+passed against the same frozen inputs: LOC/function budgets, oracle/coercion/
+tag seam, compiler inventory and dead-export/reachability preservation
+(state-gates-z92dneaw, terminal56552). These are separate component evidence;
+the zero-row historical closure-suite failure is still unresolved and no
+complete broad preservation/public population success is claimed.
+
+Root saved the immutable state/boundary/gate checkpoint and released the
+reviewed next pending-declaration source scope to the writer. The all-source
+association certifies genuine source shape/slot/Call transport only; current
+IR closure metadata does not provide constructor capability, InitialName,
+source text or allocation-time inferred-name authority. Do not infer those
+from fn.name/signature. They remain genuine producer/metadata obligations
+before full Function completion. No extra leaf, retirement or public readiness
+is authorized by this release.
+
+
+#### Claimed later-main historical comparison repair
+
+The independent source audit found four changed current inputs, all exact to
+published HEAD, covering ten genuine upstream source commits. Actual source-span
+inversion reconstructed every immutable original array receipt and replayed
+current bytes exactly; this is diagnostic construction, not passing Vitest.
+A separate fixed authenticated outer layer will normalize only those four
+historical reads, before old array inversion and dependency authentication.
+Keep original receipts/donor fixtures byte-identical and current production
+source intact. There are 32 exact ordered spans (11/14/5/2), eight actual new
+direct implementation imports, and a real duplicate-context hazard requiring
+larger unique contexts in closure exports. Do not permit arbitrary receipts,
+automatic fallback, first-match selection or raw historical replacement files.
+
+Scope is tests/helpers/later-main-preservation-port.ts, its fixed fixture
+receipt, focused preservation controls, and the single outer read seam in
+tests/helpers/array-main-refresh-port.ts. Authenticate full SHA256/Git blobs,
+fixed path/commit population, exact unique ordered spans and both-direction
+replay; refuse mutation/missing/duplicate/shift/order/wrong-direction/outside-span
+changes and changed dependencies before normalization. Preserve older controls
+after normalization and real Deno call/apply receiver tests. Require a nonzero
+previously unloaded closure suite denominator on strict validation.
+
+Root claimed3518:later-main-preservation-layer-20260930 through authoritative
+upstream issue-assignments, owner
+ttraenkler/codex-later-main-preservation-layer-20260930, isolated branch
+codex/3518-later-main-preservation-layer-20260930 at8a730516. The helper writer
+owns only those test paths; graph source writer is in its different checkout.
+Root owns integration/metadata/Git/publication. No heavy runs overlap.
+
+
+#### Canonical exception reservation bridge
+
+The current consumer reserves physical:exception-tag before foundation,
+either local __exn or imported env.__exn from checked plan.exceptionTag.shared.
+The public tag sub-owner belongs inside approved native-object-realm.ts and
+must preserve that exact early decision: a privately issued packet retains
+genuine requirements, own-data/no-getter required/shared selection and exact
+TagReservation/TagImportReservation. Require original owner/current identities,
+reject any existing canonical key/conflicting packet before allocation, never
+adopt an equal-shaped raw tag. Pending owners borrow only; post-freeze reads
+use physicalIndex, with no reserving-phase index resolution.
+
+The eventual public program-consumer branch REPLACES its existing early direct
+reservation with this issuer; it never adds a second realm tag. The default
+branch stays unchanged. program-physical-plan adds genuine public realm tag
+demand. Both seams remain subsequent explicitly reviewed integration work;
+the current declaration increment changes no consumer behavior. Reserve tag
+imports before foundation functions/globals close imports. Existing source,
+descriptor, vector, invocation and async routes, plus future native Promise
+composition, all borrow the same token. Canonical signature is externref→void;
+matching signatures alone do not establish exception identity. Prove local/
+shared census, wrong-owner/stale selection and prior-key refusal, followed by
+real source/native abrupt payload identity at public integration.
+
+
+#### Pending declaration checkpoint and closure preservation repair — 2026-09-30
+
+The pending public declaration/source increment passed TS7 and its26 actual
+component tests. The broader19-file run measured1390/1417, with26 native-closure
+historical reconstruction failures and one census mismatch; all7419 frozen
+inputs were unchanged. Seven required gates passed on the exact same freeze.
+Root corrected only the measured two extra imports,782 edges/403 type-only/379
+runtime, then full boundary349/349 passed with all7419 pins unchanged. Original
+nine-row public Number suite/fixture hashes stay fixed; last outcome remains5/9.
+No full graph or retirement certification follows from component results.
+
+The integrated later-main preservation layer passes its248 rows, the original
+array73 and live receiver2 in this graph; native closure now collects100 but
+passes74. Architect traced all26 failures before their intended mutations to
+the single137-byte realmStateInitializer documentation/field addition in
+closure-layouts.ts, with full-source, contextual-span and all52 intervening
+historical replay checks. Current SHA7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67
+inverts to exactHEADf79e77c4bb0a0286c0c3462d80613f8a1c3c3ee861cab689f6fb0f1ad3dc9d7b;
+the original closure inverse then obtains its unchanged donor0f9e1fe72f60e7f24577bf12ef194629e0b77815339f335c37df5784950a5543.
+These are byte proofs, not yet passing test results.
+
+Authorize under this graph claim four test-only paths: new
+ tests/helpers/closure-state-preservation-port.ts,
+ tests/fixtures/issue-3518-closure-state-preservation/receipt.json,
+ tests/issue-3518-closure-state-preservation-port.test.ts, and a single initial
+reader import/composition in tests/helpers/resume-main-composition.ts after
+readBeforeArrayMainRefresh and before delivery-main. Authenticate fixed receipt,
+full input/output SHA/blob, one contextual span at fixed offset and reciprocal
+replay. Unknown revisions, tampering, changed/missing/duplicated/relocated fields,
+retained-source edits and wrong direction must refuse. Original receipts,
+controls and production state are untouched. Raw runtime reads remain live;
+normalization applies only to initial historical text reads before mutations.
+No historical full-file fallback, discovered receipt or permissive hash branch.
+
+Run the original100 closure tests unchanged, its separately invoked dedicated
+closure-source-composition suite, new paired repair controls and affected older
+composition/state suites with frozen inputs and actual nonzero denominators.
+Retain failed broad evidence in pending-preservation-3e7363bn. Root owns metadata,
+claims/Git/publication; assigned graph writer owns only the four repair paths.
+
+Delivered dependency6358 (native builtin callable objects) was verified at
+mergea37e18b9197bcdf8ef6f2888881468112f5640bf and freshmain1df04af5b77a7867c418df02e6ecd4beee33ec48:
+exact reviewedbb5d0b22 ancestry and all16 blobs match,102 real protected shards
+(82standalone/20host), final regression/report gates and CI/CLA/differential
+passed. Scoped builtin claim completed by effect; full migration and this graph
+claim remain active. Later main has additional ES2015 implementation changes;
+merge only at a source freeze, preserving them, before publication.
+
+
+#### Closure repair measured results and exact baseline attribution
+
+The four-path test-only preservation repair passed TS7, its 71 paired controls,
+the unchanged native closure suite 100/100 and dedicated closure composition
+27/27. Stateful carrier suites passed 32+24; production source and original
+nine-row fixture bytes remain unchanged. All 7,422 compiler/source/control
+pins and 14,559 tracked pins matched before/after. No worker errors, pending,
+skipped or todo rows.
+
+The expanded thirteen-file run measured 808/839 assertions plus one zero-row
+prototype-read collection failure. Four newly included older suites were then
+run unchanged on the exact isolated HEAD 8a730516 baseline with the already
+validated later-main layer: 166/197, the same 31 failures and the same zero-row
+prototype collection failure. Every full assertion name, status and first
+error, plus each file census and collection message, matches exactly. All
+1,739 baseline production files matched HEAD; all 7,402 compiler/control and
+14,559 tracked input pins remained unchanged. This attributes those specific
+failures to the baseline without weakening any check or measuring uncollected
+rows. It does not establish that all migration failures are inherited.
+
+Retain graph closure-state-preservation-2z44f8nf and closure-state-repair-checkpoint-m3igwtz1;
+retain isolated later-main baseline-cijldjwr under .tmp/closure-state-attribution.
+The previous nineteen-file failure record remains intact; do not extrapolate a
+new aggregate full-cohort pass from the repaired subsets. Required gates on the
+new frozen checkpoint, normal signed hooks and eventual exact-main publication
+remain pending. Original public Number outcome remains last measured 5/9;
+full realm/provider completion and legacy retirement remain unavailable.
+
+
+### Final preservation checkpoint (2026-09-30)
+
+Seven current preservation gates all passed against LOC_GATE_BASE8a730516:
+LOC, function budget, oracle, coercion, JS-tag seam, compiler inventory, and
+legacy reachability preservation. All7,422 compiler inputs and14,559 tracked
+file hashes stayed exact. Receipt and preserved original failures/baseline
+comparison: `.tmp/public-native-object-number-graph/checkpoint-gates-4erxb0r2/`.
+No source/test/metadata edits occurred during the checkpoint.
+
+This does not turn the older19-suite1390/1417 or repaired13-suite808/839 plus
+zero-row collection into a full green cohort. The 31 specific assertion
+failures and collection signature were exactly reproduced on baseline.
+The reachability audit says preservation-only PASS, graph OPEN, strict modeled
+closure FAIL, retirement/deletion NOT CERTIFIED. Public realm completion
+and original Number9 coverage remain open (last5/9). No legacy is retired.
+
+Prerequisite6359 exacthead90d4c969 has actual protected queue admission:
+queueeb136e20, verified parentsmain08e61b26 +exactPRhead90d. Last actual
+merge_group CI/Test262 checks were running; CLA/Differential passed. Main
+delivery remains unverified, so downstream main refresh stays paused.
+The separate pureFunction component was signed and fork-published as87da0faa,
+245/245 +349/349 +TS7 +seven gates, then actual numeric18 normal push controls.
+Its source/helper bytes remain exact; two deletion and one arrow lint findings
+were repaired only in its test and245 rerun fully passed. Both scoped claims
+remain active; all prepared work and failure evidence preserved.
+
+
+### Mixed access implementation clarification (2026-09-30)
+
+Sole graph claim remains held on upstream issue-assignments at892beefdaabf.
+The next already-planned implementation is mixed Get/Has/actual-prototype
+access, preserving the original public Number fixture and full realm scope.
+Dispatch genuine String carriers before the generic storage path; within
+String [[GetOwnProperty]], the existing actual donor checks ordinary own
+entries first, then synthesizes virtual index descriptors. Earlier "String
+virtual-own first" wording describes family dispatch, not reversed descriptor
+precedence. Ordinary lookup/has traverse their field0 chain and cannot be
+reused as heterogeneous traversal; reuse only genuine own-entry/key/storage
+leaves. Native/source ownership precedes both bag and prototype reads.
+The complete next implementation brief is being written before writer dispatch;
+no provider-row-only admission or selected-property readiness is permitted.
+
+
+### Mixed native/source access writer dispatch (2026-09-30)
+
+After sole graph claim verification on upstream892beef, native Astra writer
+owns four NEW paths: runtime/wasmgc/values/mixed-object-access-bodies.ts,
+backend/wasmgc/resources/native-mixed-object-access.ts (both under src/),
+tests/helpers/native-mixed-object-access.ts, and
+tests/issue-3518-native-mixed-object-access.test.ts. Root owns all metadata,
+claims, inventory, Git/integration/publication. No shared pending files may
+be altered. Full concrete interface plan is being completed concurrently by
+the Astra architect; no heavy tests until root review and genuine inventory
+registration. Original nine-row suite and fixture hashes are pinned unchanged.
+
+Implement heterogeneous own-lookup/Get/Has/prototype traversal with genuine
+carrier/realm checks before stores and original receivers throughout. Has
+never executes getters; present undefined and getter-less accessors stop.
+String-family dispatch preserves ordinary-own-before-virtual descriptor
+precedence. Unknown or uninitialized native/source metadata stores are
+unresolved, never absent. Source own name/length/prototype initialization and
+actual intrinsic descriptor population remain explicit dependencies.
+
+Get reserves its token with the access graph, then binds the genuine mixed
+Call owner once before canonical fill; exact accessor Call takes callee,
+original receiver and the genuine empty vector. No raw-handle completion
+permit or selected-method0 substitute. Own lookup/Has/prototype need no Call.
+Component controls may use honest semantic observers; production owner public
+completion must refuse until genuine Call and descriptor population complete.
+No Number-only readiness, provider-row-only public admission, host production
+fallback, catalog omission or legacy retirement. All45 intrinsic/transitive
+algorithms, dynamicFunction/eval/with and both-backend equality remain required.
+
+
+## Implementation Plan — mixed object access and genuine public Number join (2026-09-30)
+
+Astra reviewed the actual current graph and preserved Number sources; exact
+brief SHA256 `2aeba58eda9d6c90d24b76be697f912df5144ebc2ec3310c0122ee9bf058cb73`. Its 48-input receipt recorded zero drift, with no
+tests or source edits. The existing writer is implementing the exact four
+paths below. Full public completion and the unchanged original nine rows
+remain required.
+
+# Issue 3518 — IR-only default and direct front-end retirement
+# Next production dependency: mixed object access, then genuine public Number join
+
+Read-only implementation brief, 2026-09-30. Root owns claims, tracked issue/inventory,
+Git and integration. This file is analysis, not an implementation or validation
+receipt. The graph's current source includes pending state/carrier and public
+catalog declarations; those do not complete a public realm. The input manifest
+beside this file pins the actual graph and preserved Number files used here.
+No compiler, tests, gates, network operations or Git mutations were run for this
+brief. Original failures and every preserved lane remain intact.
+
+## 1. What actually fails, and what the next change must accomplish
+
+The original unchanged public fixture is
+`tests/fixtures/issue-3518-native-object-access-712.ts.txt`, SHA256
+`c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9`.
+The unchanged nine-row suite is
+`tests/issue-3518-public-number-object-712.test.ts`, SHA256
+`afc3885f51522cec10d5eccac536636b104b9a01b8c5e5c139b8dbd5fef35d37`.
+It creates a default-prototype object whose `valueOf` getter updates trace to 1
+and returns a genuine capturing function which updates trace to 12 and returns
+7. Its `toString` getter throws 99 and must never execute in the successful
+conversion. `Number(object) * 100 + trace` must be 712 on repeated calls in two
+fresh instances. `Number({})` is an additional inherited-default-method test;
+it is not this fixture and replaces none of its nine rows.
+
+Actual graph baseline: 5/9, with four native original/decoded UTF16/UTF8 rows
+refused during preparation: `runtime feature js.number.from-value has no provider`.
+See `.tmp/public-native-object-number-graph/baseline-vkacxnna/result.json`.
+This occurs before public acceptance, emission or Wasm instantiation.
+
+The cause is a missing canonical symbolic provider, not missing Number syntax:
+
+1. `frontend/builtins/prepare-number-conversion.ts`, `ir/program-source.ts` and
+   `ir/from-ast.ts::lowerPreparedNumberCall` already produce the real intrinsic
+   `js.number.from-value : (externref) -> f64`. Accessor literals already produce
+   ordinary-object descriptor operations and genuine source closure units.
+2. `ir/runtime/number-conversion-callable.ts` has the semantic declaration and
+   intrinsic support already recognizes its feature.
+3. `ir/runtime/callable-declarations.ts` has no canonical Number provider row;
+   `ir/runtime/contracts/manifest.ts` and `ir/runtime/manifest.ts` lack the
+   corresponding provider ID. `RuntimeManifestBuilder.#selectProvider` correctly
+   rejects the zero-provider result.
+4. Merely registering that row would expose the later physical deficiencies.
+   The preserved Number lane already gets that far: its same nine rows remain
+   5/9 with seven reported materialization gaps. These are **three unique
+   intrinsic functions** (`js.number.from-value`, `js.object.create-default`,
+   `js.object.define-accessor`) plus four body references (one default create,
+   two accessor definitions, one Number call), not seven different functions.
+
+The next implementation is therefore the already planned **mixed object access
+owner**, not a provider-registration-only checkpoint. It implements actual
+cross-family own-property/prototype behavior and the Get algorithm, with honest
+pending dependencies for unrestricted getter Call and complete descriptor
+population. The eventual public Number provider must bind the completed whole
+graph. No partial population, selected-property proof, source-demand fabrication,
+host bridge or primitive-unbox alias may stand in for that graph.
+
+## 2. Exact next ownership
+
+The existing native graph writer owns only these four new paths for this step:
+
+- `src/runtime/wasmgc/values/mixed-object-access-bodies.ts`
+- `src/backend/wasmgc/resources/native-mixed-object-access.ts`
+- `tests/helpers/native-mixed-object-access.ts`
+- `tests/issue-3518-native-mixed-object-access.test.ts`
+
+Root owns issue/inventory and grants any additional existing-file change. Do not
+modify the bounded builtin kernel, default invocation, old ordinary lookup, the
+original public suite/fixture, historical receipts, or prepared Number lane to
+make these component tests pass. The existing state/layout/public declaration
+owners are dependencies, not competing issuers. Do not silently add physical
+coordination to `src/ir/` or import backend ownership into a pure runtime leaf,
+even as a type-only dependency.
+
+This increment can implement and authenticate complete structural access bodies
+and the pure general getter algorithm now. A completed production getter Call
+owner and full source/intrinsic own-property population do not yet exist; they
+must remain explicit missing dependencies, not be replaced by a raw function
+handle with a completion flag. Section 6 defines the reserve/bind/fill seam.
+
+## 3. Pure body contracts and actual operand layout
+
+Use repository `Instr`, `LocalDef`, `ValType`, `FuncHandle`, `TypeHandle` and
+`GlobalHandle` types. Produce fresh `{ locals, body }` values. Pure operands are
+physical instruction-generation data; they do not issue or attest ownership.
+The backend derives them solely from authenticated reservations. Validate
+own enumerable data fields before reading configuration, including nested rows,
+optional presence and instruction trees; reject getter/inherited/hidden fields,
+extra roles, sparse arrays, cycles, invalid handles/types/indices and malformed
+instruction operands without evaluating callbacks. Do not weaken current pure
+builder/config conventions to accommodate the tests.
+
+Recommended fixed internal protocol, retaining the established distinction:
+
+- 0 = proven absent, or semantic false for Has/SetPrototypeOf.
+- 1 = present, or successfully resolved true/result.
+- 2 = actual population/initialization prerequisite unresolved.
+- 3 = unknown, foreign or unsupported carrier/edge (including corrupt cycles).
+
+These are internal statuses, not JavaScript booleans. Do not implement Has as
+`status != 0`. Use a distinct enum if the implementation needs finer internal
+reasons, but preserve these semantic distinctions and test every terminal.
+
+| Role | Actual Wasm parameters | Results |
+| --- | --- | --- |
+| own descriptor | object `externref`, canonical PropertyKey `externref` | `i32 status`, `ref null PropEntry` |
+| prototype lookup | object `externref`, canonical PropertyKey `externref` | `i32 status`, `ref null PropEntry` |
+| Get | object `externref`, key `externref`, original receiver `externref` | `i32 status`, `externref value` |
+| Has | object `externref`, key `externref` | `i32 status` |
+| actual GetPrototypeOf | object `externref` | `i32 status`, `externref actualParent` |
+| internal SetPrototypeOf | object `externref`, proposed object-or-null `externref` | `i32 status` |
+
+For actual GetPrototypeOf, `(1, null)` is a normal authenticated null parent;
+`(2/3, null)` is unresolved and must not end a traversal as absence. For own or
+chain lookup, status 1 requires a live nonnull entry. A null entry by itself is
+not an answer. The public scalar Get adapter comes later: only status 0 maps to
+genuine undefined, status 1 unwraps its value, and 2/3 cannot be published as a
+successful JavaScript result.
+
+Get has locals after parameters 0=object, 1=key, 2=originalReceiver, for the
+entry (`ref null PropEntry`), getter (`externref`), status (`i32`) and a genuine
+argument vector if needed. Consume multi-results in stack order: save the entry
+first, then status. A live data entry returns status 1 and entry field 1 converted
+from anyref. An accessor uses the canonical flag 8 and getter field 4. The
+canonical missing-getter representation returns status 1 with genuine undefined.
+Otherwise invoke exactly `Call(getter, originalReceiver, emptyArgumentVector)`.
+No inherited property is consulted after a live entry, including a data value
+of undefined or an accessor without a getter.
+
+The adjacent mixed Call ABI is `(callee externref, thisValue externref,
+ref issuedArgumentVector) -> externref`. **NewVector is `() -> externref`** in
+`native-argument-vectors.ts`; apply `any.convert_extern` then `ref.cast` to its
+issued carrier before passing the non-null typed vector to Call. Push is
+`(vector externref, element externref) -> ()`. Never pass a marker struct or
+confuse capacity 8 with an argument limit. Native lifted transport remains
+`(ref closureRoot self, externref originalThis, ref vector userArguments)`;
+algorithm slots receive `(originalThis, vector)`. Neither transport arity is
+header user-formal arity or own `.length`.
+
+All cursors, entries, receiver, status and cycle-tracking state are per-call
+locals. Has never invokes a getter or reads the returned PropEntry value. The
+String own-descriptor donor may read StringData while synthesizing its virtual
+character descriptor; this is part of that genuine internal method, not an
+accessor invocation. A getter reentering any of these
+operations cannot overwrite the outer receiver/entry. Let its genuine shared
+tag exception propagate unchanged; never rebox a payload, catch it as absence,
+or replace it with TypeError. State restoration around source calls belongs to
+the authentic mixed invocation owner, not ad-hoc writes in property lookup.
+
+## 4. Exact family, own-property and prototype authority
+
+The same extensible ordinary storage root is not an arbitrary-object admission
+proof. Authenticate an issued concrete family and its runtime realm evidence
+**before** bag, private state or payload reads. Dispatch rules:
+
+1. **Public native functions:** use the public declaration entry's final type,
+   exact metadata ID in field 4, runtime realm identity in field 6, actual
+   singleton identity, and the expected lifted function type. Structural
+   canonicalization can alias metadata families/types; `ref.test` alone is
+   insufficient. Field 3 is mutable metadata state. Bag is field 2; actual
+   prototype is field 5; immutable InitialName is field 7. Never return the bag
+   as a prototype or recover mutable own name from InitialName after deletion.
+2. **Unknown native metadata:** after known-native matching, recognize native
+   metadata families and return unresolved for an unknown ID/singleton/realm.
+   It must not fall through to a permissive source row merely because its
+   transport function signature matches a source signature.
+3. **Source functions:** use exact issued source shapes from the same combined
+   closure pack and retained `nativeSourceClosureRealmState` owner, then compare
+   runtime state realm identity. A root closure shape or equal signature is
+   insufficient. Captures stay at 3+, state follows all captures (including a
+   dedicated zero-capture final subtype), and bag stays at field 2. The existing
+   source issuer enforces immutable fields after the header, disjoint from
+   mutable native metadata; preserve that actual proof. A legitimate source
+   with the same transport signature as a native function must still work.
+   Do not attempt `ref.eq` on funcrefs as an invented function identity test.
+   In this four-file checkpoint, a recognized source-shaped candidate remains
+   status 2 before bag/prototype reads until authentic original source slot and
+   allocation/lowering authority joins the production composition. The existing
+   all-source callable association explicitly does not certify canonical IR
+   lowering. Pure-body source fixtures may use actual lowered source slots, but
+   cannot turn that fixture into a production completion grant.
+4. **Genuine String wrappers:** match the issued stateful String wrapper before
+   generic ordinary handling. State is field 7; payload remains field 6. Borrow
+   `NativeStringOwnDescriptorReservations.findOwn` with exact wrapper, ordinary,
+   String, Symbol, equality and flatten dependencies. This donor first calls
+   ordinary own find, then synthesizes a virtual index descriptor. “String
+   first” means family dispatch, **not reversing that own-property precedence**.
+   Its virtual indices are enumerable/nonwritable/nonconfigurable; length is
+   the actual seeded nonenumerable/nonwritable/nonconfigurable own property.
+5. **Other primitive wrappers:** use exact issued stateful wrapper types and
+   state realm. Their payload remains field 6, state field 7. Do not classify
+   them by the ordinary root or treat a String wrapper as generic storage.
+6. **Concrete ordinary objects:** match the issued final ordinary type, state
+   field 6, and state realm identity. Read real own storage through the existing
+   own finder. The six-field prefix's old prototype field 0 is not authoritative
+   for these public objects, even if nonnull. State field 0 is their actual
+   externref prototype; state field 1 identifies the realm.
+7. **Object.prototype:** require the actual singleton identity from the same
+   pending/public population owner and its issued final six-field subtype.
+   Its actual prototype is null and immutable. An independently allocated
+   same-shaped six-field object is not that singleton or a generic ordinary
+   object. Its complete descriptors still require actual population.
+8. Everything else is unknown until its genuine family owner joins: bare
+   storage roots, legacy implicit-prototype objects, foreign states, arrays,
+   proxies, bound/dynamic carriers not yet implemented, host objects or clones
+   cannot be silently treated as empty ordinary objects. This is an explicit
+   missing dependency of unrestricted public support, not an exclusion from
+   the full migration goal.
+
+Reuse `native-object-access.findOwn` and canonical hash/key-equality, not its
+`lookup` or `has`: the latter follow ordinary root field 0 and preserve an
+implicit-prototype status. Reuse actual PropEntry representation and descriptor
+flags from `ordinary-object-descriptor-common.ts`; ignore tombstones, preserve
+live presence and property order. String/Symbol keys are canonical inputs here;
+ToPropertyKey is a separate real general dependency, not a host coercion hidden
+in an equality helper. Symbol identity must use the authentic shared Symbol
+carrier, not descriptions or an invented numeric ID.
+
+Population is separate from carrier recognition. Current source allocations
+start with bag 2 null, while source functions still owe own name/length and,
+where constructible, prototype/other canonical properties. Current native
+catalog declarations reserve null singleton slots and no standard algorithm
+bodies. Null/uninitialized function bags and incomplete intrinsic own storage
+must not prove absence. Within the scoped structural protocol an authenticated
+live entry may report present; any own miss on an incompletely populated
+source/native function or Object.prototype returns 2 before following its parent.
+Actual GetPrototypeOf may resolve a separately authenticated parent without
+claiming that the object's own descriptors are complete. The later
+source/intrinsic population producer must seed all initial own descriptors in
+canonical order before exposure, and its
+exact allocation/initializer bodies must be part of full graph authentication.
+A nonnull bag, global flag, count, supplied callback or catalog label alone is
+not that proof. Reserve/build the access owner against pending identities now;
+keep its missing population dependency explicit. The runtime initialization
+guard, if emitted, uses the retained population owner's real state and is only
+a guard; toggling it cannot certify a graph the compiler has not completed.
+
+Traversal checks an own entry before asking for a parent, preserves receiver
+unchanged, and terminates as absent only at an authenticated actual null link.
+Do not inspect a more distant parent early: it may be unsupported while the
+nearer object already supplies the requested property. No fixed depth cap.
+Prevent malformed admitted-state cycles from hanging without adding observable
+Get/GetPrototypeOf calls or returning absence; maintain call-local visited
+identity state if necessary. Do not use lookahead that changes failure/order.
+Future Proxy integration must implement its actual internal methods and abrupt
+behavior; blindly applying an ordinary-chain walker to proxies is not a join.
+
+SetPrototypeOf must authenticate target/current parent first, accept SameValue
+of current and proposed parent even for a nonextensible target, then check
+extensibility and the proposed actual chain before any write. Flags are real
+ordinary storage flags (nonExtensible bit 1), not descriptor attribute bits.
+For source/native functions, obtaining these flags requires authenticated
+initialized bag storage, with no silent allocation or population substitution.
+Reject self/indirect cycles, unknown or unresolved edges without mutation;
+Object.prototype may only retain null. Check an already cyclic proposed chain
+not containing target as well, so it cannot hang. Do not follow bag.prototype.
+The later Object/Reflect API layer owns argument validation and conversion of a
+semantic false result into the specification's return/throw behavior.
+
+## 5. Backend ownership, authentication and physical indices
+
+Recommended issued pack exposes the own/lookup/Get/Has/prototype function tokens
+and an honest scope such as `mixed-object-access-structure`; a reserved Get
+slot is not a completed Get capability. Derive all rows from real producers.
+Do not accept caller-authored family arrays, runtime type IDs, population IDs,
+getter handles, completion booleans or a copied public packet as authorities.
+
+The structural dependency record retains these exact existing owners:
+
+- public `NativeObjectRealmDeclarations` plus its exact expected dependency
+  record, checked with `requireNativeObjectRealmDeclarations`;
+- its realm requirements, common public builtin issuer, single combined closure
+  owner/plan, state layouts/anchors, shared invocation substrate/vector owner,
+  exception selection/tag, and optional genuine source type owner;
+- exact ordinary own-lookup/storage dependencies, primitive wrapper layout
+  dependencies (with that SAME state owner), and String own-descriptor owner;
+- genuine native value/undefined and key String/Symbol resources as needed.
+
+Validate nested dependency descriptors before invoking older authenticators
+that read fields directly. Optional absent versus present undefined/null,
+accessor, hidden or inherited is significant. Preserve original records and
+identity snapshots, revalidate their data descriptors and currentness on every
+require/fill/completion. A cache hit never bypasses this validation. Compare
+same-ledger owners, layouts, source requirements and state, all shared string,
+vector, key and tag dependencies; independently genuine but different owners
+are not interchangeable.
+
+Keep declaration/reservation/require/fill/completion/inventory phases explicit:
+`declareNativeMixedObjectAccessResources`,
+`reserveNativeMixedObjectAccessResources`,
+`requireNativeMixedObjectAccessReservations`, structural canonical fill and
+completion, and `nativeMixedObjectAccessReservationInventory` (names may follow
+local conventions). The later getter binding is a separate single-use operation
+against an authentic mixed invocation issuer; no public raw-handle binder now.
+
+Authenticate all dependencies and the entire canonical declaration recipe before
+calling `assertReservationKeysAvailable` with every key for THIS owner, and
+before its first allocation. Test a collision on its last key. This proves zero
+new mixed-access keys on refusal; it does not promise rollback of earlier realm,
+String or substrate owners or continued access to an already-failed ledger.
+Do not reserve during fill. Obtain all indices from exact issued tokens in the
+appropriate phase. Types and functions are different spaces; imports/displaced
+functions/globals must not change a captured type-ID association. Completion
+checks the complete fresh canonical locals and instruction bodies, not only
+`filled`, completed token status, body length, selected rows or matching ABI.
+
+## 6. Real cyclic composition, with no fabricated completed Call
+
+The four-path checkpoint has no genuine unrestricted mixed invocation owner yet.
+Do not implement `completedCall: true`, accept a caller FuncHandle as an owner,
+reuse selected Number/method0 demands, or create a fake source closure request.
+Use this dependency order:
+
+1. Existing public preparation derives current program/projection/catalog and
+   real source requirements; supplements native literals through their genuine
+   owner. Reserve the one canonical exception tag before imports close, shared
+   vectors/TypeError, ordinary/String/wrapper/key/state prerequisites.
+2. Issue public builtin requests before the sole combined source/native closure
+   pack, even in a genuine no-source program. Reserve the real source unit slots,
+   pending catalog declarations and structural mixed-access tokens, including
+   the eventual Get slot. Existing public declarations borrow the sole realm
+   and Function.prototype anchors; instantiate no bounded bootstrap kernel.
+3. Fill the standalone structural access subgraph when its authentic leaves
+   permit it; its scoped completion says nothing about getter dispatch or
+   intrinsic descriptor population. Implement pure Get now and execute it with
+   clearly labelled dependency observers in component tests. The production
+   Get slot/completion remains pending until step 4 exists.
+4. Adjacent implementation in the already planned new
+   `mixed-invocation-bodies.ts` / `native-mixed-invocation.ts` reserves real
+   generic Call/IsCallable/Construct/IsConstructor entries borrowing this exact
+   access pack. Its own completion and source state remain with that owner.
+5. Perform the sole freeze after all reservations. Bind all source callables to
+   original consumer slots with `bindNativeRealmSourceClosureCallables`; this
+   authentic association is unavailable during the earlier reservation phase.
+   Bind mixed invocation to mixed access once, after checking the same public
+   packet, state, source types/slots, vector, values, realm and exception tag.
+   Fill pure Get from that real Call token and shared empty-vector constructor,
+   then fill invocation and the canonical algorithm/source/population bodies.
+6. Audit a finite explicit dependency graph after fill: both owners' canonical
+   definitions, actual source lowering, every edge and whole catalog population.
+   Do not recursively treat an already-visited or reserved owner as complete.
+   A bodies-complete record can certify canonical code; only the whole-graph
+   owner can certify complete public population and publish public bindings.
+
+The current compilable owner exposes `fillNativeMixedObjectAccessStructure`
+and `requireCompletedNativeMixedObjectAccessStructure` for the exact structural
+subset only. Keep Get unfilled, with either an always-refusing
+`requireCompletedNativeMixedObjectGet` or no successful getter-completion API.
+Caller-filling that reserved token cannot bypass the owner's refusal. Expose no
+raw-handle binder, caller authenticator or pending-source-matcher permit.
+
+No type import from a nonexistent future issuer is required in this checkpoint:
+leave its production Get bind/fill entry unavailable until the adjacent owner
+is implemented in its own authorized paths. At that point extend this same leaf
+with the typed one-use binding operation described above. The pure Get operand
+contract and reserved token specify the concrete later join without minting
+authority today. A module containing genuinely pending catalog/Get slots cannot
+be sealed/emitted by filling them with test stubs; runtime body components and
+production owner reservation/completion refusal controls remain distinct.
+
+## 7. Exact component and ownership tests for the four paths
+
+The helper must use genuine existing reservations, native storage, StringCreate,
+wrapper/state owners, real vector constructors and emitted Wasm. Label imported
+observer getter/Call functions as component dependencies; they do not prove a
+public native module or a completed catalog. Do not fill 44 pending catalog
+algorithm slots with stubs so that a whole pending module can be emitted.
+Owner reservation/refusal controls can inspect the genuine pending packet
+separately from pure-body executable fixtures. Component input constructors or
+anchor setters must remain visibly test-only, with no production ready grant.
+
+At minimum cover normal UTF16 and physically displaced UTF8, nonempty exact
+family/row counts and actual Wasm values/identities for:
+
+- ordinary own/inherited data; live undefined shadows an inherited value;
+  getter-less live accessor shadows inherited getter; tombstones permit lookup
+  to continue; redefine preserves descriptor semantics and observable order;
+- genuine String wrapper length and canonical virtual indices, noncanonical
+  indices/out-of-range/Symbol keys, UTF16 code-unit behavior including isolated
+  surrogate, actual own-before-virtual precedence, String as a prototype;
+- ordinary -> source -> native -> ordinary actual prototype chains; result is
+  the actual function object identity, never its expando bag; inherited getter
+  receives the original ordinary or explicitly supplied primitive receiver;
+- data/Get presence distinct from null/undefined, Has invokes zero getters;
+  exact call count, zero user args, supplied receiver unchanged, reentry into
+  Get/Has/prototype operations, normal return and thrown payload identity;
+- genuine zero/capturing source carrier shapes, native same-shaped metadata
+  with different IDs, unknown/forged metadata, legitimate same-transport source,
+  wrong realm/state/singleton/type and bare/unknown carriers. Wrong families
+  must be rejected before their bag/state/private payload is read;
+- incomplete intrinsic population and null/uninitialized source function bag
+  stay unresolved; default/Object.prototype identity cannot be substituted by
+  an ordinary root allocation, a bag, a clone, or a partial catalog owner;
+- explicit actual null termination; unknown intermediate parent; self/indirect
+  cycle, preexisting cycle not involving target, immutable Object.prototype,
+  nonextensible same/different parent, no mutation after refusal; long valid
+  chains prove there is no fixture-sized traversal cap;
+- cloned/copied/foreign-ledger owners; swapped genuine shared String/vector/
+  state/tag owners; stale source/realm/recipe/dependencies; inherited/accessor/
+  hidden/extra/undefined/null fields with getter invocation counters zero;
+  last-key preflight collision; wrong body AND wrong locals after completion;
+  duplicate bind/fill and use in the wrong phase; missing final dependency.
+
+For controls requiring the future real mixed Call or population owner, state
+that prerequisite and keep them as mandatory next integration controls, rather
+than silently substituting a source-selected observer or calling a helper a
+public test. Do not weaken 35-second preservation timeouts, scopes, assertions,
+error handling, historical receipt hashes or known failures. Root schedules
+one heavy process and records actual collected/pass/fail/skip/error counts.
+
+## 8. Minimal reviewed Number reuse, after the mixed dependencies
+
+Read preserved donors in `/private/tmp/js2-ir-number-current-main-20260930`.
+Do not overlay its 56 pending files or old broad source hunks onto this graph.
+
+| Prepared material | Reuse and current integration obligation |
+| --- | --- |
+| `ir/runtime/number-conversion-callable.ts` provider + canonical mismatch/policy; its hooks in `callable-declarations.ts`, `runtime/contracts/manifest.ts`, `runtime/manifest.ts` | Compose these four logical hunks against current validators. Canonical `native.js.number.from-value`, standalone/WasmGC only, externref->f64, no host capabilities. Symbolic obligation only; no physical admission. |
+| `runtime/wasmgc/values/number-from-value-body.ts` | Reuse real ToPrimitive(number), @@toPrimitive/GetMethod, valueOf-before-toString, exact abrupt propagation, Symbol TypeError and explicit BigInt conversion. Harden config/Instr inputs to current conventions. Bind scalar general Get and genuine general IsCallable/Call, not selected coverage. |
+| `bigint-to-number-body.ts` + `resources/native-bigint-number.ts` | Reuse real narrow/wide BigInt conversion, including rounding/overflow, with exact current BigInt owner/plan and complete canonical bodies/locals checks. |
+| `resources/native-number-primitive-classifier.ts` | Reuse authentic primitive-family predicates only; add current own-data/currentness/completion discipline. Same actual Boolean/String/Symbol/BigInt/value owners. Not IsCallable. |
+| `runtime/contracts/well-known-symbols.ts` + `resources/native-well-known-symbols.ts` | Reuse canonical named symbols and actual carrier/interning. Harden dependency capture. Bind real @@toPrimitive, never a string spelling or caller-selected numeric ID. |
+| `object-prototype-to-string-body.ts` | Reuse algorithm only with actual ToObject, IsArray (including revoked Proxy behavior), internal slots, general Get(@@toStringTag), native String recognition/concat. Constant-false slot probes are not general completion. |
+| `native-number-callable-coverage`, method-effects, Number-invocation analyses, `native-callable-classifier.ts`, selected invocation/getter edits | Preserve their bounded tests/contracts. They certify selected values and reject default/inherited population. Do not promote them into general IsCallable, relax their refusal or fabricate selected demands. New all-source/public owners replace that authority for this graph. Independent semantic/projection occurrence checks may be reused. |
+| pending Number-selected object-literal/Object.create/Symbol source hooks | Original accessor fixture needs none of these to be recognized. Do not overwrite the stronger current genuine Object.create(null) resolver or its discarded/statement-call hooks. General syntax additions require their own source identity/ambient declaration/signature/mutation/escape/policy proof. |
+
+The new Number owner is the already planned
+`src/backend/wasmgc/resources/native-number-from-value.ts`. Its dependencies are
+real scalar mixed Get, general mixed IsCallable/Call, native primitive/scanner
+and BigInt owners, canonical @@toPrimitive Symbol, same value/undefined/Boolean
+carriers, same TypeError owner and same tag. Explicit adapters preserve donor
+method0(receiver,method)/method1(receiver,method,arg) ordering when constructing
+Call(callee,receiver,vector). Never alias `native-values.unboxNumber`, whose
+object fallback is not observable full Number conversion.
+
+Literal supplementation belongs in the authenticated
+`backend/wasmgc/program/native-realm-literals.ts`: add the actual number hint,
+valueOf/toString and error strings/Symbol descriptions required by the real
+algorithms, preserving original source literal order/encoding and exact retained
+realm/literal identity. Primitive/Boolean resources must be demanded by real
+algorithm requirements even if source has no explicit Boolean boxing call.
+
+## 9. Eventual public consumer join and completion bar
+
+Use the already planned `src/backend/wasmgc/program/native-object-number-abi.ts`
+for exact public intrinsic declaration/occurrence/physical-token reconciliation.
+Later authorized edits to `program-consumer.ts`, `program-physical-plan.ts`,
+backend `program/native-realm.ts`, native requirement/literal planning and the
+retained source allocation/invocation seams must do all of the following:
+
+- derive real complete source/semantic/projection requirements, currentness and
+  catalog obligations; preserve default/bootstrap consumer behavior;
+- replace the existing early `physical:exception-tag` reservation with the real
+  public exception producer when public mode is selected (same checked required/
+  shared import policy), never allocate a second tag; use one substrate/closure
+  population/state owner and no bounded bootstrap population in public mode;
+- reserve all actual owners, source slots, algorithm entries, startup/ABI
+  adapters before one freeze; bind exact original source bodies and state;
+- authenticate complete algorithms, every source/native own descriptor,
+  constructors/prototype aliases and initialization order. Allocate identities
+  first, link actual prototypes/constructor aliases, seed all descriptors, then
+  publish readiness only after successful actual population;
+- reconcile the three canonical function bindings and all four original unit
+  references in physical resources, ABI manifest, callable maps and startup;
+  preflight/emission replay must rederive exact identities and canonical bodies,
+  not count or stringify a prepared-looking substitute;
+- accept canonical default prototypes only through the actual completed
+  Object.prototype singleton and same whole-realm owner. Old implicit/default
+  prototype refusals remain valid for old/unowned/incomplete representations.
+
+Required public evidence remains the original **9/9** (all original rows,
+unchanged hashes), four actual native original/decoded x both-encoding routes,
+zero host imports, repeated 712 on two fresh instances. Add a separate fresh
+child decoding those exact bytes with zero TypeScript/frontend preparation or
+resolution; byte-identical codec re-encoding, actual public acceptance/emission
+and Wasm execution are mandatory. Preserve original baseline failures alongside
+new results. Add Number({}), inherited native/source getters/methods, general
+@@toPrimitive ordering/abrupt cases, Symbol/BigInt/primitive conversions,
+state/receiver restoration, descriptor/prototype mutation and full catalog
+population controls. A component observer or backend-only typed-IR fixture does
+not satisfy any of the four native public rows.
+
+Full completion remains unrestricted: all 45 Object/Function catalog intrinsics,
+actual constructor links, full Object statics and prototype methods, generic
+ToObject/ToPropertyKey/descriptors/Set/ownKeys/extensibility/integrity, arrays,
+iterables/IteratorClose and relevant exotics; general Function call/apply/bind/
+toString/@@hasInstance, restricted properties, bound Call/Construct, source
+newTarget/Construct/name semantics, and real CreateDynamicFunction including
+parsing/global environment/SyntaxError. `eval` and `with` remain in full IR
+scope. No unavailable member may become an absent key, stub body or host import.
+A closed-demand optimization could be proposed later; it cannot redefine this
+public API, the whole-realm completion contract, or the migration goal. Nine
+passing rows are necessary regression evidence, not full IR or realm completion.
+
+## 10. Concrete blockers retained, without stalling structural work
+
+- Canonical mixed getter Call/IsCallable owner is not implemented yet; implement
+  pure Get and the structural owner now, then bind it through the adjacent real
+  mixed invocation issuer. No invented authority in the four-file checkpoint.
+- Source/intrinsic complete own-property allocation/population is still missing;
+  source shape/state alone is not that evidence. General source Construct/name
+  reflection is explicitly not granted by source-call association.
+- Pending public declarations still reserve 44 callable rows and 45 catalog
+  intrinsics without their complete algorithms/initialization. Do not emit them
+  with placeholder fills or equate declaration completion to public completion.
+- Runtime registration, native Number conversion ownership and physical
+  consumer/ABI wiring are separate real later joins. Four symbolic provider
+  edits cannot make the original public fixture executable by themselves.
+
+Root can dispatch the four mixed-access files immediately under the verified
+public graph claim. The final production Get bind and whole public provider
+remain coupled to the adjacent genuine invocation/population work. No unrelated
+armed lane or existing pending Number source needs to be changed for this step.
+
+
+### Adjacent mixed Call source ownership findings
+
+Independent read-only inspection confirms the genuine all-source association
+must be obtained from nativeRealmSourceClosureCallableBindings(tx, emission,
+realm), retaining that exact pack together with the SAME private emission.
+Revalidation compares that relationship and invokes
+requireCompletedNativeSourceClosures(tx, sameEmission). The lower-level public
+association binder alone accepts genuine raw slots and proves association,
+not canonical lowering; an arbitrary association plus an independently completed
+emission does not join source authority. fillPreparedPrimaryUnit supplies the
+real canonical source-lowering marker and the ledger checks body/locals drift.
+
+Current selected native-invocation supports only externref/f64 parameters and
+externref/f64/Boolean results; it cannot become unrestricted GenericCall by
+renaming it. General adapters still need genuine numeric/Boolean/BigInt/Symbol/
+String/vector/reference conversions, actual receiver/argc/extras restoration,
+missing undefined, void boxing and all source signatures. Current source
+association is synchronous fixed-parameter and has no class-constructor Call
+mode authority. Classes remain IsCallable=true with throwing Call, distinct
+from IsConstructor. Async/rest/Construct/newTarget coverage remains required;
+these findings grant no exclusion from the full migration goal.
+
+
+Root registered precisely the two actual mixed-access production leaves after
+they existed: inventory1744→1746, backend entries/floor48→49, native-runtime
+entries95→96 and floor94→95. All1744 prior ordered rows, layer policies,
+activation history and allowed edges are preserved. Boundary activation-tail
+expectations add only these leaves. This is metadata registration before tests,
+not a passing gate or public completion claim. Getter/Call/population remains
+explicitly pending. New source/helper/test draft validation has not run yet.
+
+
+### Mixed-access first-draft review and bounded correction dispatch
+
+Independent review of the exact four frozen draft inputs found two defects before
+execution: both recipe preflights omitted the authenticated external PropEntry
+type key, and older own/String dependency owners could mark an incorrectly
+first-filled executable definition complete. The new mixed owner must rebuild
+and compare those actual dependency bodies and locals with authenticated
+operands; ledger completion alone does not establish canonical semantics.
+The writer is correcting only its four owned files and adding wrong-body,
+wrong-locals, genuine same-ledger owner-mismatch, and String virtual-value/length
+controls. Initial draft bytes and review findings are retained in
+`.tmp/public-native-object-number-graph/mixed-access-dispatch/review/`.
+No tests have run on this draft; 31 was the initial static planned count.
+Production getter Call, source population and whole public completion remain
+explicitly unresolved. Existing fixtures and original public nine-row failures
+remain unchanged. The canonical root worktree advanced externally to
+9398d8d272259df6b3a3809ee0a338bfad84e0a9 with unrelated dirty files; it was
+read only and is preserved. This graph worktree stays at 8a730516.
+
+
+### Mixed-access corrected draft checkpoint
+
+The four-file corrected draft remains source-scoped and was independently pinned
+by root: the pure body recipe is unchanged; the new owner supplies PropEntry
+preflight prerequisites and reconstructs the executed ordinary key/hash/findOwn,
+String index/virtual/own, equality and flattening definitions and exact empty
+sentinel. Both body and locals must match authentic donor recipes. Old
+whole-chain lookup/has helpers are unused and are not accepted as heterogeneous
+traversal authority. Six new dependency body/local refusal rows raise the static
+planned denominator from31 to37. Same-ledger alternative-owner mismatch, actual
+String surrogate characters/length and tombstone continuation controls are
+included. The configured implementation attribution is Codex GPT-6 Astra Max.
+
+Second review confirmed the two production fixes and identified a test-helper
+trap before execution: tombstoned entries were inserted and then looked up
+through real findOwn for a getter update, although findOwn correctly skips
+them. Only helper instrumentation is released for correction; production lookup
+and the inherited-value assertion remain preserved. Draft1/draft2 and review
+receipts remain retained. No typecheck or test evidence is claimed yet.
+
+
+### Mixed-access first executed diagnostic and scoped repairs (2026-10-01)
+
+On the exact reviewed draft, TS7 passed. The strict focused run executed a
+37-row suite with10 passes,3 failures and24 skipped due to two beforeAll
+failures; there were zero todo or worker errors. All7426 compiler/config
+and14559 retained tracked inputs stayed unchanged. Full logs, JSON rows and
+exact input copies are preserved in `.tmp/public-native-object-number-graph/
+mixed-diagnostic-c0tdhzjh/`; this is failed evidence, never a success count.
+
+The normal emitted fixture's initializer referenced an undeclared lifted
+control function; the helper must declare the genuine exact ref.func target
+through the ledger, preserving the ledger validator. Displaced UTF8 fixture
+construction omitted the canonical WTF16 empty literal demanded by genuine
+String flattening. The existing production native-string-values composition
+already includes this prerequisite, so this is not a new public-consumer
+defect. Root will preserve every selected realm literal row and supplement
+its genuine realm plan with canonical ('', 'wtf16') if absent; this lets the
+narrower foundation plan carry the same actual algorithm prerequisite.
+
+One normal canonical-completion control took36.163s against the unchanged
+35-second limit. The new owner redundantly authenticates individual physical
+indices for every44 singleton plus anchors. The writer may batch those exact
+tokens through the genuine callback-free ledger API, preserving fresh full
+canonical audits. This is an optimization hypothesis until measured; the test
+limit, assertions, public fixture and completion scope remain unchanged.
+
+
+The corrected production/helper cohort is cleared by independent review3.
+The root-owned realm requirements regression retains its original source-prefix,
+currentness, cache and reservation assertions. Its old homogeneous UTF8 assertion
+is replaced with exact selected-prefix order/encoding plus exactly one appended
+canonical WTF16 empty carrier, preserving the separate selected UTF8 empty.
+Normal UTF16 selection is still homogeneous with exactly one empty literal.
+No limits, fixtures or completion checks are relaxed.
+PR6359 is now verified delivered on fresh main e303c5c: all9 merge-path blobs
+match exacthead90d at mergeeb136e20; all source blobs persist on freshmain;
+all82 standalone+20 host unique protected shards, final regression gate,
+CI/CLA/differential merge_group runs passed. Its slice claim completion is
+verified on issue-assignments tipc5fd4303. The IR migration epic remains active.
+
+
+### Mixed-access second diagnostic and exact prerequisite census
+
+Second frozen run: TS7 passed;37 planned rows produced23 passes,2 failures
+and12 skipped from one displaced beforeAll. All error paths require the real
+StringCreate ('length','wtf16') binding; all12 normal Wasm controls and11
+normal ownership controls passed. Completion34.678s/postfill34.224s remained
+under unchanged35s limits; no broader performance guarantee follows.
+Zero worker errors/todo/drift across7426 compiler/config and14559 tracked
+inputs. Exact six-input cohort/logs/results are retained in
+`.tmp/public-native-object-number-graph/mixed-diagnostic-292vx1sm/`.
+
+Independent scoped prerequisite inventory traced every actually selected
+donor: exactly('',wtf16) for flatten and('length',wtf16) for StringCreate;
+other selected owners add no further fixed encoding tuples. Substrate/error
+literals are text-only;11 fixture control keys are separately reserved and
+are not added to the production plan. Root supplements precisely these two
+canonical carriers, deduplicated by value+encoding while retaining every
+selected UTF8 row. The preservation test requires the exact selected prefix
+and both canonical rows, including retained UTF8 variants. No public readiness
+or successful37-row rerun is claimed yet. Next heavy slot prioritizes the
+main-based Function component; graph files remain preserved for its next run.
+
+
+### Resume after Function delivery: fresh literal inventory authentication (2026-10-01)
+
+The active full IR migration goal resumed after the requested wrap-up. The
+public-native-object-number-graph slice was freshly checked unassigned and
+reclaimed by ttraenkler/codex-public-native-object-number-graph-20260930 on its
+preserved branch. No peer claim or reservation was changed. PR6369 has merged
+as6383d218; exact protected merge-group and current-main content proof is being
+collected separately. Legacy retirement and whole native provider completion
+remain unproved.
+
+The unchanged37-row mixed cohort remains36/37, with canonical structural
+completion40.134s exceeding35s. The single standalone instrumented replay
+measured ledger public operations32.809s/36.687s (89.43%); physicalIndex3459
++physicalIndices2133+assertTypeReservation5650 dominate, while scalar completion
+checks132 took only0.579s. Inclusive totals overlap and are not additive.
+Receipt: mixed-performance-pjcruab8. No timeout or assertion may be relaxed.
+
+Scoped implementation plan: native-builtin-function-requests.ts resolves
+common/catalog literal lists by calling requireNativeStringLiteral once per
+text. Every call reauthenticates the full same string owner and its type family.
+Instead, within each individual private literal-list authentication, obtain
+one freshly authenticated nativeStringLiteralReservationInventory from the
+actual tx and exact original owner. Select its original immutable request
+bindings in the same order, preserving first-match text semantics, encoding
+behavior, missing-text refusals and retained-binding identities. Never accept
+a caller inventory, cache proof across calls, remove argument-vector checks,
+or bypass a changed requirement/dependency/ledger check.
+
+Writer owns only this existing prepared source file and one focused regression
+test file. Root owns claims, metadata, integration, Git and publication. Other
+prepared source changes remain intact. Required controls: genuine native
+request issuer, common/public literals, missing literal, warmed then corrupted
+ledger/dependency refusal, foreign owner refusal, no getter execution, and
+fresh per-call authentication; tests must not replace owners with fake packs.
+After review, run TS7 plus the full unchanged37-row suite with source pins and
+retain all prior failures. Only then run current375 preservation cohort and
+seven gates. No global ledger API or audit suspension is part of this repair.
+Full45 catalog/transitive algorithms, genuine Get/Call/source binding, original
+public9 rows and both backends remain acceptance obligations for the full goal.
+
+
+### Function component verified main delivery — 2026-10-01
+
+PR6369 “feat(ir): add Function call and apply algorithm bodies” merged as
+6383d2187cac76626dd04c1a37e1733997c79c00, exact parentsae62dbdc+5dd3fc53.
+Freshly observed/fetched/observed main25ee5b64b883b6d735b1072272a24d8740256e0b
+contains both signed head and merge. All8 PR-path blobs match at merge and
+all source/test blobs match that main. Actual protected merge_group runs
+36787500620/36787500581/36787500609/36787500589 succeeded, including all unique
+82standalone+20host shards and final regression/report gates. This component
+counts delivered; no PR-head stub/skipped shard is counted. Local raw proof:
+.tmp/public-native-object-number-graph/resume-20261001/pr6369-verified-delivery.json.
+
+Its scoped claim was released during stand-down and remains released; this
+record does not close the migration epic. Full native provider completion,
+originalpublic9 rows, entire45catalog, both-backend equality and legacy
+retirement are still unproved. The goal resumed under the freshly reclaimed
+public-native-object-number-graph slice; no foreign claim was changed.
+
+
+### Fresh literal authentication repair validated — 2026-10-01
+
+The narrow native builtin request owner repair now resolves each common/catalog
+literal list from one fresh genuine String inventory per invocation, preserving
+original first-text bindings and all currentness/refusal contracts. No proof is
+cached across calls. Actual TS7 passed, new24/24 controls passed, and unchanged
+mixed37/37 passed with zero skips/setup/worker errors. Formerly failing canonical
+completion control took23.271s, below its unchanged35s limit (retained old
+40.134s failure). Source/test bytes stayed frozen across all validation.
+
+Current375/375 preservation (349boundary+26realm requirements) and all7 gates
+passed;7427compiler/config and14559tracked pins had zero drift. This is current
+root/component evidence, not a new broad historical comparison. The reachability
+verdict remains preservation-only PASS, graph OPEN, strict closure FAIL,
+retirement/deletion NOT CERTIFIED. Earlier failure cohorts and originalpublic9
+fixture remain unchanged; its last actual5/9 result is not replaced by these
+component controls. FullGet/Call/source authority and45catalog remain pending.
+
+Exact owner source SHA256ece7be10320cf5c034b59c553995b3ce72a40ad037878d315e7b8369aa121263;
+new test SHA256fcb430600ea1c1088fc4cd39d90e794f505779b4c8a6ceb0735e52c599a6b4b6.
+Implementation: Codex GPT-6 Astra Max. Root integrates claims/metadata/Git.
+Receipts under .tmp/public-native-object-number-graph/resume-20261001:
+request-literal-validation-4077db63, mixed-validation-1d95dba6,
+preservation-gates-b32dc940. No graph commit/push/PR yet; next delivery action is
+fresh-main composition, normal signed hooks and ready publication when verified.
+
+
+## Astra implementation plan — genuine source identities and mixed invocation (2026-10-01)
+
+Root reviewed the complete following brief. It was drafted while the literal
+authentication validation was running; its reference to the former36/37
+checkpoint is historical. The current actual result is37/37 plus24/24 controls,
+TS7 and375/375 preservation with7gates. No Get/Call/source-identity implementation
+is claimed by this paper. Its full catalog and genuine source-completion bar
+is retained. Deliver the current validated checkpoint through fresh-main
+composition before expanding code scope; verify claims and exact file ownership
+again before any future dispatch. The full brief follows without truncation.
+
+# Issue 3518 — IR-only default and direct front-end retirement
+# Next production scope: authentic source targets, mixed Call and Get
+
+Read-only architecture brief, 2026-10-01. Root owns claims, metadata, integration and publication. No tracked files or tests were changed or executed for this brief. The existing literal-list authentication optimization has a separate writer and is outside this scope. Start this implementation only after root accepts the frozen mixed-access run and its preservation gates; this document does not turn the existing 36/37 timeout result into a pass.
+
+## Decision and completion boundary
+
+Implement the actual source invocation authority and the mixed invocation/access cycle. Do not publish a Number provider or a successful public consumer route by treating this cycle as a completed realm. Keep the existing structural access checkpoint and old default invocation behavior compatible.
+
+The current catalog has **45 intrinsic objects, 44 callable entries, and two constructible entries** (%Object% and %Function%). Full public realm completion therefore requires all 45 actual identities/descriptors/links, all 44 canonical Call algorithms, all 44 genuine lifted Call entries, both genuine Construct entries, and their transitive dependencies. It does not mean 45 identical function triples. Keep normative-optional catalog entries in the currently selected catalog; do not remove them to reduce the denominator.
+
+`wholeRealmReady` cannot honestly become true before that graph is materialized and authenticated. Under the assigned unrestricted public Get/default-object contract, **the original nine-row public Number suite cannot be made accepted before full catalog materialization**. The `constructor` links expose Object/Function and their other members; missing members cannot become absence or runtime stubs. A later proven closed-demand optimization could change compilation reachability, but is not this architecture or its acceptance bar.
+
+The next increment may issue/audit canonical *code definitions and links* while the whole graph is incomplete. That is a bodies/association fact, not a subset public-completion capability. Full `requireCompletedNativeObjectRealm`, scalar public bindings, and original public acceptance remain blocked by explicit missing roles. No observer, raw FuncHandle, completed-token count, user boolean, partial catalog, or fabricated source requirement can discharge a missing role.
+
+## Exact existing facts that drive the change
+
+- `native-mixed-object-access.ts` owns seven tokens, fills six structural roles, and deliberately leaves Get pending. Its source rows return unready before bag/prototype reads. Already-filled structural code cannot be patched later: ledger fill is single-use.
+- `program-native-invocation.ts` owns the genuine private source-emission map and canonical-lowering markers. `nativeRealmSourceClosureCallableBindings` obtains the all-source association from that exact map. The lower-level public `bindNativeRealmSourceClosureCallables` accepts real same-shaped slots but is only an association issuer, not proof that the body was lowered.
+- `requireCompletedNativeSourceClosures` currently covers lifted source units. It does not separately certify every outer allocation-owner body in `requirements.allocations`. A general source allocation claim must cover those bodies too.
+- Source shapes are shared by `(signature, captures)`. Their current fields are header 0–2, captures 3+, then immutable realm-state reference. A field-0 `funcref` test proves a signature, not membership in the original unit set. Do not add `ref.eq` on funcrefs or dispatch the first same-shaped entry's slot.
+- The public declaration owner reserves all real native tokens and only fills null/zero module initializers. It does not implement its initialization function, algorithms, lifted functions, or constructors. Its readiness global is immutable and currently initialized to zero.
+- Existing selected native invocation supports only a limited argument/result conversion population. Its requirement issuer selects particular call/apply/getter demands. It cannot be renamed into generic Call or used to justify source functions absent from those demands.
+
+## Proposed owned files
+
+Root must approve this explicit expansion before edits. Names below are proposed API names, not claims that those APIs already exist.
+
+### New production files
+
+1. `src/backend/wasmgc/resources/native-source-call-targets.ts`: genuine pre-source unit identities and allocation-tail initializer owner. It takes exact source requirements and exact realm-state owner, not selected invocation demands.
+2. `src/backend/wasmgc/program/native-source-invocation.ts`: relocate the existing physical source-emission owner here, preserving its actual private maps and lowering operations; add the authentic all-source execution association/completion API here.
+3. `src/runtime/wasmgc/values/mixed-invocation-bodies.ts`: pure family matching, source adapters, native lifted dispatch, checked invocation and state-boundary definitions. No backend/IR owner imports, even type-only.
+4. `src/backend/wasmgc/resources/native-mixed-invocation.ts`: exact reservation, reciprocal access binding, code filling and canonical finite completion audit.
+
+### Existing production edits needed now
+
+- `src/runtime/wasmgc/values/realm-object-layouts.ts`: add the explicit public source variant with an immutable SourceUnitIdentity field after the existing state field; add pure identity/tail-initializer declarations/builders. Ordinary/wrapper layouts and existing state layout remain unchanged.
+- `src/backend/wasmgc/resources/native-source-closures.ts`: optional genuine `callTargets` carrier, preflight/reservation-plan/shape/currentness checks, and an authenticated retained-target accessor. Existing absent-option layouts and behavior stay identical. Present undefined/null/accessor/hidden/foreign values refuse.
+- `src/backend/wasmgc/resources/native-source-closure-callables.ts`: expose the exact unit-to-shape/signature/original-slot association required by the new execution owner. Preserve the old selected and all-source association APIs; do not relabel their completion scope.
+- `src/ir/program-native-invocation.ts`: compatibility re-exports for the relocated physical APIs, plus the existing semantic preparation helper if it remains here. No second WeakMap, new issuer, or parallel lowering implementation.
+- `src/runtime/wasmgc/values/mixed-object-access-bodies.ts`: an explicit source-match port for the public composition, and a checked-Call Get body that propagates unresolved statuses. Preserve the existing pure scalar-Call component builder/default structural behavior.
+- `src/backend/wasmgc/resources/native-mixed-object-access.ts`: optional authentic pending invocation port packet at reservation, exact reciprocal one-use bind, Get fill and canonical body audit. No raw-handle or callback completion permit.
+- `src/backend/wasmgc/resources/native-object-realm.ts`: canonical native lifted-entry binding/fill association and explicit remaining-role inventory as the algorithm owners join. Keep declaration-only behavior. Do not set wholeRealmReady merely because dispatch bodies were filled.
+
+No edit to `native-builtin-function-requests.ts` is needed for these identity/Call changes: reuse its genuine common/public issuer and preserve the independent literal optimization. No existing emitter or `IrClosureLowering` field change is needed for the multi-result tail technique below. No current historical closure-layouts receipt requires rehashing for that technique.
+
+### Focused new tests/helper
+
+- `tests/helpers/native-mixed-invocation.ts`
+- `tests/issue-3518-native-mixed-invocation.test.ts`
+- `tests/issue-3518-native-source-call-targets.test.ts`
+
+The helper must lower actual original and freshly decoded prepared source, bind the actual slots, and use real native vector/error/value/storage owners. Component execution and full public acceptance must remain explicitly separate. Never make a pending full-catalog module emit by filling its missing slots with controls.
+
+### Additional semantic producer prerequisite, before claiming unrestricted source Call
+
+The retained source contract currently proves fixed parameters/public length; it has no affirmative class Call mode, Construct capability, or strict/global/lexical this-mode contract. `funcKind` alone does not fill that gap. This work must report unavailable modes and converters explicitly. To enable more modes, root must separately approve the real source-contract extension at:
+
+- `src/ir/source-closure-invocation.ts::fixedClosureParameters` (or a new adjacent source-facts helper, not the selected invocation proof);
+- the two `fixedClosureParameters` producer calls in `src/ir/from-ast.ts` around 15651/15678;
+- `src/ir/core/nodes.ts::IrFunction.closureSubtype` and the genuine preparation/codec validation readers of the new field;
+- `src/ir/program/native-source-closure-requirements.ts::calculate` and source callable resolution.
+
+The fact must originate from the real source node, directives/module/class context and actual lowering policy before preparation, survive serialization, and be checked between semantic/projection views. Do not infer strictness/constructibility from an absent field, the name, the presence of a prototype property, or a caller flag. The existing codegen strictness helpers are analysis donors, not backend imports. Missing source modes remain typed unsupported and stay on the full goal; they are not silently excluded from it. In particular classes are callable in the IsCallable sense while their ordinary Call operation throws; that is distinct from IsConstructor.
+
+## Source identity and the unrelated-header problem
+
+Use a real unit identity, not a new closure root or a physical type index as a nominal brand.
+
+`reserveNativeSourceCallTargets(tx, requirements, { realmState })` must authenticate exact issued requirements/current program/projection and exact state owner before reserving anything. Declare/preflight every key of this owner first. For every actual `requirements.units` row reserve:
+
+- one immutable nonnull `ref SourceUnitIdentity` global, initialized canonically by a distinct `struct.new`;
+- one tail initializer with exact signature `() -> (ref RealmState, ref SourceUnitIdentity)`.
+
+The tail initializer calls the genuine existing `realmState.sourceInitializer` and then reads that unit's identity global. Its two results are in the order required by the final source struct. All globals/functions and their complete canonical definitions are retained privately and reauthenticated. Structurally identical identity types are harmless because the runtime comparison is of the actual singleton reference.
+
+A public source allocation shape becomes:
+
+`[func, arity, bag, captures..., state, sourceUnitIdentity]`.
+
+Header/capture coordinates and the state coordinate `3 + captureCount` remain unchanged; identity is `4 + captureCount`. Fields after the header remain immutable, preserving native-metadata/source separation. Default stateless and existing state-only source modes remain byte-compatible.
+
+The existing WasmGC emitter already emits `call layout.realmStateInitializer` immediately before `struct.new`. A unit-specific authenticated lowering view can use the new two-result initializer in that position; the existing single-result state initializer is not changed. Capture recovery uses the same widened shape but never emits an allocation initializer. Allocation resolution without the actual unit association must refuse; it must not silently fall back to the shared state-only initializer for a widened shape.
+
+The relocated source resolver must select the initializer by the real IR `liftedUnitId`/original slot relation. Wrap source unit `resolveFunc` lookups using the owner's private unit map; an external resolver returning a different same-signature unit must not select a different initializer. Retain and compare the exact allocation occurrence, allocating owner unit and lifted target from the issued requirement census. Do not associate only by `(signature, captures)`. The existing subtype resolver receives the stable lifted FuncHandle, so maintain the privately verified one-to-one reverse map from that actual original handle to its unit target; source `resolveFunc` must first map the real IR unit reference to that exact handle. This composes with the existing resolver ABI. A shared shape view may describe capture recovery without an allocator, but only the private unit-specific allocation view may supply the two-result initializer; neither a missing handle nor direct use of the shared shape may allocate an identity-bearing closure.
+
+At runtime the source matcher requires the exact issued final allocation shape, actual state realm, and actual source-unit identity before any bag/prototype read. Mixed Call then directly invokes that identity's original slot with the actual closure as self. **It does not invoke field 0 as an arbitrary source callback.** This preserves captures and distinguishes two same-shaped source units without pretending that a signature test compares funcref identity. The ordinary immutable header remains correct for old readers because canonical allocation still emits exactly the original lifted reference.
+
+There are two separate proofs: canonical lowering proves the produced header/identity pair; identity-directed dispatch proves that changing an unrelated header cannot redirect mixed Call. Do not claim a universal runtime funcref-membership test. A control that changes the source resolver/allocation target must fail canonical-source acceptance. A deliberately crafted component object with a copied identity and an unrelated header must never invoke that unrelated header through mixed Call. Foreign/unknown identity and missing identity refuse before bag reads.
+
+## Relocated source owner: association and actual completion
+
+Preserve the existing implementations of `beginNativeSourceClosureEmission`, `bindNativeSourceClosureUnits`, `nativeSourceClosureCallableBindings`, `nativeRealmSourceClosureCallableBindings`, `nativeSourceClosureValueType`, `nativeSourceClosureResolver`, `fillPreparedPrimaryUnit`, and `requireCompletedNativeSourceClosures` in one backend owner. The old IR path re-exports the same functions/identities. Keep `prepareNativeSourceClosureInput` semantic and backend-independent if it stays in the IR facade; the relocated backend owner must not import the facade back. All physical ownership and lowering markers move together, so existing imports and new backend imports resolve to the same issuer instance.
+
+Add an opaque backend-owned execution association, for example:
+
+- `nativeRealmSourceExecutionBindings(tx, emission, realm, callTargets)`;
+- `requireNativeRealmSourceExecutionBindings(tx, pack, exactExpectedDependencies)`;
+- `requireCompletedNativeRealmSourceExecution(tx, pack)`.
+
+Its private owner retains the SAME genuine emission, the exact result of `nativeRealmSourceClosureCallableBindings(tx, emission, realm)`, exact source types/combined closures, exact call-target owner, state, program/projection and original slots. Requiring some independently completed emission plus some separately authentic association is insufficient. A public lower-level raw-slot association cannot mint this execution proof.
+
+Track canonical lowering of the union of all lifted units and all actual allocation-owner units. Keep allocation-owner tracking separate from the old lifted-unit map/count so the existing source APIs retain their contract. Bind those owner slots from the consumer's original slot map, not new duplicates. `fillPreparedPrimaryUnit` records each real retained function/slot once only after actually lowering it. Source-aware lowering must install the authenticated closure resolver and exact source-unit lookup; do not let caller-supplied callbacks replace these checks. Completion checks every marker, body/local snapshot, source requirement/current projection, all allocation associations and every canonical target initializer/global.
+
+Readers/callers of the current adapter, found in this tree:
+
+- production: `src/ir/program-consumer.ts`;
+- tests: `issue-3518-native-object-realm-declarations`, `native-realm-source-integration`, `native-object-get-owner`, `native-getter-invocation` suites;
+- helpers: `native-builtin-functions`, `native-getter-resource-fixture`, `native-getter-invocation-fixture`, `native-object-realm`, `native-realm-source-integration`, `native-realm-object-layouts`, `native-mixed-object-access`, `native-invocation-substrate`.
+
+The source owner mutators are begin/reserve, original-slot bind, association cache issuance, and `fillPreparedPrimaryUnit`'s actual completion marker; require/resolver APIs also enforce currentness. Move those private stores together. Retain the old imports as compatibility; do not update every caller opportunistically. The inventory names the old mixed module and must record the genuine new backend leaf and compatibility status through root's normal boundary workflow.
+
+Source shape/tail readers are `native-source-closures.ts`, `native-object-realm.ts`, `native-source-closure-callables.ts`, `native-mixed-object-access.ts`, `realm-object-layouts.ts`, the native source resolver and WasmGC allocation/capture emitter. Existing `closure-layouts.ts`, `lower-generic.ts`, emitter interface and linear emitter need no new transport field for the proposed tail initializer. The historical closure-source/state-preservation helpers read `closure-layouts.ts` exactly; do not edit or refresh their receipts for an unrelated relocation.
+
+## Real mixed invocation ABI and dependency ownership
+
+Public-facing semantic roles retain these signatures:
+
+- `Call(F externref, thisValue externref, argv ref IssuedArgumentVector) -> externref`.
+- `Construct(F externref, argv ref IssuedArgumentVector, newTarget externref) -> externref`.
+- `IsCallable(F) -> i32 Boolean` and `IsConstructor(F) -> i32 Boolean`, only with a complete applicable family proof.
+- Native lifted Call is exactly `(self ref ClosureRoot, originalThis externref, argv ref IssuedArgumentVector) -> externref`, locals 0/1/2.
+- Native algorithm Call is exactly `(originalThis externref, argv ref IssuedArgumentVector) -> externref`, locals 0/1.
+- Native Construct tokens are currently `(self ref ClosureRoot, argv ref IssuedArgumentVector, newTarget externref) -> externref`.
+
+Transport arity, source parameter count, header arity/public length and mutable own `.length` are distinct. Never use field1 or own `.length` to decide how many vector elements to transport.
+
+The new owner borrows the exact pending full-public declaration pack and original dependencies, call-target/source-execution owners, value/conversion owners, one substrate/vector plan and one actual exception token. It owns currentThis/argc/extras state; the shared substrate still owns only vectors/TypeError. No duplicate Error, vector, realm, Function.prototype, source closure pack or tag.
+
+Reserve a separately named internal checked invocation operation with explicit status/result if needed to expose honest unready/unsupported state during graph construction. Keep scalar Call's ABI above; never silently bind a status pair to it. Its statuses must distinguish known noncallable (genuine TypeError on Call), known callable, unavailable implementation, and unsupported/foreign carrier. IsCallable cannot return false merely because a known native algorithm is still pending. A Get body using checked Call must propagate status2/3 unchanged; it must not push success before that call. The existing scalar-Call pure Get builder stays compatible. Public scalar adapters are not completed while unresolved statuses can represent valid admitted language values.
+
+Native matching precedes source fallback: exact final native type, physical metadata ID, realm, singleton and expected lifted signature. Unknown metadata families/IDs never become source. Generate native lifted wrappers from their actual entry/algorithm tokens; do not borrow the bounded bootstrap kernel's population or switch on its two behavior tags. Unavailable catalog bodies remain unfilled and explicitly listed as prerequisites, not stubbed or implemented by the Call dispatcher.
+
+Source matching uses exact source identities above and invokes original slots directly. Build adapters from each actual logical parameter/result contract and issued physical signature. Reuse the actual vector length, materialize every required formal and preserve all excess arguments. No eight-argument limit. Preserve missing versus explicit undefined and the real f64 default sentinel. Missing ref/conversion owners are refusal, not null/zero fallbacks.
+
+Reuse `buildClosureInvocationBoundary` for save/restore and catch-all rethrow identity, plus the real argument/result conversion leaves where their exact dependencies exist. The old conversion helpers have intentional legacy fallbacks (`0n`, null, drop-result); general native admission must reject those missing dependencies. Implement genuine Boolean/Symbol/BigInt/String/reference/vector/callback conversions by their issued owners, not numeric unboxing aliases. Apply receiver normalization according to the affirmative source Call mode; native originalThis is untouched. Capture cells and lexical this remain the actual lowered source semantics.
+
+A genuine callback parameter must resolve through the same source target identity/slot owner, not a shape-only callback contract or selected source `.call` plan. Test actual callbacks that reenter Get/Call, two same-shaped functions, and returned getter closures. Source invocation state must restore after argument conversion, call, result boxing, nested invocation and abrupt completion.
+
+Construct/IsConstructor remain separate capabilities. Do not fabricate them from Call, prototype properties, source function names or a vector-only apply body. Bound Call must prepend bound arguments/use bound this; bound Construct must prepend arguments and substitute newTarget only when required by actual target identity. Real source constructors, classes, generators/async, bound/dynamic functions and Proxy callable/constructible cases remain required and must have explicit missing-role records until implemented.
+
+## Reservation, binding and canonical cycle
+
+1. Reauthenticate real program/projection/catalog/source requirements and canonical supplemental literals. Reserve the one checked exception token while imports are open; reserve genuine strings, vectors/TypeError, values, ordinary/String/wrapper/state owners.
+2. Reserve source-call-target identities/tail initializers from genuine source requirements and state. Issue all real builtin requests before the sole combined closure pack. Reserve source types using that call-target owner, then the consumer's original unit slots and all pending public catalog declarations. A genuine no-source program uses its actual empty/no-source census, not fake closure requirements.
+3. Reserve the mixed invocation ports before the final access fill; it need not have access bound yet. Access reservation can retain this privately issued pending invocation pack/source-match token. Reserve Get, checked/scalar Call and Construct roles plus required algorithm ports before the sole freeze. Each owner preflights all its own keys; do not claim transaction rollback across earlier owners.
+4. Freeze once. Bind source units/allocation owners to original slots, derive the all-source execution association from that same emission, and bind the exact invocation/access pair once. Check realm, layouts, source identities, original slots, strings/values/vector/substrate/tag and all optional-presence rules. No reservation during fill.
+5. Fill canonical leaves and target identities/initializers, then the real source-match/invocation/access bodies using the already-issued cyclic handles. Lower every actual source/allocation-owner body through the genuine resolver. Complete algorithm/population producers as they become implemented. Referencing a real pending token permits instruction construction, not readiness.
+6. Audit the finite graph in explicit stages: issued identity/currentness, exact association edges, canonical code/locals, actual source lowering, canonical algorithm/population dependencies, then full public completion. An in-progress/visited node must never mean complete. Avoid mutual recursive `requireCompleted` calls between Get and Call; currentness checks inspect issued peer identity, and one outer audit checks both canonical bodies and every actual prerequisite.
+7. Structural-only already-filled access owners remain structural-only. Public composition creates a fresh transaction and chooses its authentic source port before first fill. Do not refill classifier/lookup bodies in an old pack or turn a boolean into a source authority permit.
+
+The current declaration-only ready-global initializer is zero and cannot be rewritten after fill. A later full-population mode must leave its immutable ready token unfilled until all compile-time graph obligations are authenticated, then fill its canonical true initializer once. Preserve the declaration-only zero path/tests. Runtime bootstrap `state` is separate and restores/rethrows actual abrupt identity. Neither a runtime flag nor the immutable guard substitutes for compiler-owned completion.
+
+## Reuse and later public binding
+
+Reuse current genuine source/type/all-source association, shared substrate, state/layout, ordinary own/key/String descriptor leaves, and the already-reviewed mixed traversal. Do not reuse ordinary `lookup`/`has` for heterogeneous chains.
+
+The delivered Function component supplies real pure `create-list-from-array-like-body.ts` and `function-prototype-invoker-bodies.ts`. Root must compose their delivered bytes from current main into this preserved graph; their host-observer harness is not a production dependency owner. Bind the actual general Get/ToLength/index-key/IsCallable/Call/vector/undefined/error/tag roles later. Preserve full f64 ToLength/index iteration and actual property-key-mode String/Symbol classification. Native lifted three-operand transport wraps their two-operand algorithms; no extra hidden user argument.
+
+After complete mixed access/invocation and population, reuse the reviewed Number algorithm/BigInt/well-known-Symbol pieces and register the real logical Number provider. Public ABI reconciliation must bind exact js.number.from-value, js.object.create-default and js.object.define-accessor plus their real body references. Do not overlay the preserved 56-file Number lane or weaken its old bounded proof. The whole public coordinator belongs under backend/wasmgc/program, not a new physical IR-root module. Existing consumer default/bootstrap behavior and the original fixture/tests remain unchanged until a genuinely complete public mode is selected.
+
+## Required controls and acceptance evidence
+
+Preserve the current mixed37, substrate/source/state/wrapper/builtin suites, all historical failures and exact original public fixture/suite bytes. Keep 35-second limits and root's single-heavy-process rule.
+
+New concrete controls must include:
+
+- Real original and fresh-decoded source; zero and capturing closures; mutable captures, real getter returning a closure, nested callback/reentry and exact thrown payload. Decode/replay performs zero frontend/TypeScript work.
+- Two different source units with identical signature/capture shapes and different results. Their actual unit identities choose their own slots and captures. Foreign/missing/swapped identity, wrong same-signature header, wrong original-slot map and poisoned source resolver must not invoke an unrelated source function.
+- Exact SAME emission + all-source association + completion joins: association from another valid emission, a raw-slot association, copied pack, stale prepared body/census, unlowered last source unit, unlowered last allocation owner and wrong initializer/body/locals all refuse.
+- No-source genuine program; no fabricated demand or selected invocation proof. Last-key collision reserves zero new keys for that owner, without claiming earlier-owner rollback.
+- Getter uses original receiver and a real empty vector; present undefined/getter-less descriptor stops; Has executes no getter; String own-before-virtual, real UTF16 units and actual prototype identities remain intact.
+- Native exact ID/realm/singleton and same-shaped metadata cases; legitimate same-transport source; unknown metadata cannot fall through to source. Check family authority before bags.
+- Null/canonical undefined/host undefined receivers, missing and excess arguments including growth beyond eight, default parameters, void/value returns, all implemented conversion classes; explicit named refusal for every unimplemented conversion/mode. Do not collect only supported rows and call the result unrestricted.
+- Normal and displaced UTF8/UTF16 type/function/global/tag spaces; one original closure pack, vector owner, TypeError owner and tag. Completed native production paths have no host semantic imports.
+- Body/locals/currentness checks both at first fill and after completion, warmed-owner corruption, own-data/accessor/hidden/extra fields without getter execution, foreign same-ledger dependency owners, duplicate binding/fill and wrong phases.
+- Partial catalog, last missing Call algorithm/lifted/Construct slot, missing descriptor/population edge or caller-filled plausible stub cannot complete the realm or bind public Number. Missing roles remain explicit; changing counts or wholeRealmReady cannot remove them.
+
+Runtime components should execute real source and real native algorithms whose genuine dependency owners are complete; no fake full-catalog emission. Separately exercise the production owner's full pending catalog and refusal graph. Such controls establish the actual implementation pieces, not original-public acceptance.
+
+Final public evidence still requires the unchanged original nine rows, both native encodings and fresh decoded replay, repeated result712 on two fresh instances, and general native realm behavior beyond that fixture: full catalog property descriptors/order/deletion/redefinition, inherited Get and actual prototypes, Object/Function/Construct/newTarget/bound operations and all transitive/exotic dependencies. Full dynamic Function/eval/with, both-backend equality and retained legacy behavior remain obligations until all IR behavior is tested equal.
+
+## Exact blockers to an immediate public green result
+
+1. All catalog algorithm/population slots are not implemented; declaration-only readiness is correctly false.
+2. The same-shaped-source header problem and allocation-owner completion gap need the actual identity/direct-slot and private lowering join above.
+3. General source this/Call/Construct modes and complete ABI conversions have no affirmative owner yet; unsupported is required rather than guessing.
+4. String/ordinary/source/native descriptor population, scalar Get/Call, and general ToObject/ToPropertyKey/array/iterator/Proxy/bound/dynamic dependencies remain open.
+5. Number's symbolic provider and its physical full-graph join are still absent. Registering the provider alone merely moves the original refusal and proves no semantics.
+
+These blockers sequence the implementation chain; they do not reduce the user's full migration objective or justify legacy retirement.
+
+
+
+### Native realm infrastructure publication handoff — 2026-10-01
+
+The preserved graph checkpoint is integrated onto freshly verified main
+4c5a334669d3d9ac4db29e850f73d65965ba89f6. Its final fast-forward from25ee5b64
+changed only six npm benchmark JSON artifacts; compiler/tests/configuration
+bytes stayed identical. Source composition had no conflicts. Three additive
+metadata conflicts preserve all main policy/entry/history and Function runtime
+leaves, then add graph leaves: inventory1749, native-runtime floor97.
+
+This is infrastructure scope: catalog/requirements, authenticated realm state
+and layouts, source state, pending declarations/bootstrap and mixed structural
+object access. Full mixed Get/Call/source lowering authority, all public
+intrinsic algorithms/populations and the logical Number provider stay open.
+No legacy code is retired. The complete next Get/Call plan remains above.
+
+Original unlanded public9 suite is preserved verbatim as a tracked handoff
+artifact, not a discovered test for this infrastructure checkpoint. Its SHA
+and original fixture stay exact, all assertions remain unchanged, and actual
+5/9 plus four missing-provider failures are retained. Full public completion
+must restore and pass it unchanged; no completion credit is taken here.
+
+Fresh first cohort1012/1106 had94 failures solely in the later-main historical
+input suite. New main's actual TypedArray Call fix invalidated that old input.
+A separate fixed two-span outer receipt reconstructs its prior test view;
+raw readers and all old receipts/mutation guards remain strict. Actual new29
+and existing248 pass, TS7 zero errors. The wider repaired historical cohort
+is607/680:73 failures in two unchanged suites. A genuine exact-main production
+checkout with the same eight test-only input adapters reproduced all204 paired
+rows (131pass73fail) with zero status/first-failure differences and no source
+changes. Only these specific comparisons establish baseline attribution.
+All original failures are retained; none is skipped or converted to expected
+failure. Component tests are separate from whole-public/retirement evidence.
+
+Durable resumable handoff, row-level failures, paired attribution, repair
+provenance and validation live in
+`plan/log/3518-native-realm-checkpoint-2026-10-01/`. Normal signed commit and fork
+push hooks remain required. Protected queue delivery must be verified on main;
+a published PR is not delivery. Release the slice claim on stand-down while
+keeping this epic in-progress. Preserve all other dirty prepared lanes.
+
+
+## 2026-10-01 source-parameter projection preservation delivery
+
+Claim `3518:source-parameter-projection-preservation-20261001`, owner `ttraenkler/codex-source-parameter-projection-preservation-20261001`, branch `codex/3518-source-parameters-main-20261001`, based on freshly verified upstream main `4c5a334669d3d9ac4db29e850f73d65965ba89f6`. This independent existing-bug repair does not include pending PR6371's realm infrastructure or the frozen new source identity implementation.
+
+Actual physical preparation rebuilds in `vec-layout.ts`, `string-carrier.ts` and `physical-ref-support.ts` discarded affirmative fixed/default parameter facts whenever a carrier/type changed. Preserve the exact original `parameters` record explicitly and compare its identity in the unchanged fast path; absent source facts remain absent. Three production files gain two lines each. Existing assertions and fixtures remain unchanged.
+
+New seven-row controls cover actual vector/string/reference type rewrites, absent facts and stable second pass, plus genuine captured String source preparation/codec with one lifted source unit and one allocation represented in both semantic/projected views. Fresh-main before-edit run measured 4/7: three pure projection rows lost the record, three absence controls and the genuine source/codec row already passed. The genuine transport row is a preservation control, not evidence that the pre-edit driver itself exercised the buggy reconstruction. It verifies no public execution or full source Call parity. Independent static review found no additional same-function reconstruction seam and no defect in the narrow repair.
+
+Validate exact current-root TypeScript, new controls and relevant physical/source requirements preservation; run all normal hooks and protected CI/queue. Only actual verified main merge counts delivery. The new source identity draft remains separately held and preserved pending genuine validation/lowering dependency separation; do not weaken boundary policy or omit guards to publish it. Full catalog, source modes, mixed Get/Call/Construct/newTarget, dynamic Function/eval/with, original public nine-row parity and both-backend equality stay required. Legacy retirement remains unauthorized until full IR equivalence.
+
+
+Current-root validation measured 49/49 across new projections (7), existing physical-reference controls (4), native source requirements (28) and native source callable contracts (10), with no ignored worker errors. TS7 passed. Fresh-main LOC/function, coercion and oracle gates passed; compiler inventory is valid with zero inventory errors and architecture explicitly incomplete. Dead-export preservation passes its 6/6 full and cut witnesses while graph OPEN/strict modeled closure FAIL/retirement NOT CERTIFIED remain unchanged. No architecture or full IR completion is claimed.
+
+## 2026-10-01 — PR6371 canonical-audit delivery repair
+
+Fresh authoritative CI inspection found required quality failure at signed head `e4737c9f1dcb632c56f3cc3a31e3ad47cd7f848e`: three original mixed structural owner tests timed out at the unchanged 35-second gate (349, 361, 375 in `tests/issue-3518-native-mixed-object-access.test.ts`). The other 34 rows passed. Preserve their fixtures, assertions, mutation controls, original failure log, and timeout. No completion or delivery credit is given.
+
+Claim `3518:6371-canonical-audit-performance-20261001`, owner `ttraenkler/codex-6371-canonical-audit-performance-20261001`, was verified as in-progress on upstream `issue-assignments`. Isolated repair branch/worktree starts at the exact PR head. Root owns integration, validation and metadata; architect investigates read-only. Original published head and the seven-file source-identity draft remain unchanged.
+
+Local first-row diagnostic (one selected test, 36 filtered rows not counted as coverage) passed in 23.33 seconds against the same unchanged code; CI recorded 52.96 seconds. Next measure the real fixture/dependency/fill/completion paths before choosing a semantics-preserving optimization. No timeout increase, admission weakening, stale validation cache, skipped control, or registry/provider substitute is authorized by this repair. Full IR migration and legacy parity remain open.
+
+### Measured serializer bottleneck and implementation ownership
+
+The direct exact-head CPU profile attributes 11,756 sampled ticks to recursive serialization in `wasm/physical/module-reservations.ts`, versus 1,932 collection-brand probe ticks. Every authenticating coordinate call freshly snapshots all completed function bodies. A post-freeze closure-token batch preserves every coordinate and one fresh ledger audit per owner call; a reentrant getter that swallows a phase error must still be rejected after the batch. Reserving behavior and all canonical body checks remain unchanged.
+
+The physical snapshot writer owns only `src/wasm/physical/module-reservations.ts` and new `tests/issue-3518-physical-snapshot-comparison.test.ts` in isolated `/private/tmp/js2-ir-6371-snapshot-writer-20261001`. Replace only completed-function textual snapshots with a private immutable structural expected tree. Capture once at fill; every audit must traverse all live values again, preserve `Object.entries` sibling capture timing, ordered enumerable own string fields, array/byte tags, exact Float64 bits including NaN payloads and signed zero, present undefined, and active-cycle rejection. Preserve locals/body identity checks and all other ledger checks. Ignore the same hidden/symbol/prototype differences as the prior snapshot domain. Traverse later fields even after a mismatch so later errors retain precedence. No public completion permit or successful-validation cache. Root owns metadata, Git and serialized heavy validation. Differential controls must compare the actual new ledger with the authenticated original textual algorithm, not a second candidate invocation.
+
+The first before/after stage measurements used different profiling instrumentation; treat their ~15% difference as diagnostic, not paired speedup proof. Final attribution requires the same harness/instrumentation and all original 37 rows at the unchanged timeout. Full normal gates and protected delivery remain required.
+
+### First repair verification rows
+
+The initial three-file cohort measured 192/193 passed, zero skipped: all 37 original mixed-owner rows and all authentication-performance rows passed; the sole failure was a newly drafted closure fixture using the special `promise:settle` metadata key for an incompatible reference signature. Preserve that original log; the fixture now uses explicit ordinary `batch:first`/`batch:alias` keys. No original control changed.
+
+After adding the swallowed-phase-error regression, the unguarded batch measured 6/7 selected rows: the reentrant getter marked the private ledger failed while validation incorrectly returned. Adding the post-batch filling/sealed phase guard corrected that demonstrated defect. The full closure-resource plus authentication-performance cohort then passed **157/157**, zero skipped. These are scoped current-root measurements; protected CI and main delivery are still unverified.
+
+The phase check also belongs inside the existing batch primitive: public `tx.state` can be shadowed, while the old next scalar audit checked private state. The snapshot writer is authorized to add an immediate private filling/sealed check after `physicalIndices`' live layout audit, with a reentrant getter/false-public-state control. No reusable validation permit or broader state-policy change. The closure owner keeps its phase check as an additional guard; tests cover both filling and sealed phases.
+
+The first integrated snapshot/closure/authentication/ledger cohort measured **354/355**, zero skipped. All 49 new snapshot differential rows and existing physical/authentication controls passed. The only failure was root's newly added assumed type census of five; actual authenticated allocation showed external=0, root=1, both signatures use root=1, metadata=3 and4. The new control now explicitly checks that measured root alias and four distinct owner tokens; no original assertion changed. Preserve the failed run. This does not omit the interned function signature type: the full ledger audit still checks every registered type.
+
+### Final scoped repair evidence before refreshed-main integration
+
+The actual five-file cohort passed **392/392**, zero skipped: 107 closure, 149 ledger, 50 authentication, 49 snapshot differential and 37 unchanged mixed-owner rows. TS7 exited 0; LOC/function/oracle/coercion and compiler inventory pass. Dead-export gate is preservation-only6/6 full + 6/6 cut; graph OPEN, strict closure FAIL and retirement NOT CERTIFIED remain. The paired same-instrumentation diagnostic on exact e473 versus candidate measured 23.79s versus 17.16s (28% single-run reduction, not a CI timing guarantee). Durable rows/pins/handoff are `plan/log/3518-native-realm-quality-repair-2026-10-01/`. Fresh upstream main advanced before publication; preserve signed work and integrate the verified base before updating the existing PR. No main-delivery or full migration credit yet.
+
+Normal-hook follow-up: two new snapshot controls used sparse array literal syntax rejected by Biome. Length-constructed arrays retain index0 holes, explicit undefined, length and key order. Appending seven controls also invalidated the historical exact-byte closure-test pin; the original100-row test was restored byte-exact and the seven controls moved to `tests/issue-3518-closure-coordinate-audits.test.ts`. Existing receipt SHA and assertions remain unchanged. Both original hook failures are retained in `.tmp/canonical-audit/`.
+
+
+## 2026-10-01 — source validation/lowering prerequisite: real closed contracts
+
+Claim `3518:source-validation-contracts-20261001`, owner `ttraenkler/codex-source-validation-contracts-20261001`, branch `codex/3518-source-validation-contracts-20261001`, starts at verified main `a8cd258d553278d8e5f908878f56a81377ba8e40`. The previous native-realm quality repair is published at `21c7922d5f8601aab52542690815d5b951796a14` in existing ready PR6371; three CI jobs were verified running when this lane began. No duplicate PR, competing repair dispatch or main-delivery credit.
+
+The frozen seven-file source-call identity draft remains byte-preserved in its own worktree. Its actual graph imports mixed validator/lowerer debt from activated clean backend roots; 43 component rows do not make that graph valid. Implement the full prerequisite in dependency order: A genuine shared/core/runtime contracts and single-identity error/producer owners; B actual analysis/full verifier/allocation/class-layout bodies; C full program/runtime reconstruction and validator; D actual generic/Wasm lowering closure and contracts; E one source identity issuer and authentic primary fill integration, including genuine linear compatibility. The existing detailed architect specification is preserved under `.tmp/source-contracts/extraction-spec.md` and the source-identity handoff. No allowed-edge relaxation, callback validation permit, duplicated registry/class, facade toward debt or check omission.
+
+Phase A writer owns new canonical preparation errors, global binding keys, declared types, fnctor ABI, neutral tag domain, runtime JS tag domain/default producer, remaining string runtime vocabulary, counted-string site-ID grammar, shared surrogate scanner, four runtime symbols and date callables; retain old paths as explicit aliases of the same implementation. Move only the exact bodies/declaration closures specified; keep rich outcomes, AST plans/proof/digest authority, provider ownership and global factories in their existing donors. Preserve class/function/object identity, optionality, comments, ordering and failure behavior. Root owns claims, issue/gate metadata, historical live-source relocation composition, integration/Git and one serialized heavy validation process. The writer is isolated and may not run compiler/tests or modify other lanes.
+
+Baseline affected historical source/declaration instruments on pinned main before changing their live inputs. After body movement, authenticate complete actual source/facade bytes, exact declaration/body order and approved import substitutions; append one reciprocal outer relocation input before existing historical inverses, preserving every earlier receipt/hash, malformed-source control and original failure. Prove actual namespace identity and canonical clean import closure under the unchanged detector. Keep whole-compiler strict graph debt explicit. Only protected verified main merge counts delivery.
+
+This is a required dependency of full source execution, not a replacement goal: all 45 intrinsic identities, 44 Call algorithms/lifted entries and two intrinsic Construct entries, complete Get/Call/Construct/source modes/this/newTarget/bound behavior, dynamic Function/eval/with, original public nine-row Number fixture, fresh-process replay and both-backend equality remain required. Retain legacy until all IR behavior is implemented, tested and equal. Do not declare complete from this contract phase.
+
+
+## 2026-10-01 — wrap-up handoff and preserved unvalidated extraction
+
+The user requested wrap-up and PR publication. The existing ready implementation stays in PR6371 at signed head21c7922d5f8601aab52542690815d5b951796a14 with protected auto-merge enabled; quality and issue-tests remained running at the recorded wrap-up read, so no main-delivery claim is made. PR6372 parameter projection repair is separately verified delivered as d1d7d68583ba312aa04f58f6144b3222a90c2d5e. Main ff564bcc adds only the official npm-compat refresh to the a8cd baseline.
+
+Phase A source is frozen unvalidated in the isolated writer worktree:26 paths (12 new canonical owners,13 donor edits,one new suite), all live hashes checked against its manifest. No draft production/test files are included in the handoff PR. Before-edit a8cd historical cohort completed107 passed/35 failed of142 collected assertions, plus an ownership-file collection ENOSPC and a compiler-fixture heap abort. Exact raw failures and original receipts remain preserved; this is not passing candidate evidence and no gate/hash/fixture was weakened.
+
+See [the durable wrap-up handoff](../log/3518-ir-wrap-up-2026-10-01/handoff.md), exact frozen manifest, original raw baseline rows and full A–E dependency specification. Reclaim the scoped source-validation-contracts claim on resume after verifying canonical ownership; stand-down releases its active claim, never the migration epic. Full IR/source/catalog/public-nine/replay/both-backend acceptance remains open and legacy stays until tested equality.
+
+
+## 2026-10-01 — source-contract integration wrap-up
+
+The new integration remains uncommitted at freshly verified main ff564bcc in `/private/tmp/js2-ir-source-contracts-integration-20261001`. Production TS7 passes; focused source/component tests 121/121, complete boundary suites 477/477, original ownership 22/22. Historical core remains 16/20 and program-data 37/47, with original receipts and failures preserved. New reciprocal reader has 65 drafted rows but is neither integrated nor tested; architect pre-A inverses are static findings only. No complete IR/public-nine/backend equality or retirement is claimed.
+
+Ready documentation PR6374, “docs(ir): preserve migration handoff and extraction baseline”, preserves exact current source/test/metadata bytes, staged and unstaged patches, authenticated snapshots, executed JSON/errors, claim release and ordered resumption in `plan/log/3518-ir-wrap-up-2026-10-01/handoff.md` and its `resume-checkpoint/manifest.json`. The scoped source-validation claim is released on upstream issue-assignments (released_at 2026-10-01T03:13:54Z, write_id 68420-4cmsrof8); revalidate ownership before resuming. All worktrees remain preserved. PR6371's quality and issue-tests now pass, but it remains OPEN at 21c792 and is not delivered. Only verified main merges count.
+
+
+## 2026-10-01 final source-contract stand-down and refreshed handoff
+
+User requested wrap-up, handoff and PR publication. Continue the ready existing PR6374, “docs(ir): preserve migration handoff and extraction baseline,” rather than create a duplicate. Integrate exact verified main `0d94fc71681fd4988ae0ca32dda3a12f614e4b47`, preserving both sides of the sole shared issue-file conflict. Source work remains uncommitted and outside the documentation PR.
+
+Current source branch `codex/3518-source-contracts-main-20261001` at `1265c47d` has 41 preserved staged/unstaged paths. Latest actual results: relocation65/65, components121/121, ownership22/22, boundaries477/477, program123/123 (76 new +47 original), core17/20, runtime69/75, historical runtime2/631. The 629 historical rows stop at the common positive source check; no claim of independently attributed defects. Production TS7 and main-based preservation gates passed; inventory1761 is valid but architecture incomplete. Reachability remains graph OPEN/strict closure FAIL/retirement NOT CERTIFIED. No fixture, timeout, hash or negative control was weakened.
+
+The three-file core reader is frozen with 132 drafted rows, not integrated or executed. Runtime inverse specs preserve34 bounded spans and27 production inputs; implementation and real runtime tests remain outstanding. All exact source bytes, index/worktree patches, latest raw results, specifications and both static diagnostics are pinned in `plan/log/3518-ir-wrap-up-2026-10-01/final-checkpoint/manifest.json`. The earlier34 raw archives remain immutable. Read the updated handoff before resuming and reclaim through the canonical ledger: this slice was released and read back with write_id `76946-fhh4sf6o`, released_at `2026-10-01T03:42:15Z`; no other claim/reservation changed.
+
+PR6371, “feat(ir): add native realm state and structural object access,” is now verified delivered as1265c47d: exact ancestry/content and all102 actual protected conformance shards plus final regression succeeded. Merge-group issue-tests was cancelled, so no all-CI-green claim. PR6372 remains verified delivered. The migration epic continues; public Number remains5/9, and legacy retirement requires complete tested equality. All worktrees and original failures are preserved; writers stopped and no heavy process remains.
+
+
+## 2026-10-01 resumed core/runtime historical receipt implementation
+
+The active migration goal resumes after the signed handoff publication. Fresh upstream main remains0d94fc71; source worktree/base1265c47d and all41 archived paths were verified. The scoped source-validation-contracts claim is reacquired on the canonical issue-assignments branch, authoritative write_id87615-9npim132. Existing handoff PR6374 remains separate documentation.
+
+Integrate the exact frozen three-file core reader at only the three initial historical receipt reads; restore default parsing to raw current source for current closure/type/runtime checks. The132 new and20 original rows require actual strict execution. Never normalize existing injected mutants twice or refresh old hashes. Runtime inverse writer owns only three new helper/receipt/control files in its isolated worktree, preserving all35 prior frozen paths; root owns existing75/631 suite plumbing and all compilers/gates/Git. No static compatibility proof is credited as executed behavior. Preserve the original core17/20, runtime69/75 and historical2/631 results and the complete final acceptance.
+
+
+Executed resumed core proof: strict single-fork152/152 PASS, zero skipped or worker errors:132 new live-reconstruction controls and all20 original vocabulary rows. The prior17/20 failure remains archived. Four moved/retained original receipts keep every old hash/count; all current runtime39-entry/Boolean-brand/async-authority checks and19 typed negative controls pass on raw current input. Production TS7 exits0. Formatting precheck found only existing test layout; helper/JSON frozen bytes were already clean and stay unchanged. This establishes affected historical controls, not full runtime/native/source/backend equality. Runtime75/631 remains unresolved pending the separately owned live inverse.
+
+
+While the runtime inverse is authored, root remeasures the unchanged original nine-row public Number712 fixture against the current source checkpoint. The source pin c0550b99 and archived test bytes are preserved; a temporary ignored harness only selects that exact original file and keeps the existing timeout/heap/current config. No existing test, fixture, source or competing Number lane is edited. The previous5/9 remains archived; new outcomes require terminal evidence and do not certify both backends or dynamic-code completion.
+
+
+Current public Number measurement preserves all9 rows:5 PASS/4 FAIL, zero skipped. All4 actual public IR cases still fail at preparation with js.number.from-value lacking a provider; the oracle and4 legacy cases pass. This re-executed native-realm/source-contract checkpoint does not meet the public fixture requirement. Durable raw evidence and core152/152 proof are pinned in plan/log/3518-source-contract-core-progress-2026-10-01/manifest.json. Complete migration and retirement remain unproved.
+
+
+## 2026-10-01 user-requested final resumed stand-down
+
+Refresh existing ready PR6374, “docs(ir): preserve migration handoff and extraction baseline,” with the executed core152/152 and unchanged public Number5/9 failures. Source remains uncommitted at1265c47d; all46 source/test/metadata/issue paths retain separate index/worktree bytes. Runtime writer froze three files with331 drafted, zero executed rows. Existing75/631 initial-read plumbing is also unexecuted; prior69/75 and2/631 failures remain. Full source/provider/backend equality and legacy retirement remain open.
+
+The immutable resumed-checkpoint manifest and updated handoff pin raw executions, all source bytes/patches, runtime draft/static audit and release. Scoped claim read back released at2026-10-01T04:15:43Z, write_id 89776-u29luamo; no other claim/reservation changed. Writers stopped, no heavy process remains, all other worktrees preserved. Normal signed commit/fork push hooks and protected exact-head delivery remain required; the documentation PR is not migration completion.

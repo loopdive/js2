@@ -719,9 +719,17 @@ function requireClosureOwner(tx: PhysicalModuleReservations, pack: NativeClosure
     ...pack.signatures.map((row) => row.binding.type),
     ...pack.metadata.map((row) => row.binding.type),
   ]);
-  for (const token of tokens) {
-    if (tx.state === "reserving") tx.assertTypeReservation(token);
-    else if (tx.physicalIndex(token) !== token.typeIndex) fail("closure type coordinate mismatch");
+  if (tx.state === "reserving") {
+    for (const token of tokens) tx.assertTypeReservation(token);
+  } else {
+    // One fresh full-ledger audit covers this private, dense token population.
+    // Keep every coordinate check; no audit result survives the current call.
+    const ordered = [...tokens];
+    const indices = tx.physicalIndices(ordered);
+    if (tx.state !== "filling" && tx.state !== "sealed") fail("closure type coordinate audit changed phase");
+    for (let index = 0; index < ordered.length; index++) {
+      if (indices[index] !== ordered[index]!.typeIndex) fail("closure type coordinate mismatch");
+    }
   }
   return owner;
 }

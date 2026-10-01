@@ -1,0 +1,4 @@
+c2fb27fed2ae2cbe3559b26acd42d53d61da80d0 041fbe05d7465d75094cedfc74c9711dec39c54d feat(ir): define explicit native Boolean carrier boundaries
+85750eeee069fcaf7b49f203904086a37c941648 97ee23f340f2094c513cda53d018f394edabde1d cb64af7b0315d59d08809e404c1216c846270654 refactor(ir): join native invocation with ordinary object preparation
+cb64af7b0315d59d08809e404c1216c846270654 fdaa94315aeeeab5dc85a3596f2b4997b388ac76 feat(ir): own native source invocation and mutable captures
+7de4c2f421416b8b521dda0b0c777da140ed81df 2e89b4cf62b3fb28e71cac5ef6fddf2fc1ae118e feat(ir): prepare ordinary descriptors and Number conversions

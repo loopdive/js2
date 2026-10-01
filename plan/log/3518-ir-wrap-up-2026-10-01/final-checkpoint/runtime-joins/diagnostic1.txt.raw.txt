@@ -1,0 +1,1 @@
+First source-only proof stopped before helper acceptance at ABI donor composition: the local script chose function-name boundary and omitted preserved following declaration documentation/export. No source changed. Correct composition boundary is the following complete leading doc. Node v24.4.1; error live donor composition differs.

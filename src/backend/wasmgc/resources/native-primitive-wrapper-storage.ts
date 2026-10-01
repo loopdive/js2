@@ -21,6 +21,7 @@ import {
   type NativePrimitiveWrapperLayoutDependencies,
 } from "./native-primitive-wrapper-layouts.js";
 import { nativeStringLiteralReservationInventory, nativeStringTypeKeys } from "./native-string-literals.js";
+import { requireCompletedNativeRealmObjectLayouts } from "./native-realm-object-layouts.js";
 import {
   executeNativeResourceRecipe,
   freezeNativeResourceRecipe,
@@ -196,23 +197,26 @@ export function requireNativePrimitiveWrapperStorageReservations(
   return pack;
 }
 
-export function fillNativePrimitiveWrapperStorageResources(
-  tx: PhysicalModuleReservations,
-  pack: NativePrimitiveWrapperStorageReservations,
-): void {
-  const owner = owners.get(pack);
-  if (!owner || owner.tx !== tx) fail("foreign or copied owner");
-  requireNativePrimitiveWrapperStorageReservations(tx, pack, owner.sourcePlan, owner.sourceDependencies);
-  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
+function definitions(tx: PhysicalModuleReservations, owner: Owner) {
   const d = owner.dependencies,
     prerequisite = prerequisites(tx, d);
+  const state = d.layoutDependencies.realmState;
+  if (state) requireCompletedNativeRealmObjectLayouts(tx, state);
   const common = {
     objectTypeIdx: tx.physicalIndex(d.layoutDependencies.objects.object),
     propMapTypeIdx: tx.physicalIndex(d.layoutDependencies.objects.propMap),
     initialCapacity: owner.plan.initialCapacity,
+    ...(state
+      ? {
+          realmState: {
+            stateTypeIdx: tx.physicalIndex(state.types.state),
+            realmGlobalIdx: tx.physicalIndex(state.anchors.realm),
+          },
+        }
+      : {}),
   };
   // Resolve and build the complete set before changing any function body.
-  const definitions = PRIMITIVE_WRAPPER_KINDS.flatMap((kind) => {
+  return PRIMITIVE_WRAPPER_KINDS.flatMap((kind) => {
     const bindings: PrimitiveWrapperBodyBindings = {
       ...common,
       wrapperTypeIdx: tx.physicalIndex(d.layouts.types[kind]),
@@ -224,7 +228,17 @@ export function fillNativePrimitiveWrapperStorageResources(
     };
     return [buildPrimitiveWrapperAllocationDefinition(bindings), buildPrimitiveWrapperDataDefinition(bindings)];
   });
-  owner.functions.forEach((token, index) => tx.fillFunction(token, definitions[index]!));
+}
+export function fillNativePrimitiveWrapperStorageResources(
+  tx: PhysicalModuleReservations,
+  pack: NativePrimitiveWrapperStorageReservations,
+): void {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign or copied owner");
+  requireNativePrimitiveWrapperStorageReservations(tx, pack, owner.sourcePlan, owner.sourceDependencies);
+  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
+  const bodies = definitions(tx, owner);
+  owner.functions.forEach((token, index) => tx.fillFunction(token, bodies[index]!));
   owner.filled = true;
 }
 
@@ -239,6 +253,19 @@ export function requireCompletedNativePrimitiveWrapperStorage(
   const owner = owners.get(pack)!;
   if (!owner.filled) fail("missing canonical fill");
   owner.functions.forEach((token) => tx.assertCompletedReservation(token));
+  if (owner.dependencies.layoutDependencies.realmState) {
+    const canonical = definitions(tx, owner);
+    owner.functions.forEach((token, index) => {
+      const expected = canonical[index]!;
+      if (
+        preparedIrDataMismatch(
+          { locals: token.object.locals, body: token.object.body },
+          { locals: expected.locals, body: expected.body },
+        )
+      )
+        fail("noncanonical stateful wrapper body");
+    });
+  }
   return pack;
 }
 

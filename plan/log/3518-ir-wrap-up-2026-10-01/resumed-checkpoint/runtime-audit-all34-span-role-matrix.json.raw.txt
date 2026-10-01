@@ -1,0 +1,308 @@
+[
+  {
+    "path": "src/runtime/contracts/provider-policy.ts",
+    "ordinal": 0,
+    "currentStartLine": 14,
+    "recipe": "Nonexecutecutable Number policy type member/docs only",
+    "liveSlices": 3,
+    "replacementSha256": "67f25d2e242f8d570f2a15d9b53b513a78817521ee05b5ac197c28f1bc5c282c",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/runtime/contracts/provider-policy.ts",
+    "ordinal": 1,
+    "currentStartLine": 26,
+    "recipe": "Nonexecutecutable Boolean policy type members/docs only",
+    "liveSlices": 4,
+    "replacementSha256": "a4cca2c031c2881e96723c2f0378b7cac0cafd4d400e51e95bf7df5078defc6c",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/runtime/contracts/provider-policy.ts",
+    "ordinal": 2,
+    "currentStartLine": 69,
+    "recipe": "Nonexecutecutable generator-policy documentation only",
+    "liveSlices": 1,
+    "replacementSha256": "3523225f7ed9eff263473c1eb4efa08c4eceacc18e3bc6cfc071b30f0a2e85a2",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/contracts/manifest.ts",
+    "ordinal": 0,
+    "currentStartLine": 35,
+    "recipe": "Nonexecutecutable feature union type only",
+    "liveSlices": 3,
+    "replacementSha256": "184e503ead23fe3231064c2b30b82c5bdbbcaf6d57675c5194c6463a330b970a",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/contracts/manifest.ts",
+    "ordinal": 1,
+    "currentStartLine": 99,
+    "recipe": "Remove actual added native Number ID atom",
+    "liveSlices": 5,
+    "replacementSha256": "349022b1411d97da646ae9387e20b9efc5844ca74af458ab6aafb903c85ea149",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/contracts/manifest.ts",
+    "ordinal": 2,
+    "currentStartLine": 399,
+    "recipe": "Remove actual native Boolean ID atoms; doc/format scaffold only",
+    "liveSlices": 2,
+    "replacementSha256": "ff9cf5115f48ba61f53546d9431a090ee14bdbf680845c7b678147317152fd3d",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/contracts/manifest.ts",
+    "ordinal": 3,
+    "currentStartLine": 441,
+    "recipe": "Remove4whole authenticated new ordinary-object declarations as live forward residues; type union arm removal",
+    "liveSlices": 2,
+    "replacementSha256": "f685ffb0b69ba8f5ffcd9a1af2b844910fd12fcd1346385629d20709715e5217",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/intrinsics.ts",
+    "ordinal": 0,
+    "currentStartLine": 46,
+    "recipe": "Named-export scaffold atom removal; canonical alias body untouched",
+    "liveSlices": 0,
+    "replacementSha256": "2e7d140aa9ffed26a5c488cef020ed8fca9bbc50de3db57a3813751a65325481",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/core/intrinsic-vocabulary.ts",
+    "ordinal": 0,
+    "currentStartLine": 59,
+    "recipe": "Remove actual Boolean-unbox tuple atom; restore nonexecutecutable doc",
+    "liveSlices": 3,
+    "replacementSha256": "c9f4742320c527803282168dea1ed4ccd76f5fbdc9449b67dbd0884dfa044cb2",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/contracts/intrinsics.ts",
+    "ordinal": 0,
+    "currentStartLine": 55,
+    "recipe": "Remove actual Boolean-unbox tuple atom; restore nonexecutecutable doc; generic specialization stayslive",
+    "liveSlices": 3,
+    "replacementSha256": "242b69c5b8c3275121cb2cafcd8c3cfb77736fe28abf3b78899dcf40a480cd4f",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/core/intrinsics.ts",
+    "ordinal": 0,
+    "currentStartLine": 66,
+    "recipe": "Remove actual new Boolean signature object declaration as authenticated forward residue",
+    "liveSlices": 1,
+    "replacementSha256": "fe9bd2660daa5da5c7226b0b79943c2eb01a9640aef19f67eb98d150b0b64c85",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/core/intrinsics.ts",
+    "ordinal": 1,
+    "currentStartLine": 197,
+    "recipe": "Remove actual new Boolean table property; existing initializer/function bodies remainlive",
+    "liveSlices": 2,
+    "replacementSha256": "17c4a3073cbff65a4d6f46b24b3efc19885b0d11abd21c79370d8b738e1272be",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/analysis/intrinsics.ts",
+    "ordinal": 0,
+    "currentStartLine": 41,
+    "recipe": "Remove actual added Boolean-brand guard; all remaining actual function statements/order staylive",
+    "liveSlices": 2,
+    "replacementSha256": "63e18800279885c15385a40d3dba1ec5d1fcffd3aa917f473c16273596fc95df",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/callable-declarations.ts",
+    "ordinal": 0,
+    "currentStartLine": 7,
+    "recipe": "module-link scaffolds only",
+    "liveSlices": 1,
+    "replacementSha256": "389bba9b85d23aa62ca62bb4a857566d7a205df7e683460769d354fd73a40205",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/callable-declarations.ts",
+    "ordinal": 1,
+    "currentStartLine": 98,
+    "recipe": "Retain actual first2lookup calls; remove3authenticated additions; compact only whitespace",
+    "liveSlices": 3,
+    "replacementSha256": "ed59b91ef433cee8a18d434bc2e259e8111d3a88b20d75a82096fb81644e4884",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 0,
+    "currentStartLine": 106,
+    "recipe": "module-link scaffolds only",
+    "liveSlices": 0,
+    "replacementSha256": "7f6a1c17f061e192c318c563bf3dbabc20ec3b913832c0a731067f007693cb42",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 1,
+    "currentStartLine": 220,
+    "recipe": "module-link scaffolds only",
+    "liveSlices": 0,
+    "replacementSha256": "151c0c55c3c9ac93b44075a619c4f974f27520ec256ca3fdd957723aa62b024e",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 2,
+    "currentStartLine": 259,
+    "recipe": "module-link scaffold only",
+    "liveSlices": 0,
+    "replacementSha256": "0279da7a0ce14ac3e333c94195b157156fbf8239076001873423597869f4d999",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 3,
+    "currentStartLine": 485,
+    "recipe": "nonexecutable documentation only",
+    "liveSlices": 2,
+    "replacementSha256": "babfc12277bc8e749b6557540b782423c6c3326822c85b5ce4d79e9b94ae7204",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 4,
+    "currentStartLine": 497,
+    "recipe": "Remove actual added native Number row; all historical array calls remain live",
+    "liveSlices": 2,
+    "replacementSha256": "1e0d8889c1b6c0864c63815dee97861856016589ab4f8be955d771e96af5f0e5",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 5,
+    "currentStartLine": 524,
+    "recipe": "Remove actual added native Boolean rows; restore nonexecutable doc; historical host call remains live",
+    "liveSlices": 3,
+    "replacementSha256": "57184f00ebea0ab5310660496b875abef4121460f6a83c0d3f411503b8ef65eb",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 6,
+    "currentStartLine": 1022,
+    "recipe": "Retain actual host conditional/true result/deep-null; remove unbox clause and feature parameter",
+    "liveSlices": 5,
+    "replacementSha256": "283c5bdbbb6c68fc216b67a0be4f51fe56282711716ac98b7502479edfd97375",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 7,
+    "currentStartLine": 1055,
+    "recipe": "Retain actual host conditional/true result/deep-null; remove native nested ternary only",
+    "liveSlices": 3,
+    "replacementSha256": "ffdfd3bceea173fde9fd20cd3b617060aff27ab4cd31cde2ff8256d3a3d5bf78",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 8,
+    "currentStartLine": 1370,
+    "recipe": "Transfer actual first2SpreadElements from callable SEMANTIC array; retain live manifest aggregates/sort",
+    "liveSlices": 4,
+    "replacementSha256": "50cb532d651093ea29f1ab876e747016abe12acd36ac3f0e3084d3c1b4f022f1",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 9,
+    "currentStartLine": 1394,
+    "recipe": "Remove only actual ordinary-object/from-value feature entries",
+    "liveSlices": 2,
+    "replacementSha256": "2c706ebd06b0ffc7bc60534cda9733da8ea2b76946186f60a959e0e8701d26c7",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 10,
+    "currentStartLine": 1418,
+    "recipe": "Remove only actual ordinary-object provider-ID spread",
+    "liveSlices": 2,
+    "replacementSha256": "f6c317a3ff293a97025dd2fab5de69f14bac0b0d6c497d4d8d215ecd92d9960f",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 11,
+    "currentStartLine": 1650,
+    "recipe": "Retain actual Object.freeze callee/object box property; delete optional-unbox spread; compact whitespace",
+    "liveSlices": 3,
+    "replacementSha256": "c2ec4ece44740f52e23a01b741538f7a54185f07be19af58c6f7d08311983423",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 12,
+    "currentStartLine": 1894,
+    "recipe": "Transfer actual first2nullish calls from semanticCallableProviderMismatch; surrounding manifest check/order remains live",
+    "liveSlices": 4,
+    "replacementSha256": "e03de0895aa164e5d2266b955b376fd7f780e2b35c6431e9bee48a6dfffdc657",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 13,
+    "currentStartLine": 2119,
+    "recipe": "Transfer actual condition and true/native,false/vector calls from semanticCallablePolicyMismatch; substitute current caller this.#policy operand; drop ordinary fallback",
+    "liveSlices": 7,
+    "replacementSha256": "81f604c1dcef28249244e11cf334397222ded05404a007352f89c68409eb2e1a",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/runtime/manifest.ts",
+    "ordinal": 14,
+    "currentStartLine": 2147,
+    "recipe": "Delete actual Boolean feature call argument and template unbox suffix; preserve existing selectedId/error/filter/body",
+    "liveSlices": 3,
+    "replacementSha256": "8a9bc898eca52667cf35a3ea5364273b6c7998816c6a49ddf02c815173823108",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/intrinsic-support.ts",
+    "ordinal": 0,
+    "currentStartLine": 26,
+    "recipe": "module-link scaffold only",
+    "liveSlices": 0,
+    "replacementSha256": "2cd0aa228b19f1d84e07d005b588a91434e40bf6f165dd142c9bad20b0314d86",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/intrinsic-support.ts",
+    "ordinal": 1,
+    "currentStartLine": 823,
+    "recipe": "Select actual reference-error equality from guard; transfer actual same-implementation ?. syntax token and current addstatement; remove extra demands",
+    "liveSlices": 6,
+    "replacementSha256": "ea3bbc1dbf9449c714f5833cbff299b4449c267d53ebd041db796335370e43b7",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/program-runtime-abi.ts",
+    "ordinal": 0,
+    "currentStartLine": 1,
+    "recipe": "module-link scaffold only",
+    "liveSlices": 0,
+    "replacementSha256": "ed4a4db12598aed01be6a6c06dfeec51108bcc84e0da5866bd82aa37b8475414",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  },
+  {
+    "path": "src/ir/program-runtime-abi.ts",
+    "ordinal": 1,
+    "currentStartLine": 10,
+    "recipe": "Insert actual2function live donor slice with live docs; remove exact current named forward",
+    "liveSlices": 3,
+    "replacementSha256": "7e2dc0329babb1f4c64407f3d94b0883fd1facd517aa61f0cb691f639226b10c",
+    "exactSliceEvidence": "recipe-slice-audit.json rows matching path/ordinal"
+  }
+]

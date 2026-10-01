@@ -1,0 +1,183 @@
+diff --git a/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md b/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+index a98b11ded5..d78ea9529e 100644
+--- a/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
++++ b/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+@@ -18804,3 +18804,22 @@ Integrate exactly the preserved26 source/test paths after checking all current d
+ 
+ 
+ Fresh-main continuation: PR6371 “feat(ir): add native realm state and structural object access” is merged as1265c47d; exact repaired-source/test bytes and head ancestry verified. Actual protected Test262 run36808651261 has all102 concrete numbered shard jobs and final regression gate SUCCESS; matrix stubs are excluded. Merge-group CI's issue-tests job was cancelled, so all-CI-green is not inferred; exact PR-head quality/issue tests had passed. Raw records are in .tmp/source-contracts-main/pr6371-delivery-verification.json. Fresh-main metadata preserves all1749 current entries plus12 source-contract leaves (1761 total), both realm and source-contract activation test arms, and prior88 history plus3 additions. The newly integrated genuine live PhaseA reader executes65/65 controls; all13 inverses and25 forward owners are checked from actual source, with missing/mutation/blob/receipt/refusal controls. Old pending historical cohorts still require their remaining authenticated inverses.
++
++
++Executed fresh-main receipt repair: all47 original program-data controls now PASS, including the genuine root-config TS5 positive/negative compiler fixture; all76 new full-pin/live-span/reciprocal/mutation controls PASS (123/123 combined, no skipped). Existing historical hashes and statement floors62/34 and41/28 remain unchanged; compiler input is raw current. Whole boundary suites remain477/477 on new realm main; new PhaseA reader65/65 and component/ownership controls retain their original populations. Production TS7 passes. Exact-main LOC/function (+117 LOC in25sourcepaths), JsTag/coercion/oracle and inventory gates PASS, with all1761 current metadata entries and architecture/graph explicitly incomplete. Remaining core17/20 and runtime69/75 failures are still preserved; core reciprocal implementation and later runtime policy/Boolean composition remain ongoing. Source stays uncommitted until affected preservation/gates and normal hooks are justified.
++
++
++## 2026-10-01 resumed core/runtime historical receipt implementation
++
++The active migration goal resumes after the signed handoff publication. Fresh upstream main remains0d94fc71; source worktree/base1265c47d and all41 archived paths were verified. The scoped source-validation-contracts claim is reacquired on the canonical issue-assignments branch, authoritative write_id87615-9npim132. Existing handoff PR6374 remains separate documentation.
++
++Integrate the exact frozen three-file core reader at only the three initial historical receipt reads; restore default parsing to raw current source for current closure/type/runtime checks. The132 new and20 original rows require actual strict execution. Never normalize existing injected mutants twice or refresh old hashes. Runtime inverse writer owns only three new helper/receipt/control files in its isolated worktree, preserving all35 prior frozen paths; root owns existing75/631 suite plumbing and all compilers/gates/Git. No static compatibility proof is credited as executed behavior. Preserve the original core17/20, runtime69/75 and historical2/631 results and the complete final acceptance.
++
++
++Executed resumed core proof: strict single-fork152/152 PASS, zero skipped or worker errors:132 new live-reconstruction controls and all20 original vocabulary rows. The prior17/20 failure remains archived. Four moved/retained original receipts keep every old hash/count; all current runtime39-entry/Boolean-brand/async-authority checks and19 typed negative controls pass on raw current input. Production TS7 exits0. Formatting precheck found only existing test layout; helper/JSON frozen bytes were already clean and stay unchanged. This establishes affected historical controls, not full runtime/native/source/backend equality. Runtime75/631 remains unresolved pending the separately owned live inverse.
++
++
++While the runtime inverse is authored, root remeasures the unchanged original nine-row public Number712 fixture against the current source checkpoint. The source pin c0550b99 and archived test bytes are preserved; a temporary ignored harness only selects that exact original file and keeps the existing timeout/heap/current config. No existing test, fixture, source or competing Number lane is edited. The previous5/9 remains archived; new outcomes require terminal evidence and do not certify both backends or dynamic-code completion.
++
++
++Current public Number measurement preserves all9 rows:5 PASS/4 FAIL, zero skipped. All4 actual public IR cases still fail at preparation with js.number.from-value lacking a provider; the oracle and4 legacy cases pass. This re-executed native-realm/source-contract checkpoint does not meet the public fixture requirement. Durable raw evidence and core152/152 proof are pinned in plan/log/3518-source-contract-core-progress-2026-10-01/manifest.json. Complete migration and retirement remain unproved.
+diff --git a/tests/issue-3518-core-vocabulary-seam.test.ts b/tests/issue-3518-core-vocabulary-seam.test.ts
+index 26d5d4b115..616f0e7851 100644
+--- a/tests/issue-3518-core-vocabulary-seam.test.ts
++++ b/tests/issue-3518-core-vocabulary-seam.test.ts
+@@ -22,11 +22,11 @@ import type {
+   IrCountedStringAppendSiteClaim,
+ } from "../src/shared/contracts/ir-counted-string-identity.js";
+ import { createIrSourceId, createIrUnitId } from "../src/ir/identity.js";
+-import { readBeforeIrSourceContractRelocation } from "./helpers/ir-source-contract-relocation.js";
++import { readCoreVocabularyReceiptSource } from "./helpers/ir-core-vocabulary-evolution.js";
+ 
+ const root = resolve(import.meta.dirname, "..");
+ const rawRead = (path: string) => readFileSync(resolve(root, path), "utf8");
+-const read = (path: string) => readBeforeIrSourceContractRelocation(path, rawRead);
++const read = rawRead;
+ function parse(path: string, text = read(path)) {
+   const tree = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+   expect((tree as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toEqual([]);
+@@ -133,8 +133,8 @@ function identity(): IrCountedStringAppendSiteIdentity {
+ 
+ describe("#3518 canonical core vocabulary seam", () => {
+   it.each(moves)("moves exactly $moved declarations from $old and preserves everything retained", (move) => {
+-    const canonical = declarations(parse(move.canonical));
+-    const retained = declarations(parse(move.old));
++    const canonical = declarations(parse(move.canonical, readCoreVocabularyReceiptSource(move.canonical, rawRead)));
++    const retained = declarations(parse(move.old, readCoreVocabularyReceiptSource(move.old, rawRead)));
+     expect(canonical).toHaveLength(move.moved);
+     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.moved);
+     expect(digest(canonical)).toBe(move.movedHash);
+@@ -142,7 +142,7 @@ describe("#3518 canonical core vocabulary seam", () => {
+     expect(digest(retained)).toBe(move.retainedHash);
+     expect(retained.filter(([name]) => canonical.some(([movedName]) => movedName === name))).toEqual([]);
+     const publicNames = canonical.map(([name]) => name).filter((name) => name !== "irCountedStringAppendSiteIdBrand");
+-    const forwarded = parse(move.old).statements.flatMap((node) => {
++    const forwarded = parse(move.old, readCoreVocabularyReceiptSource(move.old, rawRead)).statements.flatMap((node) => {
+       if (
+         !ts.isExportDeclaration(node) ||
+         !node.moduleSpecifier ||
+@@ -209,7 +209,11 @@ describe("#3518 canonical core vocabulary seam", () => {
+   );
+ 
+   it("does not confuse semantic async features with provider IDs or capability IDs", () => {
+-    expect(Object.keys(intents).sort()).toEqual(["ASYNC_OPTIONAL_RUNTIME_FEATURES", "ASYNC_RUNTIME_FEATURES", "isAsyncRuntimeFeature"]);
++    expect(Object.keys(intents).sort()).toEqual([
++      "ASYNC_OPTIONAL_RUNTIME_FEATURES",
++      "ASYNC_RUNTIME_FEATURES",
++      "isAsyncRuntimeFeature",
++    ]);
+     expect(providers.isAsyncRuntimeFeature).toBe(intents.isAsyncRuntimeFeature);
+     expect(intents.ASYNC_RUNTIME_FEATURES).toHaveLength(7);
+     expect(intents.ASYNC_OPTIONAL_RUNTIME_FEATURES).toEqual(["value.undefined", "promise.number.bridge"]);
+@@ -323,8 +327,12 @@ describe("#3518 canonical core vocabulary seam", () => {
+         }
+         if (!elements.length) return [];
+         const declaration = ts.factory.updateExportDeclaration(
+-          node, node.modifiers, node.isTypeOnly,
+-          ts.factory.updateNamedExports(node.exportClause, elements), node.moduleSpecifier, node.attributes,
++          node,
++          node.modifiers,
++          node.isTypeOnly,
++          ts.factory.updateNamedExports(node.exportClause, elements),
++          node.moduleSpecifier,
++          node.attributes,
+         );
+         return [ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, file)];
+       });
+diff --git a/tests/issue-3518-historical-runtime-reconstruction.test.ts b/tests/issue-3518-historical-runtime-reconstruction.test.ts
+index 789f7c9197..bed04fff51 100644
+--- a/tests/issue-3518-historical-runtime-reconstruction.test.ts
++++ b/tests/issue-3518-historical-runtime-reconstruction.test.ts
+@@ -16,7 +16,27 @@ import {
+   type SourceReader,
+ } from "./helpers/ir-historical-runtime-reconstruction.js";
+ 
+-const read = liveSourceReader(resolve(import.meta.dirname, ".."));
++import {
++  readRuntimeContractReceiptSource,
++  reconstructRuntimeContractReceiptSources,
++  runtimeContractCurrentPaths,
++} from "./helpers/ir-runtime-contract-evolution.js";
++
++const rawRead = liveSourceReader(resolve(import.meta.dirname, ".."));
++const read: SourceReader = (path) => readRuntimeContractReceiptSource(path, rawRead);
++function currentHistoricalRead(): SourceReader {
++  // One fresh authenticated capture per top-level proof, before any historical mutant.
++  const sources = reconstructRuntimeContractReceiptSources(rawRead);
++  if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
++  for (const path of runtimeContractCurrentPaths)
++    if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
++  return (path) => {
++    if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
++    const source = sources.get(path);
++    if (source === undefined) throw Error("missing required runtime historical source " + path);
++    return source;
++  };
++}
+ const contract = "src/ir/runtime/contracts/intrinsics.ts";
+ const core = "src/ir/core/intrinsic-contracts.ts";
+ const intrinsic = "src/ir/core/intrinsics.ts";
+@@ -776,7 +796,7 @@ describe("final clock/vector source before reverse-composition historical accept
+   });
+ });
+ 
+-function acceptedCallablePositive(source: SourceReader = read): void {
++function acceptedCallablePositive(source: SourceReader = currentHistoricalRead()): void {
+   assertCallableExtension(source);
+   for (const path of [callables, manifestContract, "src/ir/runtime-manifest.ts", support])
+     acceptedHistoricalDeclarations(path, source);
+diff --git a/tests/issue-3518-runtime-data-contract-seam.test.ts b/tests/issue-3518-runtime-data-contract-seam.test.ts
+index 6b0986c882..b0ee09ee7c 100644
+--- a/tests/issue-3518-runtime-data-contract-seam.test.ts
++++ b/tests/issue-3518-runtime-data-contract-seam.test.ts
+@@ -41,8 +41,11 @@ import {
+   receiptRows,
+ } from "./helpers/ir-historical-runtime-reconstruction.js";
+ 
++import { readRuntimeContractReceiptSource } from "./helpers/ir-runtime-contract-evolution.js";
++
+ const root = resolve(import.meta.dirname, "..");
+ const read = (path: string) => readFileSync(resolve(root, path), "utf8");
++const historicalRead = (path: string) => readRuntimeContractReceiptSource(path, read);
+ const hash = (rows: unknown) => createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+ 
+ // Measured from f95d8a0bf318e857d981863b1018a9d776483a46, source-qualified:
+@@ -379,11 +382,11 @@ describe("#3518 canonical runtime data-contract seam", () => {
+     const reconstructed =
+       receipt.path === "src/ir/runtime/contracts/intrinsics.ts" ||
+       receipt.path === "src/ir/runtime/contracts/manifest.ts"
+-        ? acceptedHistoricalDeclarations(receipt.path, read)
++        ? acceptedHistoricalDeclarations(receipt.path, historicalRead)
+         : undefined;
+     const file = reconstructed
+         ? parse(receipt.path, reconstructed.map((row) => (row.doc ? row.doc + "\n" : "") + row.text).join("\n\n"))
+-        : parse(receipt.path),
++        : parse(receipt.path, historicalRead(receipt.path)),
+       rows = declarationRows(file, receipt.path.endsWith("/prepared.ts"));
+     expect(rows.map(([name]) => name)).toEqual(receipt.names);
+     expect(
+@@ -407,7 +410,7 @@ describe("#3518 canonical runtime data-contract seam", () => {
+   it.each(retainedReceipts)(
+     "checks historical retained $path receipt after checked extension reconstruction",
+     (receipt) => {
+-      const records = acceptedHistoricalDeclarations(receipt.path, read),
++      const records = acceptedHistoricalDeclarations(receipt.path, historicalRead),
+         rows = receiptRows(records);
+       expect(rows).toHaveLength(receipt.declarations);
+       expect(records.filter((record) => ts.isFunctionDeclaration(record.node))).toHaveLength(receipt.functions);
+@@ -423,7 +426,7 @@ describe("#3518 canonical runtime data-contract seam", () => {
+     expect(retainedReceipts.reduce((count, receipt) => count + receipt.functions, 0)).toBe(118);
+     expect(valueCases).toHaveLength(52);
+     const old = parse("src/ir/async-plan.ts");
+-    const historical = acceptedHistoricalDeclarations("src/ir/async-plan.ts", read);
++    const historical = acceptedHistoricalDeclarations("src/ir/async-plan.ts", historicalRead);
+     expect(historical.filter((row) => ts.isFunctionDeclaration(row.node))).toHaveLength(39);
+     const authority = currentDeclarations("src/ir/runtime/async-attachment.ts", read);
+     expect(authority.filter((row) => row.name === "preparedManifestByPlan")).toHaveLength(1);

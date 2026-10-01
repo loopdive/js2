@@ -9,6 +9,13 @@ import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/stri
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
+import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
+import {
+  planNativeRealmLiterals,
+  readNativeRealmLiteralInput,
+  type NativeRealmLiteralPlan,
+  type NativeRealmLiteralInput,
+} from "./native-realm-literals.js";
 import { nativeStringInvocationRequirements } from "./native-invocation-abi.js";
 import { selectNativeBooleans, type NativeBooleanSelection } from "./native-primitive-boundary-abi.js";
 import type { PreparedIrProgramFailure } from "../../../ir/program/prepared-contracts.js";
@@ -102,7 +109,7 @@ export interface NativeStringValueOptions {
 }
 export interface NativeStringValuePhysicalPlan {
   readonly key: string;
-  readonly mode: "literals" | "number-boundary";
+  readonly mode: "literals" | "number-boundary" | "realm-bootstrap";
   readonly booleans?: NativeBooleanSelection;
   readonly output?: NativeStringOutputPhysicalPlan;
   readonly literalRequirements: NativeStringLiteralRequirements;
@@ -116,9 +123,10 @@ export type NativeStringValuePlanningOutcome =
       readonly kind: "planned";
       readonly plan: NativeStringValuePhysicalPlan;
       readonly invocationRequirements?: NativeInvocationRequirements;
+      readonly realmLiterals?: NativeRealmLiteralPlan;
     }
   | PreparedIrProgramFailure;
-export interface NativeStringValueReservationInput {
+export interface NativeStringValueReservationInput extends NativeRealmLiteralInput {
   readonly demands: NativeStringValueDemands;
   readonly plan: NativeStringValuePhysicalPlan;
   readonly valueRequirements?: NativeValueResourcePlan;
@@ -197,6 +205,7 @@ export function planNativeStringValuePhysical(
   demands: NativeStringValueDemands,
   options: NativeStringValueOptions,
   expectedInvocation?: NativeInvocationRequirements,
+  realmRequirements?: NativeRealmRequirements,
 ): NativeStringValuePlanningOutcome {
   if (options.representation !== "native-string" || typeof options.utf8Storage !== "boolean")
     fail("invalid representation options");
@@ -205,6 +214,13 @@ export function planNativeStringValuePhysical(
     collectNativeStringValueDemands(demands.program, demands.projection),
     "stale or mismatched demand census",
   );
+  const realmLiterals =
+    realmRequirements === undefined ? undefined : planNativeRealmLiterals(realmRequirements, options.utf8Storage);
+  if (
+    realmRequirements &&
+    (realmRequirements.program !== demands.program || realmRequirements.projection !== demands.projection)
+  )
+    fail("foreign realm program/projection");
   const executable = (occurrence: number) =>
     demands.buffers[demands.occurrences[occurrence]!.bufferIndex]!.view === "projection";
   const invocationRequirements = nativeStringInvocationRequirements(demands, options.utf8Storage, expectedInvocation);
@@ -290,7 +306,7 @@ export function planNativeStringValuePhysical(
     literals.push({ value: i.value, encoding });
     uses.push({ demandIndex: index, cacheKey: selection.key });
   }
-  if (!numeric && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
+  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
   const entry = demands.program.inventory.sources.find((row) => row.kind === "entry");
   if (!entry) fail("missing canonical entry source");
   const key = "native-string-values:v1:" + JSON.stringify(entry.id);
@@ -301,18 +317,19 @@ export function planNativeStringValuePhysical(
         flattenKey: key + ":flatten",
       })
     : undefined;
-  if (numeric || output) literals.push({ value: "", encoding: "wtf16" });
+  if (numeric || realmLiterals || output) literals.push({ value: "", encoding: "wtf16" });
   if (invocation) literals.push({ value: "TypeError" }, { value: "Value is not callable" });
   if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
+  if (realmLiterals) literals.push(...realmLiterals.literals);
   const literalRequirements = { key, utf8Storage: options.utf8Storage, literals };
-  const values = numeric ? declareNativeValueResources(entry.id) : undefined;
+  const values = numeric || realmLiterals ? declareNativeValueResources(entry.id) : undefined;
   const booleanType = values?.declarations.find((row) => row.role[0] === "values" && row.role[1] === "boolean");
   // Acceptance describes the same recipes the producers later execute. No
   // physical indices, scratch ledger, or post-reservation ABI additions.
   const recipes = [
     declareNativeStringLiteralTypes(key, options.utf8Storage),
     declareNativeStringLiteralResources(literalRequirements),
-    ...(numeric || output ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)] : []),
+    ...(values || output ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)] : []),
     ...(values ? [declareNativeStringNumberResources(entry.id), values] : []),
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
@@ -322,9 +339,10 @@ export function planNativeStringValuePhysical(
   return {
     kind: "planned",
     ...(invocationRequirements ? { invocationRequirements } : {}),
+    ...(realmLiterals ? { realmLiterals } : {}),
     plan: freezePreparedIrValue({
       key,
-      mode: numeric ? "number-boundary" : "literals",
+      mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
       ...(boolean.selection ? { booleans: boolean.selection } : {}),
       ...(output ? { output } : {}),
       literalRequirements,
@@ -337,13 +355,15 @@ export function planNativeStringValuePhysical(
 
 interface Owner {
   readonly tx: PhysicalModuleReservations;
+  readonly sourceInput: NativeStringValueReservationInput;
   readonly input: NativeStringValueReservationInput;
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
-function checkInput(input: NativeStringValueReservationInput) {
+export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
+  const realm = readNativeRealmLiteralInput(input, input.plan.literalRequirements.utf8Storage);
   const outcome = planNativeStringValuePhysical(
     input.demands,
     {
@@ -352,10 +372,12 @@ function checkInput(input: NativeStringValueReservationInput) {
       stringConcatEmptyIdentity: input.plan.output?.options.emptyIdentity,
     },
     input.invocationRequirements,
+    realm?.realmRequirements,
   );
   if (outcome.kind !== "planned") fail("input no longer has a materializable string plan");
   if (outcome.invocationRequirements !== input.invocationRequirements)
     fail("missing exact issued invocation requirements");
+  if (outcome.realmLiterals !== realm?.realmLiterals) fail("missing exact issued realm literals");
   same(input.plan, outcome.plan, "demand/plan mismatch");
   if (input.plan.output) {
     if (!input.outputRequirements || input.outputRequirements.demands !== input.demands)
@@ -363,7 +385,7 @@ function checkInput(input: NativeStringValueReservationInput) {
     assertNativeStringOutputRequirementsCurrent(input.outputRequirements);
     same(input.outputRequirements.options, input.plan.output.options, "output options changed");
   } else if (input.outputRequirements !== undefined) fail("unexpected output requirements");
-  if (input.plan.mode === "number-boundary") {
+  if (input.plan.mode !== "literals") {
     if (!input.valueRequirements) fail("missing issued native value requirements");
     assertNativeValueResourcePlanFor(
       input.valueRequirements,
@@ -377,7 +399,13 @@ function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReserva
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
   same(owner.input.demands, owner.snapshot, "changed retained string demands");
-  checkInput(owner.input);
+  const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
+  if (
+    currentRealm?.realmRequirements !== owner.input.realmRequirements ||
+    currentRealm?.realmLiterals !== owner.input.realmLiterals
+  )
+    fail("changed retained realm literal identities");
+  assertNativeStringValueReservationInput(owner.input);
   nativeStringLiteralReservationInventory(tx, pack.strings);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
@@ -395,14 +423,14 @@ export function reserveNativeStringValueResources(
   input: NativeStringValueReservationInput,
   types: NativeStringLiteralTypeReservations,
 ): NativeStringValueReservations {
-  checkInput(input);
+  assertNativeStringValueReservationInput(input);
   const strings = reserveNativeStringLiteralResources(tx, input.plan.literalRequirements, types);
   const flatten =
-    input.plan.mode === "number-boundary" || input.plan.output
+    input.plan.mode !== "literals" || input.plan.output
       ? reserveNativeStringFlattenResources(tx, input.plan.key + ":flatten", strings)
       : undefined;
   let number: NativeStringValueReservations["number"];
-  if (input.plan.mode === "number-boundary") {
+  if (input.plan.mode !== "literals") {
     if (!flatten) fail("number resources require flatten");
     const scanner = reserveNativeStringNumberResources(tx, input.valueRequirements!, flatten);
     const dependencies: NativeValueDependencies = Object.freeze({
@@ -502,6 +530,7 @@ export function reserveNativeStringValueResources(
     fail("reservation steps do not cover the captured population exactly once");
   owners.set(pack, {
     tx,
+    sourceInput: input,
     input: Object.freeze({ ...input }),
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),

@@ -264,6 +264,7 @@ export function attachIrPhysicalRefTypeRefs(
     ? {
         signature: mapSignature(fn.closureSubtype.signature),
         captureFieldTypes: mapArray(fn.closureSubtype.captureFieldTypes, mapType),
+        ...(fn.closureSubtype.parameters ? { parameters: fn.closureSubtype.parameters } : {}),
         ...(fn.closureSubtype.hostOneShot ? { hostOneShot: true } : {}),
         ...(fn.closureSubtype.domCallbackAuthority
           ? { domCallbackAuthority: fn.closureSubtype.domCallbackAuthority }
@@ -274,6 +275,7 @@ export function attachIrPhysicalRefTypeRefs(
     closureSubtype === undefined ||
     (closureSubtype.signature === fn.closureSubtype?.signature &&
       closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes &&
+      closureSubtype.parameters === fn.closureSubtype.parameters &&
       closureSubtype.hostOneShot === fn.closureSubtype.hostOneShot &&
       closureSubtype.domCallbackAuthority === fn.closureSubtype.domCallbackAuthority);
   return params === fn.params && resultTypes === fn.resultTypes && blocks === fn.blocks && closureSubtypeUnchanged

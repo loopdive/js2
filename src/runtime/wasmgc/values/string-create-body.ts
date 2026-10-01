@@ -12,6 +12,7 @@ export interface StringCreateBindings {
   readonly boxNumberIdx: number;
   readonly initialCapacity: number;
   readonly lengthKey: { readonly kind: "global" | "function"; readonly index: number };
+  readonly realmState?: { readonly stateTypeIdx: number; readonly realmGlobalIdx: number };
 }
 function fail(detail: string): never {
   throw Error("StringCreate body: " + detail);
@@ -63,7 +64,8 @@ export function buildStringCreateDefinition(input: StringCreateBindings): { loca
     "initialCapacity",
     "lengthKey",
   ] as const;
-  const raw = data(input, keys);
+  const hasState = Object.hasOwn(input, "realmState");
+  const raw = data(input, hasState ? [...keys, "realmState"] : keys);
   const typeKeys = ["objectTypeIdx", "stringObjectTypeIdx", "propMapTypeIdx", "anyStringTypeIdx"] as const;
   const types = typeKeys.map((key) => coordinate(raw[key]));
   if (new Set(types).size !== types.length) fail("aliased type coordinates");
@@ -76,28 +78,48 @@ export function buildStringCreateDefinition(input: StringCreateBindings): { loca
   if (key.kind !== "global" && key.kind !== "function") fail("invalid length-key binding");
   const readKey: Instr =
     key.kind === "global" ? { op: "global.get", index: keyIndex } : { op: "call", funcIdx: keyIndex };
+  const state = hasState ? data(raw.realmState, ["stateTypeIdx", "realmGlobalIdx"]) : undefined;
+  const stateType = state ? coordinate(state.stateTypeIdx) : undefined,
+    realmGlobal = state ? coordinate(state.realmGlobalIdx) : undefined;
+  if (stateType !== undefined && types.includes(stateType)) fail("aliased realm state type");
   return {
     locals: [{ name: "object", type: { kind: "ref", typeIdx: stringObjectTypeIdx! } }],
     body: [
-      // Cast before allocating. Null is an explicit prototype, not a default marker.
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.cast_null", typeIdx: objectTypeIdx! },
+      // Mixed prototype admission belongs to the stateful caller; own storage stays null-rooted.
+      ...(stateType !== undefined
+        ? [{ op: "ref.null", typeIdx: objectTypeIdx! } as Instr]
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast_null", typeIdx: objectTypeIdx! },
+          ] as Instr[])),
       { op: "i32.const", value: initialCapacity },
       { op: "array.new_default", typeIdx: propMapTypeIdx! },
       { op: "i32.const", value: 0 }, // count
       { op: "i32.const", value: 0 }, // tombstones
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype }],
-        else: [{ op: "i32.const", value: 0 }],
-      }, // explicit null must never request an implicit realm prototype
+      ...(stateType !== undefined
+        ? [{ op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype } as Instr]
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [{ op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype }],
+              else: [{ op: "i32.const", value: 0 }],
+            },
+          ] as Instr[])), // explicit null must never request an implicit realm prototype
       { op: "i32.const", value: 0 }, // nextSeq
       { op: "local.get", index: 1 },
+      ...(stateType !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "global.get", index: realmGlobal! },
+            { op: "ref.as_non_null" },
+            { op: "struct.new", typeIdx: stateType },
+          ] as Instr[])
+        : []),
       { op: "struct.new", typeIdx: stringObjectTypeIdx! },
       { op: "local.set", index: 2 },
       { op: "local.get", index: 2 },

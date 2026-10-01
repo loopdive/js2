@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4595,
+    "pass": 4597,
     "fail": 192,
-    "ce": 134,
+    "ce": 132,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4496,
+        "pass": 4498,
         "fail": 107,
-        "ce": 8,
+        "ce": 6,
         "skip": 0,
         "total": 4611,
         "pct": 98

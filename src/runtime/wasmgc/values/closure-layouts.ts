@@ -62,6 +62,8 @@ export interface IrClosureLowering {
    * import-global insertion cannot stale the allocation operand.
    */
   readonly domCallbackAuthorityGlobalIdx?: () => number;
+  /** Stable handle issued by the native realm state owner; called after all captures. */
+  readonly realmStateInitializer?: FuncHandle;
 }
 
 /** Field 0 — the lifted function reference. */

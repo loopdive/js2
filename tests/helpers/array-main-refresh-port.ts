@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readBeforeLaterMainPreservation } from "./later-main-preservation-port.js";
 
 export const arrayMainPrior = "90a0219f954857012e70c0ca6c2f3bc5d71397b4";
 export const arrayMainUpstream = "bb41a01224b8173818f4e4cde86f1fdf1905d8aa";
@@ -12,8 +12,7 @@ export const arrayMainPaths = [
   "src/codegen/object-runtime.ts",
   "src/codegen/closure-exports.ts",
 ] as const;
-export const readArrayMainSource = (path: string): string =>
-  readFileSync(new URL("../../" + path, import.meta.url), "utf8");
+export const readArrayMainSource = readBeforeLaterMainPreservation;
 export const arrayMainHash = (source: string): string => createHash("sha256").update(source).digest("hex");
 export const arrayMainBlob = (source: string): string =>
   createHash("sha1")

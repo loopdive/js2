@@ -222,9 +222,60 @@ const semanticCallableAdditions = [
   "src/ir/runtime/number-conversion-callable.ts",
   "src/ir/runtime/ordinary-object-callables.ts",
 ];
+// Fixed realm-join dependency census, reviewed from actual imports. The
+// historical fixture population and signed policy receipts remain unchanged.
+const realmFixtureAdditions = {
+  "ir-program": ["src/ir/program/native-realm-requirements.ts"],
+  "backend-wasmgc": [
+    "src/backend/wasmgc/program/native-realm-literals.ts",
+    "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
+    "src/backend/wasmgc/resources/native-object-descriptors.ts",
+    "src/backend/wasmgc/resources/native-string-descriptor-selection.ts",
+    "src/backend/wasmgc/resources/native-object-storage.ts",
+    "src/backend/wasmgc/resources/native-object-same-value.ts",
+    "src/backend/wasmgc/resources/native-string-exotic-own-descriptors.ts",
+    "src/backend/wasmgc/resources/native-object-access.ts",
+    "src/backend/wasmgc/resources/native-bigint.ts",
+    "src/backend/wasmgc/resources/native-string-equality.ts",
+    "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
+    "src/backend/wasmgc/resources/native-object-layouts.ts",
+    "src/backend/wasmgc/resources/native-symbol-carrier.ts",
+    "src/backend/wasmgc/resources/native-object-access-declarations.ts",
+    "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
+  ],
+  "runtime-contracts": ["src/runtime/contracts/native-realm-catalog.ts"],
+  "native-runtime": [
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-definitions.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
+    "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
+    "src/runtime/wasmgc/values/ordinary-object-storage-definitions.ts",
+    "src/runtime/wasmgc/values/object-same-value-body.ts",
+    "src/runtime/wasmgc/values/string-exotic-bodies.ts",
+    "src/runtime/wasmgc/values/string-exotic-define-body.ts",
+    "src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts",
+    "src/runtime/wasmgc/values/ordinary-object-key-definitions.ts",
+    "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+    "src/runtime/wasmgc/values/bigint-carrier-body.ts",
+    "src/runtime/wasmgc/values/bigint-carrier-layouts.ts",
+    "src/runtime/wasmgc/values/bigint-finalized-layouts.ts",
+    "src/runtime/wasmgc/values/string-equality-body.ts",
+    "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
+    "src/runtime/wasmgc/values/realm-object-layouts.ts",
+    "src/runtime/wasmgc/values/object-key-bodies.ts",
+    "src/runtime/wasmgc/values/object-layouts.ts",
+    "src/runtime/wasmgc/values/symbol-carrier-bodies.ts",
+    "src/runtime/wasmgc/values/closure-capture-layouts.ts",
+  ],
+};
 const liveFixtureGroups = {
   ...groups,
-  "runtime-contracts": [...groups["runtime-contracts"], "src/runtime/contracts/js-value-tags.ts"],
+  "runtime-contracts": [
+    ...groups["runtime-contracts"],
+    "src/runtime/contracts/js-value-tags.ts",
+    ...realmFixtureAdditions["runtime-contracts"],
+  ],
   "ir-runtime": [
     ...groups["ir-runtime"],
     ...semanticCallableAdditions,
@@ -238,6 +289,7 @@ const liveFixtureGroups = {
   ],
   "ir-program": [
     ...groups["ir-program"],
+    ...realmFixtureAdditions["ir-program"],
     "src/ir/program/native-string-output-requirements.ts",
     "src/ir/program/population.ts",
     "src/ir/program/abi-signatures.ts",
@@ -254,6 +306,7 @@ const liveFixtureGroups = {
   ],
   "native-runtime": [
     ...groups["native-runtime"],
+    ...realmFixtureAdditions["native-runtime"],
     "src/runtime/wasmgc/values/boolean-bodies.ts",
     "src/runtime/wasmgc/values/bigint-primitive-bodies.ts",
     "src/runtime/wasmgc/values/string-concat-bodies.ts",
@@ -261,6 +314,7 @@ const liveFixtureGroups = {
   ],
   "backend-wasmgc": [
     ...groups["backend-wasmgc"],
+    ...realmFixtureAdditions["backend-wasmgc"],
     "src/backend/wasmgc/resources/native-booleans.ts",
     "src/backend/wasmgc/program/native-string-output.ts",
     "src/backend/wasmgc/resources/native-string-output.ts",
@@ -972,6 +1026,18 @@ describe("semantic verification and provider ownership boundary", () => {
           "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
           "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
         );
+      if (id === "runtime-contracts") additions.push("src/runtime/contracts/native-realm-catalog.ts");
+      if (id === "ir-program") additions.push("src/ir/program/native-realm-requirements.ts");
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/program/native-realm-literals.ts",
+          "src/backend/wasmgc/program/native-realm.ts",
+        );
+      if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/realm-object-layouts.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-realm-object-layouts.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-object-realm.ts");
+      if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/mixed-object-access-bodies.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-mixed-object-access.ts");
       const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
       if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
       const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
@@ -993,9 +1059,9 @@ describe("semantic verification and provider ownership boundary", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
     expect(required).toHaveLength(106);
-    expect(liveRequired).toHaveLength(135);
-    expect(new Set(liveRequired).size).toBe(135);
-    expect(r.report.counts.total).toBe(135);
+    expect(liveRequired).toHaveLength(174);
+    expect(new Set(liveRequired).size).toBe(174);
+    expect(r.report.counts.total).toBe(174);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
@@ -1013,11 +1079,15 @@ describe("semantic verification and provider ownership boundary", () => {
     // (40 type-only / 60 runtime), plus six imports in existing owners
     // (two type-only / four runtime). Every copied dependency remains real source.
     // The import-free canonical tag leaf adds one real module and zero edges.
+    // Realm literals/requirements add the fixed 39-module dependency closure:
+    // 168 further edges (62 type-only / 106 runtime), measured by the detector.
+    // Public builtin requests add one realm-requirements runtime import and
+    // one catalog type-only import; both modules already belong to this closure.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 612,
-      typeOnly: 340,
-      runtime: 272,
+      edges: 782,
+      typeOnly: 403,
+      runtime: 379,
     });
   });
 

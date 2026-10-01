@@ -1,0 +1,17 @@
+# Frozen runtime historical reader draft
+
+State: **UNVALIDATED**. Only the three files listed in freeze.json are new. All35 earlier frozen paths remain byte-exact. No compiler, checker, Vitest, Git or network ran. Attribution: Codex GPT-6 Astra Max.
+
+The reader captures exactly27 raw production sources once per operation and checks full UTF-8 byte length, SHA256, Git blob, and complete declaration/documentation/link/order/span identities. The fixed34 contextual inverses use84 live slices across11changed files. Literal pieces contain only whitespace/comments/module links. Eight current-only declarations and every removed addition remain authenticated actual live source for exact forward replay. Both ABI functions and documentation come from the actual canonical ABI identity module, including its six checked links and exact two-function population. No stored executable historical bodies, successful-validation cache, Git lookup or fallback are used.
+
+Provider dispatch and policy restoration use bounded actual current declaration operands. The old optional-chain expression is not present whole: the explicit fixed token/AST projection uses the current guarded equality and current ?. token from the same implementation. Current tokens retain ordinal, kind, position, hash and parent role chains; target operands retain order. Full27target source pins and full27current byte-exact reciprocal replay are independently checked by syntax/source arithmetic. This is static proof, not execution of the new helper.
+
+The runtime75 source pin is authoring provenance ONLY. The helper never reads it as a runtime dependency, avoiding a self-referential pin when root evolves its initial read plumbing. Core842/Phase A inverses are not used; generic runtime specialization remains. Old10link/5owner receipts and clock/vector/callable normalization remain untouched.
+
+Drafted rows: 331; executed tests: NONE. The suite covers all27current inputs, all34spans, all8removed declaration residues, exact historical receipts and stages, both actual ABI functions, valid-syntax semantic mutations, metadata/provenance/wrong-blob controls, fresh reads, unknown paths and double normalization. Root must review and run its serial TS7/focused validation before any acceptance or publication.
+
+Integration: use runtimeContractCurrentPaths to require every mapped returned entry. acceptedCallablePositive may reconstruct once per top-level proof, then mutate that historical data; do not renormalize the mutants. Other initial receipt reads use readRuntimeContractReceiptSource(path, rawReader). Unknown external facade paths remain raw. The16unchanged mapped files cannot distinguish earlier passage by identical text; the11changed historical outputs are refused as raw input.
+
+Proposed root validation, not run here: repository TS7, strict single-fork new tests/issue-3518-runtime-contract-evolution.test.ts, then unchanged runtime75 and historical631 with approved initial-read plumbing. Keep both heaps4096, maxforks1 and existing timeouts/error policy. Existing baseline69/75 and2/631 remain historical evidence until measured again.
+
+Do not rerun generate.cjs over these frozen paths; it is retained authoring evidence. The formatted receipt hash is pinned by the frozen helper. All original freezes are untouched.

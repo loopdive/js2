@@ -1,0 +1,115 @@
+{
+  "pr": {
+    "baseRefOid": "ae62dbdc06f3214360abf7702af7773fc34e5637",
+    "headRefOid": "5dd3fc53264ecd0f8503ca8af133730d35844465",
+    "mergeCommit": {
+      "oid": "6383d2187cac76626dd04c1a37e1733997c79c00"
+    },
+    "mergedAt": "2026-09-30T22:59:43Z",
+    "number": 6369,
+    "state": "MERGED",
+    "title": "feat(ir): add Function call and apply algorithm bodies"
+  },
+  "merge": "6383d2187cac76626dd04c1a37e1733997c79c00",
+  "exactParents": ["ae62dbdc06f3214360abf7702af7773fc34e5637", "5dd3fc53264ecd0f8503ca8af133730d35844465"],
+  "freshMain": "25ee5b64b883b6d735b1072272a24d8740256e0b",
+  "mainReadBefore": "25ee5b64b883b6d735b1072272a24d8740256e0b\trefs/heads/main",
+  "mainReadAfter": "25ee5b64b883b6d735b1072272a24d8740256e0b\trefs/heads/main",
+  "headAndMergeOnMain": true,
+  "content": [
+    {
+      "path": "plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md",
+      "headBlob": "e25daf09e44b8063edf3bf821768ab848017c95c",
+      "mergeBlob": "e25daf09e44b8063edf3bf821768ab848017c95c",
+      "freshMainBlob": "e25daf09e44b8063edf3bf821768ab848017c95c",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "plan/log/3518-function-prototype-invokers-handoff-2026-09-30.md",
+      "headBlob": "258f314678c0c1b8f88f1e698e2f9e3e141a0bd6",
+      "mergeBlob": "258f314678c0c1b8f88f1e698e2f9e3e141a0bd6",
+      "freshMainBlob": "258f314678c0c1b8f88f1e698e2f9e3e141a0bd6",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "headBlob": "250b40e09bc1f20a699f587b3a69ab7939d0bc24",
+      "mergeBlob": "250b40e09bc1f20a699f587b3a69ab7939d0bc24",
+      "freshMainBlob": "250b40e09bc1f20a699f587b3a69ab7939d0bc24",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+      "headBlob": "63c78fb8a5e28d2ca3df875c2d546ed28cd4b95c",
+      "mergeBlob": "63c78fb8a5e28d2ca3df875c2d546ed28cd4b95c",
+      "freshMainBlob": "63c78fb8a5e28d2ca3df875c2d546ed28cd4b95c",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
+      "headBlob": "a135e766cbd15d4e81987e3fb0adb65ece279e4f",
+      "mergeBlob": "a135e766cbd15d4e81987e3fb0adb65ece279e4f",
+      "freshMainBlob": "a135e766cbd15d4e81987e3fb0adb65ece279e4f",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "tests/helpers/ir-function-prototype-body-controls.ts",
+      "headBlob": "8344a2d7972d13f687c98ad809fdc85ad494923a",
+      "mergeBlob": "8344a2d7972d13f687c98ad809fdc85ad494923a",
+      "freshMainBlob": "8344a2d7972d13f687c98ad809fdc85ad494923a",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "tests/issue-3518-function-prototype-invoker-bodies.test.ts",
+      "headBlob": "f241f4d8e58ed9a63b7ae5f926dff5ed3675a471",
+      "mergeBlob": "f241f4d8e58ed9a63b7ae5f926dff5ed3675a471",
+      "freshMainBlob": "f241f4d8e58ed9a63b7ae5f926dff5ed3675a471",
+      "sameOnFreshMain": true
+    },
+    {
+      "path": "tests/issue-3518-semantic-provider-boundary.test.ts",
+      "headBlob": "d3705e3fa49ebb96be8901f6738e4d0970b561cb",
+      "mergeBlob": "d3705e3fa49ebb96be8901f6738e4d0970b561cb",
+      "freshMainBlob": "d3705e3fa49ebb96be8901f6738e4d0970b561cb",
+      "sameOnFreshMain": true
+    }
+  ],
+  "protectedJobs": 120,
+  "verifiedDelivery": true,
+  "shards": {
+    "standalone": {
+      "count": 82,
+      "allUniqueCompleteSuccess": true
+    },
+    "js-host": {
+      "count": 20,
+      "allUniqueCompleteSuccess": true
+    }
+  },
+  "totalShards": 102,
+  "regressionGatePassed": true,
+  "mergeReportsGatePassed": true,
+  "mergeGroupRuns": [
+    {
+      "id": 36787500620,
+      "name": "Test262 Sharded",
+      "conclusion": "success"
+    },
+    {
+      "id": 36787500581,
+      "name": "CI",
+      "conclusion": "success"
+    },
+    {
+      "id": 36787500609,
+      "name": "Differential test",
+      "conclusion": "success"
+    },
+    {
+      "id": 36787500589,
+      "name": "CLA Check",
+      "conclusion": "success"
+    }
+  ],
+  "fullIrMigrationComplete": false
+}

@@ -7,7 +7,16 @@ import {
   type NativeArgumentVectorReservations,
   type NativeArgumentVectorDeclarationPlan,
 } from "./native-argument-vectors.js";
-import { requireNativeStringLiteral, type NativeStringLiteralReservations } from "./native-string-literals.js";
+import {
+  nativeStringLiteralReservationInventory,
+  type NativeStringLiteralBinding,
+  type NativeStringLiteralReservations,
+} from "./native-string-literals.js";
+import {
+  assertNativeRealmRequirementsCurrent,
+  type NativeRealmRequirements,
+} from "../../../ir/program/native-realm-requirements.js";
+import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 
 export interface NativeBuiltinFunctionRequirement {
   readonly id: string;
@@ -31,10 +40,23 @@ export interface NativeBuiltinFunctionRequestDependencies {
   readonly strings: NativeStringLiteralReservations;
 }
 /** Symbolic extension of the sole closure issuer, not a parallel closure pack. */
-export interface NativeBuiltinFunctionRequests {
-  readonly requirements: NativeBuiltinFunctionRequirements;
+export interface NativeBuiltinFunctionRequestIssuer {
   readonly requests: NativeClosureDeclarationRequirements["requests"];
   readonly referenceTypes: readonly TypeReservation[];
+}
+export interface NativeBuiltinFunctionRequests extends NativeBuiltinFunctionRequestIssuer {
+  readonly requirements: NativeBuiltinFunctionRequirements;
+}
+export interface NativePublicBuiltinFunctionRequest {
+  readonly intrinsic: NativeRealmIntrinsic & { readonly callable: NonNullable<NativeRealmIntrinsic["callable"]> };
+  readonly signatureId: string;
+  readonly metadataId: string;
+}
+/** Full catalog declarations, including unavailable algorithms. This is never a completion grant. */
+export interface NativePublicBuiltinFunctionRequests extends NativeBuiltinFunctionRequestIssuer {
+  readonly realm: NativeRealmRequirements;
+  readonly key: string;
+  readonly intrinsics: readonly NativePublicBuiltinFunctionRequest[];
 }
 export const NATIVE_BUILTIN_FUNCTION_LITERALS = Object.freeze([
   "",
@@ -51,7 +73,7 @@ interface Owner {
   readonly original: NativeBuiltinFunctionRequirements;
   readonly dependencies: NativeBuiltinFunctionRequestDependencies;
   readonly identities: NativeBuiltinFunctionRequestDependencies;
-  readonly literals: readonly ReturnType<typeof requireNativeStringLiteral>[];
+  readonly literals: readonly NativeStringLiteralBinding[];
 }
 const owners = new WeakMap<NativeBuiltinFunctionRequests, Owner>();
 function fail(detail: string): never {
@@ -149,6 +171,19 @@ function freezeData<T>(value: T): T {
   }
   return value;
 }
+/** Each list gets a fresh owner audit; ordered requests retain the original first-match bindings. */
+function literalBindings(
+  tx: PhysicalModuleReservations,
+  strings: NativeStringLiteralReservations,
+  texts: readonly string[],
+): NativeStringLiteralBinding[] {
+  const { requests } = nativeStringLiteralReservationInventory(tx, strings);
+  return texts.map((text) => {
+    const binding = requests.find((request) => request.binding.text === text)?.binding;
+    if (!binding) throw new Error(`native strings: missing literal ${JSON.stringify(text)}`);
+    return binding;
+  });
+}
 function authenticate(tx: PhysicalModuleReservations, dependencies: NativeBuiltinFunctionRequestDependencies) {
   assertBuiltinFunctionDataRecord(dependencies);
   if (
@@ -157,7 +192,7 @@ function authenticate(tx: PhysicalModuleReservations, dependencies: NativeBuilti
   )
     fail("missing or unexpected dependency role");
   nativeArgumentVectorReservationInventory(tx, dependencies.arguments, dependencies.argumentPlan);
-  return NATIVE_BUILTIN_FUNCTION_LITERALS.map((text) => requireNativeStringLiteral(tx, dependencies.strings, text));
+  return literalBindings(tx, dependencies.strings, NATIVE_BUILTIN_FUNCTION_LITERALS);
 }
 export function declareNativeBuiltinFunctionRequests(
   tx: PhysicalModuleReservations,
@@ -240,4 +275,116 @@ export function nativeBuiltinFunctionRequestDependencies(
 ): NativeBuiltinFunctionRequestDependencies {
   requireNativeBuiltinFunctionRequests(tx, pack);
   return owners.get(pack)!.dependencies;
+}
+
+interface PublicOwner {
+  readonly tx: PhysicalModuleReservations;
+  readonly realm: NativeRealmRequirements;
+  readonly dependencies: NativeBuiltinFunctionRequestDependencies;
+  readonly identities: NativeBuiltinFunctionRequestDependencies;
+  readonly literals: readonly NativeStringLiteralBinding[];
+}
+const publicOwners = new WeakMap<NativePublicBuiltinFunctionRequests, PublicOwner>();
+function publicLiterals(tx: PhysicalModuleReservations, owner: PublicOwner) {
+  const catalog = owner.realm.description.catalog;
+  const texts = [
+    ...new Set(
+      catalog.intrinsics.flatMap((row) => [
+        ...(row.callable ? [row.callable.initialName] : []),
+        ...row.properties.flatMap((property) => [
+          ...(property.key.kind === "string" ? [property.key.value] : []),
+          ...(property.kind === "data" && property.value.kind === "string" ? [property.value.value] : []),
+        ]),
+      ]),
+    ),
+  ];
+  return literalBindings(tx, owner.dependencies.strings, texts);
+}
+export function declareNativePublicBuiltinFunctionRequests(
+  tx: PhysicalModuleReservations,
+  realm: NativeRealmRequirements,
+  dependencies: NativeBuiltinFunctionRequestDependencies,
+): NativePublicBuiltinFunctionRequests {
+  if (tx.state !== "reserving") fail("public declaration requires reservation phase");
+  assertNativeRealmRequirementsCurrent(realm);
+  authenticate(tx, dependencies);
+  const key = realm.description.key + ":public-builtins";
+  const intrinsics = Object.freeze(
+    realm.description.catalog.intrinsics.flatMap((intrinsic) => {
+      if (!intrinsic.callable) return [];
+      if (!Number.isSafeInteger(intrinsic.callable.length) || intrinsic.callable.length < 0)
+        fail("dynamic or infinite public builtin length needs its actual algorithm owner");
+      return [
+        Object.freeze({
+          intrinsic: intrinsic as NativePublicBuiltinFunctionRequest["intrinsic"],
+          signatureId: key + ":signature:" + intrinsic.id,
+          metadataId: key + ":metadata:" + intrinsic.id,
+        }),
+      ];
+    }),
+  );
+  const requests: NativeClosureDeclarationRequirements["requests"] = freezeData(
+    intrinsics.flatMap((row) => [
+      {
+        kind: "signature" as const,
+        id: row.signatureId,
+        allocationMode: "support" as const,
+        params: [{ kind: "externref" as const }, { kind: "ref" as const, typeKey: dependencies.arguments.carrier.key }],
+        results: [{ kind: "externref" as const }],
+      },
+      {
+        kind: "metadata" as const,
+        id: row.metadataId,
+        signatureId: row.signatureId,
+        key: key + ":intrinsic:" + row.intrinsic.id,
+        name: row.intrinsic.callable.initialName,
+        length: row.intrinsic.callable.length,
+      },
+    ]),
+  );
+  const pack = Object.freeze({
+    realm,
+    key,
+    intrinsics,
+    requests,
+    referenceTypes: Object.freeze([dependencies.arguments.carrier]),
+  });
+  const pending = { tx, realm, dependencies, identities: Object.freeze({ ...dependencies }), literals: [] };
+  publicOwners.set(pack, { ...pending, literals: publicLiterals(tx, pending) });
+  return pack;
+}
+export function requireNativePublicBuiltinFunctionRequests(
+  tx: PhysicalModuleReservations,
+  pack: NativePublicBuiltinFunctionRequests,
+  expectedRealm?: NativeRealmRequirements,
+): NativePublicBuiltinFunctionRequests {
+  const owner = publicOwners.get(pack);
+  if (!owner || owner.tx !== tx || (expectedRealm !== undefined && owner.realm !== expectedRealm))
+    fail("foreign or copied public request issuer");
+  assertNativeRealmRequirementsCurrent(owner.realm);
+  authenticate(tx, owner.dependencies);
+  for (const role of ["arguments", "argumentPlan", "strings"] as const)
+    if (owner.dependencies[role] !== owner.identities[role]) fail("changed public dependency identities");
+  const literals = publicLiterals(tx, owner);
+  if (literals.length !== owner.literals.length || literals.some((binding, index) => binding !== owner.literals[index]))
+    fail("changed public literal tokens");
+  return pack;
+}
+/** The two private issuers share transport, never their implementation or completion authority. */
+export function requireNativeBuiltinFunctionRequestIssuer(
+  tx: PhysicalModuleReservations,
+  pack: NativeBuiltinFunctionRequestIssuer,
+): NativeBuiltinFunctionRequestIssuer {
+  if (owners.has(pack as NativeBuiltinFunctionRequests))
+    return requireNativeBuiltinFunctionRequests(tx, pack as NativeBuiltinFunctionRequests);
+  if (publicOwners.has(pack as NativePublicBuiltinFunctionRequests))
+    return requireNativePublicBuiltinFunctionRequests(tx, pack as NativePublicBuiltinFunctionRequests);
+  return fail("foreign or copied request issuer family");
+}
+export function nativePublicBuiltinFunctionRequestDependencies(
+  tx: PhysicalModuleReservations,
+  pack: NativePublicBuiltinFunctionRequests,
+): NativeBuiltinFunctionRequestDependencies {
+  requireNativePublicBuiltinFunctionRequests(tx, pack);
+  return publicOwners.get(pack)!.identities;
 }

@@ -148,3 +148,11 @@ This is a host API containment/correctness contract, not a security boundary.
 - [ ] Inward operations on the root remain allowed, while root-relative
       outward operations cannot alter ancestors or siblings.
 - [ ] Allowed methods delegate through the resolved import function.
+
+## 2026-09-30 review cross-reference
+
+The shipped containment exempts `domRoot` itself from the mutation checks
+(`src/runtime.ts:19476/19486/19513/19522` gate on `self !== domRoot`), so
+`root.after(x)`, `root.remove()`, `root.insertAdjacentHTML("beforebegin", …)`
+escape the subtree; `src/runtime-containment.ts` is an unreferenced duplicate.
+Tracked as #6792.

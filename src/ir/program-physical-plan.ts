@@ -43,6 +43,8 @@ import {
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
+import { readNativeRealmLiteralInput } from "../backend/wasmgc/program/native-realm-literals.js";
+import type { NativeRealmDescription } from "./program/native-realm-requirements.js";
 import type {
   NativeResourceRecipe,
   NativeDeclaredValType,
@@ -193,6 +195,7 @@ export interface PhysicalSetupPlan {
   readonly vectors: NativeVectorResourcePlan;
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
   readonly nativeStrings?: PhysicalNativeStringSetup;
@@ -527,6 +530,7 @@ function nativeStringSetup(
     input.demands.projection !== projection
   )
     nativeInvalid("native input does not belong to the selected standalone program/projection");
+  const realm = readNativeRealmLiteralInput(input, options.utf8Storage);
   const current = planNativeStringValuePhysical(
     input.demands,
     {
@@ -535,12 +539,14 @@ function nativeStringSetup(
       stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
     },
     input.invocationRequirements,
+    realm?.realmRequirements,
   );
   if (current.kind !== "planned") nativeInvalid("native input has no supported current physical recipe");
   if (current.invocationRequirements !== input.invocationRequirements)
     nativeInvalid("missing exact invocation demand owner");
+  if (current.realmLiterals !== realm?.realmLiterals) nativeInvalid("missing exact realm literal owner");
   nativeSame(input.plan, current.plan, "native declarations or selection changed");
-  if (input.plan.mode === "number-boundary") {
+  if (input.plan.mode !== "literals") {
     if (!input.valueRequirements) nativeInvalid("missing exact issued native value plan");
     assertNativeValueResourcePlanFor(input.valueRequirements, program, projection, "native-string");
   } else if (input.valueRequirements !== undefined)
@@ -1190,7 +1196,7 @@ export function planPhysicalSetup(
     vectors,
     nativeStrings,
     gaps,
-    native?.invocationRequirements?.source,
+    native?.invocationRequirements?.source ?? native?.realmRequirements?.source,
   );
   const invocation = planNativeInvocationInput(sourceClosures, options.utf8Storage === true, native);
   for (const gap of invocation.gaps) gaps.add(gap.detail, gap.unitId);
@@ -1439,6 +1445,7 @@ export function planPhysicalSetup(
         }
       : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),
     ...(nativeStrings ? { nativeStrings } : {}),

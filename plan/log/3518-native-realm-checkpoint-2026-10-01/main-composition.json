@@ -1,0 +1,39 @@
+{
+  "base": "25ee5b64b883b6d735b1072272a24d8740256e0b",
+  "files": 1749,
+  "layers": {
+    "ir-program": {
+      "main": [],
+      "graph": ["src/ir/program/native-realm-requirements.ts"],
+      "floor": 38
+    },
+    "runtime-contracts": {
+      "main": [],
+      "graph": ["src/runtime/contracts/native-realm-catalog.ts"],
+      "floor": 9
+    },
+    "backend-wasmgc": {
+      "main": [],
+      "graph": [
+        "src/backend/wasmgc/program/native-realm-literals.ts",
+        "src/backend/wasmgc/program/native-realm.ts",
+        "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
+        "src/backend/wasmgc/resources/native-object-realm.ts",
+        "src/backend/wasmgc/resources/native-mixed-object-access.ts"
+      ],
+      "floor": 49
+    },
+    "native-runtime": {
+      "main": [
+        "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+        "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts"
+      ],
+      "graph": [
+        "src/runtime/wasmgc/values/realm-object-layouts.ts",
+        "src/runtime/wasmgc/values/mixed-object-access-bodies.ts"
+      ],
+      "floor": 97
+    }
+  },
+  "resolution": "preserve main order and graph additive tails"
+}

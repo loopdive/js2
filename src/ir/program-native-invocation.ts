@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { NativeInvocationRequirements } from "./program/native-invocation-requirements.js";
+import type { NativeRealmRequirements } from "./program/native-realm-requirements.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   planNativeSourceClosureRequirements,
@@ -16,6 +17,7 @@ import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import {
   reserveNativeSourceClosureTypes,
   requireNativeSourceClosureTypes,
+  requireCompletedNativeSourceClosureState,
   resolveNativeSourceClosure,
   resolveNativeSourceClosureShape,
   resolveNativeSourceRefCell,
@@ -32,6 +34,9 @@ import {
   bindNativeSourceClosureCallables,
   requireNativeSourceClosureCallables,
   type NativeSourceClosureCallables,
+  bindNativeRealmSourceClosureCallables,
+  requireNativeRealmSourceClosureCallables,
+  type NativeRealmSourceClosureCallables,
 } from "../backend/wasmgc/resources/native-source-closure-callables.js";
 import type { Instr, ValType } from "../wasm/model/instructions.js";
 import { lowerIrFunctionBody } from "./lower-generic.js";
@@ -40,7 +45,7 @@ import type { IrLowerResolver } from "./backend/lower-contracts.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { LinearEmitter } from "./backend/linear-emitter.js";
 import type { IrBackendKind } from "./backend/legality.js";
-import type { NativeBuiltinFunctionRequests } from "../backend/wasmgc/resources/native-builtin-function-requests.js";
+import type { NativeBuiltinFunctionRequestIssuer } from "../backend/wasmgc/resources/native-builtin-function-requests.js";
 
 export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
@@ -51,8 +56,9 @@ interface SourceOwner {
   readonly units: Map<IrUnitId, { readonly fn: IrFunction; readonly slot: FunctionReservation }>;
   readonly completed: Set<IrUnitId>;
   callables?: NativeSourceClosureCallables;
+  realmCallables?: NativeRealmSourceClosureCallables;
   bound: boolean;
-  readonly builtins: NativeBuiltinFunctionRequests | undefined;
+  readonly builtins: NativeBuiltinFunctionRequestIssuer | undefined;
 }
 const owners = new WeakMap<NativeSourceClosureEmission, SourceOwner>();
 function fail(detail: string): never {
@@ -80,7 +86,7 @@ export function beginNativeSourceClosureEmission(
   tx: PhysicalModuleReservations,
   requirements: NativeSourceClosureRequirements,
   carriers: NativeSourceClosureCarriers,
-  builtins?: NativeBuiltinFunctionRequests,
+  builtins?: NativeBuiltinFunctionRequestIssuer,
 ): NativeSourceClosureEmission {
   assertPreparedIrProgram(requirements.demands.program);
   assertNativeSourceClosureRequirementsCurrent(requirements);
@@ -143,6 +149,23 @@ export function nativeSourceClosureCallableBindings(
     requirements,
   );
   return requireNativeSourceClosureCallables(tx, owner.callables, pack.types);
+}
+
+/** Bind the genuine original unit map, without fabricating selected invocation demand. */
+export function nativeRealmSourceClosureCallableBindings(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceClosureCallables {
+  const owner = requireOwner(tx, pack);
+  if (!owner.bound) fail("realm source callables have not been bound to the consumer's slots");
+  owner.realmCallables ??= bindNativeRealmSourceClosureCallables(
+    tx,
+    pack.types,
+    new Map([...owner.units].map(([id, row]) => [id, row.slot])),
+    realm,
+  );
+  return requireNativeRealmSourceClosureCallables(tx, owner.realmCallables, pack.types, realm);
 }
 
 export function nativeSourceClosureValueType(
@@ -241,6 +264,7 @@ export function requireCompletedNativeSourceClosures(
   const owner = requireOwner(tx, pack);
   if (!owner.bound || owner.units.size !== pack.requirements.units.length || owner.completed.size !== owner.units.size)
     fail("source canonical lowering is incomplete");
+  requireCompletedNativeSourceClosureState(tx, pack.types);
   for (const [unitId, row] of owner.units) {
     if (!owner.completed.has(unitId)) fail("source unit did not pass canonical lowering");
     tx.assertCompletedReservation(row.slot);
