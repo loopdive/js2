@@ -39,6 +39,8 @@ function createFreshCompiler() {
       sourceMapUrl: "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
+      // #6776: the worker validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+      validate: false,
       // (#3049 C1) Defer top-level init in the host test262 lane: export
       // `__module_init` instead of wiring the wasm `(start)` section, so
       // top-level code runs AFTER `setExports` has wired the runtime
@@ -76,6 +78,8 @@ process.on("message", async (msg) => {
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
             emitWat: false,
             skipSemanticDiagnostics: true,
+            // #6776: see createFreshCompiler — the worker validates itself.
+            validate: false,
             inferModuleStrictArguments,
             semanticProviders,
             // (#3049 C1) See createFreshCompiler — host lane defers top-level

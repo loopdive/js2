@@ -63,6 +63,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { fusedToNumberEnabled, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { readEnv } from "../env.js";
 export { fusedToNumberEnabled, smiFastPathAllValues, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
 
 /** The abstract `i31` heap type, as every other `ref.test`/`ref.cast` site spells it. */
@@ -109,7 +110,7 @@ function canAllocateLocals(fctx: FunctionContext): boolean {
 export const toNumberFastStats = { fusedSites: 0, smiSites: 0, declines: 0 };
 let statsHookInstalled = false;
 function note(bucket: "fusedSites" | "smiSites" | "declines"): void {
-  if (process.env.JS2WASM_TONUMBER_FAST_DEBUG !== "1") return;
+  if (readEnv("JS2WASM_TONUMBER_FAST_DEBUG") !== "1") return;
   toNumberFastStats[bucket]++;
   if (statsHookInstalled) return;
   statsHookInstalled = true;

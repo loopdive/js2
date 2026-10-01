@@ -42,6 +42,7 @@ import {
 import { prepareIrBodies, type PreparedIrFreeFunctionBodies } from "./ir-prepared-free-functions.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
+import { readEnv } from "../env.js";
 
 export interface MultiPreparedArrayLeafShape {
   readonly arrayDeclaration: ts.VariableDeclaration;
@@ -620,7 +621,7 @@ export function planEarlyMultiPreparedArrayLeafRoute<Plan extends MultiPreparedS
       safety,
       lateProviderOwnerUnitIds: input.lateProviderOwnerUnitIds(state.plan, sourceFile),
     });
-    if (!candidate && process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_ARRAY_LEAF === "1") {
+    if (!candidate && readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_ARRAY_LEAF") === "1") {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
@@ -654,7 +655,7 @@ export function planEarlyMultiPreparedArrayLeafRoute<Plan extends MultiPreparedS
       : undefined,
     projectLoweringPlans: (selection) => input.projectLoweringPlans(exact.plan, selection),
   });
-  if (!route && process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_ARRAY_LEAF === "1") {
+  if (!route && readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_ARRAY_LEAF") === "1") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "patch",
@@ -672,7 +673,7 @@ export function assertMultiPreparedArrayLeafRouteCurrent(input: {
   readonly safety: MultiPreparedScalarLeafGraphSafety;
 }): void {
   const { ctx, route, finalSelection, safety } = input;
-  if (process.env.JS2WASM_TEST_TAMPER_MULTI_PREPARED_ARRAY_LEAF?.split(",").includes(route.legacyName)) {
+  if (readEnv("JS2WASM_TEST_TAMPER_MULTI_PREPARED_ARRAY_LEAF")?.split(",").includes(route.legacyName)) {
     route.allocatedFunction.name = `${route.legacyName}$tampered`;
   }
   const allocated = exactAllocatedNumericCallable(ctx, route.unitId, route.legacyName, 0, false);

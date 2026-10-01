@@ -3,6 +3,7 @@
 import type { FieldDef } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { presenceWordName } from "./fnctor-presence-bits.js";
+import { readEnv } from "../env.js";
 
 export const FNCTOR_CONSTRUCTOR_FIELD = "$constructor";
 
@@ -43,13 +44,13 @@ export function appendFnctorInternalFields(
   // marshalling (`exposedClosedStructFieldName` hides `__`-prefixed fields);
   // they are not presence-tracked, so presence-word count is unchanged and
   // the delta is purely the slots themselves.
-  const padSlots = Number(process.env.JS2WASM_FNCTOR_PAD_SLOTS ?? "0");
+  const padSlots = Number(readEnv("JS2WASM_FNCTOR_PAD_SLOTS") ?? "0");
   if (Number.isInteger(padSlots) && padSlots > 0) {
     for (let i = 0; i < padSlots; i++) {
       fields.push({ name: `__pad${i}`, type: { kind: "externref" }, mutable: true });
     }
   }
-  const stride = process.env.JS2WASM_PACKED_PRESENCE_BITS === "0" ? 32 : 1;
+  const stride = readEnv("JS2WASM_PACKED_PRESENCE_BITS") === "0" ? 32 : 1;
   const tracked = fields.filter((candidate) => onlyConditional.get(candidate.name) === true);
   tracked.forEach((field, index) => {
     field.presenceTracked = true;

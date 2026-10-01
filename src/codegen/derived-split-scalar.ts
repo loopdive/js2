@@ -8,6 +8,7 @@ import { ensureNativeStringHelpers, flatStringType } from "./native-strings.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { emitTdzInit } from "./statements/tdz.js";
 import { isModuleInitChunkFunctionContext } from "./module-init-chunks.js";
+import { readEnv } from "../env.js";
 
 const splitTailLengthLocals = new WeakMap<FunctionContext, Map<ts.Declaration, number>>();
 
@@ -64,7 +65,7 @@ export function tryCompileSingleUnitSplitLengthBinding(
       if (isSafeDirectLengthRead(property, node)) {
         // accepted
       } else if (
-        process.env.JS2WASM_NATIVE_SPLIT_TAIL_SCALAR !== "0" &&
+        readEnv("JS2WASM_NATIVE_SPLIT_TAIL_SCALAR") !== "0" &&
         isSplitTailLengthRead(ctx, property, node, decl)
       ) {
         observesTailLength = true;

@@ -10,6 +10,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { compileExpression } from "./shared.js";
+import { readEnv } from "../env.js";
 
 const MAX_FIXED_HOST_METHOD_CALL_ARITY = 3;
 
@@ -38,7 +39,7 @@ export function tryEmitFixedHostMethodCall(
     ctx.standalone ||
     ctx.wasi ||
     ctx.targetProfile.semanticProviders === "native-first" ||
-    process.env.JS2WASM_FIXED_HOST_METHOD_CALLS === "0" ||
+    readEnv("JS2WASM_FIXED_HOST_METHOD_CALLS") === "0" ||
     expr.arguments.length > MAX_FIXED_HOST_METHOD_CALL_ARITY ||
     expr.arguments.some((arg) => ts.isSpreadElement(arg))
   ) {

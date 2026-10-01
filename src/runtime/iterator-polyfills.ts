@@ -314,6 +314,7 @@ function _getGeneratorPrototype(): any {
     state.materialize = undefined;
     state.index = state.buf.length;
     state.retDone = true;
+    state.pendingThrow = null; // (#6781) completed: the eager body's deferred throw never surfaces
     return { value, done: true };
   });
 
@@ -326,6 +327,8 @@ function _getGeneratorPrototype(): any {
     state.thunk = undefined;
     state.materialize = undefined;
     state.index = state.buf.length;
+    state.pendingThrow = null; // (#6781) completed: a later next() is `{undefined, done: true}`,
+    state.retDone = true; // with no deferred body throw and no body return value
     throw e;
   });
 

@@ -44,6 +44,7 @@ import {
   collectMultiPreparedStringLeafShapes,
   type MultiPreparedStringLeafShape,
 } from "./multi-prepared-string-leaf.js";
+import { readEnv } from "../env.js";
 
 type ProgramCallableRecord = IrProgramCallableBindingGraph["records"][number];
 
@@ -161,7 +162,7 @@ export function initializeMultiPreparedProgram(
     !ctx.wasi &&
     !ctx.fast &&
     ctx.nativeStrings &&
-    !explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER);
+    !explicitlyDisabled(readEnv("JS2WASM_MULTI_PREPARED_CALLABLE_COMPONENT_CUTOVER"));
   return createMultiPreparedProgramOwner<IrOverlayPlan>(multiAst, options, ctx);
 }
 
@@ -678,7 +679,7 @@ function publishCallableAttemptCensus(
   // a consumer mutation cannot silently rewrite the trusted denominator.
   const publicAttemptedProjection = new Set(authoritativeAttempted);
   input.ctx.irProgramCallableAttemptedUnitIds = publicAttemptedProjection;
-  const censusMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_CENSUS;
+  const censusMutation = readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_CENSUS");
   if (censusMutation === "drop") {
     publicAttemptedProjection.delete([...authoritativeAttempted][0]!);
   } else if (censusMutation === "foreign") {
@@ -772,7 +773,7 @@ function assertCallableGraphUsesMatchCachedPlans(
     localCalleesBySource.set(sourceFile, plan.identityPlan.identitySelection.localCallees ?? new Map());
     importedCallsBySource.set(sourceFile, plan.importedCalls);
   }
-  const mutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_PLAN;
+  const mutation = readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_PLAN");
   let mutationApplied = false;
   for (const use of graph.uses) {
     const owner = selected.get(use.ownerUnitId);
@@ -924,7 +925,7 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
     }
   }
   const assertPreflightCurrent = (): void => {
-    const bodyMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_DECLARATION_BODY;
+    const bodyMutation = readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_DECLARATION_BODY");
     if (
       bodyMutation !== undefined &&
       bodyMutation !== "1" &&
@@ -938,7 +939,7 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
         `unknown callable declaration-body mutation ${JSON.stringify(bodyMutation)}`,
       );
     }
-    const stagedBodyMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_STAGED_BODY;
+    const stagedBodyMutation = readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_STAGED_BODY");
     if (stagedBodyMutation !== undefined && stagedBodyMutation !== "1") {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -1252,7 +1253,7 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
   input.owner.reconcileModuleInitCensus(observedCensus);
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
   const stringProofContext = { checker: input.multiAst.checker, oracle: input.ctx.oracle };
-  const stringShapes = input.explicitlyDisabled(process.env.JS2WASM_IR_STRING_BUILDER)
+  const stringShapes = input.explicitlyDisabled(readEnv("JS2WASM_IR_STRING_BUILDER"))
     ? []
     : collectMultiPreparedStringLeafShapes({
         proofContext: stringProofContext,
@@ -1271,7 +1272,7 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
   const active =
     !!input.options?.experimentalIR &&
     !input.options.disableIrFirst &&
-    !input.explicitlyDisabled(process.env.JS2WASM_IR_FIRST) &&
+    !input.explicitlyDisabled(readEnv("JS2WASM_IR_FIRST")) &&
     input.ctx.standalone &&
     !input.ctx.wasi &&
     !input.ctx.fast &&
@@ -1299,12 +1300,12 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
   if (preparedModuleInitBatch) input.owner.registerPreparedModuleInitBatch(preparedModuleInitBatch);
   input.owner.planExistingRoutes({
     active,
-    scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
-    arrayCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
-    stringCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_STRING_CUTOVER),
+    scalarCutoverEnabled: !input.explicitlyDisabled(readEnv("JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER")),
+    arrayCutoverEnabled: !input.explicitlyDisabled(readEnv("JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER")),
+    stringCutoverEnabled: !input.explicitlyDisabled(readEnv("JS2WASM_MULTI_PREPARED_STRING_CUTOVER")),
     stringProofContext,
-    functionValueLeafCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
-    fibonacciPairCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
+    functionValueLeafCutoverEnabled: !input.explicitlyDisabled(readEnv("JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER")),
+    fibonacciPairCutoverEnabled: !input.explicitlyDisabled(readEnv("JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER")),
     ctx: input.ctx,
     sourceFiles: input.multiAst.sourceFiles,
     entryFile: input.multiAst.entryFile,

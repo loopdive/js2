@@ -87,6 +87,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 // property-access.ts / index.ts.
 import { coerceType, compileExpression } from "./shared.js";
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { readEnv } from "../env.js";
 
 /**
  * Names with dedicated lowerings (array length, proto walk, constructor
@@ -139,7 +140,7 @@ export const fnctorTypedReadStats = {
 };
 let statsHookInstalled = false;
 function censusEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_TYPED_READS_DEBUG === "1";
+  return readEnv("JS2WASM_FNCTOR_TYPED_READS_DEBUG") === "1";
 }
 function note(bucket: Map<string, number>, key: string): void {
   if (!censusEnabled()) return;

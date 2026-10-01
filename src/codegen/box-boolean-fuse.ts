@@ -113,6 +113,7 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { retUnboxAbiPoisoned, retUnboxMergeSinkEnabled } from "./ret-unbox-abi.js"; // (#4406 Phase 2)
 import { walkChildren, walkInstructions } from "./walk-instructions.js";
+import { readEnv } from "../env.js";
 
 const OFF_TOKENS = new Set(["", "0", "off", "false", "no"]);
 
@@ -154,7 +155,7 @@ function cloneInstrs(instrs: readonly Instr[]): Instr[] {
 
 /** Flag gate. Default OFF ⇒ byte-identical output. */
 function fuseEnabled(): boolean {
-  const raw = process.env.JS2WASM_UNBOXED_BOOL_FUSE;
+  const raw = readEnv("JS2WASM_UNBOXED_BOOL_FUSE");
   if (raw === undefined) return false;
   return !OFF_TOKENS.has(raw.trim().toLowerCase());
 }
@@ -478,8 +479,8 @@ function fuseInArray(arr: Instr[], opts: FuseOpts, stats: Stats): void {
  */
 export function fuseBoxBooleanSinks(ctx: CodegenContext): void {
   if (!fuseEnabled()) return; // DEFAULT OFF — byte-identical to base.
-  const debug = process.env.JS2WASM_UNBOXED_BOOL_FUSE_DEBUG === "1";
-  const poison = process.env.JS2WASM_UNBOXED_BOOL_FUSE_POISON === "1";
+  const debug = readEnv("JS2WASM_UNBOXED_BOOL_FUSE_DEBUG") === "1";
+  const poison = readEnv("JS2WASM_UNBOXED_BOOL_FUSE_POISON") === "1";
   const truthyIdx = ctx.funcMap.get("__is_truthy");
   if (truthyIdx === undefined) {
     if (debug) process.stderr.write(`[box-bool-fuse] no __is_truthy in this module — pass declined\n`);

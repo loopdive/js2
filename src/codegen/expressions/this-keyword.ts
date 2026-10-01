@@ -26,6 +26,7 @@ import { emitCachedResolvedThis, recordResolvedThis } from "../receiver-cse.js";
 import { emitLazyClassObjectGet } from "./extern.js";
 import { compileIdentifier } from "./identifiers.js";
 import { tryEmitObjectLiteralMethodReceiverValue } from "../method-receiver-this.js"; // (#6651 A11)
+import { readEnv } from "../../env.js";
 
 export function compileThisKeyword(
   ctx: CodegenContext,
@@ -49,7 +50,7 @@ export function compileThisKeyword(
   // the receiver parameter a complete representation of `this`, so direct
   // twin-to-twin calls do not need to install a dynamic receiver frame.
   if (
-    process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0" &&
+    readEnv("JS2WASM_TWIN_RECEIVER_PARAM") !== "0" &&
     fctx.typedThisLocalIdx !== undefined &&
     fctx.typedThisStructIdx !== undefined
   ) {

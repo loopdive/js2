@@ -16,6 +16,7 @@ import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
+import { readEnv } from "../../env.js";
 
 function stripParens(expr: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
@@ -289,7 +290,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   // merely a cheaper guess. A resolved cross-domain assignment still demotes
   // regardless — that is #3961's hazard and it is untouched.
   const provenNumeric =
-    process.env.JS2WASM_MIXED_CARRIER_NUMERIC !== "0" &&
+    readEnv("JS2WASM_MIXED_CARRIER_NUMERIC") !== "0" &&
     initialDomain === "number" &&
     ctx.numericLocalVerdict?.(decl.name, decl.name.text) === true;
 
@@ -332,7 +333,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
  * `JS2WASM_NUMERIC_RETURNS`.
  */
 export function numericAdmissionEnabled(): boolean {
-  const value = process.env.JS2WASM_NUMERIC_ADMISSION;
+  const value = readEnv("JS2WASM_NUMERIC_ADMISSION");
   return value !== "0" && value !== "off" && value !== "";
 }
 

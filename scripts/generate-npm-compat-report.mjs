@@ -30,7 +30,14 @@ import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
 
 import { compile, compileMulti, compileProject } from "../src/index.ts";
-import { buildStringConstants, buildStringConstants16, jsString, wrapExports } from "../src/runtime.ts";
+import {
+  buildCompiledImports,
+  buildStringConstants,
+  buildStringConstants16,
+  jsString,
+  wrapExports,
+} from "../src/runtime.ts";
+import { instantiateLinkedProviders } from "../src/linked-provider-runtime.ts";
 
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
@@ -1638,6 +1645,19 @@ function packageSpecifierFor(setup) {
   return `./${entry.replace(/^\.\//, "")}`;
 }
 
+/**
+ * (#6779) `result.importObject` is built with the library's fail-closed
+ * dynamic-code default (`deny`). The perf lanes measure packages as they always
+ * ran — lodash's root detection reaches `Function("return this")()` — so build
+ * the same import object with the explicit `hostEval` policy.
+ */
+function npmCompatHostImportObject(result) {
+  const options = { dynamicCode: "hostEval" };
+  const imports = buildCompiledImports(result, undefined, options);
+  if (result.linkedModules?.length) instantiateLinkedProviders(result.linkedModules, imports, { options });
+  return imports;
+}
+
 async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   const target = lane === "js-host" || lane === "js-host-native" ? "gc" : "standalone";
   const driverPath = join(setup.root, `.js2-npm-compat-perf-${lane}.mjs`);
@@ -1746,9 +1766,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   let instance;
   const instantiateStarted = performance.now();
   try {
-    const importObject = target === "standalone" ? {} : (result.importObject ?? {});
+    const importObject = target === "standalone" ? {} : npmCompatHostImportObject(result);
     instance = await WebAssembly.instantiate(module, importObject);
-    importObject.__setInstance?.(instance);
+    importObject.setInstance?.(instance);
     const init = instance.exports.__module_init;
     if (typeof init === "function") init();
   } catch (error) {

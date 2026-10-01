@@ -28,6 +28,10 @@ import { compileDirectPorfforProgram } from "./lib/porffor-direct-source-adapter
 
 type WorkerLane = "wasm" | "js2" | "plain";
 
+// #6776: the linear compile below is timed into published compile phases; keep
+// `validate: false` so they stay comparable with pre-validation runs.
+const JS2_LINEAR_COMPILE_OPTIONS = { target: "linear", allocator: "analysis-stack", validate: false } as const;
+
 interface WorkerArguments {
   readonly lane: WorkerLane;
   readonly programId: string;
@@ -160,11 +164,7 @@ async function run(options: WorkerArguments): Promise<void> {
   }
 
   const sourceStart = performance.now();
-  const compiled = await compile(source.source, {
-    target: "linear",
-    allocator: "analysis-stack",
-    fileName: source.path,
-  });
+  const compiled = await compile(source.source, { ...JS2_LINEAR_COMPILE_OPTIONS, fileName: source.path });
   const sourceToLinearMs = performance.now() - sourceStart;
   const report = getLastLinearIrReport();
   const exactFunctionSelected = report?.compiled.includes(program.functionName) === true;
@@ -198,11 +198,7 @@ async function run(options: WorkerArguments): Promise<void> {
           compilerResourceUsage: compilerResourceUsage(),
           commandProvenance: {
             frontend: "js2-exact-source",
-            js2CompileOptions: {
-              target: "linear",
-              allocator: "analysis-stack",
-              fileName: source.path,
-            },
+            js2CompileOptions: { ...JS2_LINEAR_COMPILE_OPTIONS, fileName: source.path },
             compiledFunctions: report?.compiled ?? [],
             rejectedFunctions: report?.rejected ?? [],
             compileSuccess: compiled.success,
@@ -251,11 +247,7 @@ async function run(options: WorkerArguments): Promise<void> {
           compilerResourceUsage: compilerResourceUsage(),
           commandProvenance: {
             frontend: "js2-exact-source",
-            js2CompileOptions: {
-              target: "linear",
-              allocator: "analysis-stack",
-              fileName: source.path,
-            },
+            js2CompileOptions: { ...JS2_LINEAR_COMPILE_OPTIONS, fileName: source.path },
             memoryPlan: report.memoryPlan,
           },
         },
@@ -301,7 +293,7 @@ async function run(options: WorkerArguments): Promise<void> {
     },
     commandProvenance: {
       frontend: "js2-exact-source",
-      js2CompileOptions: { target: "linear", allocator: "analysis-stack", fileName: source.path },
+      js2CompileOptions: { ...JS2_LINEAR_COMPILE_OPTIONS, fileName: source.path },
       telemetry:
         "getLastLinearIrReport captured immediately; report.irModule and report.memoryPlan passed without replanning",
       memoryPlan: report.memoryPlan,
@@ -319,6 +311,8 @@ async function writeWasmBuild(options: WorkerArguments, source: ReturnType<typeo
     fileName: source.path,
     ...LANDING_WASMTIME_COMPILE_OPTIONS,
     experimentalIR: false,
+    // #6776: js2CompileMs below is published; keep it comparable with pre-validation runs.
+    validate: false,
   } as const;
   const compileStarted = performance.now();
   const compiled = await compile(source.source, compileOptions);

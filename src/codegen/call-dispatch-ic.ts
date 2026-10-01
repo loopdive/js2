@@ -94,10 +94,11 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 /** True when `JS2WASM_CALL_DISPATCH_IC` requests the rewrite. DEFAULT OFF. */
 function enabled(): boolean {
-  const raw = (process.env.JS2WASM_CALL_DISPATCH_IC ?? "").trim().toLowerCase();
+  const raw = (readEnv("JS2WASM_CALL_DISPATCH_IC") ?? "").trim().toLowerCase();
   return !(raw === "" || raw === "0" || raw === "off" || raw === "false" || raw === "no");
 }
 
@@ -390,8 +391,8 @@ function rewriteInstrs(
  */
 export function inlineCallDispatchSites(ctx: CodegenContext): void {
   if (!enabled()) return; // DEFAULT OFF — byte-identical to base.
-  const debug = process.env.JS2WASM_CALL_DISPATCH_IC_DEBUG === "1";
-  const poison = process.env.JS2WASM_CALL_DISPATCH_IC_POISON === "1";
+  const debug = readEnv("JS2WASM_CALL_DISPATCH_IC_DEBUG") === "1";
+  const poison = readEnv("JS2WASM_CALL_DISPATCH_IC_POISON") === "1";
 
   const stats: Stats = { armed: 0, patched: 0, fnsTouched: 0, declines: new Map() };
   const decline = (name: string, reason: string): void => {

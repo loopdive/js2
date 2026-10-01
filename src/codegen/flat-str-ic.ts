@@ -76,9 +76,10 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 function enabled(): boolean {
-  const raw = process.env.JS2WASM_FLAT_STR_IC;
+  const raw = readEnv("JS2WASM_FLAT_STR_IC");
   return raw !== undefined && !["", "0", "off", "false", "no"].includes(raw);
 }
 
@@ -327,8 +328,8 @@ function rewriteInstrs(instrs: Instr[], t: Targets, scratch: (which: 0 | 1) => n
  */
 export function inlineFlatStrCallSites(ctx: CodegenContext): void {
   if (!enabled()) return; // DEFAULT OFF — byte-identical to base.
-  const debug = process.env.JS2WASM_FLAT_STR_IC_DEBUG === "1";
-  const poison = process.env.JS2WASM_FLAT_STR_IC_POISON === "1";
+  const debug = readEnv("JS2WASM_FLAT_STR_IC_DEBUG") === "1";
+  const poison = readEnv("JS2WASM_FLAT_STR_IC_POISON") === "1";
 
   // Handles in the same regime the emitters baked into call instrs: funcMap is
   // the shift-maintained authority for __str_flatten (#1618); __str_equals

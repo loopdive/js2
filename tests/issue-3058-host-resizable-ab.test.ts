@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { buildCompiledImports, compileAndInstantiate } from "../src/runtime.js";
 
 // #3058 — resizable ArrayBuffer + length-tracking TypedArray views in the
 // JS-HOST lane. The standalone lane got the `$__resizable_ab` machinery in
@@ -24,6 +24,17 @@ import { compileAndInstantiate } from "../src/runtime.js";
 async function run<T>(src: string): Promise<T> {
   const exports = await compileAndInstantiate(src);
   return (exports as { f: () => T }).f();
+}
+
+// (#6779) `compileAndInstantiate` uses the library's `deny` dynamic-code
+// default; the `new Function` carve-out case needs the hostEval policy.
+async function runHostEval<T>(src: string): Promise<T> {
+  const r = await compile(src);
+  expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+  const imports = buildCompiledImports(r, undefined, { dynamicCode: "hostEval" });
+  const { instance } = await WebAssembly.instantiate(r.binary, imports as unknown as WebAssembly.Imports);
+  imports.setInstance?.(instance);
+  return (instance.exports as { f: () => T }).f();
 }
 
 describe("#3058 host-lane resizable ArrayBuffer", () => {
@@ -233,7 +244,7 @@ describe("#3058 host-lane resizable ArrayBuffer", () => {
   describe("#2960 new Function class-carrying body (harness subClass shape)", () => {
     it("returns a genuine host class extending a builtin", async () => {
       expect(
-        await run(`function subClass(type: any): any {
+        await runHostEval(`function subClass(type: any): any {
           try {
             return new Function('return class My' + type + ' extends ' + type + ' {}')();
           } catch (e) {}

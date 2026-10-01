@@ -179,6 +179,7 @@ import { IR_NUMBER_TO_FIXED_FN } from "../ir/string-runtime.js";
 import { EXEC_CENSUS_PREFIX } from "./exec-census.js";
 import type { CodegenContext } from "./context/types.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "./ir-native-map.js";
+import { readEnv } from "../env.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -1180,7 +1181,7 @@ function shouldSkipModuleInitInlineCallee(
 }
 
 export function inlineUserFunctions(ctx: CodegenContext): void {
-  const opts = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
+  const opts = parseInlineOptions(readEnv("JS2WASM_IR_INLINE"));
   if (!opts.enabled) return;
   const mod = ctx.mod;
   const moduleInitBoundary = moduleInitInlineBoundary(ctx.moduleInitChunkHelperNames);
@@ -1540,7 +1541,7 @@ function report(
   // Three dense lines per compile is a diagnostic, not a compiler message.
   // Printed when the operator asked for the flag (including `report`, whose
   // whole purpose is the print) — silent on a plain default build.
-  if (!opts.report && !opts.verbose && !tunedFlagExplicit(process.env.JS2WASM_IR_INLINE)) return;
+  if (!opts.report && !opts.verbose && !tunedFlagExplicit(readEnv("JS2WASM_IR_INLINE"))) return;
   const w = (s: string): void => void process.stderr.write(s);
   const sizes = mod.functions
     .map((f, index) => (sharedFunctionPositions.has(index) ? countInstrsDag(f.body) : countInstrs(f.body)))

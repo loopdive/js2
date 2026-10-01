@@ -18,6 +18,7 @@ import { ensureLateImport } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
 import { collectConcatOperands } from "./native-batched-concat.js";
 import { compileStringBinaryOp } from "./string-ops.js";
+import { readEnv } from "../env.js";
 
 // (#3753 S2) An `any`-typed operand the whole-program fixpoint already PROVED
 // numeric is not really `any` for arithmetic purposes. Inside a fnctor
@@ -31,7 +32,7 @@ import { compileStringBinaryOp } from "./string-ops.js";
 // so trusting them here is consistent with the representation those fields
 // ALREADY have, not a new claim. Standalone-only, like the verdicts.
 export function provenNumericOperand(ctx: CodegenContext, e: ts.Expression): boolean {
-  if (!ctx.standalone || process.env.JS2WASM_NUMERIC_OPERANDS === "0") return false;
+  if (!ctx.standalone || readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
   const bare = ts.isParenthesizedExpression(e) ? e.expression : e;
   // `this.f` where every write to `f` is numeric.
   if (

@@ -132,6 +132,7 @@ import {
   resolveComputedKeyExpression,
   valTypesMatch,
 } from "./shared.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#846h / #1682) Returns true if `body` lexically contains a `super(...)` call
@@ -2352,7 +2353,7 @@ export function skipExactPreparedClassBody(
 
 function assertDirectClassBodyAllowed(ctx: CodegenContext, name: string, declaration: ts.Node): void {
   ctx.irBodyRouteAuditSession?.recordRoot("compileClassBodies", name, declaration);
-  const poisoned = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+  const poisoned = readEnv("JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
   if (!poisoned || !poisoned.split(",").includes(name)) return;
   throw new Error(`injected direct class-body poison: ${name}`);
 }

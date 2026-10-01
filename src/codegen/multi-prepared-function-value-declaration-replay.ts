@@ -36,6 +36,7 @@ import {
   multiPreparedFunctionValueUseIsCurrent,
   type MultiPreparedFunctionValueUseReceipt,
 } from "./multi-prepared-function-value-import-target.js";
+import { readEnv } from "../env.js";
 
 const POISON_MESSAGE = "live declaration oracle poisoned after semantic-snapshot finalization";
 
@@ -196,7 +197,7 @@ interface RawSnapshot {
 }
 
 function armed(variable: string, legacyName: string): boolean {
-  const raw = process.env[variable];
+  const raw = readEnv(variable);
   if (raw === undefined || raw === "") return false;
   const names = raw.split(",").map((entry) => entry.trim());
   if (names.some((entry) => entry.length === 0)) invariant(`${variable} must be an exact comma-separated name list`);
@@ -407,7 +408,7 @@ export function certifyMultiPreparedDeclarationReplay<Evidence>(input: {
   const roleOf = multiPreparedDeclarationRoleClassifier(input.reductionBody);
   const useLiveOracle = armed("JS2WASM_TEST_DECLARATION_REPLAY_LIVE_ORACLE", input.legacyName);
   const poisonLiveOracle = armed("JS2WASM_TEST_POISON_DECLARATION_ORACLE", input.legacyName);
-  const mutation = process.env.JS2WASM_TEST_MUTATE_DECLARATION_SNAPSHOT;
+  const mutation = readEnv("JS2WASM_TEST_MUTATE_DECLARATION_SNAPSHOT");
   let poisoned = false;
   const facade: DeclarationQueryOracle = {
     valueDeclarationOf: (node) => {

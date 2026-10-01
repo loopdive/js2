@@ -130,11 +130,7 @@ export {
 // pulls the `async-cps`/`async-frame` chain which imports back into `closures`
 // (a cycle), so it must evaluate after this module's other deps are loaded to
 // avoid perturbing the init order of the coercion-engine/string-ops chain.
-import {
-  planAsyncClosureActivation,
-  emitAsyncClosureBody,
-  reportDeclinedAsyncRejectionHazard,
-} from "./async-activation.js";
+import { planAsyncClosureActivation, emitAsyncClosureBody, reportDeclinedAsyncBody } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
 import { asyncClosurePromiseWrapEnabled, reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
@@ -235,6 +231,7 @@ import {
   ensureFuncClosureSingleton,
   emitCachedFuncClosureAccess,
 } from "./closures/method-trampolines.js";
+import { readEnv } from "../env.js";
 export {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -3477,7 +3474,7 @@ function reportClosureFrameBreach(
   };
   walk(liftedFctx.body);
   if (worst < 0) return;
-  if (process.env?.JS2WASM_FRAME_OPS) {
+  if (readEnv("JS2WASM_FRAME_OPS")) {
     const flat: string[] = [];
     const dump = (instrs: readonly Instr[], depth: number): void => {
       for (const instr of instrs) {
@@ -3522,7 +3519,7 @@ function reportClosureFrameBreach(
  * Consumed by `scripts/profile-buckets.mjs`.
  */
 function reportClosureNameMap(arrow: ts.ArrowFunction | ts.FunctionExpression, closureName: string): void {
-  if (typeof process === "undefined" || !process.env?.JS2WASM_CLOSURE_NAME_MAP) return;
+  if (typeof process === "undefined" || !readEnv("JS2WASM_CLOSURE_NAME_MAP")) return;
   let label = ts.isFunctionExpression(arrow) && arrow.name ? arrow.name.text : "";
   if (!label) {
     const parent = arrow.parent;
@@ -3666,12 +3663,12 @@ export function compileArrowAsClosure(
       closureReturnType = { kind: "externref" };
       eagerAsyncPromiseWrap = true;
     }
-    // (#3587) Declined async arrow/fn-expr with a genuinely-suspending await
-    // inside a `try`: refuse loudly instead of silently compiling the legacy
-    // pass-through that cannot deliver awaited rejections. Still reported for
+    // (#3587/#6780) Declined async arrow/fn-expr with a suspension inside a `try`
+    // or only settled awaits: refuse loudly instead of silently compiling the
+    // legacy pass-through (lost rejections / inline continuations). Still reported for
     // the #4630 wrap — the wrap settles the COMPLETION value, it does not make
     // the parked pass-through deliver awaited rejections.
-    reportDeclinedAsyncRejectionHazard(ctx, arrow);
+    reportDeclinedAsyncBody(ctx, arrow);
   }
   // (#4648) NOTE — a DECLINED (await-free) async closure does NOT get the
   // Promise wrapper here; only the host-callback bridge does (see
@@ -3784,7 +3781,7 @@ export function compileArrowAsClosure(
   // together with the offending source text. The end-of-codegen checker can only
   // say which function is broken; this says which ARROW produced it, which is
   // the last link needed to reduce a fixture. Inert unless set.
-  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+  if (typeof process !== "undefined" && readEnv("JS2WASM_CHECK_FRAMES")) {
     reportClosureFrameBreach(ctx, arrow, closureName, liftedFuncTypeIdx, liftedFctx);
   }
   pushProgramAbiNestedCallable(ctx, arrow, liftedFuncIdx, {
@@ -4798,7 +4795,7 @@ export function compileArrowAsCallback(
         }
       } else {
         // Immutable capture or already-boxed: push directly
-        if (process.env?.JS2WASM_FRAME_OPS) {
+        if (readEnv("JS2WASM_FRAME_OPS")) {
           const liveFrame = fctx.params.length + fctx.locals.length;
           if (cap.localIdx >= liveFrame) {
             process.stderr.write(

@@ -9,6 +9,8 @@
  * compound `standalone || wasi || strictNoHostImports` predicates.
  */
 
+import { readEnv } from "./env.js";
+
 export type CompileTarget = "gc" | "linear" | "wasi" | "standalone";
 export type CompileBackend = "wasmgc" | "linear";
 export type CompileEnvironment = "javascript" | "wasi" | "none" | "unknown";
@@ -134,7 +136,7 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
       environment === "javascript" &&
       capabilityPolicy === "ambient-js" &&
       semanticProviderSelection === "native-first" &&
-      process.env.JS2WASM_NATIVE_REGIME_JS !== "0");
+      readEnv("JS2WASM_NATIVE_REGIME_JS") !== "0");
 
   return Object.freeze({
     target,

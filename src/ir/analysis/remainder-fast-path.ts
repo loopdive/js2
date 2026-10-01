@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
 import { staticIntegerRange, type StaticIntegerRange, type StaticIntegerRangeContext } from "./static-numeric-range.js";
+import { readEnv } from "../../env.js";
 
 const I64_MIN = -(2 ** 63);
 const I64_MAX_EXCLUSIVE = 2 ** 63;
@@ -43,7 +44,7 @@ export function remainderFastPathPlan(
   left: ts.Expression,
   right: ts.Expression,
 ): RemainderFastPathPlan {
-  if (process.env.JS2WASM_INLINE_REMAINDER_FAST_PATH === "0") return { kind: "none" };
+  if (readEnv("JS2WASM_INLINE_REMAINDER_FAST_PATH") === "0") return { kind: "none" };
 
   const lhs = proveIntegerOperand(ctx, left);
   const rhs = proveIntegerOperand(ctx, right);

@@ -108,6 +108,7 @@ import {
 } from "./runtime/typed-array-host-brand.js";
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
+import * as dynamicCodePolicy from "./runtime/dynamic-code-policy.js"; // (#6779)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
@@ -160,6 +161,7 @@ import {
   _updateLegacyRegExpState,
   type LegacyRegExpState,
 } from "./runtime/legacy-regexp.js";
+import { readEnv } from "./env.js";
 export { buildWasiPolyfill } from "./runtime/wasi-polyfill.js";
 
 // (#4616) Internal runtime decisions (arg conversion, deep equal, trampolines)
@@ -8196,7 +8198,7 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
   // prototype object. Accessors run with the live-mirror proxy as the receiver.
   const protoDesc = _fnctorProtoLookup(obj, key, exports);
   if (protoDesc) {
-    if (process.env.DEBUG_1712)
+    if (readEnv("DEBUG_1712"))
       console.error(
         "[protoHook]",
         String(key),
@@ -9036,7 +9038,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       const val = safeGetField(key);
       const primitiveValue = _nativePrimitiveToHost(val, currentExports());
       if (primitiveValue !== _MISS) return primitiveValue;
-      if (process.env.JS2WASM_DEBUG_3051) {
+      if (readEnv("JS2WASM_DEBUG_3051")) {
         console.error(
           "[3051] proxy.get",
           String(key),
@@ -11487,7 +11489,7 @@ function resolveImport(
   // the leading `self` for `extern_class` members. Lets the generic method shim
   // below drop its rest parameter. Undefined when unknown → rest form kept.
   paramCount?: number,
-  dynamicCode: DynamicCodePolicy = "compat",
+  dynamicCode: dynamicCodePolicy.ResolvedDynamicCodePolicy = dynamicCodePolicy.DEFAULT_DYNAMIC_CODE_POLICY,
   dynamicCodeEvaluator?: DynamicCodeEvaluator,
   getCaughtException?: () => unknown,
 ): Function {
@@ -12705,37 +12707,20 @@ function resolveImport(
             return dynamicCodeEvaluator.evaluate(src, { direct: isDirect !== 0 });
           };
         }
-        // #1164: dynamic eval via Wasm module compilation.  The primary
-        // path compiles the eval string through js2wasm and instantiates
-        // it as a fresh Wasm module via the JS Wasm API — no `(0, eval)`,
-        // no JS global leakage, CSP-compatible (`wasm-unsafe-eval` only).
-        //
-        // We retain the legacy `(0, eval)(...)` host path as a fallback
-        // for sources the Wasm pipeline cannot yet compile (e.g. test262
-        // harness-rewritten code containing identifiers that resolve to
-        // host-only state, or syntax constructs js2wasm doesn't support).
-        // The fallback is gated on JS host availability; in standalone /
-        // WASI mode neither path works and the import is simply absent.
-        const wasmEvalShim = createEvalShim({});
+        // `hostEval` (#1164/#6779): compile the string through js2wasm into a
+        // fresh child Wasm module first. Only when that module cannot be BUILT
+        // (parse, compile, instantiate — js2wasm is stricter than V8 on some
+        // forms) does the string go to the host realm's `(0, eval)`. A throw
+        // from RUNNING the string propagates once, unchanged: re-running it in
+        // the host would repeat its side effects and swap its error.
+        const wasmEvalShim = createEvalShim({ dynamicCode, hostFallback: true });
         return (src: any, _isDirect: number = 0) => {
           // Spec: if input is not a string, return it unchanged.
           if (typeof src !== "string") return src;
-          // Try the Wasm-module path first.  Compile failures, instantiation
-          // failures, and "import not provided" errors fall through to the
-          // host-eval fallback so test262 harness-aware eval keeps working.
           try {
             return wasmEvalShim(src, _isDirect);
           } catch (e: any) {
-            // SyntaxError from the Wasm-module path means js2wasm couldn't
-            // compile the source as JS at all — propagate it (real JS would
-            // throw too).  Other errors (ReferenceError from missing imports,
-            // generic Error from instantiation) fall back to host eval.
-            const isSyntaxError = e instanceof SyntaxError;
-            if (isSyntaxError) {
-              // If the host-eval fallback can compile it, prefer that result;
-              // js2wasm is more strict than V8/SpiderMonkey on some forms.
-              return _legacyHostEval(src);
-            }
+            if (!dynamicCodePolicy.isDynamicCodeBuildFailure(e)) throw e;
             return _legacyHostEval(src);
           }
         };
@@ -12912,7 +12897,7 @@ assert._isSameValue = isSameValue;
           policy: dynamicCode,
           createFunction: dynamicCodeEvaluator ? (p, b) => dynamicCodeEvaluator.createFunction(p, b) : undefined,
           createWasmNewFunctionShim: () =>
-            createNewFunctionShim({ globalSandbox }) as (params: unknown, body: string) => unknown,
+            createNewFunctionShim({ globalSandbox, dynamicCode }) as (params: unknown, body: string) => unknown,
           moduleGlobal: globalSandbox ?? (globalThis as any),
           makeEvalError: (message) => new EvalError(message),
         });
@@ -17713,7 +17698,7 @@ assert._isSameValue = isSameValue;
               materialize?: () => void;
             } = { buf: [], index: 0, pendingThrow: null, retVal: undefined, thunk: buf };
             st.materialize = () => {
-              const DBG = process.env.GEN_DEBUG === "1";
+              const DBG = readEnv("GEN_DEBUG") === "1";
               const thunk = st.thunk;
               st.thunk = undefined;
               st.materialize = undefined;
@@ -19548,18 +19533,19 @@ export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions 
    */
   ambientCompatibility?: boolean;
   /**
-   * Runtime implementation for dynamic eval and new Function.
+   * Runtime implementation for dynamic eval and new Function (#6779).
    *
-   * `compat` preserves the existing meta-circular-first path and its native
-   * fallback. `native` delegates directly to the current realm's eval/Function.
-   * `evaluator` delegates to the explicit evaluator below. `deny` fails closed.
+   * `deny` (the default) fails closed. `evaluator` delegates to the explicit
+   * evaluator below. `hostEval` tries a js2wasm child module, then the host
+   * realm's eval/Function when that module cannot be built; `native` uses the
+   * host realm's directly. Both reach host globals. `compat` = deprecated `hostEval`.
    */
   dynamicCode?: DynamicCodePolicy;
   /** Synchronous evaluator used only when `dynamicCode` is `evaluator`. */
   dynamicCodeEvaluator?: DynamicCodeEvaluator;
 }
 
-export type DynamicCodePolicy = "compat" | "native" | "evaluator" | "deny";
+export type DynamicCodePolicy = dynamicCodePolicy.DynamicCodePolicy;
 
 /** Live caller binding retained by the AOT module's host realm. */
 export interface DynamicCodeBinding {
@@ -19649,6 +19635,7 @@ export function buildImports(
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
   domCapabilityRuntime?.bindCallbackState(callbackState);
   const hostImportCallState = createHostImportCallState();
+  const dynamicCode = dynamicCodePolicy.resolveDynamicCodePolicy(options?.dynamicCode); // (#6779) once per instance
 
   // (#1467 / #1933) Each instantiated module gets its own symbol id space and
   // per-instance symbol cache/registry, RegExp legacy state, and subclass/
@@ -19682,7 +19669,7 @@ export function buildImports(
         options?.globalSandbox,
         instanceState,
         imp.paramCount,
-        options?.dynamicCode,
+        dynamicCode,
         options?.dynamicCodeEvaluator,
         hostImportCallState.getCaughtException,
       );

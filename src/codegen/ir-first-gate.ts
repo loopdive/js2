@@ -22,6 +22,7 @@ import {
   requireIrPlanningSourceId,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
+import { readEnv } from "../env.js";
 
 // ===========================================================================
 // (#3143) ALLOWLIST skip predicate — the safe-by-construction IR-first skip.
@@ -251,7 +252,7 @@ export function irFirstBodyIsProvenLowerable(
         const f = exprDomain(c.whenFalse);
         if (t !== null && t === f) return t;
         if (
-          process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL !== "0" &&
+          readEnv("JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL") !== "0" &&
           t !== null &&
           f !== null &&
           t !== "dynamic" &&

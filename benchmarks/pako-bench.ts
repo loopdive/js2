@@ -330,7 +330,8 @@ interface WasmModule {
 async function compileModule(source: string, fast: boolean): Promise<WasmModule | null> {
   try {
     const t0 = performance.now();
-    const result = await compile(source, { fast });
+    // #6776: `validate: false` keeps compileMs comparable with pre-validation runs.
+    const result = await compile(source, { fast, validate: false });
     const compileMs = performance.now() - t0;
 
     if (!result.success) {

@@ -67,6 +67,12 @@ export function preloadLibFiles(files: Record<string, string>): void {
 function getPath() {
   return getDefaultEnvironment().path;
 }
+/** `node:path` for the disk-backed entry points; they cannot run without it (#6782). */
+function requirePath(): typeof import("node:path") {
+  const pathMod = getPath();
+  if (!pathMod) throw new Error("compiling from disk needs a Node `path` module, which this runtime does not provide");
+  return pathMod;
+}
 function dirname(p: string) {
   return getPath()?.dirname(p) ?? "";
 }
@@ -1298,7 +1304,7 @@ function resolveProjectCompilerOptions(
   if (tsconfigOption === false) return undefined;
   const sys = ts.sys;
   if (!sys) return undefined; // no disk host — legacy options
-  const pathMod = require("node:path") as typeof import("node:path");
+  const pathMod = requirePath();
 
   let configPath: string | undefined;
   if (typeof tsconfigOption === "string") {
@@ -1341,7 +1347,7 @@ function resolveProjectCompilerOptions(
  * Returns a MultiTypedAST suitable for generateMultiModule().
  */
 export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions): MultiTypedAST {
-  const pathMod = require("node:path") as typeof import("node:path");
+  const pathMod = requirePath();
   const resolvedEntry = pathMod.resolve(entryPath);
 
   const entryIsJsx = resolvedEntry.endsWith(".tsx") || resolvedEntry.endsWith(".jsx");

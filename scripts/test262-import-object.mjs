@@ -57,6 +57,15 @@ import { resetTemporalRealmGlobals } from "./test262-temporal.mjs";
 
 export { RUNTIME_EVAL_IMPORT_MODULE };
 
+/**
+ * (#6779) The dynamic-code policy every test262 lane builds imports with. The
+ * library default is `deny`; test262 measures `eval` / `new Function` the way
+ * the host lane always ran them — a js2wasm child module first, the host
+ * realm's eval / Function when that module cannot be built — so each lane's
+ * `buildImports` passes this explicitly, and linked providers get it below.
+ */
+export const TEST262_DYNAMIC_CODE_POLICY = "hostEval";
+
 // ── Runtime-eval provider (#2928 E6/E7) ────────────────────────────────
 // One selection per process, memoised: `selectCachedRuntimeEvalProvider()`
 // reads the cache and (for the interpreter tier) reassembles the provider
@@ -291,7 +300,12 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     // different identity, and a `$DONE` marker printed where nobody is looking
     // (#6476). `linkedHost` carries the same `{deps, options}` the lane passed
     // to `buildImports` for the consumer; absent, behaviour is unchanged.
-    instantiateLinkedProviders(linkedModules, importObj, options.linkedHost);
+    // (#6779) A provider's own eval / Function imports follow the lane policy.
+    const linkedHost = options.linkedHost ?? {};
+    instantiateLinkedProviders(linkedModules, importObj, {
+      ...linkedHost,
+      options: { dynamicCode: TEST262_DYNAMIC_CODE_POLICY, ...linkedHost.options },
+    });
     const instance = await WebAssembly.instantiate(wasmModule, importObj);
     wireCompiledInstance(importObj, instance, true);
     // (#6477) A linked harness body is compiled with `deferTopLevelInit`

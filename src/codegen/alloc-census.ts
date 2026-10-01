@@ -35,6 +35,7 @@ import type { Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { reportReceiverCse } from "./receiver-cse.js"; // (#4157 B)
 import { walkChildren } from "./walk-instructions.js";
+import { readEnv } from "../env.js";
 
 /** Export-name prefix for a per-type counter. */
 export const ALLOC_CENSUS_PREFIX = "__alloc_count_";
@@ -43,7 +44,7 @@ export const ALLOC_CENSUS_PREFIX = "__alloc_count_";
 export const CALL_CENSUS_PREFIX = "__call_census_";
 
 export function allocCensusEnabled(): boolean {
-  return process.env.JS2WASM_ALLOC_CENSUS === "1";
+  return readEnv("JS2WASM_ALLOC_CENSUS") === "1";
 }
 
 /**
@@ -54,7 +55,7 @@ export function allocCensusEnabled(): boolean {
  * (`__any_box_*` for `$AnyValue`) gets its first level of attribution.
  */
 function allocCensusByFunc(): boolean {
-  return process.env.JS2WASM_ALLOC_CENSUS_BY_FUNC === "1";
+  return readEnv("JS2WASM_ALLOC_CENSUS_BY_FUNC") === "1";
 }
 
 /**
@@ -64,7 +65,7 @@ function allocCensusByFunc(): boolean {
  * thousands of exported globals; focusing keeps the measurement build sane.
  */
 function allocCensusFocus(): string[] {
-  const raw = process.env.JS2WASM_ALLOC_CENSUS_FOCUS;
+  const raw = readEnv("JS2WASM_ALLOC_CENSUS_FOCUS");
   if (!raw) return [];
   return raw
     .split(",")
@@ -79,7 +80,7 @@ function allocCensusFocus(): string[] {
  * helpers. Self-gated; usable with or without the per-type census.
  */
 function callCensusTargets(): string[] {
-  const raw = process.env.JS2WASM_ALLOC_CENSUS_CALLS;
+  const raw = readEnv("JS2WASM_ALLOC_CENSUS_CALLS");
   if (!raw) return [];
   return raw
     .split(",")

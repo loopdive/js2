@@ -39,6 +39,7 @@ import {
 import { nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
+import { readEnv } from "../env.js";
 
 type AsyncSelectionOptions = Pick<
   IrSelectionOptions,
@@ -838,8 +839,8 @@ export function preparedIrAsyncAwaitSite(
   }
   if (
     settledOwner &&
-    (process.env.JS2WASM_TEST_DROP_IR_ASYNC_SETTLED_OWNER === "1" ||
-      process.env.JS2WASM_TEST_DROP_IR_ASYNC_SETTLED_OWNER === owner.name?.text)
+    (readEnv("JS2WASM_TEST_DROP_IR_ASYNC_SETTLED_OWNER") === "1" ||
+      readEnv("JS2WASM_TEST_DROP_IR_ASYNC_SETTLED_OWNER") === owner.name?.text)
   ) {
     // Test-only fault injection models a producer that withdrew an owner
     // after declaration ABI projection. The next shared gate below must

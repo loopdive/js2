@@ -25,6 +25,7 @@ import {
 import { ProgramAbiInvariantError } from "./program-abi.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
 import type { Import, ValType, WasmFunction } from "./types.js";
+import { readEnv } from "../env.js";
 
 type PreparedProgramAbiScopeTransaction = ReturnType<
   NonNullable<CodegenContext["programAbiSession"]>["beginPreparedComponentScope"]
@@ -547,9 +548,9 @@ export function prepareDependencyCompletePreparedComponents(
 ): PreparedComponentSealingResult {
   const { ctx, entries, inventory } = input;
   const session = ctx.programAbiSession;
-  const failureSelector = parsePreparedSealFailureSelector(process.env.JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE);
+  const failureSelector = parsePreparedSealFailureSelector(readEnv("JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE"));
   const internalErrorSelector = parsePreparedSealFailureSelector(
-    process.env.JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_INTERNAL_ERROR,
+    readEnv("JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_INTERNAL_ERROR"),
     "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_INTERNAL_ERROR",
   );
   if (!session) {

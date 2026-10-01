@@ -22,6 +22,7 @@ import { ts } from "../ts-api.js";
 import type { IrUnitId } from "./identity.js";
 import type { AnalysisState, FieldWrite } from "./fnctor-graph-model.js";
 import type { LatticeType } from "./propagate.js";
+import { readEnv } from "../env.js";
 
 export interface FieldFactTraceRecord {
   ownerName: string;
@@ -45,11 +46,11 @@ const plusRhs = new Map<string, string>();
 let hooked = false;
 
 export function fieldFactTraceEnabled(): boolean {
-  return Boolean(process.env.JS2WASM_FNCTOR_FIELD_FACT_TRACE);
+  return Boolean(readEnv("JS2WASM_FNCTOR_FIELD_FACT_TRACE"));
 }
 
 function matchesFilter(ownerName: string, field: string): boolean {
-  const raw = process.env.JS2WASM_FNCTOR_FIELD_FACT_TRACE ?? "";
+  const raw = readEnv("JS2WASM_FNCTOR_FIELD_FACT_TRACE") ?? "";
   for (const entry of raw.split(",")) {
     const f = entry.trim();
     if (f === "") continue;

@@ -2,6 +2,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { FunctionContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 const HOT_COUNTED_PUSH_TRIP_COUNT = 1024;
 const HOT_NUMERIC_INDEX_OF_UNROLL = 32;
@@ -11,7 +12,7 @@ const HOT_NUMERIC_INDEX_OF_BATCHED_UNROLL = 8;
 const HOT_NUMERIC_INDEX_OF_BRANCH_BATCH = 4;
 
 function batchedIndexOfBranchesEnabled(): boolean {
-  return process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES !== "0";
+  return readEnv("JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES") !== "0";
 }
 
 interface CountedPushProof {

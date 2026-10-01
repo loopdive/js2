@@ -70,6 +70,7 @@ import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read c
 import { coerceType } from "./type-coercion.js";
 import { compileClassExpression } from "./expressions/new-super.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
+import { readEnv } from "../env.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -97,7 +98,7 @@ export { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 let traceStmtGlobalSerial = 0;
 function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement, compile: () => void): void {
   const pos = getSourcePos(ctx, stmt);
-  if (process.env.JS2WASM_TRACE_LAST_STMT && pos) {
+  if (readEnv("JS2WASM_TRACE_LAST_STMT") && pos) {
     // Debug-only (env-gated): stream every statement boundary into an exported
     // mutable f64 global so a host harness can read WHERE a standalone module
     // trapped (file index * 1e6 + line). No imports — global writes don't

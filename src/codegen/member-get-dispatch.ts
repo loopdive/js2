@@ -75,6 +75,7 @@ import {
   residFieldReadInstrs,
   residMatchTestInstrs,
 } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
+import { readEnv } from "../env.js";
 
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
@@ -1084,7 +1085,7 @@ function buildMemberGetInlineCacheArm(
     findColdStructsForField(ctx, propName).length === 0 &&
     findFnctorLayoutStructsForField(ctx, propName).length === 0;
   if (
-    process.env.JS2WASM_MEMBER_GET_IC !== "1" ||
+    readEnv("JS2WASM_MEMBER_GET_IC") !== "1" ||
     !eligible ||
     !ctx.standalone ||
     !ctx.nativeStrings ||
