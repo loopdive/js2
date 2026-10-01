@@ -25,9 +25,12 @@
         "src/shared/contracts/identity-values.ts",
         "src/shared/contracts/ir-counted-string-identity.ts",
         "src/shared/contracts/ir-preparation-failure.ts",
-        "src/shared/contracts/ir-unit-inventory.ts"
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/ir-preparation-errors.ts",
+        "src/shared/contracts/ir-counted-string-site-id.ts",
+        "src/shared/contracts/string-surrogate.ts"
       ],
-      "minModules": 6
+      "minModules": 9
     },
     {
       "id": "wasm-model",
@@ -106,9 +109,16 @@
         "src/ir/core/type-binding-keys.ts",
         "src/ir/core/type-key.ts",
         "src/ir/core/string-callables.ts",
-        "src/ir/core/closure-invocation-callables.ts"
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/core/global-binding-keys.ts",
+        "src/ir/core/declared-types.ts",
+        "src/ir/core/fnctor-abi.ts",
+        "src/ir/core/tag-domain.ts",
+        "src/ir/core/string-runtime.ts",
+        "src/ir/core/runtime-symbols.ts",
+        "src/ir/core/date-callables.ts"
       ],
-      "minModules": 22
+      "minModules": 29
     },
     {
       "id": "ir-analysis",
@@ -118,7 +128,13 @@
         "src/ir/analysis/alloc-registry.ts",
         "src/ir/analysis/effects.ts",
         "src/ir/analysis/intrinsics.ts",
-        "src/ir/analysis/async-plan.ts"
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts"
       ],
       "required": true,
       "entries": [
@@ -126,9 +142,15 @@
         "src/ir/analysis/alloc-registry.ts",
         "src/ir/analysis/effects.ts",
         "src/ir/analysis/intrinsics.ts",
-        "src/ir/analysis/async-plan.ts"
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts"
       ],
-      "minModules": 5
+      "minModules": 11
     },
     {
       "id": "ir-passes",
@@ -158,9 +180,13 @@
         "src/ir/runtime/vector-callables.ts",
         "src/ir/runtime/number-conversion-callable.ts",
         "src/ir/runtime/ordinary-object-callables.ts",
-        "src/ir/runtime/closure-invocation-callables.ts"
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/js-tag-domain.ts",
+        "src/ir/runtime/producer.ts",
+        "src/ir/runtime/verify.ts",
+        "src/ir/runtime/generator-support.ts"
       ],
-      "minModules": 15
+      "minModules": 19
     },
     {
       "id": "ir-program",
@@ -205,9 +231,14 @@
         "src/ir/program/native-object-result-requirements.ts",
         "src/ir/program/native-object-result-values.ts",
         "src/ir/program/native-prototype-requirements.ts",
-        "src/ir/program/native-realm-requirements.ts"
+        "src/ir/program/native-realm-requirements.ts",
+        "src/ir/program/allocations.ts",
+        "src/ir/program/class-layouts.ts",
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts"
       ],
-      "minModules": 38
+      "minModules": 43
     },
     {
       "id": "runtime-contracts",
@@ -1678,6 +1709,69 @@
         "src/runtime/wasmgc/values/closure-result-bodies.ts"
       ],
       "minModules": 8
+    },
+    {
+      "layer": "foundation",
+      "entries": [
+        "src/shared/contracts/ir-preparation-errors.ts",
+        "src/shared/contracts/ir-counted-string-site-id.ts",
+        "src/shared/contracts/string-surrogate.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/global-binding-keys.ts",
+        "src/ir/core/declared-types.ts",
+        "src/ir/core/fnctor-abi.ts",
+        "src/ir/core/tag-domain.ts",
+        "src/ir/core/string-runtime.ts",
+        "src/ir/core/runtime-symbols.ts",
+        "src/ir/core/date-callables.ts"
+      ],
+      "minModules": 7
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": ["src/ir/runtime/js-tag-domain.ts", "src/ir/runtime/producer.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "ir-analysis",
+      "entries": [
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts"
+      ],
+      "minModules": 6
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": ["src/ir/runtime/verify.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/allocations.ts", "src/ir/program/class-layouts.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": ["src/ir/runtime/generator-support.ts"],
+      "minModules": 1
     }
   ],
   "nonModules": [
@@ -10439,11 +10533,8 @@
     },
     {
       "path": "src/ir/analysis/dominance.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-analysis",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Move the complete dominance implementation into the clean ir-analysis layer; the contract-only subroot does not complete src/ir/analysis."
+      "state": "clean",
+      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/encoding-inference.ts",
@@ -10455,19 +10546,13 @@
     },
     {
       "path": "src/ir/analysis/encoding.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-core",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "state": "clean",
+      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/escape.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-core",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "state": "clean",
+      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/i32-coerced-locals.ts",
@@ -10487,11 +10572,8 @@
     },
     {
       "path": "src/ir/analysis/lattice.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-core",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "state": "clean",
+      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/linear-memory-plan.ts",
@@ -10519,11 +10601,8 @@
     },
     {
       "path": "src/ir/analysis/ownership.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-core",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "state": "clean",
+      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/remainder-fast-path.ts",
@@ -14699,6 +14778,106 @@
       "path": "src/backend/wasmgc/resources/native-mixed-object-access.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/shared/contracts/ir-preparation-errors.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-site-id.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/string-surrogate.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/core/global-binding-keys.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/declared-types.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/fnctor-abi.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/tag-domain.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/string-runtime.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/runtime-symbols.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/date-callables.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/runtime/js-tag-domain.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/producer.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/verify.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/class-layouts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/owner.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/draft-abi-lookup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-support-dependencies.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/generator-support.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
     }
   ]
 }

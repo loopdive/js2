@@ -1,0 +1,43 @@
+{
+  "base": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "depends_on_pr": 6378,
+  "canonical_main_checked": "f37134584ee7ce68c43d9ea66381bd80be6b660d",
+  "files": {
+    "src/ir/analysis/lattice.ts": {
+      "sha256": "8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c",
+      "bytes": 5739
+    },
+    "src/ir/analysis/ownership.ts": {
+      "sha256": "e591418b5044f844dd37562471d249aa116846e30f0a23cdde1b3e51d4640051",
+      "bytes": 23651
+    },
+    "src/ir/analysis/encoding.ts": {
+      "sha256": "02502ab1f7a254253a830a1c4bbacfc27900f6d34aa0a43eb4030d50d3bcdf11",
+      "bytes": 10318
+    },
+    "src/ir/analysis/escape.ts": {
+      "sha256": "8292ac767cb3f1f9ea89de4a7a4e1b7f68be8f2a78ac12c92a67ea0d2f614444",
+      "bytes": 10826
+    },
+    "src/ir/analysis/dominance.ts": {
+      "sha256": "dd951d008a605614fb7e8eee4e8d148112f438b9a954d75197a6da6d6b50a820",
+      "bytes": 13729
+    },
+    "src/ir/verify-alloc.ts": {
+      "sha256": "40161d406e9d322c2681617dbc2bcf178e8be21bdac4c1448f7c7b3eec10ee84",
+      "bytes": 7023
+    },
+    "src/ir/verify.ts": {
+      "sha256": "990ab03c38f460ee801a87224c60106d4f63a6d5367e9b742c1fd1763fa67100",
+      "bytes": 122223
+    },
+    "src/ir/program-allocations.ts": {
+      "sha256": "bd7e82e46bfaf26bdcdf5759ef70b18b2ae1e74120039054f0f0aaf764dfb57c",
+      "bytes": 6549
+    },
+    "src/ir/program-class-layouts.ts": {
+      "sha256": "010ecc8d4ee03087bb0faac9d10c7f183fe50b07f3445ee7631756088fd81251",
+      "bytes": 2620
+    }
+  }
+}

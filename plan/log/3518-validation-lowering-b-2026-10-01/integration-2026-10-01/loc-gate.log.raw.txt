@@ -1,0 +1,5 @@
+
+LOC budget gate: intentional growth allowed by this change-set's issue file:
+    src/ir/runtime/verify.ts: 0 → 2868 (+2868) granted by plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+
+LOC budget gate: OK — no unallowed growth in 37 changed src file(s) (base: env:LOC_GATE_BASE, net +143 LOC).

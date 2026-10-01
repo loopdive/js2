@@ -1,0 +1,63 @@
+[STARTED] Backing up original state...
+[COMPLETED] Backed up original state in git stash (3f8e1a3f286)
+[STARTED] Running tasks for staged files...
+[STARTED] package.json — 80 files
+[STARTED] *.{ts,js,mjs} — 23 files
+[STARTED] *.json — 6 files
+[STARTED] prettier --write
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[COMPLETED] *.json — 6 files
+[COMPLETED] prettier --write
+[STARTED] biome lint --diagnostic-level=error --no-errors-on-unmatched
+[FAILED] biome lint --diagnostic-level=error --no-errors-on-unmatched [FAILED]
+[FAILED] biome lint --diagnostic-level=error --no-errors-on-unmatched [FAILED]
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[SKIPPED] Skipped because of errors from tasks.
+[STARTED] Reverting to original state because of errors...
+[COMPLETED] Reverting to original state because of errors...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+✖ biome lint --diagnostic-level=error --no-errors-on-unmatched:
+/private/tmp/js2-ir-validation-lowering-b-resume-20261001/tests/issue-3518-verifier-body-relocation.test.ts:181:11 lint/suspicious/noShadowRestrictedNames ━━━━━━━━━━
+
+  × Do not shadow the global "escape" property.
+  
+    179 │     analyzeEncoding(f.fn, f.registry);
+    180 │     const ownership = analyzeOwnership(f.fn, f.registry);
+  > 181 │     const escape = analyzeEscape(f.fn, f.registry, ownership);
+        │           ^^^^^^
+    182 │     expect(f.registry.read<Encoding>(f.id, ALLOC_NAMESPACES.encoding)).toBe(encoding);
+    183 │     expect(ownership.ownershipOf(f.result)).toBe("escaped");
+  
+  i Consider renaming this variable. It's easy to confuse the origin of variables when they're named after a known global.
+  
+
+/private/tmp/js2-ir-validation-lowering-b-resume-20261001/tests/issue-3518-validation-policy-evolution.test.ts:244:9 lint/performance/noDelete  FIXABLE  ━━━━━━━━━━
+
+  × Avoid the delete operator which can impact performance.
+  
+    242 │       },
+    243 │       (v: MutablePolicy) => {
+  > 244 │         delete v.activationHistory[1];
+        │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    245 │       },
+    246 │       (v: MutablePolicy) => {
+  
+  i Unsafe fix: Use an undefined assignment instead.
+  
+    242 242 │         },
+    243 243 │         (v: MutablePolicy) => {
+    244     │ - ········delete·v.activationHistory[1];
+        244 │ + ········v.activationHistory[1]·=·undefined;
+    245 245 │         },
+    246 246 │         (v: MutablePolicy) => {
+  
+
+Checked 23 files in 39ms. No fixes applied.
+Found 2 errors.
+lint ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.

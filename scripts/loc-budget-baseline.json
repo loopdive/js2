@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-01",
   "threshold": 1500,
-  "totalCeiling": 983964,
+  "totalCeiling": 984128,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -101,12 +101,12 @@
     "src/ir/integration.ts": 10303,
     "src/ir/lower-generic.ts": 4200,
     "src/ir/module-bindings.ts": 2666,
-    "src/ir/prepared-component-dependencies.ts": 1870,
+    "src/ir/prepared-component-dependencies.ts": 1778,
     "src/ir/propagate.ts": 1666,
     "src/ir/runtime/manifest.ts": 2406,
+    "src/ir/runtime/verify.ts": 2868,
     "src/ir/select-identity.ts": 1642,
     "src/ir/select.ts": 11270,
-    "src/ir/verify.ts": 2865,
     "src/package-linker.ts": 2133,
     "src/runtime.ts": 20218,
     "src/runtime/iterator-polyfills.ts": 1513

@@ -1,0 +1,15 @@
+commit efe352fee8afc3feb6a28c34d00fc658dc1fb205
+Author:     Thomas Tränkler <git@thomas.traenkler.com>
+AuthorDate: Wed Sep 9 07:02:51 2026 +0200
+Commit:     Thomas Tränkler <git@thomas.traenkler.com>
+CommitDate: Wed Sep 9 07:02:51 2026 +0200
+
+    feat(ir): transport canonical formatter support through prepared programs
+    
+    Build genuine radix support with the shared frontend kernel and jointly capture its separate IR population. Preserve symbolic support references, required ABI declarations, allocation provenance and source-free codec validation; reject unsupported dependency fields.
+    
+    Keep physical formatter emission and direct-codegen retirement blocked. Record the High-reviewed contract, boundary debt classification and scoped validation receipts.
+    
+    Co-authored-by: Codex <codex@openai.com>
+    
+    Model: Codex GPT-6 Astra Default

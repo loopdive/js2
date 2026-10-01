@@ -1,0 +1,145 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ❯ tests/issue-3518-validation-analysis-relocation.test.ts (116 tests | 1 failed) 5640ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/analysis/lattice.ts' from live owners 91ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/analysis/ownership.ts' from live owners 61ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/analysis/encoding.ts' from live owners 60ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/analysis/escape.ts' from live owners 59ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/analysis/dominance.ts' from live owners 56ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/verify-alloc.ts' from live owners 58ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/verify.ts' from live owners 57ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/program-allocations.ts' from live owners 53ms
+   ✓ Phase B complete live validation/analysis preservation > reconstructs exact original 'src/ir/program-class-layouts.ts' from live owners 55ms
+   ✓ Phase B complete live validation/analysis preservation > accounts for all 135 bodies/types and reproduces all thirteen complete current sources 65ms
+   ✓ Phase B complete live validation/analysis preservation > stores no executable declaration or body in literal recipes 6ms
+   ✓ Phase B complete live validation/analysis preservation > captures each dependency and fixed receipt exactly once per operation, including a fresh later operation 113ms
+   ✓ Phase B complete live validation/analysis preservation > normalizes only an initial supplied raw donor and leaves unknown paths raw 126ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/analysis/ownership.ts' twice 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/analysis/encoding.ts' twice 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/analysis/escape.ts' twice 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/analysis/dominance.ts' twice 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/verify-alloc.ts' twice 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/verify.ts' twice 60ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/program-allocations.ts' twice 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses to normalize historical 'src/ir/program-class-layouts.ts' twice 67ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/analysis/lattice.ts' 60ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/analysis/ownership.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/analysis/encoding.ts' 58ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/analysis/escape.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/analysis/dominance.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/verify-alloc.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/verify.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/program-allocations.ts' 58ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/program-class-layouts.ts' 58ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/analysis/alloc-verification.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/runtime/verify.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/program/allocations.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > requires actual dependency 'src/ir/program/class-layouts.ts' 59ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/analysis/lattice.ts' after a warmed successful read 111ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/analysis/ownership.ts' after a warmed successful read 112ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/analysis/encoding.ts' after a warmed successful read 113ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/analysis/escape.ts' after a warmed successful read 112ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/analysis/dominance.ts' after a warmed successful read 112ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/verify-alloc.ts' after a warmed successful read 113ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/verify.ts' after a warmed successful read 112ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/program-allocations.ts' after a warmed successful read 112ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/program-class-layouts.ts' after a warmed successful read 114ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/analysis/alloc-verification.ts' after a warmed successful read 113ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/runtime/verify.ts' after a warmed successful read 117ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/program/allocations.ts' after a warmed successful read 119ms
+   ✓ Phase B complete live validation/analysis preservation > rejects changed 'src/ir/program/class-layouts.ts' after a warmed successful read 119ms
+   ✓ Phase B complete live validation/analysis preservation > refuses another genuine file substituted for a required raw owner 61ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/analysis/lattice.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/analysis/ownership.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/analysis/encoding.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/analysis/escape.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/analysis/dominance.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/verify-alloc.ts' 1ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/verify.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/program-allocations.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/program-class-layouts.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/analysis/alloc-verification.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/runtime/verify.ts' 1ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/program/allocations.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > independently checks length, SHA256 and Git blob for 'src/ir/program/class-layouts.ts' 0ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: renamed public declaration 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: deleted moved body 60ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: duplicated private body 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: reordered private declarations 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed full verifier body 64ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed moved documentation 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed readonly public option 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed optional declared-table API 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: erased PreparedIrFunction type owner 63ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed private dominance cache initializer 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed retained debug-flag body 64ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed canonical delegate alias 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed allocation kind table 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: removed readonly error field 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed live import into type-only import 68ms
+   × Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed analysis dependency authority 56ms
+     → mutation span is absent or repeated: "./alloc-registry.js"
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: inserted verifier overload 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: wildcard compatibility forwarding 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: duplicate compatibility forwarding 60ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: unaccounted executable top-level statement 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: shifted full source 59ms
+   ✓ Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed unchanged-lattice documentation 58ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'operandIrType' 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'operandIrType' 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'binopResultKind' 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'binopOperandKind' 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'unopResultKind' 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'unopOperandKind' 62ms
+   ✓ Phase B complete live validation/analysis preservation > refuses changed live ImportType token in 'constResultKind' 61ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: schema 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: base revision 6ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: freeze provenance 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: unearned committed provenance 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: prior full-source hash 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: prior full-source Git blob 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: current full-source hash 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: wrong current owner path 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: missing mandatory current owner 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: extra owner 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: missing declaration transfer 6ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: duplicate transfer identity 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: unapproved private body change 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: unexpected wrapper body rewrite 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: extra type import edit 6ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: wrong ImportType qualifier 6ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: wrong ImportType owner 6ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: shifted reciprocal ImportType offset 7ms
+   ✓ Phase B complete live validation/analysis preservation > refuses modified receipt authority: reordered source recipe 7ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: nonexistent transfer 9ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: declaration owner mismatch 5ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: reciprocal transfer order 9ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: reciprocal declaration offset 9ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: omitted facade replay 9ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: executable literal 9ms
+   ✓ Phase B complete live validation/analysis preservation > also rejects structural reciprocal recipe fault: type declaration literal 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-validation-analysis-relocation.test.ts > Phase B complete live validation/analysis preservation > refuses actual current-source mutation: changed analysis dependency authority
+Error: mutation span is absent or repeated: "./alloc-registry.js"
+ ❯ replaceOnce tests/issue-3518-validation-analysis-relocation.test.ts:57:11
+     55|   const index = source.indexOf(from);
+     56|   if (index < 0 || source.indexOf(from, index + 1) >= 0)
+     57|     throw new Error(`mutation span is absent or repeated: ${from}`);
+       |           ^
+     58|   return source.slice(0, index) + to + source.slice(index + from.lengt…
+     59| }
+ ❯ tests/issue-3518-validation-analysis-relocation.test.ts:196:7
+ ❯ tests/issue-3518-validation-analysis-relocation.test.ts:579:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 115 passed (116)
+   Start at  08:46:36
+   Duration  6.03s (transform 30ms, setup 0ms, collect 225ms, tests 5.64s, environment 0ms, prepare 39ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/analysis-controls.json

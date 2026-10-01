@@ -1,0 +1,5 @@
+
+Function budget gate: intentional growth allowed by this change-set's issue file:
+    src/ir/runtime/verify.ts::verifyInstrStructure: 0 → 381 (+381) granted by plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+
+Function budget gate: OK — no unallowed growth in 37 changed src file(s) (base: env:LOC_GATE_BASE).

@@ -4,7 +4,7 @@
 //
 // WHY THIS GATE EXISTS. Phase 1 replaced `IrType`'s `{ kind: "dynamic";
 // tag?: JsTag }` leaf with an opaque `TagId` resolved against a `TagDomain`
-// (src/ir/tag-domain.ts), so the IR's ECMAScript assumptions are named instead
+// (src/ir/core/tag-domain.ts), so the IR's ECMAScript assumptions are named instead
 // of ambient. That is a one-time factoring; without a ratchet it decays the
 // first time somebody reaches for the enum because it is closer to hand. The
 // gate does not forbid `JsTag` — a lot of the remaining uses are legitimate
@@ -54,15 +54,15 @@ const BASELINE_PATH = join(ROOT, "scripts", "jstag-seam-baseline.json");
  * natively — everything else is measured against them.
  *   - `src/runtime/contracts/js-value-tags.ts` the enum + its Wasm-carrier table.
  *   - `src/ir/js-tag.ts`        the retained forwarding API.
- *   - `src/ir/js-tag-domain.ts` the ECMAScript `TagDomain` implementation.
- *   - `src/ir/tag-domain.ts`    the neutral interface (has no `JsTag` at all;
+ *   - `src/ir/runtime/js-tag-domain.ts` the ECMAScript `TagDomain` implementation.
+ *   - `src/ir/core/tag-domain.ts`    the neutral interface (has no `JsTag` at all;
  *                               listed so the seam's file set is one list).
  */
 const EXEMPT = new Set([
   "src/runtime/contracts/js-value-tags.ts",
   "src/ir/js-tag.ts",
-  "src/ir/js-tag-domain.ts",
-  "src/ir/tag-domain.ts",
+  "src/ir/runtime/js-tag-domain.ts",
+  "src/ir/core/tag-domain.ts",
 ]);
 
 const FIELDS = ["valueImports", "refs"];
@@ -234,7 +234,7 @@ if (failures.length > 0) {
   console.error(
     `[jstag-seam] FAILED — direct \`JsTag\` usage GREW under src/ (${failures.length} file(s)).\n\n` +
       `#3954 phase 1 put the IR's dynamic value model behind a TagDomain seam\n` +
-      `(src/ir/tag-domain.ts, implemented by src/ir/js-tag-domain.ts). New code\n` +
+      `(src/ir/core/tag-domain.ts, implemented by src/ir/runtime/js-tag-domain.ts). New code\n` +
       `should ask the domain, not the enum:\n\n` +
       `  - need the partition's payload shape?   domain.carrierKindOf(tagId)\n` +
       `  - need its name for a diagnostic?       domain.nameOf(tagId)\n` +

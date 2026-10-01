@@ -1,0 +1,11 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ✓ tests/issue-3518-validation-analysis-relocation.test.ts (116 tests) 5582ms
+
+ Test Files  1 passed (1)
+      Tests  116 passed (116)
+   Start at  08:51:52
+   Duration  5.98s (transform 30ms, setup 0ms, collect 222ms, tests 5.58s, environment 0ms, prepare 39ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/analysis-corrected.json

@@ -1,0 +1,115 @@
+{
+  "recorded_at": "2026-10-01T05:36:18.775592+00:00",
+  "base": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "dependency_pr": 6378,
+  "verified_main": "f37134584ee7ce68c43d9ea66381bd80be6b660d",
+  "source_changed_before_baseline": false,
+  "production_typecheck_exit": 0,
+  "vitest_exit": 1,
+  "total": 219,
+  "passed": 212,
+  "failed": 7,
+  "skipped": 0,
+  "failed_rows": [
+    {
+      "path": "tests/ir-scaffold.test.ts",
+      "name": "ir scaffold \u2014 phase 1 selector picks up only phase-1-shaped functions",
+      "status": "failed",
+      "messages": [
+        "AssertionError: expected [ 'compound', 'nonNumeric', \u2026(11) ] to deeply equal [ 'compound', 'nonNumeric', \u2026(10) ]\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/ir-scaffold.test.ts:96:35\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runTest (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)\n    at runSuite (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)\n    at runSuite (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)\n    at runFiles (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1787:3)"
+      ]
+    },
+    {
+      "path": "tests/issue-3518-semantic-verification-ownership.test.ts",
+      "name": "semantic implementation preservation preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/core/intrinsics.ts'",
+      "status": "failed",
+      "messages": [
+        "AssertionError: expected [ 'F64_TYPE', 'I32_TYPE', \u2026(19) ] to deeply equal [ 'F64_TYPE', 'I32_TYPE', \u2026(18) ]\n    at verifyReceipt (/private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-3518-semantic-verification-ownership.test.ts:238:45)\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-3518-semantic-verification-ownership.test.ts:325:92\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:863:59\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runTest (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/issue-3518-semantic-verification-ownership.test.ts",
+      "name": "semantic implementation preservation preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/analysis/intrinsics.ts'",
+      "status": "failed",
+      "messages": [
+        "AssertionError: signatureMismatch: expected '38f1214d1a8b93c91dc85e147ca4c06c6615a\u2026' to be '0e58749590b4dbfa116ddeba00d65903f852d\u2026' // Object.is equality\n    at verifyReceipt (/private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-3518-semantic-verification-ownership.test.ts:246:65)\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-3518-semantic-verification-ownership.test.ts:325:92\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:863:59\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runTest (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/issue-3518-semantic-verification-ownership.test.ts",
+      "name": "canonical export identities and complete catalogs forwards all five effect functions and every intrinsic signature/catalog object",
+      "status": "failed",
+      "messages": [
+        "AssertionError: expected [ 'js.to_uint32', \u2026(38) ] to have a length of 38 but got 39\n    at Proxy.<anonymous> (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1257:20)\n    at Proxy.<anonymous> (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1029:14)\n    at Proxy.methodWrapper (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1686:25)\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-3518-semantic-verification-ownership.test.ts:404:35\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runTest (file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)"
+      ]
+    },
+    {
+      "path": "tests/issue-4113-ir-final-allocation-provenance.test.ts",
+      "name": "#4113 final allocation-provenance gate accepts a normal final artifact with IR_VERIFY_ALLOC unset",
+      "status": "failed",
+      "messages": [
+        "AssertionError: expected [ { \u2026(19) }, { \u2026(14) } ] to deeply equal [ ObjectContaining{\u2026} ]\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-4113-ir-final-allocation-provenance.test.ts:94:31\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:20"
+      ]
+    },
+    {
+      "path": "tests/issue-4113-ir-final-allocation-provenance.test.ts",
+      "name": "#4113 final allocation-provenance gate does not let a synthetic final artifact bypass the required gate",
+      "status": "failed",
+      "messages": [
+        "AssertionError: expected [ { \u2026(21) }, { \u2026(14) } ] to deeply equal [ ObjectContaining{\u2026} ]\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-4113-ir-final-allocation-provenance.test.ts:137:31\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:20"
+      ]
+    },
+    {
+      "path": "tests/issue-4113-ir-final-allocation-provenance.test.ts",
+      "name": "#4113 final allocation-provenance gate does not let a monomorphized final artifact bypass the required gate",
+      "status": "failed",
+      "messages": [
+        "AssertionError: expected [ { \u2026(21) }, { \u2026(14) } ] to deeply equal [ ObjectContaining{\u2026} ]\n    at /private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-4113-ir-final-allocation-provenance.test.ts:158:31\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at file:///Volumes/Archiv%20Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:20"
+      ]
+    }
+  ],
+  "artifacts": {
+    "before-manifest.json.raw.txt": {
+      "sha256": "7d418bbd7e824902fae5cf14d99fe35debc89bde7bff64d6cab0d5797ae1cb40",
+      "bytes": 1498
+    },
+    "baseline-typecheck.log.raw.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "baseline-original-controls.json.raw.txt": {
+      "sha256": "6be729f931d23c9527e88eef4d20be498de32a85b0d5a2e107be2c818d196311",
+      "bytes": 89835
+    },
+    "baseline-original-controls.log.raw.txt": {
+      "sha256": "3293eb263f166bcc51d0ad3b9d51d0e2bd3d43357687dea758ac1fafc0d53d3a",
+      "bytes": 15851
+    },
+    "baseline-boundaries.json.raw.txt": {
+      "sha256": "5c5672c24c91e309fc1a50b87a751374c95f775f7f6a67843c1f595f392fff3f",
+      "bytes": 341068
+    },
+    "baseline-boundaries.log.raw.txt": {
+      "sha256": "4eca56ec654c005d50d84ffb575af7c5056abec7b906f9bb982a048d57b2bb35",
+      "bytes": 108526
+    },
+    "baseline-boundaries-exit.txt.raw.txt": {
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "bytes": 2
+    },
+    "program-data-boundary-before.ts.raw.txt": {
+      "sha256": "8c637b37de043a622eda295fa319f0c4257936c6c10dddc8892580eaf6983be4",
+      "bytes": 24573
+    }
+  },
+  "claim": "3518:validation-lowering-phase-b-20261001",
+  "claim_write_id": "29580-nbe2k5m6",
+  "full_migration_complete": false,
+  "boundary_baseline": {
+    "total": 457,
+    "passed": 353,
+    "failed": 104,
+    "skipped": 0,
+    "primary_failure": "102 fixture setups fail closed on unchanged historical intrinsics declaration receipt before injection; two old metadata-policy assertions also fail; semantic provider boundary352/352"
+  }
+}

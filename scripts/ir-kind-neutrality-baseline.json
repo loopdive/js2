@@ -485,14 +485,14 @@
       "where": "dialect",
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrStringCharAt",
       "why": "ECMAScript §22.1.3.1, twice over: the index is normalized by ToIntegerOrInfinity (§7.1.5) and an out-of-range index yields the EMPTY STRING rather than trapping. That total-function convention is the thing a non-JS producer would have to work around — Java throws, Rust panics.",
-      "evidence": ["src/ir/core/dialect/js.ts#17a833773aa6", "src/ir/string-runtime.ts#a18642d81db0"]
+      "evidence": ["src/ir/core/dialect/js.ts#17a833773aa6", "src/ir/core/string-runtime.ts#a18642d81db0"]
     },
     "string.char_code_at": {
       "verdict": "js",
       "where": "dialect",
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrStringCharCodeAt",
       "why": "ECMAScript §22.1.3.2: out-of-range yields NaN. The repo even carries `utf16CharCodeAt` as the reference semantics for backend-independent evidence tests, which is a spec obligation, not a representation choice.",
-      "evidence": ["src/ir/core/dialect/js.ts#8d43cff4533f", "src/ir/string-runtime.ts#2860e81acebf"]
+      "evidence": ["src/ir/core/dialect/js.ts#8d43cff4533f", "src/ir/core/string-runtime.ts#2860e81acebf"]
     },
     "string.concat": {
       "verdict": "neutral",
@@ -533,7 +533,7 @@
       "where": "dialect",
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrStringRepeat",
       "why": "ECMAScript String.prototype.repeat owns both the f64 count normalization through ToIntegerOrInfinity and the negative/+Infinity RangeError. A non-JS producer would have to work around that language contract rather than merely select a backend provider.",
-      "evidence": ["src/ir/core/dialect/js.ts#64f1cbb8767e", "src/ir/string-runtime.ts#e6b7218a1b4f"]
+      "evidence": ["src/ir/core/dialect/js.ts#64f1cbb8767e", "src/ir/core/string-runtime.ts#e6b7218a1b4f"]
     },
     "switch": {
       "verdict": "neutral",

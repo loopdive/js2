@@ -1,0 +1,12 @@
+{
+  "id": "3518",
+  "slice": "validation-lowering-phase-b-20261001",
+  "assignee": "ttraenkler/codex-validation-lowering-b-20261001",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
+  "branch": "codex/3518-validation-lowering-b-20261001",
+  "claimed_at": "2026-10-01T05:33:24Z",
+  "updated_at": "2026-10-01T05:53:19Z",
+  "write_id": "40138-k7ulq2nc",
+  "released_at": "2026-10-01T05:53:19Z"
+}

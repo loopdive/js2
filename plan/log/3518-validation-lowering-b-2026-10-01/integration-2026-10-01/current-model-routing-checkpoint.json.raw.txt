@@ -1,0 +1,117 @@
+{
+  "objective": "Complete IR migration; legacy stays until full tested equality",
+  "branch": "codex/3518-validation-lowering-b-resume-20261001",
+  "head": "0e4638afc9b475cc90a3aa36c74307b7a6a9a26b",
+  "canonicalBase": "88cdb141715f59f3504acfae2213105e09174f24",
+  "claim": "3518:validation-lowering-phase-b-20261001",
+  "claimWriteId": "63764-feehmtqm",
+  "modelRouting": {
+    "hardSpecs": "Astra; implementation plan in plan/issues",
+    "defaultImplementer": "Sol 6.1",
+    "routineEffort": "Medium",
+    "currentPreservationEffort": "High",
+    "rootIntegration": "Codex GPT-6 Default"
+  },
+  "results": {
+    "productionTS7": true,
+    "targetedNinePathTS7": true,
+    "newSemantics": "39/39",
+    "graphAndPolicy": "192/192",
+    "analysisPreservation": "116/116",
+    "coreTypeEvolution": "49/49",
+    "originalBoundaryPopulations": "457/457 (352+105)",
+    "originalBehavior": "212/219; same seven original failures and first errors",
+    "rawSupportRef": "15/20 before and after B; same five original failures",
+    "activatedBOwners": "9 clean;54 resolved edges; zero outgoing unknown/unresolved/forbidden"
+  },
+  "publication": "PR6378 prerequisite remains open at exact head; no B commit/stage/push/PR yet",
+  "pending": [
+    "Reverify dependency protected main delivery before B publication",
+    "Fresh canonical-main and claim/PR overlap checks before publication",
+    "Explicit stage and verify1765 tracked source inventory",
+    "Normal signed commits/full hooks/fork ready PR/protected queue",
+    "Full IR catalog/source/dynamic/Number/fresh replay/both-backend equality before retirement"
+  ],
+  "files": [
+    {
+      "path": "tests/helpers/ir-program-initial-graph-evolution.ts",
+      "bytes": 20763,
+      "sha256": "0fe14c4a6d3c2e105996e46afbac26682e7931b4bcbe5275af9aea057133e963"
+    },
+    {
+      "path": "tests/helpers/ir-program-initial-graph-evolution.json",
+      "bytes": 23424,
+      "sha256": "0cd9d3d2580f0473c7fa940578f9e706d1a86b15688547896e919cd180c1b904"
+    },
+    {
+      "path": "tests/issue-3518-program-initial-graph-evolution.test.ts",
+      "bytes": 22083,
+      "sha256": "983de94c489aae3d6699736f12c27fd32dae8416ee2145ef2f20fb3b25135651"
+    },
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+      "bytes": 18322,
+      "sha256": "05f37c0bf66544a226dc22c1f6173c8e36d536e94834997af9ce5dd65e91eacb"
+    },
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.json",
+      "bytes": 327660,
+      "sha256": "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969"
+    },
+    {
+      "path": "tests/issue-3518-validation-analysis-relocation.test.ts",
+      "bytes": 22549,
+      "sha256": "84e05af3b178b0d5fd261dc2a0602e1b53d62f473e2e10dfada21ad448945387"
+    },
+    {
+      "path": "tests/helpers/ir-validation-policy-evolution.ts",
+      "bytes": 11095,
+      "sha256": "a962c04960b945705e9ac5a354da3e96c8e0cf5543382847231dd3df9204fb40"
+    },
+    {
+      "path": "tests/helpers/ir-validation-policy-evolution.json",
+      "bytes": 51450,
+      "sha256": "39dacc9d17fb52b6a369ed81d7498afc30b00bc06d89362bba039305aa96fa0e"
+    },
+    {
+      "path": "tests/issue-3518-validation-policy-evolution.test.ts",
+      "bytes": 11037,
+      "sha256": "485f44cf49ca36888214f28f523a2c2a8bf33c33f7711e629f3a03a82bf4c5c6"
+    },
+    {
+      "path": "tests/helpers/ir-program-core-type-evolution.ts",
+      "bytes": 17010,
+      "sha256": "521ab5369f34e6653427b98b1dafec5ff276d898b375e879043efd12e67516be"
+    },
+    {
+      "path": "tests/helpers/ir-program-core-type-evolution.json",
+      "bytes": 24523,
+      "sha256": "7656fac126fa982f114f900382e6f3a256d417d3750406a142e96df22d6f80e2"
+    },
+    {
+      "path": "tests/issue-3518-program-core-type-evolution.test.ts",
+      "bytes": 15306,
+      "sha256": "15f1a8ba829c5d9727d43d93224bbd4715bd6b691e284cd9500545f019e17a60"
+    },
+    {
+      "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "bytes": 27075,
+      "sha256": "41e154f5216525ea4a7b98a5e2004e771de9016c352bff9b03de535c257ce962"
+    },
+    {
+      "path": "tests/issue-3518-semantic-provider-boundary.test.ts",
+      "bytes": 62309,
+      "sha256": "0f6b9f40e1152d83ffa443db26efc7bbd55137b51ca60a5cd5b721e2743c4c8c"
+    },
+    {
+      "path": "plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md",
+      "bytes": 1325008,
+      "sha256": "628805bfa5651de848add6d64b7bd65f0b541dd1ee5ff012dca747a0151ff828"
+    },
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "bytes": 565540,
+      "sha256": "9ea36786ddf9e19ce6a5f7726bf23964265c2332c1a0854de870ca00b8a85c76"
+    }
+  ]
+}

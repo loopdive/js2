@@ -1,0 +1,12 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ✓ tests/issue-3518-program-initial-graph-evolution.test.ts (129 tests) 985ms
+ ✓ tests/issue-3518-validation-policy-evolution.test.ts (63 tests) 1290ms
+
+ Test Files  2 passed (2)
+      Tests  192 passed (192)
+   Start at  08:41:00
+   Duration  2.77s (transform 44ms, setup 0ms, collect 224ms, tests 2.28s, environment 0ms, prepare 56ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/reviewed-controls.json
