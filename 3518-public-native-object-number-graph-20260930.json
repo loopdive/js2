@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "public-native-object-number-graph-20260930",
   "assignee": "ttraenkler/codex-public-native-object-number-graph-20260930",
-  "requested_by": "ttraenkler/codex-public-native-object-number-graph-20260930",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-native-realm-mixed-main-20261001",
   "claimed_at": "2026-10-01T00:20:20Z",
-  "updated_at": "2026-10-01T00:20:20Z",
-  "write_id": "94038-oas7xab1"
+  "updated_at": "2026-10-01T00:56:52Z",
+  "write_id": "12827-fnou4diz",
+  "released_at": "2026-10-01T00:56:52Z"
 }
