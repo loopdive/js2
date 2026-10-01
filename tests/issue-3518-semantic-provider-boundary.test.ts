@@ -13,7 +13,9 @@ import {
   irValidationPolicyActivations,
 } from "./helpers/ir-validation-policy-evolution.js";
 import {
-  authenticateIrRuntimeProgramPolicy,
+  authenticateNumberPrerequisitePolicy,
+  beforeNumberPrerequisitePolicy,
+  beforeWellKnownSymbolPolicy,
   beforeIrRuntimeProgramPolicy,
   type MutableIrRuntimeProgramPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
@@ -396,7 +398,7 @@ const additions = [
 ];
 const policy = () => {
   const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-  authenticateIrRuntimeProgramPolicy(actual);
+  authenticateNumberPrerequisitePolicy(actual);
   return actual;
 };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -994,8 +996,10 @@ describe("semantic verification and provider ownership boundary", () => {
     ])
       expect(required).toContain(path);
     const p = policy();
-    authenticateIrRuntimeProgramPolicy(p);
-    assertCurrentActivations(beforeIrRuntimeProgramPolicy(p).activationHistory);
+    authenticateNumberPrerequisitePolicy(p);
+    assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(p))).activationHistory,
+    );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     for (const [id, entries] of Object.entries(currentLayerGroups)) {
       const layer = p.layers.find((row: { id: string }) => row.id === id);
@@ -1097,6 +1101,18 @@ describe("semantic verification and provider ownership boundary", () => {
           "src/ir/program/runtime-support-dependencies.ts",
         );
       if (id === "ir-runtime") additions.push("src/ir/runtime/generator-support.ts");
+      if (id === "runtime-contracts") additions.push("src/runtime/contracts/well-known-symbols.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-well-known-symbols.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/bigint-to-number-body.ts",
+          "src/runtime/wasmgc/values/number-from-value-body.ts",
+        );
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/resources/native-bigint-number.ts",
+          "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+        );
       const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
       if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
       const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
@@ -1153,7 +1169,9 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(["delete", "reorder", "layer", "entries", "minimum", "extra"] as const)(
     "rejects %s corruption of the independently pinned twelve-record prefix",
     (mutation) => {
-      const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
+      const history = beforeIrRuntimeProgramPolicy(
+        beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+      ).activationHistory;
       assertCurrentActivations(history);
       const before = digest(history);
       if (mutation === "delete") history.splice(0, 1);
@@ -1168,21 +1186,27 @@ describe("semantic verification and provider ownership boundary", () => {
   );
 
   it.each([81, 82, 83, 84])("rejects a changed primitive composition record %i", (index) => {
-    const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(
+      beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+    ).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
   });
 
   it.each([85, 86, 87])("rejects changed merged invocation record %i", (index) => {
-    const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(
+      beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+    ).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
   });
 
   it.each([88, 89, 90])("rejects changed source contract activation %i", (index) => {
-    const history = beforeIrRuntimeProgramPolicy(policy()).activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(
+      beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+    ).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
@@ -1229,7 +1253,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ),
   )("rejects $mutation corruption of formatter activation record $index", ({ index, mutation }) => {
     const history = assertCurrentActivations(
-      beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+        .activationHistory,
     ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const before = digest(history);
@@ -1246,7 +1271,8 @@ describe("semantic verification and provider ownership boundary", () => {
     "rejects %s corruption of the new activation records",
     (mutation) => {
       const history = assertCurrentActivations(
-        beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+        beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+          .activationHistory,
       ) as MutableIrRuntimeProgramPolicy["activationHistory"];
       assertNewActivations(history);
       const before = digest(history);
@@ -1276,7 +1302,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ),
   )("rejects $mutation corruption of the $owner activation record", ({ index, mutation }) => {
     const history = assertCurrentActivations(
-      beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+        .activationHistory,
     ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const before = digest(history);
@@ -1295,7 +1322,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ),
   )("rejects $mutation corruption of original prerequisite activation records at $offset", ({ offset, mutation }) => {
     const history = assertCurrentActivations(
-      beforeIrRuntimeProgramPolicy(policy()).activationHistory,
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+        .activationHistory,
     ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const index = 3 + originalCompositionOffsets[offset]!;

@@ -19637,3 +19637,482 @@ SignedcleanC1main integration `d517920690446d05861bbd7d9eb7a7fd900f80dc` passed 
 Fetched actualmain contains WATPR6382merge `d3e804aadc6` plusPR6381npmbenchmarkrefresh. Exact9pathdelta changesonlyWATsource/regression, benchmarkartifacts andthissharedissue; allC1source/test/helper/receipt/policy pathsunchanged. Rootintegratedthatmain, preservingits complete issue bytes plus completeC1appendix andthe existing user model-routing insertion near the top. First resolutionpreflight incorrectly assumed theC1issue waspureappend-only; its assertion stopped before any trackedfile/Gitstage/commitmutation, preserving the rawconflict. Exact removal/reinsertion of theone knownroutingparagraph establishes complete byte-preservation of both histories.
 
 FullWAT maincontent/protectedworkflowprovenance verification is independentandstillpending; nofullIRcompletioncredit. Refreshednormalhooks useexactfreshmainthroughunchangedmerge-base selector; actualC1+newWAT selectedpopulationisrecordedwithout guessingresults. No source/fixtures/receipt/assertions/counts/timeouts/gates/protectionswereweakened.
+
+
+## 2026-10-01 — current-main WKS integration and model routing
+
+User direction: Astra specifies hard tasks and writes their implementation plans in plan/issues; Sol 6.1 Medium is the default implementer, with effort raised for concrete complexity. Historical attribution remains unchanged. The next exact WKS implementation plans follow; no GitHub issue is created.
+
+Root integration branch codex/3518-well-known-symbol-integration-20261001 starts from verified current main c7366c3c6d3eb9e4c5cff0b29b11c42e3faab4c7. C1 PR6384, refactor(ir): isolate runtime and program ownership, delivered exact8edd38c556db902909f0321307cfa785b3ef36e9 via2ca34324ceb29d821a31e3176e61cc3b1747dbb6; independent Sol confirms all26 paths blob/mode/type match merge and current main. Merge-group102 conformance, report/final regression, quality, equivalence8+gate, differential and CLA succeeded. Attempt1 issue-tests110373668355 was CANCELLED and receives no success credit. Root requested an official exact-merge-group rerun: run36863556777 attempt2/job110387553636 is in progress at the recorded read. Required-gate acceptance and seven own C1 claim completions remain pending. Original cancellation/raw evidence is retained; post-main evidence is not substituted.
+
+The well-known-symbol-policy-integration-20261001 claim remains with ttraenkler/codex-well-known-symbol-policy-integration-20261001 and is now effect-verified on this integration branch. Fresh full14-PR file/head census and2570 canonical claim keys show no new overlap; seven unchanged reviewed shared-metadata PR heads and all foreign/old claims remain intact. Archived WKS114/114 source evidence and its three source hashes remain unchanged; no source has yet been copied into this integration.
+
+Root scratch authoring independently authenticates actual C1 policy565188bytes, original helper10742byte prefix and19 immutable inputs. Its exact two-leaf successor is565875bytes/SHA451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59,1771files/98histories; four localized raw spans reconstruct original bytes reciprocally. The scratch fixed receipt SHAce9351c3b4c026a746d44cc769b6ff3968c2feabe686abe07e8361d4b28f7172 binds the actual reviewed Astra addendum SHA803f3fcc5af93344f878b33dace6c9484d2d4aa1437e9537548c899f4204753c. Metadata/receipt have not been applied. Astra reviews this hard proof in the preserved isolated WKS tree; SolMedium helper/new-suite implementation dispatch waits required C1 rerun proof and root application. Root owns policy, receipt, four caller edits, serial heavy validation and protected delivery. No public/full-migration completion or retirement is implied.
+
+## 2026-10-01 — WKS production metadata and exact C1 successor policy plan
+
+**Architect: Codex GPT-6 Astra High. Implementation default: Codex GPT-6.1 Sol Medium.** Root owns this issue, metadata, integration, serial heavy validation, signing and protected delivery. The WKS writer owns only its three recovered production/test paths. The plan is based on read-only inspection of the WKS recovery tree at main88cdb141 and the separate exact C1 integration policy; no compiler, checker, tests, network or Git mutation was performed for this specification.
+
+Root reports actual WKS production controls114/114 and focused TS7 exit0 after the writer's type-only repair, including descriptor-safe dependency capture and its14 new negative controls. These are reported bounded production results, not a new architect execution or evidence of public Number/catalog completion. Preserve the original archived implementation, all failure evidence and the unchanged public nine-row fixture.
+
+### Delivery order and exact metadata delta
+
+Publish WKS after verified C1 delivery. This avoids changing the active26-path C1 checkpoint and gives the new policy one genuine predecessor. It does not eliminate compatibility work: the C1 guard authenticates the complete policy digest, and its original suite also pins the raw565,188-byte policy. Do not publish unclassified WKS leaves or omit activation records to avoid those controls.
+
+Root changes only the following portions of `scripts/compiler-boundaries.json`, against the inspected exact C1 policy:
+
+| New clean file | Layer | Required entries and floor | Classified population |
+| --- | --- | --- | --- |
+| `src/runtime/contracts/well-known-symbols.ts` | `runtime-contracts`, layer index10 | 9 to10 | 9 to10 |
+| `src/backend/wasmgc/resources/native-well-known-symbols.ts` | `backend-wasmgc`, layer index11 | 49 to50 | 54 to55 |
+
+Append each path to its existing layer's ordered entries and increase that layer's floor by one. Append two clean `files` rows in contract/owner order, with key order `path,state,layer`. Append two activation records in the same order, each with its one entry and `minModules:1`. Preserve the complete existing1,769-file/96-history prefix, all existing layer fields and all unrelated policy data. Expected candidate arithmetic is1,771 files and98 history records; program44, IR-runtime19 and native-runtime103 populations remain unchanged. These arithmetic expectations require the actual final detector report. Backend required entries/floor50 must not be confused with classified backend population55.
+
+The contract has no imports. The owner has seven direct target modules: two type-only imports to `wasm-physical` and `native-runtime`, and five value-bearing imports to `runtime-contracts`, `ir-program` and three `backend-wasmgc` modules. The targets are physical reservations, native declaration types, the WKS contract, program data, native strings, native Symbol carrier and native resource declarations. Every direct edge is already permitted; root verifies the actual complete transitive type/value closure. Change no allowed edge, root, external-package rule or existing file classification.
+
+The allowed-edge data digest stays `efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7`. Global architecture remains incomplete unless the unchanged full gate actually establishes otherwise.
+
+### One explicit WKS successor profile in the existing policy proof
+
+Extend `tests/helpers/ir-runtime-program-policy-evolution.ts` with explicitly named WKS-successor APIs while keeping the original C1 APIs and their accepted population unchanged:
+
+- `authenticateWellKnownSymbolPolicy(value)` authenticates only the complete reviewed WKS-current policy and returns a detached frozen current snapshot.
+- `beforeWellKnownSymbolPolicy(value)` authenticates that policy, reverses exactly the two-leaf delta, invokes the unchanged genuine C1 guard, proves reciprocal replay and returns a fresh mutable C1 copy.
+- `beforeWellKnownSymbolPolicySource(raw)` performs the corresponding exact raw-text inverse for the existing C1 raw-byte witness.
+
+Add one fixed receipt, `tests/helpers/ir-runtime-program-policy-well-known-symbols.json`, and one focused suite, `tests/issue-3518-well-known-symbol-policy-evolution.test.ts`. This is a fixed successor profile inside the existing proof, not a generic delta engine, profile autodetection, permissive historical fallback or new source-reconstruction framework.
+
+The before profile is the existing C1 ordered-data digest `f24c0f10d4e8e9b5dc23471ec327f2fab7312890a5d4db035066e8c189ed2a11`. Its raw565,188 bytes retain SHA256 `460eb6835dff1d22322ac9fb0fdd9526f04cd09d99d4dec8138f8e66b91ffd57`. Root records the after-profile hashes from the actual reviewed metadata bytes; do not invent them from a formatting prediction.
+
+Reuse the existing descriptor-safe capture implementation. Before serialization reject accessors, hidden/symbol fields, foreign prototypes, sparse arrays/extra array properties, cycles and non-JSON values. Authenticate the entire current policy, exact suffixes, unchanged prefixes, both layer deltas and every unrelated field before reversing anything. Replay must reproduce the complete ordered current data. There is no identity-based success cache or caller attestation.
+
+For raw-text preservation, record only the reviewed localized replacements for the two layer edits, activation suffix and file suffix. Authenticate the complete after bytes first; reverse those fixed replacements; verify the original byte count/hash; compare parsed inverse data with the semantic inverse; then forward-replay exact after bytes. Do not use a new formatter's serialization as the original raw file, nor store a complete historical policy as a fallback.
+
+Keep `ir-runtime-program-policy-evolution.json`, `ir-validation-policy-evolution.json` and every source-relocation receipt untouched. The original C1 proof continues rejecting WKS-current directly; only the explicitly named new profile accepts and projects it.
+
+### Exact four-caller integration scope
+
+1. **`tests/issue-3518-semantic-provider-boundary.test.ts`.** Its initial `policy()` authenticates WKS-current and returns actual current data. The direct current-policy guard near line997 in the inspected C1 version becomes the explicit WKS guard. At existing historical activation inputs compose WKS-current to exact C1 to the existing B inverse. Injected history mutants never enter this normalization. Extend the independently enumerated current layer-entry suffixes by exactly the WKS contract/owner; preserve the existing signed-prefix hashes and floor formula, now yielding10/50. Preserve the original174-file bounded source fixture and all mutations.
+2. **`tests/issue-3518-program-data-contract-boundary.test.ts`.** Authenticate actual WKS-current in `policy()` and return current data. Add WKS-to-C1 only before the two existing historical policy compositions, around lines355/442 in the inspected C1 version. Keep genuine current source readers, fixed historical source populations and all later fixture mutations unchanged.
+3. **`tests/issue-3518-validation-policy-evolution.test.ts`.** In initial `actual()` only, add WKS-to-C1 before the existing C1-to-B operation. All original B hashes,63 controls and mutation operands remain unchanged.
+4. **`tests/issue-3518-runtime-program-policy-evolution.test.ts`.** Initial `actual()` obtains authenticated C1 data before the original C1 guard. Its raw-positive input obtains exact C1 bytes through the explicit raw inverse. Preserve the565,188-byte/hash assertions,1,769/96 counts and all204 original controls. Describe this as an authenticated C1 view, not current raw bytes.
+
+These four callers and the policy-helper source are not in the C1 receipt's18 immutable source/reader inputs; this scope does not require repinning that receipt. All source inverses remain unchanged because WKS adds files and moves no declarations. Do not adapt the four C1 source-reader suites or feed historical metadata to the actual current boundary detector.
+
+### Root validation and publication scope
+
+Claim the metadata/compatibility responsibility separately from the writer's three WKS paths. Root owns exactly the policy, this issue, the existing policy helper, the new fixed receipt/suite and the four existing callers. The oldA/oldB C2/C3 scopes remain held and untouched.
+
+After freezing the production handback and composing verified delivered C1, run the following serially:
+
+- Actual WKS production controls and final focused typing, preserving all15 named identities, both encodings/displaced spaces and descriptor-safe capture refusals. Report the real denominator; do not add14 again to the reported114.
+- New fixed WKS-policy positives for genuine current input, C1 inverse, raw inverse, reciprocal replay and detached copies. Independently reject deletion/replacement/duplication/reordering of each new file/entry/history row, wrong floor/layer/state/root, same-count substitution, unknown additions, modified original prefixes/edges/unrelated fields and warmed-object mutation. Establish the actual mutation before expecting refusal, and keep getter counters zero.
+- Original C1 policy204 plus semantic-provider352, program-boundary105 and B-policy63:724 existing controls, separate from new controls and from WKS runtime execution.
+- Unchanged compiler-boundary detector on the genuine candidate with both required entries and their complete type/value closures. Record valid inventory separately from incomplete architecture.
+- Required type, format, LOC/function, coercion/oracle/dead-export checks and normal publication hooks. No new budget, timeout, skip or gate exception is granted.
+
+Deliver C1 first, then compose WKS on its verified delivered content in the WKS integration worktree. A fresh unrelated policy change requires an explicit reviewed composition before after hashes are fixed; it cannot be accepted as an unknown prefix. Only verified protected-main ancestry/content counts delivery. Native WKS completion does not supply source bindings, full realm completion, public Number9/9, backend equality or legacy-retirement permission.
+
+
+
+## 2026-10-01 — Astra WKS proof implementation addendum against actual C1
+
+**Architect: Codex GPT-6 Astra High; bounded implementer: Codex GPT-6.1 Sol Medium.** This specifies the nine already named metadata/test/issue files; it grants no production/source-relocation changes. Root owns actual policy bytes, after hashes, canonical claims, current-main reconciliation and all heavy checks. Root reports C1 PR6384 exact `8edd` in protected queue group `2ca34324`, not yet main delivery. Implementation composition waits verified C1 delivery, not queue status. The existing WKS114/114/type0 source evidence is unchanged and is not proof of this new metadata instrument. This addendum's static inspection performed no Git/network/compiler/TS Program/test/gate operations.
+
+The unchanged issue prefix before this addendum is **1,364,738 bytes /19,210 lines**, SHA256 `389bb042925721d037447c30074c5ee6a736edbe757f441af193273fc7dcccc4`. Root retains that prefix and the original18902–18967 plan. The actual C1 helper inspected in `/private/tmp/js2-ir-runtime-program-c1-integration-20261001` has only a semantic policy inverse: it exports `authenticateIrRuntimeProgramPolicyEvolution`, `authenticateIrRuntimeProgramPolicy` and `beforeIrRuntimeProgramPolicy`; there is no existing raw-source inverse to reuse. The helper's complete10,742-byte text has SHA256 `2636bd52d821cbc1a7aaff425a03d1ea56fe29b584db5925d6ef099a893f5f3d`. Append the new WKS implementation after that exact text without editing old functions/constants/accepted populations. Its existing private descriptor capture, digest, freeze and semantic primitives can be called by appended code; do not rewrite the old proof into a generic parameterized engine.
+
+### Exact fixed receipt and responsibilities
+
+`scripts/compiler-boundaries.json` receives only the previously specified two ordered layer additions (runtime-contracts index10:9→10; backend-wasmgc index11:49→50), two clean file suffix rows (contract then owner) and two matching one-entry/min1 activation suffix rows. The complete C1 prefix is1769 files/96 histories; WKS is1771/98. Classified runtime-contracts9→10 and backend54→55; native classified103/required98/floor97, program44 and IR-runtime19 remain unchanged. No other layer/top-level field or allowed edge changes.
+
+Add `tests/helpers/ir-runtime-program-policy-well-known-symbols.json` as one root-authored fixed receipt. Export its path constant and `authenticateWellKnownSymbolPolicyEvolution(text?)` for authentication/testing, alongside the three already planned WKS APIs. Bind the receipt's complete UTF-8 text SHA256 in the appended helper after root freezes actual bytes. The receipt has exactly these ordered top-level fields, with no optional wildcard fields:
+
+- `schema:1`, `kind:"wks-exact-runtime-program-policy-successor"`.
+- `provenance:{reviewedBase, planSha256, c1HelperPrefix:{bytes,sha256}, immutableInputs:[{path,bytes,sha256}]}`. Root supplies the full verified delivery base SHA and plan pin. The helper prefix pin is the exact value above, not a hash of the future extended helper. Immutable inputs comprise the original C1 receipt and the18 source/reader/B-authority inputs already enumerated by that receipt, exactly once each; do not include modified caller suites as immutable inputs or pin the new helper to its own future hash.
+- `before` and `current`, each using the existing `Profile` shape exactly: `source:{bytes,sha256,gitBlob}`, `dataSha256,fileCount,filesSha256,activationCount,activationHistorySha256,layersSha256`. The before profile is the real C1 profile below. Root measures current fields after the four exact edits; no after hash/byte count is specified or guessed here.
+- `allowedEdgesSha256`, the unchanged `efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7`.
+- `layerDeltas`, exactly two rows in index10/index11 order, using existing C1 delta field names `index,id,beforeEntries,currentEntries,beforeMinModules,currentMinModules,roots,additions`. They fix runtime-contracts9/10/9/10/root`src/runtime/contracts`/the single WKS contract path and backend49/50/49/50/root`src/backend/wasmgc`/the single WKS owner path.
+- `addedFiles`, exactly the two `{path,state:"clean",layer}` rows in contract/owner order; `activationAdditions`, exactly two `{layer,entries:[path],minModules:1}` rows in the same order.
+- `census:{layers:20,files:1771,histories:98,requiredContracts:10,contractsFloor:10,classifiedContracts:10,requiredBackend:50,backendFloor:50,classifiedBackend:55,requiredProgram:43,classifiedProgram:44,requiredRuntime:19,classifiedRuntime:19,requiredNative:98,nativeFloor:97,classifiedNative:103,requiredAnalysis:11,requiredCore:29}`.
+- `raw:{offsetUnit:"utf16-code-unit",spans:[{role,beforeOffset,afterOffset,before,after}]}` with exactly four ordered roles `runtime-contracts-layer-tail`, `backend-wasmgc-layer-tail`, `activation-history-tail`, `files-tail`. Raw offsets address JavaScript string positions; whole-source byte counts/hashes use UTF-8, so those units are never mixed.
+
+The known before profile is raw565188 bytes/SHA`460eb6835dff1d22322ac9fb0fdd9526f04cd09d99d4dec8138f8e66b91ffd57`/Git blob`5395e0265ca6fef778141101ea688e456417c558`; data SHA`f24c0f10d4e8e9b5dc23471ec327f2fab7312890a5d4db035066e8c189ed2a11`; files1769/SHA`c1e4f0b02ab0d5a42e0dbef3f725d64c427fc2c866e4989b5d0da8313cd92616`; histories96/SHA`1c64b137373008c3bce05ac01a50808d2d3c2198b20b779d4f24f3bfcbdfed70`; layersSHA`c1be051d77d0857faeec740a200f3291fca0be93f2eb1bab8f93d9f2e12e9e36`. Compare the receipt before profile to `authenticateIrRuntimeProgramPolicyEvolution().current`, not merely to its own internally consistent fields. Preserve original C1 receipt6804 bytes/SHA`8e2589e90fbc697dceba56e1bbe53447250a94f3bcb03d99317ad4878bc1f58c`, B helperSHA`a962c04960b945705e9ac5a354da3e96c8e0cf5543382847231dd3df9204fb40` and B receiptSHA`39dacc9d17fb52b6a369ed81d7498afc30b00bc06d89362bba039305aa96fa0e`. Verify the existing C1 helper prefix and all19 immutable inputs freshly; these do not certify current policy without the full proof.
+
+### Four localized raw replacements, not a saved historical policy
+
+Author the four spans against actual unchanged C1 bytes. Span1 begins at the existing quoted final contract entry `src/runtime/contracts/native-realm-catalog.ts` and ends after that layer's `"minModules": 9`; its after text appends the WKS contract and changes only that floor to10. Span2 analogously begins at the existing last backend entry `src/backend/wasmgc/resources/native-mixed-object-access.ts` and ends after `"minModules": 49`; append only the WKS owner and change its floor to50. Preserve surrounding indentation, commas, newlines and all other bytes.
+
+Span3 contains the final existing history record (ir-runtime, entry`src/ir/runtime/generator-support.ts`, min1) and the close of the activation array through the following `"nonModules"` key anchor. Its after text preserves that original record and appends only the two WKS activations before the same close/anchor. Span4 contains the last existing files record (`src/ir/runtime/generator-support.ts`, clean, ir-runtime) through the file-array/top-level closes and final newline; its after text preserves that row and appends only the two WKS clean rows. No whole-layer/full-policy saved-text fallback is allowed. The four spans must be nonempty, nonoverlapping, strictly increasing in both coordinate systems, unique in each corresponding source and independently checked against these fixed role anchors. Exact root-authored fragments/offsets belong in the receipt; they are not rediscovered from an untrusted policy at runtime.
+
+Implement private fixed forward/reverse raw application. Authenticate the complete input profile byte count/hash/Git blob before any replacements. Assemble from slices of the original input using that direction's recorded offsets, checking exact fragment, first/last occurrence uniqueness and monotonic end offset; do not chain replacements whose offsets drift. Verify complete output profile and reverse reciprocal reconstruction. Reject duplicate/missing/reordered fragments, whitespace/newline changes, insertion outside spans and malformed offsets even if parsed JSON appears equivalent. `beforeWellKnownSymbolPolicySource(raw)` accepts primitive string only, proves full current raw authenticity, derives exact C1 raw by these spans, parses both and cross-checks its inverse against the genuine semantic proof, then forward-replays exact WKS bytes. It does not call a formatter or return a stored565188-byte snapshot. Original C1 raw supplied to this WKS API is not a fallback success.
+
+### Semantic proof and explicit entry APIs
+
+Use one private WKS proof action returning detached `current` and `before` values. Capture the entire unknown input through the existing descriptor-first routine before JSON.stringify, spread, field reads or Object.entries. Preserve its zero-getter behavior and reject hidden/symbol/accessor fields, foreign prototypes, sparse/extra arrays, cycles, functions/toJSON, undefined/bigint, nonfinite numbers and negative zero. Never allow a caller validator/serialization callback. Every public action starts a fresh capture; no cross-call identity/success cache.
+
+Authenticate the fixed receipt, complete WKS ordered-data digest and all independent census values. Check exact two-row file/history suffixes and complete1769/96 prefix hashes, full layers and unchanged allowed edges, fixed ordered16 top-level keys and all20 layers. Validate both exact layer identities/status/required/roots/entry prefixes/tails/floors before reversing. Derive C1 from this captured current policy by removing only two file rows/two history rows and restoring the two layer tails/floors; verify full before profiles. Call the **unchanged genuine** `authenticateIrRuntimeProgramPolicy(before)`, which itself proves B through the unchanged B guard. Forward-append the independently fixed WKS delta to a detached copy of that verified C1 result and compare the complete ordered WKS data and digest to the initial capture. Other fields are retained from actual current input, never copied wholesale from receipt-saved layers or a saved policy.
+
+`authenticateWellKnownSymbolPolicy(value)` returns a detached deeply frozen current snapshot; `beforeWellKnownSymbolPolicy(value)` returns a fresh mutable detached C1 copy for old mutation controls. `beforeWellKnownSymbolPolicySource(raw)` implements the raw contract above. Original C1 APIs continue accepting only1769/96 with their old digests and directly reject1771/98. Original B APIs likewise do not gain WKS admission. The receipt-authentication API may accept alternate text only to test its one fixed digest/schema; it accepts no alternative expected hash/profile.
+
+### Four caller starting views and original-control preservation
+
+1. `tests/issue-3518-semantic-provider-boundary.test.ts`: `policy()` parses actual current policy, invokes the WKS guard and returns that actual current object. Replace its direct current C1 guard with the WKS guard. At **every existing** `beforeIrRuntimeProgramPolicy(policy())` or equivalent initial historical input, insert `beforeWellKnownSymbolPolicy` immediately inside it; the old activation inverses receive genuine B-derived data. Do not adapt `assertCurrentActivations` to accept a new arbitrary prefix or normalize an injected history mutant. Add only the two exact WKS suffix paths to independent current layer-entry expectations (contracts10/backend50). Keep all352 original cases, signed prefixes, original174-file live fixture and current782-edge census (403type/379runtime): WKS adds no import to a module already in that bounded fixture. The separate future SameValue175-module correction is outside this WKS proof.
+2. `tests/issue-3518-program-data-contract-boundary.test.ts`: `policy()` authenticates/returns actual WKS-current. Only the two existing `historicalIrValidationPolicyView(beforeIrRuntimeProgramPolicy(p))` initial views near actual C1 lines355/442 insert WKS→C1. Preserve all105 cases, actual current source readers, existing source inverses and mutation operands.
+3. `tests/issue-3518-validation-policy-evolution.test.ts`: only initial `actual()` changes from `beforeIrRuntimeProgramPolicy(JSON.parse(read(...)))` to explicit WKS→C1→B. All63 cases still start from exact authenticated B; hashes, `refused`, mutation generators and genuine B calls stay unchanged.
+4. `tests/issue-3518-runtime-program-policy-evolution.test.ts`: initial `actual()` reads real WKS data then calls `beforeWellKnownSymbolPolicy` and the original C1 guard. The single original raw-positive input becomes `beforeWellKnownSymbolPolicySource(read(...))`; its565188/raw SHA/data SHA/1769/96 assertions remain unchanged and described as a reconstructed authenticated C1 view. Do not change its `refused` helper, independent C1→B replay,204 mutations or18 immutable-input assertions. The test suite is proving C1 against genuine WKS-derived initial input, not claiming raw WKS is old C1.
+
+These four callers and the existing helper are absent from C1's18 immutable source/reader pins, confirmed by reading the actual receipt. No repinning of that receipt, source-relocation helper or old B authority is needed. New WKS receipt uses19 immutable inputs because it additionally pins the original C1 receipt itself; this is not a change to C1's original18. The only new test file is `tests/issue-3518-well-known-symbol-policy-evolution.test.ts`; the only new receipt is the fixed WKS JSON above. Preserve the nine-file scope including this issue; any additional dependency or overlapping source path needs root's new exact scope check.
+
+### New controls and root handback
+
+New positives must independently read actual policy/raw bytes, establish1771/98 and the10/50 versus classified10/55 census, prove genuine C1 guard acceptance of the derived1769/96 inverse, prove C1→B remains real, reconstruct WKS data using a test-local independently enumerated two-row delta, and reconstruct raw bytes from the four reviewed fragments. Check all immutable pins, original-helper prefix, frozen/detached current results, mutable/detached historical copies and repeated independent calls. Existing C1/B guards must reject raw WKS semantic data directly; WKS guard must reject direct C1 data. Report actual new test count only after execution; do not inflate724 old controls with wrappers.
+
+Negatives independently delete/replace/duplicate/reorder each new file, layer entry and activation; change layer index/id/root/state/status/required/floor, swap same-count entries, insert unknown paths, mutate any old prefix/edge/unrelated field or key order, and corrupt complete current/raw/receipt bytes. Prove every mutation before expected refusal. Exercise each of four raw fragment boundaries and bytes outside them, LF/CRLF/final-newline and whitespace-only drift, missing/duplicate/reordered anchors, while preserving original fixed-receipt failure evidence. Getter/toJSON counters stayzero; test nested accessors, holes/inherited elements, symbols/hidden fields, foreign prototypes, cycles and warmed-object mutations. Fresh genuine input must still pass after each refusal. Raw and semantic proofs must agree; tests must not call the candidate twice and call that an independent oracle.
+
+Root first verifies delivered C1 content/policy/helper pins and current overlap/claims, authors/freezes actual after metadata and receipt, and dispatches Sol6.1 Medium only inside the authorized scope. If delivered main contains a policy change outside these exact two WKS additions, stop authoring and specify the concrete composition; do not adjust old hashes or choose a looser profile. Root alone runs typing, actual new proof suite, all724 original controls (204+352+105+63), unchanged114 WKS production rows as required by final source changes, inventory/architecture checks and required normal gates/hooks. Source-only specification is not runtime, C1 delivery or full migration evidence. Public9/9/all45/44/44/2, source/mixed/dynamic/backends and legacy-retirement requirements remain unchanged.
+
+
+## 2026-10-01 — Astra static review of root-authored WKS successor artifacts
+
+**Reviewer: Codex GPT-6 Astra High; implementation default remains Codex GPT-6.1 Sol Medium.** Root reports C1 exact8edd content merged through2ca34324 and verified on actualmain `c7366c3c6d3eb9e4c5cff0b29b11c42e3faab4c7`, with all26 path blob/mode/type matches and independent successful conformance/final/quality/equivalence/gate/differential/CLA evidence. The original issue-tests attempt1 cancellation remains retained; the official exact merge-group retry was still in progress at this dispatch, so root has not claimed complete acceptance/claim completion. No Git/network or CI query was performed by this reviewer. Root retains the stated retry-proof prerequisite before applying/dispatching metadata.
+
+Read-only review covered the five root-authored scratch artifacts in `/private/tmp/js2-ir-well-known-symbol-integration-20261001/.tmp/wks-integration/` and the copied `astra-exact-helper-plan.md`. Independent Python byte/JSON arithmetic, separate from the root authoring script, found **no artifact discrepancy**. This is static data verification, not execution of the TypeScript helper, compiler inventory, test suite or gate. The root authoring script was read, not executed. No tracked policy/source/receipt was changed: tracked `scripts/compiler-boundaries.json` still exactly equals before-policy.json and the tracked WKS receipt is absent.
+
+The receipt is9,566 bytes/SHA256 `ce9351c3b4c026a746d44cc769b6ff3968c2feabe686abe07e8361d4b28f7172`; authority-freeze is2,772 bytes/SHA `dd25c93ddfe768936932d00018081cf20d812a98ba0fdb4785bed251106b1392`; author script is7,013 bytes/SHA `0ce67b7568baa66793d557881e7187597f45ea2bebdfb4749e52c747f6cae3ca`. The16,129-byte copied plan is an exact contiguous appendix of this issue and matches recordedSHA `803f3fcc5af93344f878b33dace6c9484d2d4aa1437e9537548c899f4204753c`. Reviewed-base provenance equals root's stated fullc736 SHA; that agreement is not an independent Git ancestry check.
+
+Before policy matches the original C1 receipt current profile in every raw/data/file/history/layer field:565188 bytes,1769 files,96 histories. Current scratch policy is565875 bytes/SHA `451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59`, Git blob `74dc1b073145713d122e28a0b45f34c0cc41a066`, ordered-data SHA `462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7`. Independent construction of only the two specified layer-entry/floor additions and two file/history suffix rows matches the complete current ordered data; all unrelated data/field order and allowed edges are unchanged. Actual scratch counts are1771/98, contracts10/10/10 and backend50/50/55; program43required/44classified, IR-runtime19/19 and native98required/97floor/103classified retain their exact values. Every declared census and both complete layer-delta rows match the independent specification.
+
+Four spans occur exactly once on each side, remain nonoverlapping/increasing, and obey the reviewed fixed anchors. Their before→after UTF-16 offsets are9384→9384,12760→12816,64874→64999,565065→565475; lengths are78→134,92→161,140→425,123→400 code units. Independent UTF-16-unit slicing reproduced exact forward current bytes and exact reverse C1 bytes, including final newline; the net687-byte increase agrees with the raw profiles. Both whole raw SHA256 and Git-blob profiles and all ordered semantic hashes agree with receipt/freeze. These offsets are literal frozen coordinates, not search-derived authority for accepting a different file.
+
+Receipt schema/top-level order, fixed kind, exact two added-file/activation rows, layer indexes/roots/floors and census conform to the preceding contract. All19 immutable paths are unique; rows2–19 exactly equal C1's18 immutable records and every actual current file matches its declared byte/hash pin. The first row is the unchanged original C1 receipt. The actual helper is still the exact10,742-byte prefixSHA `2636bd52d821cbc1a7aaff425a03d1ea56fe29b584db5925d6ef099a893f5f3d`. No old receipt, helper prefix or source input needs repinning for these authored artifacts.
+
+Implementation clarification: pin the reviewed receipt's exact text SHA above in the appended helper, but still validate its independently fixed shape/constants/profile relation and full actual policy before deriving any predecessor. The root authoring script and authority-freeze are authoring evidence, not runtime validators or a successful-authentication cache. Do not execute/import that scratch script from tests, trust its saved before-policy as the inverse answer, or replace the genuine unchanged C1 guard with a saved hash comparison. Implement descriptor-safe full capture, semantic and raw inverses, genuine C1 invocation, reciprocal replay, immutable-input/prefix checks and all negative/current-source controls exactly as specified. Keep the four caller initial-view boundaries and all724 original rows/raw565188 witnesses unchanged. The author's optional `--apply` branch is not authorization to run it before root's retry-proof/integration gate.
+
+This review froze and preserved the complete preceding issue prefix:1,380,867 bytes/19,266 lines, SHA256 `276edbdf0743e99d5603070d97a1a2745d8b4311c6edfc95052512354e25c448`. Only this review appendix changed. No new source, helper, receipt, policy or claim edits and no compiler/tests/gates ran. Root owns any later artifact revision and fresh after pins; unknown main-policy drift requires explicit composition, not relaxed hashes. Full public/catalog/backend/dynamic/legacy-retirement obligations remain open.
+
+Root formatting handback: the reviewed scratch receipt was formatted with the repository Prettier configuration before its eventual helper binding. Exact ordered JSON data, policy bytes, four spans and all pins are unchanged; formatted receipt SHA256 5b28556311bb1548e3fb399fc8dee458fcec60f0d5366714e6298af123b73a61. The original reviewed receipt and a separate before/after formatting proof are retained. No tracked policy or receipt has been applied.
+
+
+### 2026-10-01 — implementation proceeds on verified delivered C1 contents
+
+Fresh exact rerun job110387553636 confirms its mandatory pinned issue-test step SUCCESS; the advisory changed-test step remains in progress. All C1 source/policy/helper contents and ancestry on main are independently verified, with all other merge-group gates successful. Root therefore begins reversible successor implementation while preserving the complete remaining job obligation. C1 claim completion and successor publication remain gated on terminal acceptance; no incomplete job is called passing. This updates the earlier implementation-wait decision without weakening any test, gate, historical receipt or migration requirement. Root has applied only the reviewed two-leaf policy, formatted fixed receipt and three frozen WKS source/test leaves in the isolated successor tree. Sol6.1Medium owns only the helper append and new focused policy suite in an isolated worker tree; root owns the four original callers, metadata, issue, serial heavy checks and delivery.
+
+
+### 2026-10-01 — C1 mandatory protection verified and WKS validation begins
+
+Root corrected the earlier required-gate classification against the active main ruleset16700772. Its six mandatory contexts are cheap gate (main-ancestor + lint), merge shard reports, quality, equivalence-gate, check for test262 regressions and cla-check. Each is SUCCESS on exact C1 merge_group2ca34324, attempt1, with102 successful conformance shards and actual final/report/equivalence jobs. The issue-tests job is not required by that ruleset. Attempt1 and retryattempt2 advisory cancellations remain recorded and receive no success credit; the retry fatal pinned step did pass. Root did not change protections, workflow, timeouts or tests.
+
+A fresh main advance to5a41f88a104b21469f5670f2a41895d5764c52e8 contains only six npm benchmark artifacts. Root fetched that exact commit, proved C1 merge ancestry and all26 PR path blobs/modes/types still exact. The first completion preflight correctly stopped before any claim mutation when main changed. Only the seven owned C1 slices are eligible for completion, not the epic or foreign claims.
+
+Sol6.1Medium completed only the existing policy-helper append and new focused suite; all original10742 helper bytes remain exact, and the154 drafted cases are not counted as passing before execution. Root imported the two authenticated source pins. Independent Sol static review of the four original callers found no concrete defect and proved preservation of all724 original generators/mutation operands and the174-module/782-edge fixture. Root actual native WKS114/114 and focused typing pass on delivered C1; the real boundary detector reports1771 modules, zero inventory errors, architecture incomplete. All six candidate suites are now executing serially with the original timeouts/flags; new policy/runtime acceptance, normal hooks and publication remain pending.
+
+
+C1 slice completion handback: all seven owned claims are now decoded/effect-verified done at canonical tip 559ef3e41078e742a9f65f0d2a31f160e9959c8b. This completes only the delivered C1 relocation and preservation slices. The tracking epic, foreign claims and remaining public/native/source/dynamic/backend requirements remain open. Original advisory cancellations and the protection-rule correction are preserved.
+
+
+### 2026-10-01 — executed WKS candidate acceptance
+
+The six-suite candidate run passed992/992 with zero failed/pending: new WKS policy154, native Symbol114, and all724 preserved controls (program boundary105, C1 policy204, semantic provider352, B policy63). Full scoped TS7 exited0. Lint initially rejected the new suite’s delete operator; Sol6.1Medium replaced only that operation with Reflect.deleteProperty, preserving actual deletion and reinsertion. The focused successor suite passed154/154; root preserved the original full result and raw lint failure. Repository formatting then changed only layout and produced byte-identical transpiled JavaScript. The final typing/lint/format/LOC/function/oracle/coercion/dead-export gates all exit0 using the exact current-main source scope. No grant, timeout, assertion or gate was weakened.
+
+The boundary inventory contains1771 modules, zero errors, contracts10 and backend55 classified; two new required entry/floor counts are10/50. Architecture remains incomplete. The original C1 helper prefix, original C1/B/source receipts, all19 immutable inputs and the native production source pins remain exact. Independent Sol reviews found no concrete caller or helper bypass; malformed content is refused by full digests, with no later-branch isolation credit. Normal signed commit/push hooks, final current-main/head/claim/overlap checks and ready protected PR delivery remain outstanding. Public Number9/9, the full native catalog algorithms, source/dynamic/mixed execution and both-backend equality are not established by this component.
+
+
+## 2026-10-01 — Implementation Plan: integrate the prepared Number prerequisites after WKS
+
+**Architect: Codex GPT-6 Astra High; default implementer: Codex GPT-6.1 Sol Medium.** This bounded increment imports the existing four production leaves and four tests, then proves their exact boundary-policy successor. It does not repeat the completed production repair or implement the missing public Number graph. Planning base is `75e59458067c293749da33fb5fbb4eaf7031144c`; root's dispatch records WKS PR6386 OPEN with quality running, not delivered. Root must establish actual protected-main ancestry, content and required merge-group evidence before source integration. A later main descendant is usable only when the exact reviewed source/policy delta and every predecessor pin/profile remain valid; ancestry alone admits nothing, and an unrelated policy change requires an explicit new composition.
+
+### Existing prepared input and ownership
+
+The donor is `/private/tmp/js2-ir-number-prerequisite-recovery-20261001`. Its `.tmp/number-recovery/definition-capture/validation-v5/results.json` actually records **713/713**, zero failed/pending: BigInt body201, BigInt owner75, primitive classifier185, Number body252. V6 records **252/252** for the changed Number test, exact other-seven pins, and reciprocal restoration of its four lint-only identifier edits. All eight current donor files match V6 `source-freeze.json`; all eight are absent from this planning base. These are unpublished component results, not a fresh run on the future integration tree.
+
+| Frozen donor path | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `src/runtime/wasmgc/values/bigint-to-number-body.ts` | 9195 | `a698e80ad9054d7dd66ed33e17798b339b3ae2c16c7b9efdd004394d52e91d80` |
+| `src/runtime/wasmgc/values/number-from-value-body.ts` | 9609 | `00376356e12a0d70976addeff7911b1ec5401375b1f4eb0d7c81450568c20b59` |
+| `src/backend/wasmgc/resources/native-bigint-number.ts` | 15683 | `ccc1c66d4fc734339cc9a192dc29f24d08483fb7a559b777a903a622b64c3cc6` |
+| `src/backend/wasmgc/resources/native-number-primitive-classifier.ts` | 21040 | `210c30e3f2928952ebfceeafb8f6545930054b0c5ed9c1ec66ca2afcc41e7161` |
+| `tests/issue-3518-bigint-to-number-body.test.ts` | 11598 | `f80b9fe1701a8f289a458a5032d3d4bd0af4910d723eabe343476b4814c3f130` |
+| `tests/issue-3518-native-bigint-number-owner.test.ts` | 29455 | `b266965df90630f184a136f07c6867f99b59507f1ee11f0ca141c047e6b8f621` |
+| `tests/issue-3518-native-number-primitive-classifier.test.ts` | 43687 | `45ad86969dd28b1597eef4e8e0a53531ea4f3dc54e90e2784ca6cb01baec626d` |
+| `tests/issue-3518-number-from-value-body.test.ts` | 36900 | `2abc9c96ebd7fcda5547c8f093530d08d56796b4ab4b636b64a4d3b0ff5ae969` |
+
+Root alone integrates these bytes under the preserved original Number claims and receiver-ABI continuation after fresh canonical overlap checks. This plan grants/releases no source claim. The new planner claim covers only this append-only issue and its scratch. Preserve old foreign linker and C2/C3 claims, the WKS writer's source, and the separate runtime-definition owner. No donor branch overlay or unrelated archive recovery.
+
+The implementations already contain the intended mechanisms: `buildBigIntToNumberDefinition` at donor line224 retains full-width guard/sticky/ties-even conversion; `buildNumberFromValueDefinition` at line167 retains scalar `Get(target,key,receiver)`, actual receiver/method argument order, primitive/Symbol/BigInt branches and uncaught abrupt propagation. The BigInt owner's `captureLiveDefinitions`/`requireCompletedNativeBigIntNumber` are at lines70/323; classifier equivalents at104/432. They preflight original live descriptors before borrowed producer/ledger reads and independently compare full definitions after genuine dependency completion. Import these completed repairs; emit no new Wasm instructions in this integration task.
+
+Keep `tests/helpers/native-bigint-carrier-fixture.ts` unchanged (2844 bytes, SHA `e4256172936834a5b36df9619705b2197969ac52b1b376ca53a31532c7d8d915`) and the WKS contract `src/runtime/contracts/well-known-symbols.ts` unchanged (749 bytes, SHA `86933d515e3a243a9577ce4d14f3edd059423292fda7c638d907ec61b321d404`). Preserve the original public fixture and all V1–V6 raw failures/results. Number's252 tests retain their algorithm-component imported Get/Call harness label; they are not public source execution.
+
+### Exact four-leaf metadata delta
+
+Root edits only `scripts/compiler-boundaries.json` as follows. Append the two runtime body paths in table order to `layers[12]` (`native-runtime`, root `src/runtime/wasmgc`), and the two backend owner paths in table order to `layers[11]` (`backend-wasmgc`, root `src/backend/wasmgc`). Retain active/required flags and all old entry bytes/order. Append four `{path,state:"clean",layer}` rows to `files`, in the table's four-source-path order. Append exactly two activation records, first native-runtime with the two body entries/minModules2, then backend-wasmgc with the two owner entries/minModules2. Tests are not classified source modules.
+
+| Complete policy census | Real WKS predecessor | Number successor |
+| --- | ---: | ---: |
+| files / activation records / layers | 1771 / 98 / 20 | 1775 / 100 / 20 |
+| backend entries / floor / classified | 50 / 50 / 55 | 52 / 52 / 57 |
+| native entries / floor / classified | 98 / 97 / 103 | 100 / 99 / 105 |
+| contracts entries / floor / classified | 10 / 10 / 10 | unchanged |
+| program entries / floor / classified | 43 / 43 / 44 | unchanged |
+| IR-runtime entries / floor / classified | 19 / 19 / 19 | unchanged |
+| analysis / core required entries | 11 / 29 | unchanged |
+
+**Do not normalize the native floor to100.** Its existing one-entry offset is historical reality; add only2 to97. Historical WKS/C1/B inputs must still show98/97/103. Preserve all16 top-level keys/order, roots, external-package rules, evidence, moves and allowed edges (SHA `efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7`). Static import inspection finds22 direct module edges: body2/type-only2, Number body2/type-only1, BigInt owner6/type-only2, classifier12/type-only4. All targets fit existing native/backend permissions. Root still runs the real complete transitive type/value inventory; this static count is not its replacement. Add no edge, budget allowance, timeout, gate or fixture expansion.
+
+### One fixed Number proof, explicitly deriving genuine WKS
+
+**Recommendation: append to `tests/helpers/ir-runtime-program-policy-evolution.ts`, after its exact existing23854 bytes**, SHA `fe575facb2aedc750760ba302ded54ab37ac223ff70e0d07f25faa804de84474`. This reuses private descriptor-first `capture`, digest/freeze and profile types without extracting or changing either predecessor. The concrete invariant is stronger than preserving exported names: every old C1/WKS byte remains identical, and the new proof must call `authenticateWellKnownSymbolPolicy(derivedBefore)` successfully. A separate leaf would either duplicate the defensive capture implementation or require touching/exporting old internals; neither is needed for this fixed increment. Do not turn the helper into a generic policy engine.
+
+Append explicit APIs `numberPrerequisitePolicyReceiptPath`, `authenticateNumberPrerequisitePolicyEvolution(text?)`, `authenticateNumberPrerequisitePolicy(value)`, `beforeNumberPrerequisitePolicy(value)` and `beforeNumberPrerequisitePolicySource(raw)`. Add only `tests/helpers/ir-runtime-program-policy-number-prerequisites.json` and `tests/issue-3518-number-prerequisite-policy-evolution.test.ts`. Old C1/WKS/B APIs continue rejecting direct Number-current data. No profile detection, prefix fallback, caller-selected hashes or normalization of mutants.
+
+Root first authors/freezes actual candidate policy and the fixed receipt in scratch. Freeze the eight source inputs above, the complete predecessor, policy before/after profiles, exact four raw spans, and the helper prefix before the implementer binds any after digest. The receipt uses the WKS receipt's ordered shape (`schema,kind,provenance,before,current,allowedEdgesSha256,layerDeltas,addedFiles,activationAdditions,census,raw`), with kind `number-prerequisites-exact-runtime-program-policy-successor`. Provenance fixes the actual reviewed delivered base and this plan's digest, `wksHelperPrefix`, ordered `immutableInputs` and ordered `sourceInputs`. The former is exactly the WKS receipt itself followed by its existing19 immutable inputs (20 unique paths); the latter is exactly the eight V6 files above, with bytes and SHA. Recheck all on every public proof action. Do not pin a mutable whole issue or a whole helper containing its own receipt hash.
+
+The unchanged WKS receipt is9470 bytes / SHA `5b28556311bb1548e3fb399fc8dee458fcec60f0d5366714e6298af123b73a61`. Require the new receipt's complete `before` profile to equal its genuinely authenticated `current`. Actual WKS policy:565875 bytes, SHA `451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59`, Git blob `74dc1b073145713d122e28a0b45f34c0cc41a066`, ordered-data SHA `462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7`. Freeze actual Number after values; no after hash is invented here. Preserve every old receipt, source-relocation helper and immutable input, including C1's18 and WKS's19 membership/order. The new receipt hash is a literal bound in appended code; alternate text is only a negative-test operand, never authority to select a profile.
+
+Semantic action: freshly descriptor-capture the entire unknown input before field reads/serialization; retain old zero-getter and non-JSON refusals. Authenticate fixed receipt and all pins; check complete current ordered digest/profile,16 keys,20 layers, allowed edges, independently enumerated census,1771-file/98-history predecessor prefix digests, exact four/two suffixes, and layer identities/roots/status/required/entry tails/floors. Derive `before` from that actual captured current object by removing only those suffixes and restoring backend50/50 and native98/97. Check its full predecessor profile, then invoke **unchanged `authenticateWellKnownSymbolPolicy(before)`**, which really proves WKS→C1→B. Forward-replay an independently fixed four-leaf delta over a detached copy of that verified result and compare complete current data/digest. Never substitute a receipt-saved whole policy or layer. Return detached deeply frozen current from authenticate, fresh mutable WKS from before; each call recaptures, including after a previous success.
+
+Raw proof has exactly four nonempty, unique, nonoverlapping spans in source order, offsets in UTF16 code units: (1) backend layer tail from quoted `src/backend/wasmgc/resources/native-well-known-symbols.ts` through minModules50, appending only the two owners and floor52; (2) native layer tail from quoted `src/runtime/wasmgc/values/mixed-object-access-bodies.ts` through minModules97, appending only the two bodies and floor99; (3) final WKS backend activation record through array close and `"nonModules"` anchor, preserving it and appending only the two grouped min2 records; (4) final WKS backend files row through final array/object close/newline, preserving it and appending only four clean rows. Root records exact fragments/offsets from the real before/after files; layerDeltas are index11 then12, regardless of the native-first file/history order.
+
+Authenticate whole input bytes/SHA/Git blob before applying raw spans. Validate role anchors, monotonic original-input offsets, accumulated displacement and first/last-occurrence uniqueness; assemble slices without drifting offsets. Check output complete profile, exact reciprocal reconstruction and agreement of parsed raw inverse with the semantic inverse. `beforeNumberPrerequisitePolicySource` returns the actually reconstructed WKS bytes, then exercises the unchanged WKS raw inverse to C1. Refuse whitespace changes outside spans, duplicated/reordered fragments, object-wrapped strings and direct old WKS input. No formatter or saved565875-byte output snapshot can establish the inverse.
+
+### Exact compatibility edits and worker split
+
+Root owns the eight imports, policy, fixed receipt, this issue, and **five** existing caller files. Sol owns only the helper append and the new Number policy suite after root hands over frozen artifacts. This is18 tracked paths total, including eight new source/test paths; no contract, native fixture, source reconstruction or old receipt change. Root rechecks exact path overlap/claims before granting implementation scope. Neither this planner nor Sol takes over the old Number/foreign claims.
+
+1. `tests/issue-3518-semantic-provider-boundary.test.ts`: at `policy()` near400 and the direct current guard near998 authenticate Number-current and still return/test actual current policy. At every existing initial `beforeWellKnownSymbolPolicy(policy())`/`beforeWellKnownSymbolPolicy(p)` historical composition insert `beforeNumberPrerequisitePolicy` immediately inside WKS; retain WKS→C1→B and all original mutation operands. Append exactly the two native/two backend paths to the independent current layer-addition lists near1102; preserve signed-prefix hashes and floor formula. Keep the174-source fixture and782-edge census (403type/379runtime) unchanged: none of its existing sources imports these newly added leaves. Do not include new leaves in that historical fixture merely to inflate coverage.
+2. `tests/issue-3518-program-data-contract-boundary.test.ts`: current `policy()` near135 uses the Number guard; the two initial historical compositions near357/445 become Number→WKS→C1→B. Preserve actual current readers,105 controls and all source inverses.
+3. `tests/issue-3518-validation-policy-evolution.test.ts`: only initial `actual()` near29 gains Number inverse immediately before WKS. Preserve63 controls, B hashes, refusal helpers and mutants.
+4. `tests/issue-3518-runtime-program-policy-evolution.test.ts`: only initial `actual()` near25 gains Number inverse before WKS; initial raw-positive near74 becomes Number raw inverse then WKS raw inverse. Preserve204 controls, original565188-byte C1/raw/data assertions,18 immutable inputs and independent C1 replay.
+5. `tests/issue-3518-well-known-symbol-policy-evolution.test.ts`: its initial `raw()` near22 becomes `beforeNumberPrerequisitePolicySource(read("scripts/compiler-boundaries.json"))`; its existing `actual()` parses that authenticated derived WKS input. Preserve all154 WKS controls,565875-byte/hash/19-pin assertions, independent two-row replay, raw fragments, `rawRefused`, `rejected`, descriptor refusals and all mutation operands. Change the positive test's description to identify the authenticated WKS predecessor view. Mutants built from `raw()` are sent directly to the existing WKS raw API, never back through Number. The new Number suite separately reads the true current raw directly; it must not reuse this historical initial view.
+
+These narrow initial-view adaptations preserve four old callers'724 controls plus WKS154 = **878 historical controls**. Historical guards never learn to admit Number, and a malicious current input cannot be made acceptable by choosing a predecessor from its shape. Root retains before/after caller bytes and reviews each mutation generator/operand for preservation.
+
+### Required proof and bounded completion
+
+New Number tests independently read actual current bytes and establish1775/100 and each census; derive1771/98 WKS and prove genuine unchanged WKS→C1→B; independently replay the four source rows/two histories and both layer changes; independently assemble the four raw slices and reciprocal bytes. Check all28 fixed full-file pins (20 predecessor inputs +8 source inputs), the23854-byte helper prefix and nested10742-byte C1 prefix, detached/frozen versus mutable copies, and repeated actions. Explicitly require each old guard to reject direct Number, and Number to reject direct WKS/C1/B. No wrapper around an old test counts as a new semantic result.
+
+Negatives cover deletion/replacement/duplication/reordering of each new source row, required entry and activation; wrong layer/state/root/floor; same-count substitutions; extra unknown files/entries/history; any old prefix/allowed-edge/unrelated-field drift; receipt/source pin drift; raw fragments, offsets, outside-span bytes and reciprocal mismatch. Preserve descriptor-first zero-getter tests, hidden/symbol/inherited/sparse/cyclic/non-JSON inputs and warm success→actual mutation→refusal→exact restoration→success. Establish that each mutation happened before asserting refusal; no successful-object cache, mutant auto-selection, rewritten receipt or swallowed failure.
+
+Root runs serially against final integrated bytes: focused current typing; the four production suites retaining all713 rows (201/75/185/252), zero skips; all878 historical policy/boundary controls; unchanged114 WKS native controls; and the new Number suite, whose actual denominator is reported only after execution. This is1705 existing controls plus actual new controls, not a claim that1705 have been rerun here. Preserve native owner no-semantic-import execution, genuine carrier/encoding/displaced-coordinate controls, full-definition/accessor restoration controls, and the Number component label. Run real inventory/architecture and unchanged format/lint/LOC/function/oracle/coercion/dead-export gates/hooks, with current-main scope and no grants. Inventory should contain1775 modules with zero errors while architecture remains incomplete; extra rows/errors require explanation, not baseline rewriting. Root retains failures, source/policy/pin freezes and actual required protected delivery evidence.
+
+Completion of this increment means these exact prepared leaves and their strict successor proof are delivered. Public Number remains the recorded **5/9**, with four public original/decoded×encoding rows missing `js.number.from-value`; no public row was rerun here. Current source still declares that feature without its provider (`src/ir/runtime/number-conversion-callable.ts:11`, contracts manifest feature near43/provider IDs near102), reserves unfilled checked Get `(externref,externref,externref)->(i32,externref)` (`native-mixed-object-access.ts:197,459`), and refuses full realm completion (`native-object-realm.ts:457`). The later real joins remain source identity/captured cells and scalar Get/Call/IsCallable, genuine Number owner and provider, all45 catalog objects/44 Call algorithms/44 lifted entries/2 Construct entries, complete population/failure replay and dynamic behavior, then both-backend equivalence. Runtime-definition component completion does not discharge the42 pending Call algorithms or2 Construct roles. Existing harder graph plans cover those separate claims; do not widen this import/proof task into speculative implementations. Legacy remains until complete IR coverage, testing and equality.
+
+**Exact next dispatch:** after root verifies WKS delivered content/protection and renews its held-claim integration authority, root imports only the eight V6 files and authors/freezes the stated policy/receipt/raw spans. Dispatch Sol6.1 Medium to append only the fixed Number proof to the existing helper and create its one new suite using those artifacts; root adapts the five callers, validates serially and delivers through normal protection. Raise effort only for a concrete new mechanism or incompatible current contract. This planning pass performed read-only source/evidence inspection and static byte/JSON arithmetic; no compiler, TypeScript Program, tests, gates, network or source mutation was run. The only Git read was the required initial isolated-worktree branch verification.
+
+
+### 2026-10-01 — Static interface review: distinguish declarations from type/value edges
+
+This addendum clarifies the preceding import-count wording without changing its integration scope. Sol6.1 Medium's donor receipt `.tmp/number-recovery/current-interface-review.json`, captured2026-10-01T14:49:43.576764Z, SHA-256 `2f9334ee2714145e8301bf0ae2c5754d6decec38da433dbbbb566674ff155ce8`, lists **22 import declarations**, consisting of9 wholly type-only declarations and13 value-bearing declarations. Splitting mixed declarations into their separate type/value dependencies yields **28 edges:15 type and13 value**. Thus the preceding phrase “22 direct module edges” denotes declaration-level module imports, not the boundary detector's split type/value edge unit. The four per-file declaration totals remain2/2/6/12; all28 split edges use existing permitted layer relations. The historical fixture's782 split edges (403type/379runtime) remains a separate, unchanged population.
+
+The receipt confirms all eight V6 source/test pins, byte-identical external production interfaces, and all40 external test dependency declaration rows. It records86 reachable module hashes from the saved TypeScript-resolver graph at `c7366c3c6d3eb9e4c5cff0b29b11c42e3faab4c7`; static readback here independently confirms86/86 hashes against planning base `75e59458067c293749da33fb5fbb4eaf7031144c`. Its `recorded_graph_complete` is explicitly false, with empty recorded scoped unknown/unresolved/forbidden/transitive-violation lists. This is hash continuity for that recorded reachable set, not a freshly recomputed or complete graph, current inventory admission, typing or runtime evidence. Its `source_edits_required` is empty. Integrate all four frozen production leaves together because the BigInt owner imports the frozen BigInt body absent from the baseline; no source API repair is indicated. The public source fixture remains SHA `c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9`, with the original5/9 result unchanged.
+
+Root's follow-up reports WKS in protected queue position1, group `6c216adfc54f6c8c07b83dcad54d8bfb7121a285`, parents abbreviated `5a41` + exact WKS head `75e59458067c293749da33fb5fbb4eaf7031144c`; CI run36879254320 and Test262 run36879254659 are in progress. These are root-reported pending observations, not independently fetched or successful delivery evidence. Source integration still awaits actual protected-main ancestry/content and required merge-group acceptance. The next dispatch, fixed successor proof, frozen source scope and all validation obligations above remain unchanged. This follow-up ran only receipt/byte reads and static arithmetic; no compiler, TypeScript Program, tests, gates, Git or network operations.
+
+
+### Root execution audit — original public Number fixture on the published WKS source
+
+After the static plan, root reran the original unchanged `tests/issue-3518-public-number-object-712.test.ts` (4487 bytes, SHA256 `afc3885f51522cec10d5eccac536636b104b9a01b8c5e5c139b8dbd5fef35d37`) and the original source fixture `tests/fixtures/issue-3518-native-object-access-712.ts.txt` (293 bytes, SHA256 `c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9`) against exact source revision `75e59458067c293749da33fb5fbb4eaf7031144c`. No prepared Number prerequisite production leaf was added, and no source, assertion, fixture, timeout or metadata changed. This is current published-head evidence, not historical/current comparison or verified-main acceptance.
+
+Actual result: **5/9 passed, 4 failed, zero skipped**, exit1. The native oracle and all four explicit legacy host/standalone × UTF16/UTF8 rows still execute712. All four public original/decoded × encoding rows still fail in actual preparation with `invariant: runtime feature js.number.from-value has no provider`. They do not reach decode, acceptance or emission, so none earns decoded/runtime coverage. Preserve these failures and the complete nine-row denominator. The initial audit setup mistakenly expected the already-present byte-identical source fixture to be absent; the first startup therefore had no dependency symlink and executed zero tests. That setup observation and startup log are retained separately; only the subsequent actual nine-row report counts.
+
+Raw evidence is retained in `/private/tmp/js2-ir-number-successor-plan-20261001/.tmp/number-successor-plan/current-public-number-audit/`: input-freeze.json, report.json, runtime.log and acceptance-audit.json. The standalone Astra plan and its digest remain unchanged. WKS PR6386 is now first in the protected queue at actual merge-group `6c216adfc54f6c8c07b83dcad54d8bfb7121a285`, with exact parents freshly verified main `5a41f88a104b21469f5670f2a41895d5764c52e8` and published head75e5945. Its specific merge-group CI and conformance runs are active at this observation; no main delivery or full migration completion is claimed. Root leaves the existing Number and new planning claims held.
+
+
+## 2026-10-01 — Fresh Number component acceptance and bounded Sol dispatch
+
+Root integrated all eight frozen V6 source/test files into isolated
+`codex/3518-number-prerequisite-integration-20261001` at freshly verified main
+`345616935e6ad070f1c39f9eb360131241acbbae`, after protected WKS delivery. Four
+original Number claims retain their actors and now name the integration branch;
+root's separate policy claim remains held. The full18-path overlap census
+found no new or changed overlap. No foreign claim was transferred or released.
+
+Actual focused TypeScript7 typing exited0 with no diagnostics. Fresh Number
+runtime suites passed **713/713**, zero failures/pending:201 BigInt body,
+75 BigInt owner,185 classifier,252 Number body. All eight source/test and20
+predecessor pins remain exact. The unchanged native WKS suite passed
+**114/114**, zero failures/pending. These component results do not establish
+public source, decoded replay or catalog coverage. Original public Number
+remains **5/9** with four actual preparation refusals for missing
+`js.number.from-value` provider; its original test and fixture are preserved.
+
+Astra High approved root's frozen metadata/receipt before application.
+Sol6.1 Medium owns only the exact23854-byte-prefix helper append and new Number
+policy suite in isolated `codex/3518-number-policy-proof-20261001`, under root's
+held `3518:number-policy-proof-20261001` claim. Root owns five initial-view
+caller adaptations and the sole heavy validation lane. Independent Sol static
+review confirms all878 historical generators, mutants, assertions and pins
+preserved, with the174-module/782-edge fixture unchanged. The WKS positive is
+explicitly labeled as an authenticated predecessor view. These historical
+runtime suites and the new Number proof suite have not run on this tree yet.
+
+Fresh source inventory enumerates1775 modules, exits0 and has no inventory
+errors. Status remains `inventory-valid-architecture-incomplete`: whole graph
+has4 unknown dynamic imports and12847 forbidden edges, with0 transitive
+violations. This is not architecture completion or a zero-forbidden graph.
+Astra reviews the four new modules' scoped records and import counting units
+from the retained actual report. No budget, allowed edge, gate assertion,
+fixture, timeout or legacy path was relaxed. No Number PR or delivery yet.
+
+
+## 2026-10-01 — Actual Number inventory units and scoped closure correction
+
+Astra High's read-only review of root's actual fresh inventory corrects the
+planning addendum: the detector counts22 outgoing reference records for the
+four new production modules,9 type-only and13 runtime. The auxiliary static
+28 count includes six extra mixed-import type facets and is neither the
+detector unit nor individual binding count. The historical174-module fixture
+still expects782 reference records,403 type-only and379 runtime; no count or
+fixture changed.
+
+The union of the four new modules' dependency closures contains90 clean
+modules (4 new and86 existing),309 resolved reference records (208 type-only,
+101 runtime). All90 saved module hashes match current source bytes. Filtering
+that saved report by these module sources yields zero scoped unknown,
+unresolved, forbidden and transitive-violation records. Individual overlapping
+closures were not summed. This is scoped current inventory evidence; the
+whole graph still has4 unknown and12847 forbidden records and remains
+incomplete. No full architecture, historical fixture runtime, public source
+Number or whole migration completion is inferred. Root retains the complete
+report and Astra's independent readback; no detector or source repair needed.
+
+
+## 2026-10-01 — Actual historical compatibility run and Number restoration counterexample
+
+Root executed all five preserved historical callers: **878/878**, zero
+failures/pending (semantic352, program105, B63, C1 204, WKS154). The new Number
+suite's first actual run was **246/247**, zero pending. Its symbol-descriptor
+warm restoration test created a non-configurable property and ignored a failed
+deletion, so the unchanged proof correctly refused the unrestored object.
+Independent static review had missed this test cleanup defect; both that review
+and the actual failure are retained. No helper or refusal was weakened.
+
+Sol6.1 Medium repaired only the new test's cleanup: the injected symbol is
+configurable, every deletion must succeed, and restored own keys, descriptors
+and plain prototype are checked against the detached original before
+reacceptance. Exact inverse diff proves all247 controls and their refusal and
+zero-callback assertions preserved. Helper SHA remains
+`148601474472e3d2021faa66b1735c1ca6f9d17a7a16bc80e32ae737170053a9`;
+repaired suite SHA is
+`010d81d228228e2581ceaa6a10d52577fc98ee09f0c7a3f61b5308ac9ad51cf5`.
+Independent static repair review passed; the actual repaired run is pending.
+
+After the historical run, root freshly read canonical main via `ls-remote`,
+fetched exact `a49f245868e1bb37ebdca00421352c134d1db940`, and verified ancestry
+and its six benchmark-only paths. No owned or pinned path changed. The isolated
+branch fast-forwarded to that exact main head; prior runtime reports retain
+base345616 and are not relabeled as fresh post-refresh executions. The repaired
+proof run starts on a49f. All18 scope paths and seven owned claims were freshly
+verified, with no new PR overlaps or claim transfer. No Number delivery yet.
+
+
+## 2026-10-01 — Repaired Number proof actual acceptance
+
+The repaired247-control Number policy suite actually passed **247/247**,
+zero failures/pending, on exact refreshed main
+`a49f245868e1bb37ebdca00421352c134d1db940`. Focused TypeScript7 across all11
+checkpoint test entrypoints exited0 with no diagnostics. All28 full input
+pins and the exact23854-byte historical helper prefix remain unchanged.
+The separate actual runs total **1952 passing checks**:713 Number components,
+114 native WKS,878 historical policy controls,247 Number policy controls.
+The first three reports retain their original345616 base; only benchmark
+files changed during the verified fast-forward. The original246/247 failure,
+its static-review miss and exact test-only repair remain preserved.
+
+Repository gates, normal commit/push hooks, ready fork PR and protected-main
+delivery are still required. These component/proof results do not turn the
+original public Number5/9 into9/9, prove whole mixed execution or retire the
+old compiler. Full epic remains active; only verified main merges are delivery.
+
+
+## 2026-10-01 — Number checkpoint repository gates before normal hooks
+
+Root ran the five unchanged repository checks at exact a49f main base:
+LOC and function budgets, coercion-site and oracle ratchets, and the required
+legacy-reachability preservation mode all exited0. Budgets measured only the
+four new production files, net1340 lines; no allowances or ceilings changed.
+Coercion/oracle checks correctly enumerate zero changed codegen files and are
+not runtime coverage. Reachability reports preservation-only PASS (6/6 full
+and6/6 cut witnesses), graph OPEN, strict modeled closure FAIL and explicitly
+**retirement/deletion NOT CERTIFIED**. Its required preservation-mode success
+is not architecture completion. Full raw logs are retained. Normal hooks,
+signed commit, push, ready PR and protected queue delivery remain pending.
+
+
+## 2026-10-01 — Normal hook fixed-authority formatting failure, no commit
+
+The actual full normal signed-commit attempt exited1; HEAD remains a49f and
+no checkpoint commit exists. Formatting/lint and both budgets passed. Its
+changed-root lane genuinely enumerated10 tests, passed all713 Number native
+component controls, then stopped with247/247 new policy controls refusing the
+receipt digest. Historical878 controls were not reached in that hook run.
+Those were separately measured earlier; no full-hook success is inferred.
+
+Normal Prettier changed only the two receipt roots arrays from multiline to
+inline, removing32 bytes:12758 bytes/a5bd7bdf... became12726 bytes with SHA
+`92c0539b00d3b8ba5bb58951c1612f62fa334627f2b928e6ff1485ae9cd25845`.
+Complete ordered JSON data is exactly equal. Root's independent programmatic
+formatter check reproduces the hook bytes and proves canonical idempotence.
+All28 full-file inputs, policy/raw profiles, original23854-byte helper prefix
+and complete unchanged helper still match their prior pins. The guard correctly
+refuses the changed bytes; it has not learned alternate authority or normalized
+receipt whitespace. Original normal-hook failure/log and frozen receipt are
+retained. Earlier247/247 acceptance belongs to the original receipt bytes and
+is not relabeled as current acceptance.
+
+Astra High is specifying an explicit canonical-format authority amendment.
+Root will freeze independently verified canonical bytes before any Sol digest
+binding, preserve both predecessor guards and all original controls, and prove
+the old noncanonical receipt remains refused. No formatter, hook or gate will
+be bypassed. New proof execution and full normal hooks remain required; no
+Number PR or protected-main delivery exists yet.
+
+
+## 2026-10-01 - Astra implementation amendment for canonical Number receipt authority
+
+# Number prerequisite receipt formatting authority amendment — 2026-10-01
+
+Adopt exactly one newly reviewed serialized representation of the same Number receipt payload. The preserved `.tmp/number-integration/root-receipt.json` is **12,758 bytes**, SHA-256 `a5bd7bdf49069d030c29eda4f1b334d97c761b220f2e2887ca3a7cea0d9abfb4`. The actual hook-formatted `tests/helpers/ir-runtime-program-policy-number-prerequisites.json` is **12,726 bytes**, SHA-256 `92c0539b00d3b8ba5bb58951c1612f62fa334627f2b928e6ff1485ae9cd25845`. Independently replacing only the two multiline `layerDeltas[0].roots` and `layerDeltas[1].roots` arrays with their inline forms reproduces the entire destination byte for byte; each replacement removes 16 bytes. Full ordered JSON equality holds, including every key, array, profile, pin, and raw policy-span string. Ordered payload SHA-256: `13db4f038759cb2186ce8764543fe0f9d174d58d1136ec4174d170a18082c33d`.
+
+## Failure mechanism and authority decision
+
+`package.json` maps staged `*.json` to `prettier --write`; `.husky/pre-commit:1` invokes lint-staged unconditionally. `.prettierrc` uses printWidth 120 and tabWidth 2; the receipt destination is not excluded by `.prettierignore`. `author-successor.mjs:19` invoked Prettier on a scratch pathname, but the saved original receipt is byte-identical to `root-receipt.unformatted.json`. That scratch result did not establish canonical stability at the committed destination. This static review did not run Prettier or establish why the earlier scratch invocation returned unchanged bytes. Root reports that destination Prettier checking now passes; independently freeze its actual bytes before implementation.
+
+The saved normal hook failure reports **247/247 Number successor rows failing at the fixed receipt digest**. That is expected fail-closed behavior. Authorize an explicit serialization amendment before publication: replace the one fixed Number receipt digest with the reviewed canonical digest. Do not accept both representations, normalize receipt input, derive the accepted hash from the candidate under test, select authority from mutants, skip hooks/formatter, or change ignore/configuration/gates. The previous representation must be refused under the amended authority. Preserve the prior freeze, tests/pass receipts and terminal failure as history; do not overwrite them silently.
+
+## Independently rechecked invariants
+
+All **28 unique full-file pins (20 historical inputs + 8 frozen Number source/tests)** match their actual byte counts and SHA-256. The original helper prefix remains **23,854 bytes / fe575facb2aedc750760ba302ded54ab37ac223ff70e0d07f25faa804de84474**; nested C1 remains **10,742 bytes / 2636bd52d821cbc1a7aaff425a03d1ea56fe29b584db5925d6ef099a893f5f3d**. The WKS/C1 receipts, B helper/receipt, and all other historical pinned inputs are unchanged.
+
+The before policy still equals genuine WKS-current: **565,875 bytes / 451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59**, ordered data **462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7**. Actual `scripts/compiler-boundaries.json` equals the frozen current policy: **567,166 bytes / 8213f6d2d3bf112544ca2aa50b68e585f4ba2c1f9795acc240c9e8495712e7df**, ordered data **5dea4a676b8ddbc6fc50c7c77446e799ee4db12f4113c1fdf4edff33de848b21**. Complete file/layer/history profiles and Git blob hashes match. All four UTF-16 raw spans are unchanged; independently replaying both directions reproduces the exact before/current bytes. Allowed-edge hash remains **efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7**. The companion static-review JSON records each of the 28 checks, both prefix hashes, all profiles and spans.
+
+## Implementation ownership and exact changes
+
+1. **Root owns the receipt/freeze and issue appendix.** Preserve original evidence. Confirm repository Prettier at the actual destination leaves the 12,726-byte candidate unchanged, including a repeat-format stability check when freezing. Create a separately named canonical scratch receipt and amended freeze tied to this plan, this static review, and the original authority freeze. Record the exact two-span formatting change, ordered equality, unchanged policy/source pins and prefixes. If formatting yields any other bytes, stop for exact review rather than auto-selecting another digest. Keep receipt payload/provenance/planSha256 unchanged; record this amendment separately and append this authored plan to the claimed issue without changing existing issue bytes. Existing source claims and actors retain their scope.
+2. **Sol 6.1 Medium owns exactly the existing helper and new Number proof suite.** In `tests/helpers/ir-runtime-program-policy-evolution.ts:577`, change only `numberReceiptSha256` from `a5bd7bdf49069d030c29eda4f1b334d97c761b220f2e2887ca3a7cea0d9abfb4` to `92c0539b00d3b8ba5bb58951c1612f62fa334627f2b928e6ff1485ae9cd25845`. This binding is inside the appended Number section, after the immutable 23,854-byte prefix. Leave the actual Number→WKS→C1→B proof, all raw/semantic profiles, full-file checks and failure paths unchanged. In `tests/issue-3518-number-prerequisite-policy-evolution.test.ts:165-166`, change the independent positive byte assertion **12758 → 12726** and digest literal to **92c0539b00d3b8ba5bb58951c1612f62fa334627f2b928e6ff1485ae9cd25845**. Do not import or derive that expectation from the helper.
+3. **Add a targeted assertion block inside the existing positive pin test beginning at line 162; keep 247 test rows.** Starting from the canonical receipt text, replace exactly once each literal `"roots": ["src/backend/wasmgc"]` and `"roots": ["src/runtime/wasmgc"]` with the original three-line representation: `"roots": [`, newline + eight spaces + quoted path, newline + six spaces + `]`. Assert each exact inline fragment occurs once before replacement. Assert the resulting full text is **12,758 bytes / a5bd7bdf49069d030c29eda4f1b334d97c761b220f2e2887ca3a7cea0d9abfb4**, and `JSON.stringify(JSON.parse(oldText)) === JSON.stringify(JSON.parse(currentText))`. Assert `authenticateNumberPrerequisitePolicyEvolution(oldText)` throws `receipt digest mismatch`, then authenticate the fresh canonical receipt successfully. This derives only the known two-array formatting predecessor; no whole-document formatter/reserialization is used to construct it, and no scratch file becomes a committed test dependency. Existing whitespace/newline and all other mutation controls remain intact. This strengthens rejection while preserving the 247-row denominator.
+4. **Root independently reviews final changes.** The helper diff is exactly one digest literal after the frozen prefix. Suite changes are exactly the independent hash/byte literals and the bounded predecessor-rejection assertions in the existing test. The receipt's only change versus original remains the reviewed 32-byte formatting delta. No production source, policy, source pin, original helper prefix, caller, historical receipt/test, budget, detector or gate changes are authorized by this amendment.
+
+## Required validation by root after implementation
+
+Run against the final canonical candidate and capture new evidence. Require **247/247 Number successor rows**, including fresh canonical acceptance and exact old-representation rejection, plus all existing field/span/whitespace/newline/full-pin negative controls. Preserve and exercise semantic and raw Number→WKS→C1→B inverse derivation; snapshots cannot replace it. Run the normal required changed-root/full hook path and retain its real per-suite denominators: **713 Number native**, **878 historical boundary/policy controls**, and the separate **114 WKS native controls** wherever included by the required acceptance run. Do not combine partial runs into fabricated completion; the failed normal hook stopped before the historical controls. Preserve the historical **174-module/782-reference-record (403 type-only/379 runtime)** fixture and authentic native populations. Verify all 28 pins, immutable helper prefixes, policy bytes/profiles and canonical receipt hash after formatting and normal hooks. No skipped formatter, hook or gate is part of the repair.
+
+This review ran only read-only byte/JSON/hash/profile inspection and wrote this plan plus `format-authority-review.json`. It ran no formatter, compiler, TypeScript Program, tests, gates, Git, or network; it provides no new execution or migration-completion credit.
+
+
+## 2026-10-01 — Canonical Number authority actual proof acceptance
+
+Root applied the separately frozen canonical representation after Astra's
+explicit amendment. The helper changed by exactly one appended digest literal;
+the new suite changed only its independent positive byte/hash literals and
+assertions deriving the exact old representation, proving ordered data equality,
+rejecting those old bytes and accepting fresh canonical bytes. Independent Sol
+inverse review recovers the complete prior helper and canonical suite preimages;
+all247 registrations, mutations, refusals and callback assertions remain intact.
+All28 input pins and the immutable23854-byte helper prefix match.
+
+The actual canonical candidate passed **247/247**, zero failures/pending, on
+exact a49f main base. Programmatic Prettier at all three actual destination paths
+(helper, new suite, receipt) leaves their bytes unchanged. This is new execution
+credit for canonical authority, not a relabeling of old receipt results. Both
+the symbol-cleanup246/247 failure and full-hook247/247 digest refusals remain
+preserved. Full normal hooks and delivery are still pending; no legacy retirement.
