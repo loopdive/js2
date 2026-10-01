@@ -3,9 +3,10 @@
   "slice": "validation-lowering-phase-b-20261001",
   "assignee": "ttraenkler/codex-validation-lowering-b-20261001",
   "requested_by": "ttraenkler/codex-validation-lowering-b-20261001",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3518-validation-lowering-b-resume-20261001",
   "claimed_at": "2026-10-01T06:35:42Z",
-  "updated_at": "2026-10-01T06:35:42Z",
-  "write_id": "63764-feehmtqm"
+  "updated_at": "2026-10-01T11:25:41Z",
+  "write_id": "82145-fj23duew",
+  "released_at": "2026-10-01T11:25:41Z"
 }
