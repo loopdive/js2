@@ -2,11 +2,10 @@
   "id": "3518",
   "slice": "source-validation-contracts-20261001",
   "assignee": "ttraenkler/codex-source-validation-contracts-20261001",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
+  "requested_by": "ttraenkler/codex-source-validation-contracts-20261001",
+  "status": "in-progress",
   "branch": "codex/3518-source-contracts-main-20261001",
-  "claimed_at": "2026-10-01T03:59:19Z",
-  "updated_at": "2026-10-01T04:15:43Z",
-  "write_id": "89776-u29luamo",
-  "released_at": "2026-10-01T04:15:43Z"
+  "claimed_at": "2026-10-01T04:22:15Z",
+  "updated_at": "2026-10-01T04:22:15Z",
+  "write_id": "92121-m1jz4k2t"
 }
