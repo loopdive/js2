@@ -477,6 +477,7 @@ import {
   tryStringLengthIteratorAndExternClassReads,
   trySuperAndImportMetaRead,
 } from "./property-access-dispatch.js"; // (#3276) Wave B — extracted guard bands
+import { readEnv } from "../env.js";
 
 /**
  * (#3037 CS1b) True when `expr` is a direct operand of a standalone
@@ -3617,7 +3618,7 @@ function tryKnownFnctorDynamicObjectCarrierGet(
   propName: string,
 ): ValType | undefined {
   // Narrow rollback switch used by the Acorn exact A/B benchmark.
-  if (process.env.JS2WASM_TYPED_OPEN_CARRIER_READS === "0") return undefined;
+  if (readEnv("JS2WASM_TYPED_OPEN_CARRIER_READS") === "0") return undefined;
   if (!ctx.standalone) return undefined;
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const carrierRead = expr.expression;

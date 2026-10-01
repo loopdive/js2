@@ -26,7 +26,8 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { addFuncType } from "./registry/types.js";
+import { emitHostCarrierToStringTail, isHostArrayCarrier } from "./host-carrier-to-primitive.js"; // (#6788)
 import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
@@ -3587,6 +3588,9 @@ export function coerceType(
       return;
     }
     fctx.body.push({ op: "extern.convert_any" });
+    // (#6788) No in-Wasm `@@toPrimitive`/`toString` reduced the carrier above;
+    // a string-hint consumer needs its ToString, not the object itself.
+    if (toPrimitiveHint === "string" && emitHostCarrierToStringTail(ctx, fctx, typeIdx)) return;
     // Vec structs (arrays) need Symbol.iterator to be iterable by JS APIs (#854).
     // After extern.convert_any, call __make_iterable to attach Symbol.iterator via sidecar.
     // Skip i32_byte vec structs (ArrayBuffer/DataView backing) — neither is
@@ -3599,13 +3603,7 @@ export function coerceType(
     // JS boundary exposes the identity-cached live array view. Materializing a
     // detached JS array merely because an internal type widens to externref
     // would make the embedder a semantic provider again and lose ownership.
-    if (
-      !ctx.standalone &&
-      !ctx.wasi &&
-      ctx.targetProfile.semanticProviders !== "native-first" &&
-      getArrTypeIdxFromVec(ctx, typeIdx) >= 0 &&
-      ctx.vecTypeMap.get("i32_byte") !== typeIdx
-    ) {
+    if (isHostArrayCarrier(ctx, typeIdx)) {
       const makeIterIdx = ensureLateImport(ctx, "__make_iterable", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (makeIterIdx !== undefined) {
         flushLateImportShifts(ctx, fctx);

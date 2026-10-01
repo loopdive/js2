@@ -28,6 +28,7 @@ import {
 } from "./oracle.js";
 import { InHouseOracle, factKey } from "./inhouse-oracle.js";
 import { classifyDivergence, type DivergenceVerdict } from "./divergence-classifier.js";
+import { readEnv } from "../env.js";
 
 export type OracleBackend = "checker" | "inhouse" | "differential";
 
@@ -36,7 +37,7 @@ const VALID_BACKENDS: ReadonlySet<string> = new Set<OracleBackend>(["checker", "
 /** Resolve the backend for this compile (explicit option wins over env). */
 export function resolveOracleBackend(explicit?: OracleBackend): OracleBackend {
   if (explicit) return explicit;
-  const fromEnv = process.env.JS2WASM_ORACLE_BACKEND;
+  const fromEnv = readEnv("JS2WASM_ORACLE_BACKEND");
   if (fromEnv && VALID_BACKENDS.has(fromEnv)) return fromEnv as OracleBackend;
   return "checker";
 }

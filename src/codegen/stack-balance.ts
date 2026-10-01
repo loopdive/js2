@@ -32,6 +32,7 @@ import { walkInstructionDag } from "./walk-instructions.js";
 import { type InstrArraySharing, TREE_VISITED, visitedFor } from "./call-arg-producers.js";
 import type { CodegenError } from "./context/types.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#2934) Widen a packed i8/i16 STORAGE type to the i32 that actually lives on
@@ -215,7 +216,7 @@ export interface StrictBalanceDiagnostic {
  * pass refusals are written to that same sink directly by `stackBalance`.
  */
 export function strictBalanceDiagnostics(events: readonly FixupEvent[]): StrictBalanceDiagnostic[] {
-  const mode = (process.env.JS2WASM_STRICT_BALANCE ?? "").toLowerCase();
+  const mode = (readEnv("JS2WASM_STRICT_BALANCE") ?? "").toLowerCase();
   const enabled = mode === "1" || mode === "true" || mode === "warn" || mode === "error" || mode === "strict";
   if (!enabled || events.length === 0) return [];
   const severity: "error" | "warning" = mode === "error" || mode === "strict" ? "error" : "warning";

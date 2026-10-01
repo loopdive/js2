@@ -304,6 +304,10 @@ async function main() {
       platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
         ? await loadNodeHostDependencies()
         : await loadWebHostDependencies(),
+      // (#6779) Upstream suites measure packages as they always ran (lodash's
+      // root detection reaches `Function("return this")()`), not under the
+      // library's fail-closed `deny` default.
+      { dynamicCode: "hostEval" },
     );
     const { instance } = result.linkedModules?.length
       ? await instantiateLinkedProject(result, imports)

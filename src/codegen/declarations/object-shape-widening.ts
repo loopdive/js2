@@ -24,6 +24,7 @@ import {
 } from "./dynamic-with-shape.js";
 import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
 import { sourceContainsWithStatement } from "../source-scan-predicates.js"; // (#5313)
+import { readEnv } from "../../env.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -1274,7 +1275,7 @@ export function collectGrowableObjectLiterals(
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.
-  const keepClosedOuterForDeclaredNestedWrites = process.env.JS2WASM_KEEP_CLOSED_NESTED_TABLES !== "0";
+  const keepClosedOuterForDeclaredNestedWrites = readEnv("JS2WASM_KEEP_CLOSED_NESTED_TABLES") !== "0";
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
   // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
   const evalMutableNames = collectEvalMutableNames(sourceFile);

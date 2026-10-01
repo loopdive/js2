@@ -3,6 +3,7 @@
 import { buildBoxBooleanBody, buildBooleanBoxInitializer } from "../runtime/wasmgc/values/boolean-bodies.js";
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#3780) `__box_boolean`'s body, with the two carriers INTERNED rather than
@@ -29,7 +30,7 @@ import type { CodegenContext } from "./context/types.js";
  * control the measurement above was taken against.
  */
 export function boxBooleanBody(ctx: CodegenContext, boxBoolStructIdx: number): Instr[] {
-  if (process.env.JS2WASM_INTERNED_BOOL_BOXES === "0")
+  if (readEnv("JS2WASM_INTERNED_BOOL_BOXES") === "0")
     return buildBoxBooleanBody({ mode: "allocating", typeIndex: boxBoolStructIdx });
 
   const carrier = (value: 0 | 1): number => {

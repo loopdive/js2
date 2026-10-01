@@ -127,6 +127,7 @@ import { isNativeGeneratorResultStruct } from "./generators-native.js";
 import { classAccessorCandidatesForProp } from "./member-get-dispatch.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { coercionInstrs } from "./type-coercion.js";
+import { readEnv } from "../env.js";
 
 /** One speculation: the dispatcher call this replaces, and the arm to inline. */
 interface IcPlan {
@@ -205,7 +206,7 @@ const DEFAULT_MAX_CANDIDATES = 8;
  * quietly demote the ceiling to a value nobody measured.
  */
 function icMaxCandidates(): number {
-  const raw = process.env.JS2WASM_INLINE_PROP_IC;
+  const raw = readEnv("JS2WASM_INLINE_PROP_IC");
   if (!tunedFlagEnabled(raw)) return 0;
   if (raw === undefined) return DEFAULT_MAX_CANDIDATES;
   const n = Number.parseInt(raw.trim(), 10);
@@ -471,7 +472,7 @@ export function rewriteInstrs(
 export function inlineMemberGetCallSites(ctx: CodegenContext): void {
   const max = icMaxCandidates();
   if (max <= 0) return; // explicitly OFF — byte-identical to the pre-#4157 base.
-  const debug = process.env.JS2WASM_INLINE_PROP_IC_DEBUG === "1";
+  const debug = readEnv("JS2WASM_INLINE_PROP_IC_DEBUG") === "1";
   resetGuardReuseStats(); // the reported line is per module, not per process
 
   // Plan building calls `coercionInstrs`, which may register union box imports.

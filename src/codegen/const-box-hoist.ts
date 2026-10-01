@@ -99,10 +99,11 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { walkChildren } from "./walk-instructions.js";
+import { readEnv } from "../env.js";
 
 /** Escape hatch: `JS2WASM_HOIST_CONST_BOXES=0` restores the pre-#4157 emission. */
 function enabled(): boolean {
-  return process.env.JS2WASM_HOIST_CONST_BOXES !== "0";
+  return readEnv("JS2WASM_HOIST_CONST_BOXES") !== "0";
 }
 
 /**
@@ -158,7 +159,7 @@ interface HoistedConst {
  */
 export function hoistConstantBoxedNumbers(ctx: CodegenContext): void {
   if (!enabled()) return;
-  const debug = process.env.JS2WASM_HOIST_CONST_BOXES_DEBUG === "1";
+  const debug = readEnv("JS2WASM_HOIST_CONST_BOXES_DEBUG") === "1";
   const boxIdx = ctx.funcMap.get("__box_number");
   const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
   if (boxIdx === undefined || !initFn) {

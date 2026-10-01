@@ -83,6 +83,7 @@ import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-s
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
 import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#6693) JS call arity
+import { readEnv } from "../env.js";
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -1801,7 +1802,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             else: fallback,
           },
         ];
-        if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND === "0") {
+        if (readEnv("JS2WASM_REGEXP_TEST_OUTER_BRAND") === "0") {
           current = wrapNativeRegExpTest(current);
         }
       }
@@ -1914,7 +1915,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // the regex engine instead of walking the generated user-method ladder.
     // The inner arm remains the fallback under the kill switch and keeps the
     // construction order of all unrelated dispatchers byte-identical.
-    if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND !== "0" && wrapNativeRegExpTest !== undefined) {
+    if (readEnv("JS2WASM_REGEXP_TEST_OUTER_BRAND") !== "0" && wrapNativeRegExpTest !== undefined) {
       current = wrapNativeRegExpTest(current);
     }
 

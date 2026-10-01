@@ -75,6 +75,7 @@ import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import { extractTruthyLadder, type TruthyArm } from "./is-truthy-ladder.js";
 import { producesExternref } from "./member-get-inline-ic.js";
+import { readEnv } from "../env.js";
 
 /**
  * Arms inlined by `=1`, chosen from the MEASURED per-arm hit counts on the
@@ -111,7 +112,7 @@ const isArmName = (s: string): boolean => KNOWN_ARMS.has(s) || /^t\d+$/.test(s);
 
 /** Selected arm names, or `undefined` when the pass is explicitly off. */
 function selectedArms(): string[] | undefined {
-  const raw = process.env.JS2WASM_INLINE_TRUTHY_IC;
+  const raw = readEnv("JS2WASM_INLINE_TRUTHY_IC");
   if (!tunedFlagEnabled(raw)) return undefined;
   if (raw === undefined) return DEFAULT_ARMS;
   const norm = raw.trim().toLowerCase();
@@ -126,7 +127,7 @@ function selectedArms(): string[] | undefined {
 
 /** Did the operator name this flag, as opposed to inheriting the tuned default? */
 function truthyIcExplicit(): boolean {
-  return tunedFlagExplicit(process.env.JS2WASM_INLINE_TRUTHY_IC);
+  return tunedFlagExplicit(readEnv("JS2WASM_INLINE_TRUTHY_IC"));
 }
 
 /** Declared supertype chain of `typeIdx`, itself first. */
@@ -300,7 +301,7 @@ function rewriteInstrs(
       anyScratch,
       f64Scratch,
       helperAnyLocal,
-      poison: process.env.JS2WASM_INLINE_TRUTHY_IC_POISON === "1",
+      poison: readEnv("JS2WASM_INLINE_TRUTHY_IC_POISON") === "1",
     };
     // `local.tee` feeds the first `ref.test` straight from the stack, so the
     // chain's own leading `local.get` is dropped — one instruction per site.
@@ -337,7 +338,7 @@ function definedTruthy(ctx: CodegenContext): { funcIdx: number; fn: WasmFunction
 export function inlineIsTruthyCallSites(ctx: CodegenContext): void {
   const want = selectedArms();
   if (!want) return; // explicitly OFF — byte-identical to the pre-#4157 base.
-  const debug = process.env.JS2WASM_INLINE_TRUTHY_IC_DEBUG === "1";
+  const debug = readEnv("JS2WASM_INLINE_TRUTHY_IC_DEBUG") === "1";
   const target = definedTruthy(ctx);
   if (!target) {
     if (debug) process.stderr.write(`[truthy-ic] no defined __is_truthy (host-import mode) — pass declined\n`);
@@ -395,7 +396,7 @@ export function inlineIsTruthyCallSites(ctx: CodegenContext): void {
       `[truthy-ic] arms=${arms.map((x) => x.name).join(",")} patched-sites=${stats.patched} ` +
         `functions=${fnsTouched} declined-producer-shape=${stats.declinedProducer}` +
         `${declines.length > 0 ? ` declined-arms=${declines.join(" ")}` : ""}` +
-        `${process.env.JS2WASM_INLINE_TRUTHY_IC_POISON === "1" ? " POISON=ON" : ""}\n`,
+        `${readEnv("JS2WASM_INLINE_TRUTHY_IC_POISON") === "1" ? " POISON=ON" : ""}\n`,
     );
   }
   if (debug) {

@@ -9,6 +9,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport } from "./late-imports.js";
+import { readEnv } from "../../env.js";
 
 export type HostCallFallbackPlan = {
   fixedArity: boolean;
@@ -17,7 +18,7 @@ export type HostCallFallbackPlan = {
 };
 
 export function planHostCallFallback(arity: number, nativeBoundary = false): HostCallFallbackPlan {
-  const fixedArity = nativeBoundary || (process.env.JS2WASM_FIXED_ARITY_HOST_CALLS !== "0" && arity <= 4);
+  const fixedArity = nativeBoundary || (readEnv("JS2WASM_FIXED_ARITY_HOST_CALLS") !== "0" && arity <= 4);
   return {
     fixedArity,
     importName: nativeBoundary

@@ -29,6 +29,7 @@ import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-dr
 import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
+import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
   FUNCTIONAL_ARRAY_METHODS,
   KNOWN_CONSTRUCTORS,
@@ -2162,6 +2163,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     if (!(ctx.standalone || ctx.wasi) || needsNoJsHostFallback) {
       addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
     }
+    reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
   }
 
   // ── collectIteratorImports finalize ──

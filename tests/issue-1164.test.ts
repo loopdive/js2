@@ -18,7 +18,8 @@ import { createEvalShim } from "../src/runtime-eval.js";
 async function runTest(src: string): Promise<{ pass: boolean; ret?: unknown; error?: string }> {
   const result = await compile(src, { skipSemanticDiagnostics: true });
   if (!result.success) return { pass: false, error: result.errors[0]?.message };
-  const importObj = buildImports(result.imports, undefined, result.stringPool);
+  // (#6779) The dynamic Wasm-module eval path runs under the hostEval policy.
+  const importObj = buildImports(result.imports, undefined, result.stringPool, { dynamicCode: "hostEval" });
   const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
   if (typeof (importObj as any).setExports === "function") {
     (importObj as any).setExports(instance.exports);

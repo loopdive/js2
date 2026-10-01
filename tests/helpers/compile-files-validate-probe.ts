@@ -11,14 +11,6 @@
 // success under `validate: true`, and — independently — whether the host
 // engine actually accepts the emitted bytes.
 
-import { createRequire } from "node:module";
-
-// `analyzeFiles` (src/checker/index.ts) reaches for a bare `require("node:path")`.
-// Under an ESM entry that binding does not exist, and Node reports it as
-// ERR_AMBIGUOUS_MODULE_SYNTAX rather than a missing global. Provide it before
-// the compiler is loaded.
-(globalThis as unknown as { require?: NodeRequire }).require ??= createRequire(import.meta.url);
-
 const { compileFiles } = await import("../../src/index.js");
 
 export const COMPILE_FILES_VALIDATE_PROBE_MARKER = "__JS2_COMPILE_FILES_VALIDATE_PROBE__";

@@ -30,9 +30,10 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 export function sharedEmptyVecEnabled(): boolean {
-  return process.env.JS2WASM_SHARED_EMPTY_VEC !== "0";
+  return readEnv("JS2WASM_SHARED_EMPTY_VEC") !== "0";
 }
 
 /**

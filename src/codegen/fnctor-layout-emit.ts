@@ -80,6 +80,7 @@ import type { FnctorLayoutPlan } from "./fnctor-alloc-labels.js";
 import { type PresenceSlot, presenceSetInstrs, presenceTestInstrs, presenceWordName } from "./fnctor-presence-bits.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { readEnv } from "../env.js";
 
 /** Suffix + ordinal appended to the base struct name per emitted layout. */
 const LAYOUT_STRUCT_INFIX = "__lay";
@@ -123,7 +124,7 @@ export function isFnctorLayoutStructName(structName: string): boolean {
  * The standalone-lane gate lives in {@link fnctorLayoutEmitFor}, not here.
  */
 export function fnctorLayoutEmitEnabled(): boolean {
-  const raw = process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
+  const raw = readEnv("JS2WASM_FNCTOR_LAYOUT_EMIT");
   if (raw === undefined) return true;
   const norm = raw.trim().toLowerCase();
   return norm !== "" && norm !== "0" && norm !== "off";
@@ -200,7 +201,7 @@ export interface FnctorLayoutEmitInfo {
  */
 export function reserveFnctorLayoutTypes(ctx: CodegenContext, fnctorName: string, baseTypeIdx: number): void {
   const plan = fnctorLayoutPlanFor(ctx, fnctorName);
-  if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") {
+  if (readEnv("JS2WASM_FNCTOR_LAYOUT_DIAG") === "1") {
     process.stderr.write(
       `[layout-emit] reserve ${fnctorName}: standalone=${String(ctx.standalone)} flag=${String(
         fnctorLayoutEmitEnabled(),
@@ -274,7 +275,7 @@ export function applyFnctorLayoutSplit(
   onlyConditional: Map<string, boolean>,
   flowGrownNames: ReadonlySet<string>,
 ): void {
-  const diag = process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1";
+  const diag = readEnv("JS2WASM_FNCTOR_LAYOUT_DIAG") === "1";
   const reservation = ctx.fnctorLayoutReserved?.get(fnctorName);
   const plan = fnctorLayoutPlanFor(ctx, fnctorName);
   if (reservation === undefined || plan === undefined) {
@@ -397,7 +398,7 @@ export function applyFnctorLayoutSplit(
     hintBySite.set(label.site, { hintGlobalIdx: reservation.hintGlobalIdx, ordinal: layoutIdx + 1 });
   }
 
-  if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") {
+  if (readEnv("JS2WASM_FNCTOR_LAYOUT_DIAG") === "1") {
     process.stderr.write(
       `[layout-emit] ${reservation.baseStructName}: ${layouts.length} layouts (stamps ${info.stampLo}..${
         info.stampLo + info.stampCount - 1

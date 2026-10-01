@@ -276,6 +276,7 @@ import {
   irVecElemSetSymbol,
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
+import { readEnv } from "../env.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -12520,7 +12521,7 @@ function proveExactMixedPrimitiveWrapperCall(
   cx: LowerCtx,
 ): ExactMixedPrimitiveWrapperProof | null {
   if (
-    process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0" ||
+    readEnv("JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL") === "0" ||
     !ts.isIdentifier(expr.expression) ||
     (expr.expression.text !== "String" && expr.expression.text !== "Number") ||
     cx.scope.has(expr.expression.text) ||
@@ -12677,7 +12678,7 @@ function proveMixedPrimitiveConditional(
 ): MixedPrimitiveConditionalProof | null {
   const claim = mixedPrimitiveConditionalClaim(expr, cx);
   if (claim === null) return null;
-  return process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL === "proof" ? null : claim;
+  return readEnv("JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL") === "proof" ? null : claim;
 }
 
 /**
@@ -12731,7 +12732,7 @@ function boxMixedConditionalArm(
 
   const expectedTag =
     family === "number" ? JS_TAG_IDS.NumberF64 : family === "boolean" ? JS_TAG_IDS.Boolean : JS_TAG_IDS.String;
-  const tamper = process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL;
+  const tamper = readEnv("JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL");
   const emittedTag = (tamper === "1" || tamper === "tag") && arm === "then" ? JS_TAG_IDS.String : expectedTag;
   if (emittedTag !== expectedTag) {
     throw new IrInvariantError(
@@ -12793,7 +12794,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
       });
 
       joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
-      const tamper = process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL;
+      const tamper = readEnv("JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL");
       const resultType = tamper === "result" ? trueConcreteType : irDynamic();
       const result = cx.builder.emitIfElse({
         cond,

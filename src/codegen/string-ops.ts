@@ -110,6 +110,7 @@ import {
   tryStructToString,
 } from "./type-coercion.js";
 import { STRING_ARRAY_SHARED_METHODS } from "./array-slice-native.js"; // (#6683)
+import { readEnv } from "../env.js";
 
 /**
  * (#2176) Type of a value expression for stringification decisions, preferring
@@ -1915,7 +1916,7 @@ function compileNativeStringConcat(
   const constVal = resolveStrictConstant(ctx, expr);
   if (typeof constVal === "string") return compileStringLiteral(ctx, fctx, constVal, expr);
 
-  if (noJsHost(ctx) && process.env.JS2WASM_NATIVE_BATCHED_CONCAT !== "0") {
+  if (noJsHost(ctx) && readEnv("JS2WASM_NATIVE_BATCHED_CONCAT") !== "0") {
     const operands = collectConcatOperands(ctx, expr);
     const folded = foldAdjacentConstantOperands(ctx, operands);
     const batchedIdx = ensureNativeBatchedConcat(ctx, folded.length);
@@ -1942,7 +1943,7 @@ function compileNativeStringConcat(
   }
 
   const staticRhsLength = staticStringLength(ctx, expr.right);
-  if (process.env.JS2WASM_NATIVE_PROVEN_ROPE_CONCAT !== "0" && (staticRhsLength ?? 0) >= 64) {
+  if (readEnv("JS2WASM_NATIVE_PROVEN_ROPE_CONCAT") !== "0" && (staticRhsLength ?? 0) >= 64) {
     emitProvenRopeConcat(ctx, fctx, staticRhsLength!);
     return nativeStringType(ctx);
   }

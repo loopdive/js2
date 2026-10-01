@@ -18,6 +18,7 @@ import { emitWat } from "./wat.js";
 import { WasmEncoder } from "./encoder.js";
 import { GC, OP, SECTION, SIMD, TYPE } from "./opcodes.js";
 import { resolveLayout, type ModuleLayout } from "./resolve-layout.js";
+import { readEnv } from "../env.js";
 
 /** A source map entry: maps a wasm byte offset to a source position */
 export interface SourceMapEntry {
@@ -160,19 +161,18 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
   }
   const flatTypes = indexPhysicalTypes(mod.types).entries.map((entry) => entry.definition);
   const numTypes = flatTypes.length;
-  if (process.env.JS2WASM_DUMP_TYPES) {
+  const dumpTypesPath = readEnv("JS2WASM_DUMP_TYPES");
+  if (dumpTypesPath) {
     const lines = flatTypes.map((t, i) => {
       const inner = t.kind === "sub" ? t.type : t;
       const name = (inner as { name?: string }).name ?? "";
       const detail = inner.kind === "struct" ? JSON.stringify(inner.fields.slice(0, 8)) : inner.kind;
       return `${i}\t${inner.kind}\t${name}\t${detail}`;
     });
-    writeFileSync(process.env.JS2WASM_DUMP_TYPES, lines.join("\n"));
-    if (process.env.JS2WASM_DUMP_WAT_FN) {
-      writeFileSync(
-        `${process.env.JS2WASM_DUMP_TYPES}.wat`,
-        emitWat(mod, { onlyFunctions: new Set(process.env.JS2WASM_DUMP_WAT_FN.split(",")) }),
-      );
+    writeFileSync(dumpTypesPath, lines.join("\n"));
+    const dumpWatFunctions = readEnv("JS2WASM_DUMP_WAT_FN");
+    if (dumpWatFunctions) {
+      writeFileSync(`${dumpTypesPath}.wat`, emitWat(mod, { onlyFunctions: new Set(dumpWatFunctions.split(",")) }));
     }
   }
   return {
@@ -275,7 +275,7 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
 }
 
 function emitBinaryInternal(mod: WasmModule, collectSourceMap: boolean): EmitResult {
-  valCtx = process.env.JS2WASM_SKIP_INDEX_VALIDATION ? null : makeValidationCtx(mod);
+  valCtx = readEnv("JS2WASM_SKIP_INDEX_VALIDATION") ? null : makeValidationCtx(mod);
   // #1916/#2710 — resolve the final index layout once, at serialization: the
   // single point that sees the fully-settled index space (post late imports,
   // post DCE). All func/global references below dereference through it.
@@ -530,7 +530,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boo
     // `body: func.body`) — shared references break savedBody/swap"). A body that
     // is still being appended to by another context is one way a function ends
     // up referencing locals its own frame never declared.
-    if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
+    if (typeof process !== "undefined" && readEnv("JS2WASM_EMIT_DUMP")) {
       const bodyOwners = new Map<Instr[], number[]>();
       for (const [position, f] of mod.functions.entries()) {
         bodyOwners.set(f.body, [...(bodyOwners.get(f.body) ?? []), position]);
@@ -541,7 +541,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boo
         process.stderr.write(`[js2:emit] SHARED BODY ARRAY across ${positions.length} functions: ${named}\n`);
       }
     }
-    if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
+    if (typeof process !== "undefined" && readEnv("JS2WASM_EMIT_DUMP")) {
       const lines = mod.functions.map((f, position) => {
         const params = resolveParamCount(f.typeIdx);
         return `[js2:emit] ${position}\t${params >= 0 ? params + f.locals.length : "?"}\t${f.name}`;

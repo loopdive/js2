@@ -128,6 +128,7 @@ import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
+import { readEnv } from "../env.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -5678,7 +5679,7 @@ export function compileArrayLiteral(
     // reflective reader (String, typeof, sameValue, symbol-keying) already
     // understands. Native-symbol lanes only; the js-host lane keeps its vec
     // selection byte-identical (the 2026-08-23 park precedent for brand leaks).
-    if (process.env.JS2_SYM_DEBUG)
+    if (readEnv("JS2_SYM_DEBUG"))
       console.error(
         "[arr-lit]",
         expr.getText().slice(0, 30),
