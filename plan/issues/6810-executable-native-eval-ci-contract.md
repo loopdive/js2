@@ -151,3 +151,27 @@ unfinished draft checkpoint. Separately, current shared quality CI has four
 CLAUDE.md path-reference failures outside this slice; a fixing PR exists
 (6431) but its queued head contains a corrupted first-line resource marker.
 Do not copy or merge that corrupt document or weaken the path checker.
+
+### 2026-10-02 publication and upstream integration handoff
+
+Checkpoint `a5fc13c12464d2416c3fcfbd8212d193fdda27cb` passed normal commit
+and push gates and was published as upstream PR
+[6435](https://github.com/loopdive/js2/pull/6435). It remains an unfinished
+draft because the seven retained native semantic failures above are not fixed.
+The PR does not claim a green semantic lane or any original Test262 gain.
+
+At the user's request, verified upstream main
+`1255c536b4c275a2dbe4c4605bf5cb5775584efa` was merged locally as
+`c466dbd08e05533aa5be7347b1c8b51178b12f40`, without conflicts. The resulting
+tree was clean, with zero commits behind that upstream revision and only the
+same four owned files in the PR diff. All eight focused CI-contract controls
+passed again (terminal session 30113, exit 0, one file, zero skips). This is
+structural integration evidence only: the earlier 60/67 semantic receipt
+remains attributed to production baseline `1f1b0ad61c`, not this merged source.
+
+Next: publish the integrated checkpoint only after a fresh queue/state check
+and normal push gates; keep the draft unfinished. Coordinate a separate
+runtime/fixture slice to isolate the six undefined failures and replace the
+stale NaN-gap assertion with standards-backed positive descriptor controls.
+Do not edit held runtime/IR files, weaken expectations, or count infrastructure
+checks toward the frozen 11,778-file goal.
