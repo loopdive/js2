@@ -19380,22 +19380,14 @@ function wrapWithContainment(
   // Dangerous properties — block entirely (return null)
   const blockedProps = new Set(["ownerDocument", "baseURI", "getRootNode"]);
 
-  // Mutation methods that need containment check
-  const mutationMethods = new Set([
-    "appendChild",
-    "removeChild",
-    "insertBefore",
-    "replaceChild",
-    "remove",
-    "append",
-    "prepend",
-    "after",
-    "before",
-    "replaceWith",
-    "insertAdjacentElement",
-    "insertAdjacentHTML",
-    "insertAdjacentText",
-  ]);
+  // (#6792) Members that mutate the receiver's PARENT or siblings. On a contained
+  // node that stays inside the fence; on domRoot itself it writes outside it, so
+  // the root may use only its inward mutators (append, innerHTML, "beforeend", …).
+  const outwardMethods = new Set(["remove", "after", "before", "replaceWith"]);
+  const outwardSetters = new Set(["outerHTML", "outerText"]);
+  const outwardPosition = /^(?:beforebegin|afterend)$/i; // insertAdjacent* position
+  const rootViolation = (verb: string) =>
+    new Error(`DOM containment violation: ${verb} "${member}" on the container root would mutate outside it`);
 
   // Helper: check if domRoot contains an element (duck-typed for mock objects)
   function isContained(el: any): boolean {
@@ -19445,6 +19437,7 @@ function wrapWithContainment(
   // For set actions
   if (action === "set" && member) {
     return (self: any, v: any) => {
+      if (self === domRoot && outwardSetters.has(member)) throw rootViolation("setting");
       if (self !== domRoot && isNodeLike(self) && !isContained(self)) {
         throw new Error(`DOM containment violation: setting "${member}" on element outside container`);
       }
@@ -19470,18 +19463,14 @@ function wrapWithContainment(
       return fn;
     }
 
-    if (mutationMethods.has(member)) {
-      return (self: any, ...args: any[]) => {
-        if (self !== domRoot && isNodeLike(self) && !isContained(self)) {
-          throw new Error(`DOM containment violation: calling "${member}" on element outside container`);
-        }
-        return self[member](...args);
-      };
-    }
-
-    // Other methods — containment check on self
+    // Containment check on self; on the root itself, refuse the outward subset.
+    const adjacent = member.startsWith("insertAdjacent");
     return (self: any, ...args: any[]) => {
-      if (self !== domRoot && isNodeLike(self) && !isContained(self)) {
+      if (self === domRoot) {
+        // Convert the position once so the value checked is the value the DOM sees.
+        if (adjacent && args.length > 0) args[0] = `${args[0]}`;
+        if (outwardMethods.has(member) || (adjacent && outwardPosition.test(args[0]))) throw rootViolation("calling");
+      } else if (isNodeLike(self) && !isContained(self)) {
         throw new Error(`DOM containment violation: calling "${member}" on element outside container`);
       }
       return self[member](...args);
