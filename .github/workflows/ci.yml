@@ -557,6 +557,8 @@ jobs:
 
       - name: Prepare Test262 harness inputs for changed root tests
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
         run: |
           # The root-test gate below executes Test262 integration tests when a
           # PR changes them. Keep the regular checkout lightweight, but prepare
@@ -567,10 +569,11 @@ jobs:
           git submodule update --init --checkout test262-fyi/data
           pnpm run build:compiler-bundle
           pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
-          # Changed root tests that run eval-mentioning test262 files need the
-          # runtime-eval REFUSAL provider linked, or instantiate fails with
-          # 'Import "js2wasm:runtime-eval": module is not an object' (#4234).
-          node scripts/build-runtime-eval-provider.mjs --refusal-only
+          # Semantic eval guards require an executable provider (#6810).
+          # REFUSAL keeps imports linkable but cannot measure eval semantics.
+          # The full builder also prepares refusal controls and verifies its
+          # bundle-keyed executable provider with a canary before caching it.
+          node scripts/build-runtime-eval-provider.mjs
 
       - name: Changed root test files must pass (#3008)
         # Per-PR half of the #3008 wiring (the post-merge half is
@@ -583,10 +586,11 @@ jobs:
         # warning — the post-merge detector covers them.
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         env:
-          # Keep this broad, toolchain-light gate on the native engine. The
+          # Keep this broad gate on the executable native engine. The
           # dedicated QuickJS artifact workflow exercises the default engine;
           # the selector tests below still delete this env to prove the default.
           JS2WASM_EVAL_ENGINE: interpreter
+          TEST262_FULL_RUNTIME_EVAL: "1"
         run: |
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run test:changed-root
