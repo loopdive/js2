@@ -495,6 +495,33 @@ ordinal-associated. Full176 and physical-comparison obligations remain unwaived.
 
 ### Sol6.1 bounded physical-comparison dispatch — 2026-10-02
 
+Integration follow-up: exact upstream1f1b0ad61cbc74d0bde3a326e8b7e2e02b7add99
+is merged locally as16e81912d6d75e8c93e691bfeee10c14cfea7e62, without
+conflicts. Its seven incoming compiler files and six-case iterator test are
+byte-identical to upstream; issue5197's additional prototype finding is retained.
+This adds real iterator semantics, so previous86/86 checkpoint results are not
+new-composition evidence. D has the exclusive serial validation slot for
+canonical typecheck, all nine unchanged suites and the entire incoming iterator
+suite. B implements only the new comparison launcher; C reviews; A inventories
+existing held IR PRs read-only to identify the next dependency-first landing.
+No new main delivery or hold release is claimed.
+
+Fresh composition validation is now terminal: D session11087/runner6762 exited0,
+canonical TS7 passed, all nine checkpoint suites passed86/86 and the entire
+incoming iterator suite passed6/6, zero pending/failures. All7522 pinned inputs
+were unchanged. Parent inspected each child result and archived the exact JSON
+streams under `plan/agent-context/5883-main1f1b-validation-20261002/`; raw logs
+and the pin manifest are retained with hashes. Publication/required remote
+checks and protected-main delivery remain pending; no retirement credit.
+
+Parent's first launcher source review found a concrete admission mismatch before
+execution: it required `final.valid`, but authentic V9 final-environment receipts
+contain `initialCompilerEnvironment` and `finalCompilerEnvironment`, not that
+flag. B must compare those complete objects against authenticated invocation
+evidence and add a genuine frozen-receipt positive control with missing/drift
+negatives. Historical receipts/pins stay unchanged; preserve the rejected source
+revision separately. No compiler launch was authorized or counted as failed.
+
 Parent authored the [implementation and acceptance plan](../agent-context/3518-sol61-physical-comparison-plan-20261002.md)
 before assigning further source work. B owns only a new guarded launcher and
 receipt contract around unchanged V7 diagnostics; C independently reviews it;

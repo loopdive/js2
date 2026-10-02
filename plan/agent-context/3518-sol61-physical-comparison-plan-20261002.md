@@ -109,3 +109,24 @@ reconciling its actual remote head. Do not push the stale local B branch over it
 No additional checkpoint PR, hold removal, main push or legacy retirement is
 authorized by this task. PR5883 continues separately through required checks and
 the protected queue when justified; its delivery does not complete issue5197.
+
+## Integration priority: exact main1f1b0ad61c
+
+Freshly fetched main1f1b0ad61cbc74d0bde3a326e8b7e2e02b7add99 advances the
+included883ec89 by22 commits and13 paths: seven iterator/constructor compiler
+files, one six-case iterator protocol test and five issue files. None of the
+seven production files overlaps PR5883's owned source, but iterator semantics
+intersect Promise consumption. Issue5197 has disjoint text additions.
+
+Parent merges this exact head into the owned5883 branch with normal hooks,
+preserving both issue additions. Any unexpected conflict stops for review.
+Verify every incoming production/test path is byte-identical to exact main.
+Then D receives the exclusive local execution slot for canonical typecheck,
+the full nine changed-root suites (previously86 cases) and all six incoming
+iterator controls. Keep original cases, options, timeouts and failure evidence;
+new output directories only. Record actual collected counts and terminal exits,
+pin source/tests/configs before and after, and stop on infrastructure drift.
+No existing test result is relabeled as validation of the new composition.
+Only after those runs and parent review may normal publication hooks execute.
+B and C remain source-only during D's slot. Required remote checks and protected
+queue admission remain separate, with hold retained until justified.
