@@ -108,9 +108,24 @@ function isSideEffectFreeInlineArrayReceiver(receiverExpr: ts.Expression, ctorNa
   );
 }
 
+const overridesByFile = new WeakMap<ts.SourceFile, Map<string, boolean>>();
+
 export function sourceOverridesBuiltinPrototypeMember(anchor: ts.Node, ctorName: string, memberName: string): boolean {
   const sf = anchor.getSourceFile();
   if (!sf) return false;
+  // (#6770 S5) Whole-file walk, now asked per primitive `toString()` call and
+  // per static `<Builtin>.prototype.<m>` read — memoize per (file, ctor, member).
+  let perFile = overridesByFile.get(sf);
+  if (perFile === undefined) overridesByFile.set(sf, (perFile = new Map()));
+  const cacheKey = `${ctorName}.${memberName}`;
+  const cached = perFile.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const found = scanOverrides(sf, ctorName, memberName);
+  perFile.set(cacheKey, found);
+  return found;
+}
+
+function scanOverrides(sf: ts.SourceFile, ctorName: string, memberName: string): boolean {
   // Unwrap the type-only wrappers on BOTH halves. `(Array.prototype as any).x =`
   // is the ordinary TypeScript spelling of the same write, and a predicate that
   // only matched the bare form silently declined for it — the arm then left the

@@ -205,7 +205,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     // `Proxy`. Deliberately NOT in the dynamic-code cascade below: a proxy built
     // by eval'd code keeps the pre-H6 array-like answers, and eval-using
     // modules (most of ES5) keep their bytes.
-    if (!ctx.proxyDirty && ts.isIdentifier(node) && node.text === "Proxy") ctx.proxyDirty = true;
+    // (#6770 S8) …and a Proxy's trap-absent [[OwnPropertyKeys]] forwards to its
+    // TARGET's own-key list, an own-name read on a possibly-vec target that
+    // this pass cannot see (`Object.keys(new Proxy([], h))` must list `length`).
+    if (!ctx.proxyDirty && ts.isIdentifier(node) && node.text === "Proxy") ctx.proxyDirty = ctx.vecOwnKeysDirty = true;
     if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
       // ArraySetLength can expose absent f64 indices even when every literal

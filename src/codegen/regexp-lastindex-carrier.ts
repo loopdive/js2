@@ -79,6 +79,7 @@ import {
   standaloneRegExpStructTypeIdx,
 } from "./regexp-standalone.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { installRegExpLastIndexReflectionArms } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 import { addFuncType } from "./registry/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -393,6 +394,13 @@ export function installRegExpLastIndexCarrierArms(ctx: CodegenContext): void {
   const readIdx = registerRead(ctx, d);
   const writeIdx = registerWrite(ctx, d);
   const defineIdx = registerDefine(ctx, d, readIdx);
+  // (#6770 S3) …and on gOPN / gOPD, the reflective key surfaces.
+  installRegExpLastIndexReflectionArms(ctx, {
+    reTypeIdx,
+    keyIdx,
+    readIdx,
+    nonWritableField: RE_FIELD_LASTINDEX_NONWRITABLE,
+  });
 
   unshiftKeyArm(ctx, "__extern_get", keyIdx, [
     { op: "local.get", index: 0 },

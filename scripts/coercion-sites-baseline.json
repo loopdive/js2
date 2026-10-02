@@ -86,6 +86,7 @@
   "codegen/number-format-native.ts": 15,
   "codegen/number-proto-format.ts": 3,
   "codegen/object-integrity-proxy.ts": 1,
+  "codegen/object-model/proxy-own-keys-surfaces.ts": 1,
   "codegen/object-ops.ts": 5,
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 5,

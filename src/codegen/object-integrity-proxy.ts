@@ -26,18 +26,14 @@
  * already registers, so every trap invocation, revoked-proxy check and
  * trap-absent forward is the existing one.
  *
- * ## The key list, and why it is not just one dispatch call
+ * ## The key list
  *
- * `__proxy_ownkeys_names_dispatch` returns the raw `ownKeys` TRAP result when a
- * trap is present — strings and symbols alike, which is what §10.5.11 wants.
- * With NO trap it forwards to `__getOwnPropertyNames(target)`, which is
- * string-keyed only; `freeze/proxy-no-ownkeys-returned-keys-order.js` asserts
- * the symbol key IS visited (expected order `["0", "foo", sym]`). So the
- * trap-absent case appends the target's own symbol keys. Deciding between the
- * two needs the `$ProxyTraps` slot directly, which is why the field indices
- * below are duplicated here rather than imported (the same ESM-cycle-free
- * duplication `native-proto-instance-method-read.ts` documents for
- * `WRAPPER_PRIMITIVE_KEY`).
+ * `__proxy_ownkeys_names_dispatch` answers the full §10.5.11 key set —
+ * the `ownKeys` TRAP's list when present, else (#6770 S7) the target's
+ * names AND symbols; `freeze/proxy-no-ownkeys-returned-keys-order.js` asserts
+ * the symbol key IS visited (expected order `["0", "foo", sym]`). Until #6770
+ * the trap-absent forward was string-only and this module appended the
+ * symbols itself.
  *
  * ## Descriptor shape is asserted, not incidental
  *
@@ -53,6 +49,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -166,123 +163,27 @@ function absentInstrs(local: number, d: IntegrityProxyDeps): Instr[] {
 
 /**
  * `__proxy_own_keys_all(p) -> externref` — §10.5.11 [[OwnPropertyKeys]] as a
- * list this module can index. See the module header for why the trap-absent
- * case has to append the target's symbol keys.
- *
- * params: 0=p ; locals: 1=keys 2=syms 3=out 4=n 5=i
+ * list this module can index: the names dispatch, which (#6770 S7) answers the
+ * complete key set with or without an `ownKeys` trap — its trap-absent forward
+ * is the target's names AND symbols.
  */
-function ensureProxyOwnKeysAll(ctx: CodegenContext, proxyTypeIdx: number, proxyTrapsTypeIdx: number): number {
+function ensureProxyOwnKeysAll(ctx: CodegenContext): number {
   const cached = ctx.funcMap.get("__proxy_own_keys_all");
   if (cached !== undefined) return cached;
   const d = resolveDeps(ctx);
   if (!d) return -1;
-
-  const P = 0;
-  const KEYS = 1;
-  const SYMS = 2;
-  const OUT = 3;
-  const N = 4;
-  const I = 5;
-
-  /** Append every element of `srcLocal` to the `$ObjVec` in `OUT`. */
-  const appendAll = (srcLocal: number): Instr[] => [
-    { op: "local.get", index: srcLocal },
-    { op: "call", funcIdx: d.externLength },
-    { op: "i32.trunc_sat_f64_s" },
-    { op: "local.set", index: N },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: I },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: I },
-            { op: "local.get", index: N },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: OUT },
-            { op: "local.get", index: srcLocal },
-            { op: "local.get", index: I },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: d.externGetIdx },
-            { op: "call", funcIdx: d.objVecPush },
-            { op: "local.get", index: I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: I },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-  ];
-
   const body: Instr[] = [
-    { op: "local.get", index: P },
-    { op: "local.get", index: P },
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 0 },
     { op: "call", funcIdx: d.ownKeysNames },
-    { op: "local.set", index: KEYS },
-    // An `ownKeys` TRAP already answered with the complete key set.
-    { op: "local.get", index: P },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: proxyTypeIdx },
-    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: I32 },
-      then: [{ op: "i32.const", value: 1 }],
-      else: [
-        { op: "local.get", index: P },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: proxyTypeIdx },
-        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_OWNKEYS },
-        { op: "ref.is_null" },
-      ],
-    },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // No trap: the forward answered string names only. Append the target's
-        // own SYMBOL keys so the list is §10.5.11's full key set.
-        { op: "local.get", index: P },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: proxyTypeIdx },
-        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: d.getOwnPropertySymbols },
-        { op: "local.set", index: SYMS },
-        { op: "call", funcIdx: d.objVecNew },
-        { op: "local.set", index: OUT },
-        ...appendAll(KEYS),
-        ...appendAll(SYMS),
-        { op: "local.get", index: OUT },
-        { op: "local.set", index: KEYS },
-      ],
-    },
-    { op: "local.get", index: KEYS },
   ];
-
   const typeIdx = addFuncType(ctx, [EXTERNREF], [EXTERNREF]);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__proxy_own_keys_all", funcIdx);
   pushDefinedFunc(ctx, funcIdx, {
     name: "__proxy_own_keys_all",
     typeIdx,
-    locals: [
-      { name: "keys", type: EXTERNREF },
-      { name: "syms", type: EXTERNREF },
-      { name: "out", type: EXTERNREF },
-      { name: "n", type: I32 },
-      { name: "i", type: I32 },
-    ],
+    locals: [],
     body,
     exported: false,
   } as WasmFunction);
@@ -435,10 +336,7 @@ function ensureProxySetIntegrity(
         { op: "local.get", index: P },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: proxyTypeIdx },
-        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
-        { op: "ref.is_null" },
+        ...proxyTrapAbsentTail(ctx, TRAP_DEFINE),
         { op: "i32.eqz" },
       ],
     },
@@ -611,10 +509,7 @@ function ensureProxyTestIntegrity(
         { op: "local.get", index: P },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: proxyTypeIdx },
-        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_GOPD },
-        { op: "ref.is_null" },
+        ...proxyTrapAbsentTail(ctx, TRAP_GOPD),
       ],
     },
     // (#5268 review R2-2) Stash the answer instead of returning on it. §7.3.17
@@ -638,10 +533,7 @@ function ensureProxyTestIntegrity(
         { op: "local.get", index: P },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: proxyTypeIdx },
-        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
-        { op: "ref.is_null" },
+        ...proxyTrapAbsentTail(ctx, TRAP_DEFINE),
         { op: "i32.eqz" },
       ],
     },
@@ -859,7 +751,7 @@ export function fillObjectIntegrityProxyArms(ctx: CodegenContext, proxyTypeIdx: 
   if (!ctx.standalone) return;
   const proxyTrapsTypeIdx = ctx.objectRuntimeTypes?.proxyTrapsTypeIdx;
   if (proxyTrapsTypeIdx === undefined) return;
-  const ownKeysAllIdx = ensureProxyOwnKeysAll(ctx, proxyTypeIdx, proxyTrapsTypeIdx);
+  const ownKeysAllIdx = ensureProxyOwnKeysAll(ctx);
   if (ownKeysAllIdx < 0) return;
   const setIdx = ensureProxySetIntegrity(ctx, ownKeysAllIdx, proxyTypeIdx, proxyTrapsTypeIdx);
   const testIdx = ensureProxyTestIntegrity(ctx, ownKeysAllIdx, proxyTypeIdx, proxyTrapsTypeIdx);

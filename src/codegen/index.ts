@@ -740,6 +740,41 @@ import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic li
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 import { readEnv } from "../env.js";
+// (#6770/#6797) The object-model leaves reach these core helpers through
+// object-model/ports.ts, installed here at the composition root, so the leaves
+// never value-import the core and stay out of its import cycle.
+import * as omTryTable from "../ir/try-table.js";
+import * as omAnyHelpers from "./any-helpers.js";
+import * as omArraySubclass from "./array-subclass-receiver.js";
+import * as omProtoOverride from "./builtin-proto-member-override.js";
+import * as omBuiltinValueRead from "./builtin-value-read.js";
+import * as omCalls from "./expressions/calls.js";
+import * as omLiterals from "./literals.js";
+import * as omNativeProto from "./native-proto.js";
+import * as omNativeStrings from "./native-strings.js";
+import * as omObjectRuntime from "./object-runtime.js";
+import * as omRegistryImports from "./registry/imports.js";
+import { installObjectModelPorts } from "./object-model/ports.js";
+
+installObjectModelPorts(() => ({
+  addStringConstantGlobal: omRegistryImports.addStringConstantGlobal,
+  nextModuleGlobalIdx: omRegistryImports.nextModuleGlobalIdx,
+  stringConstantExternrefInstrs: omNativeStrings.stringConstantExternrefInstrs,
+  undefinedExternInstrs: omAnyHelpers.undefinedExternInstrs,
+  ensureExternStrictEqHelper: omAnyHelpers.ensureExternStrictEqHelper,
+  ensureObjVecBuilders: omObjectRuntime.ensureObjVecBuilders,
+  ensureObjectRuntime: omObjectRuntime.ensureObjectRuntime,
+  reserveApplyClosure: omObjectRuntime.reserveApplyClosure,
+  withArraySubclassReceiverAsVec: omArraySubclass.withArraySubclassReceiverAsVec,
+  sourceOverridesBuiltinPrototypeMember: omProtoOverride.sourceOverridesBuiltinPrototypeMember,
+  tryEnsureNativeProtoBrand: omBuiltinValueRead.tryEnsureNativeProtoBrand,
+  emitFnctorSubclassDynamicMethodCall: omCalls.emitFnctorSubclassDynamicMethodCall,
+  emitLazyNativeProtoGet: omNativeProto.emitLazyNativeProtoGet,
+  compileObjectLiteral: omLiterals.compileObjectLiteral,
+  compileObjectLiteralAsExternref: omLiterals.compileObjectLiteralAsExternref,
+  objectLiteralForcesHostPath: omLiterals.objectLiteralForcesHostPath,
+  buildStandardTryTable: omTryTable.buildStandardTryTable,
+}));
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
