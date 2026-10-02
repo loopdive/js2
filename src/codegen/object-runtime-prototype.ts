@@ -1,4 +1,5 @@
 import { NATIVE_GENERATOR_PROTO_VIEW } from "./generators-native-protocol.js";
+import { closedCarrierPrototypeStatus } from "./closed-carrier-prototype-status.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#3274, subtask of #3182) Object-runtime **prototype-chain** helper builders,
@@ -872,7 +873,16 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+        then: [
+          ...closedCarrierPrototypeStatus(
+            objectTypeIdx,
+            OBJ_FLAG_NONEXTENSIBLE,
+            ctx.funcMap.get("__closure_bag_lookup"),
+            ctx.funcMap.get("__getPrototypeOf"),
+          ),
+          { op: "i32.const", value: 1 },
+          { op: "return" },
+        ],
       },
       { op: "local.get", index: 5 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -951,6 +961,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         { name: "v", type: objRefNull },
         { name: "p", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
+        { name: "currentProto", type: { kind: "externref" } },
+        { name: "proposedProto", type: { kind: "anyref" } },
       ],
       body,
     );

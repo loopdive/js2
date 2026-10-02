@@ -1074,6 +1074,16 @@ export function collectClassDeclaration(
             break;
           }
           parentStructTypeIdx = ctx.structMap.get(parentClassName);
+          // The native collection carrier is not a user class layout. Its
+          // registration timing must not turn `extends Map` into an empty GC
+          // subtype; builtin super construction owns the actual instance.
+          if (
+            ctx.nativeStrings &&
+            isNativeCollectionBuiltin(parentClassName) &&
+            parentStructTypeIdx === ctx.mapTypeIdx
+          ) {
+            parentStructTypeIdx = undefined;
+          }
           parentFields = ctx.structFields.get(parentClassName) ?? [];
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
@@ -2583,13 +2593,7 @@ function compileClassBodiesInner(
       savedBodies: [],
       isConstructor: true,
       isDerivedConstructor: ctx.classParentMap.has(className),
-      // (#5197 r3) `resolveEnclosingClassName` reads the class off the `<C>_new`
-      // prefix, which a synthetic `__anonClass_N` name defeats: a nested
-      // `return super(executor)` in an anonymous class then lowered to nothing.
-      // Scoped to the standalone Promise-rooted (D4 carrier) classes this round.
-      ...(ctx.standalone && ctx.classBuiltinParentMap.get(className) === "Promise" && className.indexOf("_") <= 0
-        ? { enclosingClassName: className }
-        : {}),
+      enclosingClassName: className,
     };
     fctx.activationEntryBody = fctx.body;
 
@@ -4010,6 +4014,7 @@ function emitPromiseSubclassOnHostCtor(
     savedBodies: [],
     isConstructor: true,
     isDerivedConstructor: ctx.classParentMap.has(className),
+    enclosingClassName: className,
     // The host installs the capability promise into `__current_this` before
     // dispatching this body via `__call_fn_method_1`; `this` reads that global.
     readsCurrentThis: true,

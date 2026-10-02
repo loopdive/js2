@@ -63,6 +63,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  * `ensureLateImport` for these names.
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
+import { buildRestOnlyApply } from "./rest-only-apply.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -132,6 +133,7 @@ import {
 } from "./closures/transferred-native-proto.js";
 import type { TransferredNativeReceiverEntry } from "./closures/transferred-native-proto.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { reserveLinkedRealmPropertyRead } from "./linked-realm-property-read.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
@@ -2004,6 +2006,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // body bakes its `call`. The driver body is filled in finalize once
     // `__call_fn_method_0` exists (fillAccessorDrivers). Routing through funcMap
     // keeps the late-import shifter in sync (#329/#1899).
+    reserveLinkedRealmPropertyRead(ctx);
     const callAccessorGetIdx = reserveAccessorGetDriver(ctx);
     // (#2106 S1) Under the `undefinedSingleton` regime a MISSING property read
     // answers the extern-wrapped tag-1 `$undefined` singleton — the value JS
@@ -6351,6 +6354,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
   const variadicBuiltinArm = buildVariadicBuiltinApplyArm(ctx, locals, 3, argcGlobalIdx);
+  const restOnlyApply = buildRestOnlyApply(ctx, locals, 3, argcGlobalIdx);
 
   // (#3673) Read the in-module $ObjVec argument carrier directly, avoiding a
   // dynamic `__extern_get_idx` per argument. Non-$ObjVec args keep the generic
@@ -6522,6 +6526,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...variadicBuiltinArm, // (#6701) Math.max/min, String.fromCharCode values
+    ...restOnlyApply,
     ...widen,
     // A compiled closure above the module's TOP dispatcher arity must fail
     // loudly rather than falling through to the undefined sentinel (#1058).

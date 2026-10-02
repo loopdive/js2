@@ -1694,6 +1694,18 @@ function hoistedFnTypeof(ctx: CodegenContext, fctx: FunctionContext, ident: ts.I
     : null;
 }
 
+/** Import aliases have runtime bindings even though their TS symbol lacks valueDeclaration. */
+function importedIdentifierHasRuntimeBinding(ctx: CodegenContext, ident: ts.Identifier): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(ident);
+  if (declaration === undefined) return false;
+  if (ts.isImportClause(declaration)) return !declaration.isTypeOnly;
+  if (ts.isNamespaceImport(declaration)) return !declaration.parent.isTypeOnly;
+  if (ts.isImportSpecifier(declaration)) {
+    return !declaration.isTypeOnly && !declaration.parent.parent.isTypeOnly;
+  }
+  return false;
+}
+
 function stringWrapperIndexNeedsRuntimeTypeof(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1836,7 +1848,7 @@ export function compileTypeofExpression(
         }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
-      const hasValueDecl = !!sym?.valueDeclaration;
+      const hasValueDecl = !!sym?.valueDeclaration || importedIdentifierHasRuntimeBinding(ctx, ident);
       // (#3436) In standalone / WASI mode `structuredClone` is deliberately NOT
       // provided — its host import is skipped in extern-declarations, so the
       // global genuinely does not exist and `typeof structuredClone` must be
@@ -2259,7 +2271,7 @@ export function compileTypeofComparison(
         }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
-      if (!sym?.valueDeclaration) {
+      if (!sym?.valueDeclaration && !importedIdentifierHasRuntimeBinding(ctx, ident)) {
         const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
         if (annexB) {
           const actual = annexB;

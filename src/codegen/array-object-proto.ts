@@ -85,6 +85,7 @@ import { emitSliceProtoArrayLikeFallback, emitSliceProtoEndDefault } from "./arr
 import { emitArraySpliceProtoMemberBody, isArraySpliceVariadicMember } from "./array-splice-native.js"; // (#6701)
 import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.js"; // (#6651 RS1)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
+import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array-fill-proto-value.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -937,6 +938,8 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // cores used by direct `array.push`/`reverse`/`unshift` calls.
   const spliceBody = emitArraySpliceProtoMemberBody(ctx, fctx, member); // (#6701)
   if (spliceBody !== undefined) return spliceBody;
+  const fillBody = emitArrayFillProtoMemberBody(ctx, fctx, member);
+  if (fillBody !== undefined) return fillBody;
   const arrayLikeMutator = emitArrayLikeNativeMemberBody(ctx, fctx, member);
   if (arrayLikeMutator !== undefined) return arrayLikeMutator;
 
@@ -2627,6 +2630,7 @@ function makeGlue(
       // (#6709) reduce/reduceRight need the argument COUNT (initialValue presence).
       (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
       (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
+      (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||

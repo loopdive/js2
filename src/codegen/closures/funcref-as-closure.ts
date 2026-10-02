@@ -23,6 +23,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { valTypesMatch } from "../shared.js";
+import { promotedCaptureValueInstrs } from "./promoted-capture-value.js";
 import {
   observeProgramAbiFunctionValue,
   sourceFunctionDeclarationForHandle,
@@ -252,9 +253,13 @@ function emitMemoizedNestedFnClosure(
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
-      if (fctx.boxedCaptures?.has(cap.name)) {
-        const currentLocalIdx = fctx.localMap.get(cap.name)!;
-        fctx.body.push({ op: "local.get", index: currentLocalIdx });
+      if (
+        liveBoxLocalIdx !== undefined &&
+        liveBox !== undefined &&
+        (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
+        liveBoxType.typeIdx === liveBox.refCellTypeIdx
+      ) {
+        fctx.body.push({ op: "local.get", index: liveBoxLocalIdx });
       } else if (boxGlobal !== undefined) {
         // Shared ref-cell box promoted to a module global — live
         // write-through semantics with the declaring function.
@@ -302,10 +307,7 @@ function emitMemoizedNestedFnClosure(
       // (#2029 family A) Immutable capture promoted to a value global by
       // the accessor-capture pass — read it instead of the out-of-scope
       // declaring-function local slot.
-      fctx.body.push({ op: "global.get", index: ctx.capturedGlobals.get(cap.name)! });
-      if (ctx.capturedGlobalsWidened.has(cap.name)) {
-        fctx.body.push({ op: "ref.as_non_null" });
-      }
+      fctx.body.push(...promotedCaptureValueInstrs(ctx, cap.name, cap.valType));
     } else {
       const capSourceIdx = captureSourceSlot(fctx, cap);
       const sourceType = getLocalType(fctx, capSourceIdx);

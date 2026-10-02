@@ -12,6 +12,9 @@
  *   4. Registers delegates in shared.ts (registerCompileExpression, etc.)
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { ORDINARY_NEW_TARGET } from "./ordinary-new-target.js";
+import { buildPromiseRejectionEvent } from "../runtime/wasmgc/promise/rejection-event-bodies.js";
+import { promiseRejectionDispatcher } from "./promise-rejection-dispatch.js";
 import { isBooleanType, isPromiseType, mapTsTypeToWasm } from "../checker/type-mapper.js";
 import {
   classifyAsyncConsumer,
@@ -550,6 +553,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
         { op: "local.get", index: valueLocal },
         { op: "ref.null.extern" },
         closureBagInitInstr(),
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "extern.convert_any" },
       ],
@@ -598,6 +602,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "local.get", index: reasonLocal },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -606,9 +611,33 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
+    const rejectionDispatch = promiseRejectionDispatcher(ctx);
+    const rejectedLocal =
+      rejectionDispatch === undefined ? undefined : allocTempLocal(fctx, { kind: "ref", typeIdx: promiseTypeIdx });
+    if (rejectedLocal !== undefined) {
+      for (const arm of [catchExn, catchAll]) {
+        arm.splice(
+          arm.length - 1,
+          1,
+          { op: "local.set", index: rejectedLocal },
+          ...buildPromiseRejectionEvent(
+            rejectionDispatch,
+            0,
+            [{ op: "local.get", index: rejectedLocal }],
+            [
+              { op: "local.get", index: rejectedLocal },
+              { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+            ],
+          ),
+          { op: "local.get", index: rejectedLocal },
+          { op: "extern.convert_any" },
+        );
+      }
+    }
     fctx.body.push(
       buildTargetTaggedTry(
         ctx,
@@ -619,6 +648,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       ),
     );
     releaseTempLocal(fctx, reasonLocal);
+    if (rejectedLocal !== undefined) releaseTempLocal(fctx, rejectedLocal);
     return;
   }
   const rejectIdx = ensureLateImport(ctx, "Promise_reject", [{ kind: "externref" }], [{ kind: "externref" }]);
@@ -1627,6 +1657,11 @@ function compileExpressionInner(
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.NewKeyword && expr.name.text === "target") {
+    const ordinaryTarget = fctx.localMap.get(ORDINARY_NEW_TARGET);
+    if (ordinaryTarget !== undefined) {
+      fctx.body.push({ op: "local.get", index: ordinaryTarget });
+      return { kind: "externref" };
+    }
     if (fctx.isConstructor) {
       // (#2023) Read the live new.target class-id (set at the outermost `new`
       // site, preserved through super()). Non-zero inside a construction, so
