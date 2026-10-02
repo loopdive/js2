@@ -57,6 +57,10 @@
  * (`PROTO_METHOD_DEFINE_FLAGS`), which is the same rule, so the constant is
  * passed in by the caller rather than re-derived here.
  */
+import {
+  buildPrototypeSeedDataTail,
+  buildPrototypeSeedReceiver,
+} from "../runtime/wasmgc/values/prototype-seeder-bodies.js";
 import type { ValType } from "../ir/types.js";
 import { emitBuiltinProtoConstructorValue, hasBuiltinProtoConstructorCarrier } from "./builtin-proto-constructor.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -89,9 +93,9 @@ export function pushCompanionConstructorSeed(
   if (!hasBuiltinProtoConstructorCarrier(builtinName)) return false;
 
   const body = seedFctx.body;
-  body.push({ op: "local.get", index: 0 });
+  body.push(...buildPrototypeSeedReceiver());
   addStringConstantGlobal(ctx, "constructor");
-  for (const instr of stringConstantExternrefInstrs(ctx, "constructor")) body.push(instr);
+  body.push(...stringConstantExternrefInstrs(ctx, "constructor"));
 
   const valueType = emitBuiltinProtoConstructorValue(ctx, seedFctx, builtinName);
   if (valueType === null) {
@@ -106,8 +110,6 @@ export function pushCompanionConstructorSeed(
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineValueIdx === undefined) return false;
 
-  seedFctx.body.push({ op: "f64.const", value: defineFlags });
-  seedFctx.body.push({ op: "call", funcIdx: defineValueIdx });
-  seedFctx.body.push({ op: "drop" }); // the helper returns the target
+  seedFctx.body.push(...buildPrototypeSeedDataTail(defineValueIdx, defineFlags));
   return true;
 }

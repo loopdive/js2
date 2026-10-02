@@ -9,9 +9,11 @@
 //     akey = sha256(quickjs-ng ref ∥ wasi-libc ref ∥ builtins url ∥ OPT ∥
 //                   sha256(qjs_shim.c) ∥ sha256(build.sh))
 //   quickjs-eval-adapter-<key>.wasm
-//     key = runtimeEvalProviderCacheKey(adapterSource, compilerBundleHash);
+//     key = runtimeEvalProviderCacheKey(adapterSource, computeCompilerBundleHash());
 //     the adapter source bakes in the artifact's own qjs-abi.json constants, so
-//     re-pinning the artifact invalidates the adapter automatically.
+//     re-pinning the artifact invalidates the adapter automatically, and the
+//     compiler hash covers src/ + pnpm-lock.yaml + the bundle (if any), so a
+//     compiler change does too (scripts/compiler-inputs-hash.mjs).
 //
 // Acquisition order:
 //   1. JS2WASM_QUICKJS_ARTIFACT_DIR — a prebuilt dir, verified then copied into

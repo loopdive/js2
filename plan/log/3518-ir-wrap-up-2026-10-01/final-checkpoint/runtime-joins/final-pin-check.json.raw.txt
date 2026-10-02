@@ -1,0 +1,8 @@
+{
+  "head": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "productionPopulation": 27,
+  "authoringInputs": 28,
+  "drift": [],
+  "findingsSha256": "3af0ddb37c461095d5f676c7bbb4608bfd553da99edd86b6ca96a70ee421e131",
+  "originalHelperUnchanged": true
+}

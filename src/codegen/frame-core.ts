@@ -72,6 +72,12 @@ export interface FrameLayout {
   spillTypes: ValType[];
   /** Field index where spilled locals start in the state struct. */
   spillFieldOffset: number;
+  /**
+   * (#6651 A12) Parameter locals the body can write, each with its (mutable)
+   * frame field: stored back with the spills, so the next resume's
+   * parameter-copy prelude reads the written value (generator-param-writeback.ts).
+   */
+  paramWriteBack?: readonly { local: number; field: number }[];
 }
 
 export type FrameSpillCellMap = ReadonlyMap<number, { refCellTypeIdx: number; valType: ValType }>;
@@ -159,6 +165,11 @@ export function storeSpills(
     body.push({ op: "local.get", index: selfLocal });
     body.push({ op: "local.get", index: localIdx });
     body.push({ op: "struct.set", typeIdx: layout.stateTypeIdx, fieldIdx: layout.spillFieldOffset + i });
+  }
+  for (const param of layout.paramWriteBack ?? []) {
+    body.push({ op: "local.get", index: selfLocal });
+    body.push({ op: "local.get", index: param.local });
+    body.push({ op: "struct.set", typeIdx: layout.stateTypeIdx, fieldIdx: param.field });
   }
   return body;
 }

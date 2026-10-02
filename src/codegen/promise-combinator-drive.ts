@@ -76,6 +76,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
 import { compileExpression } from "./shared.js";
 import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
+import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
 import {
   observableCombinatorReactionFns,
   emitObservableCombinatorElement,
@@ -181,7 +182,7 @@ function ensureDriveAllRuntime(
         ...captures,
         arrTypeIdx: ids.arrTypeIdx,
         vecTypeIdx: ids.vecTypeIdx,
-        fulfillFuncIdx: rt.fulfillFuncIdx,
+        fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
       }),
       exported: false,
     });
@@ -680,7 +681,7 @@ function emitDriveAllComplete(
             { op: "struct.get", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },
             { op: "struct.new", typeIdx: ids.vecTypeIdx },
             { op: "extern.convert_any" },
-            { op: "call", funcIdx: rt.fulfillFuncIdx },
+            { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
             { op: "drop" },
           ],
         },

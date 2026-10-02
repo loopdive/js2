@@ -1,0 +1,13 @@
+# Source parameter preservation handoff
+
+This independent patch preserves the original fixed/default parameter record when vector, String or physical-reference preparation rebuilds an existing closure subtype. The source files gain two lines each: explicit record forwarding and unchanged-path identity checking. Missing facts stay missing. All existing controls and original public fixtures are unchanged.
+
+Base is freshly verified loopdive/js2 main `4c5a334669d3d9ac4db29e850f73d65965ba89f6`; branch `codex/3518-source-parameters-main-20261001`. Claim is `3518:source-parameter-projection-preservation-20261001`, owner `ttraenkler/codex-source-parameter-projection-preservation-20261001` on upstream `issue-assignments`. Root owns integration/publication. This branch contains no pending PR6371 or new source-target implementation.
+
+Measured pre-edit result on exact main: **4/7**. Three forced pure projection rewrites lost their existing records; absence controls and genuine captured String source/codec preservation already passed. After the fix, **49/49** pass across seven new controls, four existing physical-reference controls, 28 source-requirement controls and ten source callable contracts. The genuine case has one lifted source and one allocation represented in both semantic/projected views. It is transport preservation, not proof that the ordinary driver previously exercised each buggy projector or proof of public execution. `validation.json` preserves all before/after rows, original failures and source hashes.
+
+TS7, fresh-main LOC/function, coercion/oracle, compiler inventory and dead-export preservation pass. Inventory is valid with zero errors but architecture remains incomplete. Reachability remains graph OPEN, strict modeled closure FAIL and retirement/deletion NOT CERTIFIED. Normal hooks/signing and protected CI/queue remain required; count delivery only after actual main ancestry/content verification.
+
+The separately held source-identity continuation is preserved at `/private/tmp/js2-ir-genuine-mixed-get-call-20261001`. Its frozen seven-file Astra Max draft passed TS7 and 43 runtime/refusal controls, but its validation/lowering dependency closure is inventory-invalid and must be genuinely separated before landing. No guard or boundary was weakened. Read its issue record and `.tmp/mixed-invocation` receipts before resuming. No wholesale overlay of parallel Number/realm/later-main lanes.
+
+Full migration remains open: full native catalog and dependencies, source modes, heterogeneous Get/Call, Construct/newTarget/bound, dynamic Function/eval/with, original public nine-row parity, fresh replay and both-backend equality. Keep legacy until all IR behavior is implemented, tested and equal.

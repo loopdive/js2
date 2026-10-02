@@ -36,11 +36,12 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 export const EXEC_CENSUS_PREFIX = "__exec_count_";
 
 function targets(): string[] {
-  const raw = process.env.JS2WASM_EXEC_CENSUS;
+  const raw = readEnv("JS2WASM_EXEC_CENSUS");
   if (!raw) return [];
   return raw
     .split(",")

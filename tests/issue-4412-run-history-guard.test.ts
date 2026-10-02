@@ -25,6 +25,12 @@ describe("#4412 run-history publish guard", () => {
     expect(v.reason).toContain("TEST262_PATH_FILTER");
   });
 
+  it("refuses an explicit original-file manifest run", () => {
+    const v = shouldPublishRunHistory({ TEST262_EXACT_MANIFEST_FILE: "scripts/test262-es2015-11778-manifest.txt" });
+    expect(v.publish).toBe(false);
+    expect(v.reason).toContain("TEST262_EXACT_MANIFEST_FILE");
+  });
+
   it("refuses a narrowed shard glob — the exact 2026-08-14 case", () => {
     const v = shouldPublishRunHistory({ TEST262_LOCAL_SHARD_GLOB: "tests/test262-local-shard1.test.ts" });
     expect(v.publish).toBe(false);

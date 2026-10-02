@@ -4,6 +4,7 @@ import { ts } from "./ts-api.js";
 import type { CompileOptions } from "./index.js";
 import { rewriteCjsRequire } from "./cjs-rewrite.js";
 import { foldStandaloneProcessEnvBranches } from "./cjs-standalone-env-fold.js";
+import { hoistStandaloneNestedRequires } from "./cjs-standalone-nested-require.js";
 import { getDefaultEnvironment } from "./env.js";
 import { resolveConsumerDrivenImports } from "./resolve/consumer-driven-barrels.js";
 
@@ -43,9 +44,11 @@ export class ModuleResolver {
   /**
    * (#6563) Target-dependent source fold applied to every file as it is read,
    * before the CJS rewrite and the dependency scan. Identity except under
-   * `--target standalone`, whose `process.env` is always empty.
+   * `--target standalone`, whose `process.env` is always empty and which has
+   * no host `require` (#6666: a function-nested `require("Y")` is linked into
+   * the static graph, see `cjs-standalone-nested-require.ts`).
    */
-  readonly foldSource: (source: string) => string;
+  readonly foldSource: (source: string, filePath: string) => string;
 
   /**
    * Create a resolver rooted at a directory.
@@ -63,7 +66,11 @@ export class ModuleResolver {
     const define = options?.define;
     this.foldSource =
       options?.target === "standalone"
-        ? (source) => foldStandaloneProcessEnvBranches(source, define)
+        ? (source, filePath) =>
+            hoistStandaloneNestedRequires(
+              foldStandaloneProcessEnvBranches(source, define),
+              (specifier) => this.resolve(specifier, filePath) !== null,
+            )
         : (source) => source;
 
     // Build compiler options for TS resolver
@@ -637,7 +644,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
       const synthesized = resolver.getStaticJsonSource(filePath);
       if (synthesized !== undefined) return synthesized;
       try {
-        return resolver.foldSource(getFs()!.readFileSync(filePath, "utf-8"));
+        return resolver.foldSource(getFs()!.readFileSync(filePath, "utf-8"), filePath);
       } catch {
         return undefined;
       }
@@ -656,7 +663,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     let content = resolver.getStaticJsonSource(canonicalPath);
     if (content === undefined) {
       try {
-        content = resolver.foldSource(getFs()!.readFileSync(canonicalPath, "utf-8"));
+        content = resolver.foldSource(getFs()!.readFileSync(canonicalPath, "utf-8"), canonicalPath);
       } catch {
         // File not found — skip (TS will report errors)
         onStack.delete(canonicalPath);

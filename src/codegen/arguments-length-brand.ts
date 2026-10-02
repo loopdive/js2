@@ -12,6 +12,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import type { ToPrimitiveArgumentsBindings } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -216,31 +217,19 @@ export function buildArgumentsIsBrandedCall(ctx: CodegenContext, objParam = 0): 
  * latter uses Array.prototype.toString's join result as its intrinsic string.
  * The callbacks emit fresh instruction arrays for each method-order branch.
  */
-export function buildArgumentsToPrimitiveArm(
+export function captureArgumentsToPrimitiveBindings(
   ctx: CodegenContext,
-  isStringHint: Instr[],
-  tryOrdinaryMethod: (name: "valueOf" | "toString", defaultObjectToStringOnMissing: boolean) => Instr[],
   stringExtern: (value: string) => Instr[],
-): Instr[] {
-  const brandCall = buildArgumentsIsBrandedCall(ctx, 0);
-  if (brandCall.length === 0) return [];
-  const argumentsTag = (): Instr[] => [...stringExtern("[object Arguments]"), { op: "return" }];
-  return [
-    ...brandCall,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...isStringHint,
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [...tryOrdinaryMethod("toString", false), ...tryOrdinaryMethod("valueOf", false), ...argumentsTag()],
-          else: [...tryOrdinaryMethod("valueOf", false), ...tryOrdinaryMethod("toString", false), ...argumentsTag()],
-        },
-      ],
-    },
-  ];
+): ToPrimitiveArgumentsBindings | undefined {
+  const brandIdx = ctx.funcMap.get(IS_BRANDED_NAME);
+  if (brandIdx === undefined) return undefined;
+  return {
+    brandIdx,
+    stringFirst: [{ lookup: stringExtern("toString") }, { lookup: stringExtern("valueOf") }],
+    stringTag: stringExtern("[object Arguments]"),
+    numberFirst: [{ lookup: stringExtern("valueOf") }, { lookup: stringExtern("toString") }],
+    numberTag: stringExtern("[object Arguments]"),
+  };
 }
 
 /** `__args_len_revive(obj)` — a store to `length` recreates the property. */

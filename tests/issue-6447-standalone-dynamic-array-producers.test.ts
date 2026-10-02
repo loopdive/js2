@@ -24,10 +24,8 @@
 // asserted for BOTH members because they compose: fixing `concat` alone moves
 // the failure one statement later onto a `sort` that is broken the same way.
 //
-// `slice`/`reverse`/`at` (#6683, array-slice-native.ts) and `flat` (#2717)
-// have since joined the arm. `splice` shares the root cause and is still wrong
-// on an `any` receiver; the `it` at the end PINS that residual, so the day
-// someone fixes it the stale expectation fails loudly instead of rotting.
+// `slice`/`reverse`/`at` (#6683, array-slice-native.ts), `flat` (#2717) and
+// `splice` (#6701, array-splice-native.ts) have since joined the arm.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -149,10 +147,7 @@ describe("#6447 — Array producer methods on an `any` receiver, standalone", ()
     ).resolves.toBe(7);
   });
 
-  it("slice/reverse/flat on an `any` receiver answer (#6683, #2717); splice is the PINNED residual", async () => {
-    // The residual is recorded as an executable claim, not a note: when
-    // `splice` on an `any` receiver is fixed the second assertion fails and
-    // must be updated.
+  it("slice/reverse/flat/splice on an `any` receiver answer (#6683, #2717, #6701)", async () => {
     await expect(
       runStandalone(
         `export function run() {
@@ -170,10 +165,10 @@ describe("#6447 — Array producer methods on an `any` receiver, standalone", ()
     await expect(
       runStandalone(
         `export function run() {
-           function f(n) { try { const r = n.splice(0, 1); return r === null || r === undefined ? 1 : 0; } catch (e) { return 1; } }
+           function f(n) { try { const r = n.splice(0, 1); return r === null || r === undefined ? 1 : (r[0] === "b" && n.length === 1 ? 0 : 2); } catch (e) { return 1; } }
            return f(["b", "a"]);
          }`,
       ),
-    ).resolves.toBe(1);
+    ).resolves.toBe(0);
   });
 });

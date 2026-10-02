@@ -36,6 +36,7 @@ import {
 import { ARRAY_METHODS, compileArrayMethodCall, guardedFuncRefCastInstrs, resolveArrayInfo } from "./array-methods.js";
 import { emitArrayLikeHofArm } from "./array-like-hof-arms.js";
 import { compileArrayConcatNativeSpecFromExprs } from "./array-concat-spec.js"; // (#5145)
+import { compileProxyReceiverArrayProtoCall } from "./array-proxy-receiver.js"; // (#6651 H6)
 
 /** Methods supported by the array-like (externref receiver) path.
  * NOTE: map/filter/reduce/reduceRight are excluded because:
@@ -1310,6 +1311,15 @@ export function compileArrayPrototypeCall(
     const nativeConcat = compileArrayConcatNativeSpecFromExprs(ctx, fctx, receiverArg, callExpr.arguments.slice(1));
     if (nativeConcat !== undefined) return nativeConcat;
   }
+  // (#6651 H6) A Proxy VALUE typed as its target array — never the typed cast.
+  const proxyGeneric = compileProxyReceiverArrayProtoCall(
+    ctx,
+    fctx,
+    methodName,
+    receiverArg,
+    callExpr.arguments.slice(1),
+  );
+  if (proxyGeneric !== undefined) return proxyGeneric;
   // The mutating generic receiver contract for push is not native yet. The
   // typed synthetic-call route can compile this spelling but then traps when
   // the borrowed receiver is dynamically represented. Keep the direct

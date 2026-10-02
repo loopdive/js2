@@ -12,6 +12,7 @@ import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../.
 import { forEachChild, ts } from "../../ts-api.js";
 import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { isStandaloneClassProtoObjectExpression } from "../class-proto-object.js"; // (#6767) C.prototype is an $Object
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { getVecInfo } from "../type-coercion.js";
@@ -466,6 +467,54 @@ function forwardedParamAbiType(ctx: CodegenContext, arg: ts.Identifier): ValType
   }
 }
 
+/**
+ * (#5151) Does this call argument compile to the standalone `$NativeProto`
+ * value for a collection prototype, rather than to the shared `$Map` instance
+ * carrier the checker reports? `resolveWasmType` deliberately maps Map, Set,
+ * WeakMap, and WeakSet to `$Map`, which is correct for their real instances but
+ * wrong as evidence for an untyped parameter's ABI: the static receiver read
+ * emits an externref NativeProto and a later `$Map` boundary null-casts it.
+ *
+ * Keep the source proof deliberately exact. A resolved ambient declaration
+ * rejects a local collection-constructor binding, while transparent wrappers
+ * preserve the same runtime value. Identifier aliases are intentionally not
+ * followed: a stable declaration alone does not prove that its own storage ABI
+ * preserved the NativeProto instead of applying the same `$Map` conversion
+ * first.
+ */
+function isKnownAmbientGlobalBinding(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  // This is a positive representation proof, not the permissive unresolved
+  // global rule used by call dispatch. Require an oracle-resolved, nonempty
+  // declaration population whose entries are all ambient before treating a
+  // collection spelling as a NativeProto producer.
+  const declarations = ctx.oracle.declarationsOf(identifier);
+  return declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
+}
+
+function isStandaloneCollectionNativeProtoArgument(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!ctx.standalone) return false;
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (!ts.isPropertyAccessExpression(current) || current.name.text !== "prototype") return false;
+  const receiver = current.expression;
+  return (
+    ts.isIdentifier(receiver) &&
+    (receiver.text === "Map" ||
+      receiver.text === "Set" ||
+      receiver.text === "WeakMap" ||
+      receiver.text === "WeakSet") &&
+    isKnownAmbientGlobalBinding(ctx, receiver)
+  );
+}
+
 export function inferParamTypeFromCallSites(
   ctx: CodegenContext,
   funcName: string,
@@ -486,6 +535,11 @@ export function inferParamTypeFromCallSites(
   // See the ref-narrowing withdrawal rule below.
   let sawOpaqueAnyArg = false;
   let sawCatchVarArg = false;
+  // (#5151) A real collection `.prototype` value is `$NativeProto` at runtime
+  // even though its checker type resolves to the shared `$Map` instance
+  // carrier. Record it separately from opaque-any evidence so the withdrawal
+  // stays confined to this representation mismatch.
+  let sawStandaloneCollectionNativeProtoArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -541,6 +595,10 @@ export function inferParamTypeFromCallSites(
       if (!conflict) {
         const arg = callArgs?.[paramIndex];
         if (arg) {
+          if (isStandaloneCollectionNativeProtoArgument(ctx, arg) || isStandaloneClassProtoObjectExpression(ctx, arg)) {
+            sawStandaloneCollectionNativeProtoArg = true;
+            return;
+          }
           const argType = ctx.checker.getTypeAtLocation(arg);
           // Skip if the argument itself is also `any` — no useful info
           if (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
@@ -711,6 +769,12 @@ export function inferParamTypeFromCallSites(
   // (TS control-flow can't see the closure mutation of `agreed` — assert its
   // declared type so the property narrowing below typechecks.)
   let type: ValType | null = conflict ? null : (agreed as ValType | null);
+  // (#5151) Do not turn a parameter receiving the NativeProto value above into
+  // the physical `$Map` instance ABI inferred from another call site. Leaving
+  // it externref preserves the object identity and lets dynamic descriptor
+  // handling observe the actual prototype. Instance-only Map/Set parameters
+  // never set this flag and retain their existing specialized fast path.
+  if (sawStandaloneCollectionNativeProtoArg) type = null;
   // (#3548) Soundness: if ANY call site under-applies this param, the value can
   // be `undefined` at runtime, so a NON-NULLABLE ref inference has no valid
   // filler — widen to the nullable ref of the same type (NOT all the way to

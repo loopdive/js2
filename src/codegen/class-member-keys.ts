@@ -9,6 +9,7 @@
  * `index.ts` — can import it without risking an import cycle.
  */
 import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
 
 /**
  * Class members register in `ctx.funcMap` under `${className}_${member}` keys
@@ -66,6 +67,25 @@ export function classMemberFuncKey(ctx: CodegenContext, fullName: string, kind?:
   let n = 0;
   while (ctx.topLevelFunctionNames.has(key)) key = `__cm$${fullName}$${n++}`;
   return key;
+}
+
+/**
+ * (#6699) `ctx.funcRestParams` key for a class member's rest-parameter ABI.
+ *
+ * The metadata maps keep the legacy `fullName` (see the module note) — which is
+ * NOT collision-free when a class declares both `static m(...)` and instance
+ * `m(...)`: both registered `funcRestParams[A_m]`, last-wins, so one member's
+ * call sites packed arguments against the OTHER member's `restIndex`. axios's
+ * `AxiosHeaders` has exactly this pair (`concat(...targets)` /
+ * `static concat(first, ...targets)`); `new H(x).concat(y)` then pushed a
+ * receiver plus a padded "first" plus the rest vec into the two-param instance
+ * method — invalid Wasm. The colliding STATIC member takes its funcMap key
+ * (also the function's display name, which its own body prologue reads); the
+ * instance member and every non-colliding member keep `fullName`, so all other
+ * programs are unchanged.
+ */
+export function classMemberRestParamKey(ctx: CodegenContext, fullName: string, kind: ClassMemberKind): string {
+  return kind === "static" && ctx.classMethodSet.has(fullName) ? classMemberFuncKey(ctx, fullName, "static") : fullName;
 }
 
 /**
@@ -155,4 +175,31 @@ export function resolveMethodOwnerClass(ctx: CodegenContext, start: string, prop
     break;
   }
   return bestOwner;
+}
+
+/**
+ * (#6767) True when `Cls[key](…)` names a static METHOD of the class the
+ * identifier `receiver` spells — exactly the claim condition of the
+ * element-access STATIC arm in `compileTailDispatch`.
+ *
+ * The INSTANCE arm ahead of that one resolves the receiver's type SYMBOL, which
+ * is the class symbol for `typeof Cls` as well, and then finds the static method
+ * under its legacy `Cls_key` funcMap key — so it pushed the class object as a
+ * hidden receiver the static function does not take. At statement level the
+ * stack fixer drops the stray value; as a call ARGUMENT
+ * (`assert.sameValue(C[4](), 4)`) it shifts the operand order and the enclosing
+ * call reads the class object where its callee belongs: "called value is not a
+ * function" (`definition/numeric-property-names.js`). The instance arm yields to
+ * the static arm when this holds.
+ */
+export function elementCallTargetsStaticMethod(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  methodName: string,
+): boolean {
+  if (!ts.isIdentifier(receiver) || !ctx.classSet.has(receiver.text)) return false;
+  const fullName = `${ctx.classExprNameMap.get(receiver.text) ?? receiver.text}_${methodName}`;
+  return (
+    ctx.staticMethodSet.has(fullName) && ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) !== undefined
+  );
 }

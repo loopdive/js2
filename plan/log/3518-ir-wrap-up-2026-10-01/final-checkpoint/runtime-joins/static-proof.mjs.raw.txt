@@ -1,0 +1,51 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import ts from 'typescript';
+import * as h from '../../tests/helpers/ir-historical-runtime-reconstruction.ts';
+const out='.tmp/runtime-contract-joins-zfyoy_rc', prior='.tmp/runtime-historical-inverses-d740ci';
+const sha=s=>createHash('sha256').update(s).digest('hex');
+const blob=s=>createHash('sha1').update('blob '+Buffer.byteLength(s)+'\0'+s).digest('hex');
+const pins=s=>({sha256:sha(s),bytes:Buffer.byteLength(s),gitBlob:blob(s)});
+const parse=(p,s)=>ts.createSourceFile(p,s,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+const json=p=>JSON.parse(readFileSync(p,'utf8'));
+const captured=new Map, sources=new Map, accessed=new Map;
+const raw=p=>{if(!captured.has(p))captured.set(p,readFileSync(p,'utf8'));return captured.get(p)};
+const edits=json(out+'/bounded-joins.json').records;
+for(const rec of edits){let s=raw(rec.path);if(sha(s)!==rec.current.sha256)throw Error('drift '+rec.path);for(const e of [...rec.spans].reverse()){if(s.slice(e.currentOffset,e.currentOffset+e.currentContext.length)!==e.currentContext)throw Error('span');s=s.slice(0,e.currentOffset)+e.targetContext+s.slice(e.currentOffset+e.currentContext.length)}if(sha(s)!==rec.target.sha256)throw Error('output');sources.set(rec.path,s)}
+const priorEdits=json(prior+'/bounded-inverse-spans.json').records;
+for(const rec of priorEdits){let s=raw(rec.path);if(sha(s)!==rec.afterFullSha256)throw Error('prior drift');for(const e of [...rec.spans].reverse()){
+ let target=e.before;
+ if(e.kind==='live-donor-splice-required'){
+  const p='src/ir/program/runtime-abi-identity.ts', donor=raw(p), sf=parse(p,donor);
+  const ds=sf.statements.filter(ts.isFunctionDeclaration);
+  if(ds.length!==2||ds.map(n=>n.name.text).join()!=='preparedIrRuntimeAbiAnchor,preparedIrRuntimeCallableBindingId')throw Error('donor');
+  const at=target.indexOf('/** Shared ABI identity');const end=target.indexOf('/** Caller-supplied declaration data cannot replace the canonical runtime catalog. */');
+  const liveBodies=donor.slice(ds[0].getFullStart(),ds[1].end).trim();
+  target=target.slice(0,at)+liveBodies+'\n\n'+target.slice(end);
+  if(target!==e.before)throw Error('live donor composition differs');
+ }
+ if(s.slice(e.afterOffset,e.afterOffset+e.after.length)!==e.after)throw Error('prior span');
+ s=s.slice(0,e.afterOffset)+target+s.slice(e.afterOffset+e.after.length);
+ }if(sha(s)!==rec.beforeFullSha256)throw Error('prior output');sources.set(rec.path,s)}
+const read=p=>{accessed.set(p,(accessed.get(p)||0)+1);return sources.has(p)?sources.get(p):raw(p)};
+const results={kind:'static syntax/source-receipt compatibility only; no tests/checker/compiler',head:'1265c47d6fc41300a380ef7e4abc45fdfcfd2c61',stageResults:[],receipts:[],failures:[]};
+const record=(name,fn)=>{try{results.stageResults.push({name,result:fn()??'accepted'})}catch(e){results.failures.push({name,error:e.message})}};
+record('assertIntrinsicSpecialization unchanged',()=>h.assertIntrinsicSpecialization(read));
+for(const v of ['pre-vector-clock','pre-clock-callable'])record('callableSourceView '+v,()=>{h.callableSourceView(read,v);return 'accepted (all original10link/5owner/stage checks retained)'});
+const paths=['src/ir/runtime/contracts/intrinsics.ts','src/ir/async-runtime-providers.ts','src/ir/runtime-manifest.ts','src/ir/intrinsics.ts','src/ir/async-plan.ts','src/ir/intrinsic-support.ts','src/ir/runtime/callable-declarations.ts','src/ir/runtime/contracts/manifest.ts'];
+for(const p of paths)record('acceptedHistoricalDeclarations '+p,()=>{const r=h.acceptedHistoricalDeclarations(p,read);results.receipts.push({path:p,count:r.length,functions:r.filter(x=>x.kind==='function').length,sha256:sha(JSON.stringify(h.receiptRows(r))),order:r.map(x=>[x.path,x.kind,x.name,x.ordinal])});return 'original receipt accepted'});
+record('canonical alias and combined verifier source',()=>h.historicalIntrinsicSource(read).length);
+// Compare source receipt requirements, without running the runtime75 suite.
+const tf=parse('runtime75',raw('tests/issue-3518-runtime-data-contract-seam.test.ts'));
+const getArray=name=>{for(const n of tf.statements)if(ts.isVariableStatement(n))for(const d of n.declarationList.declarations)if(d.name.getText(tf)===name){let init=d.initializer;while(ts.isAsExpression(init))init=init.expression;return init.elements}throw Error(name)};
+const str=n=>{if(ts.isStringLiteral(n))return n.text;if(ts.isNumericLiteral(n))return Number(n.text);if(ts.isArrayLiteralExpression(n))return n.elements.map(str);throw Error('nonliteral')};
+const obj=n=>Object.fromEntries(n.properties.map(x=>[x.name.getText(tf),str(x.initializer)]));
+const rowsOf=(p,s)=>{const sf=parse(p,s);return sf.statements.filter(n=>!ts.isImportDeclaration(n)&&!ts.isExportDeclaration(n)).map(n=>{const name=ts.isVariableStatement(n)?n.declarationList.declarations[0].name.getText(sf):n.name.text;return [name,h.declarationDoc(n),n.getText(sf)]})};
+results.runtime75SourceRequirements=[];
+for(const x of getArray('movedReceipts')){const req=obj(x);record('runtime75 moved '+req.path,()=>{let rows;if(req.path.includes('/contracts/intrinsics.ts')||req.path.includes('/contracts/manifest.ts'))rows=h.receiptRows(h.acceptedHistoricalDeclarations(req.path,read));else {rows=rowsOf(req.path,read(req.path));if(req.path.endsWith('/prepared.ts'))rows=rows.map(([name,doc,text])=>{if(name==='PreparedIrAsyncRuntimeInput'){if(!text.startsWith('export type '))throw Error('prepared input modifier');text=text.replace(/^export /,'')}if(name==='PreparedIrRuntimeManifest'){if(!text.includes('readonly functions: readonly PreparedIrFunction[];'))throw Error('prepared function annotation');text=text.replace('readonly PreparedIrFunction[]','readonly IrFunction[]')}return [name,doc,text]})}const actual=sha(JSON.stringify(rows));if(actual!==req.hash||JSON.stringify(rows.map(x=>x[0]))!==JSON.stringify(req.names))throw Error('moved receipt mismatch '+actual);results.runtime75SourceRequirements.push({path:req.path,count:rows.length,sha256:actual,expected:req.hash});return 'exact moved requirements accepted'})}
+for(const x of getArray('retainedReceipts')){const req=obj(x);record('runtime75 retained '+req.path,()=>{const rows=h.acceptedHistoricalDeclarations(req.path,read),actual=sha(JSON.stringify(h.receiptRows(rows)));if(actual!==req.hash||rows.length!==req.declarations||rows.filter(x=>x.kind==='function').length!==req.functions)throw Error('retained requirements mismatch');results.runtime75SourceRequirements.push({path:req.path,count:rows.length,functions:req.functions,sha256:actual,expected:req.hash});return 'exact retained requirements accepted'})}
+results.closedHistoricalHelperReadPopulation=[...accessed].map(([path,count])=>({path,readCount:count,current: pins(raw(path)),reconstructed:pins(read(path)),changed:read(path)!==raw(path)}));
+results.authoringRawCapturedPopulation=[...captured].map(([path,s])=>({path,...pins(s)}));
+results.finalInputDrift=[...captured].filter(([p,s])=>readFileSync(p,'utf8')!==s).map(([p])=>p);
+writeFileSync(out+'/static-compatibility-proof.json',JSON.stringify(results,null,2)+'\n');
+console.log(JSON.stringify({stages:results.stageResults.length,failures:results.failures,receipts:results.receipts.map(({path,count,functions})=>({path,count,functions})),runtime75SourceRequirements:results.runtime75SourceRequirements.length,helperReadPopulation:results.closedHistoricalHelperReadPopulation.length,rawCapturedPopulation:results.authoringRawCapturedPopulation.length,drift:results.finalInputDrift}));

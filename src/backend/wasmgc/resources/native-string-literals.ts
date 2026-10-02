@@ -207,11 +207,21 @@ const typeOwners = new WeakMap<
 function authenticateTypes(tx: PhysicalModuleReservations, pack: NativeStringLiteralTypeReservations) {
   const owner = typeOwners.get(pack);
   if (!owner || owner.tx !== tx) throw new Error("native strings: foreign or forged type owner");
-  for (const token of pack.types) {
-    if (tx.state === "reserving") tx.assertTypeReservation(token);
-    else tx.physicalIndex(token);
-  }
+  if (tx.state === "reserving") for (const token of pack.types) tx.assertTypeReservation(token);
+  else tx.physicalIndices(pack.types);
   return owner;
+}
+/** Read-only issued type-family check; does not consume its literal reservation phase. */
+export function requireNativeStringLiteralTypes(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralTypeReservations,
+  expectedKey: string,
+  expectedUtf8Storage: boolean,
+): NativeStringLiteralTypeReservations {
+  authenticateTypes(tx, pack);
+  if (pack.key !== expectedKey || pack.utf8Storage !== expectedUtf8Storage)
+    throw new Error("native strings: substituted type-family plan");
+  return pack;
 }
 interface LiteralOwner {
   readonly tx: PhysicalModuleReservations;
@@ -394,9 +404,11 @@ export function requireCompletedNativeStringLiterals(
 ): NativeStringLiteralReservations {
   const owner = authenticateLiteralOwner(tx, pack);
   if (!owner.filled) throw new Error("native strings: incomplete literal resources");
-  for (const token of pack.types) tx.physicalIndex(token);
-  for (const row of owner.globals) tx.physicalIndex(row.token);
-  for (const row of owner.functions) tx.physicalIndex(row.token);
+  tx.physicalIndices([
+    ...pack.types,
+    ...owner.globals.map((row) => row.token),
+    ...owner.functions.map((row) => row.token),
+  ]);
   return pack;
 }
 
@@ -406,16 +418,12 @@ export function fillNativeStringLiteralResources(
 ): void {
   const owner = authenticateLiteralOwner(tx, pack);
   if (owner.filled) throw new Error("native strings: duplicate fill");
-  for (const token of pack.types) tx.physicalIndex(token);
+  tx.physicalIndices(pack.types);
   for (const row of owner.globals) tx.fillGlobal(row.token, row.init);
   for (const row of owner.functions) {
     tx.fillFunction(
       row.token,
-      buildOversizedNativeStringLiteral(
-        pack.layout,
-        row.chunks,
-        row.globals.map((token) => tx.physicalIndex(token)),
-      ),
+      buildOversizedNativeStringLiteral(pack.layout, row.chunks, tx.physicalIndices(row.globals)),
     );
   }
   owner.filled = true;

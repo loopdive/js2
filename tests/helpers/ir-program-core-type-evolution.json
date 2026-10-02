@@ -1,0 +1,766 @@
+{
+  "schema": 1,
+  "kind": "authenticated-live-program-core-type-evolution",
+  "provenance": {
+    "fixtureRevision": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+    "introducingCommit": "efe352fee8afc3feb6a28c34d00fc658dc1fb205",
+    "introducingParent": "efe352fee8afc3feb6a28c34d00fc658dc1fb205^",
+    "patchSha256": "19b43ecc7cb155dbc00f41388d3923e47b3147aedf4575ee5e53adfb7b474b79"
+  },
+  "inputs": [
+    {
+      "path": "src/ir/core/types.ts",
+      "bytes": 32296,
+      "sha256": "58d3795e4f38002798fbdb93c7599f74cb422555ba0ed84f160a51aec52543a2",
+      "gitBlob": "db0b740a300009d035b7af28377bf0333e023105"
+    },
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "bytes": 2741,
+      "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+      "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+    },
+    {
+      "path": "src/wasm/model/instructions.ts",
+      "bytes": 14904,
+      "sha256": "b305b96583e473272f26032cd1e4ad4653a32d4f56db74df50dac7f1c2461b6d",
+      "gitBlob": "699c7b386f529b6017659a2f4b0f3c5671235969"
+    },
+    {
+      "path": "src/ir/core/fnctor-shapes.ts",
+      "bytes": 1758,
+      "sha256": "72a6ebe66e064906582f7f4bc5fbad6850e02d94b1bd00c8a4bb916329d70cf6",
+      "gitBlob": "f56d385b7b01008222034b0a58e200b9a8f90c17"
+    },
+    {
+      "path": "src/ir/core/value-references.ts",
+      "bytes": 1596,
+      "sha256": "b47a5f0fe7a5da86b6c851f3cdfe2af40403c6217ed04e30ab0d94b06752ba9f",
+      "gitBlob": "e05666548e17605878033e91392d43cdf44a7a8b"
+    },
+    {
+      "path": "src/ir/core/tag-refinement.ts",
+      "bytes": 1169,
+      "sha256": "715cb4e87f7563adc13ca9da1280b468a36b5af8ba2f8f249da6eb8275f9d97a",
+      "gitBlob": "1e9facc37909092c4be1b5b5a09ef874159401eb"
+    },
+    {
+      "path": "src/ir/core/binding-key-primitives.ts",
+      "bytes": 1497,
+      "sha256": "9b5715139c147146b4ed29d972e5ffad677e4fe496c95868b9ecc8935e57fa24",
+      "gitBlob": "76364db86fb07972f66a78a886d66197e2355f6a"
+    }
+  ],
+  "output": {
+    "path": "src/ir/core/types.ts",
+    "bytes": 31278,
+    "sha256": "49f0b751abc784cff47501d3309a1e2d20307ce5c3a460bab1a60ef3bb19dac5",
+    "gitBlob": "ba531205b0429574c6e675dd456dd8487b22923f"
+  },
+  "currentDeclarations": [
+    {
+      "ordinal": 0,
+      "kind": "ImportDeclaration",
+      "name": "../../shared/contracts/ir-identity.js",
+      "startByte": 85,
+      "endByte": 179,
+      "bytes": 94,
+      "sha256": "b3248ef7db159b75453c2c117eb76f496a705d3da56fdca6a71c5753f8d54be4",
+      "gitBlob": "229ba978fe8d949d127a38b3076b7e850c830ca8"
+    },
+    {
+      "ordinal": 1,
+      "kind": "ImportDeclaration",
+      "name": "../../wasm/model/instructions.js",
+      "startByte": 180,
+      "endByte": 244,
+      "bytes": 64,
+      "sha256": "dd558a549c497a40741fd2afbe943e34c64f1b23c2f4175b397a0d8f15d49fb2",
+      "gitBlob": "e6ca72eca5d28069b438467973d4d5a6021b1024"
+    },
+    {
+      "ordinal": 2,
+      "kind": "ImportDeclaration",
+      "name": "./fnctor-shapes.js",
+      "startByte": 245,
+      "endByte": 301,
+      "bytes": 56,
+      "sha256": "e16b41bd3d7f5344d9562f41fdb42564c5843f08a4cc0b20b961285e0287b514",
+      "gitBlob": "f5c96b731131cf569504af7bf34306daeaae66ec"
+    },
+    {
+      "ordinal": 3,
+      "kind": "ImportDeclaration",
+      "name": "./value-references.js",
+      "startByte": 302,
+      "endByte": 357,
+      "bytes": 55,
+      "sha256": "e296b0d2df035685233da2a075bcf4a07d14f93dd4fc412efb71e2ef096897d8",
+      "gitBlob": "9ff41fb0ae260d9f380e85cc76bfae68089f3e28"
+    },
+    {
+      "ordinal": 4,
+      "kind": "ImportDeclaration",
+      "name": "./tag-refinement.js",
+      "startByte": 358,
+      "endByte": 428,
+      "bytes": 70,
+      "sha256": "0e17ee0d56e928840910cc333dd4547a096e4e4ba010652b750e63acc1169e63",
+      "gitBlob": "dcc0d0a547c82408036b212b5e5c9a47feb209e9"
+    },
+    {
+      "ordinal": 5,
+      "kind": "ImportDeclaration",
+      "name": "./binding-key-primitives.js",
+      "startByte": 429,
+      "endByte": 492,
+      "bytes": 63,
+      "sha256": "038a0b1ba5c4fd24cf8ddd5de7ce6fe045b37baf2a929dd1ff04a3fb050abe13",
+      "gitBlob": "d4804ba278eb515fb78607329b5196d761cfe803"
+    },
+    {
+      "ordinal": 6,
+      "kind": "TypeAliasDeclaration",
+      "name": "IrTypeBinding",
+      "startByte": 1272,
+      "endByte": 1661,
+      "bytes": 389,
+      "sha256": "55109898ff1179670848164defb1e43bd8ccbd0eaceb78164797fd5592507185",
+      "gitBlob": "582be0288c0461555f541a61da1096f29df0ca5b"
+    },
+    {
+      "ordinal": 7,
+      "kind": "InterfaceDeclaration",
+      "name": "IrTypeRef",
+      "startByte": 1663,
+      "endByte": 1845,
+      "bytes": 182,
+      "sha256": "4661ab6957bbb27b034d89937ed66202baec3f73b71b19fec68dd7bbe2e09791",
+      "gitBlob": "aecb79943eb251214b4f4166242247589a21fbf4"
+    },
+    {
+      "ordinal": 8,
+      "kind": "InterfaceDeclaration",
+      "name": "IrSupportRefType",
+      "startByte": 1926,
+      "endByte": 2136,
+      "bytes": 210,
+      "sha256": "6c9e34daaea41cd6a4a1fdd87071981e2320d86e1639c55ca69e11a417b9bd3d",
+      "gitBlob": "e90c3c9cfa3d7b0c64b1bd52c42f652fc7d1c547"
+    },
+    {
+      "ordinal": 9,
+      "kind": "FunctionDeclaration",
+      "name": "irSupportRef",
+      "startByte": 2138,
+      "endByte": 2625,
+      "bytes": 487,
+      "sha256": "af7179cddfc1011f4e6a7e6fbe2b4ea03d19f62a53c435e76e2a3776d9dda014",
+      "gitBlob": "8971da5aa128d471db1f46123557efab884fbd85"
+    },
+    {
+      "ordinal": 10,
+      "kind": "InterfaceDeclaration",
+      "name": "IrVecLayoutRef",
+      "startByte": 3157,
+      "endByte": 3331,
+      "bytes": 174,
+      "sha256": "6d8c55feb3ee0cbabff1d32a752efe20df4a3aec4156da469c9abb6029bdd6f7",
+      "gitBlob": "55708ffa94475489009e144fb62b16e7805dbd5c"
+    },
+    {
+      "ordinal": 11,
+      "kind": "InterfaceDeclaration",
+      "name": "IrObjectShape",
+      "startByte": 8175,
+      "endByte": 8289,
+      "bytes": 114,
+      "sha256": "7c0a5cc63fc87a6a05c2915c3fd8c089ad1db05a576a9477a7f162c6717d91af",
+      "gitBlob": "48b87175d0d1e5a1c6b3504e8863fbce9de34d35"
+    },
+    {
+      "ordinal": 12,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClosureSignature",
+      "startByte": 8674,
+      "endByte": 9144,
+      "bytes": 470,
+      "sha256": "ff360dd3d0fbda33b96410ede6d2963e7a87a4dc51e31f1a7a5944cf08908881",
+      "gitBlob": "8e5a4bbd9d0426d6acc6fcae79889e261c669b0e"
+    },
+    {
+      "ordinal": 13,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClassFieldDescriptor",
+      "startByte": 9215,
+      "endByte": 9308,
+      "bytes": 93,
+      "sha256": "c72d5732656a8315944c6eeed15fb80dd198705fa59a09a9d31705dc400befcd",
+      "gitBlob": "7f19c9fcd96ca16677aa71ffe31f70e738b5fabd"
+    },
+    {
+      "ordinal": 14,
+      "kind": "TypeAliasDeclaration",
+      "name": "IrClassMemberKind",
+      "startByte": 9606,
+      "endByte": 9680,
+      "bytes": 74,
+      "sha256": "ad4767ba9d918f094a9cec91b7ce8573093d3cbd3b6f15777f25da200a7d36d4",
+      "gitBlob": "6b3a218b924b4336f677926f086a6f4d576295c0"
+    },
+    {
+      "ordinal": 15,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClassMethodDescriptor",
+      "startByte": 9682,
+      "endByte": 11324,
+      "bytes": 1642,
+      "sha256": "306840328fff4f758cf6b61539e7b24ab2b244d96c5fadfa3425067c189030bc",
+      "gitBlob": "b5e0c57c8ed842c43b2c66b4c5962aaf7cdcd266"
+    },
+    {
+      "ordinal": 16,
+      "kind": "FirstStatement",
+      "name": "IR_CLASS_SHAPE_CELL",
+      "startByte": 12488,
+      "endByte": 12568,
+      "bytes": 80,
+      "sha256": "d1fb3d936c0b8d9632bb8f35682fdd4bfef6dd4e6a6c2f57950b615905f4de33",
+      "gitBlob": "3616ff65969f3490e3389462128f85e2437ab9fc"
+    },
+    {
+      "ordinal": 17,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClassShape",
+      "startByte": 12570,
+      "endByte": 14036,
+      "bytes": 1466,
+      "sha256": "4bfb0f17b81d1e351cc761b920cc5b4a922909f13dbb4a1c5ba9e782126e472f",
+      "gitBlob": "b0429269b45828c757457462a57f17f7cf0a3e3b"
+    },
+    {
+      "ordinal": 18,
+      "kind": "TypeAliasDeclaration",
+      "name": "IrType",
+      "startByte": 14038,
+      "endByte": 22818,
+      "bytes": 8780,
+      "sha256": "9f682fd0211c42cf4da19a38c6ea25b08967850887c737fa329a22c717cfd65e",
+      "gitBlob": "e83f825ad4ee799f5e2af14ac7014dd42ef6f8d0"
+    },
+    {
+      "ordinal": 19,
+      "kind": "FunctionDeclaration",
+      "name": "irVal",
+      "startByte": 22904,
+      "endByte": 22983,
+      "bytes": 79,
+      "sha256": "fef2345a1b3e4ecf66ffd46dac6fa139a74046af5f22caf6d5fe820dd5babfdd",
+      "gitBlob": "02087baeed48b2e6bb7791b322a8772dcecf4ce5"
+    },
+    {
+      "ordinal": 20,
+      "kind": "FunctionDeclaration",
+      "name": "irVec",
+      "startByte": 23039,
+      "endByte": 23159,
+      "bytes": 120,
+      "sha256": "8dcd36affdda371c6681ac548ae7eba2583b51ff1f6bfe35a8002a4767c3f9a4",
+      "gitBlob": "88bef60d2d80a3c5c314f05d7706dcc79329cfa5"
+    },
+    {
+      "ordinal": 21,
+      "kind": "FunctionDeclaration",
+      "name": "irFnctor",
+      "startByte": 23227,
+      "endByte": 23321,
+      "bytes": 94,
+      "sha256": "ba7c5288a6c2f04bc49c3771b642e6a6b13f937c99b755455eb0e285600dd32f",
+      "gitBlob": "f536a48050f6533de42126dd1fbc4523ed530687"
+    },
+    {
+      "ordinal": 22,
+      "kind": "FunctionDeclaration",
+      "name": "asVal",
+      "startByte": 23520,
+      "endByte": 23614,
+      "bytes": 94,
+      "sha256": "fd24bcaa14cd708f4d1c1bfe66fe0577328fa0d53f0f9550bf7af2e0b5dcf53a",
+      "gitBlob": "f4bbb34f56ec79e69fa354dd5da6276e08b40cb0"
+    },
+    {
+      "ordinal": 23,
+      "kind": "FunctionDeclaration",
+      "name": "irDynamic",
+      "startByte": 24217,
+      "endByte": 24344,
+      "bytes": 127,
+      "sha256": "10d0d46680f64c0169d0e9c6426e576c82e5f28fb7741af805a165dee5768943",
+      "gitBlob": "bfc837ac98552ee40e44d580eb2f36c4da2214a3"
+    },
+    {
+      "ordinal": 24,
+      "kind": "FunctionDeclaration",
+      "name": "irTypeEquals",
+      "startByte": 24656,
+      "endByte": 27995,
+      "bytes": 3339,
+      "sha256": "bae1b204cddddcb54c5ce3a5e202f333c5d5a22b3ccfad503414d82b6ab416de",
+      "gitBlob": "4ab471337ed00ae9bccdfb5719769a6e2c4997a5"
+    },
+    {
+      "ordinal": 25,
+      "kind": "FirstStatement",
+      "name": "activeFnctorPairs",
+      "startByte": 27997,
+      "endByte": 28062,
+      "bytes": 65,
+      "sha256": "5b517b161659b824501c71c49d4b9c83d89e1c46acf525e5a0b77f8576c2649f",
+      "gitBlob": "023f523c4815eff62c5395a3a3b2beba24438677"
+    },
+    {
+      "ordinal": 26,
+      "kind": "FunctionDeclaration",
+      "name": "canonicalRefBinding",
+      "startByte": 28064,
+      "endByte": 28519,
+      "bytes": 455,
+      "sha256": "6551292f692f12912daa9c0717b1446cda84153d2f5a9d22badb1f93a5cf1d71",
+      "gitBlob": "a8170075720c20de52a6484dd7722532ef756198"
+    },
+    {
+      "ordinal": 27,
+      "kind": "FunctionDeclaration",
+      "name": "fnctorShapeEquals",
+      "startByte": 28521,
+      "endByte": 30406,
+      "bytes": 1885,
+      "sha256": "683e1e6f72ec2080314c3fd042de328a129c24b7483e80750af86b85fecb2ffb",
+      "gitBlob": "e8c1111a3d816a1cc14aa071522e15e0278a735b"
+    },
+    {
+      "ordinal": 28,
+      "kind": "FunctionDeclaration",
+      "name": "classShapeEquals",
+      "startByte": 30642,
+      "endByte": 30755,
+      "bytes": 113,
+      "sha256": "f2706f02efbd0acec26266d61355f5654a6023c7f5c336dde9ce098b2a2e7ebc",
+      "gitBlob": "8c68cba72d1bfa668fde9ab43ed8898a3cecddb2"
+    },
+    {
+      "ordinal": 29,
+      "kind": "FunctionDeclaration",
+      "name": "closureSignatureEquals",
+      "startByte": 30944,
+      "endByte": 31460,
+      "bytes": 516,
+      "sha256": "a5f5ae1c0498546bec141ab96022a36d3314a1d5051337a6f8ce3c89f3adf185",
+      "gitBlob": "4be531c6547ae69b50b64527e28ea8338a8deaea"
+    },
+    {
+      "ordinal": 30,
+      "kind": "FunctionDeclaration",
+      "name": "objectShapeEquals",
+      "startByte": 31679,
+      "endByte": 32039,
+      "bytes": 360,
+      "sha256": "04243f01b4e33e685efb445ba0b2c706e685fb7d98d95cfbefeeae51cb2c8819",
+      "gitBlob": "ca8affd7d116f7bbb7fb6eddc620503870c05726"
+    },
+    {
+      "ordinal": 31,
+      "kind": "FunctionDeclaration",
+      "name": "valTypeEquals",
+      "startByte": 32041,
+      "endByte": 32295,
+      "bytes": 254,
+      "sha256": "2835de2867b3af0ebb133bf12fee7d707b997102060369dad52c7ad5688703f7",
+      "gitBlob": "b7de532fc282b11336cac09a34e2636f7ea6a018"
+    }
+  ],
+  "originalDeclarations": [
+    {
+      "ordinal": 0,
+      "kind": "ImportDeclaration",
+      "name": "../../shared/contracts/ir-identity.js",
+      "startByte": 85,
+      "endByte": 179,
+      "bytes": 94,
+      "sha256": "b3248ef7db159b75453c2c117eb76f496a705d3da56fdca6a71c5753f8d54be4",
+      "gitBlob": "229ba978fe8d949d127a38b3076b7e850c830ca8"
+    },
+    {
+      "ordinal": 1,
+      "kind": "ImportDeclaration",
+      "name": "../../wasm/model/instructions.js",
+      "startByte": 180,
+      "endByte": 244,
+      "bytes": 64,
+      "sha256": "dd558a549c497a40741fd2afbe943e34c64f1b23c2f4175b397a0d8f15d49fb2",
+      "gitBlob": "e6ca72eca5d28069b438467973d4d5a6021b1024"
+    },
+    {
+      "ordinal": 2,
+      "kind": "ImportDeclaration",
+      "name": "./fnctor-shapes.js",
+      "startByte": 245,
+      "endByte": 301,
+      "bytes": 56,
+      "sha256": "e16b41bd3d7f5344d9562f41fdb42564c5843f08a4cc0b20b961285e0287b514",
+      "gitBlob": "f5c96b731131cf569504af7bf34306daeaae66ec"
+    },
+    {
+      "ordinal": 3,
+      "kind": "ImportDeclaration",
+      "name": "./value-references.js",
+      "startByte": 302,
+      "endByte": 357,
+      "bytes": 55,
+      "sha256": "e296b0d2df035685233da2a075bcf4a07d14f93dd4fc412efb71e2ef096897d8",
+      "gitBlob": "9ff41fb0ae260d9f380e85cc76bfae68089f3e28"
+    },
+    {
+      "ordinal": 4,
+      "kind": "ImportDeclaration",
+      "name": "./tag-refinement.js",
+      "startByte": 358,
+      "endByte": 428,
+      "bytes": 70,
+      "sha256": "0e17ee0d56e928840910cc333dd4547a096e4e4ba010652b750e63acc1169e63",
+      "gitBlob": "dcc0d0a547c82408036b212b5e5c9a47feb209e9"
+    },
+    {
+      "ordinal": 5,
+      "kind": "TypeAliasDeclaration",
+      "name": "IrTypeBinding",
+      "startByte": 1208,
+      "endByte": 1597,
+      "bytes": 389,
+      "sha256": "55109898ff1179670848164defb1e43bd8ccbd0eaceb78164797fd5592507185",
+      "gitBlob": "582be0288c0461555f541a61da1096f29df0ca5b"
+    },
+    {
+      "ordinal": 6,
+      "kind": "InterfaceDeclaration",
+      "name": "IrTypeRef",
+      "startByte": 1599,
+      "endByte": 1781,
+      "bytes": 182,
+      "sha256": "4661ab6957bbb27b034d89937ed66202baec3f73b71b19fec68dd7bbe2e09791",
+      "gitBlob": "aecb79943eb251214b4f4166242247589a21fbf4"
+    },
+    {
+      "ordinal": 7,
+      "kind": "InterfaceDeclaration",
+      "name": "IrVecLayoutRef",
+      "startByte": 2313,
+      "endByte": 2487,
+      "bytes": 174,
+      "sha256": "6d8c55feb3ee0cbabff1d32a752efe20df4a3aec4156da469c9abb6029bdd6f7",
+      "gitBlob": "55708ffa94475489009e144fb62b16e7805dbd5c"
+    },
+    {
+      "ordinal": 8,
+      "kind": "InterfaceDeclaration",
+      "name": "IrObjectShape",
+      "startByte": 7331,
+      "endByte": 7445,
+      "bytes": 114,
+      "sha256": "7c0a5cc63fc87a6a05c2915c3fd8c089ad1db05a576a9477a7f162c6717d91af",
+      "gitBlob": "48b87175d0d1e5a1c6b3504e8863fbce9de34d35"
+    },
+    {
+      "ordinal": 9,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClosureSignature",
+      "startByte": 7830,
+      "endByte": 8300,
+      "bytes": 470,
+      "sha256": "ff360dd3d0fbda33b96410ede6d2963e7a87a4dc51e31f1a7a5944cf08908881",
+      "gitBlob": "8e5a4bbd9d0426d6acc6fcae79889e261c669b0e"
+    },
+    {
+      "ordinal": 10,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClassFieldDescriptor",
+      "startByte": 8371,
+      "endByte": 8464,
+      "bytes": 93,
+      "sha256": "c72d5732656a8315944c6eeed15fb80dd198705fa59a09a9d31705dc400befcd",
+      "gitBlob": "7f19c9fcd96ca16677aa71ffe31f70e738b5fabd"
+    },
+    {
+      "ordinal": 11,
+      "kind": "TypeAliasDeclaration",
+      "name": "IrClassMemberKind",
+      "startByte": 8762,
+      "endByte": 8836,
+      "bytes": 74,
+      "sha256": "ad4767ba9d918f094a9cec91b7ce8573093d3cbd3b6f15777f25da200a7d36d4",
+      "gitBlob": "6b3a218b924b4336f677926f086a6f4d576295c0"
+    },
+    {
+      "ordinal": 12,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClassMethodDescriptor",
+      "startByte": 8838,
+      "endByte": 10480,
+      "bytes": 1642,
+      "sha256": "306840328fff4f758cf6b61539e7b24ab2b244d96c5fadfa3425067c189030bc",
+      "gitBlob": "b5e0c57c8ed842c43b2c66b4c5962aaf7cdcd266"
+    },
+    {
+      "ordinal": 13,
+      "kind": "FirstStatement",
+      "name": "IR_CLASS_SHAPE_CELL",
+      "startByte": 11644,
+      "endByte": 11724,
+      "bytes": 80,
+      "sha256": "d1fb3d936c0b8d9632bb8f35682fdd4bfef6dd4e6a6c2f57950b615905f4de33",
+      "gitBlob": "3616ff65969f3490e3389462128f85e2437ab9fc"
+    },
+    {
+      "ordinal": 14,
+      "kind": "InterfaceDeclaration",
+      "name": "IrClassShape",
+      "startByte": 11726,
+      "endByte": 13192,
+      "bytes": 1466,
+      "sha256": "4bfb0f17b81d1e351cc761b920cc5b4a922909f13dbb4a1c5ba9e782126e472f",
+      "gitBlob": "b0429269b45828c757457462a57f17f7cf0a3e3b"
+    },
+    {
+      "ordinal": 15,
+      "kind": "TypeAliasDeclaration",
+      "name": "IrType",
+      "startByte": 13194,
+      "endByte": 21953,
+      "bytes": 8759,
+      "sha256": "b629111dc325af313674470195c0cde0fb6548678db325362868238cb1626771",
+      "gitBlob": "dbc537aaac946e30f5098dedb5e025ad7c676e9d"
+    },
+    {
+      "ordinal": 16,
+      "kind": "FunctionDeclaration",
+      "name": "irVal",
+      "startByte": 22039,
+      "endByte": 22118,
+      "bytes": 79,
+      "sha256": "fef2345a1b3e4ecf66ffd46dac6fa139a74046af5f22caf6d5fe820dd5babfdd",
+      "gitBlob": "02087baeed48b2e6bb7791b322a8772dcecf4ce5"
+    },
+    {
+      "ordinal": 17,
+      "kind": "FunctionDeclaration",
+      "name": "irVec",
+      "startByte": 22174,
+      "endByte": 22294,
+      "bytes": 120,
+      "sha256": "8dcd36affdda371c6681ac548ae7eba2583b51ff1f6bfe35a8002a4767c3f9a4",
+      "gitBlob": "88bef60d2d80a3c5c314f05d7706dcc79329cfa5"
+    },
+    {
+      "ordinal": 18,
+      "kind": "FunctionDeclaration",
+      "name": "irFnctor",
+      "startByte": 22362,
+      "endByte": 22456,
+      "bytes": 94,
+      "sha256": "ba7c5288a6c2f04bc49c3771b642e6a6b13f937c99b755455eb0e285600dd32f",
+      "gitBlob": "f536a48050f6533de42126dd1fbc4523ed530687"
+    },
+    {
+      "ordinal": 19,
+      "kind": "FunctionDeclaration",
+      "name": "asVal",
+      "startByte": 22655,
+      "endByte": 22749,
+      "bytes": 94,
+      "sha256": "fd24bcaa14cd708f4d1c1bfe66fe0577328fa0d53f0f9550bf7af2e0b5dcf53a",
+      "gitBlob": "f4bbb34f56ec79e69fa354dd5da6276e08b40cb0"
+    },
+    {
+      "ordinal": 20,
+      "kind": "FunctionDeclaration",
+      "name": "irDynamic",
+      "startByte": 23352,
+      "endByte": 23479,
+      "bytes": 127,
+      "sha256": "10d0d46680f64c0169d0e9c6426e576c82e5f28fb7741af805a165dee5768943",
+      "gitBlob": "bfc837ac98552ee40e44d580eb2f36c4da2214a3"
+    },
+    {
+      "ordinal": 21,
+      "kind": "FunctionDeclaration",
+      "name": "irTypeEquals",
+      "startByte": 23791,
+      "endByte": 26977,
+      "bytes": 3186,
+      "sha256": "5c0aded0e7889c20eca2feee2278a05d8ff292e348020ffa7f1604305c39d1bd",
+      "gitBlob": "ac22aa902fe8e4da92940132ca5606d777ec20ad"
+    },
+    {
+      "ordinal": 22,
+      "kind": "FirstStatement",
+      "name": "activeFnctorPairs",
+      "startByte": 26979,
+      "endByte": 27044,
+      "bytes": 65,
+      "sha256": "5b517b161659b824501c71c49d4b9c83d89e1c46acf525e5a0b77f8576c2649f",
+      "gitBlob": "023f523c4815eff62c5395a3a3b2beba24438677"
+    },
+    {
+      "ordinal": 23,
+      "kind": "FunctionDeclaration",
+      "name": "canonicalRefBinding",
+      "startByte": 27046,
+      "endByte": 27501,
+      "bytes": 455,
+      "sha256": "6551292f692f12912daa9c0717b1446cda84153d2f5a9d22badb1f93a5cf1d71",
+      "gitBlob": "a8170075720c20de52a6484dd7722532ef756198"
+    },
+    {
+      "ordinal": 24,
+      "kind": "FunctionDeclaration",
+      "name": "fnctorShapeEquals",
+      "startByte": 27503,
+      "endByte": 29388,
+      "bytes": 1885,
+      "sha256": "683e1e6f72ec2080314c3fd042de328a129c24b7483e80750af86b85fecb2ffb",
+      "gitBlob": "e8c1111a3d816a1cc14aa071522e15e0278a735b"
+    },
+    {
+      "ordinal": 25,
+      "kind": "FunctionDeclaration",
+      "name": "classShapeEquals",
+      "startByte": 29624,
+      "endByte": 29737,
+      "bytes": 113,
+      "sha256": "f2706f02efbd0acec26266d61355f5654a6023c7f5c336dde9ce098b2a2e7ebc",
+      "gitBlob": "8c68cba72d1bfa668fde9ab43ed8898a3cecddb2"
+    },
+    {
+      "ordinal": 26,
+      "kind": "FunctionDeclaration",
+      "name": "closureSignatureEquals",
+      "startByte": 29926,
+      "endByte": 30442,
+      "bytes": 516,
+      "sha256": "a5f5ae1c0498546bec141ab96022a36d3314a1d5051337a6f8ce3c89f3adf185",
+      "gitBlob": "4be531c6547ae69b50b64527e28ea8338a8deaea"
+    },
+    {
+      "ordinal": 27,
+      "kind": "FunctionDeclaration",
+      "name": "objectShapeEquals",
+      "startByte": 30661,
+      "endByte": 31021,
+      "bytes": 360,
+      "sha256": "04243f01b4e33e685efb445ba0b2c706e685fb7d98d95cfbefeeae51cb2c8819",
+      "gitBlob": "ca8affd7d116f7bbb7fb6eddc620503870c05726"
+    },
+    {
+      "ordinal": 28,
+      "kind": "FunctionDeclaration",
+      "name": "valTypeEquals",
+      "startByte": 31023,
+      "endByte": 31277,
+      "bytes": 254,
+      "sha256": "2835de2867b3af0ebb133bf12fee7d707b997102060369dad52c7ad5688703f7",
+      "gitBlob": "b7de532fc282b11336cac09a34e2636f7ea6a018"
+    }
+  ],
+  "changes": [
+    {
+      "role": "binding-import",
+      "current": {
+        "startByte": 429,
+        "endByte": 493,
+        "bytes": 64,
+        "sha256": "c15c8a493239514f1f02b35958fba28ba9988d69b2e403d7419f5474ba7cf338",
+        "gitBlob": "b3e60667d15ba87f8ac4e5effdd517b6d18567a4"
+      },
+      "originalOffset": 429,
+      "originalAnchor": {
+        "startByte": 429,
+        "endByte": 557,
+        "bytes": 128,
+        "sha256": "3d7d34caf922b342e220259b9101a447f4866e66e3439382c16dc237d4594993",
+        "gitBlob": "70f3c4655b0f4e81f2ad409e07767e9e9ced0913"
+      }
+    },
+    {
+      "role": "support-interface",
+      "current": {
+        "startByte": 1847,
+        "endByte": 2138,
+        "bytes": 291,
+        "sha256": "b92cd6cf1b3b97cef43eea24a9765cf788561a81d06b09d5f0ce517bd6f212f1",
+        "gitBlob": "45d734eb2866348f863754d31b586c4cce872fbf"
+      },
+      "originalOffset": 1783,
+      "originalAnchor": {
+        "startByte": 1783,
+        "endByte": 1911,
+        "bytes": 128,
+        "sha256": "2b8d3a0ad1484cd33fe2bae66436f25f3dfb9c3b7125b158fdae358a5f3b78b8",
+        "gitBlob": "084a91aa092958261638c3934849f95513e7c3ae"
+      }
+    },
+    {
+      "role": "support-factory",
+      "current": {
+        "startByte": 2138,
+        "endByte": 2627,
+        "bytes": 489,
+        "sha256": "23431b972e35d90ee52a9d994000681a416ca541995a2cf50eb28482e566c7ff",
+        "gitBlob": "3d43b74550d81e1bd8fa9129bcdfa789708bf140"
+      },
+      "originalOffset": 1783,
+      "originalAnchor": {
+        "startByte": 1783,
+        "endByte": 1911,
+        "bytes": 128,
+        "sha256": "2b8d3a0ad1484cd33fe2bae66436f25f3dfb9c3b7125b158fdae358a5f3b78b8",
+        "gitBlob": "084a91aa092958261638c3934849f95513e7c3ae"
+      }
+    },
+    {
+      "role": "support-union",
+      "current": {
+        "startByte": 14059,
+        "endByte": 14080,
+        "bytes": 21,
+        "sha256": "3fe70544aa4637ee05df322539fb1fc5a80a496334c577d56a284942cb1f8830",
+        "gitBlob": "340aeba8e27cff5b01de59187f0e2eca678dd07b"
+      },
+      "originalOffset": 13215,
+      "originalAnchor": {
+        "startByte": 13215,
+        "endByte": 13343,
+        "bytes": 128,
+        "sha256": "6753b02580e10c04033ab2f308447e42214bd1826d9d62b1bcba41fbae071ff4",
+        "gitBlob": "03116bc5f0a3980a40042b9fb0977c13bbcf9bb6"
+      }
+    },
+    {
+      "role": "support-equality",
+      "current": {
+        "startByte": 24757,
+        "endByte": 24910,
+        "bytes": 153,
+        "sha256": "629873380465d9802fb18df627a04c78b2346591ecf891ba21c7e692ae22d9e2",
+        "gitBlob": "375f27ce84b87f35cc641e6bd8773fcfa2daa40e"
+      },
+      "originalOffset": 23892,
+      "originalAnchor": {
+        "startByte": 23892,
+        "endByte": 24020,
+        "bytes": 128,
+        "sha256": "86bbb69e6017aae5271af7e510a5bd560c1a4fc3b62da07d14575cf5e5ecb4d8",
+        "gitBlob": "48da6fc342b4a21c46a7b7d6e03399c7228d5760"
+      }
+    }
+  ]
+}

@@ -52,6 +52,7 @@ import {
 } from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
 import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
+import { linkedClosureDispatch } from "./runtime/linked-closure-dispatch.js";
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
@@ -107,6 +108,7 @@ import {
 } from "./runtime/typed-array-host-brand.js";
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
+import * as dynamicCodePolicy from "./runtime/dynamic-code-policy.js"; // (#6779)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
@@ -118,7 +120,7 @@ import {
   createHostPromiseBuiltinImport,
   createHostUndefinedImport,
 } from "./runtime/host-async-imports.js";
-import { PROMISE_INTRINSICS } from "./runtime/promise-intrinsics.js";
+import { markPromiseHandled, PROMISE_INTRINSICS } from "./runtime/promise-intrinsics.js";
 import { createHostImportCallState } from "./runtime/host-import-call-state.js";
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
@@ -152,6 +154,7 @@ import {
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
 import * as classStaticParent from "./runtime/class-static-parent.js";
+const _classParents = classStaticParent.classParentsFor; // (#6790) one registry per instance
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
@@ -159,6 +162,7 @@ import {
   _updateLegacyRegExpState,
   type LegacyRegExpState,
 } from "./runtime/legacy-regexp.js";
+import { readEnv } from "./env.js";
 export { buildWasiPolyfill } from "./runtime/wasi-polyfill.js";
 
 // (#4616) Internal runtime decisions (arg conversion, deep equal, trampolines)
@@ -709,7 +713,7 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
   }
   // (lib.d.ts here predates the ES2024 options overload — cast the ctor.)
   const AbCtor = ArrayBuffer as unknown as new (len: number, opts?: { maxByteLength?: number }) => ArrayBuffer;
-  let ab = typeof maxLen === "number" && maxLen >= 0 ? new AbCtor(n, { maxByteLength: maxLen }) : new ArrayBuffer(n);
+  const ab = typeof maxLen === "number" && maxLen >= 0 ? new AbCtor(n, { maxByteLength: maxLen }) : new ArrayBuffer(n);
   const view = new Uint8Array(ab);
   for (let i = 0; i < n; i++) view[i] = getFn(vec, i) & 0xff;
   _abHostBufferCache.set(vec, ab);
@@ -2087,6 +2091,7 @@ function _wrapWasmClosureUnknownArity(
   // (#4618) true = the class-ctor mirror's own construct/apply dispatch —
   // must get the RAW bridge, not the mirror (infinite recursion otherwise).
   rawDispatch = false,
+  linkedPeer = false, // a per-module retry bridge (linked-closure-dispatch.ts): uncached, no retry of its own
 ): ((...args: any[]) => any) | null {
   if (closure != null && typeof closure === "object") {
     // (#4618) A registered class ctor VALUE presents as the constructible
@@ -2096,7 +2101,7 @@ function _wrapWasmClosureUnknownArity(
       const mirror = _wrapForHost(closure, callbackState?.getExports());
       if (typeof mirror === "function") return mirror;
     }
-    const cached = _wasmClosureDynamicWrapperCache.get(closure);
+    const cached = linkedPeer ? undefined : _wasmClosureDynamicWrapperCache.get(closure);
     if (cached) return cached as (...args: any[]) => any;
   }
   if (!callbackState) return null;
@@ -2200,6 +2205,7 @@ function _wrapWasmClosureUnknownArity(
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
         const receiver = _isWasmStruct(rawThis) ? rawThis : this;
         const argcCallFn = exports[`__\0js2_call_fn_method_argc_${dispatchArity}`];
+        if (linkedClosureDispatch.isRepeat(closure, exports, `m${dispatchArity}`, receiver)) return undefined;
         return marshalNew(
           typeof argcCallFn === "function"
             ? _applyWithPrefix(argcCallFn, undefined, [args.length, receiver, closure], padded)
@@ -2245,6 +2251,7 @@ function _wrapWasmClosureUnknownArity(
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
     const padded = _denseOwnWasmArgs(args, arity);
+    if (linkedClosureDispatch.isRepeat(closure, exports, `f${arity}`, undefined)) return undefined;
     if (widenedFrom >= 0) {
       const argcCallFn = exports[`__\0js2_call_fn_argc_${arity}`];
       if (typeof argcCallFn === "function") {
@@ -2255,10 +2262,11 @@ function _wrapWasmClosureUnknownArity(
   };
   const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
     try {
+      const via = linkedPeer ? dispatch : linkedClosureDispatch.routed(closure, exports, dispatch, rawDispatch);
       const result =
         new.target === undefined
-          ? _intrinsicReflectApply(dispatch, this, args)
-          : _intrinsicReflectConstruct(dispatch, args, new.target);
+          ? _intrinsicReflectApply(via, this, args)
+          : _intrinsicReflectConstruct(via, args, new.target);
       _drainNativePromiseBoundary(callbackState);
       return result;
     } catch (error) {
@@ -2311,7 +2319,7 @@ function _wrapWasmClosureUnknownArity(
   _wasmClosureWrapperSource.set(wrapped, { closure, arity: -1 });
   wsh.recordCallableOwner(wrapped, callbackState);
   if (closure != null && typeof closure === "object") {
-    _wasmClosureDynamicWrapperCache.set(closure, wrapped);
+    if (!linkedPeer) _wasmClosureDynamicWrapperCache.set(closure, wrapped);
     _wasmClosureWrapperTargets.set(wrapped, closure);
     _linkedProviderMirrors.recordMirrorOwner(wrapped, callbackState?.getExports()); // (#5222)
     // (#4618) Surface the closure's OWN sidecar props on the bridge as live
@@ -2850,11 +2858,7 @@ function _instanceofResult(
   // TypeError. Reached only for an object V, per the step-3 short-circuit above.
   let proto = _compiledFnPrototypeSlot(rawTarget, callbackState);
   if (proto === _SLOT_ABSENT) {
-    try {
-      proto = (target as { prototype?: unknown }).prototype;
-    } catch (e) {
-      throw e;
-    }
+    proto = (target as { prototype?: unknown }).prototype;
   }
   if (proto === null || proto === undefined || (typeof proto !== "object" && typeof proto !== "function")) {
     return _INSTANCEOF_THROW;
@@ -4340,15 +4344,13 @@ function _hostToPrimitive(
   // represents the spec violation in §7.1.1.1 step 6 and must throw TypeError
   // (#1253).
   let methodInvokedReturnedObject = false;
+  const rawOpaque = obj === raw && !_userProxies.has(obj) && _isWasmStruct(obj);
   const methodNames = hint === "string" ? ["toString", "valueOf"] : ["valueOf", "toString"];
   for (const mName of methodNames) {
     // Check real JS property first (goes through proxy which may wrap closures)
-    let fn: any;
-    try {
-      fn = obj[mName];
-    } catch {
-      /* property access on opaque struct */
-    }
+    // Raw Wasm carriers use the sidecar/export fallbacks below. A genuine
+    // host or proxy Get can run an accessor and must preserve its abrupt result.
+    const fn = rawOpaque ? undefined : obj[mName];
     if (typeof fn === "function") {
       const result = fn.call(obj);
       if (result == null || typeof result !== "object") return result;
@@ -5994,7 +5996,8 @@ function _safeSet(
   // (#1712) A vec read through `_wrapForHost` may return its real-array Proxy
   // view. Numeric writes must target the canonical raw WasmGC vec so the
   // module's element-set dispatcher can mutate the backing array.
-  obj = (_wasmClosureWrapperTargets.has(obj) && Reflect.set(obj, key, val, obj), _unwrapForHost(obj));
+  if (_wasmClosureWrapperTargets.has(obj)) Reflect.set(obj, key, val, obj);
+  obj = _unwrapForHost(obj);
   const accessorKey = typeof key === "number" && Number.isInteger(key) ? String(key) : key;
   const scAccessor = typeof accessorKey === "string" ? _wasmStructProps.get(obj) : undefined;
   if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
@@ -6365,6 +6368,7 @@ const _hostProxyExportSlots = new WeakMap<object, { current: Record<string, Func
 const _linkedProviderMirrors = createLinkedProviderMirrorOwnership(_canBeWeakKey);
 // (#5225) Inbound twin: which module of a linked project can DECODE a struct.
 const _crossModuleStructs = createCrossModuleStructOwners(_canBeWeakKey);
+linkedClosureDispatch.configure(_crossModuleStructs, _wrapWasmClosureUnknownArity); // (#6757)
 
 /**
  * (#6492 r20) Mirror a COMPILED thenable for the keyed-combinator polyfill.
@@ -6414,35 +6418,32 @@ function _decodes(exports: Record<string, Function> | undefined, obj: object): b
 // exports while that instance is alive anyway.
 let _latestInstance: WeakRef<{ getExports: () => Record<string, Function> | undefined }> | undefined;
 
-/** (#5225) Record a linked provider's exports as a decoder for the project. */
-export function registerLinkedProviderModule(exports: Record<string, Function>): void {
-  _linkedProviderMirrors.registerProviderExports(exports);
-  _crossModuleStructs.registerModule(exports);
+/** (#6790) Open a linked project keyed by its root import object; its modules decode only each other. */
+export function beginLinkedProject(rootImports: object): void {
+  _crossModuleStructs.beginProject(rootImports);
 }
 
-/** (#5225) Record the consumer's exports as a decoder for the project. */
-export function registerLinkedConsumerModule(exports: Record<string, Function>): void {
-  _crossModuleStructs.registerModule(exports);
+/** (#5225) Record a linked provider's exports as a decoder for `rootImports`' project. */
+export function registerLinkedProviderModule(exports: Record<string, Function>, rootImports?: object): void {
+  _linkedProviderMirrors.registerProviderExports(exports);
+  _crossModuleStructs.registerModule(exports, rootImports);
+}
+
+/** (#5225) Record the consumer's exports as a decoder for `rootImports`' project. */
+export function registerLinkedConsumerModule(exports: Record<string, Function>, rootImports?: object): void {
+  _crossModuleStructs.registerModule(exports, rootImports);
 }
 
 /**
- * (#5364) Retire the linked project that is no longer live, so the NEXT one
- * starts from an empty registry.
+ * (#5364) Forget every linked project registered so far.
  *
- * Both registries above are module-level singletons with no unregister path.
- * That is correct while a process hosts one linked project, and wrong for a
- * process that hosts many: `scripts/test262-worker.mjs` runs many rows per fork
- * and since #5353 every Temporal row re-instantiates the SAME provider binary.
- * Two instances of one binary share canonical WasmGC types, so project 1's
- * `__struct_field_names` happily names a struct project 2 minted — and
- * `_owningClassObject` (#5354) then answers with project 1's class-object
- * singleton. Nothing throws; the consumer's live `C` and the instance's
- * resolved constructor are simply two unrelated mirrors, so `x instanceof C`
- * is false while `x.constructor.name` reads right.
- *
- * Call it BEFORE instantiating a project, not after tearing one down: "after"
- * has no single owner (a row can throw out of instantiate) and would leave the
- * stale entries live for exactly the window that matters.
+ * (#6790) Correctness no longer depends on it: `instantiateLinkedProviders`
+ * opens a project per call, and two instances of one provider binary — which
+ * share canonical WasmGC types, so project 1's `__struct_field_names` names a
+ * struct project 2 minted and `_owningClassObject` (#5354) would answer with
+ * project 1's class-object singleton — are never consulted across projects.
+ * Kept for the test262 seam (which retires each row before the next) and for
+ * tests that want an empty registry.
  */
 export function resetLinkedProjectRegistry(): void {
   _crossModuleStructs.reset();
@@ -6674,7 +6675,8 @@ function _registerClassCtorHandler(
   parentFnctor: any,
   classNameArg: any,
   implicitDynamicParentCtor: any,
-  liveExportSource?: MarshalExportSource,
+  liveExportSource: MarshalExportSource | undefined,
+  classParents: classStaticParent.ClassParentRegistry,
 ): void {
   if (classObj == null || typeof classObj !== "object") return;
   if (liveExportSource !== undefined) _classCtorCallbackStates.set(classObj, liveExportSource);
@@ -6686,8 +6688,7 @@ function _registerClassCtorHandler(
     _classObjectByProtoStruct.set(protoObj, classObj);
   }
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
-  if (typeof classNameArg === "string" && classNameArg.length > 0)
-    classStaticParent.registerClassObject(classObj, classNameArg);
+  classStaticParent.registerClassObject(classObj, classNameArg, classParents);
   if (implicitDynamicParentCtor === 1) _classImplicitDynamicParentCtor.add(classObj);
   else _classImplicitDynamicParentCtor.delete(classObj);
   _hostProxyCache.delete(classObj);
@@ -6819,25 +6820,15 @@ function _hostPrototypeForInstance(raw: any, exports: Record<string, Function> |
   return proto != null && typeof proto === "object" ? proto : undefined;
 }
 
-/** (#4618) `__register_class_parent` import: dynamic `extends <value>`
- * parent, registered by name at the class declaration statement (see
- * emitRegisterDynamicClassParent). */
-function _registerClassParentHandler(className: any, parentValue: any): void {
-  if (typeof className !== "string" || className.length === 0) return;
-  // (#5280) A null `parentValue` is `class C extends null` — a real heritage, not a missing one; see registerClassParent.
-  classStaticParent.registerClassParent(className, parentValue);
-}
-
-/** (#4618) Lazy dynamic-parent registration for PROPERTY-ACCESS heritage
+/** (#4618) Lazy dynamic-parent resolver for PROPERTY-ACCESS heritage
  * (`class Test extends React.Component`): the compiled value read at the
  * declaration statement can cross as null through the static member lane
  * (observed in the react per-file batch), so the runtime stores the live
  * container object + key and resolves `obj[key]` host-side, on demand, when
  * the class mirror needs the parent. Memoized on first non-null resolve. */
-function _registerClassParentRefHandler(className: any, obj: any, key: any, exports?: Record<string, Function>): void {
-  if (typeof className !== "string" || className.length === 0) return;
-  if (obj == null || typeof key !== "string" || key.length === 0) return;
-  classStaticParent.registerClassParentLazy(className, () => {
+function _classParentRefResolver(obj: any, key: any, exports?: Record<string, Function>): (() => any) | undefined {
+  if (obj == null || typeof key !== "string" || key.length === 0) return undefined;
+  return () => {
     try {
       // The container is often a RAW wasm struct (the compiled module's
       // `exports` object): its props may live in the sidecar OR as real
@@ -6859,12 +6850,11 @@ function _registerClassParentRefHandler(className: any, obj: any, key: any, expo
         if (wrapped != null && wrapped !== obj) v = (wrapped as any)[key];
       }
       if (v == null) v = (obj as any)[key];
-      if (v != null) classStaticParent.rememberClassParent(className, v);
       return v;
     } catch {
       return undefined;
     }
-  });
+  };
 }
 
 /**
@@ -8192,7 +8182,7 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
   // prototype object. Accessors run with the live-mirror proxy as the receiver.
   const protoDesc = _fnctorProtoLookup(obj, key, exports);
   if (protoDesc) {
-    if (process.env.DEBUG_1712)
+    if (readEnv("DEBUG_1712"))
       console.error(
         "[protoHook]",
         String(key),
@@ -9032,7 +9022,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       const val = safeGetField(key);
       const primitiveValue = _nativePrimitiveToHost(val, currentExports());
       if (primitiveValue !== _MISS) return primitiveValue;
-      if (process.env.JS2WASM_DEBUG_3051) {
+      if (readEnv("JS2WASM_DEBUG_3051")) {
         console.error(
           "[3051] proxy.get",
           String(key),
@@ -9624,7 +9614,7 @@ function _makeClassCtorMirrorForHost(
     const viaFnctor = _classFnctorParents.get(classObj);
     if (viaFnctor != null) return viaFnctor;
     if (className === "") return undefined;
-    const registered = classStaticParent.getClassParent(className);
+    const registered = classStaticParent.classParentOf(classObj, className);
     if (registered != null) return registered;
     // (#5354) A STATIC `class B extends A` heritage is resolved entirely inside
     // the compiler and registers nothing on the host, so neither record above
@@ -9654,6 +9644,7 @@ function _makeClassCtorMirrorForHost(
   // (#5354) The mirror itself, needed by the prototype facade's `constructor`
   // answer below. Assigned at the end of this function; every read of it
   // happens inside a trap, i.e. strictly after that assignment.
+  // biome-ignore lint/style/useConst: assigned at the end of the function; a `const` there would turn the guarded `mirrorSelf !== undefined` trap reads into TDZ errors.
   let mirrorSelf: any;
   const protoStruct = _classProtoStructs.get(classObj);
   // (#4618) Install the prototype facade even when the proto struct did not
@@ -10628,6 +10619,8 @@ interface InstanceState {
   subclassCtors?: Map<string, Function[]>;
   /** user-class name → parent class name (or null). */
   userClassParents?: Map<string, string | null>;
+  /** (#6790) user-class name → dynamic `extends` value, for this instance only. */
+  classParents?: classStaticParent.ClassParentRegistry;
   /**
    * (#2637 B2) `class extends Promise` name → the host-bridged wasm
    * constructor-body callable (`$<Class>_new`, registered via
@@ -10818,9 +10811,8 @@ const _tTimeBasicSrc = `${_tHourSrc}(?:${_tMinuteSrc}(?:${_tSecondSrc}${_tFracSr
 const _tOffsetSrc =
   "[+-](?:[01]\\d|2[0-3])(?::[0-5]\\d(?::[0-5]\\d(?:[.,]\\d{1,9})?)?|[0-5]\\d(?:[0-5]\\d(?:[.,]\\d{1,9})?)?)?";
 // TimeZoneAnnotation ::: `[` `!`? (UTCOffset[~SubMinutePrecision] | TimeZoneIANAName) `]`
-const _tTzAnnotationRe = new RegExp(
-  "^\\[!?(?:[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?|[A-Za-z._][A-Za-z._0-9+-]*(?:\\/[A-Za-z._][A-Za-z._0-9+-]*)*)\\]$",
-);
+const _tTzAnnotationRe =
+  /^\[!?(?:[+-](?:[01]\d|2[0-3])(?::?[0-5]\d)?|[A-Za-z._][A-Za-z._0-9+-]*(?:\/[A-Za-z._][A-Za-z._0-9+-]*)*)\]$/;
 // Annotation ::: `[` `!`? AnnotationKey `=` AnnotationValue `]`
 const _tAnnotationRe = /^\[(!?)([a-z_][a-z0-9_-]*)=([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\]$/;
 const _tBracketSplitRe = /\[[^\]]*\]/g;
@@ -11483,7 +11475,7 @@ function resolveImport(
   // the leading `self` for `extern_class` members. Lets the generic method shim
   // below drop its rest parameter. Undefined when unknown → rest form kept.
   paramCount?: number,
-  dynamicCode: DynamicCodePolicy = "compat",
+  dynamicCode: dynamicCodePolicy.ResolvedDynamicCodePolicy = dynamicCodePolicy.DEFAULT_DYNAMIC_CODE_POLICY,
   dynamicCodeEvaluator?: DynamicCodeEvaluator,
   getCaughtException?: () => unknown,
 ): Function {
@@ -12701,37 +12693,20 @@ function resolveImport(
             return dynamicCodeEvaluator.evaluate(src, { direct: isDirect !== 0 });
           };
         }
-        // #1164: dynamic eval via Wasm module compilation.  The primary
-        // path compiles the eval string through js2wasm and instantiates
-        // it as a fresh Wasm module via the JS Wasm API — no `(0, eval)`,
-        // no JS global leakage, CSP-compatible (`wasm-unsafe-eval` only).
-        //
-        // We retain the legacy `(0, eval)(...)` host path as a fallback
-        // for sources the Wasm pipeline cannot yet compile (e.g. test262
-        // harness-rewritten code containing identifiers that resolve to
-        // host-only state, or syntax constructs js2wasm doesn't support).
-        // The fallback is gated on JS host availability; in standalone /
-        // WASI mode neither path works and the import is simply absent.
-        const wasmEvalShim = createEvalShim({});
+        // `hostEval` (#1164/#6779): compile the string through js2wasm into a
+        // fresh child Wasm module first. Only when that module cannot be BUILT
+        // (parse, compile, instantiate — js2wasm is stricter than V8 on some
+        // forms) does the string go to the host realm's `(0, eval)`. A throw
+        // from RUNNING the string propagates once, unchanged: re-running it in
+        // the host would repeat its side effects and swap its error.
+        const wasmEvalShim = createEvalShim({ dynamicCode, hostFallback: true });
         return (src: any, _isDirect: number = 0) => {
           // Spec: if input is not a string, return it unchanged.
           if (typeof src !== "string") return src;
-          // Try the Wasm-module path first.  Compile failures, instantiation
-          // failures, and "import not provided" errors fall through to the
-          // host-eval fallback so test262 harness-aware eval keeps working.
           try {
             return wasmEvalShim(src, _isDirect);
           } catch (e: any) {
-            // SyntaxError from the Wasm-module path means js2wasm couldn't
-            // compile the source as JS at all — propagate it (real JS would
-            // throw too).  Other errors (ReferenceError from missing imports,
-            // generic Error from instantiation) fall back to host eval.
-            const isSyntaxError = e instanceof SyntaxError;
-            if (isSyntaxError) {
-              // If the host-eval fallback can compile it, prefer that result;
-              // js2wasm is more strict than V8/SpiderMonkey on some forms.
-              return _legacyHostEval(src);
-            }
+            if (!dynamicCodePolicy.isDynamicCodeBuildFailure(e)) throw e;
             return _legacyHostEval(src);
           }
         };
@@ -12908,7 +12883,7 @@ assert._isSameValue = isSameValue;
           policy: dynamicCode,
           createFunction: dynamicCodeEvaluator ? (p, b) => dynamicCodeEvaluator.createFunction(p, b) : undefined,
           createWasmNewFunctionShim: () =>
-            createNewFunctionShim({ globalSandbox }) as (params: unknown, body: string) => unknown,
+            createNewFunctionShim({ globalSandbox, dynamicCode }) as (params: unknown, body: string) => unknown,
           moduleGlobal: globalSandbox ?? (globalThis as any),
           makeEvalError: (message) => new EvalError(message),
         });
@@ -14057,21 +14032,21 @@ assert._isSameValue = isSameValue;
             classNameArg,
             implicitDynamicParentCtor,
             callbackState,
+            _classParents(instanceState),
           );
         };
-      if (name === "__register_class_parent") return _registerClassParentHandler;
+      if (name === "__register_class_parent") return _classParents(instanceState).register;
       if (name === "__register_class_parent_ref")
         return function registerClassParentRef(n: any, o: any, k: any): void {
-          _registerClassParentRefHandler(n, o, k, callbackState?.getExports());
+          _classParents(instanceState).registerLazy(n, _classParentRefResolver(o, k, callbackState?.getExports()));
         };
       if (/^__call_dynamic_class_parent_\d+$/.test(name))
         return (parentIdentity: any, receiver: any, ...args: any[]): void => {
           const className = typeof parentIdentity === "string" ? parentIdentity : "";
-          // Dynamic property-access heritage is registered by class name. A
-          // statically named top-level function parent has no class `_init`,
-          // so the compiler passes its canonical closure directly instead.
-          // Both are the same JavaScript SuperCall operation once resolved.
-          const parent = className !== "" ? classStaticParent.getClassParent(className) : parentIdentity;
+          // Property-access heritage is registered by class name, per instance
+          // (#6790). A top-level function parent has no class `_init`, so the
+          // compiler passes its canonical closure; both are one SuperCall.
+          const parent = className !== "" ? _classParents(instanceState).get(className) : parentIdentity;
           const parentCtor =
             typeof parent === "function"
               ? parent
@@ -16236,6 +16211,7 @@ assert._isSameValue = isSameValue;
             try {
               // Probe via a no-op proxy target; only [[Construct]] presence is
               // tested, the proxy is never actually instantiated.
+              // biome-ignore lint/complexity/useArrowFunction: Reflect.construct needs a constructible target; an arrow is not one, so this IsConstructor probe would always throw.
               Reflect.construct(function () {}, [], wrappedCallee);
               isCtor = true;
             } catch {
@@ -16293,6 +16269,7 @@ assert._isSameValue = isSameValue;
           let isCtor = false;
           if (typeof wrappedCallee === "function") {
             try {
+              // biome-ignore lint/complexity/useArrowFunction: Reflect.construct needs a constructible target; an arrow is not one, so this IsConstructor probe would always throw.
               Reflect.construct(function () {}, [], wrappedCallee);
               isCtor = true;
             } catch {
@@ -17533,20 +17510,10 @@ assert._isSameValue = isSameValue;
       // a Wasm object-literal thenable must be mirrored before V8 performs
       // PromiseResolve, while ordinary objects remain raw for === identity.
       if (name === "Promise_resolve") return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction);
-      if (name === "Promise_reject")
-        return (val: any) => {
-          // (#2978) Pre-mark the rejection as handled. Compiled code holds the
-          // promise as an opaque externref and may drop it without attaching a
-          // handler (e.g. the for-await sync drive's bounded step cap discards
-          // one rejected promise per iteration) — without this, each discarded
-          // rejection fires the host's unhandledRejection machinery, and a
-          // capped loop emits a 100k-event storm that vitest/CI runners count
-          // as errors. The no-op catch derives a separate promise; consumers of
-          // the returned promise observe the rejection unchanged.
-          const p = PROMISE_INTRINSICS.reject(val);
-          p.catch(() => {});
-          return p;
-        };
+      // (#6791) Bare: a rejection the program drops reaches unhandledRejection as
+      // natively. A `for await` sync drive marks the elements it drops instead.
+      if (name === "Promise_reject") return (val: any) => PROMISE_INTRINSICS.reject(val);
+      if (name === "__forawait_mark_handled") return (v: any) => markPromiseHandled(v, globalSandbox?.Promise);
       // (#1042) async/await CPS scheduling primitives. The state machine
       // allocates one pending outer Promise per async function, then settles
       // it from a continuation that runs as a microtask. We stash the
@@ -17709,7 +17676,7 @@ assert._isSameValue = isSameValue;
               materialize?: () => void;
             } = { buf: [], index: 0, pendingThrow: null, retVal: undefined, thunk: buf };
             st.materialize = () => {
-              const DBG = process.env.GEN_DEBUG === "1";
+              const DBG = readEnv("GEN_DEBUG") === "1";
               const thunk = st.thunk;
               st.thunk = undefined;
               st.materialize = undefined;
@@ -18986,9 +18953,8 @@ assert._isSameValue = isSameValue;
           if (exports === undefined && args.length > 0 && callbackState) {
             const defer = (callbackState as { deferToExports?: (fn: () => void) => void }).deferToExports;
             if (defer) {
-              const self = this;
               defer(() => {
-                invokeNativeFunctionCallback(id, cap, [self, ...args], callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+                invokeNativeFunctionCallback(id, cap, [this, ...args], callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
               });
               return undefined;
             }
@@ -19544,18 +19510,19 @@ export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions 
    */
   ambientCompatibility?: boolean;
   /**
-   * Runtime implementation for dynamic eval and new Function.
+   * Runtime implementation for dynamic eval and new Function (#6779).
    *
-   * `compat` preserves the existing meta-circular-first path and its native
-   * fallback. `native` delegates directly to the current realm's eval/Function.
-   * `evaluator` delegates to the explicit evaluator below. `deny` fails closed.
+   * `deny` (the default) fails closed. `evaluator` delegates to the explicit
+   * evaluator below. `hostEval` tries a js2wasm child module, then the host
+   * realm's eval/Function when that module cannot be built; `native` uses the
+   * host realm's directly. Both reach host globals. `compat` = deprecated `hostEval`.
    */
   dynamicCode?: DynamicCodePolicy;
   /** Synchronous evaluator used only when `dynamicCode` is `evaluator`. */
   dynamicCodeEvaluator?: DynamicCodeEvaluator;
 }
 
-export type DynamicCodePolicy = "compat" | "native" | "evaluator" | "deny";
+export type DynamicCodePolicy = dynamicCodePolicy.DynamicCodePolicy;
 
 /** Live caller binding retained by the AOT module's host realm. */
 export interface DynamicCodeBinding {
@@ -19602,6 +19569,7 @@ export function buildImports(
     legacyRegExpState: _makeLegacyRegExpState(),
     subclassCtors: new Map<string, Function[]>(),
     userClassParents: new Map<string, string | null>(),
+    classParents: new classStaticParent.ClassParentRegistry(),
   };
 
   installAmbientCompatibility({
@@ -19611,7 +19579,7 @@ export function buildImports(
     // (#6492 r17) Compiled code reads `Promise` through the sandbox, so a
     // polyfilled static has to be installed there or its receiver can never be
     // the object the test wrote to.
-    globalSandbox: options?.globalSandbox,
+    globalSandbox: wsh.snapshotSandboxIntrinsics(options?.globalSandbox), // (#6651) record realm intrinsics first
     mirrorThenable: _mirrorPolyfillThenable,
   });
 
@@ -19645,6 +19613,7 @@ export function buildImports(
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
   domCapabilityRuntime?.bindCallbackState(callbackState);
   const hostImportCallState = createHostImportCallState();
+  const dynamicCode = dynamicCodePolicy.resolveDynamicCodePolicy(options?.dynamicCode); // (#6779) once per instance
 
   // (#1467 / #1933) Each instantiated module gets its own symbol id space and
   // per-instance symbol cache/registry, RegExp legacy state, and subclass/
@@ -19678,7 +19647,7 @@ export function buildImports(
         options?.globalSandbox,
         instanceState,
         imp.paramCount,
-        options?.dynamicCode,
+        dynamicCode,
         options?.dynamicCodeEvaluator,
         hostImportCallState.getCaughtException,
       );

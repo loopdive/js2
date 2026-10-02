@@ -69,7 +69,11 @@ function gateVerdictFor(failingId: string): { status: number; output: string } {
     const res = spawnSync(process.execPath, [GATE_PATH], {
       cwd: REPO_ROOT,
       encoding: "utf8",
-      env: { ...process.env, MERGE_PARTIALS_DIR: dir, SHARD: "", PARTIAL_OUT: "" },
+      // SHARD marks the partial as ONE shard's slice (#6785): the whole-suite
+      // passingFloor / fileCount checks belong to the merged report, and a
+      // one-test synthetic report would trip them before the set comparison
+      // this file is about.
+      env: { ...process.env, MERGE_PARTIALS_DIR: dir, SHARD: "1/8", PARTIAL_OUT: "" },
     });
     return { status: res.status ?? -1, output: `${res.stdout ?? ""}${res.stderr ?? ""}` };
   } finally {

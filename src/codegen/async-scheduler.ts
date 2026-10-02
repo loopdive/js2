@@ -56,6 +56,14 @@ import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
 import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { tryEmitObservablePromiseFinally } from "./promise-finally-invoke.js"; // (#6651 D7)
+import {
+  emitPromiseThenSpeciesCapability,
+  preparePromiseThenSpecies,
+  promiseResolvePassThroughInstrs,
+  speciesChainedInstrs,
+  speciesForwardAndResultInstrs,
+} from "./promise-species-then.js"; // (#5197 r3)
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import {
   PROMISE_STATE_PENDING,
@@ -3565,6 +3573,9 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
   // Plain values still settle synchronously through the fulfil fast path, so
   // non-thenable behaviour is observably unchanged.
   ensurePromiseSettleFunctions(ctx);
+  const vLocal = allocLocal(fctx, `__presolve_v_${fctx.locals.length}`, { kind: "externref" });
+  // (#5197 r3 Step 1e) PromiseResolve step 1 — `x.constructor` must be `%Promise%`.
+  const passThrough = promiseResolvePassThroughInstrs(ctx, fctx, vLocal);
   const resolveValueIdx = ctx.funcMap.get("__promise_resolve_value");
   if (resolveValueIdx === undefined) {
     // Defensive legacy fallback: direct fulfilled mint (pre-#3125 shape).
@@ -3576,7 +3587,6 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
     fctx.body.push({ op: "extern.convert_any" });
     return;
   }
-  const vLocal = allocLocal(fctx, `__presolve_v_${fctx.locals.length}`, { kind: "externref" });
   const pLocal = allocLocal(fctx, `__presolve_p_${fctx.locals.length}`, {
     kind: "ref",
     typeIdx: promiseTypeIdx,
@@ -3586,6 +3596,14 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
   fctx.body.push({ op: "local.get", index: vLocal });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
+  if (passThrough) {
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: passThrough,
+      else: [{ op: "i32.const", value: 0 }],
+    });
+  }
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "externref" } },
@@ -3682,8 +3700,12 @@ export function emitStandalonePromiseThen(
   promiseInstrs: Instr[],
   onFulfilled: StandalonePromiseThenCallback | null,
   onRejected?: StandalonePromiseThenCallback | null,
+  intrinsic = false, // (#6651 D7) %Promise.prototype.then% itself: never re-dispatches to an own `then`
 ): void {
   ensurePromiseSettleFunctions(ctx);
+  // (#5197 r3 Step 1) §27.2.5.4 steps 3-4, registered before any index is read.
+  const species = preparePromiseThenSpecies(ctx, fctx);
+  const speciesFwd = species && [ensureDynamicThenWrapper(ctx, "fulfill"), ensureDynamicThenWrapper(ctx, "reject")];
   const state = getOrInitState(ctx as CodegenContextWithScheduler);
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const callbackTypeIdx = getOrRegisterPromiseCallbackType(ctx);
@@ -3763,12 +3785,19 @@ export function emitStandalonePromiseThen(
   fctx.body = nativeBody;
 
   // Chained promise starts pending with no callbacks.
-  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push(closureBagInitInstr());
-  fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
-  fctx.body.push({ op: "local.set", index: chainedLocal });
+  const mintChained: Instr[] = [
+    { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    closureBagInitInstr(),
+    { op: "struct.new", typeIdx: promiseTypeIdx },
+    { op: "local.set", index: chainedLocal },
+  ];
+  const sp =
+    species && speciesFwd?.[0] !== undefined && speciesFwd[1] !== undefined
+      ? emitPromiseThenSpeciesCapability(ctx, fctx, species, promiseLocal)
+      : undefined;
+  fctx.body.push(...(sp && species ? speciesChainedInstrs(ctx, species, sp, chainedLocal, mintChained) : mintChained));
   fctx.body.push(
     ...buildDenoPromiseHookCall(
       ctx,
@@ -3849,8 +3878,14 @@ export function emitStandalonePromiseThen(
         },
       ],
     },
-    { op: "local.get", index: chainedLocal },
-    { op: "extern.convert_any" },
+    ...(sp && species && speciesFwd
+      ? speciesForwardAndResultInstrs(ctx, species, sp, chainedLocal, {
+          callbackTypeIdx,
+          capsTypeIdx,
+          dynFulfillIdx: ctx.funcMap.get("__then_dyn_fulfill")!,
+          dynRejectIdx: ctx.funcMap.get("__then_dyn_reject")!,
+        })
+      : ([{ op: "local.get", index: chainedLocal }, { op: "extern.convert_any" }] satisfies Instr[])),
   );
   fctx.savedBodies.pop();
   fctx.body = outerBody;
@@ -3867,7 +3902,7 @@ export function emitStandalonePromiseThen(
   // `ensureObjVecBuilders` → `ensureObjectRuntime` registers the entire
   // `__boundary_object_*` import family (14 host imports the host-import
   // ratchet counts against every plain async module).
-  if (ctx.funcMap.get("__carrier_bag_has") === undefined || ctx.funcMap.get("__extern_get") === undefined) {
+  if (intrinsic || !ctx.funcMap.has("__carrier_bag_has") || !ctx.funcMap.has("__extern_get")) {
     fctx.body.push(...nativeBody);
     return;
   }
@@ -4352,6 +4387,9 @@ export function emitStandalonePromiseFinally(
   promiseInstrs: Instr[],
   onFinally: StandalonePromiseThenCallback | null,
 ): void {
+  // (#6651 D7) §27.2.5.3 step 7: Get `then` first; only an intrinsic `then` on a
+  // native `$Promise` re-enters here for the lowering below (promise-finally-invoke.ts).
+  if (tryEmitObservablePromiseFinally(ctx, fctx, promiseInstrs, onFinally, emitStandalonePromiseFinally)) return;
   if (onFinally === null) {
     emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, null);
     return;

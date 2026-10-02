@@ -81,6 +81,8 @@ import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; //
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
 import { emitArrayFlatProtoMemberBody } from "./array-flat-native.js"; // (#2717)
+import { emitSliceProtoArrayLikeFallback, emitSliceProtoEndDefault } from "./array-slice-native.js"; // (#6701)
+import { emitArraySpliceProtoMemberBody, isArraySpliceVariadicMember } from "./array-splice-native.js"; // (#6701)
 import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.js"; // (#6651 RS1)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
@@ -91,6 +93,7 @@ import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // brands (a reflective member closure must degrade to a catchable TypeError, not
 // a hard compile error — #2193 PR-C).
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
+import { emitObjectProtoOwnPredicateBody } from "./object-proto-has-own-property.js";
 // (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
 // to the same `__isPrototypeOf` native the typed call path uses.
 import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
@@ -924,6 +927,8 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // by the historical Test262 rows, so their reflective closures must operate
   // through the dynamic array-like substrate rather than the typed `$Vec`
   // cores used by direct `array.push`/`reverse`/`unshift` calls.
+  const spliceBody = emitArraySpliceProtoMemberBody(ctx, fctx, member); // (#6701)
+  if (spliceBody !== undefined) return spliceBody;
   const arrayLikeMutator = emitArrayLikeNativeMemberBody(ctx, fctx, member);
   if (arrayLikeMutator !== undefined) return arrayLikeMutator;
 
@@ -976,6 +981,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // slice: args begin@2, end@3 (closure ABI pads with externref). Unbox to i32.
   const startLocal = unboxArgToI32(ctx, fctx, 2);
   const endLocal = unboxArgToI32(ctx, fctx, 3);
+  emitSliceProtoEndDefault(ctx, fctx, endLocal); // (#6701) omitted end => len
   const resultType: ValType = { kind: "externref" };
 
   // Recover the array instance from the externref `this` (param 1) over the
@@ -1001,8 +1007,8 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       if (sliced.kind !== "externref") fctx.body.push({ op: "extern.convert_any" }); // vec → externref
     },
     () => {
-      // Non-array (genuine host) `this`: no compiled backing → return undefined.
-      fctx.body.push({ op: "ref.null.extern" });
+      // Non-array `this`: the array-like slice (#6701), else undefined.
+      if (!emitSliceProtoArrayLikeFallback(ctx, fctx)) fctx.body.push({ op: "ref.null.extern" });
     },
   );
   return resultType;
@@ -2526,7 +2532,8 @@ function emitPromiseProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, 
       // is receivers the spec already rejects. Without it `emitStandalonePromiseThen`'s
       // `ref.cast` trapped on a foreign `this` instead of throwing.
       emitPromiseReceiverIsPromiseGuard(ctx, fctx);
-      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3));
+      // (#6651 D7) `true`: this IS the intrinsic `then` — an own `p.then` must not re-dispatch.
+      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3), true);
       return { kind: "externref" };
     case "catch": {
       const generic = emitPromiseProtoCatchBody(ctx, fctx);
@@ -2611,6 +2618,7 @@ function makeGlue(
     memberIsVariadic: (member) =>
       // (#6709) reduce/reduceRight need the argument COUNT (initialValue presence).
       (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
+      (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||
@@ -2729,6 +2737,9 @@ function makeGlue(
                   // OrdinaryToPrimitive walk reaches; refusing it made ToPrimitive
                   // throw where the spec just falls through to `toString`.
                   (name === "Object" ? emitObjectProtoValueOfBody(c, fctx, member) : null) ??
+                  // (#6684) `hasOwnProperty` / `propertyIsEnumerable` as VALUES
+                  // (lodash-es: `var hasOwnProperty = objectProto.hasOwnProperty`).
+                  (name === "Object" ? emitObjectProtoOwnPredicateBody(c, fctx, member) : null) ??
                   emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }

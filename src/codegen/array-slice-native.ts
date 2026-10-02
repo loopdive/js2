@@ -39,7 +39,8 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -65,7 +66,7 @@ export function isNativeSliceForm(methodName: string, arity: number): boolean {
   return false;
 }
 
-interface SliceDeps {
+export interface SliceDeps {
   externLength: number;
   externGetIdx: number;
   externSet: number;
@@ -76,7 +77,7 @@ interface SliceDeps {
   objVecPush: number;
 }
 
-function resolveDeps(ctx: CodegenContext): SliceDeps | undefined {
+export function resolveSliceDeps(ctx: CodegenContext): SliceDeps | undefined {
   ensureObjectRuntime(ctx);
   addUnionImportsViaRegistry(ctx);
   const get = (name: string): number | undefined => ctx.funcMap.get(name);
@@ -98,7 +99,7 @@ const F64: ValType = { kind: "f64" };
 const EXTERNREF: ValType = { kind: "externref" };
 
 /** Throw the step-1 TypeError when `local` is null or undefined. */
-function requireObjectCoercible(ctx: CodegenContext, deps: SliceDeps, local: number, method: string): Instr[] {
+export function requireObjectCoercible(ctx: CodegenContext, deps: SliceDeps, local: number, method: string): Instr[] {
   return [
     { op: "local.get", index: local },
     { op: "ref.is_null" },
@@ -117,7 +118,7 @@ function requireObjectCoercible(ctx: CodegenContext, deps: SliceDeps, local: num
  * `args[argIdx]` as ToIntegerOrInfinity, or `dflt` when the argument is absent
  * (or, with `undefinedIsDefault`, explicitly `undefined`). Leaves an f64.
  */
-function integerArg(
+export function integerArg(
   deps: SliceDeps,
   argsLocal: number,
   argIdx: number,
@@ -173,8 +174,26 @@ function integerArg(
   ];
 }
 
+/**
+ * (#6701) ArraySpeciesCreate(O, count) → ArrayCreate(count) throws a RangeError
+ * when `count` (an f64 on the stack) exceeds 2^32 − 1 (§10.4.2.2 step 1) —
+ * before any element is copied, so an array-like with a huge `length` fails
+ * the way the spec says instead of trapping on the result's growth.
+ */
+export function arrayCreateLengthCheck(ctx: CodegenContext): Instr[] {
+  return [
+    { op: "f64.const", value: 4294967295 },
+    { op: "f64.gt" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: buildThrowJsErrorInstrs(ctx, "RangeError", "Invalid array length"),
+    },
+  ];
+}
+
 /** Relative index (value on stack) clamped into [0, len] — §23.1.3.28 steps 4–5 / 7–8. */
-function clampRelative(tmpLocal: number, lenLocal: number): Instr[] {
+export function clampRelative(tmpLocal: number, lenLocal: number): Instr[] {
   return [
     { op: "local.set", index: tmpLocal },
     { op: "local.get", index: tmpLocal },
@@ -216,6 +235,10 @@ function buildSliceBody(ctx: CodegenContext, deps: SliceDeps): { body: Instr[]; 
     ...integerArg(deps, ARGS, 1, TMP, ARG, [{ op: "local.get", index: LEN }], true),
     ...clampRelative(TMP, LEN),
     { op: "local.set", index: FIN },
+    { op: "local.get", index: FIN },
+    { op: "local.get", index: K },
+    { op: "f64.sub" },
+    ...arrayCreateLengthCheck(ctx),
     { op: "call", funcIdx: deps.objVecNew },
     { op: "local.set", index: OUT },
     {
@@ -376,7 +399,7 @@ export function ensureNativeArraySlice(ctx: CodegenContext, methodName: string):
   const helperName = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
-  const deps = resolveDeps(ctx);
+  const deps = resolveSliceDeps(ctx);
   if (deps === undefined) return undefined;
   const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [EXTERNREF]);
   const funcIdx = mintDefinedFunc(ctx);
@@ -395,4 +418,62 @@ export function ensureNativeArraySlice(ctx: CodegenContext, methodName: string):
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#6701) The reflective `Array.prototype.slice` closure value
+ * (`[].slice.call(o, k)`, array-object-proto.ts) reads `end` with a plain
+ * ToIntegerOrInfinity, so an omitted `end` — padded with the canonical
+ * `undefined` by the reflective call site — became 0 and every
+ * `[].slice.call(arguments, 1)` answered an empty array. Rewrites `endLocal`
+ * (i32, already unboxed) to INT32_MAX when param 3 is `undefined`; the slice
+ * core clamps it to the length. Standalone-only; emits nothing otherwise.
+ */
+export function emitSliceProtoEndDefault(ctx: CodegenContext, fctx: FunctionContext, endLocal: number): void {
+  const isUndefined = ctx.funcMap.get("__extern_is_undefined");
+  if (!ctx.standalone || isUndefined === undefined || fctx.params.length < 4) return;
+  fctx.body.push(
+    { op: "local.get", index: 3 },
+    { op: "call", funcIdx: isUndefined },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0x7fffffff },
+        { op: "local.set", index: endLocal },
+      ],
+    },
+  );
+}
+
+/**
+ * (#6701) The non-vec `this` arm of the reflective `slice` closure: an
+ * array-LIKE receiver (an `arguments` object, a `$ObjVec`, an open `$Object`
+ * with a `length`) answered null. Serve it with `__arrprod_slice(this,
+ * [begin, end])`, which also throws the step-1 TypeError on null/undefined.
+ * Returns false (emitting nothing) when the native helper is unavailable.
+ */
+export function emitSliceProtoArrayLikeFallback(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  if (!ctx.standalone || fctx.params.length < 4) return false;
+  const sliceIdx = ensureNativeArraySlice(ctx, "slice");
+  const objVecNew = ctx.funcMap.get("__objvec_new");
+  const objVecPush = ctx.funcMap.get("__objvec_push");
+  if (sliceIdx === undefined || objVecNew === undefined || objVecPush === undefined) return false;
+  const args = allocLocal(fctx, `__slice_args_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push(
+    // The guard's host arm leaves the receiver on the stack; `this` is re-read.
+    { op: "drop" },
+    { op: "call", funcIdx: objVecNew },
+    { op: "local.set", index: args },
+    { op: "local.get", index: args },
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: objVecPush },
+    { op: "local.get", index: args },
+    { op: "local.get", index: 3 },
+    { op: "call", funcIdx: objVecPush },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: args },
+    { op: "call", funcIdx: sliceIdx },
+  );
+  return true;
 }

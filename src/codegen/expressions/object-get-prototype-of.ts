@@ -7,8 +7,9 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
-import { emitLazyNativeProtoGet } from "../native-proto.js";
+import { buildLazyNativeProtoGetInstrs, emitLazyNativeProtoGet } from "../native-proto.js";
 import {
+  ensureArrayBufferNativeProtoGlue,
   ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
   isTypedArrayViewProtoName,
@@ -22,6 +23,7 @@ import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
 import { allocLocal } from "../context/locals.js"; // (#6609)
 import { popBody, pushBody } from "../context/bodies.js"; // (#6630 fallback)
+import { isStandaloneBaseClassOrPrototype } from "../class-proto-object.js"; // (#6767 step 2)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -221,7 +223,7 @@ function isJsonObjectParseCall(ctx: CodegenContext, fctx: FunctionContext, expr:
  * Emit the compiler-owned intrinsic prototype singleton rather than asking the
  * host MOP for the prototype of an opaque Wasm closure/struct.
  */
-function emitEs5IntrinsicPrototype(
+export function emitEs5IntrinsicPrototype(
   ctx: CodegenContext,
   fctx: FunctionContext,
   anchor: ts.Node,
@@ -246,6 +248,47 @@ function emitEs5IntrinsicConstructor(
   (builtin as { parent?: ts.Node }).parent = anchor;
   ts.setTextRange(builtin, anchor);
   return compileExpression(ctx, fctx, builtin, { kind: "externref" }) ?? { kind: "externref" };
+}
+
+/**
+ * (#6767 step 2) `Object.getPrototypeOf(C.prototype)` / `Object.getPrototypeOf(C)`
+ * for a standalone BASE class read the real [[Prototype]] at runtime.
+ *
+ * The class folds in `call-builtin-static.ts` predate the prototype `$Object`
+ * (#3976): `C.prototype` folded to `null` ("Object.prototype not modeled") and
+ * the class OBJECT took the class-INSTANCE arm and answered `C.prototype`
+ * (`definition/basics.js`; p11 bits 8/16). The runtime already answers both —
+ * the native `__getPrototypeOf` gives `%Object.prototype%` for the null-`$proto`
+ * prototype object, and the #6609 callable arm gives `%Function.prototype%` for
+ * the class-object carrier (measured through an untyped parameter,
+ * `.tmp/6767/q2.js`) — so this is the generic fallback's own lowering minus its
+ * iterator-record branch and its all-classes demand record, neither of which a
+ * class operand needs. A later `Object.setPrototypeOf(C.prototype, …)` stays
+ * observable, which no fold could.
+ *
+ * DERIVED classes keep their folds: `D.prototype` already answers the parent
+ * prototype, and the runtime answers the class object `D` wrongly too (neither
+ * the parent class nor `%Function.prototype%`, `.tmp/6767/q3.js`).
+ */
+function tryEmitStandaloneBaseClassGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!isStandaloneBaseClassOrPrototype(ctx, arg0)) return null;
+  const argType = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+  if (!argType) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+  if (tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg0)) return { kind: "externref" };
+  // Declined: the receiver is still on the stack.
+  const gpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (gpoIdx === undefined) fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+  else fctx.body.push({ op: "call", funcIdx: gpoIdx });
+  return { kind: "externref" };
 }
 
 /**
@@ -293,6 +336,11 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // READ, not folded — see `tryEmitDynamicProtoRuntimeRead`.
   const dynamicProtoRead = tryEmitDynamicProtoRuntimeRead(ctx, fctx, arg0);
   if (dynamicProtoRead) return dynamicProtoRead;
+
+  // (#6767 step 2) A standalone BASE class and its prototype read their real
+  // [[Prototype]] instead of the class folds below — see the helper.
+  const baseClassProto = tryEmitStandaloneBaseClassGetPrototypeOf(ctx, fctx, arg0);
+  if (baseClassProto) return baseClassProto;
 
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
@@ -879,4 +927,37 @@ export function tryCompileGetPrototypeOfIsPrototypeOf(
     fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
   }
   return { kind: "i32", boolean: true };
+}
+
+/**
+ * (#6769 S10) `__getPrototypeOf(<ArrayBuffer carrier>)` is `ArrayBuffer.prototype`.
+ *
+ * An ArrayBuffer is the packed byte vec `$__vec_i32_byte` — a `$__vec_base`
+ * subtype — so the dynamic native answered the vec default, `Array.prototype`,
+ * for every buffer that reached it through a dynamic value: `new
+ * TA(sample).buffer`, `view.buffer`, and a statically created buffer passed
+ * through `any`. §25.1.3.1 AllocateArrayBuffer creates it from
+ * `%ArrayBuffer.prototype%`; the arm answers the same lazily-built glue
+ * singleton `ArrayBuffer.prototype` reads, so the identity holds by `ref.eq`.
+ *
+ * Finalize-time (called from `fillTaDynViewMopArms`, i.e. only in a module that
+ * builds dynamic TypedArray views): prepended, so it precedes the generic vec
+ * answer. Residual: a buffer re-parented with `Object.setPrototypeOf` still
+ * answers `ArrayBuffer.prototype` here (#2917's vec proto link is not
+ * consulted for this carrier).
+ */
+export function fillArrayBufferGetPrototypeOfArm(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const byteVecIdx = ctx.vecTypeMap.get("i32_byte");
+  const fn = ctx.mod.functions.find((f) => f.name === "__getPrototypeOf");
+  if (byteVecIdx === undefined || !fn) return;
+  const brand = ensureArrayBufferNativeProtoGlue(ctx);
+  const read = brand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, brand);
+  if (!read) return;
+  fn.body.unshift(
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: byteVecIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [...read, { op: "return" }] },
+  );
 }

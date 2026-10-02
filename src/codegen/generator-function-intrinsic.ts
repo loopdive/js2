@@ -63,6 +63,8 @@ const FLAGS_NONE = 0x00;
 const FLAGS_CONFIGURABLE = 0x04;
 /** Well-known symbol id of `Symbol.toStringTag` for `__box_symbol`. */
 const SYMBOL_TO_STRING_TAG_ID = 4;
+/** (#6651 A9) Lazy global holding `%GeneratorFunction%` once the singleton is reified. */
+const GENERATOR_FUNCTION_GLOBAL = "__native_generator_function";
 
 function lazyGlobal(ctx: CodegenContext, name: string): number {
   let idx = ctx.builtinObjectGlobals.get(name);
@@ -137,11 +139,12 @@ export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fct
         { op: "local.tee", index: protoLocal },
         { op: "global.set", index: protoGlobal },
       );
-      // C = %GeneratorFunction%
+      // C = %GeneratorFunction% (published too: the #6651 A9 call guard compares against it)
       fctx.body.push(
         { op: "local.get", index: fpLocal },
         { op: "call", funcIdx: createIdx },
-        { op: "local.set", index: ctorLocal },
+        { op: "local.tee", index: ctorLocal },
+        { op: "global.set", index: lazyGlobal(ctx, GENERATOR_FUNCTION_GLOBAL) },
       );
       pushMarkBuiltinCarrierCallable(ctx, fctx, ctorLocal);
       define(
@@ -186,6 +189,21 @@ export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fct
   return { kind: "externref" };
 }
 
+/**
+ * (#6651 A8) A top-level `g.prototype = v` (any `g.p = v`) makes the TS binder
+ * add the receiver identifier to `g`'s symbol as an expando declaration, so
+ * `var g = function* () {}; g.prototype = null;` has TWO declarations and read
+ * as rebound (`expressions/generators/default-proto.js`). It writes a property,
+ * not the binding. `__proto__` is the one property write that changes
+ * `[[Prototype]]`, so that receiver still counts.
+ */
+const isExpandoReceiverDeclaration = (d: ts.Declaration): boolean =>
+  ts.isIdentifier(d) &&
+  d.parent !== undefined &&
+  ts.isPropertyAccessExpression(d.parent) &&
+  d.parent.expression === d &&
+  d.parent.name.text !== "__proto__";
+
 const isSyncGeneratorFunctionLike = (node: ts.Node): boolean =>
   (ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
   node.asteriskToken !== undefined &&
@@ -214,6 +232,18 @@ export function isStaticSyncGeneratorFunctionValue(ctx: CodegenContext, expr: ts
   let e: ts.Expression = expr;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   if (ts.isFunctionExpression(e)) return isSyncGeneratorFunctionLike(e);
+  // (#6651 A7) `var g = function* () {}; Object.getPrototypeOf(g)` — a
+  // never-rebound binding whose initializer is a sync generator expression.
+  // A read written BEFORE that initializer may run before it (`undefined`, or
+  // a TDZ throw), so it is not claimed.
+  if (ts.isIdentifier(e)) {
+    let init = bindingIsSingleAssignment(ctx, e, isExpandoReceiverDeclaration)
+      ? ctx.oracle.variableInitializerOf(e)
+      : undefined;
+    if (init !== undefined && (init.getSourceFile() !== e.getSourceFile() || init.end > e.pos)) init = undefined;
+    while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+    return init !== undefined && ts.isFunctionExpression(init) && isSyncGeneratorFunctionLike(init);
+  }
   if (!ts.isPropertyAccessExpression(e) || !ts.isIdentifier(e.expression) || !ts.isIdentifier(e.name)) return false;
   const holder = e.expression;
   const name = e.name.text;
@@ -264,4 +294,23 @@ export function isStaticSyncGeneratorFunctionValue(ctx: CodegenContext, expr: ts
   };
   visit(expr.getSourceFile());
   return !written;
+}
+
+/**
+ * (#6651 A9) The lazy globals that hold `%GeneratorFunction%` and
+ * `%GeneratorPrototype%` once `emitGeneratorFunctionPrototypeSingleton`'s init
+ * body has run (it sets both). READ ONLY — reading them emits no builder, which
+ * matters inside a generator body: building the singleton there leaves that
+ * generator's `next` unable to dispatch it (measured on base, independent of
+ * A9: `function* () { Object.getPrototypeOf(function* () {}); yield 1; }` traps
+ * `unreachable` in `%GeneratorPrototype%.next`). A caller holding
+ * `%GeneratorFunction%` proves the init body already ran, so neither is null
+ * then. The generator-prototype key is the one `emitGeneratorPrototypeSingleton`
+ * (`array-object-proto.ts`) registers; whichever side registers first creates it.
+ */
+export function generatorFunctionIntrinsicGlobals(ctx: CodegenContext): { ctor: number; generatorPrototype: number } {
+  return {
+    ctor: lazyGlobal(ctx, GENERATOR_FUNCTION_GLOBAL),
+    generatorPrototype: lazyGlobal(ctx, "__native_generator_prototype_obj"),
+  };
 }

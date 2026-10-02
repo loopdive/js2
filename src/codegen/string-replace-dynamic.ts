@@ -56,7 +56,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { ensureNativeStringHelpers, nativeStringType, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -114,7 +114,10 @@ export function tryCompileStandaloneDynamicReplace(
   subjectExpr?: ts.Expression,
 ): ValType | null | undefined {
   if ((method !== "replace" && method !== "replaceAll") || !dynamicReplaceAvailable(ctx)) return undefined;
-  if (expr.arguments.length !== 2 || expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
+  // (#6651 B8) One argument too: an absent `replaceValue` is `undefined`, which
+  // the helper's step 6 `ToString`s to "undefined" — the §22.1.3.19 answer.
+  const arity = expr.arguments.length;
+  if ((arity !== 2 && arity !== 1) || expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
   // Mint the helper BEFORE emitting anything at the call site: building it
   // registers late natives, and those shifts must not straddle a half-built
   // call expression.
@@ -132,6 +135,7 @@ export function tryCompileStandaloneDynamicReplace(
     if (argType === null) fctx.body.push({ op: "ref.null.extern" });
     else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, EXTERNREF);
   }
+  if (arity === 1) emitUndefined(ctx, fctx);
   fctx.body.push({ op: "i32.const", value: method === "replaceAll" ? 1 : 0 });
   // Read by NAME at the end: the argument emission above may have shifted it.
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(HELPER_NAME)! });

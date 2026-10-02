@@ -1,0 +1,380 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-integration-20261001
+
+ ✓ tests/issue-3518-compiler-boundaries.test.ts (125 tests) 35491ms
+   ✓ formatter contracts cannot import frontend-ts debt via type  309ms
+   ✓ formatter contracts cannot import frontend-ts debt via value  316ms
+   ✓ formatter contracts cannot import mixed-needs-split debt via type  313ms
+   ✓ formatter contracts cannot import mixed-needs-split debt via value  308ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects delete after its positive control  320ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects demote after its positive control  316ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects type-import after its positive control  323ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects delete after its positive control  321ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects demote after its positive control  315ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects delete after its positive control  320ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects demote after its positive control  316ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects value-import after its positive control  325ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects delete after its positive control  307ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects demote after its positive control  314ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects type-import after its positive control  320ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects value-import after its positive control  315ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects delete after its positive control  317ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects demote after its positive control  319ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects type-import after its positive control  319ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects delete after its positive control  319ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects demote after its positive control  317ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects type-import after its positive control  319ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects value-import after its positive control  322ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects delete after its positive control  319ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects demote after its positive control  320ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects type-import after its positive control  326ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects delete after its positive control  319ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects demote after its positive control  320ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects type-import after its positive control  318ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects value-import after its positive control  318ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects delete after its positive control  319ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects demote after its positive control  321ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects type-import after its positive control  314ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects value-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects delete after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects demote after its positive control  317ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects type-import after its positive control  317ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects delete after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects demote after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects type-import after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects value-import after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects delete after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects demote after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects type-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects delete after its positive control  311ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects demote after its positive control  317ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects type-import after its positive control  317ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects delete after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects demote after its positive control  312ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects type-import after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects value-import after its positive control  323ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects delete after its positive control  315ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects demote after its positive control  321ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects type-import after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects value-import after its positive control  323ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects delete after its positive control  312ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects demote after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects type-import after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects delete after its positive control  315ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects demote after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects value-import after its positive control  315ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects delete after its positive control  312ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects demote after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects delete after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects demote after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects value-import after its positive control  318ms
+   ✓ #3518 real compiler boundary detector > reports nonliteral import(name) as unknown, with unmigrated debt distinct from clean failure  465ms
+   ✓ #3518 real compiler boundary detector > reports nonliteral require(name) as unknown, with unmigrated debt distinct from clean failure  468ms
+   ✓ #3518 real compiler boundary detector > uses package exports and enforces external type packages by layer  304ms
+   ✓ #3518 real compiler boundary detector > requires explicit built-in policy and exposes missing external resolution  465ms
+   ✓ #3518 real compiler boundary detector > allows exact JSON metadata policy without allowing implementation escapes  447ms
+   ✓ #3518 real compiler boundary detector > reports planned empty layers as pending and fails the default check  307ms
+   ✓ #3518 real compiler boundary detector > rejects committed demotion and erased history against an independently pinned base  369ms
+   ✓ #3518 real compiler boundary detector > distinguishes a verified initial introduction from an unreadable or missing base  512ms
+   ✓ #3518 real compiler boundary detector > tracks current source including untracked modules and fingerprints dirty content  325ms
+   ✓ #3518 real compiler boundary detector > requires explicit nonmodule rationale and never excludes declarations  461ms
+   ✓ #3518 real compiler boundary detector > preserves all ten held B findings across moves, dummy callers and removed exports  916ms
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts (352 tests) 113083ms
+   ✓ semantic verification and provider ownership boundary > loads the complete actual canonical type-and-value closure  335ms
+   ✓ semantic verification and provider ownership boundary > rejects an upward runtime dependency from the native string/value aggregate  333ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsic-contracts.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsics.ts and its classification  637ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/callable-bindings.ts and its classification  651ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/effects.ts and its classification  647ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/intrinsics.ts and its classification  650ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/async-plan.ts and its classification  664ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/host-capabilities.ts and its classification  678ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-providers.ts and its classification  673ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/callable-declarations.ts and its classification  674ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/manifest.ts and its classification  656ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-attachment.ts and its classification  639ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/intrinsic-verification.ts and its classification  643ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/model/module-records.ts and its classification  647ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/function-types.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/module-reservations.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/settlement-bodies.ts and its classification  640ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/frame-engine.ts and its classification  639ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/native-await.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/exception-control.ts and its classification  661ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/delay-bodies.ts and its classification  637ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/combinator-bodies.ts and its classification  645ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/type-layout.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/async-callables.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/native-async-callables.ts and its classification  646ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/vector-runtime.ts and its classification  635ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/vector-callables.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-vector-resources.ts and its classification  654ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/vector-grow-store.ts and its classification  640ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-vectors.ts and its classification  642ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/resolution-bodies.ts and its classification  642ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/thenable-bodies.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-promise-resources.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-promises.ts and its classification  637ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-layouts.ts and its classification  653ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-literal-bodies.ts and its classification  640ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/error-bodies.ts and its classification  637ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-literals.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-errors.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-value-resources.ts and its classification  641ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/primitive-layouts.ts and its classification  701ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/number-bodies.ts and its classification  637ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-values.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/model/instruction-walk.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-grammar.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/decimal-scale-bodies.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-bodies.ts and its classification  641ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-flatten-bodies.ts and its classification  640ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-utf8-decode-bodies.ts and its classification  645ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-number.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-flatten.ts and its classification  645ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-string-value-demands.ts and its classification  655ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/argument-vector-bodies.ts and its classification  659ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-argument-vectors.ts and its classification  640ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/closure-layouts.ts and its classification  648ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-closures.ts and its classification  640ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/native-resource-declaration-types.ts and its classification  644ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-resource-declarations.ts and its classification  638ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/program/native-string-values.ts and its classification  634ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/frontend/builtins/contracts.ts and its classification  641ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/type-references.ts and its classification  654ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/runtime-support.ts and its classification  643ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/formatter-support.ts and its classification  641ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsic-contracts.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsics.ts  337ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/callable-bindings.ts  328ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/effects.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/intrinsics.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/async-plan.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/host-capabilities.ts  339ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-providers.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/callable-declarations.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/manifest.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-attachment.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/intrinsic-verification.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/module-records.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/function-types.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/module-reservations.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/settlement-bodies.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/frame-engine.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/native-await.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/exception-control.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/delay-bodies.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/combinator-bodies.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/type-layout.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/async-callables.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/native-async-callables.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/vector-runtime.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/vector-callables.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-vector-resources.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/vector-grow-store.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-vectors.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/resolution-bodies.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/thenable-bodies.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-promise-resources.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-promises.ts  328ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-layouts.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-literal-bodies.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/error-bodies.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-literals.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-errors.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-value-resources.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/primitive-layouts.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/number-bodies.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-values.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/instruction-walk.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-grammar.ts  337ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/decimal-scale-bodies.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-bodies.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-flatten-bodies.ts  336ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-number.ts  328ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-flatten.ts  339ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-string-value-demands.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/argument-vector-bodies.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-argument-vectors.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/closure-layouts.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-closures.ts  330ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/native-resource-declaration-types.ts  340ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-resource-declarations.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/program/native-string-values.ts  331ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/type-references.ts  337ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/runtime-support.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/formatter-support.ts  329ms
+   ✓ semantic verification and provider ownership boundary > rejects a backend implementation dependency from the frontend formatter contract  638ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsics.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/callable-bindings.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/effects.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/async-plan.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-providers.ts instead of treating it as closed  336ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/manifest.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed  337ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/module-records.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/function-types.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/exception-control.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/type-layout.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/async-callables.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/vector-runtime.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed  338ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed  403ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed  342ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-value-resources.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed  327ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed  327ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed  347ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/frontend/builtins/contracts.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/type-references.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/runtime-support.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/formatter-support.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsics.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/callable-bindings.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/effects.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/async-plan.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-providers.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/manifest.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/module-records.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/function-types.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed  328ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/exception-control.ts instead of treating it as closed  337ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/type-layout.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/async-callables.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/vector-runtime.ts instead of treating it as closed  327ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed  337ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed  331ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed  339ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed  329ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-value-resources.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed  330ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed  340ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed  336ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed  332ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed  341ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed  336ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed  341ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed  339ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed  342ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed  337ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed  340ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed  334ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/frontend/builtins/contracts.ts instead of treating it as closed  337ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/type-references.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/runtime-support.ts instead of treating it as closed  333ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/formatter-support.ts instead of treating it as closed  335ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsic-contracts.ts  336ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsics.ts  342ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/callable-bindings.ts  399ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/effects.ts  341ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/intrinsics.ts  340ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/async-plan.ts  336ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/host-capabilities.ts  343ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-providers.ts  338ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/callable-declarations.ts  334ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/manifest.ts  340ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-attachment.ts  344ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/intrinsic-verification.ts  339ms
+   ✓ semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/core/intrinsics.ts  335ms
+   ✓ semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/analysis/intrinsics.ts  339ms
+   ✓ semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/runtime/intrinsic-verification.ts  332ms
+   ✓ semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/core/intrinsics.ts  344ms
+   ✓ semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/analysis/intrinsics.ts  338ms
+   ✓ semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/runtime/intrinsic-verification.ts  342ms
+   ✓ semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/core/intrinsics.ts  336ms
+   ✓ semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/analysis/intrinsics.ts  335ms
+   ✓ semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/runtime/intrinsic-verification.ts  338ms
+   ✓ semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/core/intrinsics.ts  333ms
+   ✓ semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/analysis/intrinsics.ts  335ms
+   ✓ semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/runtime/intrinsic-verification.ts  340ms
+   ✓ semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/effects  339ms
+   ✓ semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/intrinsics  334ms
+   ✓ semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/async-plan  342ms
+
+ Test Files  2 passed (2)
+      Tests  477 passed (477)
+   Start at  05:01:52
+   Duration  148.95s (transform 41ms, setup 0ms, collect 222ms, tests 148.57s, environment 0ms, prepare 31ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/full-boundaries.json

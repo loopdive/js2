@@ -94,13 +94,15 @@ describe("#3390 slices 1–2 — combinator .call receiver admission", () => {
     expect(await envImports(`export async function f() { await Promise.all([]); }`, "standalone")).toEqual([]);
   });
 
-  it("fall-through: a real subclass-constructor receiver still routes to host (correct-or-legacy)", async () => {
+  // (#6651 D4) This pinned the legacy host route. A Promise-subclass receiver now has a standalone
+  // representation: NewPromiseCapability(SubPromise) constructs it natively.
+  it("a real subclass-constructor receiver runs host-free since #6651 D4", async () => {
     const imports = await envImports(
       `class SubPromise extends Promise {}
        export function f() { return Promise.all.call(SubPromise, []); }`,
       "standalone",
     );
-    expect(imports.length).toBeGreaterThan(0);
+    expect(imports).toEqual([]);
   });
 
   it("global `Promise` receiver uses the native carrier (slice 2)", async () => {

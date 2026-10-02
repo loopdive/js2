@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "kind": "explicit-authored-forward-correction-not-historical-donor",
+  "base": "0ef8e0ea4c23829a4eba37dca6dd6822aa95265e",
+  "extractionFixtureSha256": "b9f0e37bc857e1be0e0e5c57c243614ff142de60265de55c6b507242f451be34",
+  "originalDonorFixtureSha256": "2da520f20060b198ea9c19b7d7d6ef2b49ae0a784c89b3878ce17e66eb2a9b53",
+  "records": [
+    {
+      "path": "src/codegen/object-runtime.ts",
+      "beforeSha256": "3afffc99319fc7773d072d97e00a2385b2181678ed56e8ff2f1b50d3fbbd943d",
+      "spans": [
+        {
+          "beforeStart": 4389,
+          "afterStart": 4389,
+          "before": "import { lazyStrFlattenEnabled, redundantFlattenCall } from \"./lazy-str-flatten.js\"; // (#4157)\nimport {\n  ensureAnyToStringHelper,\n  ensureNativeStringBoundaryBridge,\n",
+          "after": "import { lazyStrFlattenEnabled, redundantFlattenCall } from \"./lazy-str-flatten.js\"; // (#4157)\nimport {\n  ANY_TO_STRING_HELPER,\n  ensureAnyToStringHelper,\n  ensureNativeStringBoundaryBridge,\n"
+        },
+        {
+          "beforeStart": 9176,
+          "afterStart": 9200,
+          "before": "  protoIndexOwnViewSubstituteInstrs,\n  captureProtoIndexReadBinding,\n  protoIndexRecvHasMissInstrs,\n  protoIndexSetDecisionInstrs,\n",
+          "after": "  protoIndexOwnViewSubstituteInstrs,\n  captureProtoIndexReadBinding,\n  captureProtoIndexPresenceBinding,\n  protoIndexRecvHasMissInstrs,\n  protoIndexSetDecisionInstrs,\n"
+        },
+        {
+          "beforeStart": 14494,
+          "afterStart": 14554,
+          "before": "  reverseMethodCallArmInstrs,\n} from \"./standalone-link-reverse-peer.js\"; // (#5383 S17 / #6600) the REVERSE hop\nimport { captureOwnToPrimitiveOverrideKeys, captureWrapperPrimitiveKey } from \"./to-primitive-wrapper-slot.js\"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms\nimport { buildToPrimitiveBody } from \"../runtime/wasmgc/values/to-primitive-bodies.js\";\nimport type {\n",
+          "after": "  reverseMethodCallArmInstrs,\n} from \"./standalone-link-reverse-peer.js\"; // (#5383 S17 / #6600) the REVERSE hop\nimport { captureWrapperPrimitiveKey } from \"./to-primitive-wrapper-slot.js\"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms\nimport { buildToPrimitiveBody } from \"../runtime/wasmgc/values/to-primitive-bodies.js\";\nimport type {\n"
+        },
+        {
+          "beforeStart": 206979,
+          "afterStart": 207004,
+          "before": "    const core: ToPrimitiveCoreBindings = {\n      frame: { any: L_ANY, method: L_METHOD, result: L_RESULT, slot: L_SLOT, args: L_ARGS },\n      primitiveTypePredicates,\n      typeofStringIdx,\n",
+          "after": "    const core: ToPrimitiveCoreBindings = {\n      frame: { any: L_ANY, method: L_METHOD, result: L_RESULT, slot: L_SLOT, args: L_ARGS },\n      wrapperPresence: { cursorLocal: 8, presentLocal: 7, companion: captureProtoIndexPresenceBinding(ctx) },\n      primitiveTypePredicates,\n      typeofStringIdx,\n"
+        },
+        {
+          "beforeStart": 208853,
+          "afterStart": 208988,
+          "before": "      };\n    })();\n    const captureMethod = (name: \"valueOf\" | \"toString\", fallback: boolean): ToPrimitiveMethodLiterals => {\n      const lookup = stringExtern(name);\n      return fallback\n        ? { lookup, missingLookup: stringExtern(name), defaultObject: stringExtern(\"[object Object]\") }\n        : { lookup };\n    };\n    const body = buildToPrimitiveBody({\n",
+          "after": "      };\n    })();\n    // A real, typed reservation breaks the ToPrimitive/ToString dependency\n    // cycle. Fill immediately after the existing AnyToString ensure below.\n    const pendingWrapperStringBody: Instr[] = [{ op: \"unreachable\" }];\n    const wrapperStringBridgeIdx = registerNative(\n      \"__to_primitive_wrapper_to_string\",\n      [{ kind: \"externref\" }],\n      [{ kind: \"externref\" }],\n      [],\n      pendingWrapperStringBody,\n    );\n    const wrapperStringBridge = definedFuncAt(ctx, wrapperStringBridgeIdx);\n    const captureMethod = (name: \"valueOf\" | \"toString\", fallback: boolean): ToPrimitiveMethodLiterals => {\n      const lookup = stringExtern(name);\n      const missingLookup = stringExtern(name);\n      const defaultObject = fallback ? stringExtern(\"[object Object]\") : undefined;\n      const primitiveKey = captureWrapperPrimitiveKey(WRAPPER_PRIMITIVE_KEY, stringExtern);\n      return {\n        lookup,\n        missingLookup,\n        defaultObject,\n        wrapperIntrinsic:\n          name === \"valueOf\"\n            ? { kind: \"valueOf\", primitiveKey }\n            : { kind: \"toString\", primitiveKey, stringifyIdx: wrapperStringBridgeIdx },\n      };\n    };\n    const body = buildToPrimitiveBody({\n"
+        },
+        {
+          "beforeStart": 209265,
+          "afterStart": 210256,
+          "before": "      array,\n      symbol,\n      ownKeys: captureOwnToPrimitiveOverrideKeys(stringExtern),\n      earlyWrapper: captureWrapperPrimitiveKey(WRAPPER_PRIMITIVE_KEY, stringExtern),\n      stringFirst: [captureMethod(\"toString\", true), captureMethod(\"valueOf\", false)],\n      numberFirst: [captureMethod(\"valueOf\", false), captureMethod(\"toString\", true)],\n      lateWrapper: captureWrapperPrimitiveKey(WRAPPER_PRIMITIVE_KEY, stringExtern),\n      terminalError: stringExtern(typeErrorMessage),\n    });\n",
+          "after": "      array,\n      symbol,\n      stringFirst: [captureMethod(\"toString\", true), captureMethod(\"valueOf\", false)],\n      numberFirst: [captureMethod(\"valueOf\", false), captureMethod(\"toString\", true)],\n      terminalError: stringExtern(typeErrorMessage),\n    });\n"
+        },
+        {
+          "beforeStart": 210063,
+          "afterStart": 210821,
+          "before": "        { name: \"slot\", type: { kind: \"ref_null\", typeIdx: propEntryTypeIdx } },\n        { name: \"args\", type: { kind: \"externref\" } },\n      ],\n      body,\n",
+          "after": "        { name: \"slot\", type: { kind: \"ref_null\", typeIdx: propEntryTypeIdx } },\n        { name: \"args\", type: { kind: \"externref\" } },\n        { name: \"methodPresent\", type: { kind: \"i32\" } },\n        { name: \"methodCursor\", type: objRefNull },\n      ],\n      body,\n"
+        },
+        {
+          "beforeStart": 210228,
+          "afterStart": 211096,
+          "before": "    const toPrimitiveIdx = ctx.funcMap.get(\"__to_primitive\")!;\n    const anyToStringIdx = ensureAnyToStringHelper(ctx);\n    const toStringBody: Instr[] = [\n      { op: \"local.get\", index: 0 },\n",
+          "after": "    const toPrimitiveIdx = ctx.funcMap.get(\"__to_primitive\")!;\n    const anyToStringIdx = ensureAnyToStringHelper(ctx);\n    // Ensures can shift imports: resolve both live handles after all effects.\n    const currentBridgeIdx = ctx.funcMap.get(\"__to_primitive_wrapper_to_string\");\n    const currentAnyToStringIdx = ctx.funcMap.get(ANY_TO_STRING_HELPER);\n    if (\n      !wrapperStringBridge ||\n      currentBridgeIdx === undefined ||\n      definedFuncAt(ctx, currentBridgeIdx) !== wrapperStringBridge ||\n      wrapperStringBridge.name !== \"__to_primitive_wrapper_to_string\" ||\n      wrapperStringBridge.body !== pendingWrapperStringBody ||\n      currentAnyToStringIdx === undefined ||\n      ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER) !== currentAnyToStringIdx ||\n      definedFuncAt(ctx, currentAnyToStringIdx)?.name !== ANY_TO_STRING_HELPER\n    )\n      throw new Error(\"ToPrimitive wrapper string dependency is not current\");\n    wrapperStringBridge.body = [\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"call\", funcIdx: currentAnyToStringIdx },\n      { op: \"extern.convert_any\" },\n    ];\n    const toStringBody: Instr[] = [\n      { op: \"local.get\", index: 0 },\n"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/to-primitive-wrapper-slot.ts",
+      "beforeSha256": "465eedf0a80dc78b9baa5c4e2b025aaaf21fc2869321a90c972e44d82a75b61f",
+      "spans": [
+        {
+          "beforeStart": 363,
+          "afterStart": 363,
+          "before": "  return stringExtern(wrapperPrimitiveKey);\n}\n\n/** Preserve valueOf-before-toString interning; body construction lives in runtime. */\nexport function captureOwnToPrimitiveOverrideKeys(stringExtern: (value: string) => Instr[]) {\n  return { valueOf: stringExtern(\"valueOf\"), toString: stringExtern(\"toString\") };\n}\n",
+          "after": "  return stringExtern(wrapperPrimitiveKey);\n}\n"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/arguments-length-brand.ts",
+      "beforeSha256": "b55982a16389cbf00cd9b0782807b5231e5614892e622d807405266262244a2c",
+      "spans": []
+    },
+    {
+      "path": "src/runtime/wasmgc/values/to-primitive-bodies.ts",
+      "beforeSha256": "0e93ed61bfbe10296274b8b10021a435f15288e0b778086b5078b2f32c6ffbf9",
+      "spans": [
+        {
+          "beforeStart": 445,
+          "afterStart": 445,
+          "before": "  type ToPrimitiveSymbolBindings,\n} from \"./to-primitive-method-bodies.js\";\nimport { buildWrapperSlotShortCircuit, buildOwnToPrimitiveOverridePresent } from \"./to-primitive-wrapper-bodies.js\";\n\n/** Complete selected donor data; optional historical branches are not absence certificates. */\n",
+          "after": "  type ToPrimitiveSymbolBindings,\n} from \"./to-primitive-method-bodies.js\";\n\n/** Complete selected donor data; optional historical branches are not absence certificates. */\n"
+        },
+        {
+          "beforeStart": 1235,
+          "afterStart": 1118,
+          "before": "    | undefined;\n  readonly symbol: ToPrimitiveSymbolBindings | undefined;\n  readonly ownKeys: { readonly valueOf: readonly Instr[]; readonly toString: readonly Instr[] };\n  /** Literal operand for the first internal-slot key lookup, not an arm body. */\n  readonly earlyWrapper: readonly Instr[];\n  readonly stringFirst: readonly [ToPrimitiveMethodLiterals, ToPrimitiveMethodLiterals];\n  readonly numberFirst: readonly [ToPrimitiveMethodLiterals, ToPrimitiveMethodLiterals];\n  /** Separately acquired literal operand for the fallback internal-slot lookup. */\n  readonly lateWrapper: readonly Instr[];\n  /** Literal TypeError message operand acquired at the terminal throw site. */\n  readonly terminalError: readonly Instr[];\n",
+          "after": "    | undefined;\n  readonly symbol: ToPrimitiveSymbolBindings | undefined;\n  readonly stringFirst: readonly [ToPrimitiveMethodLiterals, ToPrimitiveMethodLiterals];\n  readonly numberFirst: readonly [ToPrimitiveMethodLiterals, ToPrimitiveMethodLiterals];\n  /** Literal TypeError message operand acquired at the terminal throw site. */\n  readonly terminalError: readonly Instr[];\n"
+        },
+        {
+          "beforeStart": 2464,
+          "afterStart": 1999,
+          "before": "  const classToPrimIdx = bindings.array?.classToPrimIdx ?? -1;\n  const isStringHint = buildToPrimitiveStringHint(d, bindings.hintLiteral);\n  const slotDeps = {\n    anyLocal: L_ANY,\n    slotLocal: d.frame.slot,\n    objectTypeIdx,\n    propEntryTypeIdx: d.propEntryTypeIdx,\n    objFindIdx: d.objFindIdx,\n    flagInternal: d.flagInternal,\n  };\n  return [\n    // Non-objects return unchanged (ToPrimitive step 1).\n",
+          "after": "  const classToPrimIdx = bindings.array?.classToPrimIdx ?? -1;\n  const isStringHint = buildToPrimitiveStringHint(d, bindings.hintLiteral);\n  return [\n    // Non-objects return unchanged (ToPrimitive step 1).\n"
+        },
+        {
+          "beforeStart": 11286,
+          "afterStart": 10620,
+          "before": "          : [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n    },\n    // #1910/#1472 S2 — boxed primitive wrapper short-circuit, now GATED on \"no\n    // own valueOf/toString\" (#4492 wave-5). Full rationale + the measured\n    // failure on `buildWrapperSlotShortCircuit` / `buildOwnToPrimitiveOverridePresent`.\n    ...buildSymbolToPrimitive(d, isStringHint, bindings.symbol),\n    ...buildOwnToPrimitiveOverridePresent(slotDeps, bindings.ownKeys),\n    { op: \"i32.eqz\" },\n    { op: \"if\", blockType: { kind: \"empty\" }, then: buildWrapperSlotShortCircuit(slotDeps, bindings.earlyWrapper) },\n    ...structuredClone(isStringHint),\n    {\n",
+          "after": "          : [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n    },\n    // Real method lookup and missing intrinsic handling share one ordered walk.\n    ...buildSymbolToPrimitive(d, isStringHint, bindings.symbol),\n    ...structuredClone(isStringHint),\n    {\n"
+        },
+        {
+          "beforeStart": 12293,
+          "afterStart": 11253,
+          "before": "      ],\n    },\n    ...buildWrapperSlotShortCircuit(slotDeps, bindings.lateWrapper),\n    ...buildToPrimitiveTypeError(d, bindings.terminalError),\n  ];\n",
+          "after": "      ],\n    },\n    ...buildToPrimitiveTypeError(d, bindings.terminalError),\n  ];\n"
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/wasmgc/values/to-primitive-method-bodies.ts",
+      "beforeSha256": "eac00e15b1cc28eeb946ab791030acee6b046191a1cd0d287f299682485246c9",
+      "spans": [
+        {
+          "beforeStart": 0,
+          "afterStart": 0,
+          "before": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport type { Instr } from \"../../../wasm/model/instructions.js\";\n\n/** Explicit captured data for the legacy recipe, not native provider authority. */\n",
+          "after": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport type { Instr } from \"../../../wasm/model/instructions.js\";\nimport {\n  buildWrapperIntrinsicResult,\n  buildWrapperMethodPresence,\n  type ToPrimitiveWrapperIntrinsic,\n  type ToPrimitivePresenceBindings,\n} from \"./to-primitive-wrapper-bodies.js\";\n\n/** Explicit captured data for the legacy recipe, not native provider authority. */\n"
+        },
+        {
+          "beforeStart": 409,
+          "afterStart": 594,
+          "before": "    readonly args: number;\n  };\n  readonly primitiveTypePredicates: readonly number[];\n  readonly typeofStringIdx: number;\n",
+          "after": "    readonly args: number;\n  };\n  readonly wrapperPresence?: Pick<ToPrimitivePresenceBindings, \"cursorLocal\" | \"presentLocal\" | \"companion\">;\n  readonly primitiveTypePredicates: readonly number[];\n  readonly typeofStringIdx: number;\n"
+        },
+        {
+          "beforeStart": 1304,
+          "afterStart": 1599,
+          "before": "  readonly missingLookup?: readonly Instr[];\n  readonly defaultObject?: readonly Instr[];\n}\nexport interface ToPrimitiveArgumentsBindings {\n",
+          "after": "  readonly missingLookup?: readonly Instr[];\n  readonly defaultObject?: readonly Instr[];\n  readonly wrapperIntrinsic?: ToPrimitiveWrapperIntrinsic;\n}\nexport interface ToPrimitiveArgumentsBindings {\n"
+        },
+        {
+          "beforeStart": 5386,
+          "afterStart": 5740,
+          "before": "  const { method: L_METHOD, result: L_RESULT } = d.frame;\n  const defaultObjectToStringOnMissing = literals.defaultObject !== undefined;\n  if (defaultObjectToStringOnMissing && !literals.missingLookup)\n    throw new Error(\"ToPrimitive: missing own-property literal\");\n  return [\n    { op: \"local.get\", index: 0 },\n    ...copyToPrimitiveLiteral(literals.lookup),\n",
+          "after": "  const { method: L_METHOD, result: L_RESULT } = d.frame;\n  const defaultObjectToStringOnMissing = literals.defaultObject !== undefined;\n  const hasImplicitFallback = defaultObjectToStringOnMissing || literals.wrapperIntrinsic !== undefined;\n  if (hasImplicitFallback && !literals.missingLookup) throw new Error(\"ToPrimitive: missing own-property literal\");\n  if (literals.wrapperIntrinsic !== undefined && d.wrapperPresence === undefined)\n    throw new Error(\"ToPrimitive: missing complete wrapper presence data\");\n  return [\n    ...(literals.wrapperIntrinsic === undefined\n      ? []\n      : buildWrapperMethodPresence(\n          {\n            ...d.wrapperPresence!,\n            anyLocal: d.frame.any,\n            objectTypeIdx: d.objectTypeIdx,\n            objFindIdx: d.objFindIdx,\n            implicitProtoIdx: d.objectTerminalAllowsImplicitProtoIdx,\n          },\n          literals.lookup,\n        )),\n    { op: \"local.get\", index: 0 },\n    ...copyToPrimitiveLiteral(literals.lookup),\n"
+        },
+        {
+          "beforeStart": 5914,
+          "afterStart": 6897,
+          "before": "      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: defaultObjectToStringOnMissing\n        ? [\n            { op: \"local.get\", index: 0 },\n",
+          "after": "      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: hasImplicitFallback\n        ? [\n            { op: \"local.get\", index: 0 },\n"
+        },
+        {
+          "beforeStart": 6128,
+          "afterStart": 7100,
+          "before": "            { op: \"call\", funcIdx: externHasIdx },\n            { op: \"i32.eqz\" },\n            {\n              op: \"if\",\n",
+          "after": "            { op: \"call\", funcIdx: externHasIdx },\n            { op: \"i32.eqz\" },\n            ...(literals.wrapperIntrinsic === undefined\n              ? []\n              : ([\n                  { op: \"local.get\", index: d.wrapperPresence!.presentLocal },\n                  { op: \"i32.eqz\" },\n                  { op: \"i32.and\" },\n                ] satisfies Instr[])),\n            {\n              op: \"if\",\n"
+        },
+        {
+          "beforeStart": 6393,
+          "afterStart": 7651,
+          "before": "                  op: \"if\",\n                  blockType: { kind: \"empty\" },\n                  then: [...copyToPrimitiveLiteral(literals.defaultObject!), { op: \"return\" }],\n                },\n              ],\n",
+          "after": "                  op: \"if\",\n                  blockType: { kind: \"empty\" },\n                  then: [\n                    ...(literals.wrapperIntrinsic === undefined\n                      ? []\n                      : buildWrapperIntrinsicResult(\n                          {\n                            anyLocal: d.frame.any,\n                            slotLocal: d.frame.slot,\n                            objectTypeIdx: d.objectTypeIdx,\n                            propEntryTypeIdx: d.propEntryTypeIdx,\n                            objFindIdx: d.objFindIdx,\n                            flagInternal: d.flagInternal,\n                          },\n                          literals.wrapperIntrinsic,\n                        )),\n                    ...(defaultObjectToStringOnMissing\n                      ? ([...copyToPrimitiveLiteral(literals.defaultObject!), { op: \"return\" }] satisfies Instr[])\n                      : []),\n                  ],\n                },\n              ],\n"
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/wasmgc/values/to-primitive-wrapper-bodies.ts",
+      "beforeSha256": "d51c8f0291e7f6ba5afefbe84178921e63032a71b2203e9efed913713ddc46c1",
+      "spans": [
+        {
+          "beforeStart": 387,
+          "afterStart": 387,
+          "before": "}\n\n/**\n * #1910/#1472 S2 — read the boxed wrapper's `[[PrimitiveValue]]` internal slot\n * and RETURN it when present. A `new Number`/`new String`/`new Boolean` wrapper\n * carries its primitive in that reserved FLAG_INTERNAL own-slot; §7.1.1.1's\n * intrinsic `valueOf`/`toString` return exactly that, so the caller can skip the\n * method walk and apply its hint's final ToNumber/ToString directly. A plain\n * object has no such slot (`__obj_find` null ⇒ fall through, nothing emitted).\n *\n * (#4492 wave-5) `__to_primitive` emits this in TWO places, and both are\n * load-bearing:\n *\n *  - BEFORE the walk, gated on {@link buildOwnToPrimitiveOverridePresent} being\n *    false. Unconditional, it made the wrapper's OWN method unreachable for\n *    every ToPrimitive consumer at once (`==`, `+`, `String`, relational):\n *    `var s = new String(\"ABCABC\"); s.valueOf = function(){ return \"ed\" };\n *    s == \"ed\"` measured FALSE on campaign HEAD `c42bdbe3e`. §7.1.1.1 reads\n *    `Get(O, …)`, and an own slot wins over `String.prototype.valueOf`.\n *  - AFTER the walk, ungated: an own method that returns a NON-primitive must\n *    still fall back to the intrinsic slot value rather than reach the\n *    §7.1.1.1 step-6 TypeError — which is what the real\n *    `String.prototype.valueOf` would have produced further up the chain.\n *\n * A wrapper with no override therefore keeps its previous answer for one extra\n * `$Object` hash probe per operand, and a plain object is untouched.\n *\n * Each call builds FRESH `Instr` objects: aliasing one array into two tree\n * positions double-shifts the `funcIdx` fields inside it when a post-codegen\n * pass walks the tree (the #1448 corruption class).\n */\nexport function buildWrapperSlotShortCircuit(d: ToPrimitiveSlotBindings, literal: readonly Instr[]): Instr[] {\n  return [\n    { op: \"local.get\", index: d.anyLocal },\n    { op: \"ref.cast\", typeIdx: d.objectTypeIdx },\n    ...structuredClone([...literal]),\n    { op: \"call\", funcIdx: d.objFindIdx },\n    { op: \"local.tee\", index: d.slotLocal },\n    { op: \"ref.is_null\" },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        // entry present — confirm it is the internal slot (FLAG_INTERNAL), then\n        // return extern.convert_any(entry.value).\n        { op: \"local.get\", index: d.slotLocal },\n        { op: \"ref.as_non_null\" },\n        { op: \"struct.get\", typeIdx: d.propEntryTypeIdx, fieldIdx: 2 }, // flags\n        { op: \"i32.const\", value: d.flagInternal },\n        { op: \"i32.and\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: d.slotLocal },\n            { op: \"ref.as_non_null\" },\n            { op: \"struct.get\", typeIdx: d.propEntryTypeIdx, fieldIdx: 1 }, // value (anyref)\n            { op: \"extern.convert_any\" },\n            { op: \"return\" },\n          ],\n        },\n",
+          "after": "}\n\n/** A selected implicit intrinsic, after real Get/HasProperty and prototype checks. */\nexport type ToPrimitiveWrapperIntrinsic =\n  | { readonly kind: \"valueOf\"; readonly primitiveKey: readonly Instr[] }\n  | { readonly kind: \"toString\"; readonly primitiveKey: readonly Instr[]; readonly stringifyIdx: number };\n\n/**\n * An internal primitive slot supplies the intrinsic at THIS ordinary-method\n * position only. Own/inherited nullish or noncallable properties still shadow\n * it. A missing valueOf returns the primitive; a missing toString must return\n * its string conversion, so the caller cannot accidentally select numeric +.\n */\nexport function buildWrapperIntrinsicResult(d: ToPrimitiveSlotBindings, binding: ToPrimitiveWrapperIntrinsic): Instr[] {\n  return [\n    // A replaced explicit prototype chain no longer implies this wrapper's\n    // intrinsic prototype. Its real inherited methods keep their precedence.\n    { op: \"local.get\", index: d.anyLocal },\n    { op: \"ref.cast\", typeIdx: d.objectTypeIdx },\n    { op: \"struct.get\", typeIdx: d.objectTypeIdx, fieldIdx: 0 },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        { op: \"local.get\", index: d.anyLocal },\n        { op: \"ref.cast\", typeIdx: d.objectTypeIdx },\n        ...structuredClone([...binding.primitiveKey]),\n        { op: \"call\", funcIdx: d.objFindIdx },\n        { op: \"local.tee\", index: d.slotLocal },\n        { op: \"ref.is_null\" },\n        { op: \"i32.eqz\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            // entry present — confirm it is the internal slot (FLAG_INTERNAL), then\n            // return extern.convert_any(entry.value).\n            { op: \"local.get\", index: d.slotLocal },\n            { op: \"ref.as_non_null\" },\n            { op: \"struct.get\", typeIdx: d.propEntryTypeIdx, fieldIdx: 2 }, // flags\n            { op: \"i32.const\", value: d.flagInternal },\n            { op: \"i32.and\" },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [\n                { op: \"local.get\", index: d.slotLocal },\n                { op: \"ref.as_non_null\" },\n                { op: \"struct.get\", typeIdx: d.propEntryTypeIdx, fieldIdx: 1 }, // value (anyref)\n                { op: \"extern.convert_any\" },\n                ...(binding.kind === \"toString\"\n                  ? ([{ op: \"call\", funcIdx: binding.stringifyIdx }] satisfies Instr[])\n                  : []),\n                { op: \"return\" },\n              ],\n            },\n          ],\n        },\n"
+        },
+        {
+          "beforeStart": 3310,
+          "afterStart": 2989,
+          "before": "}\n\n/** i32: does this `$Object` carry an OWN `valueOf` or `toString` slot? */\nexport function buildOwnToPrimitiveOverridePresent(\n  d: ToPrimitiveSlotBindings,\n  literals: { readonly valueOf: readonly Instr[]; readonly toString: readonly Instr[] },\n): Instr[] {\n  const ownSlotPresent = (literal: readonly Instr[]): Instr[] => [\n    { op: \"local.get\", index: d.anyLocal },\n    { op: \"ref.cast\", typeIdx: d.objectTypeIdx },\n    ...structuredClone([...literal]),\n    { op: \"call\", funcIdx: d.objFindIdx },\n    { op: \"ref.is_null\" },\n    { op: \"i32.eqz\" },\n  ];\n  return [...ownSlotPresent(literals.valueOf), ...ownSlotPresent(literals.toString), { op: \"i32.or\" }];\n}\n",
+          "after": "}\n\n/** Complete ordinary-table observation; no generic has/get dispatch or getters. */\nexport interface ToPrimitivePresenceBindings {\n  readonly anyLocal: number;\n  readonly cursorLocal: number;\n  readonly presentLocal: number;\n  readonly objectTypeIdx: number;\n  readonly objFindIdx: number;\n  readonly implicitProtoIdx: number;\n  readonly companion: { readonly kind: \"absent\" } | { readonly kind: \"call\"; readonly hasIdx: number };\n}\n\nexport function buildWrapperMethodPresence(d: ToPrimitivePresenceBindings, key: readonly Instr[]): Instr[] {\n  return [\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: d.presentLocal },\n    { op: \"local.get\", index: d.anyLocal },\n    { op: \"ref.cast\", typeIdx: d.objectTypeIdx },\n    { op: \"local.set\", index: d.cursorLocal },\n    {\n      op: \"block\",\n      blockType: { kind: \"empty\" },\n      body: [\n        {\n          op: \"loop\",\n          blockType: { kind: \"empty\" },\n          body: [\n            { op: \"local.get\", index: d.cursorLocal },\n            { op: \"ref.is_null\" },\n            { op: \"br_if\", depth: 1 },\n            { op: \"local.get\", index: d.cursorLocal },\n            { op: \"ref.as_non_null\" },\n            ...structuredClone([...key]),\n            { op: \"call\", funcIdx: d.objFindIdx },\n            { op: \"ref.is_null\" },\n            { op: \"i32.eqz\" },\n            { op: \"local.tee\", index: d.presentLocal },\n            { op: \"br_if\", depth: 1 },\n            { op: \"local.get\", index: d.cursorLocal },\n            { op: \"ref.as_non_null\" },\n            { op: \"struct.get\", typeIdx: d.objectTypeIdx, fieldIdx: 0 },\n            { op: \"local.set\", index: d.cursorLocal },\n            { op: \"br\", depth: 0 },\n          ],\n        },\n      ],\n    },\n    ...(d.companion.kind === \"absent\"\n      ? []\n      : ([\n          { op: \"local.get\", index: d.presentLocal },\n          { op: \"i32.eqz\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: d.anyLocal },\n              { op: \"ref.cast\", typeIdx: d.objectTypeIdx },\n              { op: \"call\", funcIdx: d.implicitProtoIdx },\n              {\n                op: \"if\",\n                blockType: { kind: \"empty\" },\n                then: [\n                  { op: \"local.get\", index: 0 },\n                  ...structuredClone([...key]),\n                  { op: \"call\", funcIdx: d.companion.hasIdx },\n                  { op: \"local.set\", index: d.presentLocal },\n                ],\n              },\n            ],\n          },\n        ] satisfies Instr[])),\n  ];\n}\n"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/proto-index-store.ts",
+      "beforeSha256": "7fd8bed971077dced3f69ca65b7d10957d55bdee94f1af02a5128add2ce2d653",
+      "spans": [
+        {
+          "beforeStart": 12405,
+          "afterStart": 12405,
+          "before": "  ctx.protoIndexCompanionsGlobalIdx = tableGlobalIdx;\n\n  // --- helper stubs (bodies filled by fillProtoIndexStore at finalize).\n  // Stub bodies are FRESH arrays per helper — never a shared Instr list.\n",
+          "after": "  ctx.protoIndexCompanionsGlobalIdx = tableGlobalIdx;\n\n  const presenceReservations = new Map<string, PresenceFunctionReceipt>();\n\n  // --- helper stubs (bodies filled by fillProtoIndexStore at finalize).\n  // Stub bodies are FRESH arrays per helper — never a shared Instr list.\n"
+        },
+        {
+          "beforeStart": 12979,
+          "afterStart": 13055,
+          "before": "    pushDefinedFunc(ctx, funcIdx, placeholder);\n    ctx.funcMap.set(name, funcIdx);\n  };\n  const ext: ValType = { kind: \"externref\" };\n",
+          "after": "    pushDefinedFunc(ctx, funcIdx, placeholder);\n    ctx.funcMap.set(name, funcIdx);\n    presenceReservations.set(name, presenceFunctionReceipt(ctx, placeholder));\n  };\n  const ext: ValType = { kind: \"externref\" };\n"
+        },
+        {
+          "beforeStart": 16499,
+          "afterStart": 16654,
+          "before": "  // the split cannot be reintroduced.\n  reserve(PROTOIDX_OWN_RECV, [ext], [ext], () => [{ op: \"local.get\", index: 0 }]);\n}\n\n",
+          "after": "  // the split cannot be reintroduced.\n  reserve(PROTOIDX_OWN_RECV, [ext], [ext], () => [{ op: \"local.get\", index: 0 }]);\n  protoIndexPresenceReservations.set(ctx, presenceReservations);\n}\n\n"
+        },
+        {
+          "beforeStart": 23372,
+          "afterStart": 23592,
+          "before": "    { op: \"local.get\", index: 0 },\n  ];\n}\n\n",
+          "after": "    { op: \"local.get\", index: 0 },\n  ];\n}\n\n/** The ToPrimitive call site binds this stable reservation, never early absence. */\nconst TO_PRIMITIVE_PRESENCE = \"__to_primitive_companion_presence\";\nconst PRESENCE_FILL_NAMES = [\n  PROTOIDX_COMPANION,\n  PROTOIDX_NORM_KEY,\n  PROTOIDX_HAS_K,\n  PROTOIDX_BRAND_OFF,\n  PROTOIDX_HAS_R,\n] as const;\ninterface PresenceFunctionReceipt {\n  readonly fn: WasmFunction;\n  readonly type: CodegenContext[\"mod\"][\"types\"][number];\n  readonly body: Instr[];\n  readonly locals: WasmFunction[\"locals\"];\n  readonly graph: readonly PresenceGraphNode[];\n}\ninterface ToPrimitivePresenceCapture {\n  readonly reservation: PresenceFunctionReceipt;\n  completion?: {\n    readonly kind: \"absent\" | \"call\";\n    readonly bridge: PresenceFunctionReceipt;\n    readonly dependencies: readonly PresenceFunctionReceipt[];\n  };\n}\nconst toPrimitivePresenceCaptures = new WeakMap<CodegenContext, ToPrimitivePresenceCapture>();\nconst protoIndexPresenceReservations = new WeakMap<CodegenContext, ReadonlyMap<string, PresenceFunctionReceipt>>();\n\nfunction protoIndexPresenceDemanded(ctx: CodegenContext): boolean {\n  return (\n    ctx.standalone && !!(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)\n  );\n}\n\ninterface PresenceGraphNode {\n  readonly object: object;\n  readonly prototype: object | null;\n  readonly keys: readonly PropertyKey[];\n  readonly descriptors: PropertyDescriptorMap;\n  readonly numbers: ReadonlyMap<PropertyKey, bigint>;\n}\n\nfunction presenceNumberBits(value: number): bigint {\n  const view = new DataView(new ArrayBuffer(8));\n  view.setFloat64(0, value, true);\n  return view.getBigUint64(0, true);\n}\n\n/** Retain the real plain-data graph, including alias identity and scalar bits. */\nfunction presenceGraph(...roots: object[]): readonly PresenceGraphNode[] {\n  const rows: PresenceGraphNode[] = [];\n  const seen = new Set<object>();\n  const visit = (value: unknown): void => {\n    if (typeof value === \"function\") throw new Error(\"ToPrimitive presence data contains executable content\");\n    if (value === null || typeof value !== \"object\" || seen.has(value)) return;\n    const prototype = Object.getPrototypeOf(value);\n    if (prototype !== null && prototype !== Object.prototype && prototype !== Array.prototype)\n      throw new Error(\"ToPrimitive presence data is not a plain descriptor\");\n    seen.add(value);\n    const keys = Reflect.ownKeys(value);\n    const descriptors = Object.getOwnPropertyDescriptors(value);\n    const numbers = new Map<PropertyKey, bigint>();\n    rows.push({ object: value, prototype, keys, descriptors, numbers });\n    for (const key of keys) {\n      const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;\n      if (!Object.hasOwn(descriptor, \"value\")) throw new Error(\"ToPrimitive presence data contains an accessor\");\n      if (typeof descriptor.value === \"number\") numbers.set(key, presenceNumberBits(descriptor.value));\n      visit(descriptor.value);\n    }\n  };\n  for (const root of roots) visit(root);\n  return rows;\n}\n\nfunction assertPresenceGraphCurrent(rows: readonly PresenceGraphNode[]): void {\n  for (const row of rows) {\n    const keys = Reflect.ownKeys(row.object);\n    if (\n      Object.getPrototypeOf(row.object) !== row.prototype ||\n      keys.length !== row.keys.length ||\n      keys.some((key, index) => key !== row.keys[index])\n    )\n      throw new Error(\"ToPrimitive companion presence target or content changed\");\n    for (const key of keys) {\n      const expected = Reflect.get(row.descriptors, key) as PropertyDescriptor;\n      const actual = Object.getOwnPropertyDescriptor(row.object, key)!;\n      if (\n        !Object.hasOwn(actual, \"value\") ||\n        !Object.is(actual.value, expected.value) ||\n        actual.writable !== expected.writable ||\n        actual.enumerable !== expected.enumerable ||\n        actual.configurable !== expected.configurable ||\n        (typeof actual.value === \"number\" && presenceNumberBits(actual.value) !== row.numbers.get(key))\n      )\n        throw new Error(\"ToPrimitive companion presence target or content changed\");\n    }\n  }\n}\n\nfunction presenceFunctionReceipt(ctx: CodegenContext, fn: WasmFunction): PresenceFunctionReceipt {\n  const type = ctx.mod.types[fn.typeIdx];\n  if (!type) throw new Error(\"ToPrimitive companion presence signature is missing\");\n  return { fn, type, body: fn.body, locals: fn.locals, graph: presenceGraph(fn, type) };\n}\n\nfunction assertPresenceFunctionCurrent(ctx: CodegenContext, receipt: PresenceFunctionReceipt): void {\n  const fn = receipt.fn;\n  const index = ctx.funcMap.get(fn.name);\n  if (\n    index === undefined ||\n    definedFuncAt(ctx, index) !== fn ||\n    ctx.mod.types[fn.typeIdx] !== receipt.type ||\n    fn.body !== receipt.body ||\n    fn.locals !== receipt.locals\n  )\n    throw new Error(\"ToPrimitive companion presence target or content changed\");\n  assertPresenceGraphCurrent(receipt.graph);\n}\n\n/** The registered body stays unreachable until the existing finalizer completes it. */\nexport function captureProtoIndexPresenceBinding(ctx: CodegenContext): {\n  readonly kind: \"call\";\n  readonly hasIdx: number;\n} {\n  const previous = toPrimitivePresenceCaptures.get(ctx);\n  if (previous) {\n    assertToPrimitivePresenceCurrent(ctx);\n    return { kind: \"call\", hasIdx: ctx.funcMap.get(TO_PRIMITIVE_PRESENCE)! };\n  }\n  if (ctx.funcMap.has(TO_PRIMITIVE_PRESENCE))\n    throw new Error(\"ToPrimitive companion presence reservation already exists without its owner\");\n  const ext: ValType = { kind: \"externref\" };\n  const typeIdx = addFuncType(ctx, [ext, ext], [{ kind: \"i32\" }], \"$to_primitive_companion_presence_type\");\n  const hasIdx = mintDefinedFunc(ctx);\n  const fn: WasmFunction = {\n    name: TO_PRIMITIVE_PRESENCE,\n    typeIdx,\n    locals: [],\n    body: [{ op: \"unreachable\" }],\n    exported: false,\n  };\n  pushDefinedFunc(ctx, hasIdx, fn);\n  ctx.funcMap.set(TO_PRIMITIVE_PRESENCE, hasIdx);\n  toPrimitivePresenceCaptures.set(ctx, { reservation: presenceFunctionReceipt(ctx, fn) });\n  return { kind: \"call\", hasIdx };\n}\n\nfunction assertToPrimitivePresenceCurrent(ctx: CodegenContext): void {\n  const captured = toPrimitivePresenceCaptures.get(ctx);\n  if (!captured) return;\n  const completed = captured.completion;\n  assertPresenceFunctionCurrent(ctx, completed?.bridge ?? captured.reservation);\n  if (!completed) return;\n  if (completed.kind === \"absent\") {\n    if (ctx.protoIndexStoreReserved || protoIndexPresenceDemanded(ctx) || ctx.funcMap.has(PROTOIDX_HAS_R))\n      throw new Error(\"ToPrimitive companion absence became stale after completed finalization\");\n  } else {\n    if (!ctx.protoIndexStoreReserved || !ctx.protoIndexStoreFilled)\n      throw new Error(\"ToPrimitive companion presence completed store state changed\");\n    for (const receipt of completed.dependencies) assertPresenceFunctionCurrent(ctx, receipt);\n  }\n}\n\n/** Capture the actual selected descriptors before their canonical fill steps. */\nfunction capturePresenceFillInputs(ctx: CodegenContext): readonly PresenceFunctionReceipt[] {\n  if (!toPrimitivePresenceCaptures.has(ctx)) return [];\n  const reservations = protoIndexPresenceReservations.get(ctx);\n  return PRESENCE_FILL_NAMES.map((name) => {\n    const receipt = reservations?.get(name);\n    if (!receipt) throw new Error(\"ToPrimitive companion presence dependency has no reservation receipt\");\n    assertPresenceFunctionCurrent(ctx, receipt);\n    return receipt;\n  });\n}\n\n/** No flag or matching signature can substitute for the executed fill chain. */\nfunction completeToPrimitivePresence(ctx: CodegenContext, filled?: readonly PresenceFunctionReceipt[]): void {\n  const captured = toPrimitivePresenceCaptures.get(ctx);\n  if (!captured) return;\n  assertToPrimitivePresenceCurrent(ctx);\n  if (captured.completion) return;\n  if (!filled && (ctx.protoIndexStoreReserved || protoIndexPresenceDemanded(ctx) || ctx.funcMap.has(PROTOIDX_HAS_R)))\n    throw new Error(\"ToPrimitive companion presence dependency was not filled\");\n  const dependencies = (filled ?? []).map((prior) => {\n    const current = findFn(ctx, prior.fn.name);\n    if (current !== prior.fn || current.body === prior.body)\n      throw new Error(\"ToPrimitive companion presence dependency was not filled\");\n    return presenceFunctionReceipt(ctx, current);\n  });\n  const fn = captured.reservation.fn;\n  fn.body = filled\n    ? [\n        { op: \"local.get\", index: 0 },\n        { op: \"local.get\", index: 1 },\n        { op: \"call\", funcIdx: ctx.funcMap.get(PROTOIDX_HAS_R)! },\n      ]\n    : [{ op: \"i32.const\", value: 0 }];\n  captured.completion = {\n    kind: filled ? \"call\" : \"absent\",\n    bridge: presenceFunctionReceipt(ctx, fn),\n    dependencies,\n  };\n  assertToPrimitivePresenceCurrent(ctx);\n}\n\n"
+        },
+        {
+          "beforeStart": 30451,
+          "afterStart": 39340,
+          "before": " */\nexport function fillProtoIndexStore(ctx: CodegenContext): void {\n  if (!ctx.protoIndexStoreReserved || ctx.protoIndexStoreFilled) return;\n  ctx.protoIndexStoreFilled = true;\n  const deps = resolveFillDeps(ctx);\n  if (!deps) return; // dependencies absent — stubs keep answering \"miss\" (safe)\n\n  fillCompanionBody(ctx, deps);\n  fillNormKeyBody(ctx, deps);\n",
+          "after": " */\nexport function fillProtoIndexStore(ctx: CodegenContext): void {\n  assertToPrimitivePresenceCurrent(ctx);\n  // Body generation can discover a dynamic TypedArray after the original\n  // prescan. Resolve that real demand here without rebuilding ToPrimitive.\n  if (toPrimitivePresenceCaptures.has(ctx) && protoIndexPresenceDemanded(ctx)) reserveProtoIndexStore(ctx);\n  if (!ctx.protoIndexStoreReserved || ctx.protoIndexStoreFilled) {\n    completeToPrimitivePresence(ctx);\n    return;\n  }\n  ctx.protoIndexStoreFilled = true;\n  const deps = resolveFillDeps(ctx);\n  if (!deps) {\n    completeToPrimitivePresence(ctx); // A selected consumer must not bind unfilled stubs.\n    return;\n  }\n  const presenceInputs = capturePresenceFillInputs(ctx);\n  fillCompanionBody(ctx, deps);\n  fillNormKeyBody(ctx, deps);\n"
+        },
+        {
+          "beforeStart": 31148,
+          "afterStart": 40481,
+          "before": "  spliceNativeProtoWriteArms(ctx);\n  spliceNativeProtoDirectReadArms(ctx);\n}\n\n",
+          "after": "  spliceNativeProtoWriteArms(ctx);\n  spliceNativeProtoDirectReadArms(ctx);\n  completeToPrimitivePresence(ctx, presenceInputs);\n}\n\n"
+        }
+      ]
+    }
+  ]
+}

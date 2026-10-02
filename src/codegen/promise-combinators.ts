@@ -107,6 +107,7 @@ import {
   PROMISE_STATE_REJECTED,
   isStandalonePromiseActive,
 } from "./async-scheduler.js";
+import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -126,7 +127,7 @@ export function isNativeCombinatorMethod(method: string): method is NativeCombin
  * observable combinator work is constructing C and validating the executor's
  * captured resolve/reject pair.
  */
-interface CustomCapabilityRuntime {
+export interface CustomCapabilityRuntime {
   stateTypeIdx: number;
   executorTypeIdx: number;
   executorFuncIdx: number;
@@ -143,7 +144,7 @@ interface CustomCapabilityRuntime {
  * builtin-fn metadata carrier exactly as `$__promise_settle_cap` does, and the
  * capture is appended AFTER the carrier's fields — never at a hard-coded index.
  */
-function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {
+export function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {
   return [
     { op: "ref.func", funcIdx: runtime.executorFuncIdx },
     { op: "i32.const", value: 2 }, // (#3673) $arity — the executor takes (resolve, reject)
@@ -157,7 +158,7 @@ function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, s
 
 type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };
 
-function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
+export function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
   // NewPromiseCapability's executor protocol throws a TypeError before the
   // combinator touches an empty iterable when either captured slot is not
   // callable.  Reuse the in-module standalone Error constructor and native
@@ -169,7 +170,7 @@ function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
 }
 
 /** Register the two-argument capability executor and its mutable slots once. */
-function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
+export function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
   const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;
   if (cached) return cached;
 
@@ -635,7 +636,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
       stateTypeIdx: ids.stateTypeIdx,
       arrTypeIdx: ids.arrTypeIdx,
       vecTypeIdx: ids.vecTypeIdx,
-      fulfillFuncIdx: rt.fulfillFuncIdx,
+      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
     }),
     exported: false,
   });
@@ -686,7 +687,7 @@ type SettledAnyCombinatorRuntime = CombinatorRuntime &
  * COMBINATOR_FUNC_IDX_KEYS (async-scheduler.ts) for the #2918 late-import
  * lockstep shift.
  */
-function ensureSettledAnyCombinators(ctx: CodegenContext): SettledAnyCombinatorRuntime {
+export function ensureSettledAnyCombinators(ctx: CodegenContext): SettledAnyCombinatorRuntime {
   const ids = ensureCombinatorFunctions(ctx);
   if (ids.allSettledFulfillFuncIdx !== undefined && ids.anyRejectFuncIdx !== undefined) {
     return ids as SettledAnyCombinatorRuntime;
@@ -945,7 +946,7 @@ function buildAllSettledBody(
         { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },
         { op: "struct.new", typeIdx: ids.vecTypeIdx },
         { op: "extern.convert_any" },
-        { op: "call", funcIdx: rt.fulfillFuncIdx },
+        { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
         { op: "drop" },
       ],
     },
@@ -1126,7 +1127,7 @@ export function emitStandalonePromiseCombinator(
       fctx.body.push({ op: "local.get", index: arrLocal });
       fctx.body.push({ op: "struct.new", typeIdx: ids.vecTypeIdx });
       fctx.body.push({ op: "extern.convert_any" });
-      fctx.body.push({ op: "call", funcIdx: rt.fulfillFuncIdx });
+      fctx.body.push({ op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }); // (#5197 r3)
       fctx.body.push({ op: "drop" });
     } else if (method === "any") {
       fctx.body.push({ op: "local.get", index: resultLocal });
@@ -1251,7 +1252,7 @@ export function emitStandalonePromiseCombinatorRuntime(
       subscribeFuncIdx: ids.subscribeFuncIdx,
       fulfillReactionFuncIdx: reaction.fulfillIdx,
       rejectReactionFuncIdx: reaction.rejectIdx,
-      fulfillFuncIdx: rt.fulfillFuncIdx,
+      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) all/allSettled empty aggregate
       rejectFuncIdx: rt.rejectFuncIdx,
       bagInit: combinatorBagInit(),
       emptyResult:

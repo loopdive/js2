@@ -77,6 +77,7 @@ import {
 } from "./destructuring.js";
 import { collectInstrs } from "./shared.js";
 import { emitForOfRestObjectCarrier } from "./for-of-rest-object-default.js";
+import { emitSymbolNotIterableGuard } from "../dstr-non-iterable-guard.js"; // (#6651 G4)
 
 /**
  * Preserve §13.15.5 PutValue errors for identifier targets in an assignment
@@ -2279,6 +2280,7 @@ function compileForOfAssignDestructuringExternref(
   // resolved, since `ensureLateImport` can shift function indices.
   let srcLocal = elemLocal;
   if (expr.elements.length > 0) {
+    emitSymbolNotIterableGuard(ctx, fctx, elemLocal, expr); // (#6651 G4) GetIterator(Symbol) throws
     const matStepCount = patternIteratorStepCount(expr.elements);
     const matIterIdx = ensureLateImport(
       ctx,

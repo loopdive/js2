@@ -25,8 +25,15 @@ import {
 import { emitCachedResolvedThis, recordResolvedThis } from "../receiver-cse.js"; // (#4157 B) receiver CSE
 import { emitLazyClassObjectGet } from "./extern.js";
 import { compileIdentifier } from "./identifiers.js";
+import { tryEmitObjectLiteralMethodReceiverValue } from "../method-receiver-this.js"; // (#6651 A11)
+import { readEnv } from "../../env.js";
 
-export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): ValType | null {
+export function compileThisKeyword(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Node,
+  expectedType?: ValType,
+): ValType | null {
   // (#4555) A non-arrow function expression spliced in by the inline-IIFE path
   // has no activation of its own, so every receiver rung below would hand it
   // the ENCLOSING function's `this`. It was invoked with no receiver, so
@@ -43,7 +50,7 @@ export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, e
   // the receiver parameter a complete representation of `this`, so direct
   // twin-to-twin calls do not need to install a dynamic receiver frame.
   if (
-    process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0" &&
+    readEnv("JS2WASM_TWIN_RECEIVER_PARAM") !== "0" &&
     fctx.typedThisLocalIdx !== undefined &&
     fctx.typedThisStructIdx !== undefined
   ) {
@@ -52,12 +59,18 @@ export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, e
   }
   const selfIdx = fctx.localMap.get("this");
   if (selfIdx !== undefined) {
-    fctx.body.push({ op: "local.get", index: selfIdx });
-    if (selfIdx < fctx.params.length) {
-      return fctx.params[selfIdx]!.type;
+    const selfType =
+      selfIdx < fctx.params.length
+        ? fctx.params[selfIdx]!.type
+        : (fctx.locals[selfIdx - fctx.params.length]?.type ?? { kind: "externref" });
+    // (#6651 A11) An object-literal method's struct receiver is null when the
+    // method was not called through its literal; a JS-value read then binds
+    // the caller's thisArg (§10.2.1.2), not `null`.
+    if (tryEmitObjectLiteralMethodReceiverValue(ctx, fctx, expr, selfIdx, selfType, expectedType)) {
+      return { kind: "externref" };
     }
-    const localDef = fctx.locals[selfIdx - fctx.params.length];
-    return localDef?.type ?? { kind: "externref" };
+    fctx.body.push({ op: "local.get", index: selfIdx });
+    return selfType;
   }
   // (#1395) Static-context fallback: in a static field initializer or
   // static method body (or in any closure spawned from one), `this`

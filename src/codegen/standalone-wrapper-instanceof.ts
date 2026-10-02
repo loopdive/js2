@@ -23,7 +23,7 @@ import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./obj
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 
-export type StandaloneWrapperConstructorName = "Number" | "String" | "Boolean" | "BigInt";
+export type StandaloneWrapperConstructorName = "Number" | "String" | "Boolean" | "BigInt" | "Symbol";
 
 export function ensureStandaloneWrapperInstanceOfHelper(
   ctx: CodegenContext,
@@ -67,6 +67,14 @@ export function ensureStandaloneWrapperInstanceOfHelper(
         // brand test is exact there.
         return ctx.nativeBigIntTypeIdx >= 0
           ? [...slotValue(), { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx }]
+          : [{ op: "i32.const", value: 0 }];
+      case "Symbol":
+        // `Object(sym) instanceof Symbol` — since #6051 `Object(sym)` is a real
+        // `[[PrimitiveValue]]` wrapper holding the `$Symbol` carrier. The
+        // harness's deepEqual recognises a boxed symbol by exactly this test
+        // (ES5 harness/deepEqual-primitives, broken 2026-09-23).
+        return ctx.symbolTypeIdx >= 0
+          ? [...slotValue(), { op: "ref.test", typeIdx: ctx.symbolTypeIdx }]
           : [{ op: "i32.const", value: 0 }];
     }
   };

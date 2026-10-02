@@ -110,6 +110,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js"; // (#4556)
 import { coerceType } from "./type-coercion.js";
+import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#6651 A13)
 
 /** WasmGC `none` bottom heap type (signed LEB −18) — `ref.null none`, the
  *  canonical `anyref` null (mirrors receiver-brand.ts / map-runtime.ts). */
@@ -608,11 +609,25 @@ function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression, dynam
 function isEvolvingVarIdentifier(ctx: CodegenContext, e: ts.Expression): boolean {
   if (!ts.isIdentifier(e)) return false;
   const decl = ctx.oracle.valueDeclarationOf(e);
+  if (decl === undefined || !(ts.isVariableDeclaration(decl) || ts.isParameter(decl)) || decl.type !== undefined) {
+    return false;
+  }
+  if (decl.initializer === undefined) return true;
+  // (#6651 A13) `var obj = null;` is the same shape with the narrowing seeded
+  // by its initializer: TypeScript narrows a later use to `null` from that
+  // assignment and never widens it back across a call, so `obj = {…}` inside a
+  // function that has run in between is invisible to the fact. With any other
+  // write to the binding in the file the fact is not a proof
+  // (`method-definition/name-prop-name-yield-expr.js`: the write runs in a
+  // resumed generator). An unwritten binding stays nullish and keeps the fold.
+  let init: ts.Expression = decl.initializer;
+  while (ts.isParenthesizedExpression(init)) init = init.expression;
+  const nullishInit =
+    init.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(init) && init.text === "undefined") ||
+    ts.isVoidExpression(init);
   return (
-    decl !== undefined &&
-    (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) &&
-    decl.type === undefined &&
-    decl.initializer === undefined
+    nullishInit && identifierIsWrittenTo(e.getSourceFile(), e.text, (id) => ctx.oracle.valueDeclarationOf(id) === decl)
   );
 }
 

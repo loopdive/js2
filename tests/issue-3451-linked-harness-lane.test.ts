@@ -70,7 +70,11 @@ describe("#3451 P3 — linked-harness shadow lane is opt-in", () => {
     const shared = read("tests/test262-shared.ts");
     // The lane is only ever "linked-harness" under the explicit mode AND the
     // host lane — standalone cannot host the provider's value crossing.
-    expect(shared).toContain('TEST262_ORACLE_MODE === "linked" && IS_HOST_LANE');
+    // (#6723 P2) The gate lives in `test262OracleLane`; standalone is admitted
+    // only under the explicit TEST262_STANDALONE_LINKED=1 opt-in (unit-tested in
+    // tests/issue-6723-p1-harness-cache-lane.test.ts).
+    expect(shared).toContain("const ORACLE_LANE = test262OracleLane({");
+    expect(shared).toContain("standaloneLinked: process.env.TEST262_STANDALONE_LINKED,");
     expect(shared).toContain('const LINKED_HARNESS_ORACLE = ORACLE_LANE === "linked-harness"');
     // The split is computed ONLY when the lane is on; otherwise the message is
     // byte-identical to the pre-#3451 one.
@@ -79,7 +83,8 @@ describe("#3451 P3 — linked-harness shadow lane is opt-in", () => {
     const worker = read("scripts/test262-worker.mjs");
     // The worker double-checks rather than trusting the parent, and never takes
     // the linked path for a fixture graph (no provider seam there).
-    expect(worker).toContain("linkedHarness && originalHarness && !hasFixtureGraph(fixtureFiles)");
+    // (`moduleGraph` is the fixture/self-namespace graph doCompile receives.)
+    expect(worker).toContain("linkedHarness && originalHarness && !moduleGraph");
     expect(worker).toContain("msg.linkedHarness === true");
   });
 
@@ -145,9 +150,22 @@ describe("#3451 slice 6 — the authoritative host lane runs the linked oracle",
   const workflow = read(".github/workflows/test262-sharded.yml");
 
   it("both authoritative shard matrices set TEST262_ORACLE_MODE=linked", () => {
-    // Once per job env (`test262-shard`, `test262-shard-mg`) — and nowhere else,
-    // so the audit lane cannot drift back into linked mode.
-    expect(workflow.match(/^ {6}TEST262_ORACLE_MODE: linked$/gm)).toHaveLength(2);
+    // Once per job env (`test262-shard`, `test262-shard-mg`) plus (#6723 P2)
+    // the dispatch-only standalone linked SHADOW job — and nowhere else, so the
+    // audit lane cannot drift back into linked mode.
+    expect(workflow.match(/^ {6}TEST262_ORACLE_MODE: linked$/gm)).toHaveLength(3);
+    const audit = workflow.slice(
+      workflow.indexOf("  test262-honest-audit:"),
+      workflow.indexOf("  merge-honest-audit-report:"),
+    );
+    expect(audit).not.toMatch(/^ {6}TEST262_ORACLE_MODE:/m);
+    const shadow = workflow.slice(
+      workflow.indexOf("  test262-standalone-linked:"),
+      workflow.indexOf("  merge-standalone-linked-report:"),
+    );
+    expect(shadow).toContain("TEST262_ORACLE_MODE: linked");
+    expect(shadow).toContain('TEST262_STANDALONE_LINKED: "1"');
+    expect(shadow).toContain("TEST262_RESULT_PREFIX: test262-standalone-linked");
     // The result prefix is deliberately untouched, which is what keeps
     // merge-report / regression gate / promote-baseline / Pages wired as-is.
     expect(workflow).toContain("TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}");

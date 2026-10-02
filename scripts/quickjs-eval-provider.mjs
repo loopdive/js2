@@ -1355,6 +1355,8 @@ function qjsPublish(c: number, h: number): any {
       }
     }
   }
+  const generator: any = qjsPublishGenerator(c, h, retained);
+  if (generator !== undefined) return generator;
   // Register BEFORE mirroring: a self-referential object (\`o.self = o\`) walks
   // straight back into qjsPublish for the same handle, and without the row in
   // place that recursion never terminates.
@@ -1362,6 +1364,77 @@ function qjsPublish(c: number, h: number): any {
   qjsPushBoxRow(retained, box, box, 1);
   qjsPullBox(c, qjsBoxHandles.length - 1);
   return box;
+}
+
+/**
+ * (#6651 A9) A GENERATOR OBJECT crossing out — the result of calling a
+ * generator function the realm created (\`GeneratorFunction(src)\`,
+ * \`eval("function* g(){…}")\`). Returns \`undefined\` for anything else.
+ *
+ * The mirrored box below copies own STRING keys only, and a generator object
+ * has none: \`next\`/\`return\`/\`throw\` live on %GeneratorPrototype% and
+ * \`@@iterator\` on %IteratorPrototype%. So the box arrived with no protocol at
+ * all — \`it.next\` read \`undefined\` and \`for (x of it)\` threw.
+ *
+ * The box gets those four as own, non-enumerable data properties whose values
+ * are the realm's PRISTINE methods, published like any other realm function.
+ * Calling one from compiled code passes the box as the receiver, which crosses
+ * back in as the retained generator handle, so QuickJS resumes the generator
+ * it owns and every step result crosses out as an ordinary box. The generator
+ * state never leaves the realm; nothing on the compiled side models it.
+ *
+ * Residual, stated plainly: the methods are OWN properties of the box rather
+ * than inherited, and its \`[[Prototype]]\` is the compiled
+ * \`%Object.prototype%\`, not the realm generator prototype. Not mirrored
+ * (\`mirror = 0\`): a generator object's own properties are not synced.
+ */
+function qjsPublishGenerator(c: number, h: number, retained: number): any {
+  if (!qjsEnsureBoxHelpers(c)) return undefined;
+  const methods: number = qjsCallGlobalHelper(c, "__js2wasm_eval_genmethods__", 1, h);
+  if (methods === 0) return undefined;
+  if (qjs_tag(methods) !== QJS_TAG_OBJECT) {
+    qjs_free_value(c, methods);
+    return undefined;
+  }
+  const box: any = {};
+  qjsPushBoxRow(retained, box, box, 0);
+  const names: string[] = ["next", "return", "throw"];
+  for (let i = 0; i < names.length; i += 1) {
+    const name: string = names[i] as string;
+    Object.defineProperty(box, name, {
+      value: qjsGeneratorMethod(c, methods, name),
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  Object.defineProperty(box, Symbol.iterator, {
+    value: qjsGeneratorMethod(c, methods, "iterator"),
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  qjs_free_value(c, methods);
+  return box;
+}
+
+/**
+ * (#6651 A9) \`methods[name]\` published as the realm function's marker. NOT
+ * \`qjsBoxReadValue\`: that stores the \`[kind, value]\` result envelope, which a
+ * compiled READ decodes but a compiled METHOD CALL (\`__extern_method_call\` →
+ * \`__apply_closure\`) does not — \`it.next()\` then received the envelope
+ * rather than calling the marker. A marker needs no envelope: it is already the
+ * canonical cross-module callable.
+ */
+function qjsGeneratorMethod(c: number, methods: number, name: string): any {
+  const namePtr: number = qjsPushCString(name);
+  if (namePtr === 0) return undefined;
+  const v: number = qjs_get_prop_str(c, methods, namePtr);
+  qjs_free_raw(namePtr);
+  if (v === 0) return undefined;
+  const out: any = qjs_is_function(c, v) !== 0 ? qjsToGc(c, v) : undefined;
+  qjs_free_value(c, v);
+  return out;
 }
 
 /**
@@ -1483,6 +1556,23 @@ function qjsEnsureBoxHelpers(c: number): boolean {
       " if (o === null || typeof o !== 'object') return '';" +
       " if (Object.prototype.toString.call(o) !== '[object RegExp]') return '';" +
       " try { return o.flags + '\\\\u0001' + o.source; } catch (e) { return ''; } };" +
+      // (#6651 A9) Generator identification: the PRISTINE %GeneratorPrototype%
+      // protocol methods for an object that inherits from it, else undefined.
+      // Captured once, here, so a later realm-side replacement of
+      // \`isPrototypeOf\` cannot change the classification.
+      // The capture runs at install, i.e. at the FIRST outward box of the
+      // context, after evaluated code may have run; a realm that has already
+      // broken these intrinsics gets the never-a-generator answer instead of
+      // an install failure that would disable every box helper above.
+      "globalThis.__js2wasm_eval_genmethods__ = (function () {" +
+      " try {" +
+      "  var gp = Object.getPrototypeOf(function* () {}).prototype;" +
+      "  var isProto = Object.prototype.isPrototypeOf;" +
+      "  var m = { next: gp.next, return: gp.return, throw: gp.throw," +
+      "   iterator: Object.getPrototypeOf(gp)[Symbol.iterator] };" +
+      "  return function (o) {" +
+      "   return o !== null && typeof o === 'object' && isProto.call(gp, o) ? m : undefined; };" +
+      " } catch (e) { return function () { return undefined; }; } })();" +
       "0"
   );
   if (installed === 0) return false;

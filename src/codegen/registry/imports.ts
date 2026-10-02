@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
 import { registerWideBigIntTypes } from "../bigint-wide.js";
+import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import type { Import, Instr, ValType, WasmFunction } from "../../ir/types.js";
 import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
 import {
@@ -10,6 +11,12 @@ import {
   buildUnboxNumberLocals,
   buildTypeofNumberBody,
 } from "../../runtime/wasmgc/values/number-bodies.js";
+import {
+  buildUnboxBooleanBody,
+  buildUnboxBooleanLocals,
+  buildTypeofBooleanBody,
+} from "../../runtime/wasmgc/values/boolean-bodies.js";
+import { buildBoxBigIntBody, buildTypeofBigIntBody } from "../../runtime/wasmgc/values/bigint-primitive-bodies.js";
 import type { CodegenContext, ExternClassInfo } from "../context/types.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
@@ -701,6 +708,9 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     }
   }
 
+  if (ctx.undefinedGlobalIdx !== undefined && ctx.undefinedGlobalIdx >= threshold) {
+    ctx.undefinedGlobalIdx += delta;
+  }
   if (ctx.symbolCounterGlobalIdx >= threshold) {
     ctx.symbolCounterGlobalIdx += delta;
   }
@@ -1362,13 +1372,7 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   ctx.mod.types.push(buildBoxBooleanType());
 
   const bigIntStructIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "$BigInt",
-    fields: [{ name: "value", type: { kind: "i64", bigint: true }, mutable: false }],
-    // (#6656) Open: `$BigIntWide` (a value past i64) is its subtype.
-    superTypeIdx: -1,
-  });
+  ctx.mod.types.push(buildOpenBigIntType());
   registerWideBigIntTypes(ctx, bigIntStructIdx);
   ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;
   ctx.nativeBoxBooleanTypeIdx = boxBoolStructIdx;
@@ -1471,11 +1475,7 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   // #1644 Slice E1 — __box_bigint(i64) -> externref. In no-JS-host mode a
   // bigint-branded i64 needs a WasmGC carrier so it cannot fall through to the
   // number-box path and lose its BigInt identity at the externref frontier.
-  registerNative("__box_bigint", i64ToExternref, [
-    { op: "local.get", index: 0 },
-    { op: "struct.new", typeIdx: bigIntStructIdx },
-    { op: "extern.convert_any" },
-  ]);
+  registerNative("__box_bigint", i64ToExternref, buildBoxBigIntBody(bigIntStructIdx));
 
   // 6. __unbox_boolean(externref) -> i32
   //    Returns the boxed value if it's a __box_boolean_struct, otherwise
@@ -1485,36 +1485,7 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   //    fallback in `helpers.ts` does `v ? 1 : 0` which would say true,
   //    but for unbox-as-typed-call-arg the safe default is false).
   //    Boxed numbers go through __unbox_number first, then truthy-check.
-  registerNative(
-    "__unbox_boolean",
-    externrefToI32,
-    [
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
-      { op: "ref.test", typeIdx: boxBoolStructIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: boxBoolStructIdx },
-          { op: "struct.get", typeIdx: boxBoolStructIdx, fieldIdx: 0 },
-          { op: "return" },
-        ],
-      },
-      // not a boxed bool → false (conservative under wasi)
-      { op: "i32.const", value: 0 },
-    ],
-    [{ name: "$any_temp", type: { kind: "anyref" } as ValType }],
-  );
+  registerNative("__unbox_boolean", externrefToI32, buildUnboxBooleanBody(boxBoolStructIdx), buildUnboxBooleanLocals());
 
   // #1644 Slice E1 — __to_bigint(externref) -> i64. This is the native
   // ToBigInt frontier for values already represented by the standalone
@@ -1846,32 +1817,10 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   registerNative("__typeof_number", externrefToI32, buildTypeofNumberBody(boxNumStructIdx));
 
   // 9. __typeof_boolean(externref) -> i32 — `ref.test $box_boolean_struct`.
-  registerNative("__typeof_boolean", externrefToI32, [
-    { op: "local.get", index: 0 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-    },
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: boxBoolStructIdx },
-  ]);
+  registerNative("__typeof_boolean", externrefToI32, buildTypeofBooleanBody(boxBoolStructIdx));
 
   // 10. __typeof_bigint(externref) -> i32 — `ref.test $BigInt`.
-  registerNative("__typeof_bigint", externrefToI32, [
-    { op: "local.get", index: 0 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-    },
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: bigIntStructIdx },
-  ]);
+  registerNative("__typeof_bigint", externrefToI32, buildTypeofBigIntBody(bigIntStructIdx));
 
   // 11. __typeof_string(externref) -> i32. Under nativeStrings (auto-on
   //     for wasi) strings are NativeString structs at `ctx.anyStrTypeIdx`.

@@ -30,7 +30,14 @@ import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
 
 import { compile, compileMulti, compileProject } from "../src/index.ts";
-import { buildStringConstants, buildStringConstants16, jsString, wrapExports } from "../src/runtime.ts";
+import {
+  buildCompiledImports,
+  buildStringConstants,
+  buildStringConstants16,
+  jsString,
+  wrapExports,
+} from "../src/runtime.ts";
+import { instantiateLinkedProviders } from "../src/linked-provider-runtime.ts";
 
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
@@ -1638,6 +1645,19 @@ function packageSpecifierFor(setup) {
   return `./${entry.replace(/^\.\//, "")}`;
 }
 
+/**
+ * (#6779) `result.importObject` is built with the library's fail-closed
+ * dynamic-code default (`deny`). The perf lanes measure packages as they always
+ * ran — lodash's root detection reaches `Function("return this")()` — so build
+ * the same import object with the explicit `hostEval` policy.
+ */
+function npmCompatHostImportObject(result) {
+  const options = { dynamicCode: "hostEval" };
+  const imports = buildCompiledImports(result, undefined, options);
+  if (result.linkedModules?.length) instantiateLinkedProviders(result.linkedModules, imports, { options });
+  return imports;
+}
+
 async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   const target = lane === "js-host" || lane === "js-host-native" ? "gc" : "standalone";
   const driverPath = join(setup.root, `.js2-npm-compat-perf-${lane}.mjs`);
@@ -1746,9 +1766,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   let instance;
   const instantiateStarted = performance.now();
   try {
-    const importObject = target === "standalone" ? {} : (result.importObject ?? {});
+    const importObject = target === "standalone" ? {} : npmCompatHostImportObject(result);
     instance = await WebAssembly.instantiate(module, importObject);
-    importObject.__setInstance?.(instance);
+    importObject.setInstance?.(instance);
     const init = instance.exports.__module_init;
     if (typeof init === "function") init();
   } catch (error) {
@@ -1795,18 +1815,22 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
 }
 
 /**
- * (#6661) Render a module-init throw for a generic npm-compat lane. When the
- * payload cannot be rendered AND the module exports no `__exn_render_*` pair,
- * the throw cannot come from a source `throw` statement (#5384 keeps the pair
- * whenever the source has one) — it was raised by compiler-generated code,
- * e.g. the ReferenceError for an unresolved `require` (#6666). Say so instead
- * of leaving the bare "non-stringifiable payload" label.
+ * (#6661, #6666) Render a module-init throw for a generic npm-compat lane.
+ * Since #6666 every standalone/WASI module that can throw publishes an
+ * `__exn_render_*` pair — the full `__any_to_string` renderer when the source
+ * has a `throw`, else a lite one that renders the compiler-synthesized
+ * `$Error_struct` / string payloads (e.g. "ReferenceError: require is not
+ * defined", a null-guard "TypeError: … at L:C"). So an opaque label that
+ * survives means either an older binary without the pair, or a payload that is
+ * neither an Error nor a string reaching the lite renderer; name which.
  */
 function renderModuleInitThrow(error, instance) {
   const text = renderHarnessThrownText(error, instance);
   if (!instance || !text.includes("non-stringifiable payload")) return text;
-  if (typeof instance.exports?.__exn_render_prepare === "function") return text;
-  return `${text}: raised by compiler-generated code (the module has no source throw, so no __exn_render_* exports; see #6666)`;
+  if (typeof instance.exports?.__exn_render_prepare === "function") {
+    return `${text}: the payload is not an Error or string the module's renderer can read (see #6666)`;
+  }
+  return `${text}: the module publishes no __exn_render_* exports (see #6666)`;
 }
 
 const NPM_COMPAT_REPORT_SCRIPT = join(ROOT, "scripts", "generate-npm-compat-report.mjs");

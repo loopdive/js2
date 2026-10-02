@@ -1,0 +1,381 @@
+{
+  "status": "read-only authoring spec; contextual slices not historical executable module operands",
+  "head": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "target": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+  "booleanBeforeStage": "545923d1c9b0a30476f5a6e0dd7f5078be3c25c0",
+  "offsetUnits": "Unicode codepoints (all spans ASCII)",
+  "records": [
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "current": {
+        "sha256": "886c4898fe21558eac4a743cf478a7b9e7ab8edcf460436954dd1f9fda8faa56",
+        "bytes": 21289,
+        "gitBlob": "9e117958237449e8804c1907997f0487c16e3387"
+      },
+      "target": {
+        "sha256": "655e93317a2c15170f5bf63d12a494d8f9d3ae02f3a17aea216356a538e226f5",
+        "bytes": 21649,
+        "gitBlob": "dd0b6c3c61c29ee36decd179195cc38ad56afa66"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            14,
+            21
+          ],
+          "targetLines": [
+            14,
+            21
+          ],
+          "currentOffset": 683,
+          "targetOffset": 683,
+          "currentContextSha256": "94fe44134590fc585114d288b124bb5ac9c01719213b83a3f7eee69ce2cd6fa7",
+          "targetContextSha256": "67f25d2e242f8d570f2a15d9b53b513a78817521ee05b5ac197c28f1bc5c282c",
+          "currentContext": " * context.\n */\nexport interface NumberBoundaryPolicy {\n  /** Explicit host import or issued native number-box implementation. Omission stays unsupported. */\n  readonly box: \"host\" | \"native\" | \"unsupported\";\n  /** `host` selects `env.__unbox_number`; `native` the union-native function. */\n  readonly unbox: \"host\" | \"native\" | \"unsupported\";\n}\n",
+          "targetContext": " * context.\n */\nexport interface NumberBoundaryPolicy {\n  /** `host` selects `env.__box_number`. There is no native box arm in F1-S1. */\n  readonly box: \"host\" | \"unsupported\";\n  /** `host` selects `env.__unbox_number`; `native` the union-native function. */\n  readonly unbox: \"host\" | \"native\" | \"unsupported\";\n}\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        },
+        {
+          "ordinal": 1,
+          "currentLines": [
+            26,
+            36
+          ],
+          "targetLines": [
+            26,
+            41
+          ],
+          "currentOffset": 1211,
+          "targetOffset": 1179,
+          "currentContextSha256": "b61312d14fcf99c956d4439b0bc808b32cc0f92a9488ae5b9bbe544919bfdfcf",
+          "targetContextSha256": "a4cca2c031c2881e96723c2f0378b7cac0cafd4d400e51e95bf7df5078defc6c",
+          "currentContext": "  unbox: \"unsupported\",\n});\n\n/** Resolved Boolean carrier policy. Native extraction requires a proven carrier, not ToBoolean. */\nexport interface BooleanBoundaryPolicy {\n  readonly box: \"host\" | \"native\" | \"unsupported\";\n  /** Omitted means unsupported, preserving existing host-only and disabled policy records. */\n  readonly unbox?: \"native\" | \"unsupported\";\n}\n\n/** Adapters that expose no boolean boundary resolve the box arm to this. */\n",
+          "targetContext": "  unbox: \"unsupported\",\n});\n\n/**\n * (#3526 F1-S2) The exact, already-resolved BOOLEAN-boundary provider policy of\n * one preparation caller \u2014 a sibling of {@link NumberBoundaryPolicy}, not a\n * widening of it. The family is one-armed: the box arm resolves through the\n * host `env.__box_boolean` import, and there is no native boolean boxer to\n * select, so the union has no `\"native\"` member.\n */\nexport interface BooleanBoundaryPolicy {\n  /** `host` selects `env.__box_boolean`. There is no native box arm. */\n  readonly box: \"host\" | \"unsupported\";\n}\n\n/** Adapters that expose no boolean boundary resolve the box arm to this. */\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        },
+        {
+          "ordinal": 2,
+          "currentLines": [
+            69,
+            77
+          ],
+          "targetLines": [
+            74,
+            85
+          ],
+          "currentOffset": 3007,
+          "targetOffset": 3166,
+          "currentContextSha256": "bd220ed6190f377d3e4391c504dba457a1e98590db04e755802152e6aa7633c0",
+          "targetContextSha256": "3523225f7ed9eff263473c1eb4efa08c4eceacc18e3bc6cfc071b30f0a2e85a2",
+          "currentContext": " * seam's numeric boxing \u2014 a sibling of {@link NumberBoundaryPolicy}, never a\n * widening of it.\n *\n * Its policy remains independent of the synchronous number boundary. The\n * latter now has an explicit native boxing arm for an issued standalone value\n * owner; that addition does not select or widen this generator seam.\n */\nexport interface GeneratorNumberBoxPolicy {\n  /**\n",
+          "targetContext": " * seam's numeric boxing \u2014 a sibling of {@link NumberBoundaryPolicy}, never a\n * widening of it.\n *\n * The seam's truth table is deliberately WIDER than `numberBoundary`: this\n * boxing is performed natively on the GC native-strings lane, whereas\n * `numberBoundary.box` has no `\"native\"` member by design (F1-S1 excluded one\n * so that native `__box_number` presence could not widen the from-ast arm's\n * host-only policy). The two must therefore stay separate policies even though\n * both name the same physical symbol.\n */\nexport interface GeneratorNumberBoxPolicy {\n  /**\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": false
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "current": {
+        "sha256": "048358db8d8deeee38bb6d49e9fe9be41189441f6b26221733c832f16ce02cd1",
+        "bytes": 28324,
+        "gitBlob": "a9b945e529e106f61089a29440ae73d114d5d2c0"
+      },
+      "target": {
+        "sha256": "e4d48e76ea52bc2385dab915c6360be5ce31cc77041331c943521ecfc9e83cf0",
+        "bytes": 27119,
+        "gitBlob": "fb3c13fc4a9e624e0942a740e2c564ef90300fcd"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            35,
+            46
+          ],
+          "targetLines": [
+            35,
+            41
+          ],
+          "currentOffset": 1210,
+          "targetOffset": 1210,
+          "currentContextSha256": "f95c0b9d86493722090e431f358efe64b03c47977261a7a7db66c07a750e4f74",
+          "targetContextSha256": "184e503ead23fe3231064c2b30b82c5bdbbcaf6d57675c5194c6463a330b970a",
+          "currentContext": "  | HostCallbackWrapRuntimeFeature\n  | FunctionPrototypeCallRuntimeFeature\n  | NativeAsyncCallableRuntimeFeature\n  | \"js.closure.method\"\n  | \"js.closure.apply-vector\"\n  | \"js.closure.undefined\"\n  | VectorCallableRuntimeFeature\n  | OrdinaryObjectRuntimeFeature\n  | \"js.number.from-value\"\n  | ReferenceErrorRuntimeFeature;\n\nexport type HostCapabilityId = RuntimeHostCapabilityId;\n",
+          "targetContext": "  | HostCallbackWrapRuntimeFeature\n  | FunctionPrototypeCallRuntimeFeature\n  | NativeAsyncCallableRuntimeFeature\n  | VectorCallableRuntimeFeature\n  | ReferenceErrorRuntimeFeature;\n\nexport type HostCapabilityId = RuntimeHostCapabilityId;\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        },
+        {
+          "ordinal": 1,
+          "currentLines": [
+            99,
+            117
+          ],
+          "targetLines": [
+            94,
+            107
+          ],
+          "currentOffset": 3018,
+          "targetOffset": 2877,
+          "currentContextSha256": "b08719c0040ba105d4a3f17a027a463e0640d06587fbc3c4382ce9e53a0644cf",
+          "targetContextSha256": "349022b1411d97da646ae9387e20b9efc5844ca74af458ab6aafb903c85ea149",
+          "currentContext": "/** (#3526 F1-S1) One provider per admitted number-boundary policy arm. */\nexport const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([\n  \"host.js.number.box\",\n  \"native.js.number.box\",\n  \"host.js.number.unbox\",\n  \"native.js.number.unbox\",\n] as const);\n\nexport type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];\n\n/** Explicit host boxing and native Boolean carrier providers. */\nexport const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([\n  \"host.js.boolean.box\",\n  \"native.js.boolean.box\",\n  \"native.js.boolean.unbox\",\n] as const);\n\nexport type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];\n\n",
+          "targetContext": "/** (#3526 F1-S1) One provider per admitted number-boundary policy arm. */\nexport const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([\n  \"host.js.number.box\",\n  \"host.js.number.unbox\",\n  \"native.js.number.unbox\",\n] as const);\n\nexport type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];\n\n/** (#3526 F1-S2) The one admitted boolean-boundary policy arm. */\nexport const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([\"host.js.boolean.box\"] as const);\n\nexport type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];\n\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        },
+        {
+          "ordinal": 2,
+          "currentLines": [
+            399,
+            428
+          ],
+          "targetLines": [
+            389,
+            394
+          ],
+          "currentOffset": 17137,
+          "targetOffset": 16910,
+          "currentContextSha256": "6c9ef7c03d1995f91725993a6b86aa55ce2253ba2a57b5e5128352101686743c",
+          "targetContextSha256": "ff9cf5115f48ba61f53546d9431a090ee14bdbf680845c7b678147317152fd3d",
+          "currentContext": "export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([\"native.js.vector.elem-set.externref\"] as const);\nexport type VectorCallableRuntimeProviderId = (typeof VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS)[number];\n\n/** Semantic declarations only; no physical provider is granted by this catalogue. */\nexport const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([\n  \"js.object.create-default\",\n  \"js.object.create-null\",\n  \"js.object.create-with-prototype\",\n  \"js.object.define-data\",\n  \"js.object.define-accessor\",\n  \"js.object.define-attributes\",\n  \"js.object.get\",\n  \"js.object.has\",\n] as const);\nexport type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];\nexport const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([\n  \"native.js.object.create-default\",\n  \"native.js.object.create-null\",\n  \"native.js.object.create-with-prototype\",\n  \"native.js.object.define-data\",\n  \"native.js.object.define-accessor\",\n  \"native.js.object.define-attributes\",\n  \"native.js.object.get\",\n  \"native.js.object.has\",\n] as const);\nexport type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];\n\nexport type RuntimeProviderId =\n  | MathRuntimeProviderId\n  | NumericCoercionRuntimeProviderId\n",
+          "targetContext": "export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([\"native.js.vector.elem-set.externref\"] as const);\nexport type VectorCallableRuntimeProviderId = (typeof VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS)[number];\n\nexport type RuntimeProviderId =\n  | MathRuntimeProviderId\n  | NumericCoercionRuntimeProviderId\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        },
+        {
+          "ordinal": 3,
+          "currentLines": [
+            441,
+            447
+          ],
+          "targetLines": [
+            407,
+            412
+          ],
+          "currentOffset": 18819,
+          "targetOffset": 17650,
+          "currentContextSha256": "deb3d437a752b78323bebf0a611fc5425ba258ded033f0d662bf86e8801d45a3",
+          "targetContextSha256": "f685ffb0b69ba8f5ffcd9a1af2b844910fd12fcd1346385629d20709715e5217",
+          "currentContext": "  | FunctionPrototypeCallRuntimeProviderId\n  | ReferenceErrorRuntimeProviderId\n  | NativeAsyncCallableRuntimeProviderId\n  | OrdinaryObjectRuntimeProviderId\n  | VectorCallableRuntimeProviderId\n  | AsyncRuntimeProviderId;\n\n",
+          "targetContext": "  | FunctionPrototypeCallRuntimeProviderId\n  | ReferenceErrorRuntimeProviderId\n  | NativeAsyncCallableRuntimeProviderId\n  | VectorCallableRuntimeProviderId\n  | AsyncRuntimeProviderId;\n\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": false
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "current": {
+        "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+        "bytes": 2316,
+        "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+      },
+      "target": {
+        "sha256": "c39593810291752471e1f7c513b4e6e7b254d28aa236c0122a4587ab7a71f2b7",
+        "bytes": 2272,
+        "gitBlob": "3356bc74ab47b9598ab854701950569b95b59c3c"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            46,
+            52
+          ],
+          "targetLines": [
+            46,
+            51
+          ],
+          "currentOffset": 1460,
+          "targetOffset": 1460,
+          "currentContextSha256": "99a40692691946149495843483f052d659c3773e2e68d56bb20769a4884ae6b1",
+          "targetContextSha256": "2e7d140aa9ffed26a5c488cef020ed8fca9bbc50de3db57a3813751a65325481",
+          "currentContext": "export {\n  F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n  EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,\n  EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,\n  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n  EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,\n  EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,\n",
+          "targetContext": "export {\n  F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n  EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,\n  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n  EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,\n  EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": true,
+      "targetEquals545": true
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "current": {
+        "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+        "bytes": 3446,
+        "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+      },
+      "target": {
+        "sha256": "276b890af04a1c5f4f96c2764f7cbd7dcd5d3d12a8951c08c290e3577b9a7ef3",
+        "bytes": 3859,
+        "gitBlob": "528bebdab2e8b74d5b6d85584b1e8a325c097cdc"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            59,
+            66
+          ],
+          "targetLines": [
+            59,
+            75
+          ],
+          "currentOffset": 1695,
+          "targetOffset": 1695,
+          "currentContextSha256": "57392cc506b660e9c291dc83908ff12e711d9c60b542f4e3df012c605c2876b0",
+          "targetContextSha256": "c9f4742320c527803282168dea1ed4ccd76f5fbdc9449b67dbd0884dfa044cb2",
+          "currentContext": "\nexport type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];\n\n/** Boolean carrier boundaries. Unbox requires a proven Boolean carrier, never general truthiness. */\nexport const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze([\"js.boolean.box\", \"js.boolean.unbox\"] as const);\n\nexport type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];\n\n",
+          "targetContext": "\nexport type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];\n\n/**\n * (#3526 F1-S2) The synchronous BOOLEAN boundary \u2014 the branded-i32\u2192externref\n * carrier the front-end used to emit as a direct named call to\n * `__box_boolean` after reading the `hasHostBooleanBox` resolver predicate.\n *\n * A deliberate SIBLING of the number constants, not a widening of them: this\n * family is one-armed. There is no `js.boolean.unbox` because there is no\n * front-end producer for one \u2014 `__unbox_boolean` is a union member with no IR\n * consumer, and the boolean capability has no widening follow-up.\n */\nexport const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze([\"js.boolean.box\"] as const);\n\nexport type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];\n\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": true,
+      "targetEquals545": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "current": {
+        "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+        "bytes": 3101,
+        "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+      },
+      "target": {
+        "sha256": "401d18d79bb03d25924fb5f25de22209667067657e36861087be981230357f1f",
+        "bytes": 3090,
+        "gitBlob": "3bc31e819b9c7d9b7c5b27d9d7a6b70ad6f75e00"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            55,
+            62
+          ],
+          "targetLines": [
+            55,
+            62
+          ],
+          "currentOffset": 1223,
+          "targetOffset": 1223,
+          "currentContextSha256": "953043ed6d09b6687d7935aeb38716e78ba46f99723cc74490254d8515f8e695",
+          "targetContextSha256": "242b69c5b8c3275121cb2cafcd8c3cfb77736fe28abf3b78899dcf40a480cd4f",
+          "currentContext": "/** Feature rows mirror the number-boundary intrinsic IDs 1:1. */\nexport const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.number.box\", \"js.number.unbox\"] as const);\n\n/** Boolean carrier features mirror the semantic intrinsic IDs. */\nexport const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.boolean.box\", \"js.boolean.unbox\"] as const);\n\n/** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */\nexport const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.extern.is_undefined\"] as const);\n",
+          "targetContext": "/** Feature rows mirror the number-boundary intrinsic IDs 1:1. */\nexport const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.number.box\", \"js.number.unbox\"] as const);\n\n/** (#3526 F1-S2) The boolean-boundary feature row, 1:1 with its one ID. */\nexport const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.boolean.box\"] as const);\n\n/** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */\nexport const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.extern.is_undefined\"] as const);\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": true,
+      "targetEquals545": true
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "current": {
+        "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+        "bytes": 11038,
+        "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+      },
+      "target": {
+        "sha256": "dd020e9d33602174b4f1e60329e385f20fbb4bbd0eb2c87ab1ac2d5955ae0262",
+        "bytes": 10551,
+        "gitBlob": "b68b63191d636d3a995812d1030efc3bde266f74"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            66,
+            78
+          ],
+          "targetLines": [
+            66,
+            71
+          ],
+          "currentOffset": 2270,
+          "targetOffset": 2270,
+          "currentContextSha256": "972bc51a7146cdcd1a271f2833ab61bb2fac49d882d97a719411f2511c72097a",
+          "targetContextSha256": "fe9bd2660daa5da5c7226b0b79943c2eb01a9640aef19f67eb98d150b0b64c85",
+          "currentContext": "  version: INTRINSIC_SIGNATURE_VERSION,\n  params: Object.freeze([I32_TYPE]),\n  result: EXTERNREF_TYPE,\n});\n\n/** Exact Boolean carrier extraction. The logical brand survives the physical i32 ABI. */\nexport const EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({\n  version: INTRINSIC_SIGNATURE_VERSION,\n  params: Object.freeze([EXTERNREF_TYPE]),\n  result: Object.freeze({ kind: \"val\" as const, val: Object.freeze({ kind: \"i32\" as const, boolean: true as const }) }),\n});\n\n/**\n",
+          "targetContext": "  version: INTRINSIC_SIGNATURE_VERSION,\n  params: Object.freeze([I32_TYPE]),\n  result: EXTERNREF_TYPE,\n});\n\n/**\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        },
+        {
+          "ordinal": 1,
+          "currentLines": [
+            197,
+            203
+          ],
+          "targetLines": [
+            190,
+            195
+          ],
+          "currentOffset": 8011,
+          "targetOffset": 7620,
+          "currentContextSha256": "d709738e78f4e8f34d15d7a26579ab324fb9f5a3a9910690429418e1bcaf7256",
+          "targetContextSha256": "17c4a3073cbff65a4d6f46b24b3efc19885b0d11abd21c79370d8b738e1272be",
+          "currentContext": "  \"js.number.box\": definition(\"js.number.box\", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),\n  \"js.number.unbox\": definition(\"js.number.unbox\", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),\n  \"js.boolean.box\": definition(\"js.boolean.box\", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),\n  \"js.boolean.unbox\": definition(\"js.boolean.unbox\", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),\n  \"js.extern.is_undefined\": definition(\"js.extern.is_undefined\", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n  \"math.abs\": definition(\"math.abs\", F64_UNARY_INTRINSIC_SIGNATURE),\n  \"math.acos\": definition(\"math.acos\", F64_UNARY_INTRINSIC_SIGNATURE),\n",
+          "targetContext": "  \"js.number.box\": definition(\"js.number.box\", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),\n  \"js.number.unbox\": definition(\"js.number.unbox\", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),\n  \"js.boolean.box\": definition(\"js.boolean.box\", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),\n  \"js.extern.is_undefined\": definition(\"js.extern.is_undefined\", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n  \"math.abs\": definition(\"math.abs\", F64_UNARY_INTRINSIC_SIGNATURE),\n  \"math.acos\": definition(\"math.acos\", F64_UNARY_INTRINSIC_SIGNATURE),\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": true,
+      "targetEquals545": true
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "current": {
+        "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+        "bytes": 4751,
+        "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+      },
+      "target": {
+        "sha256": "58d4a7fdc7d374c838ebeb07744c5f8bae543573e5142bfab6bed7846f408651",
+        "bytes": 4520,
+        "gitBlob": "83b10ec4b2ec60d898a588e6af8287f41622b817"
+      },
+      "targetCommit": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "spans": [
+        {
+          "ordinal": 0,
+          "currentLines": [
+            41,
+            51
+          ],
+          "targetLines": [
+            41,
+            46
+          ],
+          "currentOffset": 1681,
+          "targetOffset": 1681,
+          "currentContextSha256": "8c48d2a794a9bd5ea878bb565c59bd8db2f57743ea799bb5440ad0f2c7a1fe30",
+          "targetContextSha256": "63e18800279885c15385a40d3dba1ec5d1fcffd3aa917f473c16273596fc95df",
+          "currentContext": "      return `${use.id} argument ${index} does not match its v${signature.version} signature`;\n    }\n  }\n  if (\n    use.id === \"js.boolean.unbox\" &&\n    (use.resultType.kind !== \"val\" || use.resultType.val.kind !== \"i32\" || use.resultType.val.boolean !== true)\n  )\n    return `${use.id} result must preserve its Boolean carrier brand`;\n  if (!irTypeEquals(use.resultType, signature.result)) {\n    return `${use.id} result does not match its v${signature.version} signature`;\n  }\n",
+          "targetContext": "      return `${use.id} argument ${index} does not match its v${signature.version} signature`;\n    }\n  }\n  if (!irTypeEquals(use.resultType, signature.result)) {\n    return `${use.id} result does not match its v${signature.version} signature`;\n  }\n",
+          "inverseInstruction": "Replace only reviewed changed atoms/docs within authentic live context; copy all unchanged slices from live source. No full declaration/body fallback."
+        }
+      ],
+      "inverseFullExact": true,
+      "forwardFullExact": true,
+      "booleanFiveFile": true,
+      "targetEquals545": true
+    }
+  ]
+}

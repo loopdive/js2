@@ -7,6 +7,11 @@
  * - compileCallablePropertyCall — call to a callable struct field
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
+import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { standaloneMissingStringArgRead, standaloneRefToExternBridge } from "./dispatch-extern-arg-bridge.js";
+import { tryEmitFunctionTypedPropertyCall } from "./function-typed-property-call.js";
+import { dispatchVecResultBridge, reserveDispatchVecResultMaterializer } from "./dispatch-vec-result-bridge.js";
+import { planCallablePropertyApplyFallback } from "./callable-property-apply-fallback.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
@@ -60,6 +65,7 @@ import {
   emitWrapperDynamicMethodCall,
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
+  tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
 
 /**
@@ -151,7 +157,7 @@ function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValTy
         if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
       }
     }
-    return null;
+    return standaloneRefToExternBridge(ctx, from, to); // (#6704)
   }
 
   if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
@@ -483,6 +489,11 @@ function emitRootFuncrefDispatch(
     // rule without dropping their side effects.
     const fcFixedCount = fc.restReading === true ? fc.paramTypes.length - 1 : fc.paramTypes.length;
     for (let index = 0; index < fcFixedCount; index++) {
+      const strRead = standaloneMissingStringArgRead(ctx, argLocals[index]!, argTypes[index]!, fc.paramTypes[index]!);
+      if (strRead !== null) {
+        fcCallBody.push(...strRead); // (#6704) missing string → undefined
+        continue;
+      }
       fcCallBody.push({ op: "local.get", index: argLocals[index]! });
       const bridge = callablePropertyRefBridge(ctx, argTypes[index]!, fc.paramTypes[index]!);
       if (bridge === null) {
@@ -545,8 +556,12 @@ function emitRootFuncrefDispatch(
       coerceType(ctx, fctx, fc.returnType!, expectedReturn!);
       fctx.body = saved;
     } else if (matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)) {
-      fcCallBody.push({ op: "drop" });
-      fcCallBody.push(...defaultValueInstrs(expectedReturn!));
+      // (#6684) A live externref result survives a guarded downcast (no-host).
+      const guarded =
+        dispatchVecResultBridge(ctx, fc.returnType!, expectedReturn!) ?? // (#6704) array carrier → expected vec
+        guardedExternRefResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+      if (guarded !== null) fcCallBody.push(...guarded);
+      else fcCallBody.push({ op: "drop" }, ...defaultValueInstrs(expectedReturn!));
     }
 
     funcDispatch = [
@@ -1503,16 +1518,17 @@ export function compileCallablePropertyCall(
   // compiling the receiver, so the capture below rides the ONE evaluation.
   let bind: ObjectLiteralMethodReceiverBind | undefined;
 
+  let receiverOverride = precompiledReceiver;
   const compileReceiver = (expectedType?: ValType): ValType | null => {
-    if (precompiledReceiver === undefined) {
+    if (receiverOverride === undefined) {
       return compileExpression(ctx, fctx, propAccess.expression, expectedType);
     }
-    fctx.body.push({ op: "local.get", index: precompiledReceiver.localIdx });
-    if (expectedType !== undefined && !valTypesMatch(precompiledReceiver.type, expectedType)) {
-      coerceType(ctx, fctx, precompiledReceiver.type, expectedType);
+    fctx.body.push({ op: "local.get", index: receiverOverride.localIdx });
+    if (expectedType !== undefined && !valTypesMatch(receiverOverride.type, expectedType)) {
+      coerceType(ctx, fctx, receiverOverride.type, expectedType);
       return expectedType;
     }
-    return precompiledReceiver.type;
+    return receiverOverride.type;
   };
 
   const compileCallableFieldValue = (): void => {
@@ -1578,6 +1594,14 @@ export function compileCallablePropertyCall(
     // runtime field still carries the real closure. On the JS-host lane, call
     // it through the ordinary host method bridge instead of letting the
     // downstream graceful fallback silently drop the invocation.
+    const applied = tryEmitFunctionTypedPropertyCall(ctx, fctx, expr, propAccess, fieldType, {
+      compile: () => compileReceiver(),
+      readField: (localIdx, type) => {
+        receiverOverride = { localIdx, type };
+        compileCallableFieldValue();
+      },
+    }); // (#6704) a `Function`-typed field on the host-free lane
+    if (applied !== undefined) return applied;
     if (fieldType.kind === "externref" && !noJsHost(ctx)) {
       const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
       if (dynamic !== null) return dynamic;
@@ -1800,6 +1824,7 @@ export function compileCallablePropertyCall(
       );
       const calleeIsAsync = isPromiseType(sigRetType);
       const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType;
+      reserveDispatchVecResultMaterializer(ctx, fctx, expectedReturn); // (#6704)
       const rootIdx = getFuncRefWrapperRootTypeIdx(ctx) ?? wrapperStructIdx;
       const deferredDispatchIdx = deferredCallablePropertyDispatchEligible(
         matchedClosureInfo.paramTypes,
@@ -1827,8 +1852,15 @@ export function compileCallablePropertyCall(
             )
           : [];
 
+      // (#6704) A non-wrapper callable value gets the generic apply instead of a trap.
+      const multi = deferredDispatchIdx !== undefined || funcCandidates.length > 1;
+      const fallback = multi
+        ? planCallablePropertyApplyFallback(ctx, fctx, expr, fieldType, matchedClosureInfo.paramTypes, expectedReturn)
+        : null;
+
       // Compile receiver (normalized to the struct type, #1734), get field value.
       bind = planObjectLiteralMethodReceiverBind(ctx, fctx, propAccess.name);
+      receiverOverride = fallback?.captureReceiver(compileReceiver, receiverOverride) ?? receiverOverride;
       compileCallableFieldValue();
 
       if (deferredDispatchIdx === undefined && funcCandidates.length <= 1) {
@@ -1900,6 +1932,7 @@ export function compileCallablePropertyCall(
       // intact (mirrors calls.ts #2174).
       const rootRefType: ValType = { kind: "ref_null", typeIdx: rootIdx };
       const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, rootRefType);
+      fallback?.teeRawValue();
       if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
       emitGuardedRefCast(fctx, rootIdx);
       fctx.body.push({ op: "local.set", index: closureLocal });
@@ -1930,6 +1963,7 @@ export function compileCallablePropertyCall(
 
       // After the args (they may read the caller's `this`), before the ladder.
       if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
+      const ladderStart = fctx.body.length;
       if (deferredDispatchIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: closureLocal });
         for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
@@ -1956,6 +1990,7 @@ export function compileCallablePropertyCall(
           restArgCount,
         );
       }
+      fallback?.wrapLadder(ladderStart, closureLocal, argLocals, expectedReturn);
 
       // A target that does not itself read `arguments` leaves the module
       // globals untouched. Clear them after the indirect call while preserving
@@ -2614,7 +2649,7 @@ export function tryExternClassMethodOnAny(
   // unsatisfiable standalone (e.g. `(Object.values(o) as any).join(",")`). Route
   // to the native externref `join` (host-free under noJsHost since #3155); host
   // lane keeps the existing binding (byte-identical).
-  if (noJsHost(ctx) && methodName === "join") {
+  if (noJsHost(ctx) && methodName === "join" && !joinOnTypedArrayIntrinsicProto(ctx, propAccess)) {
     const nativeJoin = compileArrayJoinExtern(ctx, fctx, propAccess, expr);
     if (nativeJoin !== null) return nativeJoin;
   }
@@ -2697,4 +2732,14 @@ export function tryExternClassMethodOnAny(
     return sig.results[0]!;
   }
   return null;
+}
+
+/**
+ * (#6769 S7b) `%TypedArray%.prototype.join()` called on the prototype object
+ * itself must reach the closed-method dispatcher's `$NativeProto` arm and its
+ * brand TypeError (§23.2.3.18 step 1, as for the eight sibling methods), so the
+ * `any`-receiver native `join` above declines it.
+ */
+function joinOnTypedArrayIntrinsicProto(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
+  return ctx.standalone === true && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
 }

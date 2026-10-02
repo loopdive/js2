@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
 
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -436,10 +437,7 @@ const sourcePaths = {
 type Sources = Record<keyof typeof sourcePaths, string>;
 function liveSources(): Sources {
   return Object.fromEntries(
-    Object.entries(sourcePaths).map(([key, path]) => [
-      key,
-      readFileSync(resolve(import.meta.dirname, "..", path), "utf8"),
-    ]),
+    Object.entries(sourcePaths).map(([key, path]) => [key, readBeforeResumeMain(path)]),
   ) as Sources;
 }
 function parsed(text: string): ts.SourceFile {
@@ -592,13 +590,87 @@ function verifyCommentReceipt(text: string, owner: keyof Sources): void {
   if (actual.count !== expected.count || actual.sha256 !== expected.sha256)
     throw Error("complete comment receipt: " + owner);
 }
+function inverseBigIntImports(
+  text: string,
+  bodies = readFileSync(
+    resolve(import.meta.dirname, "../src/runtime/wasmgc/values/bigint-primitive-bodies.ts"),
+    "utf8",
+  ),
+): string {
+  const target = "../../runtime/wasmgc/values/bigint-primitive-bodies.js";
+  removeImport(text, target, ["buildBigIntPrimitiveType", "buildBoxBigIntBody", "buildTypeofBigIntBody"]);
+  const declaration = parsed(text).statements.find(
+    (node) =>
+      ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === target,
+  )!;
+  let restored = replaceOnce(text, declaration.getText() + "\n", "");
+  restored = replaceOnce(
+    restored,
+    "  ctx.mod.types.push(buildBigIntPrimitiveType());",
+    "  ctx.mod.types.push(" + returned(bodies, "buildBigIntPrimitiveType") + ");",
+  );
+  const box = returned(bodies, "buildBoxBigIntBody");
+  const expandedBox = "[\n    " + box.slice(1, -1).replaceAll("}, {", "},\n    {") + ",\n  ]";
+  restored = replaceOnce(
+    restored,
+    '  registerNative("__box_bigint", i64ToExternref, buildBoxBigIntBody(bigIntStructIdx));',
+    '  registerNative("__box_bigint", i64ToExternref, ' + expandedBox + ");",
+  );
+  return replaceOnce(
+    restored,
+    '  registerNative("__typeof_bigint", externrefToI32, buildTypeofBigIntBody(bigIntStructIdx));',
+    '  registerNative("__typeof_bigint", externrefToI32, ' + returned(bodies, "buildTypeofBigIntBody") + ");",
+  );
+}
+
+// Undo the latest extraction before either historical exact-text forward inverse.
+// Bodies come from the actual builders; no saved donor body replaces their content.
+function inverseBooleanImports(
+  text: string,
+  bodies = readFileSync(resolve(import.meta.dirname, "../src/runtime/wasmgc/values/boolean-bodies.ts"), "utf8"),
+): string {
+  text = inverseBigIntImports(text);
+  const target = "../../runtime/wasmgc/values/boolean-bodies.js";
+  removeImport(text, target, ["buildUnboxBooleanBody", "buildUnboxBooleanLocals", "buildTypeofBooleanBody"]);
+  const declaration = parsed(text).statements.find(
+    (node) =>
+      ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === target,
+  )!;
+  let restored = replaceOnce(text, declaration.getText() + "\n", "");
+  const unbox = returned(bodies, "buildUnboxBooleanBody").replaceAll("\n", "\n  ");
+  const locals = replaceOnce(
+    returned(bodies, "buildUnboxBooleanLocals"),
+    '{ kind: "anyref" }',
+    '{ kind: "anyref" } as ValType',
+  );
+  restored = replaceOnce(
+    restored,
+    '  registerNative("__unbox_boolean", externrefToI32, buildUnboxBooleanBody(boxBoolStructIdx), buildUnboxBooleanLocals());',
+    '  registerNative(\n    "__unbox_boolean",\n    externrefToI32,\n    ' + unbox + ",\n    " + locals + ",\n  );",
+  );
+  return replaceOnce(
+    restored,
+    '  registerNative("__typeof_boolean", externrefToI32, buildTypeofBooleanBody(boxBoolStructIdx));',
+    '  registerNative("__typeof_boolean", externrefToI32, ' + returned(bodies, "buildTypeofBooleanBody") + ");",
+  );
+}
+
+const followupImportsForwardText = readFileSync(
+  resolve(import.meta.dirname, "fixtures/issue-3518-native-value-main-followup-forward.json"),
+  "utf8",
+);
+const followupImportsForwardHash = "8c2c0dfd62d0716a2748dac7c11bb30293499e1bb6097e3874ee19b35d801ffa";
+function inverseFollowupImports(text: string, fixtureText = followupImportsForwardText): string {
+  return inversePreparedSourceForward(inverseBooleanImports(text), fixtureText, followupImportsForwardHash);
+}
+
 const mainImportsForwardText = readFileSync(
   resolve(import.meta.dirname, "fixtures/issue-3518-native-value-delivered-main-import-forward.json"),
   "utf8",
 );
 const mainImportsForwardHash = "ca30cadbb7ff0c73b21d920de6ac9a1b9ba6d734d16e23eb7e9fbb7b533b5a17";
 function inverseMainImports(text: string, fixtureText = mainImportsForwardText): string {
-  return inversePreparedSourceForward(text, fixtureText, mainImportsForwardHash);
+  return inversePreparedSourceForward(inverseFollowupImports(text), fixtureText, mainImportsForwardHash);
 }
 
 const preparedImportsForwardText = readFileSync(
@@ -690,6 +762,92 @@ function verifySourceReceipts(live: Sources): void {
     verifyCommentReceipt(historical[owner], owner);
   }
 }
+
+describe("BigInt extraction outer inverse", () => {
+  it("keeps altered actual builder data visible", () => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    const bodies = readFileSync(
+      resolve(import.meta.dirname, "../src/runtime/wasmgc/values/bigint-primitive-bodies.ts"),
+      "utf8",
+    );
+    const changed = replaceOnce(bodies, "mutable: false", "mutable: true");
+    expect(inverseBigIntImports(live.union, changed)).not.toBe(inverseBigIntImports(live.union));
+  });
+  it("refuses redirected BigInt builder imports", () => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    expect(() =>
+      inverseBigIntImports(
+        replaceOnce(
+          live.union,
+          '"../../runtime/wasmgc/values/bigint-primitive-bodies.js"',
+          '"../../runtime/wasmgc/values/other-bigint-bodies.js"',
+        ),
+      ),
+    ).toThrow("canonical import");
+  });
+});
+
+describe("Boolean extraction precedes historical native-value inverses", () => {
+  const donorHash = "143a0f5cdc03fa58704b467ea180576913a104080d064011d7caed60f14f378c";
+  const bodies = () =>
+    readFileSync(resolve(import.meta.dirname, "../src/runtime/wasmgc/values/boolean-bodies.ts"), "utf8");
+  it("restores the exact signed 7de4c2f registry bytes from actual builders", () => {
+    expect(createHash("sha256").update(inverseBooleanImports(liveSources().union)).digest("hex")).toBe(donorHash);
+  });
+  it("keeps altered builder instructions visible to the donor receipt", () => {
+    const live = liveSources().union;
+    expect(createHash("sha256").update(inverseBooleanImports(live)).digest("hex")).toBe(donorHash);
+    const changed = replaceOnce(bodies(), "fieldIdx: 0", "fieldIdx: 1");
+    expect(createHash("sha256").update(inverseBooleanImports(live, changed)).digest("hex")).not.toBe(donorHash);
+  });
+  it("refuses a redirected adapter import", () => {
+    const live = liveSources().union;
+    expect(createHash("sha256").update(inverseBooleanImports(live)).digest("hex")).toBe(donorHash);
+    expect(() =>
+      inverseBooleanImports(
+        replaceOnce(
+          live,
+          '"../../runtime/wasmgc/values/boolean-bodies.js"',
+          '"../../runtime/wasmgc/values/other-boolean-bodies.js"',
+        ),
+      ),
+    ).toThrow("canonical import");
+  });
+});
+
+describe("authenticated intervening main native-value changes", () => {
+  const fixture = JSON.parse(followupImportsForwardText) as { spans: { id: string; before: string; after: string }[] };
+  it("restores the historical prepared hash through committed main changes", () => {
+    expect(fixture.spans).toHaveLength(5);
+    expect(createHash("sha256").update(inverseMainImports(liveSources().union)).digest("hex")).toBe(
+      "be46472568a57e877571770c817ede6af9ad6e8ca71d04da77aa6c20bca68668",
+    );
+    verifySourceReceipts(liveSources());
+  });
+  it.each(fixture.spans.flatMap((span) => ["missing", "changed"].map((mutation) => ({ span, mutation }))))(
+    "rejects $mutation committed span $span.id after the positive",
+    ({ span, mutation }) => {
+      const live = liveSources();
+      verifySourceReceipts(live);
+      const union = replaceOnce(
+        live.union,
+        span.after,
+        mutation === "missing" ? span.before : span.after.replace("\n", "\n// altered committed span\n"),
+      );
+      expect(() => parsed(union)).not.toThrow();
+      expect(() => inverseFollowupImports(union)).toThrow("prepared forward span");
+    },
+  );
+  it("rejects altered followup provenance", () => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    expect(() => inverseFollowupImports(live.union, followupImportsForwardText + " ")).toThrow(
+      "fixture digest mismatch",
+    );
+  });
+});
 
 describe("independently authenticated delivered-main native-value import update", () => {
   const fixture = JSON.parse(mainImportsForwardText) as { spans: { before: string; after: string }[] };

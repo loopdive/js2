@@ -30,6 +30,7 @@ import {
   emitGeneratorFunctionPrototypeSingleton,
   isStaticSyncGeneratorFunctionValue,
 } from "../generator-function-intrinsic.js";
+import { isDynamicGeneratorFunctionValue } from "../generator-function-dynamic.js"; // (#6651 A14)
 import { isAnyValue, undefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import {
@@ -143,6 +144,7 @@ import {
   classStaticOwnPropertyNames,
   hasClassStaticMethod,
 } from "../class-static-metadata.js";
+import { isClassStaticReflectiveMember } from "../class-static-descriptor.js"; // (#6767)
 import { standaloneClassProtoObjectApplies } from "../class-proto-object.js";
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
@@ -2447,7 +2449,10 @@ export function compileBuiltinStaticCall(
     // `built-ins/GeneratorFunction/**` row uses — and for a provably unchanged
     // object-literal generator METHOD (`o.m`, see the predicate). Neither
     // operand evaluation is observable, so neither is compiled.
-    if ((ctx.standalone || ctx.wasi) && isStaticSyncGeneratorFunctionValue(ctx, arg0)) {
+    if (
+      (ctx.standalone || ctx.wasi) &&
+      (isStaticSyncGeneratorFunctionValue(ctx, arg0) || isDynamicGeneratorFunctionValue(ctx, arg0))
+    ) {
       const t = emitGeneratorFunctionPrototypeSingleton(ctx, fctx);
       if (t) return t;
     }
@@ -3329,10 +3334,9 @@ export function compileBuiltinStaticCall(
             !ctx.staticAccessorSet.has(`${classIdentity}_${propLiteral}`) &&
             !ctx.staticProps.has(`${classIdentity}_${propLiteral}`);
           const methodNames = ctx.classMethodNames.get(structName);
-          const staticMethodNames = ctx.classStaticMethodNames.get(structName);
-          const isMethodLookup =
-            (methodNames && methodNames.includes(propLiteral)) ||
-            (staticMethodNames && staticMethodNames.includes(propLiteral));
+          // (#6767) …and, standalone, a static ACCESSOR: the native's class-object view answers both.
+          const isStaticMember = isClassStaticReflectiveMember(ctx, structName, propLiteral);
+          const isMethodLookup = (methodNames && methodNames.includes(propLiteral)) || isStaticMember;
           if (isMethodLookup || isClassIntrinsicLookup) {
             // Skip the fast-path null-return; let the dynamic fallback below
             // handle the method case via the host import.

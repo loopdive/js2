@@ -3,14 +3,14 @@ id: 680
 title: "Wasm-native generators (state machines) with optional JS host fallback"
 status: ready
 created: 2026-03-20
-updated: 2026-09-01
+updated: 2026-09-28
 priority: high
 feasibility: hard
 reasoning_effort: max
 goal: standalone-mode
 sprint: current
-active_slice: expression-continuations
-active_branch: codex/680-expr-continuations-d60-20260831
+active_slice: prettier-generator-shapes
+active_branch: issue-680-prettier-generators
 required_by: [681, 735, 762, 1042]
 loc-budget-allow:
   - src/codegen/index.ts
@@ -18,10 +18,14 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/expressions.ts
   - src/codegen/generators-native.ts
+  # 2026-09-28 (#680 prettier slice): +4, skip string carriers in the native-state drain.
+  - src/codegen/destructuring-params.ts
 func-budget-allow:
   - src/codegen/expressions.ts::compileExpressionInner
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/generators-native.ts::compileState
+  # 2026-09-28 (#680 prettier slice): +4, same guard.
+  - src/codegen/destructuring-params.ts::destructureParamArray
 files:
   src/codegen/statements.ts:
     breaking:
@@ -1522,3 +1526,74 @@ synthetic pre-push must use that documentation commit's actual SHA; its
 typecheck/lint/format/ratchet/parity/issue-integrity result is the final local
 publication proof. Fetch upstream once more immediately afterward and only
 push if its live SHA still equals c372.
+
+## Implementation Plan — prettier generator shapes (2026-09-28, executed)
+
+prettier 3.8.1 `standalone.mjs` (the npm-compat `standalone-dynamic` lane) was
+refused with this issue's diagnostic at three generators, found by dumping
+every compile error with its location:
+
+| fn | source shape | planner bail |
+| --- | --- | --- |
+| `be` (child-node walker) | `let {getVisitorKeys:u, filter:r=()=>!0} = t, o = n => …; for (let n of u(e)) { … if (Array.isArray(a)) for (let s of a) o(s) && (yield s); else o(a) && (yield a) }` | `lowerForOf`: subject is not a typed iterator object; `o(s) && (yield s)` in a nested list |
+| `Cr` (breadth-first walker) | `let u = [e]; for (let r = 0; r < u.length; r++) { let o = u[r]; for (let n of be(o, t)) yield n, u.push(n) }` | comma statement in a nested list; `u` is an evolving `any[]` spill |
+| `Ko` (parser enumerator) | `for (let o of t) if (o.parsers) { for (let n of o.parsers) if (!r.has(n)) { …; a?.name && (s += …), yield {value: n, description: s} } }` | `if` on an `any` condition; comma statement |
+
+All three yield objects/`any`, so they already take the boxed-any carrier.
+Increment, standalone/WASI only (every new arm is gated on `noJsHostTarget`):
+
+1. **Expression-statement desugaring** (new `generators-native-general.ts`):
+   `A, B;` → `A; B;`, `A && B;` → `if (A) B;`, `A || B;` → `if (!A) B;`,
+   `A ? B : C;` → `if/else` — exact because the completion value is discarded;
+   `A` must be yield-free. Applied only where the #680 expression-continuation
+   arm refuses outright (non-f64 carrier, try region, nested list), so no
+   currently-lowered shape is rerouted.
+2. **Generic for-of**: a subject that is not a typed iterator object goes
+   through the #6651 A4 linearised loop skeleton (`__iterator` /
+   `__iterator_next`, iterator record in frame spills, `dstr-close` unwind
+   entry) with a single PutValue into the loop binding
+   (`lowerLinearForOfBinding`, sharing `planForOfLoop` with the pattern head).
+   Typed iterator subjects keep A2's `for-of-step` terminator.
+3. **Non-numeric branch conditions** (`if` / `while` / `do` / `for`) take the
+   canonical ToBoolean path (`canonical: true`); numeric/boolean conditions keep
+   the historical test byte-for-byte.
+4. **Destructuring-declaration locals are spilled** — a pre-existing silent
+   wrong value: `function* g(o){ let {a, b} = o; yield 1; yield a + b }` gave
+   `0` instead of `15` after the first resume. Typed like `ensureBindingLocals`;
+   rest elements and non-round-tripping types keep the old behaviour. An
+   evolving `any[]` literal spills at `externref` (the post-emit reconcile pins
+   the field), as the A4 path already did.
+5. `destructureParamArray`'s native-state drain skips string-carrier
+   generators; draining one into the f64 vec was an invalid `array.set`
+   (pre-existing on main — any module with a string generator and a nested
+   array destructure of an `any`).
+
+## Resolution — prettier slice (2026-09-28)
+
+The prettier slice is done; **#680 itself stays open** (`status: ready`): the
+Done-status integrity gate (#3474) counted **230 live test262 failures** still
+citing #680 on the baseline, so the umbrella is not complete. The generator
+edges this slice left are itemised in #6731.
+
+
+- Regression test `tests/issue-680-prettier-generator-shapes.test.ts`: **6/6**
+  with the fix, **0/6** on parent `2e23e49fb1` (five refused with this issue's
+  diagnostic / invalid module, the destructuring case the wrong value).
+- Scoped standalone test262 (`language/statements/generators`,
+  `language/expressions/generators`, `built-ins/GeneratorPrototype`,
+  `language/expressions/yield`, plus the 118 `language/statements/for-of` files
+  that declare a generator — 798 rows), parent vs fix: **736 pass / 42 fail /
+  20 compile_error** on both, identical non-pass row set — no losses.
+- JS-host lane byte-identical: 568 generator / for-of test262 sources compiled
+  for the gc target, parent vs fix, identical binary hashes.
+- prettier `standalone-dynamic` lane: before — `compile-error: Codegen error:
+  native generator lowering currently supports only sequential numeric yields
+  in standalone/WASI targets (#680). Recompile with a JS host target for
+  complex generator shapes.`; after — codegen succeeds, next blocker
+  `optimization-error: wasm-opt -O4 did not produce the measured artifact:
+  wasm-opt -O4 failed: [parse exception: invalid type on stack (at
+  0:805877)]` — V8: `Compiling function #379:"Ce" failed: struct.get[0]
+  expected type (ref null 314), found if of type f64`. Not caused by this
+  change (reproduced on parent with the three generators stubbed out); filed
+  as #6730.
+- Residual native-generator edges recorded in #6731.

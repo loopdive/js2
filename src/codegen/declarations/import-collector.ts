@@ -29,6 +29,7 @@ import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-dr
 import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
+import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
   FUNCTIONAL_ARRAY_METHODS,
   KNOWN_CONSTRUCTORS,
@@ -62,6 +63,7 @@ import { type CodegenContext, hostFreeEnvironment } from "../context/types.js";
 import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { isConsoleValueIdentifier } from "../standalone-console-object.js";
+import { collectorReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
 
 /** Accumulated state for the single-pass collector */
 export interface UnifiedCollectorState {
@@ -417,6 +419,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // `ctx`, not `state`, because the flag is per-MODULE while the collector state
   // is per-source-file: one throwing file in a multi-file compile is enough.
   if (ts.isThrowStatement(node)) ctx.usesSourceThrowStatement = true;
+  if (ts.isFunctionLike(node) && (node as ts.FunctionLikeDeclaration).asteriskToken !== undefined) {
+    ctx.usesSourceGenerator = true; // (#6651 A13) gates `orNativeGeneratorCarrierInstrs`
+  }
 
   // ── collectStringLiterals (skip computed property names) ──
   if (state.insideComputedPropertyName === 0) {
@@ -515,8 +520,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // ── collectPrimitiveMethodImports ──
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
     const prop = node.expression;
-    const receiverType = ctx.checker.getTypeAtLocation(prop.expression);
     const methodName = prop.name.text;
+    const receiverType = collectorReceiverType(ctx, ctx.checker.getTypeAtLocation(prop.expression), methodName);
     // #1215: Array<number>.join() / Array<number>.toString() must coerce each
     // element to a string before concatenation. Without `number_toString` registered,
     // compileArrayJoin silently drops the f64→externref conversion and emits a Wasm
@@ -2158,6 +2163,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     if (!(ctx.standalone || ctx.wasi) || needsNoJsHostFallback) {
       addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
     }
+    reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
   }
 
   // ── collectIteratorImports finalize ──

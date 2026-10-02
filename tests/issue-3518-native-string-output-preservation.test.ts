@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { composeAnyToStringSource } from "./helpers/any-to-string-source-composition.js";
+import { composeStringEqualitySource } from "./helpers/string-equality-source-composition.js";
+import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +13,20 @@ const batchPath = "src/codegen/native-batched-concat.ts";
 const basicsPath = "src/codegen/native-strings-basics.ts";
 const legacyStdoutPath = "src/codegen/native-strings.ts";
 const paths = [concatPath, stdoutPath, batchPath, basicsPath, legacyStdoutPath];
-const read = () => Object.fromEntries(paths.map((p) => [p, readFileSync(new URL("../" + p, import.meta.url), "utf8")]));
+const read = () =>
+  Object.fromEntries(
+    paths.map((p) => {
+      const source = readBeforeResumeMain(p);
+      return [
+        p,
+        p === basicsPath
+          ? composeStringEqualitySource(source, true)
+          : p === legacyStdoutPath
+            ? composeAnyToStringSource(source, true)
+            : source,
+      ];
+    }),
+  );
 const parse = (s: string) => ts.createSourceFile("receipt.ts", s, ts.ScriptTarget.Latest, true);
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 // Pinned from the complete files at 721cd33a828c89cfc04c851b011f910b76a4d2c5.

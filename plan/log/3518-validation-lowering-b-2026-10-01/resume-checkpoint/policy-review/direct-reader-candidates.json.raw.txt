@@ -1,0 +1,680 @@
+[
+  {
+    "path": "tests/issue-3300.test.ts",
+    "pin": {
+      "sha256": "58484f74a9bcaacf39b22f7dc1a4eb87633f20fcd326d26c8e7e0ec731c6b0a2",
+      "gitBlob": "a05cf1fa4d5bfbd6f1faa765f7c58e408a7aa12e",
+      "bytes": 16048,
+      "lines": 343
+    },
+    "hits": [
+      {
+        "line": 32,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-4523-type-rule-coverage.test.ts",
+    "pin": {
+      "sha256": "1787733107304cd2c2f716d3188731b96a37dfbc57431a86ca8f33a03e7bec43",
+      "gitBlob": "64a9ac9cb9d78685486d1b98f9124ef80cf1350b",
+      "bytes": 12951,
+      "lines": 363
+    },
+    "hits": [
+      {
+        "line": 5,
+        "text": "// `checkInstr` in `src/ir/verify.ts` implements type rules for a subset of the"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3478-porffor-source-to-native-canary.test.ts",
+    "pin": {
+      "sha256": "8f2557ec638221bd197d58f468a2d7b96372cd57ba46c76571c0b68fe011a391",
+      "gitBlob": "81125218f46a44ee4e851d2b3745a93e994ab9e1",
+      "bytes": 13681,
+      "lines": 332
+    },
+    "hits": [
+      {
+        "line": 25,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3954-phase3-nonjs-domain.test.ts",
+    "pin": {
+      "sha256": "23a8369bfcda5d9d078638337d4e03a6266b0b81af86295e97a0142cd2f24ab7",
+      "gitBlob": "a9f7a1ba6287e022c0fd3f53ef693033a313ceb1",
+      "bytes": 39381,
+      "lines": 867
+    },
+    "hits": [
+      {
+        "line": 44,
+        "text": "//   W3  src/ir/verify.ts:673           CLOSED. `verifyIrFunction(func, domain?)`"
+      },
+      {
+        "line": 89,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      },
+      {
+        "line": 600,
+        "text": "// The seam holds here: `verify.ts`'s box-to-dynamic rule (R1) never reads"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-core-nodes-seam.test.ts",
+    "pin": {
+      "sha256": "1ef99e15a5465de38b3c8fcf0886ade09bbf553ffaf5f8b3935c5656ee51c319",
+      "gitBlob": "07558a6bac9333ea5c12dab542a69c6601a5cf40",
+      "bytes": 25374,
+      "lines": 624
+    },
+    "hits": [
+      {
+        "line": 22,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3526-ir-math-intrinsic-integration.test.ts",
+    "pin": {
+      "sha256": "fe18484b73918ed82e60cd78e1e100e4d4c7fdb81c107156fa04ed3e59e59f28",
+      "gitBlob": "40457ef0c01e3af2a3521627d564681c122caa62",
+      "bytes": 10772,
+      "lines": 238
+    },
+    "hits": [
+      {
+        "line": 13,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-inline-call-allocation.test.ts",
+    "pin": {
+      "sha256": "3128345425ce26dc402062f000df70e20bfd6b1d0f12c606d8a551aa13febdbc",
+      "gitBlob": "3914ac30dd6629f3b88f765f8ebcbe45e0258a68",
+      "bytes": 5259,
+      "lines": 103
+    },
+    "hits": [
+      {
+        "line": 6,
+        "text": "import { analyzeEncoding } from \"../src/ir/analysis/encoding.js\";"
+      },
+      {
+        "line": 10,
+        "text": "import { assertPreparedIrProgramAllocations } from \"../src/ir/program-allocations.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/linear-charcodeat-ascii-fast-path.test.ts",
+    "pin": {
+      "sha256": "47e99c2b55177f1af551abcd16d6e4731a15e3a82349ac74f62d5e508a5250ab",
+      "gitBlob": "86763c743f21afd7679ac81797761a696ddee943",
+      "bytes": 10310,
+      "lines": 243
+    },
+    "hits": [
+      {
+        "line": 17,
+        "text": "*    receiver (`src/ir/analysis/encoding.ts`) and rejects anything else with"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-4552-ir-dialect-gate-scope.test.ts",
+    "pin": {
+      "sha256": "0a904d198b08d41ba45f1e1e2919798e2b62987c37d3103f10f30c2d536e32af",
+      "gitBlob": "86406af498968f9fd1447703bca6878a092f147b",
+      "bytes": 7372,
+      "lines": 183
+    },
+    "hits": [
+      {
+        "line": 89,
+        "text": "\"ir/verify.ts\": 'import type { IrInstr } from \"./nodes.js\";\\nexport type V = IrInstr;\\n',"
+      },
+      {
+        "line": 118,
+        "text": "\"ir/verify.ts\": 'import type { IrInstrAwait } from \"./dialect/js.js\";\\nexport type V = IrInstrAwait;\\n',"
+      },
+      {
+        "line": 123,
+        "text": "expect(res.stderr).toContain(\"ir/verify.ts:1\");"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-1798.test.ts",
+    "pin": {
+      "sha256": "1b5c7277c97fa1327866f2aa8857847d6d7414220f9b73ff0466ea59a2036fba",
+      "gitBlob": "e7f9cacb7b27ce6aa26b54cc15b03f0ffd1f2bcd",
+      "bytes": 3006,
+      "lines": 75
+    },
+    "hits": [
+      {
+        "line": 19,
+        "text": "* `src/ir/verify.ts` demotes any future return/result-type mismatch to legacy"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3521-whole-program-validation.test.ts",
+    "pin": {
+      "sha256": "8396abd786af7d4fd72145b59df1b271d947e4448c3b7e751fa1ee73892d8a76",
+      "gitBlob": "1eff222aa527ab22fb61d4f4b7c5bcb078971a37",
+      "bytes": 11998,
+      "lines": 270
+    },
+    "hits": [
+      {
+        "line": 12,
+        "text": "import { assertPreparedIrClassLayouts } from \"../src/ir/program-class-layouts.js\";"
+      },
+      {
+        "line": 13,
+        "text": "import { assertPreparedIrProgramAllocations } from \"../src/ir/program-allocations.js\";"
+      },
+      {
+        "line": 32,
+        "text": "import { analyzeEncoding } from \"../src/ir/analysis/encoding.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-native-getter-results.test.ts",
+    "pin": {
+      "sha256": "38c3782abc161145e577cdfbaab608329460bfb2de3eea2fc122c47742a4cb0f",
+      "gitBlob": "a41da3567282558ce8b581d8fe8c6601ab2b8858",
+      "bytes": 13934,
+      "lines": 311
+    },
+    "hits": [
+      {
+        "line": 15,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/guard-suite.json",
+    "pin": {
+      "sha256": "876a3157d9ff06ff98bf0d549b4377b89c0b1251901712457d7de7bbc5211ba3",
+      "gitBlob": "b4fc41899e87e284e65adf6d532d9e317cd43df5",
+      "bytes": 16136,
+      "lines": 134
+    },
+    "hits": [
+      {
+        "line": 85,
+        "text": "\"guards\": \"four DESIGNED demote-to-legacy sites compile (fall back to legacy) instead of hard-erroring \\u2014 TypedArray element STORE (lowerElementStore), slice-12 element ACCESS on an extern receiver (lowerElementAccess), the verify.ts #1798 return-value gate, and compound-assign with a non-f64 RHS (the issue-2079 generator for-of `s += v` shape, runs =3) \\u2014 AND a GENERIC invariant (block-id"
+      }
+    ]
+  },
+  {
+    "path": "tests/ir-dominance.test.ts",
+    "pin": {
+      "sha256": "cd1b250ac52769fd922ad6c3d28f833935a7517ede737536d91e70a7a174a197",
+      "gitBlob": "0a1628548e0a4af1fe7b158113ccc7fc1d851ce1",
+      "bytes": 8304,
+      "lines": 211
+    },
+    "hits": [
+      {
+        "line": 23,
+        "text": "} from \"../src/ir/analysis/dominance.js\";"
+      },
+      {
+        "line": 178,
+        "text": "it(\"throws on non-contiguous block ids (the verify.ts invariant)\", () => {"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-typed-program-preparation.test.ts",
+    "pin": {
+      "sha256": "58b728d335f21c4a76a2401a8a6ab2d497fc47552ac493648a3ab23a8c6e69b9",
+      "gitBlob": "e040f6c7d73923f0a95d6cbbe53889d14bdc309c",
+      "bytes": 20486,
+      "lines": 467
+    },
+    "hits": [
+      {
+        "line": 14,
+        "text": "import * as verification from \"../src/ir/verify.js\";"
+      },
+      {
+        "line": 15,
+        "text": "import * as allocationVerification from \"../src/ir/verify-alloc.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-4104-ir-async-plan-runtime-consumer.test.ts",
+    "pin": {
+      "sha256": "10987a9778a90c63241fa1bd378daf938e9ff666462d80af66aabe7b18d8b875",
+      "gitBlob": "7e9d07b803e8e3ab1175a58955419cb86cab8aff",
+      "bytes": 45343,
+      "lines": 1063
+    },
+    "hits": [
+      {
+        "line": 43,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-typed-middleend-controls.test.ts",
+    "pin": {
+      "sha256": "57bb6eb6c27dc14312b5761ce21949e212b2330988cbe2ea6921077d9a61cda7",
+      "gitBlob": "cae7c61922721020eeb02fafb4ee586e2d1d3718",
+      "bytes": 14640,
+      "lines": 385
+    },
+    "hits": [
+      {
+        "line": 6,
+        "text": "import * as ownership from \"../src/ir/analysis/ownership.js\";"
+      },
+      {
+        "line": 7,
+        "text": "import * as escapeAnalysis from \"../src/ir/analysis/escape.js\";"
+      },
+      {
+        "line": 8,
+        "text": "import * as encoding from \"../src/ir/analysis/encoding.js\";"
+      },
+      {
+        "line": 9,
+        "text": "import * as dominance from \"../src/ir/analysis/dominance.js\";"
+      },
+      {
+        "line": 19,
+        "text": "import * as allocations from \"../src/ir/verify-alloc.js\";"
+      },
+      {
+        "line": 20,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3520-global-type-binding.test.ts",
+    "pin": {
+      "sha256": "af4ece4d0094e0b7b9860fa2d1ba37ff756f2036b703fee03839020fa27cc116",
+      "gitBlob": "e3ca17fe81516b31947c33fd2b1d0b3dbfffc1b2",
+      "bytes": 7473,
+      "lines": 178
+    },
+    "hits": [
+      {
+        "line": 21,
+        "text": "import { irGlobalReferenceProblem, irTypeReferenceProblem, verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3502-string-hash-four-lane.test.ts",
+    "pin": {
+      "sha256": "dc089c76820baa7a8784f7743953cb59250c69e49f552fdd1275bc458d079245",
+      "gitBlob": "f019798708a18d612c0f6505e4542802f8b2058b",
+      "bytes": 13895,
+      "lines": 336
+    },
+    "hits": [
+      {
+        "line": 24,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-ir-math-switch-retirement.test.ts",
+    "pin": {
+      "sha256": "48f86daafabd35cb4e9f3899ecdcc60f3c4274335ed4797698804e4eef9e68b8",
+      "gitBlob": "34bf9dd81df750bf6162af607058397255aaab3c",
+      "bytes": 19515,
+      "lines": 484
+    },
+    "hits": [
+      {
+        "line": 18,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+    "pin": {
+      "sha256": "8c637b37de043a622eda295fa319f0c4257936c6c10dddc8892580eaf6983be4",
+      "gitBlob": "fdadae83ecf8fe4972cb6e983cc1caec0b65415c",
+      "bytes": 24573,
+      "lines": 592
+    },
+    "hits": [
+      {
+        "line": 323,
+        "text": "[\"src/ir/analysis/dominance.ts\", \"ir-analysis\"],"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-5130-ir-math-minmax.test.ts",
+    "pin": {
+      "sha256": "e8fb7c7eaed35cf752f4516af18e903339838b6fc72f5b7b9fd6ccee96a409db",
+      "gitBlob": "39f98d693a2e24c6788e6368186305150632e074",
+      "bytes": 14528,
+      "lines": 364
+    },
+    "hits": [
+      {
+        "line": 15,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3565.test.ts",
+    "pin": {
+      "sha256": "c6ceaaa7cfafb3bcb2328ecfe5e093e376c8702f34320982c4994256bc637e4e",
+      "gitBlob": "71011739489866c87a2ef3a7de3aac93b387aca8",
+      "bytes": 8117,
+      "lines": 178
+    },
+    "hits": [
+      {
+        "line": 19,
+        "text": "*   3. The verify.ts #1798 return-value gate \u2014 a return/early.return whose value"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-4608-declared-globals-production-producer.test.ts",
+    "pin": {
+      "sha256": "8003958304a856ca6a4869fb9778288af5f5e1fa066e2da27da99fe108d6757a",
+      "gitBlob": "9313d67c9a14104670ec272ec8ae5d7fb11ac847",
+      "bytes": 17635,
+      "lines": 471
+    },
+    "hits": [
+      {
+        "line": 30,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3500-linear-ir-recursive-call-graph-type-evidence.test.ts",
+    "pin": {
+      "sha256": "4c8c9ff2266881313ff7c4d465c39f33f88c550a40dc3401f5a3d2996160ae05",
+      "gitBlob": "caf4d769594ed183332c70b7866f69ce2d302da9",
+      "bytes": 10780,
+      "lines": 288
+    },
+    "hits": [
+      {
+        "line": 16,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-symbolic-support-ref.test.ts",
+    "pin": {
+      "sha256": "6a8b1d585aa04b9dfabfe6613b23b21b0d70a2b6544fed3740277c8458e13d44",
+      "gitBlob": "f18a4e7231d1d57052031218066b4f85f6b9c662",
+      "bytes": 18014,
+      "lines": 358
+    },
+    "hits": [
+      {
+        "line": 20,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-string-repeat-ir.test.ts",
+    "pin": {
+      "sha256": "c816f148177f1972b91e2eeff27011ed980bacb39334af362318fc21bb09d2f9",
+      "gitBlob": "f84532fb36378cbcf4aceed3b14d95d0df4407b3",
+      "bytes": 30164,
+      "lines": 709
+    },
+    "hits": [
+      {
+        "line": 49,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-2952-slice2.test.ts",
+    "pin": {
+      "sha256": "ea0da14742617d65eb79d8bbbf4c46c7e465761049e5baff55d8da422bc5fb0d",
+      "gitBlob": "15025789ad299cb38fe5613558b1f41deabdc76d",
+      "bytes": 12366,
+      "lines": 412
+    },
+    "hits": [
+      {
+        "line": 30,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-4070.test.ts",
+    "pin": {
+      "sha256": "7c892e66b6ae447df58b694eaace21b1354a19fab1575b272dca395a0c98440a",
+      "gitBlob": "993d29556e5c195039320876c938b276ccea67ac",
+      "bytes": 3590,
+      "lines": 79
+    },
+    "hits": [
+      {
+        "line": 21,
+        "text": "// Only `renameInstrOperands` is exported; the twins in `src/ir/verify.ts`"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-1922.test.ts",
+    "pin": {
+      "sha256": "b3d8b54552df1bf46fa827540cc1210a1af7a3616f6b96fa185ea2dc4078438d",
+      "gitBlob": "6034caf1c154bdc39c380eaae9c58d13f51af6df",
+      "bytes": 13491,
+      "lines": 373
+    },
+    "hits": [
+      {
+        "line": 7,
+        "text": "* collect uses\" lived across `verify.ts`, `lower.ts`, `passes/dead-code.ts`,"
+      }
+    ]
+  },
+  {
+    "path": "tests/issue-3518-core-type-seam.test.ts",
+    "pin": {
+      "sha256": "b7fb72006962bed935014f815027a22d5d3c306ddd284490ed0fa809b743313f",
+      "gitBlob": "b9b4323971fbfc169ed4b42daba56e1d61bfa352",
+      "bytes": 20754,
+      "lines": 432
+    },
+    "hits": [
+      {
+        "line": 16,
+        "text": "import { verifyIrFunction } from \"../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/ir/fnctor-abi.test.ts",
+    "pin": {
+      "sha256": "c83d7ef03a9a35c84cce8e5294a3ab17ab47f292de827c4feabe04e1e3175491",
+      "gitBlob": "a44e843932ceea82915ddbca4a3eb6e68d383e2a",
+      "bytes": 8286,
+      "lines": 201
+    },
+    "hits": [
+      {
+        "line": 14,
+        "text": "import { verifyIrFunction } from \"../../src/ir/verify.js\";"
+      }
+    ]
+  },
+  {
+    "path": "tests/ir/passes.test.ts",
+    "pin": {
+      "sha256": "a3289fa15c92f8f755a8af1195c6f72bff4b4399ad620016a252c1c0961ec853",
+      "gitBlob": "f554d3a7f82ad41517743beef9586a0fb77bef34",
+      "bytes": 44121,
+      "lines": 1253
+    },
+    "hits": [
+      {
+        "line": 40,
+        "text": "import { assertAllocProvenance } from \"../../src/ir/verify-alloc.js\";"
+      },
+      {
+        "line": 913,
+        "text": "// Block ids must be dense 0..n-1 (verify.ts:41-45 invariant)."
+      }
+    ]
+  },
+  {
+    "path": "tests/helpers/ir-source-contract-relocation.json",
+    "pin": {
+      "sha256": "0b8fefeeae71e66e2b95726320609d60427cbc7ef4f7ce53a8c094d8a971940b",
+      "gitBlob": "07d8638868b34086bb9b083c47842082481bf517",
+      "bytes": 494067,
+      "lines": 13065
+    },
+    "hits": [
+      {
+        "line": 5680,
+        "text": "\"literal\": \"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n/**\\n * #3954 phase 1 \u2014 the TAG-DOMAIN SEAM: the IR's dynamic value model, named.\\n *\\n * ## What this file is for\\n *\\n * Before this seam the IR did not have \\\"a dynamic value type\\\" \u2014 it had\\n * *ECMAScript's* dynamic value type, spelled as the closed `JsTag` enum\\n * (`js-tag.ts`) and baked straigh"
+      },
+      {
+        "line": 5792,
+        "text": "\"literal\": \"\\n\\n/**\\n * True when the partition carries no payload \u2014 its only observable content is\\n * its own identity, so an `unbox` on it is a producer bug (ECMAScript R2 rule\\n * in `verify.ts`).\\n */\\n\""
+      },
+      {
+        "line": 11072,
+        "text": "\"literal\": \"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n/**\\n * #3954 phase 1 \u2014 the TAG-DOMAIN SEAM: the IR's dynamic value model, named.\\n *\\n * ## What this file is for\\n *\\n * Before this seam the IR did not have \\\"a dynamic value type\\\" \u2014 it had\\n * *ECMAScript's* dynamic value type, spelled as the closed `JsTag` enum\\n * (`js-tag.ts`) and baked straigh"
+      },
+      {
+        "line": 11184,
+        "text": "\"literal\": \"\\n\\n/**\\n * True when the partition carries no payload \u2014 its only observable content is\\n * its own identity, so an `unbox` on it is a producer bug (ECMAScript R2 rule\\n * in `verify.ts`).\\n */\\n\""
+      }
+    ]
+  },
+  {
+    "path": "scripts/gen-ir-adoption.mjs",
+    "pin": {
+      "sha256": "cc522fabf54710f3ab5c76ec0e6069277ab830b601ccdddda16756719f5a37be",
+      "gitBlob": "ab283f21f8b8a5d2387cdf4147c301179b7ae101",
+      "bytes": 47236,
+      "lines": 696
+    },
+    "hits": [
+      {
+        "line": 544,
+        "text": "\"return-type-legacy-coupling\": [\"capability gap\", \"#3565 restored contract \u2014 the verify.ts #1798 return gate.\"],"
+      }
+    ]
+  },
+  {
+    "path": "scripts/loc-budget-baseline.json",
+    "pin": {
+      "sha256": "c9ef3a68b9b725224abe380b96376f246e606c8e59121d8ae2d13cd428970bd6",
+      "gitBlob": "89f55af0cf12af8f89b073e41458ebb5cce37850",
+      "bytes": 4918,
+      "lines": 114
+    },
+    "hits": [
+      {
+        "line": 109,
+        "text": "\"src/ir/verify.ts\": 2865,"
+      }
+    ]
+  },
+  {
+    "path": "scripts/func-budget-baseline.json",
+    "pin": {
+      "sha256": "b0af96646fc37fcc07b2adf7e30745d9818ebbc97d11eea6ffd699dc58e95660",
+      "gitBlob": "6b387dbc049c524b981ee63628c646e3ed47be4a",
+      "bytes": 11940,
+      "lines": 182
+    },
+    "hits": [
+      {
+        "line": 176,
+        "text": "\"src/ir/verify.ts::verifyBlock\": 379,"
+      }
+    ]
+  },
+  {
+    "path": "scripts/compiler-boundaries.json",
+    "pin": {
+      "sha256": "2a7222a45a876923e1d6c6de60159a19a870cd44550c32e25d929af47acb29e6",
+      "gitBlob": "6473113b6815e313f2247be9bbc324c179b9e937",
+      "bytes": 563523,
+      "lines": 14803
+    },
+    "hits": [
+      {
+        "line": 2597,
+        "text": "\"path\": \"src/codegen-linear/refcount/verify.ts\","
+      },
+      {
+        "line": 10480,
+        "text": "\"path\": \"src/ir/analysis/dominance.ts\","
+      },
+      {
+        "line": 10496,
+        "text": "\"path\": \"src/ir/analysis/encoding.ts\","
+      },
+      {
+        "line": 10504,
+        "text": "\"path\": \"src/ir/analysis/escape.ts\","
+      },
+      {
+        "line": 10528,
+        "text": "\"path\": \"src/ir/analysis/lattice.ts\","
+      },
+      {
+        "line": 10560,
+        "text": "\"path\": \"src/ir/analysis/ownership.ts\","
+      },
+      {
+        "line": 11792,
+        "text": "\"path\": \"src/ir/program-allocations.ts\","
+      },
+      {
+        "line": 11824,
+        "text": "\"path\": \"src/ir/program-class-layouts.ts\","
+      },
+      {
+        "line": 12272,
+        "text": "\"path\": \"src/ir/verify-alloc.ts\","
+      },
+      {
+        "line": 12280,
+        "text": "\"path\": \"src/ir/verify.ts\","
+      }
+    ]
+  }
+]

@@ -5,7 +5,7 @@ status: done
 completed: 2026-09-03
 sprint: current
 created: 2026-09-01
-updated: 2026-09-03
+updated: 2026-09-28
 priority: high
 horizon: l
 feasibility: medium
@@ -2179,3 +2179,141 @@ abrupt mapper / arguments / typed array / getter-length array-like /
 closed-struct literal ± length / class ± length / Proxy / infinite iterator /
 subclass / `.call` receivers) on base vs lane: every row equal to or better
 than base except F3 above.
+
+## 2026-09-28 D2 continuation handoff — no implementation claim yet
+
+This narrow follow-up does not reopen or re-credit the historical 136-row
+delivery. Its `done` metadata is not evidence that D2 is implemented. Frozen
+source `f924650c6c26237f62b08a362d7003d4d2b1e12d` still fails the unchanged
+`test/built-ins/Array/prototype/Symbol.unscopables/prop-desc.js` (shard 15,
+missing own property) and `value.js` (shard 22, null/undefined access). Both
+belong to the exact 11,778-path ES2015 goal. Fresh current-source execution is
+required before any new fix credit.
+
+Read-only re-grounding on `45ce4a8e207742df5ca3888c0a458e8a48ee1655` finds
+the same missing route: `builtin-value-read.ts` resolves symbol id 11 as
+`@@11`, but Array's registered prototype method glue only supplies `@@1`.
+The nonliteral-symbol descriptor specialization handles species, not
+unscopables. `native-proto.ts` represents string data properties, symbol tags,
+and symbol methods, but not this symbol-keyed data-object property. The
+relevant sources are unchanged in the decorator fix's `f90c598` commit.
+
+### Contract correction
+
+The earlier r3 text wrongly says `value.js` asserts all 16 modern entries.
+It checks ten entries individually, not an exhaustive key set. Companion
+corpus cases `at.js`, `array-find-from-last.js`, and
+`change-array-by-copy.js` establish the remaining entries. The complete
+supported contract is `at`, `copyWithin`, `entries`, `fill`, `find`,
+`findIndex`, `findLast`, `findLastIndex`, `flat`, `flatMap`, `includes`,
+`keys`, `toReversed`, `toSorted`, `toSpliced`, `values`; `with` is absent.
+Do not derive membership merely from whichever Array methods exist or from
+the ten-entry test subset.
+
+### Implementation plan and ownership gates
+
+1. Run a fresh slice-claim/collision gate for a D2 continuation and choose an
+   isolated current-main worktree. Historical released reservations are not
+   current authority. No claim or production edit has been made by this audit.
+2. Recheck the five semantic leaves through the maintained standalone runner,
+   retaining the two frozen originals and passing `with`/cross-realm controls.
+   Match baseline/candidate provider, corpus, manifest, and source receipts.
+3. Resolve shared `native-proto.ts`/native prototype own-property ownership
+   before editing. Prefer a real companion-backed symbol data property with a
+   lazily initialized null-prototype value object; keep the algorithm in a
+   focused module. A narrower guarded fast path is acceptable only if its
+   fallback actually preserves the complete observable contract.
+4. Wire reads, own-property/descriptor lookup, assignment, deletion, and
+   redefinition to the same state. Do not return a perpetual singleton or
+   synthesized descriptor after the configurable outer property changes.
+   Existing native-prototype comments explicitly require companion entries to
+   reflect writes/deletion. Existing RegExp-only write escape detection does
+   not cover Array.
+5. Add focused tests for null prototype, all 16 entry flags/values, absent
+   `with`, identity between reads and descriptor value, inner entry mutation,
+   outer deletion/redefinition, strict/sloppy non-writable assignment, and
+   scope-shadowed Array/Symbol. Include a non-vacuous `with ([])` lookup using
+   an outer `keys` binding, plus existing passing unscopables/cross-realm
+   originals. Preserve key evaluation and receiver semantics through aliases.
+6. Verify matched originals and controls, completeness, relevant native-proto
+   regressions, and normal quality gates. Publish one ready PR for the
+   completed slice; retain a draft only if actual acceptance remains unfinished.
+
+No inherited LOC/function grant is newly approved by this handoff. Source
+coordination, fresh execution, and implementation remain outstanding. This
+plan provides no clearance for shared IR, Proxy, or runtime changes.
+
+### Fresh predispatch gate: held
+
+The normal read-only check for `5268:array-proto-unscopables-D2-recheck`
+returned `UNASSIGNED` from upstream assignments. That is not claim approval:
+an actual claim resolves the parent issue and refuses its terminal `done`
+status. Allocate a new nonterminal narrow follow-up related to this issue
+before implementation; do not change the historical completion just to bypass
+the claim gate.
+
+A one-shot open-PR overlap check found required wiring files in PR 5784
+(`array-object-proto.ts`), PR 5753 (the same file plus
+`builtin-value-read.ts`, IR closure work), and PR 5748
+(`expressions/call-builtin-static.ts`). No open-PR overlap was returned for
+`native-proto.ts`, `native-proto-own-props.ts`, or `builtin-static-gopd.ts` in
+that snapshot, but the complete fix is not file-disjoint. User clearance for
+the three wiring areas has been requested. Until clear or integrated and
+rechecked, do not dispatch a source writer. No claim was acquired by this gate.
+
+### Current-source diagnostic baseline: five failures retained
+
+Unmodified source `f90c59801b04edf8f13c6798e5c1ec02c3a6b2ee` reproduces all
+five Array unscopables leaves as failures; both `Symbol/unscopables/cross-realm`
+and `with/binding-blocked-by-unscopables` controls pass. Exact seven-path
+manifest SHA-256: `1c71bb68065cdd9ed8b6194e73756a613c0ae9382fc1d07d2371de7e093496ef`.
+The maintained standalone runner terminated exit 1 with 7 rows, 2 pass,
+5 fail, zero compile errors. Completeness independently validated 7/7,
+zero exclusions, and root rechecked both artifact hashes.
+
+In `map-size-descriptor/js2/benchmarks/results/`:
+`issue-5268-d2-current-results-5268-d2-current-a01.jsonl`, SHA-256
+`deaee0a4f0ab80d2f780b85aec0dd28594c05700ff9b2f5fe692769c3d57ec01`;
+completion `.shard-1-of-1.complete.json`, SHA-256
+`a2a407d90b8d82174c80a68095a3fb7c04d49f0ddcd730f9d6da194a11f65c25`.
+Node 24.19, one fork/worker, 4 GiB limits, explicit UTC, unlinked Temporal,
+standalone/auto/QuickJS; content-current compiler bundle key
+`efaf883716817c63`, adapter `63b801db0571a47c`, artifact
+`2e2d7736713beeda`. No production edits or retries. The three newer semantic
+companion leaves are diagnostic contract coverage, not extra ES2015 goal
+identities or pass credit. Ownership holds remain unchanged.
+
+## 2026-09-28 separate Object.assign accessor-carrier investigation
+
+Frozen index 28 still fails unchanged
+`target-is-non-extensible-existing-accessor-property.js`: `value1` remains
+1 at its first final assertion, before the Symbol half is exercised. This
+is a reached-test runtime failure, not a compile error. Current `45ce` source
+already calls `__extern_set_strict`, whose own-accessor setter precedes the
+nonextensible/frozen refusal. Do not reapply the historical Object.assign
+null-return repair or change setter runtime based only on this symptom.
+
+A source-supported hypothesis, **not yet WAT-proven**, is the wrapped
+initializer's representation: the accessor literal is produced as externref,
+but the binding's direct-literal-only tagging/type prepasses may not see it
+inside `Object.preventExtensions({ set foo(...) { ... } })`. The integrity
+call returns externref; the receiving slot may disagree. First compare emitted
+WAT for the unchanged original and reduced direct-versus-wrapped literals,
+including setter installation and the actual binding slot. If confirmed,
+investigate a shared wrapper-aware carrier fact in
+`accessor-object-literal.ts`, `declarations.ts::moduleInitForcesExternref`,
+`index.ts` local hoisting, and `statements/variables.ts`/spill typing.
+
+Such a fact must require scope-proven ambient Object and direct integrity
+wrappers, preserve struct fast paths, and not infer aliases or dynamic calls.
+Shadowed Object lowering is a separate existing scope-resolution boundary,
+not permission to fold a user function. Controls must include direct and
+wrapped accessors, frozen setter success, sealed/nonextensible existing
+properties, new-key and missing-setter failures, and the Symbol half
+independently. Matched original/neighbor runner receipts remain required.
+
+No implementation claim or shared-file clearance exists for this hypothesis.
+#3983's strict-set runtime and #1336's Object.assign getter/Symbol work have
+active assignments; leave runtime/enumeration untouched. Inference files
+also require current IR coordination before any edit. This remains a
+WAT-first follow-up, not a verified root cause or fix.

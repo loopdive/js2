@@ -1,0 +1,42 @@
+{
+  "method": "static full-line source spans; not gate execution",
+  "source": {
+    "sha256": "990ab03c38f460ee801a87224c60106d4f63a6d5367e9b742c1fd1763fa67100",
+    "gitBlob": "7b1fac3ad40c8379f4eb33829825736dff094e65",
+    "bytes": 122223
+  },
+  "functions": [
+    {
+      "path": "src/ir/verify.ts",
+      "name": "verifyInstrStructure",
+      "firstLine": 640,
+      "lastLine": 1020,
+      "inclusiveLines": 381,
+      "sha256": "dea7b10ff74257299961f88eb19c7951dad3c059b269b4ed287d34783fffe5df",
+      "gitBlob": "562c1e9c992294cbf9db586afb667d8d45b3f333",
+      "bytes": 16304
+    },
+    {
+      "path": "src/ir/verify.ts",
+      "name": "verifyBlock",
+      "firstLine": 1022,
+      "lastLine": 1221,
+      "inclusiveLines": 200,
+      "sha256": "94683699f8e62a55300ed538df76d5c955ece245e1090a58acb6f9968d7a6e25",
+      "gitBlob": "738461752e6c0a760668f589cda12de2cf0bdd0b",
+      "bytes": 9607
+    },
+    {
+      "path": "src/ir/verify.ts",
+      "name": "verifyInstrTypeRules",
+      "firstLine": 2567,
+      "lastLine": 2865,
+      "inclusiveLines": 299,
+      "sha256": "d433e8e3d4c023c89e6c1ad26c911bb122b3c6eaeba132fcd6bad3b5e9dff858",
+      "gitBlob": "fee921d6d19b2f7d25cfb80ccd13425fc5bdbef4",
+      "bytes": 11303
+    }
+  ],
+  "committedBaselineVerifyBlock": 379,
+  "baselineUsedAsCurrentMeasurement": false
+}

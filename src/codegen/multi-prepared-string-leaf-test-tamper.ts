@@ -6,6 +6,7 @@ import type { PreparedCountedStringAppendReceipt } from "../ir/ast-lowering-plan
 import type { IrUnitId } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
 import { IrInvariantError } from "../ir/outcomes.js";
+import { readEnv } from "../env.js";
 
 export type MultiPreparedStringLeafTamperPhase =
   | "support"
@@ -32,7 +33,7 @@ function fail(stage: "resolve" | "patch", detail: string): never {
 }
 
 export function createMultiPreparedStringLeafTestTamper(unitId: IrUnitId): MultiPreparedStringLeafTestTamper {
-  const raw = process.env.JS2WASM_TEST_TAMPER_MULTI_PREPARED_STRING_LEAF;
+  const raw = readEnv("JS2WASM_TEST_TAMPER_MULTI_PREPARED_STRING_LEAF");
   if (!raw) return Object.freeze({ apply: () => {}, assertConsumed: () => {} });
   let parsed: unknown;
   try {

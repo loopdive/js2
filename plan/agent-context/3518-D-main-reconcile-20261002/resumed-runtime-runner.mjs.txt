@@ -1,0 +1,62 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawn,execFileSync} from 'node:child_process';
+const root=process.cwd(), manifest=JSON.parse(fs.readFileSync('.tmp/assignment-D/serial-validation-manifest.json'));
+if(root!==manifest.candidate.worktree) throw Error('wrong checkout');
+const baseline=manifest.baseline.worktree, hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+const env={...process.env,VITEST_MAX_FORKS:'1'};
+for(const k of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE']) delete env[k];
+const git=(args,cwd=root)=>execFileSync('git',args,{cwd,env,maxBuffer:32*1024*1024});
+const files=['scripts/compiler-boundaries.json','src/codegen/promise-combinators.ts','src/codegen/promise-combinator-observable-protocol.ts','src/codegen/promise-observable-combinators.ts','src/codegen/promise-combinator-drive.ts'];
+const baseTree='f814b9c61b6ee142cca4cfea33457525151da4af';
+function pins(){
+ const head=git(['rev-parse','HEAD']).toString().trim(),mergeHead=git(['rev-parse','MERGE_HEAD']).toString().trim();
+ if(head!==manifest.candidate.head||mergeHead!==manifest.candidate.mergeHead) throw Error('ancestry changed');
+ const staged=hash(git(['diff','--cached',baseTree,'--',...files])),working=hash(git(['diff',baseTree,'--',...files]));
+ if(staged!=='f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a'||working!=='65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79') throw Error('production changed');
+ let fixtures=0;
+ for(const line of fs.readFileSync('.tmp/assignment-D/fixture-hashes.txt','utf8').split('\n')){
+  const m=/^([a-f0-9]{64})  (.+)$/.exec(line); if(!m)continue;
+  if(hash(fs.readFileSync(m[2]))!==m[1])throw Error('fixture changed '+m[2]);fixtures++;
+ }
+ if(fixtures!==141)throw Error('fixture count changed');
+ for(const t of manifest.tests){
+  const expected=t.additive?'9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387':t.sha256;
+  if(hash(fs.readFileSync(t.path))!==expected)throw Error('test changed '+t.path);
+  if(!t.additive&&hash(fs.readFileSync(path.join(baseline,t.path)))!==t.sha256)throw Error('baseline test changed '+t.path);
+ }
+ const fixturePaths=fs.readFileSync('.tmp/assignment-D/fixture-hashes.txt','utf8').split('\n').map(line=>/^([a-f0-9]{64})  (.+)$/.exec(line)).filter(Boolean).map(m=>m[2]);
+ const measuredPaths=['src','scripts','package.json','pnpm-lock.yaml','vitest.config.ts','tsconfig.json','tsconfig.ts7.json',...manifest.tests.filter(t=>!t.additive).map(t=>t.path),...fixturePaths];
+ if(git(['rev-parse','HEAD'],baseline).toString().trim()!==manifest.baseline.head||git(['diff','--name-only','--',...measuredPaths],baseline).length||git(['diff','--cached',manifest.baseline.head,'--name-only','--',...measuredPaths],baseline).length)throw Error('measured baseline HEAD/index/worktree changed');
+ return {head,mergeHead,stagedProductionPatchSha256:staged,workingProductionPatchSha256:working,frozenFixtures:fixtures,originalFiles:12,additiveFiles:1};
+}
+const receiptRoot=path.join(root,'.tmp/assignment-D-runtime-20261002');fs.mkdirSync(receiptRoot,{recursive:true});
+async function run(step,executable,args,runtime){
+ const before=pins(),stem=String(step.ordinal).padStart(2,'0')+'-'+step.id;
+ const dest=path.join(receiptRoot,stem),out=dest+'.stdout.raw',err=dest+'.stderr.raw',receipt=dest+'.receipt.json',result=dest+'.json';
+ if([out,err,receipt,result].some(f=>fs.existsSync(f)))throw Error('receipt already exists '+stem);
+ if(runtime)args=args.map(a=>a.startsWith('--outputFile=')?'--outputFile='+result:a);
+ const ofd=fs.openSync(out,'wx'),efd=fs.openSync(err,'wx'),startedAt=new Date().toISOString();
+ const child=spawn(executable,args,{cwd:step.cwd,env,stdio:['ignore',ofd,efd]});
+ console.log(JSON.stringify({event:'launch',id:step.id,ordinal:step.ordinal,pid:child.pid,runnerPid:process.pid,startedAt}));
+ let spawnError=null;child.on('error',e=>spawnError=e.message);
+ const terminal=await new Promise(resolve=>child.on('close',(exitCode,signal)=>resolve({exitCode,signal})));
+ fs.closeSync(ofd);fs.closeSync(efd);
+ let after=null,pinError=null;try{after=pins();}catch(e){pinError=e.message;}
+ let report=null,reportError=null;if(runtime){try{report=JSON.parse(fs.readFileSync(result));}catch(e){reportError=e.message;}}
+ const stream=f=>({file:f,bytes:fs.statSync(f).size,sha256:hash(fs.readFileSync(f))});
+ const r={schema:'assignment-D-measurement-v2',...step,command:[executable,...args].join(' '),startedAt,endedAt:new Date().toISOString(),actualPid:child.pid,runnerPid:process.pid,terminal:true,...terminal,spawnError,pinsBefore:before,pinsAfter:after,pinError,stdout:stream(out),stderr:stream(err),result:runtime?result:null,reportError,counts:report?{tests:report.numTotalTests,passed:report.numPassedTests,failed:report.numFailedTests,pending:report.numPendingTests,suites:report.numTotalTestSuites}:null};
+ fs.writeFileSync(receipt,JSON.stringify(r,null,2)+'\n',{flag:'wx'});
+ console.log(JSON.stringify({event:'terminal',id:step.id,...terminal,counts:r.counts,pinError,reportError}));
+ if(spawnError||pinError||terminal.signal||reportError)throw Error('infrastructure failure; stopped '+step.id);
+}
+for(const step of manifest.steps.filter(s=>s.ordinal>=7)){
+ const tokens=step.command.split(' ');tokens.shift();const executable=tokens.shift();
+ await run(step,executable,tokens,true);
+}
+const historicalArgs=['node_modules/typescript7/lib/tsc.js','--noEmit','-p','.tmp/assignment-D/tsconfig.historical12.json'];
+const cpConfig=fs.readFileSync('.tmp/assignment-D/tsconfig.historical12.json'),baseConfig=fs.readFileSync(path.join(baseline,'.tmp/assignment-D/tsconfig.historical12.json'));
+if(!cpConfig.equals(baseConfig))throw Error('paired config differs');
+await run({ordinal:22,id:'candidate-historical12-ts7',cwd:root},process.execPath,historicalArgs,false);
+await run({ordinal:23,id:'main-historical12-ts7',cwd:baseline},process.execPath,historicalArgs,false);

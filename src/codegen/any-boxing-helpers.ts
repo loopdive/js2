@@ -381,6 +381,12 @@ export function registerAnyUnboxHelpers(
     [anyRefNull],
     [{ kind: "i32" }],
     [
+      // (#6769 S1) A null box is `undefined`/`null`: §7.1.2 ToBoolean → false.
+      // Without this guard the tag read below traps "dereferencing a null
+      // pointer" (a filter predicate returning `undefined` from an any lane).
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
       { op: "local.get", index: 0 },
       { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
       { op: "i32.const", value: 4 },

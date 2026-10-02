@@ -7,6 +7,7 @@ import type {
   GlobalReservation,
   FunctionReservation,
   PhysicalFunctionSignature,
+  SelfReferentialStructDefinition,
 } from "../../../wasm/physical/module-reservations.js";
 import type {
   NativeDeclaredValType,
@@ -43,6 +44,54 @@ function dense<T>(values: readonly T[], label: string, visit: (value: T) => void
     if (!Object.hasOwn(values, index)) fail("sparse " + label);
     visit(values[index]!);
   }
+}
+function plainRecipeData(value: unknown, active = new Set<object>()): unknown {
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "function" || typeof value === "symbol") fail("non-data recipe value");
+    return value;
+  }
+  if (active.has(value)) fail("cyclic recipe data");
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null)
+    fail("non-plain recipe data");
+  active.add(value);
+  const result = Array.isArray(value) ? [] : {};
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (typeof key !== "string" || !("value" in descriptor)) fail("non-data recipe field");
+    const copied = plainRecipeData(descriptor.value, active);
+    if (Array.isArray(result) && key === "length") result.length = copied as number;
+    else Object.defineProperty(result, key, { value: copied, enumerable: true, writable: true, configurable: true });
+  }
+  active.delete(value);
+  return result;
+}
+function selfFieldType(
+  value: NativeDeclaredValType,
+  key: string,
+): value is Extract<NativeDeclaredValType, { typeKey: string }> {
+  return (value.kind === "ref" || value.kind === "ref_null") && value.typeKey === key;
+}
+function hasSelfFields(
+  shape: NativeDeclaredType,
+  key: string,
+): shape is Extract<NativeDeclaredType, { kind: "struct" }> {
+  return shape.kind === "struct" && shape.fields.some((field) => selfFieldType(field.type, key));
+}
+/** Self-reference is independent of inheritance: only these two exact root forms are supported. */
+function extensibleSelfRoot(shape: Extract<NativeDeclaredType, { kind: "struct" }>): boolean {
+  const extensible =
+    Object.hasOwn(shape, "parent") &&
+    Object.hasOwn(shape, "final") &&
+    shape.final === false &&
+    shape.parent?.kind === "root" &&
+    Object.hasOwn(shape.parent, "kind") &&
+    Object.keys(shape.parent).length === 1;
+  if (typeof shape.name !== "string" || (("parent" in shape || "final" in shape) && !extensible))
+    fail("self fields require a plain final struct or explicit extensible root");
+  const keys = extensible ? ["kind", "name", "fields", "parent", "final"] : ["kind", "name", "fields"];
+  if (Object.keys(shape).some((key) => !keys.includes(key))) fail("unknown self struct descriptor field");
+  return extensible;
 }
 export function freezeNativeResourceRecipe<T extends NativeResourceRecipe>(recipe: T): T {
   return freezePreparedIrValue(recipe) as T;
@@ -134,10 +183,11 @@ export function nativeScalarTypeDeclaration(definition: TypeDef): NativeDeclared
 }
 
 /** Validate the complete symbolic operation population without a module or ledger. */
-export function preflightNativeResourceRecipe(
-  recipe: NativeResourceRecipe,
+export function preflightNativeResourceRecipe<T extends NativeResourceRecipe>(
+  recipe: T,
   prerequisiteKeys: readonly string[] = [],
-): void {
+): T {
+  recipe = plainRecipeData(recipe) as T;
   const types = new Set<string>();
   dense(prerequisiteKeys, "prerequisites", (key) => {
     if (typeof key !== "string" || !key || types.has(key)) fail("invalid prerequisite key");
@@ -154,10 +204,16 @@ export function preflightNativeResourceRecipe(
   });
   const available = new Set(types),
     reserved = new Set<string>();
-  const ref = (value: NativeDeclaredValType) => {
+  const ref = (value: NativeDeclaredValType, selfKey?: string) => {
     if (!value || typeof value !== "object") fail("invalid value type");
     if (value.kind === "ref" || value.kind === "ref_null") {
-      if (!available.has(value.typeKey) || "typeIdx" in value) fail("missing/forward symbolic type key");
+      if (
+        typeof value.typeKey !== "string" ||
+        !value.typeKey ||
+        "typeIdx" in value ||
+        (!available.has(value.typeKey) && (selfKey === undefined || value.typeKey !== selfKey))
+      )
+        fail("missing/forward symbolic type key");
     } else if (!scalarKinds.includes(value.kind) || "typeIdx" in value || "typeKey" in value)
       fail("unsupported declared value type");
   };
@@ -205,7 +261,20 @@ export function preflightNativeResourceRecipe(
           (shape.name?.kind !== "builtin-function-metadata-index" || shape.name.typeKey !== row.key)
         )
           fail("invalid symbolic struct name");
-        dense(shape.fields, "struct fields", (field) => ref(field.type));
+        dense(shape.fields, "struct fields", (field) => ref(field.type, row.key));
+        if (hasSelfFields(shape, row.key)) {
+          extensibleSelfRoot(shape);
+          if (Object.keys(shape.fields).length !== shape.fields.length) fail("non-dense self fields");
+          for (const field of shape.fields) {
+            if (
+              typeof field.name !== "string" ||
+              typeof field.mutable !== "boolean" ||
+              Object.keys(field).some((key) => !["name", "type", "mutable"].includes(key)) ||
+              Object.keys(field.type).some((key) => !["kind", "typeKey"].includes(key))
+            )
+              fail("invalid self struct field");
+          }
+        }
         if (
           Object.hasOwn(shape, "parent") &&
           shape.parent?.kind !== "root" &&
@@ -220,6 +289,7 @@ export function preflightNativeResourceRecipe(
     reserved.add(row.key);
   });
   if (reserved.size !== declarations.size) fail("declaration missing reserve step");
+  return recipe;
 }
 
 /** Both public execution APIs share these exact reservation/interner operations. */
@@ -231,7 +301,7 @@ export function executeNativeResourceRecipeWithSignatures(
   readonly reservations: ReadonlyMap<string, NativeDeclaredReservation>;
   readonly signatures: ReadonlyMap<string, number>;
 } {
-  preflightNativeResourceRecipe(recipe, [...prerequisites.keys()]);
+  recipe = preflightNativeResourceRecipe(recipe, [...prerequisites.keys()]);
   // Only the closure producer has an authenticated append frontier for its
   // self-named metadata subtype. Refuse before executing any generic step.
   for (const row of recipe.declarations) {
@@ -243,6 +313,9 @@ export function executeNativeResourceRecipeWithSignatures(
     if (token.key !== key) fail("substituted prerequisite key");
     tx.assertTypeReservation(token);
   }
+  tx.assertReservationKeysAvailable(
+    recipe.reservationSteps.flatMap((step) => (step.kind === "reserve" ? [step.resourceKey] : [])),
+  );
   const declarations = new Map(recipe.declarations.map((row) => [row.key, row]));
   const signatures = new Map<string, number>();
   const result = new Map<string, NativeDeclaredReservation>();
@@ -259,7 +332,21 @@ export function executeNativeResourceRecipeWithSignatures(
     const row = declarations.get(step.resourceKey)!;
     let token: NativeDeclaredReservation;
     if (row.space === "type") {
-      token = tx.reserveType(row.key, instantiateNativeDeclaredType(tx, row.shape, types));
+      if (hasSelfFields(row.shape, row.key)) {
+        const definition: SelfReferentialStructDefinition = {
+          name: row.shape.name as string,
+          fields: row.shape.fields.map((field) => ({
+            name: field.name,
+            mutable: field.mutable,
+            type: selfFieldType(field.type, row.key)
+              ? { kind: field.type.kind, self: true }
+              : instantiateNativeDeclaredValType(tx, field.type, types),
+          })),
+        };
+        token = extensibleSelfRoot(row.shape)
+          ? tx.reserveExtensibleSelfReferentialStructType(row.key, definition)
+          : tx.reserveSelfReferentialStructType(row.key, definition);
+      } else token = tx.reserveType(row.key, instantiateNativeDeclaredType(tx, row.shape, types));
       types.set(row.key, token);
     } else if (row.space === "global")
       token = tx.reserveGlobal(
@@ -311,6 +398,13 @@ export function compareNativeResourceDeclarationShape(
   if (actual.key !== declaration.key || actual.space !== declaration.space) fail("substituted resource key/space");
   let observed: unknown, expected: unknown;
   if (declaration.space === "type" && actual.space === "type") {
+    if (hasSelfFields(declaration.shape, declaration.key)) {
+      extensibleSelfRoot(declaration.shape);
+      const self = types.get(declaration.key);
+      if (!self || self.key !== declaration.key || self.object !== actual.definition)
+        fail("missing or substituted actual self type");
+      typeIndex(tx, types, declaration.key);
+    }
     observed = actual.definition;
     expected = instantiateNativeDeclaredType(tx, declaration.shape, types);
   } else if (declaration.space === "global" && actual.space === "global") {

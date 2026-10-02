@@ -8,6 +8,7 @@ import {
   emitBuiltinNamespaceObject,
   isSupportedBuiltinNamespace,
 } from "./builtin-static-globals.js";
+import { isRuntimeEvalProviderAbsent } from "./expressions/standalone-dynamic-code.js";
 import { emitStandaloneFunctionIntrinsicValue } from "./function-intrinsic-carrier.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -107,7 +108,15 @@ export function appendStandaloneGlobalConstructorSeeds(
   // gate — the test262 corpus needs exactly that, since every module carrying
   // the `$262` host-object shim also carries its `evalScript`, so it is
   // always a runtime-eval module and the early return below always fires.
-  const evalModule = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0;
+  //
+  // (#6711) With NO provider linked (`runtimeEvalProvider: false`, the
+  // zero-import npm-compat lane) the boundary builds nothing: every
+  // `%Function%` read already takes the self-contained carrier (#6683), and
+  // `Function('return this')()` is lodash's realm-object idiom. Gating the seed
+  // there left `globalThis.Function` / `.TypeError` / `.Date` / ... undefined,
+  // so lodash's `var Function = context.Function; Function.prototype` threw
+  // during module init.
+  const evalModule = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0 && !isRuntimeEvalProviderAbsent(ctx);
   const names: readonly string[] = evalModule
     ? STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES
     : [...STANDALONE_GLOBAL_CONSTRUCTOR_NAMES, ...STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES];

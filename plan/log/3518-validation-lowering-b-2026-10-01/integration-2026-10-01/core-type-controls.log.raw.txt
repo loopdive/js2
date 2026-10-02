@@ -1,0 +1,11 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ✓ tests/issue-3518-program-core-type-evolution.test.ts (49 tests) 325ms
+
+ Test Files  1 passed (1)
+      Tests  49 passed (49)
+   Start at  09:00:25
+   Duration  703ms (transform 26ms, setup 0ms, collect 206ms, tests 325ms, environment 0ms, prepare 37ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/core-type-controls.json

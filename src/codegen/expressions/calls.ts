@@ -27,6 +27,7 @@ import { tryStandaloneHostFreeCall } from "./standalone-dynamic-code.js"; // (#6
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
+import { tryEmitDynamicGeneratorFunction } from "../generator-function-dynamic.js"; // (#6651 A9)
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
@@ -45,7 +46,9 @@ import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-W
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
+import { buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6769 S7d)
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
+import { prepareBuiltinCtorValueInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
 import {
   ensureBoundaryCallableKind,
   ensureObjVecBuilders,
@@ -100,6 +103,8 @@ import {
   tryBorrowedPrototypeNullishThisThrow,
 } from "../builtin-prototype-brand.js"; // (#4076, #5143)
 import { tryCompilePromiseCallWithoutNew } from "../promise-newtarget.js"; // (#5143)
+import { isDrainedCombinatorResultHandler } from "../promise-species-then.js"; // (#5197 r3)
+import { isReflectivePromiseMember } from "../promise-finally-invoke.js"; // (#6651 D7)
 import {
   appendDynamicCandidateArgcSetup,
   appendExternResultArgcReset,
@@ -292,6 +297,7 @@ import {
 } from "../property-access.js";
 import { emitToNumber, emitToString } from "../coercion-engine.js";
 import type { InnerResult } from "../shared.js";
+import { compileStandaloneDynamicImport } from "./standalone-dynamic-import.js";
 import {
   brandExternMethodResult,
   coerceType,
@@ -557,6 +563,7 @@ import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carr
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
+import { objectOwnPredicateCallKeepsFold } from "../object-proto-has-own-property.js";
 import { maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { matchClosureInfoBySignature, tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 export { BUILTIN_CLASS_NAMES };
@@ -1340,6 +1347,8 @@ function tryEmitNativeProtoReflectiveCall(
   // m.call(x)` arrives with an Identifier receiver, and the ES5 genericity idiom
   // `arr.getClass = Object.prototype.toString; arr.getClass()` never reaches a
   // `.call` at all. Neither gives the fold a receiver to read.
+  // (#6684) Same precedence for the own-property predicates — see the helper.
+  if (objectOwnPredicateCallKeepsFold(ifaceName, member, unwrapTransparent(receiver))) return undefined;
   if (ifaceName === "Object" && member === "toString" && ts.isPropertyAccessExpression(unwrapTransparent(receiver))) {
     // The lower direct-call path now owns BOTH statically-known tags and the
     // runtime any/externref classifier. Never divert this syntactic form through
@@ -1371,9 +1380,9 @@ function tryEmitNativeProtoReflectiveCall(
   // invocation. (The value-erased spelling `var m = Promise.prototype.catch`
   // already routed here, which is why a hand-probe of the same shape passed.)
   // Enumerated rather than opening the family: `then` and `catch` now decide
-  // the receiver at runtime, but `finally` still `ref.cast`s it, so routing
-  // `finally` here would turn today's wrong-but-non-throwing answer into a trap.
-  else if (brand === undefined && ifaceName === "Promise" && (member === "then" || member === "catch")) {
+  // the receiver at runtime; `finally` too since #6651 D7 (it Invokes `then`
+  // off any receiver) — except under wasi, whose native body still `ref.cast`s.
+  else if (brand === undefined && ifaceName === "Promise" && isReflectivePromiseMember(ctx, member)) {
     brand = ensurePromiseNativeProtoGlue(ctx);
   }
   // (#6651 SN1) …and the same one-member-at-a-time discipline for `Symbol`.
@@ -1540,6 +1549,10 @@ export function emitReflectiveNativeProtoClosureCall(
   // every other reflective ABI retains its existing null/undefined policy.
   const nativeStringNormalize =
     (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
+  // (#6701) `Array.prototype.slice.call(o, k)`: an omitted `end` is
+  // `undefined` (⇒ len), not `null` (⇒ 0), so pad it with the canonical
+  // undefined — `[].slice.call(arguments, 1)` answered an empty array.
+  const arraySliceEnd = ctx.standalone && member === "slice" && getNativeProtoBuiltinGlue(ctx, brand)?.name === "Array";
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (nativeProtoVariadic && i === 1) {
@@ -1571,7 +1584,9 @@ export function emitReflectiveNativeProtoClosureCall(
       // optional *form* slot (index 1) represents an omitted argument as the
       // canonical undefined singleton; explicit null is still a real value.
       const missingPad =
-        nativeStringNormalize && i === 1 ? canonicalUndefinedExternInstrs(ctx) : arrayBufferUndefinedPad;
+        (nativeStringNormalize && i === 1) || arraySliceEnd
+          ? canonicalUndefinedExternInstrs(ctx)
+          : arrayBufferUndefinedPad;
       fctx.body.push(...(missingPad ?? [{ op: "ref.null.extern" }]));
     } else {
       pushDefaultValue(fctx, pType, ctx);
@@ -4749,6 +4764,7 @@ export function tryEmitInlineDynamicCall(
   if (wantIsCallableGuard) {
     ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
     ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+    prepareBuiltinCtorValueInvoke(ctx, fctx, expr.expression); // (#6713) RegExp/Error carrier [[Call]]
   }
   if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
 
@@ -5541,8 +5557,29 @@ function buildInlineDynamicDispatch(
     }
   }
 
-  return dispatch;
+  return wantTaCtorArm ? wrapTaIntrinsicCallThrow(ctx, fctx, anyLocal, dispatch) : dispatch; // (#6769 S7d)
 }
+
+/**
+ * (#6769 S7d) §23.2.1.1: the `%TypedArray%` intrinsic throws TypeError when
+ * CALLED too. It is an ordinary `$Object` carrier here, so the `$__ta_ctor` /
+ * Int8Array-carrier arms cannot see it and `TypedArray()` returned normally.
+ * The existing identity match (`ta-static-from-of-spec.ts`) reserves the
+ * carrier's global itself, so a `__dyn_call_N` helper built from harness code
+ * before the intrinsic is first materialized still recognises it.
+ */
+function wrapTaIntrinsicCallThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anyLocal: number,
+  dispatch: Instr[],
+): Instr[] {
+  const abstractThrow = buildThrowJsErrorInstrs(ctx, "TypeError", TA_INTRINSIC_ABSTRACT_MSG, { flush: fctx });
+  return [...buildTypedArrayIntrinsicCarrierMatch(ctx, anyLocal, abstractThrow), ...dispatch];
+}
+
+/** (#6769 S7d) §23.2.1.1 — the message `dataview-native.ts` already uses for this throw. */
+export const TA_INTRINSIC_ABSTRACT_MSG = "TypeError: Abstract class TypedArray not directly constructable";
 
 /**
  * Statically flatten an array literal's elements into a positional argument
@@ -5739,6 +5776,9 @@ export function compileStandalonePromiseThenCallback(
   const savedWidenTuple = ctx.widenTupleCallbackParams;
   const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);
   ctx.widenTupleCallbackParams = true;
+  // (#5197 r3 Step 7) a drained combinator aggregate is an externref vec, never the typed one.
+  const savedForceExternref = ctx.forceExternrefCallbackParams;
+  if (isDrainedCombinatorResultHandler(ctx, arg)) ctx.forceExternrefCallbackParams = true;
   try {
     const type =
       ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)
@@ -5771,6 +5811,7 @@ export function compileStandalonePromiseThenCallback(
     return { instrs, closureInfo };
   } finally {
     ctx.widenTupleCallbackParams = savedWidenTuple;
+    ctx.forceExternrefCallbackParams = savedForceExternref;
     restoreNativeIteratorResult();
     fctx.savedBodies.pop();
     fctx.body = savedBody;
@@ -6838,22 +6879,6 @@ function tryIteratorStaticsIntrinsicCall(
   return VOID_RESULT;
 }
 
-/**
- * #3509 — A standalone dynamic import in an ordinary lifted closure can be lowered
- * to a call-site trap instead of rejecting the whole module. This is the
- * deferred case: creating the function does not need a loader, and execution
- * remains honest because reaching import() throws before a Promise or module
- * namespace can be manufactured.
- *
- * Async functions stay on #3494's explicit unsupported path. Their throw must
- * become a rejected Promise rather than escape synchronously, which requires
- * the async/module-evaluation substrate that this bounded fix deliberately
- * does not approximate.
- */
-function canDeferStandaloneDynamicImport(fctx: FunctionContext): boolean {
-  return fctx.deferredDynamicImportTrap === true;
-}
-
 /** Private, opt-in proxy brand probe used by the Deno app bridge. Ordinary
  * source never sees this name; the JavaScript fallback returns false, while a
  * standalone build can test the concrete `$Proxy` RTT without invoking any
@@ -7566,7 +7591,8 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
   {
-    const r = tryRuntimeEvalInterpretedBoundaryIntrinsic(ctx, fctx, expr);
+    const r =
+      tryRuntimeEvalInterpretedBoundaryIntrinsic(ctx, fctx, expr) ?? tryEmitDynamicGeneratorFunction(ctx, fctx, expr); // (#6651 A9)
     if (r !== undefined) return r;
   }
 
@@ -7909,42 +7935,10 @@ function compileCallExpression(
 
   // Dynamic import() — delegate to __dynamic_import host import.
   // Takes a specifier (externref string) and returns an externref (Promise).
-  // #3494 — standalone has no host loader, while compileMulti does not yet
-  // represent deferred module records or module namespace objects. Never emit
-  // env.__dynamic_import or manufacture an always-fulfilled placeholder.
-  //
-  // #3509 — an ordinary function body is deferred: compiling/creating it does
-  // not require a loader. Preserve that property with a host-free, catchable
-  // runtime throw if execution reaches import(). Eager/top-level and async
-  // cases retain #3494's fatal diagnostic until their Promise/module semantics
-  // can be implemented honestly.
+  // #3494 — standalone has no host loader: resolve an evaluated module of the
+  // compiled graph to its namespace, reject everything else with a TypeError.
   if (expr.expression.kind === ts.SyntaxKind.ImportKeyword) {
-    if (ctx.standalone) {
-      if (canDeferStandaloneDynamicImport(fctx)) {
-        reportError(
-          ctx,
-          expr,
-          "Warning: standalone dynamic import has no module loader and will throw if this function is invoked (#3509; module evaluation #3494)",
-          "warning",
-        );
-        // Preserve argument side effects and nesting order before the loader
-        // failure. A nested import emits its own terminal throw here; Wasm's
-        // stack-polymorphic unreachable tail keeps the enclosing expression
-        // valid without inventing a result.
-        for (const argument of expr.arguments) {
-          const argumentType = compileExpression(ctx, fctx, argument);
-          if (argumentType !== null) fctx.body.push({ op: "drop" });
-        }
-        emitThrowTypeError(ctx, fctx, "Standalone dynamic import requires a module loader (#3494)");
-        return { kind: "externref" };
-      }
-      reportError(
-        ctx,
-        expr,
-        "Standalone dynamic import is unsupported until compileMulti provides internal module records and namespace objects",
-      );
-      return null;
-    }
+    if (ctx.standalone) return compileStandaloneDynamicImport(ctx, fctx, expr);
     // Ensure __dynamic_import is registered
     let dynIdx = ctx.funcMap.get("__dynamic_import");
     if (dynIdx === undefined) {

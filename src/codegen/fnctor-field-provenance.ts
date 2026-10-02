@@ -38,6 +38,7 @@
  */
 import type { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
+import { readEnv } from "../env.js";
 
 /** One `this.<field> = …` slot decision. */
 export interface FnctorFieldRecord {
@@ -79,7 +80,7 @@ const records: FnctorFieldRecord[] = [];
 let hooked = false;
 
 export function fnctorFieldProvenanceEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_FIELD_PROVENANCE === "1";
+  return readEnv("JS2WASM_FNCTOR_FIELD_PROVENANCE") === "1";
 }
 
 /**

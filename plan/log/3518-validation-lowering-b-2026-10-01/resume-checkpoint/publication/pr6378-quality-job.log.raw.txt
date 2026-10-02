@@ -1,0 +1,469 @@
+﻿2026-10-01T05:30:19.9017539Z Current runner version: '2.337.0'
+2026-10-01T05:30:19.9050536Z ##[group]Runner Image Provisioner
+2026-10-01T05:30:19.9051112Z Hosted Compute Agent
+2026-10-01T05:30:19.9051447Z Version: 20260901.588
+2026-10-01T05:30:19.9051831Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+2026-10-01T05:30:19.9052485Z Build Date: 2026-09-01T19:56:44Z
+2026-10-01T05:30:19.9052882Z Worker ID: {76f236e1-9e0a-4cc1-9818-10cbc9b96052}
+2026-10-01T05:30:19.9053323Z Azure Region: westus2
+2026-10-01T05:30:19.9053645Z ##[endgroup]
+2026-10-01T05:30:19.9054448Z ##[group]Operating System
+2026-10-01T05:30:19.9054833Z Ubuntu
+2026-10-01T05:30:19.9055132Z 24.04.5
+2026-10-01T05:30:19.9055459Z LTS
+2026-10-01T05:30:19.9055753Z ##[endgroup]
+2026-10-01T05:30:19.9056059Z ##[group]Runner Image
+2026-10-01T05:30:19.9056475Z Image: ubuntu-24.04
+2026-10-01T05:30:19.9056823Z Version: 20260927.320.1
+2026-10-01T05:30:19.9057540Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260927.320/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-01T05:30:19.9058357Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260927.320
+2026-10-01T05:30:19.9058976Z ##[endgroup]
+2026-10-01T05:30:19.9059564Z ##[group]GITHUB_TOKEN Permissions
+2026-10-01T05:30:19.9060741Z Contents: read
+2026-10-01T05:30:19.9061069Z Metadata: read
+2026-10-01T05:30:19.9061466Z ##[endgroup]
+2026-10-01T05:30:19.9063069Z Secret source: None
+2026-10-01T05:30:19.9063643Z Cache mode: write
+2026-10-01T05:30:19.9064265Z Prepare workflow directory
+2026-10-01T05:30:19.9289313Z Prepare all required actions
+2026-10-01T05:30:19.9318990Z Getting action download info
+2026-10-01T05:30:20.2746827Z Download action repository 'actions/checkout@v5' (SHA:fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09)
+2026-10-01T05:30:20.3657552Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-10-01T05:30:20.5730386Z Complete job name: quality
+2026-10-01T05:30:20.6351800Z ##[group]Run actions/checkout@v5
+2026-10-01T05:30:20.6352530Z with:
+2026-10-01T05:30:20.6352760Z   fetch-depth: 2
+2026-10-01T05:30:20.6352988Z   repository: loopdive/js2
+2026-10-01T05:30:20.6355021Z   token: ***
+2026-10-01T05:30:20.6355233Z   ssh-strict: true
+2026-10-01T05:30:20.6355447Z   ssh-user: git
+2026-10-01T05:30:20.6355672Z   persist-credentials: true
+2026-10-01T05:30:20.6355918Z   clean: true
+2026-10-01T05:30:20.6356146Z   sparse-checkout-cone-mode: true
+2026-10-01T05:30:20.6356410Z   fetch-tags: false
+2026-10-01T05:30:20.6356636Z   show-progress: true
+2026-10-01T05:30:20.6356860Z   lfs: false
+2026-10-01T05:30:20.6357071Z   submodules: false
+2026-10-01T05:30:20.6357299Z   set-safe-directory: true
+2026-10-01T05:30:20.6357556Z   allow-unsafe-pr-checkout: false
+2026-10-01T05:30:20.6357876Z env:
+2026-10-01T05:30:20.6358095Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:20.6358375Z ##[endgroup]
+2026-10-01T05:30:20.6964378Z Syncing repository: loopdive/js2
+2026-10-01T05:30:20.6966051Z ##[group]Getting Git version info
+2026-10-01T05:30:20.6966559Z Working directory is '/home/runner/work/js2/js2'
+2026-10-01T05:30:20.6967360Z [command]/usr/bin/git version
+2026-10-01T05:30:20.7136551Z git version 2.55.0
+2026-10-01T05:30:20.7149064Z ##[endgroup]
+2026-10-01T05:30:20.7159190Z Temporarily overriding HOME='/home/runner/work/_temp/681b4234-e2bf-4036-a9fc-281f90e7913e' before making global git config changes
+2026-10-01T05:30:20.7160393Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-01T05:30:20.7162656Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/js2/js2
+2026-10-01T05:30:20.7322387Z Deleting the contents of '/home/runner/work/js2/js2'
+2026-10-01T05:30:20.7325827Z ##[group]Initializing the repository
+2026-10-01T05:30:20.7328767Z [command]/usr/bin/git init /home/runner/work/js2/js2
+2026-10-01T05:30:20.7527123Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-01T05:30:20.7527831Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-01T05:30:20.7528515Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-01T05:30:20.7528882Z hint: call:
+2026-10-01T05:30:20.7529086Z hint:
+2026-10-01T05:30:20.7529358Z hint: 	git config --global init.defaultBranch <name>
+2026-10-01T05:30:20.7529661Z hint:
+2026-10-01T05:30:20.7529950Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-01T05:30:20.7530665Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-01T05:30:20.7531176Z hint:
+2026-10-01T05:30:20.7531385Z hint: 	git branch -m <name>
+2026-10-01T05:30:20.7531626Z hint:
+2026-10-01T05:30:20.7532072Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-01T05:30:20.7532551Z Initialized empty Git repository in /home/runner/work/js2/js2/.git/
+2026-10-01T05:30:20.7537929Z [command]/usr/bin/git remote add origin https://github.com/loopdive/js2
+2026-10-01T05:30:20.7580084Z ##[endgroup]
+2026-10-01T05:30:20.7580481Z ##[group]Disabling automatic garbage collection
+2026-10-01T05:30:20.7582661Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-01T05:30:20.7607783Z ##[endgroup]
+2026-10-01T05:30:20.7608152Z ##[group]Setting up auth
+2026-10-01T05:30:20.7612306Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-01T05:30:20.7637442Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-01T05:30:20.8926035Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-01T05:30:20.8953377Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-01T05:30:20.9116716Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-01T05:30:20.9143750Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-01T05:30:20.9304715Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-01T05:30:20.9335790Z ##[endgroup]
+2026-10-01T05:30:20.9336418Z ##[group]Fetching the repository
+2026-10-01T05:30:20.9342519Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=2 origin +6c738911b663e7d58afda662fc1cdea55d60eb57:refs/remotes/pull/6378/merge
+2026-10-01T05:30:29.5191724Z From https://github.com/loopdive/js2
+2026-10-01T05:30:29.5192604Z  * [new ref]         6c738911b663e7d58afda662fc1cdea55d60eb57 -> pull/6378/merge
+2026-10-01T05:30:29.5194748Z ##[endgroup]
+2026-10-01T05:30:29.5195195Z ##[group]Determining the checkout info
+2026-10-01T05:30:29.5196972Z ##[endgroup]
+2026-10-01T05:30:29.5202222Z [command]/usr/bin/git sparse-checkout disable
+2026-10-01T05:30:29.5245457Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-01T05:30:29.5271575Z ##[group]Checking out the ref
+2026-10-01T05:30:29.5273753Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/6378/merge
+2026-10-01T05:30:30.5421174Z Updating files:  87% (12984/14888)
+2026-10-01T05:30:30.5491581Z Updating files:  88% (13102/14888)
+2026-10-01T05:30:30.5560236Z Updating files:  89% (13251/14888)
+2026-10-01T05:30:30.5635821Z Updating files:  90% (13400/14888)
+2026-10-01T05:30:30.5699644Z Updating files:  91% (13549/14888)
+2026-10-01T05:30:30.5775893Z Updating files:  92% (13697/14888)
+2026-10-01T05:30:30.5856715Z Updating files:  93% (13846/14888)
+2026-10-01T05:30:30.5928754Z Updating files:  94% (13995/14888)
+2026-10-01T05:30:30.6044817Z Updating files:  95% (14144/14888)
+2026-10-01T05:30:30.6200825Z Updating files:  96% (14293/14888)
+2026-10-01T05:30:30.6271518Z Updating files:  97% (14442/14888)
+2026-10-01T05:30:30.6465754Z Updating files:  98% (14591/14888)
+2026-10-01T05:30:30.7051713Z Updating files:  99% (14740/14888)
+2026-10-01T05:30:30.7052295Z Updating files: 100% (14888/14888)
+2026-10-01T05:30:30.7055138Z Updating files: 100% (14888/14888), done.
+2026-10-01T05:30:30.9000525Z Note: switching to 'refs/remotes/pull/6378/merge'.
+2026-10-01T05:30:30.9001256Z 
+2026-10-01T05:30:30.9001373Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-01T05:30:30.9001624Z changes and commit them, and you can discard any commits you make in this
+2026-10-01T05:30:30.9001884Z state without impacting any branches by switching back to a branch.
+2026-10-01T05:30:30.9002324Z 
+2026-10-01T05:30:30.9002440Z If you want to create a new branch to retain commits you create, you may
+2026-10-01T05:30:30.9002768Z do so (now or later) by using -c with the switch command. Example:
+2026-10-01T05:30:30.9002999Z 
+2026-10-01T05:30:30.9003130Z   git switch -c <new-branch-name>
+2026-10-01T05:30:30.9003335Z 
+2026-10-01T05:30:30.9003426Z Or undo this operation with:
+2026-10-01T05:30:30.9003576Z 
+2026-10-01T05:30:30.9003649Z   git switch -
+2026-10-01T05:30:30.9003770Z 
+2026-10-01T05:30:30.9003971Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-01T05:30:30.9004247Z 
+2026-10-01T05:30:30.9004529Z HEAD is now at 6c73891 Merge 63c5ce9ae1d5a77591abaff28e27fe974926bf4f into f37134584ee7ce68c43d9ea66381bd80be6b660d
+2026-10-01T05:30:30.9424339Z ##[endgroup]
+2026-10-01T05:30:30.9460344Z [command]/usr/bin/git log -1 --format=%H
+2026-10-01T05:30:30.9481259Z 6c738911b663e7d58afda662fc1cdea55d60eb57
+2026-10-01T05:30:30.9634043Z ##[group]Run node scripts/check-npm-compat-promotion.mjs --base HEAD^ --github-output "$GITHUB_OUTPUT"
+2026-10-01T05:30:30.9634476Z [36;1mnode scripts/check-npm-compat-promotion.mjs --base HEAD^ --github-output "$GITHUB_OUTPUT"[0m
+2026-10-01T05:30:31.0159369Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:30:31.0159524Z env:
+2026-10-01T05:30:31.0159650Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:31.0159800Z ##[endgroup]
+2026-10-01T05:30:31.4393521Z npm-compat artifact-only change: false
+2026-10-01T05:30:31.4740554Z ##[group]Run # GitHub Actions checks out refs/pull/N/merge (a simulated merge of
+2026-10-01T05:30:31.4740868Z [36;1m# GitHub Actions checks out refs/pull/N/merge (a simulated merge of[0m
+2026-10-01T05:30:31.4741131Z [36;1m# the PR's HEAD into the PR's BASE) for pull_request, and the queue[0m
+2026-10-01T05:30:31.4741373Z [36;1m# ref for merge_group. Both inherently include the base in history.[0m
+2026-10-01T05:30:31.4741637Z [36;1m# The previous explicit "git merge-base --is-ancestor origin/main HEAD"[0m
+2026-10-01T05:30:31.4741891Z [36;1m# check had a TOCTOU race (false positives when main moved between[0m
+2026-10-01T05:30:31.4742310Z [36;1m# checkout and the check), and using PR base.sha tripped over the[0m
+2026-10-01T05:30:31.4742554Z [36;1m# shallow checkout's missing ancestry graph. Both contexts already[0m
+2026-10-01T05:30:31.4742804Z [36;1m# guarantee base-ancestry by construction — no extra check needed.[0m
+2026-10-01T05:30:31.4743097Z [36;1mecho "✓ pull_request ref already includes base by construction"[0m
+2026-10-01T05:30:31.4795412Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:30:31.4795550Z env:
+2026-10-01T05:30:31.4795676Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:31.4795825Z ##[endgroup]
+2026-10-01T05:30:31.4856878Z ✓ pull_request ref already includes base by construction
+2026-10-01T05:30:31.4919256Z Prepare all required actions
+2026-10-01T05:30:31.4919612Z Getting action download info
+2026-10-01T05:30:31.6576712Z Download action repository 'pnpm/action-setup@v4' (SHA:b906affcce14559ad1aafd4ab0e942779e9f58b1)
+2026-10-01T05:30:31.8938815Z Download action repository 'actions/setup-node@v6' (SHA:249970729cb0ef3589644e2896645e5dc5ba9c38)
+2026-10-01T05:30:32.0574996Z ##[group]Run ./.github/actions/setup-node-pnpm
+2026-10-01T05:30:32.0575210Z with:
+2026-10-01T05:30:32.0575324Z   node-version: 25
+2026-10-01T05:30:32.0575433Z env:
+2026-10-01T05:30:32.0575549Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:32.0575880Z ##[endgroup]
+2026-10-01T05:30:32.0612231Z ##[start-action display=Setup pnpm;id=__self.__pnpm_action-setup]
+2026-10-01T05:30:32.0647205Z ##[group]Run pnpm/action-setup@v4
+2026-10-01T05:30:32.0647363Z with:
+2026-10-01T05:30:32.0647491Z   dest: ~/setup-pnpm
+2026-10-01T05:30:32.0647647Z   run_install: null
+2026-10-01T05:30:32.0647757Z   cache: false
+2026-10-01T05:30:32.0647908Z   cache_dependency_path: pnpm-lock.yaml
+2026-10-01T05:30:32.0648063Z   package_json_file: package.json
+2026-10-01T05:30:32.0648195Z   standalone: false
+2026-10-01T05:30:32.0648301Z env:
+2026-10-01T05:30:32.0648417Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:32.0648561Z ##[endgroup]
+2026-10-01T05:30:32.1536438Z ##[group]Running self-installer...
+2026-10-01T05:30:32.3873051Z (node:2179) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-01T05:30:32.3873957Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-01T05:30:32.5426893Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-10-01T05:30:32.5474245Z Packages: +1
+2026-10-01T05:30:32.5474684Z +
+2026-10-01T05:30:32.8216196Z Progress: resolved 1, reused 0, downloaded 1, added 1, done
+2026-10-01T05:30:32.8736438Z 
+2026-10-01T05:30:32.8737264Z dependencies:
+2026-10-01T05:30:32.8737564Z + pnpm 10.30.2 (12.8.1 is available)
+2026-10-01T05:30:32.8737745Z 
+2026-10-01T05:30:32.8753646Z Done in 610ms
+2026-10-01T05:30:32.8923427Z ##[endgroup]
+2026-10-01T05:30:32.8923679Z Installation Completed!
+2026-10-01T05:30:32.9007819Z ##[end-action id=__self.__pnpm_action-setup;outcome=success;conclusion=success;duration_ms=839]
+2026-10-01T05:30:32.9010276Z ##[start-action display=Setup Node with pnpm store cache;id=__self.__actions_setup-node]
+2026-10-01T05:30:32.9051032Z ##[group]Run actions/setup-node@v6
+2026-10-01T05:30:32.9051183Z with:
+2026-10-01T05:30:32.9051308Z   node-version: 25
+2026-10-01T05:30:32.9051424Z   cache: pnpm
+2026-10-01T05:30:32.9051552Z   cache-dependency-path: pnpm-lock.yaml
+2026-10-01T05:30:32.9051700Z   check-latest: false
+2026-10-01T05:30:32.9053263Z   token: ***
+2026-10-01T05:30:32.9053386Z   package-manager-cache: true
+2026-10-01T05:30:32.9053517Z env:
+2026-10-01T05:30:32.9053645Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:32.9053832Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:30:32.9053995Z ##[endgroup]
+2026-10-01T05:30:32.9973584Z Attempting to download 25...
+2026-10-01T05:30:33.5066777Z Not found in manifest. Falling back to download directly from Node
+2026-10-01T05:30:33.5861485Z Acquiring 25.9.0 - x64 from https://nodejs.org/dist/v25.9.0/node-v25.9.0-linux-x64.tar.gz
+2026-10-01T05:30:33.8901606Z Extracting ...
+2026-10-01T05:30:33.8977201Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/98d1fc22-2cb8-45c7-b67d-25d84fadb1e5 -f /home/runner/work/_temp/5fa709fa-7d63-41ac-800b-e886f98382cb
+2026-10-01T05:30:34.7501351Z Adding to the cache ...
+2026-10-01T05:30:36.5454379Z Done
+2026-10-01T05:30:36.5458156Z ##[group]Environment details
+2026-10-01T05:30:36.8196051Z node: v25.9.0
+2026-10-01T05:30:36.8196236Z npm: 11.12.1
+2026-10-01T05:30:36.8196346Z yarn: 1.22.22
+2026-10-01T05:30:36.8196675Z ##[endgroup]
+2026-10-01T05:30:36.8207509Z [command]/home/runner/setup-pnpm/node_modules/.bin/pnpm store path --silent
+2026-10-01T05:30:37.0223118Z /home/runner/setup-pnpm/node_modules/.bin/store/v10
+2026-10-01T05:30:37.3997414Z Cache hit for: node-cache-Linux-x64-pnpm-24d1f0b8cffbefdde65b156d791a9773f58f9ea1b73317bde8979908a96cc338
+2026-10-01T05:30:38.7016505Z Received 0 of 503517803 (0.0%), 0.0 MBs/sec
+2026-10-01T05:30:39.7025432Z Received 134217728 of 503517803 (26.7%), 63.9 MBs/sec
+2026-10-01T05:30:40.7028667Z Received 268435456 of 503517803 (53.3%), 85.3 MBs/sec
+2026-10-01T05:30:41.7039984Z Received 402653184 of 503517803 (80.0%), 95.9 MBs/sec
+2026-10-01T05:30:42.4227999Z Received 503517803 of 503517803 (100.0%), 101.7 MBs/sec
+2026-10-01T05:30:42.4228244Z Cache Size: ~480 MB (503517803 B)
+2026-10-01T05:30:42.4246775Z [command]/usr/bin/tar -xf /home/runner/work/_temp/809aad40-828d-4f43-90ed-95a92505d578/cache.tzst -P -C /home/runner/work/js2/js2 --use-compress-program unzstd
+2026-10-01T05:30:46.0223076Z Cache restored successfully
+2026-10-01T05:30:46.0409299Z Cache restored from key: node-cache-Linux-x64-pnpm-24d1f0b8cffbefdde65b156d791a9773f58f9ea1b73317bde8979908a96cc338
+2026-10-01T05:30:46.0554905Z ##[end-action id=__self.__actions_setup-node;outcome=success;conclusion=success;duration_ms=13154]
+2026-10-01T05:30:46.0601280Z ##[group]Run pnpm install --frozen-lockfile
+2026-10-01T05:30:46.0601481Z [36;1mpnpm install --frozen-lockfile[0m
+2026-10-01T05:30:46.0651620Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:30:46.0651766Z env:
+2026-10-01T05:30:46.0651888Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:46.0652256Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:30:46.0652454Z ##[endgroup]
+2026-10-01T05:30:46.2638274Z Lockfile is up to date, resolution step is skipped
+2026-10-01T05:30:46.2965622Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-10-01T05:30:46.3673559Z Packages: +827
+2026-10-01T05:30:46.3681174Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-10-01T05:30:47.2983385Z Progress: resolved 827, reused 827, downloaded 0, added 792
+2026-10-01T05:30:47.3226402Z Progress: resolved 827, reused 827, downloaded 0, added 827, done
+2026-10-01T05:30:49.5133298Z 
+2026-10-01T05:30:49.5134191Z dependencies:
+2026-10-01T05:30:49.5134563Z + typescript 5.9.3
+2026-10-01T05:30:49.5134696Z 
+2026-10-01T05:30:49.5134790Z devDependencies:
+2026-10-01T05:30:49.5134987Z + @biomejs/biome 1.9.4
+2026-10-01T05:30:49.5135262Z + @bytecodealliance/componentize-js 0.20.0
+2026-10-01T05:30:49.5135530Z + @types/lodash 4.17.24
+2026-10-01T05:30:49.5135738Z + @types/lodash-es 4.17.12
+2026-10-01T05:30:49.5135986Z + @types/node 22.19.13
+2026-10-01T05:30:49.5136213Z + axios 1.16.1
+2026-10-01T05:30:49.5136399Z + binaryen 132.0.0
+2026-10-01T05:30:49.5136581Z + bun 1.3.14
+2026-10-01T05:30:49.5136774Z + create-react-class 15.7.0
+2026-10-01T05:30:49.5136977Z + deno 2.8.1
+2026-10-01T05:30:49.5137152Z + esbuild 0.25.12
+2026-10-01T05:30:49.5137330Z + eslint 10.0.3
+2026-10-01T05:30:49.5137506Z + hono 4.12.16
+2026-10-01T05:30:49.5137676Z + husky 9.1.7
+2026-10-01T05:30:49.5137903Z + jest 30.4.2
+2026-10-01T05:30:49.5138068Z + jsdom 30.0.1
+2026-10-01T05:30:49.5138268Z + lint-staged 16.4.0
+2026-10-01T05:30:49.5138449Z + lit 3.3.3
+2026-10-01T05:30:49.5138618Z + lodash 4.18.1
+2026-10-01T05:30:49.5138794Z + lodash-es 4.18.1
+2026-10-01T05:30:49.5138997Z + marked 18.0.2
+2026-10-01T05:30:49.5139193Z + moment 2.30.1
+2026-10-01T05:30:49.5139373Z + monaco-editor 0.55.1
+2026-10-01T05:30:49.5139557Z + prettier 3.8.1
+2026-10-01T05:30:49.5139789Z + prop-types 15.8.1
+2026-10-01T05:30:49.5139967Z + react 19.2.6
+2026-10-01T05:30:49.5140145Z + react-dom 19.2.6
+2026-10-01T05:30:49.5140347Z + react-test-renderer 19.2.6
+2026-10-01T05:30:49.5140561Z + redux 5.0.1
+2026-10-01T05:30:49.5140727Z + shiki 4.0.2
+2026-10-01T05:30:49.5140918Z + styled-components 6.4.4
+2026-10-01T05:30:49.5141130Z + stylelint 17.14.1
+2026-10-01T05:30:49.5141318Z + tailwindcss 4.3.3
+2026-10-01T05:30:49.5141495Z + three 0.185.1
+2026-10-01T05:30:49.5141671Z + ts-morph 27.0.2
+2026-10-01T05:30:49.5141840Z + tsx 4.23.1
+2026-10-01T05:30:49.5142260Z + typescript7 <- typescript 7.0.2
+2026-10-01T05:30:49.5142476Z + uuid 14.0.1
+2026-10-01T05:30:49.5142645Z + vite 6.4.1
+2026-10-01T05:30:49.5142833Z + vite-plugin-dts 4.5.4
+2026-10-01T05:30:49.5143041Z + vitest 3.2.4
+2026-10-01T05:30:49.5143210Z + wabt 1.0.39
+2026-10-01T05:30:49.5143409Z + web-streams-polyfill 4.3.0
+2026-10-01T05:30:49.5143631Z + webpack 5.109.2
+2026-10-01T05:30:49.5143741Z 
+2026-10-01T05:30:50.6334999Z . prepare$ sh scripts/configure-git-hooks.sh
+2026-10-01T05:30:50.6450642Z . prepare: Done
+2026-10-01T05:30:50.6474086Z ╭ Warning ─────────────────────────────────────────────────────────────────────╮
+2026-10-01T05:30:50.6474403Z │                                                                              │
+2026-10-01T05:30:50.6474794Z │   Ignored build scripts: unrs-resolver@1.12.2.                               │
+2026-10-01T05:30:50.6475148Z │   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+2026-10-01T05:30:50.6475485Z │   to run scripts.                                                            │
+2026-10-01T05:30:50.6475758Z │                                                                              │
+2026-10-01T05:30:50.6476264Z ╰──────────────────────────────────────────────────────────────────────────────╯
+2026-10-01T05:30:50.6520519Z Done in 4.5s using pnpm v10.30.2
+2026-10-01T05:30:50.6755362Z ##[group]Run # These checks are independent and read-only. Running them as three
+2026-10-01T05:30:50.6755691Z [36;1m# These checks are independent and read-only. Running them as three[0m
+2026-10-01T05:30:50.6755968Z [36;1m# lanes keeps the required `quality` context intact while bounding[0m
+2026-10-01T05:30:50.6756195Z [36;1m# this stage by the slowest lane instead of their sum.[0m
+2026-10-01T05:30:50.6756369Z [36;1m#[0m
+2026-10-01T05:30:50.6756536Z [36;1m# (#1029) `typecheck` is tsgo (TypeScript 7) since 2026-08-14 — same[0m
+2026-10-01T05:30:50.6756786Z [36;1m# src/ tree, zero diagnostics, ~21s vs ~122s for TS5, so typecheck is[0m
+2026-10-01T05:30:50.6757011Z [36;1m# no longer the long pole. TS5 remains available as[0m
+2026-10-01T05:30:50.6757244Z [36;1m# `pnpm run typecheck:ts5`, and `prepublishOnly` still runs the full[0m
+2026-10-01T05:30:50.6757490Z [36;1m# build (vite-plugin-dts emits declarations with TS5), so TS5's[0m
+2026-10-01T05:30:50.6757739Z [36;1m# opinion still gates anything that reaches npm.[0m
+2026-10-01T05:30:50.6757907Z [36;1mset +e[0m
+2026-10-01T05:30:50.6758027Z [36;1mtmp_dir=$(mktemp -d)[0m
+2026-10-01T05:30:50.6758155Z [36;1m[0m
+2026-10-01T05:30:50.6758288Z [36;1mpnpm run lint > "$tmp_dir/lint.log" 2>&1 &[0m
+2026-10-01T05:30:50.6758447Z [36;1mlint_pid=$![0m
+2026-10-01T05:30:50.6758597Z [36;1mpnpm run format:check > "$tmp_dir/format.log" 2>&1 &[0m
+2026-10-01T05:30:50.6758770Z [36;1mformat_pid=$![0m
+2026-10-01T05:30:50.6758927Z [36;1mpnpm run typecheck > "$tmp_dir/typecheck.log" 2>&1 &[0m
+2026-10-01T05:30:50.6759103Z [36;1mtypecheck_pid=$![0m
+2026-10-01T05:30:50.6759224Z [36;1m[0m
+2026-10-01T05:30:50.6759334Z [36;1mwait "$lint_pid"; lint_rc=$?[0m
+2026-10-01T05:30:50.6759483Z [36;1mwait "$format_pid"; format_rc=$?[0m
+2026-10-01T05:30:50.6759644Z [36;1mwait "$typecheck_pid"; typecheck_rc=$?[0m
+2026-10-01T05:30:50.6759796Z [36;1mset -e[0m
+2026-10-01T05:30:50.6759900Z [36;1m[0m
+2026-10-01T05:30:50.6760022Z [36;1mfor lane in lint format typecheck; do[0m
+2026-10-01T05:30:50.6760183Z [36;1m  echo "--- $lane ---"[0m
+2026-10-01T05:30:50.6760323Z [36;1m  cat "$tmp_dir/$lane.log"[0m
+2026-10-01T05:30:50.6760474Z [36;1mdone[0m
+2026-10-01T05:30:50.6760583Z [36;1m[0m
+2026-10-01T05:30:50.6760756Z [36;1mif [ "$lint_rc" -ne 0 ] || [ "$format_rc" -ne 0 ] || [ "$typecheck_rc" -ne 0 ]; then[0m
+2026-10-01T05:30:50.6761068Z [36;1m  echo "::error::quality lanes failed (lint=$lint_rc, format=$format_rc, typecheck=$typecheck_rc)"[0m
+2026-10-01T05:30:50.6761305Z [36;1m  exit 1[0m
+2026-10-01T05:30:50.6761415Z [36;1mfi[0m
+2026-10-01T05:30:50.6810970Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:30:50.6811104Z env:
+2026-10-01T05:30:50.6811224Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:30:50.6811404Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:30:50.6811568Z ##[endgroup]
+2026-10-01T05:31:54.2996230Z --- lint ---
+2026-10-01T05:31:54.3005300Z 
+2026-10-01T05:31:54.3005506Z > @loopdive/js2@0.71.0 lint /home/runner/work/js2/js2
+2026-10-01T05:31:54.3005768Z > biome lint src tests scripts --diagnostic-level=error
+2026-10-01T05:31:54.3005898Z 
+2026-10-01T05:31:54.3006029Z The number of diagnostics exceeds the number allowed by Biome.
+2026-10-01T05:31:54.3006656Z Diagnostics not shown: 1870.
+2026-10-01T05:31:54.3006890Z Checked 6667 files in 12s. No fixes applied.
+2026-10-01T05:31:54.3007180Z --- format ---
+2026-10-01T05:31:54.3013923Z 
+2026-10-01T05:31:54.3014111Z > @loopdive/js2@0.71.0 format:check /home/runner/work/js2/js2
+2026-10-01T05:31:54.3014431Z > prettier --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'
+2026-10-01T05:31:54.3014567Z 
+2026-10-01T05:31:54.3014630Z Checking formatting...
+2026-10-01T05:31:54.3014791Z All matched files use Prettier code style!
+2026-10-01T05:31:54.3015348Z --- typecheck ---
+2026-10-01T05:31:54.3022637Z 
+2026-10-01T05:31:54.3022891Z > @loopdive/js2@0.71.0 typecheck /home/runner/work/js2/js2
+2026-10-01T05:31:54.3023441Z > node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+2026-10-01T05:31:54.3023701Z 
+2026-10-01T05:31:54.3052162Z ##[group]Run pnpm run check:ir-dialect
+2026-10-01T05:31:54.3052444Z [36;1mpnpm run check:ir-dialect[0m
+2026-10-01T05:31:54.3102943Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:31:54.3103081Z env:
+2026-10-01T05:31:54.3103203Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:31:54.3103384Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:31:54.3103556Z ##[endgroup]
+2026-10-01T05:31:54.4811725Z 
+2026-10-01T05:31:54.4812404Z > @loopdive/js2@0.71.0 check:ir-dialect /home/runner/work/js2/js2
+2026-10-01T05:31:54.4812688Z > node scripts/check-ir-dialect.mjs
+2026-10-01T05:31:54.4812792Z 
+2026-10-01T05:31:57.8220595Z IR dialect gate: OK — 27 canonical dialect declarations; no other file under src/ imports the dialect (except the exact legacy type forwarder).
+2026-10-01T05:31:57.8941074Z ##[group]Run # Inventory mode enforces real activated closures while reporting
+2026-10-01T05:31:57.8941396Z [36;1m# Inventory mode enforces real activated closures while reporting[0m
+2026-10-01T05:31:57.8941648Z [36;1m# remaining migration debt; it does not certify IR-only completion.[0m
+2026-10-01T05:31:57.8941898Z [36;1m# Compare with the immutable first parent, not HEAD's new policy.[0m
+2026-10-01T05:31:57.8942604Z [36;1m# The verdict reason goes to stderr (#6418) so a failing run names the[0m
+2026-10-01T05:31:57.8942857Z [36;1m# offending files in the job log, not only in the uploaded artifact.[0m
+2026-10-01T05:31:57.8943129Z [36;1mnode --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs \[0m
+2026-10-01T05:31:57.8943409Z [36;1m  --mode inventory --base HEAD^1 > compiler-boundaries-report.json \[0m
+2026-10-01T05:31:57.8943603Z [36;1m  || {[0m
+2026-10-01T05:31:57.8943907Z [36;1m    echo "::error::compiler-boundaries gate failed - reason above (full report in artifact compiler-boundaries-36820076166-1)"[0m
+2026-10-01T05:31:57.8944198Z [36;1m    exit 1[0m
+2026-10-01T05:31:57.8944307Z [36;1m  }[0m
+2026-10-01T05:31:57.8993803Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:31:57.8993945Z env:
+2026-10-01T05:31:57.8994068Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:31:57.8994247Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:31:57.8994424Z ##[endgroup]
+2026-10-01T05:32:01.2018238Z ##[group]Run actions/upload-artifact@v4
+2026-10-01T05:32:01.2018400Z with:
+2026-10-01T05:32:01.2018530Z   name: compiler-boundaries-36820076166-1
+2026-10-01T05:32:01.2018696Z   path: compiler-boundaries-report.json
+2026-10-01T05:32:01.2018849Z   if-no-files-found: error
+2026-10-01T05:32:01.2018975Z   retention-days: 7
+2026-10-01T05:32:01.2019089Z   compression-level: 6
+2026-10-01T05:32:01.2019208Z   overwrite: false
+2026-10-01T05:32:01.2019329Z   include-hidden-files: false
+2026-10-01T05:32:01.2019459Z env:
+2026-10-01T05:32:01.2019573Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:32:01.2019751Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:32:01.2019917Z ##[endgroup]
+2026-10-01T05:32:01.3068157Z (node:2445) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-01T05:32:01.3068764Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-01T05:32:01.3097754Z With the provided path, there will be 1 file uploaded
+2026-10-01T05:32:01.3104015Z Artifact name is valid!
+2026-10-01T05:32:01.3112565Z Root directory input is valid!
+2026-10-01T05:32:01.6851162Z Beginning upload of artifact content to blob storage
+2026-10-01T05:32:01.7431774Z (node:2445) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-01T05:32:02.4239485Z Uploaded bytes 498220
+2026-10-01T05:32:02.5043852Z Finished uploading artifact content to blob storage!
+2026-10-01T05:32:02.5044495Z SHA256 digest of uploaded artifact zip is 7522ad0f0242d6ac3699e314d9b5e3e30d4c0fe54ffcb6e8293731dad3ece143
+2026-10-01T05:32:02.5044938Z Finalizing artifact upload
+2026-10-01T05:32:02.7728948Z Artifact compiler-boundaries-36820076166-1.zip successfully finalized. Artifact ID 11143045610
+2026-10-01T05:32:02.7729878Z Artifact compiler-boundaries-36820076166-1 has been successfully uploaded! Final size is 498220 bytes. Artifact ID is 11143045610
+2026-10-01T05:32:02.7734715Z Artifact download URL: https://github.com/loopdive/js2/actions/runs/36820076166/artifacts/11143045610
+2026-10-01T05:32:02.7834146Z ##[group]Run pnpm run check:ir-kind-neutrality
+2026-10-01T05:32:02.7834359Z [36;1mpnpm run check:ir-kind-neutrality[0m
+2026-10-01T05:32:02.7885143Z shell: /usr/bin/bash -e {0}
+2026-10-01T05:32:02.7885287Z env:
+2026-10-01T05:32:02.7885414Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-10-01T05:32:02.7885600Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-01T05:32:02.7885776Z ##[endgroup]
+2026-10-01T05:32:02.9501750Z 
+2026-10-01T05:32:02.9502646Z > @loopdive/js2@0.71.0 check:ir-kind-neutrality /home/runner/work/js2/js2
+2026-10-01T05:32:02.9503122Z > node scripts/check-ir-kind-neutrality.mjs
+2026-10-01T05:32:02.9503313Z 
+2026-10-01T05:32:03.1519736Z IR kind-neutrality gate: FAILED
+2026-10-01T05:32:03.1520004Z 
+2026-10-01T05:32:03.1521472Z   "string.char_at": the cited evidence is gone from src/ir/string-runtime.ts — "ECMAScript ToIntegerOrInfinity after the caller has performed ToNumber.". The verdict was derived from something that no longer exists, so it has to be re-derived rather than re-stated.
+2026-10-01T05:32:03.1522479Z 
+2026-10-01T05:32:03.1523381Z   "string.char_code_at": the cited evidence is gone from src/ir/string-runtime.ts — "export function utf16CharCodeAt". The verdict was derived from something that no longer exists, so it has to be re-derived rather than re-stated.
+2026-10-01T05:32:03.1524000Z 
+2026-10-01T05:32:03.1524963Z   "string.repeat": the cited evidence is gone from src/ir/string-runtime.ts — "readonly negative: \"range-error-or-backend-trap\";". The verdict was derived from something that no longer exists, so it has to be re-derived rather than re-stated.
+2026-10-01T05:32:03.1525692Z 
+2026-10-01T05:32:03.1526149Z 3 violation(s). The verdict table lives in scripts/check-ir-kind-neutrality.mjs; see #4551 and #3954 phase 2.
+2026-10-01T05:32:03.1655812Z  ELIFECYCLE  Command failed with exit code 1.
+2026-10-01T05:32:03.2011631Z ##[error]Process completed with exit code 1.
+2026-10-01T05:32:03.2162281Z Post job cleanup.
+2026-10-01T05:32:03.2164846Z ##[start-action display=Setup Node with pnpm store cache;id=__267eecaf-14f4-400a-b306-b6dc6d04fdc9.__actions_setup-node]
+2026-10-01T05:32:03.2166733Z ##[end-action id=__267eecaf-14f4-400a-b306-b6dc6d04fdc9.__actions_setup-node;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-01T05:32:03.2167762Z ##[start-action display=Setup pnpm;id=__267eecaf-14f4-400a-b306-b6dc6d04fdc9.__pnpm_action-setup]
+2026-10-01T05:32:03.2187750Z Post job cleanup.
+2026-10-01T05:32:03.3105914Z Pruning is unnecessary.
+2026-10-01T05:32:03.3227935Z ##[end-action id=__267eecaf-14f4-400a-b306-b6dc6d04fdc9.__pnpm_action-setup;outcome=success;conclusion=success;duration_ms=105]
+2026-10-01T05:32:03.3301762Z Post job cleanup.
+2026-10-01T05:32:03.3866593Z [command]/usr/bin/git version
+2026-10-01T05:32:03.3900966Z git version 2.55.0
+2026-10-01T05:32:03.3927328Z Temporarily overriding HOME='/home/runner/work/_temp/7f878546-50dd-43e0-a11f-2ef380e95880' before making global git config changes
+2026-10-01T05:32:03.3927892Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-01T05:32:03.3931094Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/js2/js2
+2026-10-01T05:32:03.3968737Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-01T05:32:03.4002999Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-01T05:32:03.4210656Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-01T05:32:03.4243321Z http.https://github.com/.extraheader
+2026-10-01T05:32:03.4248441Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-01T05:32:03.4283166Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-01T05:32:03.4495114Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-01T05:32:03.4526860Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-01T05:32:03.4833226Z Cleaning up orphan processes
+2026-10-01T05:32:03.5023935Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/upload-artifact@v4, pnpm/action-setup@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -1865,6 +1865,12 @@ export interface IrFunction extends IrFunctionIdentity {
   readonly closureSubtype?: {
     readonly signature: IrClosureSignature;
     readonly captureFieldTypes: readonly IrType[];
+    /** Affirmative source producer contract; omission grants no native arity capability. */
+    readonly parameters?: {
+      readonly kind: "fixed";
+      readonly count: number;
+      readonly publicLength: number;
+    };
     readonly hostOneShot?: boolean;
     readonly domCallbackAuthority?: IrDomCallbackAuthority;
   };

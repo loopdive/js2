@@ -84,8 +84,10 @@ describe("#3431 gen-test262-mg-matrix", () => {
     // standalone work ~40 % while js-host stayed flat — an ESTIMATE) -> 1.03
     // (#4441, 2026-08-15, measured: that estimate overshot, and js-host had
     // itself gotten cheaper — see the derivation in
-    // scripts/gen-test262-mg-matrix.mjs).
-    expect(JS_HOST_CHUNKS / STANDALONE_CHUNKS).toBeCloseTo(52 / 50, 2);
+    // scripts/gen-test262-mg-matrix.mjs) -> 0.215 (2026-09-28, measured after
+    // the #3451 linked-harness flip made js-host ~4x cheaper; standalone
+    // still compiles the whole assembly per row).
+    expect(JS_HOST_CHUNKS / STANDALONE_CHUNKS).toBeCloseTo(20 / 82, 2);
   });
 });
 

@@ -1,10 +1,11 @@
 ---
 id: 6667
 title: "standalone: three.js refuses at JSON.stringify(array of objects) and at `.replace(/re/g, <number>)` — first blockers in the npm-compat standalone-dynamic lane"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-28
+completed: 2026-09-28
 priority: medium
 horizon: m
 feasibility: medium
@@ -12,7 +13,7 @@ reasoning_effort: high
 task_type: feature
 area: compiler
 goal: standalone
-related: [1539, 1599, 1913, 6661, 6665]
+related: [1539, 1599, 1913, 6661, 6665, 6733]
 ---
 
 # #6667 — three.js standalone blockers: JSON.stringify of objects, non-string replace replacement
@@ -51,3 +52,19 @@ list) fails at compile time with two error families:
 - Standalone `"a NUM b".replace(/NUM/g, 4)` returns `"a 4 b"`.
 - The three standalone-dynamic lane moves past both refusals (next error, if
   any, recorded here).
+
+## Resolution (2026-09-28)
+
+1. JSON: fixed by [#1599](https://js2wasm.loopdive.com/dashboard/issue.html?slug=1599-json-standalone)
+   Phase 2 carriers — array-typed values route to the native codec and closed
+   user structs serialise as objects. `tests/issue-1599-stringify-carriers.test.ts`
+   holds the acceptance fixture as an untyped two-file `.js` project
+   (`this.groups.push({ start, count, materialIndex })` then
+   `JSON.parse(JSON.stringify(this.groups))`).
+2. `.replace(/re/g, <number>)`: no longer refused on base `2e23e49fb1` —
+   `"a NUM b NUM".replace(/NUM/g, n)` with `n: any = 4` returns `"a 4 b 4"`
+   standalone.
+3. Lane: the three standalone-dynamic lane now compiles past both and stops at
+   a program-ABI invariant, filed as
+   [#6733](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6733-standalone-three-inherited-getter-alias-signature):
+   `inherited class callable … class-instance-getter:0000000000000001 disagrees with its exact canonical signature`.

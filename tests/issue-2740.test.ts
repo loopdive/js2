@@ -31,7 +31,8 @@ async function run(src: string): Promise<unknown> {
   const r = await compile(src, {});
   expect(r.success, r.success ? "" : r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   if (!r.success) throw new Error("unreachable");
-  const imports = buildImports(r.imports, undefined, r.stringPool);
+  // (#6779) The `Function(params, body)` guard below needs the hostEval policy.
+  const imports = buildImports(r.imports, undefined, r.stringPool, { dynamicCode: "hostEval" });
   const { instance } = await WebAssembly.instantiate(r.binary, imports as never);
   imports.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as { test: () => unknown }).test();

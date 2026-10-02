@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { GeneratorReadBinding } from "../runtime/wasmgc/values/object-get-arms.js";
 /** Ordinary protocol property values for native generator state objects. */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -249,22 +250,35 @@ export function fillNativeGeneratorProtocol(ctx: CodegenContext): void {
   definedFuncAt(ctx, ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)!)!.body = viewBody;
 }
 
-/** Canonical property-get prefix. Requires the caller's ER scratch local. */
-export function nativeGeneratorProtocolReadPrefix(ctx: CodegenContext, valueLocal: number): Instr[] {
-  const funcIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
-  if (funcIdx === undefined) return [];
+/**
+ * (#6651 A13) `<i32 on the stack> || isNativeGeneratorObject(anyLocal)`, for a
+ * dispatch whose other arms test `$Object` / callables. The protocol lookup's
+ * first result is exactly that flag (0 for every other value), so this asks it
+ * for `@@iterator` and drops the value. `[]` when the lookup is not reserved,
+ * or when the source declares no generator (none can exist, so the module keeps
+ * its bytes).
+ */
+export function orNativeGeneratorCarrierInstrs(ctx: CodegenContext, anyLocal: number): Instr[] {
+  if (!ctx.usesSourceGenerator) return [];
+  const getIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  if (getIdx === undefined || boxSymbolIdx === undefined) return [];
   return [
-    load(0),
-    load(1),
-    { op: "call", funcIdx },
-    { op: "local.set", index: valueLocal },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [load(valueLocal), { op: "return" }],
-      else: [],
-    },
+    load(anyLocal),
+    { op: "extern.convert_any" },
+    { op: "i32.const", value: 1 },
+    { op: "call", funcIdx: boxSymbolIdx },
+    { op: "call", funcIdx: getIdx },
+    { op: "drop" },
+    { op: "i32.or" },
   ];
+}
+
+/** Canonical property-get prefix. Requires the caller's ER scratch local. */
+export function captureGeneratorReadBinding(ctx: CodegenContext, valueLocal: number): GeneratorReadBinding | undefined {
+  const funcIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
+  if (funcIdx === undefined) return undefined;
+  return { get: funcIdx, valueLocal };
 }
 
 /** Delegation getter bridge. The receiver is parameter zero of that getter. */

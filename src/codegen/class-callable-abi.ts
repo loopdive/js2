@@ -13,6 +13,7 @@ import { findConstructorImplementation, hasStaticModifier } from "./ast-modifier
 import { classMemberFuncKey } from "./class-member-keys.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { retypeProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
 import { addFuncType } from "./registry/types.js";
 
 function hasFixedForwardClassAbiParameters(parameters: readonly ts.ParameterDeclaration[]): boolean {
@@ -74,7 +75,8 @@ function setFinalClassCallableType(
   params: readonly ValType[],
   results: readonly ValType[],
 ): void {
-  func.typeIdx = addFuncType(ctx, [...params], [...results], `${fullName}_type`);
+  // (#6733) Inherited child aliases raised at collection must follow the retype.
+  retypeProgramAbiClassCallable(ctx, func, addFuncType(ctx, [...params], [...results], `${fullName}_type`));
 }
 
 function replaceForwardParameters(

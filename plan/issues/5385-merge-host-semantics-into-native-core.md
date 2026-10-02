@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-09-27
+updated: 2026-09-29
 priority: high
 horizon: xl
 feasibility: hard
@@ -670,6 +670,31 @@ gates green, 321-row sample **227/321**.
 now hold; row 2 (perf) is still unmeasured on the full workload — schedule
 it before S6; rows 4–7 (default policy flip, `legacy-semantic` as a
 universal error, deletion, docs) are S6/S7.
+
+### 2026-09-29 — second nightly, S6 evidence verdict: NOT YET (three blockers filed)
+
+Nightly 36399520787 (2026-09-28, main @ `cb50f21b90`, with S4 eval linking,
+S3-e Temporal linking, S3-b reduce-as-value): regime **36,327** vs host
+34,099 / standalone 35,237 (48,735 rows). Eval-refusal bucket 473 → 0.
+S3-f (#6291) landed after this run. Evidence bar for S6 (#6708):
+
+| item | verdict | detail |
+| --- | --- | --- |
+| 1. two nightlies regime ≥ host | **met** | 35,384 then 36,327 vs 34,099 |
+| 2. per-edition ratchet on the regime JSONL | **FAIL** | ES5 −99, ES2016 −9, ES2023 −4, ES2026 −179 vs the host floors → #6750 |
+| 3. npm-compat regime lane | **FAIL** | of 10 host-measured packages only `clsx` measures on the regime; `cookie`/`hono`/`redux` give wrong checksums; `uuid` crypto imports unclassified; `moment` eval provider not wired in the npm harness; `react` `require`; `acorn`/`marked`/`lit` throw → #6749 (critical) |
+| 4. perf | blocked locally | needs Node ≥ 24 for the sidebar flags; run on CI/another box |
+
+Also new: the regime-compiled Temporal provider now links but every Temporal
+row dies with `wasm exception during module init` (0 pass vs host 581 /
+standalone 170) → #6748.
+
+**Reading:** test262 totals are no longer the constraint; real-package
+correctness (three wrong checksums) and the completed-edition floors are.
+S6 waits on #6749 (product bar) and #6750 (edition floors); #6748 is needed
+for the Temporal share of the ratchet. Order: #6749 A (mechanical wiring)
+and B (wrong values) first — a wrong value in the merged mode is worse than
+a missing feature.
 
 ### Program acceptance
 

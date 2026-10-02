@@ -88,6 +88,7 @@
  */
 
 import { tunedFlagEnabled } from "./perf-flags.js";
+import { readEnv } from "./env.js";
 
 /** Knobs binaryen 125 accepts, mapped to their long-form CLI flags. */
 const NUMERIC_KNOBS: Record<string, string> = {
@@ -144,7 +145,7 @@ export interface InlineHintArgs {
  * one pattern is ever emitted, and a `no-inline=` value containing a comma is
  * rejected rather than forwarded.
  */
-export function inlineHintArgs(raw = process.env.JS2WASM_INLINE_HINTS): InlineHintArgs {
+export function inlineHintArgs(raw = readEnv("JS2WASM_INLINE_HINTS")): InlineHintArgs {
   const empty: InlineHintArgs = { pre: [], post: [] };
   if (!tunedFlagEnabled(raw)) return empty;
   const value = (raw ?? "").trim();

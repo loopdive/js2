@@ -1,0 +1,66 @@
+{
+  "base": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "rootManifest": {
+    "sha256": "7d418bbd7e824902fae5cf14d99fe35debc89bde7bff64d6cab0d5797ae1cb40",
+    "gitBlob": "e7a227d1e33563231844b2a6fcb0365c18e3029a",
+    "bytes": 1498,
+    "lines": 43
+  },
+  "donors": {
+    "src/ir/analysis/lattice.ts": {
+      "sha256": "8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c",
+      "gitBlob": "09f6f2ced96906b6d7d6aa04a68e1c1ac23d9a8d",
+      "bytes": 5739,
+      "lines": 162
+    },
+    "src/ir/analysis/ownership.ts": {
+      "sha256": "e591418b5044f844dd37562471d249aa116846e30f0a23cdde1b3e51d4640051",
+      "gitBlob": "784912232b3a9807c27fa150fa1b107cf63000ec",
+      "bytes": 23651,
+      "lines": 642
+    },
+    "src/ir/analysis/encoding.ts": {
+      "sha256": "02502ab1f7a254253a830a1c4bbacfc27900f6d34aa0a43eb4030d50d3bcdf11",
+      "gitBlob": "88f24e515c7af6ea1ce2cc6d08ab7191cff24cbb",
+      "bytes": 10318,
+      "lines": 247
+    },
+    "src/ir/analysis/escape.ts": {
+      "sha256": "8292ac767cb3f1f9ea89de4a7a4e1b7f68be8f2a78ac12c92a67ea0d2f614444",
+      "gitBlob": "8baf572141c32e7ae1dac9448d7eb1c097b4716b",
+      "bytes": 10826,
+      "lines": 300
+    },
+    "src/ir/analysis/dominance.ts": {
+      "sha256": "dd951d008a605614fb7e8eee4e8d148112f438b9a954d75197a6da6d6b50a820",
+      "gitBlob": "7fc1a806bbd211100d472995158c3066901977f8",
+      "bytes": 13729,
+      "lines": 353
+    },
+    "src/ir/verify-alloc.ts": {
+      "sha256": "40161d406e9d322c2681617dbc2bcf178e8be21bdac4c1448f7c7b3eec10ee84",
+      "gitBlob": "dbc9da355e256fe4100d3fec833b3b6a04744500",
+      "bytes": 7023,
+      "lines": 199
+    },
+    "src/ir/verify.ts": {
+      "sha256": "990ab03c38f460ee801a87224c60106d4f63a6d5367e9b742c1fd1763fa67100",
+      "gitBlob": "7b1fac3ad40c8379f4eb33829825736dff094e65",
+      "bytes": 122223,
+      "lines": 2865
+    },
+    "src/ir/program-allocations.ts": {
+      "sha256": "bd7e82e46bfaf26bdcdf5759ef70b18b2ae1e74120039054f0f0aaf764dfb57c",
+      "gitBlob": "2b21602609f7a71685e5a34d4681944c0594dc44",
+      "bytes": 6549,
+      "lines": 141
+    },
+    "src/ir/program-class-layouts.ts": {
+      "sha256": "010ecc8d4ee03087bb0faac9d10c7f183fe50b07f3445ee7631756088fd81251",
+      "gitBlob": "69c2a894e4074b820f623657661a3c5b6ba11da5",
+      "bytes": 2620,
+      "lines": 51
+    }
+  },
+  "allNineEqualRootBeforePins": true
+}

@@ -6,8 +6,9 @@
  * That file is COMMITTED and drives the report page's conformance trend graph,
  * so only a FULL-CORPUS run belongs in it. The append used to be
  * unconditional-on-completion, with no notion of a scoped run: with
- * `TEST262_PATH_FILTER` or a narrowed `TEST262_LOCAL_SHARD_GLOB`, a partial
- * run posted a partial total as if it were a full pass. Measured 2026-08-14, a
+ * `TEST262_PATH_FILTER`, `TEST262_EXACT_MANIFEST_FILE`, or a narrowed
+ * `TEST262_LOCAL_SHARD_GLOB`, a partial run posted a partial total as if it
+ * were a full pass. Measured 2026-08-14, a
  * single-shard local run wrote `pass: 1902 / total: 2713` next to real
  * ~30,000-test entries, and a 32-invocation sharded experiment would have
  * written 32 such rows. Nothing in CI catches this — the row is well-formed,
@@ -43,10 +44,15 @@ export function shouldPublishRunHistory(env) {
   // first ES5-subset run appended `8616/9029` beside the ~43k full-corpus
   // rows — precisely the #4412 failure mode this script exists to refuse.
   const filterFile = (env.TEST262_PATH_FILTER_FILE ?? "").trim();
+  // #6712: an exact original-file manifest is necessarily scoped, even when
+  // it restores paths the default category discovery omits. It must never
+  // append a partial total to the full-corpus history index.
+  const exactManifestFile = (env.TEST262_EXACT_MANIFEST_FILE ?? "").trim();
   const glob = (env.TEST262_LOCAL_SHARD_GLOB ?? "").trim();
   let scope = "";
   if (filter) scope = `TEST262_PATH_FILTER=${filter}`;
   else if (filterFile) scope = `TEST262_PATH_FILTER_FILE=${filterFile}`;
+  else if (exactManifestFile) scope = `TEST262_EXACT_MANIFEST_FILE=${exactManifestFile}`;
   else if (glob && glob !== FULL_SHARD_GLOB) scope = `TEST262_LOCAL_SHARD_GLOB=${glob}`;
 
   // An explicit 1 forces the append even for a deliberately scoped run, but

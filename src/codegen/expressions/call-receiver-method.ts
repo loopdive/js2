@@ -25,6 +25,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo, tryCompileDynViewSpeciesMethodCall } from "../array-methods.js";
 import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
+import { inheritedBuiltinReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5)
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { exactClassExpressionTypeName } from "../class-expression-identity.js";
@@ -99,6 +100,7 @@ import { isTaViewTypeIdx, taCtorIdentityTestInstrs } from "../registry/types.js"
 import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { staticHostPropertyKeyInstrs } from "../host-property-key.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
 import { ensureStandaloneRegExpCarrierExecHelper } from "../regexp-exec-carrier.js";
@@ -175,6 +177,7 @@ import {
   directObjectMethodFuncIdx,
   emitKnownRestMethodArguments,
   knownMethodRestInfo,
+  knownStaticMethodRestInfo,
 } from "./object-method-rest-abi.js";
 import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
 import { emitHostMethodCallArgs } from "../host-method-args.js"; // (#5361)
@@ -259,10 +262,11 @@ function sourceDeletesBuiltinPrototypeMember(
   const callStart = receiver.getStart(sourceFile);
   return (positions.get(key) ?? []).some((deleteStart) => deleteStart < callStart);
 }
-import { resolvePromiseSubclassName } from "./promise-subclass.js";
+import { promiseSubclassNameOfType } from "./promise-subclass.js";
 import { ensureTaToStringHelper, taToStringApplies } from "../ta-to-string.js"; // (#6651 E7)
 import { reserveTaToLocaleString, taToLocaleStringApplies } from "../to-locale-string-element.js"; // (#6651 TA1)
 import { isHostResolvedBuiltinReceiver } from "../standalone-unavailable-globals.js"; // (#1472)
+import { guardedCastBackup, publishNonInstanceSuperReceiver } from "./super-receiver-publish.js"; // (#5350 r2)
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -290,6 +294,7 @@ import {
   tryEmitAsyncGenNextDispatch,
   tryEmitAsyncGenReturnThrowDispatch,
 } from "./calls.js";
+import { readEnv } from "../../env.js";
 
 /**
  * (#742 slice 4) Receiver-type method-call dispatch — extracted verbatim from
@@ -895,6 +900,9 @@ export function compileReceiverMethodCall(
     const recovered = resolveAssignedNominalType(ctx, propAccess.expression);
     if (recovered) receiverType = recovered;
   }
+  // (#6651 C5) `class N extends Number {}; n.toFixed(2)` — an inherited builtin
+  // member dispatches as on the parent (the carrier IS the parent's wrapper box).
+  receiverType = inheritedBuiltinReceiverType(ctx, receiverType, propAccess.name.text) ?? receiverType;
   // Object literals with runtime computed keys are deliberately represented as
   // open `$Object` externrefs, even when TypeScript still describes the binding
   // as its inferred closed shape. Keep calls on those bindings on the dynamic
@@ -1241,7 +1249,8 @@ export function compileReceiverMethodCall(
     ) {
       const receiverTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
       const recvSym = receiverTsType.getSymbol()?.name;
-      const apparentSym = ctx.checker.getApparentType(receiverTsType).getSymbol()?.name;
+      const apparentTsType = ctx.checker.getApparentType(receiverTsType);
+      const apparentSym = apparentTsType.getSymbol()?.name;
       // A statically-known `class P extends Promise` value carries the same
       // native `$Promise` representation as Promise itself when its forwarding
       // constructor takes the standalone super(executor) path. TypeScript
@@ -1250,11 +1259,10 @@ export function compileReceiverMethodCall(
       // generic member-call path even though the runtime value is a real native
       // promise. Recognize transitive Promise ancestry only on the native lane,
       // keeping host/gc dispatch unchanged.
+      // (#5197 r3) …including an ANONYMOUS `class extends Promise` instance.
       const isNativePromiseSubclassReceiver =
         isStandaloneThenChainNativeActive(ctx) &&
-        [recvSym, apparentSym].some(
-          (name): name is string => name !== undefined && resolvePromiseSubclassName(ctx, name) !== undefined,
-        );
+        promiseSubclassNameOfType(ctx, receiverTsType, apparentTsType) !== undefined;
       const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise" || isNativePromiseSubclassReceiver;
       if (method === "finally" && isNativePromiseSubclassReceiver) {
         nativeFinallyActive = true;
@@ -1871,7 +1879,7 @@ export function compileReceiverMethodCall(
       // receiver. The static `__anon_*_method` stub cannot do that.
       funcIdx = undefined;
     }
-    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexInline" || methodName === "lex")) {
+    if (readEnv("DEBUG_MARKED_CODEGEN") === "1" && (methodName === "lexInline" || methodName === "lex")) {
       console.error(
         "[marked-call-receiver]",
         fctx.name,
@@ -2058,7 +2066,7 @@ export function compileReceiverMethodCall(
         const paramTypes = getFuncParamTypes(ctx, resolvedStaticIdx);
         const paramCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsStatic = ctx.funcUsesArguments.has(fullName);
-        const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
+        const restInfoStatic = knownStaticMethodRestInfo(ctx, expr, fullName, paramTypes); // (#6699)
         const handledRestStatic =
           restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
         // (#6616) A STATIC method reached through its class object is the same
@@ -2172,7 +2180,9 @@ export function compileReceiverMethodCall(
         receiverMaybeNull && methodParamTypes0?.[0]?.kind === "ref"
           ? { kind: "ref_null", typeIdx: (methodParamTypes0[0] as { typeIdx: number }).typeIdx }
           : methodParamTypes0?.[0];
+      const castBackupBefore = guardedCastBackup(fctx); // (#5350 r2)
       let recvType = compileExpression(ctx, fctx, propAccess.expression, recvHint0);
+      publishNonInstanceSuperReceiver(ctx, fctx, fullName, recvType, castBackupBefore); // (#5350 r2) `C.prototype.m()`
       // Track whether receiver went through emitGuardedRefCast — if so, null
       // means "wrong struct type" (not genuinely null), so we should NOT throw
       // TypeError on null after cast.
@@ -3794,6 +3804,18 @@ export function compileReceiverMethodCall(
       } else if (recvType.kind !== "externref") {
         fctx.body.push({ op: "extern.convert_any" });
       }
+      // (#6769 S9) §23.2.3.32 step 1 is ValidateTypedArray: a DETACHED dyn view
+      // throws TypeError before any element is read. This lowering answered
+      // `__extern_toString` straight away, which joins a post-detach length 0
+      // and returns "" (`toLocaleString/detached-buffer.js`). The receiver stays
+      // on the stack; the guard is stack-neutral.
+      if (ctx.standalone && ctx.taDynViewTypeIdx >= 0 && ctx.funcMap.has("__new_TypeError")) {
+        const recvLocal = allocLocal(fctx, `__tls_recv_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push(
+          { op: "local.tee", index: recvLocal },
+          ...taDynDetachedGuardPrologue(ctx, fctx, "toLocaleString", recvLocal),
+        );
+      }
       // (#6651 TA1) §23.2.3.29 is NOT `toString`: ValidateTypedArray runs first
       // (a detached view throws) and the element step is
       // `ToString(? Invoke(elem, "toLocaleString"))`. This is the spelling
@@ -4753,7 +4775,7 @@ export function compileReceiverMethodCall(
           [{ kind: "externref" }],
         );
         // For built-in class identifiers, import __get_builtin to resolve real JS object
-        const receiverIsBuiltin = isHostResolvedBuiltinReceiver(ctx, propAccess.expression); // (#1472)
+        const receiverIsBuiltin = isHostResolvedBuiltinReceiver(ctx, propAccess.expression, methodName); // (#1472)
         const getBuiltinIdx = receiverIsBuiltin
           ? ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }])
           : undefined;
@@ -4791,8 +4813,7 @@ export function compileReceiverMethodCall(
 
           // Push receiver, method name, args array → call __extern_method_call
           fctx.body.push({ op: "local.get", index: recvLocal });
-          addStringConstantGlobal(ctx, methodName);
-          fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+          fctx.body.push(...staticHostPropertyKeyInstrs(ctx, methodName));
           fctx.body.push({ op: "local.get", index: argsLocal });
           fctx.body.push({ op: "call", funcIdx: methodCallIdx });
           return { kind: "externref" };

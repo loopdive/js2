@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-27T14:57:09.205Z",
-  "baseline_generated_at": "2026-09-27T14:57:09.205Z",
-  "baseline_sha": "bc73c88a67b017522c4e1d53a28a1d675bec3e5b",
+  "timestamp": "2026-10-02T03:02:31.105Z",
+  "baseline_generated_at": "2026-10-02T03:02:31.105Z",
+  "baseline_sha": "86d81ddb71d1767cd261705f1ea75c1e2dca3ab9",
   "oracle_version": 14,
   "mode": {
     "target": "gc",
@@ -11,26 +11,26 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 39188,
-    "fail": 8712,
-    "compile_error": 308,
-    "compile_timeout": 6,
+    "pass": 39239,
+    "fail": 8653,
+    "compile_error": 312,
+    "compile_timeout": 10,
     "skip": 18,
-    "compilable": 47900,
-    "host_free_pass": 4340,
-    "leaky_pass": 34848,
+    "compilable": 47892,
+    "host_free_pass": 4611,
+    "leaky_pass": 34628,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 38333,
-        "fail": 8482,
-        "compile_error": 307,
-        "compile_timeout": 6,
+        "pass": 38384,
+        "fail": 8423,
+        "compile_error": 311,
+        "compile_timeout": 10,
         "skip": 18,
-        "compilable": 46815,
-        "host_free_pass": 4334,
-        "leaky_pass": 33999,
+        "compilable": 46807,
+        "host_free_pass": 4603,
+        "leaky_pass": 33781,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -42,8 +42,8 @@
         "compile_timeout": 0,
         "skip": 0,
         "compilable": 1085,
-        "host_free_pass": 6,
-        "leaky_pass": 849,
+        "host_free_pass": 8,
+        "leaky_pass": 847,
         "stale": 0,
         "label": "Annex B (legacy web compat)"
       },
@@ -62,27 +62,27 @@
       },
       "official": {
         "total": 48232,
-        "pass": 39188,
-        "fail": 8712,
-        "compile_error": 308,
-        "compile_timeout": 6,
+        "pass": 39239,
+        "fail": 8653,
+        "compile_error": 312,
+        "compile_timeout": 10,
         "skip": 18,
-        "compilable": 47900,
-        "host_free_pass": 4340,
-        "leaky_pass": 34848,
+        "compilable": 47892,
+        "host_free_pass": 4611,
+        "leaky_pass": 34628,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 39512,
-        "fail": 8788,
-        "compile_error": 315,
-        "compile_timeout": 6,
+        "pass": 39563,
+        "fail": 8729,
+        "compile_error": 319,
+        "compile_timeout": 10,
         "skip": 114,
-        "compilable": 48300,
-        "host_free_pass": 4581,
-        "leaky_pass": 34931,
+        "compilable": 48292,
+        "host_free_pass": 4852,
+        "leaky_pass": 34711,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -90,38 +90,38 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 39188,
-    "fail": 8712,
-    "compile_error": 308,
-    "compile_timeout": 6,
+    "pass": 39239,
+    "fail": 8653,
+    "compile_error": 312,
+    "compile_timeout": 10,
     "skip": 18,
-    "compilable": 47900,
-    "host_free_pass": 4340,
-    "leaky_pass": 34848,
+    "compilable": 47892,
+    "host_free_pass": 4611,
+    "leaky_pass": 34628,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 39512,
-    "fail": 8788,
-    "compile_error": 315,
-    "compile_timeout": 6,
+    "pass": 39563,
+    "fail": 8729,
+    "compile_error": 319,
+    "compile_timeout": 10,
     "skip": 114,
-    "compilable": 48300,
-    "host_free_pass": 4581,
-    "leaky_pass": 34931,
+    "compilable": 48292,
+    "host_free_pass": 4852,
+    "leaky_pass": 34711,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 37149,
-    "fail": 8260,
-    "compile_error": 288,
-    "compile_timeout": 6,
+    "pass": 37191,
+    "fail": 8210,
+    "compile_error": 292,
+    "compile_timeout": 10,
     "skip": 18,
-    "compilable": 45409,
-    "host_free_pass": 4199,
-    "leaky_pass": 32950,
+    "compilable": 45401,
+    "host_free_pass": 4470,
+    "leaky_pass": 32721,
     "stale": 0
   },
   "scope_summaries": {
@@ -133,8 +133,8 @@
       "compile_timeout": 0,
       "skip": 0,
       "compilable": 1085,
-      "host_free_pass": 6,
-      "leaky_pass": 849,
+      "host_free_pass": 8,
+      "leaky_pass": 847,
       "stale": 0
     },
     "proposal": {
@@ -151,14 +151,14 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 38333,
-      "fail": 8482,
-      "compile_error": 307,
-      "compile_timeout": 6,
+      "pass": 38384,
+      "fail": 8423,
+      "compile_error": 311,
+      "compile_timeout": 10,
       "skip": 18,
-      "compilable": 46815,
-      "host_free_pass": 4334,
-      "leaky_pass": 33999,
+      "compilable": 46807,
+      "host_free_pass": 4603,
+      "leaky_pass": 33781,
       "stale": 0
     }
   },
@@ -183,7 +183,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 845,
-      "host_free_pass": 6
+      "host_free_pass": 8
     },
     {
       "name": "built-ins/AbstractModuleSource",
@@ -210,10 +210,10 @@
     {
       "name": "built-ins/Array",
       "path": "built-ins/Array",
-      "pass": 2201,
-      "fail": 790,
+      "pass": 2202,
+      "fail": 785,
       "compile_error": 91,
-      "compile_timeout": 0,
+      "compile_timeout": 4,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 0
@@ -255,9 +255,9 @@
       "name": "built-ins/AsyncFromSyncIteratorPrototype",
       "path": "built-ins/AsyncFromSyncIteratorPrototype",
       "pass": 6,
-      "fail": 31,
+      "fail": 32,
       "compile_error": 0,
-      "compile_timeout": 1,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 38,
       "host_free_pass": 0
@@ -452,8 +452,8 @@
     {
       "name": "built-ins/Function",
       "path": "built-ins/Function",
-      "pass": 402,
-      "fail": 107,
+      "pass": 403,
+      "fail": 106,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
@@ -475,8 +475,8 @@
       "name": "built-ins/GeneratorPrototype",
       "path": "built-ins/GeneratorPrototype",
       "pass": 55,
-      "fail": 6,
-      "compile_error": 0,
+      "fail": 5,
+      "compile_error": 1,
       "compile_timeout": 0,
       "skip": 0,
       "total": 61,
@@ -507,8 +507,8 @@
     {
       "name": "built-ins/isFinite",
       "path": "built-ins/isFinite",
-      "pass": 12,
-      "fail": 3,
+      "pass": 13,
+      "fail": 2,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
@@ -530,9 +530,9 @@
       "name": "built-ins/Iterator",
       "path": "built-ins/Iterator",
       "pass": 412,
-      "fail": 233,
+      "fail": 232,
       "compile_error": 9,
-      "compile_timeout": 0,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 654,
       "host_free_pass": 0
@@ -606,8 +606,8 @@
     {
       "name": "built-ins/Number",
       "path": "built-ins/Number",
-      "pass": 320,
-      "fail": 20,
+      "pass": 321,
+      "fail": 19,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
@@ -683,8 +683,8 @@
     {
       "name": "built-ins/RegExp",
       "path": "built-ins/RegExp",
-      "pass": 1799,
-      "fail": 79,
+      "pass": 1802,
+      "fail": 76,
       "compile_error": 1,
       "compile_timeout": 0,
       "skip": 0,
@@ -749,8 +749,8 @@
     {
       "name": "built-ins/String",
       "path": "built-ins/String",
-      "pass": 1091,
-      "fail": 132,
+      "pass": 1093,
+      "fail": 130,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
@@ -892,8 +892,8 @@
     {
       "name": "harness",
       "path": "harness",
-      "pass": 102,
-      "fail": 14,
+      "pass": 103,
+      "fail": 13,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
@@ -909,7 +909,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 263,
-      "host_free_pass": 0
+      "host_free_pass": 1
     },
     {
       "name": "language/asi",
@@ -931,7 +931,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 145,
-      "host_free_pass": 102
+      "host_free_pass": 105
     },
     {
       "name": "language/comments",
@@ -1002,13 +1002,13 @@
     {
       "name": "language/expressions",
       "path": "language/expressions",
-      "pass": 9258,
-      "fail": 1788,
-      "compile_error": 38,
+      "pass": 9288,
+      "fail": 1756,
+      "compile_error": 40,
       "compile_timeout": 0,
       "skip": 18,
       "total": 11102,
-      "host_free_pass": 1928
+      "host_free_pass": 2058
     },
     {
       "name": "language/function-code",
@@ -1030,7 +1030,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 55,
-      "host_free_pass": 32
+      "host_free_pass": 49
     },
     {
       "name": "language/global-code",
@@ -1041,7 +1041,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 42,
-      "host_free_pass": 12
+      "host_free_pass": 13
     },
     {
       "name": "language/identifier-resolution",
@@ -1063,7 +1063,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 268,
-      "host_free_pass": 115
+      "host_free_pass": 116
     },
     {
       "name": "language/import",
@@ -1085,7 +1085,7 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 25,
-      "host_free_pass": 19
+      "host_free_pass": 20
     },
     {
       "name": "language/line-terminators",
@@ -1107,13 +1107,13 @@
       "compile_timeout": 0,
       "skip": 0,
       "total": 534,
-      "host_free_pass": 309
+      "host_free_pass": 325
     },
     {
       "name": "language/module-code",
       "path": "language/module-code",
-      "pass": 404,
-      "fail": 129,
+      "pass": 408,
+      "fail": 125,
       "compile_error": 65,
       "compile_timeout": 1,
       "skip": 0,
@@ -1145,8 +1145,8 @@
     {
       "name": "language/rest-parameters",
       "path": "language/rest-parameters",
-      "pass": 8,
-      "fail": 3,
+      "pass": 9,
+      "fail": 2,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
@@ -1178,13 +1178,13 @@
     {
       "name": "language/statements",
       "path": "language/statements",
-      "pass": 7718,
-      "fail": 1611,
-      "compile_error": 18,
+      "pass": 7724,
+      "fail": 1604,
+      "compile_error": 19,
       "compile_timeout": 0,
       "skip": 0,
       "total": 9347,
-      "host_free_pass": 1438
+      "host_free_pass": 1537
     },
     {
       "name": "language/types",
@@ -1210,21 +1210,21 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 27,
+    "assertion_fail": 25,
     "illegal_cast": 22,
-    "missing_builtin": 431,
+    "missing_builtin": 430,
     "missing_dependency": 28,
     "negative_test_fail": 5,
     "null_deref": 37,
     "oob": 11,
-    "other": 7377,
-    "promise_error": 127,
-    "range_error": 5,
-    "runtime_error": 896,
+    "other": 7323,
+    "promise_error": 128,
+    "range_error": 8,
+    "runtime_error": 895,
     "syntax_error": 7,
-    "type_error": 70,
+    "type_error": 68,
     "unreachable": 3,
-    "wasm_compile": 57
+    "wasm_compile": 58
   },
   "hard_errors": {},
   "skip_reasons": {

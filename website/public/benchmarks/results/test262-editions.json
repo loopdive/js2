@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7998,
-    "fail": 1006,
+    "pass": 8001,
+    "fail": 1003,
     "ce": 25,
     "skip": 0,
     "total": 9029,
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10244,
-    "fail": 1442,
-    "ce": 18,
+    "pass": 10268,
+    "fail": 1415,
+    "ce": 21,
     "skip": 0,
     "total": 11704,
     "pct": 88,
@@ -66,17 +66,17 @@
       },
       {
         "name": "generators",
-        "pass": 2178,
-        "fail": 308,
-        "ce": 0,
+        "pass": 2189,
+        "fail": 296,
+        "ce": 1,
         "skip": 0,
         "total": 2486,
         "pct": 88
       },
       {
         "name": "default-parameters",
-        "pass": 1487,
-        "fail": 65,
+        "pass": 1489,
+        "fail": 63,
         "ce": 0,
         "skip": 0,
         "total": 1552,
@@ -94,16 +94,16 @@
       {
         "name": "Symbol.iterator",
         "pass": 615,
-        "fail": 180,
-        "ce": 0,
+        "fail": 179,
+        "ce": 1,
         "skip": 0,
         "total": 795,
         "pct": 77
       },
       {
         "name": "Symbol",
-        "pass": 519,
-        "fail": 90,
+        "pass": 520,
+        "fail": 89,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -210,12 +210,12 @@
       },
       {
         "name": "Symbol.match",
-        "pass": 66,
-        "fail": 10,
+        "pass": 68,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 87
+        "pct": 89
       },
       {
         "name": "Symbol.replace",
@@ -808,8 +808,8 @@
   },
   {
     "edition": "ES2017",
-    "pass": 572,
-    "fail": 117,
+    "pass": 575,
+    "fail": 114,
     "ce": 1,
     "skip": 0,
     "total": 690,
@@ -817,12 +817,12 @@
     "features": [
       {
         "name": "async-functions",
-        "pass": 325,
-        "fail": 23,
+        "pass": 328,
+        "fail": 20,
         "ce": 0,
         "skip": 0,
         "total": 348,
-        "pct": 93
+        "pct": 94
       },
       {
         "name": "SharedArrayBuffer",
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3721,
-    "fail": 1098,
-    "ce": 4,
+    "fail": 1099,
+    "ce": 3,
     "skip": 0,
     "total": 4823,
     "pct": 77,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2779,
-        "fail": 1028,
-        "ce": 3,
+        "fail": 1029,
+        "ce": 2,
         "skip": 0,
         "total": 3810,
         "pct": 73
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1395,
-    "fail": 611,
+    "pass": 1398,
+    "fail": 608,
     "ce": 11,
     "skip": 18,
     "total": 2035,
@@ -1642,12 +1642,12 @@
       },
       {
         "name": "optional-chaining",
-        "pass": 39,
-        "fail": 12,
+        "pass": 41,
+        "fail": 10,
         "ce": 1,
         "skip": 0,
         "total": 52,
-        "pct": 75
+        "pct": 79
       },
       {
         "name": "Symbol.iterator",
@@ -1723,12 +1723,12 @@
       },
       {
         "name": "export-star-as-namespace-from-module",
-        "pass": 11,
-        "fail": 8,
+        "pass": 12,
+        "fail": 7,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 58
+        "pct": 63
       },
       {
         "name": "arbitrary-module-namespace-names",
@@ -3263,12 +3263,12 @@
   },
   {
     "edition": "ES2025",
-    "pass": 845,
-    "fail": 135,
+    "pass": 846,
+    "fail": 134,
     "ce": 21,
     "skip": 0,
     "total": 1001,
-    "pct": 84,
+    "pct": 85,
     "features": [
       {
         "name": "iterator-helpers",
@@ -3344,12 +3344,12 @@
       },
       {
         "name": "regexp-duplicate-named-groups",
-        "pass": 15,
-        "fail": 1,
+        "pass": 16,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 16,
-        "pct": 94
+        "pct": 100
       },
       {
         "name": "Symbol",
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4498,
-    "fail": 809,
-    "ce": 138,
+    "pass": 4515,
+    "fail": 786,
+    "ce": 144,
     "skip": 0,
     "total": 5445,
     "pct": 83

@@ -28,8 +28,6 @@ describe("standalone cutover audit public routes", () => {
         ["compileProject", "compileProject"],
       ] as const) {
         const script = `
-          import { createRequire } from "node:module";
-          globalThis.require = createRequire(import.meta.url);
           import("./src/index.ts").then(({ ${api} }) => {
             return ${api}(${JSON.stringify(entry)}, {
               target: "standalone", experimentalIR: false, trackIrOutcomes: true,

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { readEnv } from "../env.js";
+
 export type HostStringPredicate = "includes" | "startsWith" | "endsWith";
 
 const HOST_STRING_SYMBOL_DISPATCH = new Set(["replace", "replaceAll", "match", "matchAll", "search", "split"]);
@@ -22,7 +24,7 @@ export function makeHostStringPredicateAdapter(
   coerce: (value: any) => any,
 ): ((receiver: any, search: any, position: number) => any) | null {
   if (
-    (typeof process !== "undefined" && process.env?.JS2WASM_HOST_STRING_PREDICATE_ABI === "0") ||
+    readEnv("JS2WASM_HOST_STRING_PREDICATE_ABI") === "0" ||
     (method !== "includes" && method !== "startsWith" && method !== "endsWith")
   ) {
     return null;

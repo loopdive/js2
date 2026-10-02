@@ -21,6 +21,8 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
 import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js";
+import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
+import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
 import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -399,6 +401,11 @@ function emitObservableCombinatorState(
   return { stateLocal, arrLocal, lengthLocal };
 }
 
+/** (#5197 r3) Settle an observable aggregate through Resolve when required. */
+function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
+  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
+}
+
 /** Drop Promise.all's iteration-completion sentinel after every admitted element ran. */
 function emitObservableAllIterationComplete(
   fctx: FunctionContext,
@@ -479,6 +486,7 @@ function emitObservableCombinatorElement(
   indexInstrs: readonly Instr[],
   inputInstrs: readonly Instr[],
 ): void {
+  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
@@ -541,6 +549,8 @@ function emitObservableCombinatorElement(
     { op: "drop" },
   ];
   const buildNativeInvoke = (): Instr[] => {
+    // (#6651 D5) A replaceable `%Promise.prototype%.then` must be Got, not bypassed.
+    if (protoThenReplaceable) return buildNonNativeInvoke();
     const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
     return [
@@ -706,7 +716,7 @@ export function emitObservableStandalonePromiseCombinatorLiteral(
       [{ op: "local.get", index: inputLocals[i]! }],
     );
   }
-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
+  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
   return EXTERNREF;
 }
@@ -812,7 +822,7 @@ export function emitObservableStandalonePromiseCombinatorRuntime(
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
+  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
   return EXTERNREF;
 }

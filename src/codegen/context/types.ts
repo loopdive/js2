@@ -491,6 +491,10 @@ export interface NativeGeneratorInfo {
   paramTypes: ValType[];
   /** Field index where captured params start in the state struct. */
   paramFieldOffset: number;
+  /** (#6651 A12) `paramNames` indices the body can write: mutable fields, stored back at each suspension. */
+  writableParamIdxs?: ReadonlySet<number>;
+  /** (#6651 A12) Resume-function locals of `writableParamIdxs` and their fields (frame-core `storeSpills`). */
+  paramWriteBack?: readonly { local: number; field: number }[];
   /**
    * (#2864 C02) Field carrying the eagerly-created `arguments` vec across
    * generator suspension. Present only for generators whose body observes the
@@ -933,14 +937,6 @@ export interface FunctionContext {
   superInitializedFlagLocal?: number;
   /** Whether this function is a generator (function*) */
   isGenerator?: boolean;
-  /**
-   * #3509 — This is an ordinary lifted closure whose body is deferred until
-   * invocation. Standalone dynamic import may compile to an in-module runtime
-   * trap in this body instead of rejecting closure creation. Async/generator
-   * closures deliberately leave this unset because their Promise/lazy-throw
-   * semantics require separate substrate.
-   */
-  deferredDynamicImportTrap?: boolean;
   /**
    * (#2007/#1448) Set once a closure-allocating array method
    * (`map`/`filter`/`flatMap`/`forEach`/`reduce`/`find`/`sort`) has been
@@ -1954,6 +1950,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * `(ref null $vec)` result type, so emission is byte-identical.
    */
   arraySpeciesDirty: boolean;
+  /**
+   * (#6651 H6) The module may hold a Proxy VALUE — the identifier `Proxy`
+   * occurs anywhere (`scanForArrayHoles`). Gates the `$Proxy` arms of the
+   * standalone array-like trio (`proxy-array-like.ts`), so a Proxy-free module
+   * keeps its bytes.
+   */
+  proxyDirty?: boolean;
   /**
    * (#6485) The module can make `@@isConcatSpreadable` OBSERVABLE — it mentions
    * `isConcatSpreadable` anywhere (identifier, string literal, property name),
@@ -3502,6 +3505,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * chain is already live, so publishing the renderer costs ~150 B.
    */
   usesSourceThrowStatement: boolean;
+  /** (#6651 A13) The source declares a `function*` or a generator method (prescan). */
+  usesSourceGenerator?: boolean;
   /**
    * (#2866) Type index of the native `$Symbol` carrier struct
    * `(struct (field $id i32) (field $desc (ref null $AnyString)))`, used in
@@ -4015,9 +4020,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     /**
      * (#2025) Whether the method body reads `this` (param 0), computed at
      * registration BEFORE the TypeError-helper late import shifts function
-     * indices (which would make a finalize-time `methodFuncIdx` lookup point at
-     * the wrong function). Finalize reuses this captured value to decide whether
-     * the trampoline's null-`this` arm throws a catchable TypeError.
+     * indices. Finalize reuses it to decide whether the null-`this` arm throws
+     * a catchable TypeError; (#6789) `undefined` = body not compiled yet at
+     * registration, so finalize rescans the compiled body.
      */
     methodUsesThis?: boolean;
     /**

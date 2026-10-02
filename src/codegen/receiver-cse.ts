@@ -64,10 +64,11 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { explicitNullReceiverActive } from "./explicit-null-receiver.js";
 import { unboundThisIsGlobalObject } from "./helpers/sloppy-this-global.js";
+import { readEnv } from "../env.js";
 
 /** Flag gate. Default ON; `=0` ⇒ every `this` operand keeps its own ladder. */
 export function receiverCseEnabled(): boolean {
-  return tunedFlagEnabled(process.env.JS2WASM_RECEIVER_CSE);
+  return tunedFlagEnabled(readEnv("JS2WASM_RECEIVER_CSE"));
 }
 
 /** Per-instruction-array cache: lowering-shape key → the slot holding `this`. */
@@ -136,9 +137,9 @@ export function emitCachedResolvedThis(ctx: CodegenContext, fctx: FunctionContex
   // next here, and reusing the slot would read an unset local. Verify the tee is
   // still exactly where it was left — the only relocation signal available.
   if (fctx.body[entry.at - 1] !== entry.tee) return false;
-  const limit = process.env.JS2WASM_RECEIVER_CSE_LIMIT;
+  const limit = readEnv("JS2WASM_RECEIVER_CSE_LIMIT");
   if (limit !== undefined && hits >= Number(limit)) return false;
-  if (process.env.JS2WASM_RECEIVER_CSE_TRACE === "1") {
+  if (readEnv("JS2WASM_RECEIVER_CSE_TRACE") === "1") {
     process.stderr.write(
       `[receiver-cse] reuse#${hits} in ${fctx.name} @${expr.pos} gap=${fctx.body.length - entry.at}\n`,
     );
@@ -174,6 +175,6 @@ export function recordResolvedThis(ctx: CodegenContext, fctx: FunctionContext, e
  */
 export function reportReceiverCse(): void {
   if (!receiverCseEnabled()) return;
-  if (!tunedFlagExplicit(process.env.JS2WASM_RECEIVER_CSE) && process.env.JS2WASM_RECEIVER_CSE_TRACE !== "1") return;
+  if (!tunedFlagExplicit(readEnv("JS2WASM_RECEIVER_CSE")) && readEnv("JS2WASM_RECEIVER_CSE_TRACE") !== "1") return;
   process.stderr.write(`[receiver-cse] ladders=${slots} reuses=${hits}\n`);
 }

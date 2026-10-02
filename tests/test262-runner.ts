@@ -38,6 +38,7 @@ import {
   test262TemporalLaneEnabled,
 } from "../scripts/test262-temporal.mjs";
 import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
+import { readTest262ExactManifest } from "../scripts/test262-exact-manifest.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-shared.ts. This lane used to instantiate the binary
 // directly, so a standalone module linking `js2wasm:runtime-eval` died at
@@ -46,7 +47,7 @@ import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // injects into EVERY test contains a direct `eval`, so any test keeping it
 // reachable carries the module-level import. Measured on one 162-file ES5 lever:
 // 82 files masked, 18 of them actually passing.
-import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import { instantiateTest262Module, TEST262_DYNAMIC_CODE_POLICY } from "../scripts/test262-import-object.mjs";
 import {
   ITERATOR_BINDING_PREAMBLE,
   needsIteratorBinding as sourceNeedsIteratorBinding,
@@ -276,7 +277,12 @@ const PROPOSAL_FEATURES = new Map([
   // (#5173) `Temporal` removed — ES2026 (17th ed.), see the note above.
 ]);
 
-function getTest262RelativePath(filePath?: string): string | undefined {
+function getTest262RelativePath(filePath?: string, canonicalRelPath?: string): string | undefined {
+  // Exact-manifest discovery realpaths source files before returning them, so
+  // a symlinked corpus root need not retain a lexical `test262/` segment.
+  // Its manifest identity is the authoritative policy key; legacy callers
+  // retain the existing lexical-path derivation byte-for-byte.
+  if (canonicalRelPath) return canonicalRelPath;
   if (!filePath) return undefined;
   return filePath.replace(/.*test262\//, "");
 }
@@ -301,8 +307,13 @@ function classifyStrictMode(meta: Test262Meta, relPath: string): "only" | "no" |
   return "both";
 }
 
-export function classifyTestScope(source: string, meta: Test262Meta, filePath?: string): Test262ScopeInfo {
-  const relPath = getTest262RelativePath(filePath) ?? "";
+export function classifyTestScope(
+  source: string,
+  meta: Test262Meta,
+  filePath?: string,
+  canonicalRelPath?: string,
+): Test262ScopeInfo {
+  const relPath = getTest262RelativePath(filePath, canonicalRelPath) ?? "";
   const strict = classifyStrictMode(meta, relPath);
 
   if (relPath.startsWith("test/staging/") || relPath.startsWith("staging/")) {
@@ -413,8 +424,13 @@ export type FilterResult = { skip: true; reason: string } | { skip: false; reaso
 // abrupt setter propagation and IteratorClose (see issue #4761).
 const HANGING_TESTS = new Set<string>();
 
-export function shouldSkip(source: string, meta: Test262Meta, filePath?: string): FilterResult {
-  const scope = classifyTestScope(source, meta, filePath);
+export function shouldSkip(
+  source: string,
+  meta: Test262Meta,
+  filePath?: string,
+  canonicalRelPath?: string,
+): FilterResult {
+  const scope = classifyTestScope(source, meta, filePath, canonicalRelPath);
 
   // Skip FIXTURE files — auxiliary modules for dynamic-import tests that use
   // export syntax TypeScript rejects. They are never standalone tests.
@@ -428,7 +444,7 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
 
   // Skip known hanging tests by file path — prevents infinite compilation loops
   if (filePath) {
-    const relPath = filePath.replace(/.*test262\//, "");
+    const relPath = getTest262RelativePath(filePath, canonicalRelPath) ?? "";
     if (HANGING_TESTS.has(relPath)) {
       return { skip: true, reason: "compiler hang (see HANGING_TESTS)" };
     }
@@ -441,7 +457,7 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
   // export` entries. Skip the whole subtree unconditionally so the conformance
   // report stays clean regardless of the proposals flag.
   if (filePath) {
-    const relPath = filePath.replace(/.*test262\//, "");
+    const relPath = getTest262RelativePath(filePath, canonicalRelPath) ?? "";
     if (relPath.includes("language/import/import-defer/")) {
       return {
         skip: true,
@@ -3628,8 +3644,8 @@ const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 /** Provenance prefix for this lane's runtime-eval tier announcement (#2928 E7). */
 const RUNTIME_EVAL_PROVIDER_LABEL = "test262-in-process";
 
-export function findTestFiles(category: string): string[] {
-  const dir = join(TEST262_ROOT, "test", category);
+export function findTestFiles(category: string, test262Root = TEST262_ROOT): string[] {
+  const dir = join(test262Root, "test", category);
   if (!existsSync(dir)) return [];
   const files: string[] = [];
   function walk(d: string) {
@@ -3642,6 +3658,101 @@ export function findTestFiles(category: string): string[] {
   }
   walk(dir);
   return files.sort();
+}
+
+export type Test262DiscoveredFile = {
+  category: string;
+  filePath: string;
+  relPath: string;
+};
+
+/** Return the opted-in exact manifest path, preserving an empty env var as unset. */
+export function getTest262ExactManifestFile(): string | null {
+  const manifest = process.env.TEST262_EXACT_MANIFEST_FILE;
+  return manifest && manifest.length > 0 ? manifest : null;
+}
+
+function assertExactManifestSelectionIsUnambiguous(manifest: string): void {
+  if (process.env.TEST262_PATH_FILTER) {
+    throw new Error(
+      `TEST262_EXACT_MANIFEST_FILE=${manifest} cannot be combined with TEST262_PATH_FILTER; use the manifest as the complete auditable selection`,
+    );
+  }
+  if (process.env.TEST262_PATH_FILTER_FILE) {
+    throw new Error(
+      `TEST262_EXACT_MANIFEST_FILE=${manifest} cannot be combined with TEST262_PATH_FILTER_FILE; use the manifest as the complete auditable selection`,
+    );
+  }
+}
+
+/**
+ * Classify an explicit selection for display only.  Category membership is
+ * never used as a filter here: `intl402` (and any future root outside the
+ * maintained default category list) remains registered and verdict-bearing.
+ */
+export function categoryForTest262Path(relPath: string): string {
+  const testRelative = relPath.startsWith("test/") ? relPath.slice("test/".length) : relPath;
+  let category = "";
+  for (const candidate of TEST_CATEGORIES) {
+    if (
+      (testRelative === candidate || testRelative.startsWith(`${candidate}/`)) &&
+      candidate.length > category.length
+    ) {
+      category = candidate;
+    }
+  }
+  return category || testRelative.split("/", 1)[0] || "uncategorized";
+}
+
+/**
+ * Give fixture-graph helpers the canonical test-relative key for an exact
+ * entry without deriving a second identity from its realpathed file path.
+ * Legacy category discovery keeps its existing lexical relative-path behavior.
+ */
+export function test262FixtureRelativePath(
+  filePath: string,
+  relPath: string,
+  exactManifestFile: string | null,
+  test262Root = TEST262_ROOT,
+): string {
+  return exactManifestFile ? relPath.replace(/^test\//, "") : relative(join(test262Root, "test"), filePath);
+}
+
+/**
+ * Discover tests for the maintained category walk by default, or read an
+ * explicit original-file manifest when requested.  The manifest path is
+ * intentionally mutually exclusive with legacy filters so its identities can
+ * remain the completeness gate's independent expected set.
+ */
+export function discoverTest262TestFiles(
+  options: {
+    exactManifestFile?: string | null;
+    test262Root?: string;
+  } = {},
+): Test262DiscoveredFile[] {
+  const test262Root = options.test262Root ?? TEST262_ROOT;
+  const exactManifestFile =
+    options.exactManifestFile === undefined ? getTest262ExactManifestFile() : options.exactManifestFile;
+  if (exactManifestFile) {
+    assertExactManifestSelectionIsUnambiguous(exactManifestFile);
+    return readTest262ExactManifest(exactManifestFile, { test262Root }).map(({ filePath, relPath }) => ({
+      category: categoryForTest262Path(relPath),
+      filePath,
+      relPath,
+    }));
+  }
+
+  const discovered: Test262DiscoveredFile[] = [];
+  for (const category of TEST_CATEGORIES) {
+    for (const filePath of findTestFiles(category, test262Root)) {
+      // Preserve the legacy category-walk identity byte-for-byte; only exact
+      // manifests impose canonical POSIX `test/...` identities.
+      const relPath = relative(test262Root, filePath);
+      if (!matchesPathFilter(relPath)) continue;
+      discovered.push({ category, filePath, relPath });
+    }
+  }
+  return discovered;
 }
 
 // ── Compilation and execution ───────────────────────────────────────
@@ -3779,6 +3890,8 @@ export async function handleNegativeTest(
       emitWat: false,
       ...(target ? { target } : {}),
       semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
+      // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+      validate: false,
     };
 
     let compileMs = 0;
@@ -3811,7 +3924,10 @@ export async function handleNegativeTest(
       // Try instantiating: if wasm validation rejects it, that also counts.
       try {
         const sandbox = getTestSandbox();
-        const imports = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
+        const imports = buildImports(result.imports, undefined, result.stringPool, {
+          globalSandbox: sandbox,
+          dynamicCode: TEST262_DYNAMIC_CODE_POLICY,
+        });
         // (#4162) Shared seam: without it a standalone module linking
         // `js2wasm:runtime-eval` throws a LINK error here, which this catch
         // would score as "wasm validation rejected it" — a second way for the
@@ -4352,6 +4468,8 @@ async function runOriginalHarnessVariant(
         sourceMap: true,
         emitWat: false,
         skipSemanticDiagnostics: true,
+        // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+        validate: false,
         inferModuleStrictArguments: meta.flags?.includes("module") === true,
         // (#2860 F3) Standalone joins the host lane's deferTopLevelInit rule
         // (mirrors scripts/test262-worker.mjs doCompile): under the `(start)`
@@ -4504,6 +4622,7 @@ async function runOriginalHarnessVariant(
       markCoherentBuiltinRealm(sandbox);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
+        dynamicCode: TEST262_DYNAMIC_CODE_POLICY,
       }) as any;
       const instantiateStarted = performance.now();
       instance = await instantiateTest262Module(result.binary, imports, {
@@ -4839,6 +4958,8 @@ export async function runSyntheticTest262File(
       fileName: "test.ts",
       sourceMap: true,
       emitWat: false,
+      // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+      validate: false,
       // (#2119) keep the in-process runner aligned with the sharded worker:
       // only genuine module-goal tests infer module-strictness; script tests
       // keep mapped `arguments` despite the synthetic `export function test()`
@@ -5021,7 +5142,10 @@ export async function runSyntheticTest262File(
   let instance: any = null;
   try {
     const sandbox = getTestSandbox();
-    const importResult = buildImports(result.imports, undefined, result.stringPool, { globalSandbox: sandbox });
+    const importResult = buildImports(result.imports, undefined, result.stringPool, {
+      globalSandbox: sandbox,
+      dynamicCode: TEST262_DYNAMIC_CODE_POLICY,
+    });
     const imports = importResult as any;
     const instantiateStart = performance.now();
     // (#4162) Same shared seam as the original-harness lane — this legacy

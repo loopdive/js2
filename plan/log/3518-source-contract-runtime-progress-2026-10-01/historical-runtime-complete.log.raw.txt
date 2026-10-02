@@ -1,0 +1,642 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-3518-historical-runtime-reconstruction.test.ts (631 tests) 868594ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects valid-syntax native validation moved after existing checks in #indexProviders  1555ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects valid-syntax native validation moved after existing checks in #selectProvider  1412ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > keeps current 6/21/7/82/75/37 populations separate from historical receipts  13582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/core/async-callables.ts#IR_NATIVE_PROMISE_DELAY_FN  1671ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/core/async-callables.ts#IR_ASYNC_PROMISE_ALL_NATIVE_FN  1666ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/core/async-callables.ts#IR_ASYNC_CLOCK_SNAPSHOT_FN  1692ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/core/async-callables.ts#IR_ASYNC_NUMBER_TO_STRING_FN  1665ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/core/async-callables.ts#IR_ASYNC_CONSOLE_LOG_STRING_FN  1668ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/core/async-callables.ts#IR_ASYNC_STRING_CONCAT_5_FN  1676ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#F64  1675ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#EXTERNREF  1669ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#PROMISE  1671ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#STRING  1677ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#PROMISE_VECTOR  1684ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#declaration  1670ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_DECLARATIONS  1680ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#irNativeAsyncCallableDeclaration  1668ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#irRuntimeCallableHasNoSlot  1668ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#PROMISE_DEPENDENCIES  1676ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS  1672ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#nativeAsyncProviderMismatch  1678ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallablePolicyMismatch  1750ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableError  1673ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableDemand  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#buffers  1675ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallableValueTypes  1807ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallMismatch  1669ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#collectNativeAsyncCallableDemands  1669ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncCallableDemands  1688ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncRuntimeCallables  1666ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES  1639ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeFeature  1641ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS  1641ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeProviderId  1643ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_SIGNATURE  1641ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_RUNTIME_PROVIDERS  1645ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/core/async-callables.ts#IR_NATIVE_PROMISE_DELAY_FN  1676ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/core/async-callables.ts#IR_ASYNC_PROMISE_ALL_NATIVE_FN  1672ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/core/async-callables.ts#IR_ASYNC_CLOCK_SNAPSHOT_FN  1669ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/core/async-callables.ts#IR_ASYNC_NUMBER_TO_STRING_FN  1679ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/core/async-callables.ts#IR_ASYNC_CONSOLE_LOG_STRING_FN  1660ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/core/async-callables.ts#IR_ASYNC_STRING_CONCAT_5_FN  1675ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#F64  1671ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#EXTERNREF  1684ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#PROMISE  1676ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#STRING  1648ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#PROMISE_VECTOR  1650ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#declaration  1662ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_DECLARATIONS  1656ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#irNativeAsyncCallableDeclaration  1664ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#irRuntimeCallableHasNoSlot  1666ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#PROMISE_DEPENDENCIES  1677ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS  1677ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncProviderMismatch  1680ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallablePolicyMismatch  1680ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableError  1677ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableDemand  1677ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#buffers  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallableValueTypes  1685ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallMismatch  1673ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#collectNativeAsyncCallableDemands  1676ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncCallableDemands  1681ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncRuntimeCallables  1678ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES  1633ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeFeature  1631ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS  1639ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeProviderId  1646ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_SIGNATURE  1642ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects renamed live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_RUNTIME_PROVIDERS  1647ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/core/async-callables.ts#IR_NATIVE_PROMISE_DELAY_FN  1672ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/core/async-callables.ts#IR_ASYNC_PROMISE_ALL_NATIVE_FN  1669ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/core/async-callables.ts#IR_ASYNC_CLOCK_SNAPSHOT_FN  1678ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/core/async-callables.ts#IR_ASYNC_NUMBER_TO_STRING_FN  1675ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/core/async-callables.ts#IR_ASYNC_CONSOLE_LOG_STRING_FN  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/core/async-callables.ts#IR_ASYNC_STRING_CONCAT_5_FN  1683ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#F64  1662ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#EXTERNREF  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#PROMISE  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#STRING  1673ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#PROMISE_VECTOR  1700ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#declaration  1675ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_DECLARATIONS  1676ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#irNativeAsyncCallableDeclaration  1673ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#irRuntimeCallableHasNoSlot  1679ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#PROMISE_DEPENDENCIES  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#nativeAsyncProviderMismatch  1687ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallablePolicyMismatch  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableError  1677ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableDemand  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#buffers  1679ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallableValueTypes  1672ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallMismatch  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#collectNativeAsyncCallableDemands  1678ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncCallableDemands  1671ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncRuntimeCallables  1681ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES  1637ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeFeature  1658ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS  1644ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeProviderId  1648ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_SIGNATURE  1641ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_RUNTIME_PROVIDERS  1646ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/core/async-callables.ts#IR_NATIVE_PROMISE_DELAY_FN  1682ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/core/async-callables.ts#IR_ASYNC_PROMISE_ALL_NATIVE_FN  1678ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/core/async-callables.ts#IR_ASYNC_CLOCK_SNAPSHOT_FN  1680ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/core/async-callables.ts#IR_ASYNC_NUMBER_TO_STRING_FN  1674ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/core/async-callables.ts#IR_ASYNC_CONSOLE_LOG_STRING_FN  1679ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/core/async-callables.ts#IR_ASYNC_STRING_CONCAT_5_FN  1670ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#F64  1675ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#EXTERNREF  1706ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#PROMISE  1696ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#STRING  1680ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#PROMISE_VECTOR  1688ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#declaration  1693ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_DECLARATIONS  1689ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#irNativeAsyncCallableDeclaration  1685ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#irRuntimeCallableHasNoSlot  1686ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#PROMISE_DEPENDENCIES  1735ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS  1690ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#nativeAsyncProviderMismatch  1703ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallablePolicyMismatch  1686ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableError  1694ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableDemand  1681ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#buffers  1683ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallableValueTypes  1694ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallMismatch  1683ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#collectNativeAsyncCallableDemands  1684ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncCallableDemands  1697ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncRuntimeCallables  1688ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES  1658ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeFeature  1653ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS  1662ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeProviderId  1662ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_SIGNATURE  1693ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_RUNTIME_PROVIDERS  1671ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/core/async-callables.ts#IR_NATIVE_PROMISE_DELAY_FN  1418ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/core/async-callables.ts#IR_ASYNC_PROMISE_ALL_NATIVE_FN  1416ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/core/async-callables.ts#IR_ASYNC_CLOCK_SNAPSHOT_FN  1437ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/core/async-callables.ts#IR_ASYNC_NUMBER_TO_STRING_FN  1452ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/core/async-callables.ts#IR_ASYNC_CONSOLE_LOG_STRING_FN  1453ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/core/async-callables.ts#IR_ASYNC_STRING_CONCAT_5_FN  1438ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#F64  1416ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#EXTERNREF  1420ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#PROMISE  1422ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#STRING  1453ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#PROMISE_VECTOR  1453ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#declaration  1478ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_DECLARATIONS  1465ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#irNativeAsyncCallableDeclaration  1455ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#irRuntimeCallableHasNoSlot  1457ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#PROMISE_DEPENDENCIES  1502ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS  1444ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncProviderMismatch  1437ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallablePolicyMismatch  1434ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableError  1444ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#IrNativeAsyncCallableDemand  1442ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#buffers  1439ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallableValueTypes  1439ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#nativeAsyncCallMismatch  1456ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#collectNativeAsyncCallableDemands  1449ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncCallableDemands  1462ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/native-async-callables.ts#assertNativeAsyncRuntimeCallables  1459ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES  1397ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeFeature  1405ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/contracts/manifest.ts#NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS  1399ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/contracts/manifest.ts#NativeAsyncCallableRuntimeProviderId  1392ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_SIGNATURE  1394ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed live addition src/ir/runtime/callable-declarations.ts#REFERENCE_ERROR_RUNTIME_PROVIDERS  1397ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion +0 in 'src/ir/runtime/manifest.ts'  581ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 1 in 'src/ir/runtime/manifest.ts'  573ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 2 in 'src/ir/runtime/manifest.ts'  578ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 3 in 'src/ir/runtime/manifest.ts'  583ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 4 in 'src/ir/runtime/manifest.ts'  578ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 5 in 'src/ir/runtime/manifest.ts'  574ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 6 in 'src/ir/intrinsic-support.ts'  568ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 7 in 'src/ir/intrinsic-support.ts'  567ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 8 in 'src/ir/intrinsic-support.ts'  571ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 9 in 'src/ir/intrinsic-support.ts'  567ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 10 in 'src/ir/intrinsic-support.ts'  579ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 11 in 'src/ir/runtime/contracts/manifest.ts'  572ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 12 in 'src/ir/runtime/contracts/manifest.ts'  570ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 13 in 'src/ir/runtime/contracts/manifest.ts'  572ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects missing insertion 14 in 'src/ir/runtime/callable-declarations.…'  563ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion +0 in 'src/ir/runtime/manifest.ts'  587ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 1 in 'src/ir/runtime/manifest.ts'  584ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 2 in 'src/ir/runtime/manifest.ts'  590ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 3 in 'src/ir/runtime/manifest.ts'  585ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 4 in 'src/ir/runtime/manifest.ts'  583ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 5 in 'src/ir/runtime/manifest.ts'  574ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 6 in 'src/ir/intrinsic-support.ts'  573ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 7 in 'src/ir/intrinsic-support.ts'  582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 8 in 'src/ir/intrinsic-support.ts'  581ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 9 in 'src/ir/intrinsic-support.ts'  582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 10 in 'src/ir/intrinsic-support.ts'  581ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 11 in 'src/ir/runtime/contracts/manifest.ts'  582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 12 in 'src/ir/runtime/contracts/manifest.ts'  581ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 13 in 'src/ir/runtime/contracts/manifest.ts'  586ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects duplicate insertion 14 in 'src/ir/runtime/callable-declarations.…'  561ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion +0 in 'src/ir/runtime/manifest.ts'  582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 1 in 'src/ir/runtime/manifest.ts'  584ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 2 in 'src/ir/runtime/manifest.ts'  587ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 3 in 'src/ir/runtime/manifest.ts'  586ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 4 in 'src/ir/runtime/manifest.ts'  582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 5 in 'src/ir/runtime/manifest.ts'  584ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 6 in 'src/ir/intrinsic-support.ts'  561ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 7 in 'src/ir/intrinsic-support.ts'  573ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 8 in 'src/ir/intrinsic-support.ts'  569ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 9 in 'src/ir/intrinsic-support.ts'  556ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 10 in 'src/ir/intrinsic-support.ts'  565ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 11 in 'src/ir/runtime/contracts/manifest.ts'  564ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 12 in 'src/ir/runtime/contracts/manifest.ts'  569ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 13 in 'src/ir/runtime/contracts/manifest.ts'  557ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects reorder insertion 14 in 'src/ir/runtime/callable-declarations.…'  556ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion +0 in 'src/ir/runtime/manifest.ts'  573ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 1 in 'src/ir/runtime/manifest.ts'  575ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 2 in 'src/ir/runtime/manifest.ts'  569ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 3 in 'src/ir/runtime/manifest.ts'  574ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 4 in 'src/ir/runtime/manifest.ts'  570ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 5 in 'src/ir/runtime/manifest.ts'  569ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 6 in 'src/ir/intrinsic-support.ts'  564ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 7 in 'src/ir/intrinsic-support.ts'  568ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 8 in 'src/ir/intrinsic-support.ts'  563ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 9 in 'src/ir/intrinsic-support.ts'  571ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 10 in 'src/ir/intrinsic-support.ts'  567ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 11 in 'src/ir/runtime/contracts/manifest.ts'  577ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 12 in 'src/ir/runtime/contracts/manifest.ts'  580ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 13 in 'src/ir/runtime/contracts/manifest.ts'  578ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed insertion 14 in 'src/ir/runtime/callable-declarations.…'  578ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/core/async-callables.ts: Logical bindings, not backend function names  608ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/native-async-callables.ts: "scheduler.enqueue",  594ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/native-async-callables.ts: Object.freeze(dependencies)  605ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/native-async-callables.ts: actual.nullable === false  604ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/native-async-callables.ts: irTypeEquals({ ...actual, nullable: true }, expected)  599ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/native-async-callables.ts: readonly unitId: IrUnitId;  612ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/native-async-callables.ts: this.name = "IrNativeAsyncCallableError"  614ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: nativeAsyncProviderMismatch(provider)  589ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: nativeAsyncCallablePolicyMismatch(feature, this.#policy)  586ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: resolveProvider(feature: NativeAsyncCallableRuntimeFeature)  589ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: resolveProvider(feature: NativeAsyncCallableRuntimeFeature): RuntimeProviderDefinition;  592ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,  589ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,  580ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,  578ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: readonly builtinDemands?:  585ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: Explicit complete whole-program scan.  570ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: assertNativeAsyncCallableDemands(input.functions, input.builtinDemands)  579ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: nativeAsyncCallablePolicyMismatch(use.feature, input.policy)  572ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: runtimeCallFeatures.add(use.feature)  565ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: assertNativeAsyncRuntimeCallables(attached)  581ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/intrinsic-support.ts: return attached;  577ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: ref: irRuntimeFuncRef(referenceError.field)  582ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: params: semanticTypes(referenceError.params)  581ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: result: REFERENCE_ERROR_DECLARATION.results[0]!  576ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: id: "native.error.reference.construct"  589ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: symbol: "__new_ReferenceError"  567ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: ref.binding.symbol === "__new_ReferenceError"  573ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/callable-declarations.ts: ? REFERENCE_ERROR_DECLARATION  570ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/contracts/manifest.ts: Whole-program builtin demands;  585ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/contracts/manifest.ts: "native.async.delay",  583ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/manifest.ts: #state: BuilderState = "open"  601ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects exact live callable delta mutation src/ir/runtime/intrinsic-verification.ts: post-freeze provider binding.  859ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > requires canonical file src/ir/core/async-callables.ts even when history does not copy it  10225ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > requires canonical file src/ir/runtime/native-async-callables.ts even when history does not copy it  10328ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > requires canonical file src/ir/runtime/callable-declarations.ts even when history does not copy it  1383ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > requires canonical file src/ir/runtime/contracts/manifest.ts even when history does not copy it  1642ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > requires canonical file src/ir/runtime/manifest.ts even when history does not copy it  1897ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > requires canonical file src/ir/intrinsic-support.ts even when history does not copy it  2188ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed exact value/type forwarding src/ir/runtime/manifest.ts  560ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed exact value/type forwarding src/ir/runtime/manifest.ts  551ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed exact value/type forwarding src/ir/runtime/manifest.ts  550ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed exact value/type forwarding src/ir/runtime/manifest.ts  555ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed exact value/type forwarding src/ir/runtime/callable-declarations.ts  557ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects changed exact value/type forwarding src/ir/runtime/native-async-callables.ts  599ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects new imports, stars, duplicate forwarding and future clock/vector additions in src/ir/core/async-callables.ts  2467ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects new imports, stars, duplicate forwarding and future clock/vector additions in src/ir/runtime/native-async-callables.ts  2404ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects new imports, stars, duplicate forwarding and future clock/vector additions in src/ir/runtime/callable-declarations.ts  2265ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects new imports, stars, duplicate forwarding and future clock/vector additions in src/ir/runtime/contracts/manifest.ts  2230ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects new imports, stars, duplicate forwarding and future clock/vector additions in src/ir/runtime/manifest.ts  2299ms
+   ✓ callable deltas retained beneath the checked clock/vector composition > rejects new imports, stars, duplicate forwarding and future clock/vector additions in src/ir/intrinsic-support.ts  2284ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/intrinsic-support.ts  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/runtime/callable-declarations.ts  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/runtime/manifest.ts  570ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/runtime/manifest.ts  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/runtime/manifest.ts  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/runtime/manifest.ts  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing current import inversion in src/ir/intrinsic-support.ts  561ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/intrinsic-support.ts  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/runtime/callable-declarations.ts  563ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/runtime/manifest.ts  570ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/runtime/manifest.ts  561ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/runtime/manifest.ts  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/runtime/manifest.ts  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate current import inversion in src/ir/intrinsic-support.ts  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/intrinsic-support.ts  836ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/runtime/callable-declarations.ts  827ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/runtime/manifest.ts  837ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/runtime/manifest.ts  839ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/runtime/manifest.ts  827ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/runtime/manifest.ts  821ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement current import inversion in src/ir/intrinsic-support.ts  829ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/intrinsic-support.ts  556ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/runtime/callable-declarations.ts  549ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/runtime/manifest.ts  547ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/runtime/manifest.ts  552ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/runtime/manifest.ts  546ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/runtime/manifest.ts  548ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects type-only current import inversion in src/ir/intrinsic-support.ts  558ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > pins explicit intermediate views, overload ordinals and exact historical denominators  22850ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_FEATURES  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeFeature  1639ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS  1645ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeProviderId  1645ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_ELEM_SET_PREFIX  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_NEW_SIZED_PREFIX  1636ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_NEW  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_ELEM_SET  1632ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#IrVectorRuntimeElementKind  1623ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#irVectorRuntimeElementKind  1641ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#requireRuntimeElementKind  1650ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#irVecElemSetSymbol  1641ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#irVecNewSizedSymbol  1638ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/core/vector-runtime.ts#parseIrVectorRuntimeElement  1637ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#EXTERNREF  1654ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#SYMBOL  1667ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_DECLARATION  1681ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#irVectorCallableDeclaration  1668ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_RUNTIME_PROVIDERS  1679ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#vectorProviderMismatch  1666ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#vectorCallablePolicyMismatch  1674ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableError  1676ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableDemand  1683ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#buffers  1673ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#collectVectorCallableDemands  1643ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime/vector-callables.ts#assertVectorCallableDemands  1635ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrSemanticRuntimeSeparation  1630ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/program-runtime-validation.ts#assertClockProjection  1649ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrRuntimeProjection  1669ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/program-runtime-abi.ts#prepareIrProgramRuntimeCallables  1709ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing mandatory current extension src/ir/runtime-program-manifest.ts#prepareWholeProgramRuntimeManifest  1655ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_FEATURES  1647ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeFeature  1673ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS  1652ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeProviderId  1651ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_ELEM_SET_PREFIX  1678ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_NEW_SIZED_PREFIX  1675ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_NEW  1635ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_ELEM_SET  1634ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#IrVectorRuntimeElementKind  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#irVectorRuntimeElementKind  1656ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#requireRuntimeElementKind  1644ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#irVecElemSetSymbol  1628ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#irVecNewSizedSymbol  1647ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/core/vector-runtime.ts#parseIrVectorRuntimeElement  1673ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#EXTERNREF  1673ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#SYMBOL  1651ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_DECLARATION  1637ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#irVectorCallableDeclaration  1638ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_RUNTIME_PROVIDERS  1642ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#vectorProviderMismatch  1644ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#vectorCallablePolicyMismatch  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableError  1637ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableDemand  1634ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#buffers  1643ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#collectVectorCallableDemands  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime/vector-callables.ts#assertVectorCallableDemands  1633ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrSemanticRuntimeSeparation  1671ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/program-runtime-validation.ts#assertClockProjection  1684ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrRuntimeProjection  1668ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/program-runtime-abi.ts#prepareIrProgramRuntimeCallables  1662ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate mandatory current extension src/ir/runtime-program-manifest.ts#prepareWholeProgramRuntimeManifest  1648ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_FEATURES  1641ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeFeature  1652ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS  1635ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeProviderId  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_ELEM_SET_PREFIX  1660ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_NEW_SIZED_PREFIX  1649ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_NEW  1627ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_ELEM_SET  1641ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#IrVectorRuntimeElementKind  1635ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#irVectorRuntimeElementKind  1636ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#requireRuntimeElementKind  1642ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#irVecElemSetSymbol  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#irVecNewSizedSymbol  1626ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/core/vector-runtime.ts#parseIrVectorRuntimeElement  1640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#EXTERNREF  1633ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#SYMBOL  1637ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_DECLARATION  1636ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#irVectorCallableDeclaration  1644ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_RUNTIME_PROVIDERS  1690ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#vectorProviderMismatch  1612ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#vectorCallablePolicyMismatch  1615ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableError  1621ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableDemand  1606ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#buffers  1621ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#collectVectorCallableDemands  1611ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime/vector-callables.ts#assertVectorCallableDemands  1616ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrSemanticRuntimeSeparation  1624ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/program-runtime-validation.ts#assertClockProjection  1621ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrRuntimeProjection  1623ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/program-runtime-abi.ts#prepareIrProgramRuntimeCallables  1680ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects reorder mandatory current extension src/ir/runtime-program-manifest.ts#prepareWholeProgramRuntimeManifest  1635ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_FEATURES  1415ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeFeature  1412ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/contracts/manifest.ts#VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS  1411ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/contracts/manifest.ts#VectorCallableRuntimeProviderId  1415ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_ELEM_SET_PREFIX  1415ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#IR_VEC_NEW_SIZED_PREFIX  1403ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_NEW  1402ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#IR_HOLEY_ARRAY_ELEM_SET  1402ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#IrVectorRuntimeElementKind  1393ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#irVectorRuntimeElementKind  1348ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#requireRuntimeElementKind  1369ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#irVecElemSetSymbol  1356ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#irVecNewSizedSymbol  1370ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/core/vector-runtime.ts#parseIrVectorRuntimeElement  1376ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#EXTERNREF  1390ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#SYMBOL  1394ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_DECLARATION  1359ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#irVectorCallableDeclaration  1417ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#VECTOR_CALLABLE_RUNTIME_PROVIDERS  1413ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#vectorProviderMismatch  1406ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#vectorCallablePolicyMismatch  1404ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableError  1401ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#IrVectorCallableDemand  1409ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#buffers  1407ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#collectVectorCallableDemands  1405ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime/vector-callables.ts#assertVectorCallableDemands  1382ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrSemanticRuntimeSeparation  1378ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/program-runtime-validation.ts#assertClockProjection  1375ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/program-runtime-validation.ts#assertPreparedIrRuntimeProjection  1395ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/program-runtime-abi.ts#prepareIrProgramRuntimeCallables  1381ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed mandatory current extension src/ir/runtime-program-manifest.ts#prepareWholeProgramRuntimeManifest  1387ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span +0  556ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 1  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 2  559ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 3  568ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 4  573ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 5  573ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 6  579ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 7  583ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 8  580ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 9  560ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 10  559ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'vector' inverse span 11  570ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span +0  556ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 1  554ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 2  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 3  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 4  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 5  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 6  563ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects missing 'clock' inverse span 7  551ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span +0  552ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 1  553ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 2  563ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 3  562ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 4  561ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 5  564ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 6  576ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 7  584ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 8  582ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 9  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 10  562ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'vector' inverse span 11  576ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span +0  575ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 1  564ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 2  573ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 3  629ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 4  579ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 5  594ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 6  584ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects duplicate 'clock' inverse span 7  571ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span +0  579ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 1  576ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 2  585ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 3  571ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 4  580ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 5  576ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 6  600ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 7  592ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 8  558ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 9  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 10  563ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'vector' inverse span 11  592ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span +0  582ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 1  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 2  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 3  564ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 4  557ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 5  577ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 6  561ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects movement 'clock' inverse span 7  577ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span +0  564ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 1  560ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 2  562ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 3  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 4  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 5  562ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 6  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 7  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 8  570ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 9  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 10  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'vector' inverse span 11  580ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span +0  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 1  568ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 2  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 3  570ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 4  573ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 5  581ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 6  582ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed 'clock' inverse span 7  578ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/core/vector-runtime.ts: return value?.kind  561ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/core/vector-runtime.ts: "vector element store"  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: nullable: true  581ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: feature: "js.vector.elem-set.externref"  563ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: dependencies: Object.freeze([])  568ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: policy.backend === "wasmgc" && policy.target === "standalone"  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: let ordinal = 0;  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: owners.add(fn.unitId)  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: JSON.stringify(demands[index])  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/vector-callables.ts: this.name = "IrVectorCallableError"  577ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: readonly vectorDemands?:  579ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: assertVectorCallableDemands(input.functions, input.vectorDemands)  573ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: vectorCallablePolicyMismatch(use.feature, input.policy)  571ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: for (const demand of input.vectorDemands ?? [])  571ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/manifest.ts: vectorProviderMismatch(provider)  577ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/manifest.ts: vectorCallablePolicyMismatch(feature, this.#policy)  589ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/manifest.ts: resolveProvider(feature: VectorCallableRuntimeFeature): RuntimeProviderDefinition;  581ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/manifest.ts: ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,  582ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/manifest.ts: ...VECTOR_CALLABLE_RUNTIME_FEATURES,  583ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/manifest.ts: ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,  587ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime/callable-declarations.ts: ?? irVectorCallableDeclaration(ref)  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: Object.hasOwn(nested, "alloc")  576ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: Object.hasOwn(nested, "site") ? { site: nested.site } : {}  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: value: { kind: "f64", value: 0 }  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: projectClocks = false  640ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: projectClocks ? mapArray(attached, projectStandaloneAsyncStateInstr) : attached  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: clockProviders.length !== 1  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: nativeAsyncProviderMismatch(clockProviders[0]!) !== undefined  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: use.feature === "async.native.clock-zero"  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: attachProviders(fn, providers, manifest.hostCapabilityRecords, projectClocks)  570ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/intrinsic-support.ts: nativeProjection ? mapArray(attached, projectStandaloneAsyncStateInstr) : attached  573ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: assertClockProjection(program, projection);  557ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: nativeAsyncProviderMismatch(providers[0]!) !== undefined  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: providers.length !== 1  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: Object.hasOwn(original, "alloc")  558ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: Object.hasOwn(original, "site") ? { site: original.site } : {}  561ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: !Object.is(selected.value.value, 0)  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: if (before.length !== after.length)  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: if (fn.unitId !== selected.unitId)  574ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-validation.ts: compare(state.body, physical.body  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-abi.ts: collectVectorCallableDemands([fn]);  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/program-runtime-abi.ts:  && !(error instanceof IrVectorCallableError)  563ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime-program-manifest.ts: vectorDemands.push(collectVectorCallableDemands([fn])[0]!);  560ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime-program-manifest.ts: vectorDemands: Object.freeze(vectorDemands)  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects semantic current clock/vector mutation src/ir/runtime-program-manifest.ts:  && !(error instanceof IrVectorCallableError)  571ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > requires the live extension owner src/ir/core/vector-runtime.ts  560ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > requires the live extension owner src/ir/runtime/vector-callables.ts  1080ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > requires the live extension owner src/ir/vector-runtime.ts  816ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > requires the live extension owner src/ir/program-runtime-validation.ts  3014ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > requires the live extension owner src/ir/program-runtime-abi.ts  2468ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > requires the live extension owner src/ir/runtime-program-manifest.ts  2743ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/vector-runtime.ts  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/vector-runtime.ts  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/vector-runtime.ts  564ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/runtime/manifest.ts  565ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/runtime/manifest.ts  566ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/intrinsic-support.ts  572ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/intrinsic-support.ts  569ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/program-runtime-abi.ts  567ms
+   ✓ final clock/vector source before reverse-composition historical acceptance > rejects changed exact composed forwarding src/ir/runtime-program-manifest.ts  572ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/runtime/contracts/intrinsics.ts (20 declarations/0 functions)  820ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/async-runtime-providers.ts (26 declarations/12 functions)  555ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/runtime-manifest.ts (85 declarations/38 functions)  11718ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/intrinsics.ts (24 declarations/5 functions)  816ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/async-plan.ts (48 declarations/39 functions)  542ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/intrinsic-support.ts (41 declarations/24 functions)  12608ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/runtime/callable-declarations.ts (5 declarations/2 functions)  11717ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > accepts original unchanged receipt src/ir/runtime/contracts/manifest.ts (67 declarations/0 functions)  11704ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > retains the three overload records with their individual source-qualified ordinals  12438ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rebases exactly the two live core imports without putting core contracts into historical graph population  1073ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a missing live core declaration before producing a fixture  1887ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a renamed live core declaration before producing a fixture  1901ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a duplicate live core declaration before producing a fixture  1917ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a reorder live core declaration before producing a fixture  1910ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects deletion of overload occurrence 0  845ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects deletion of overload occurrence 1  846ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects deletion of overload occurrence 2  835ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a renamed overload  840ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a duplicate overload  832ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: Feature extends string  1627ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: readonly feature: Feature;  1644ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: readonly feature: Feature;  1652ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: readonly id: IntrinsicId;  1638ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: readonly column: number;  1623ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/runtime/contracts/intrinsics.ts: CoreIntrinsicDefinition<RuntimeFeature>  1613ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/runtime/contracts/intrinsics.ts: Provider requirements reachable  1606ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/runtime/contracts/intrinsics.ts: IntrinsicDefinition as CoreIntrinsicDefinition  1616ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/runtime/contracts/intrinsics.ts: ../../core/intrinsic-contracts.js  1605ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: ./types.js  1585ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects live contract change src/ir/core/intrinsic-contracts.ts: IntrinsicId, IntrinsicSignatureVersion  1595ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects forbidden extra imports, exports and syntax in src/ir/core/intrinsic-contracts.ts  3827ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects forbidden extra imports, exports and syntax in src/ir/runtime/contracts/intrinsics.ts  3880ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > fails when mandatory core contracts are absent even though the historical fixture does not copy that module  1612ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/core/intrinsics.ts  1377ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/core/intrinsics.ts  1371ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/core/intrinsics.ts  1353ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/core/intrinsics.ts  1373ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/runtime/manifest.ts  11983ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/runtime/manifest.ts  12071ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/runtime/async-attachment.ts  1096ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects changed initializer/body/private field/documentation in src/ir/intrinsics.ts  1354ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/analysis/intrinsics.ts  608ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/analysis/intrinsics.ts  606ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/analysis/intrinsics.ts  608ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/analysis/intrinsics.ts  620ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/runtime/intrinsic-verification.ts  615ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/runtime/intrinsic-verification.ts  617ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/runtime/intrinsic-verification.ts  625ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/runtime/intrinsic-verification.ts  610ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects altered semantic result/adapter/provider suffix in src/ir/runtime/intrinsic-verification.ts  612ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects reordered provider suffix statements rather than canonicalizing them  894ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects reordered canonical declarations from src/ir/core/intrinsics.ts  1640ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects reordered canonical declarations from src/ir/analysis/intrinsics.ts  1602ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects reordered canonical declarations from src/ir/runtime/manifest.ts  12451ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects reordered canonical declarations from src/ir/runtime/async-attachment.ts  1368ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a star live forwarding hop  560ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a wrong target live forwarding hop  560ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a duplicate live forwarding hop  560ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a renamed live forwarding hop  564ms
+   ✓ historical runtime receipts after checked extension reconstruction from mandatory live sources > rejects a local replacement live forwarding hop  560ms
+
+ Test Files  1 passed (1)
+      Tests  631 passed (631)
+   Start at  06:25:06
+   Duration  869.01s (transform 52ms, setup 0ms, collect 245ms, tests 868.59s, environment 0ms, prepare 30ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/runtime-resume/historical-runtime.json

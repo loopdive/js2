@@ -18,8 +18,9 @@
  * ordering by hint:
  *   - string hint:          toString → valueOf
  *   - number / default hint: valueOf → toString
- * Each dispatcher returns a boxed primitive externref on a struct match, or
- * `ref.null.extern` on no match; a non-null result is the primitive to return.
+ * Private dispatchers return `(matched, value)`: a real null/undefined result
+ * remains distinct from no callable method. Public one-result exports retain
+ * their existing ABI for host callers.
  * If both miss (a class with neither valueOf nor toString), the driver returns
  * the input unchanged — identical to today's "return unchanged" fall-through,
  * so no regression.
@@ -40,8 +41,10 @@
  */
 
 import type { CodegenContext } from "./context/types.js";
-import type { Instr, WasmFunction } from "../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
+import { undefinedSingletonActive } from "./any-helpers.js";
+import { toPrimitivePresenceName } from "./to-primitive-dispatch-presence.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
@@ -85,31 +88,10 @@ export function reserveClassToPrimitive(ctx: CodegenContext): number {
 }
 
 /**
- * Fill the reserved `__class_to_primitive` body now that the per-struct
- * `__call_valueOf` / `__call_toString` dispatchers are registered (after
- * `emitToPrimitiveMethodExports`). Implements §7.1.1.1 OrdinaryToPrimitive over
- * the nominal-struct dispatchers:
- *
- *   // hint==string → try toString first, else valueOf; otherwise valueOf first.
- *   first  = stringHint ? __call_toString : __call_valueOf
- *   second = stringHint ? __call_valueOf  : __call_toString
- *   r = first(obj);   if (r != null) return r       // a method matched → primitive
- *   r = second(obj);  if (r != null) return r
- *   return obj                                       // neither matched — unchanged
- *
- * `__call_*` return a boxed primitive externref on a struct match, or
- * `ref.null.extern` on no match — so a non-null result is exactly "this class
- * had this method, here is its (already-boxed-primitive) result". A class with
- * neither method falls through to `return obj` (today's behaviour, no
- * regression). The §7.1.1.1 step-6 "must return a primitive" TypeError walk for
- * a method that returns an object is intentionally NOT replicated here: the
- * standalone class dispatchers box only primitive method results, and the
- * dynamic-`$Object` path (which DOES do the full walk) is unaffected.
- *
- * When no per-struct dispatcher exists, the runtime prototype walk below still
- * gets a chance to resolve an inherited `toString`/`valueOf`. If that walk is
- * unavailable too, the driver returns the input unchanged (the historical
- * fall-through).
+ * Fill after the nominal dispatchers are published. Presence is a separate
+ * per-invocation result, not a sentinel value: null and canonical undefined
+ * are primitive completions. Object results advance in hint order; misses
+ * retain the existing prototype walk and unchanged-input fallback.
  */
 export function fillClassToPrimitive(ctx: CodegenContext): void {
   if (!ctx.classToPrimitiveReserved) return;
@@ -118,8 +100,13 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   const fn = definedFuncAt(ctx, driverIdx);
   if (!fn) return;
 
-  const callValueOfIdx = ctx.funcMap.get("__call_valueOf");
-  const callToStringIdx = ctx.funcMap.get("__call_toString");
+  const callValueOfIdx = ctx.funcMap.get(toPrimitivePresenceName("__call_valueOf"));
+  const callToStringIdx = ctx.funcMap.get(toPrimitivePresenceName("__call_toString"));
+  if (
+    (callValueOfIdx === undefined && ctx.funcMap.has("__call_valueOf")) ||
+    (callToStringIdx === undefined && ctx.funcMap.has("__call_toString"))
+  )
+    throw new Error("ToPrimitive dispatcher is missing its presence result");
   if (callValueOfIdx === undefined && callToStringIdx === undefined) {
     // A prototype override is not represented by a per-struct dispatcher, but
     // it is still observable through the runtime property chain. Keep the
@@ -131,7 +118,7 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
       { name: "rv", type: { kind: "externref" } },
       { name: "rs", type: { kind: "externref" } },
     ];
-    const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn);
+    const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn, exhaustiveWalkThrow(ctx));
     fn.body = [...runtimeWalk, { op: "local.get", index: 0 }];
     return;
   }
@@ -141,38 +128,35 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   const L_RV = 2; // externref: valueOf dispatcher result
   const L_RS = 3; // externref: toString dispatcher result
 
-  // (#2891) §7.1.1.1 OrdinaryToPrimitive requires "if the method result is not
-  // a primitive, try the next method", and a §7.1.1.1 step-6 TypeError when none
-  // yields a primitive. The per-struct `__call_valueOf`/`__call_toString`
-  // dispatchers return `ref.null.extern` when the object has no such OWN method,
-  // but for a method that RETURNS an object they `boxResult` it via
-  // `extern.convert_any` — a NON-null externref that is still an object. The old
-  // "first non-null wins" tail therefore accepted an object-returning `valueOf`
-  // and skipped the fall-through to `toString` (wrong relational/additive value)
-  // and never threw the both-objects TypeError. We now classify each dispatcher
-  // result as primitive (number/boolean/string) vs object, falling through and
-  // modelling the (un-materialized in standalone) inherited Object.prototype
-  // methods: inherited `valueOf` returns the object (non-primitive); inherited
-  // `toString` returns "[object Object]" (a primitive string). Standalone-only —
-  // the driver is reserved only under `ctx.standalone`, so GC/host is untouched.
-  const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
-  const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean");
-  const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+  const L_HAS_RV = 4;
+  const L_HAS_RS = 5;
+
+  // The same canonical carrier predicates as the dynamic $Object recipe.
+  // No tag constants or layouts are duplicated; Symbol uses its actual type.
+  const primitivePredicates = [
+    "__typeof_number",
+    "__typeof_boolean",
+    "__typeof_string",
+    "__typeof_undefined",
+    "__typeof_bigint",
+  ].flatMap((name) => {
+    const index = ctx.funcMap.get(name);
+    return index === undefined ? [] : [index];
+  });
   const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
 
   // If the primitive-classification or TypeError machinery is unavailable for
-  // some reason, fall back to the pre-#2891 "first non-null wins" behaviour so
+  // some reason, retain the pre-#2891 first completed-method fallback so
   // we never emit invalid code (these are always present in the standalone
   // `__to_primitive` build that reserves this driver).
-  if (typeofNumberIdx === undefined || typeofStringIdx === undefined || typeErrorCtorIdx === undefined) {
+  if (!ctx.funcMap.has("__typeof_number") || !ctx.funcMap.has("__typeof_string") || typeErrorCtorIdx === undefined) {
     const tryDispatcher = (idx: number | undefined): Instr[] => {
       if (idx === undefined) return [];
       return [
         { op: "local.get", index: L_OBJ },
         { op: "call", funcIdx: idx },
-        { op: "local.tee", index: L_RV },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
+        { op: "local.set", index: L_RV },
+        // The remaining i32 is this invocation's matched result.
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -194,49 +178,51 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     return;
   }
 
-  const exnTagIdx = ensureExnTag(ctx);
+  ensureExnTag(ctx);
   const OBJECT_TAG = "[object Object]";
-  const TYPE_ERR_MSG = "Cannot convert object to primitive value";
   addStringConstantGlobal(ctx, OBJECT_TAG);
   addStringConstantGlobal(ctx, TYPE_ERR_MSG);
 
-  // i32: 1 when the externref in `localIdx` is a primitive (number/boolean/
-  // string), 0 otherwise (an object). `null` is handled by the caller via a
-  // separate `ref.is_null` presence test, so it never reaches here.
-  const isPrimitive = (localIdx: number): Instr[] => {
-    const parts: Instr[] = [
+  // Null is primitive here; dispatcher presence is tested separately.
+  const isPrimitive = (localIdx: number): Instr[] => [
+    { op: "local.get", index: localIdx },
+    { op: "ref.is_null" },
+    ...primitivePredicates.flatMap((funcIdx): Instr[] => [
       { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofNumberIdx },
-    ];
-    if (typeofBooleanIdx !== undefined) {
-      parts.push({ op: "local.get", index: localIdx }, { op: "call", funcIdx: typeofBooleanIdx }, { op: "i32.or" });
-    }
-    parts.push({ op: "local.get", index: localIdx }, { op: "call", funcIdx: typeofStringIdx }, { op: "i32.or" });
-    return parts;
-  };
-
-  const returnObjectTag: Instr[] = [...stringConstantExternrefInstrs(ctx, OBJECT_TAG), { op: "return" }];
-  const throwTypeError: Instr[] = [
-    ...stringConstantExternrefInstrs(ctx, TYPE_ERR_MSG),
-    { op: "call", funcIdx: typeErrorCtorIdx },
-    { op: "throw", tagIdx: exnTagIdx },
+      { op: "call", funcIdx },
+      { op: "i32.or" },
+    ]),
+    ...(ctx.symbolTypeIdx < 0
+      ? []
+      : ([
+          { op: "local.get", index: localIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+          { op: "i32.or" },
+        ] satisfies Instr[])),
   ];
 
-  // Call a dispatcher, store into `dst`; if the result is a non-null PRIMITIVE,
-  // return it. Leaves the (possibly null/object) result in `dst` for the caller
-  // to classify by presence afterwards. Absent dispatcher → store null.
-  const callAndReturnIfPrimitive = (idx: number | undefined, dst: number): Instr[] => {
+  const returnObjectTag = (): Instr[] => [...stringConstantExternrefInstrs(ctx, OBJECT_TAG), { op: "return" }];
+  const throwTypeError = classToPrimitiveTypeError(ctx)!;
+
+  // A matched call may return null, undefined, another primitive, or an object.
+  // The separate local survives recursive conversions and never triggers a
+  // second lookup/call merely to recover presence.
+  const callAndReturnIfPrimitive = (idx: number | undefined, dst: number, present: number): Instr[] => {
     if (idx === undefined) {
-      return [{ op: "ref.null.extern" }, { op: "local.set", index: dst }];
+      return [
+        { op: "ref.null.extern" },
+        { op: "local.set", index: dst },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: present },
+      ];
     }
     return [
       { op: "local.get", index: L_OBJ },
       { op: "call", funcIdx: idx },
       { op: "local.set", index: dst },
-      // present (non-null) ?
-      { op: "local.get", index: dst },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
+      { op: "local.set", index: present },
+      { op: "local.get", index: present },
       {
         op: "if",
         blockType: { kind: "empty" },
@@ -251,42 +237,37 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
       },
     ];
   };
-
-  const presentNonNull = (localIdx: number): Instr[] => [
-    { op: "local.get", index: localIdx },
-    { op: "ref.is_null" },
-    { op: "i32.eqz" },
-  ];
+  const wasCalled = (localIdx: number): Instr[] => [{ op: "local.get", index: localIdx }];
 
   // number / default hint: valueOf → toString.
   const numberHint: Instr[] = [
-    ...callAndReturnIfPrimitive(callValueOfIdx, L_RV),
-    ...callAndReturnIfPrimitive(callToStringIdx, L_RS),
+    ...callAndReturnIfPrimitive(callValueOfIdx, L_RV, L_HAS_RV),
+    ...callAndReturnIfPrimitive(callToStringIdx, L_RS, L_HAS_RS),
     // Neither own method produced a primitive. Classify by presence.
-    ...presentNonNull(L_RV), // valueOf present & object?
+    ...wasCalled(L_HAS_RV), // valueOf present & object?
     {
       op: "if",
       blockType: { kind: "empty" },
       // valueOf present & object
       then: [
-        ...presentNonNull(L_RS), // toString present & object?
+        ...wasCalled(L_HAS_RS), // toString present & object?
         {
           op: "if",
           blockType: { kind: "empty" },
           // both present-object → §7.1.1.1 TypeError
-          then: throwTypeError,
+          then: throwTypeError(),
           // toString absent → inherited Object.prototype.toString → "[object Object]"
-          else: returnObjectTag,
+          else: returnObjectTag(),
         },
       ],
       // valueOf absent → inherited valueOf returns the object (non-primitive)
       else: [
-        ...presentNonNull(L_RS), // toString present & object?
+        ...wasCalled(L_HAS_RS), // toString present & object?
         {
           op: "if",
           blockType: { kind: "empty" },
           // valueOf inherited-object + toString present-object → TypeError
-          then: throwTypeError,
+          then: throwTypeError(),
           // both absent → fall through to the shared "return input unchanged" tail
           else: [],
         },
@@ -333,16 +314,16 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   // `valueOf` MATCHED a dispatcher arm and returned an object, which proves the
   // receiver really is a user object this driver may describe.
   const stringHint: Instr[] = [
-    ...callAndReturnIfPrimitive(callToStringIdx, L_RS),
-    ...presentNonNull(L_RS),
+    ...callAndReturnIfPrimitive(callToStringIdx, L_RS, L_HAS_RS),
+    ...wasCalled(L_HAS_RS),
     {
       op: "if",
       blockType: { kind: "empty" },
       // toString present & object → try valueOf next
       then: [
-        ...callAndReturnIfPrimitive(callValueOfIdx, L_RV),
+        ...callAndReturnIfPrimitive(callValueOfIdx, L_RV, L_HAS_RV),
         // valueOf absent (inherited → object) or present-object → both object → TypeError
-        ...throwTypeError,
+        ...throwTypeError(),
       ],
       // toString absent → fall through to the shared "return input unchanged"
       // tail; the caller decides whether "[object Object]" is the right answer.
@@ -353,9 +334,11 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   fn.locals = [
     { name: "rv", type: { kind: "externref" } },
     { name: "rs", type: { kind: "externref" } },
+    { name: "has_rv", type: { kind: "i32" } },
+    { name: "has_rs", type: { kind: "i32" } },
   ];
 
-  const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn);
+  const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn, exhaustiveWalkThrow(ctx));
 
   fn.body = [
     { op: "local.get", index: L_HINT },
@@ -371,6 +354,63 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     // exactly as the pre-#2638 fall-through did (no regression).
     { op: "local.get", index: 0 },
   ];
+}
+
+const TYPE_ERR_MSG = "Cannot convert object to primitive value";
+
+/**
+ * (#6651 H1) Modules whose runtime walk must FINISH §7.1.1.1 (skip a
+ * non-callable member, throw when nothing converts) instead of declining.
+ *
+ * Opt-in, and set only by a site that hands the runtime engine a value whose
+ * members the compile-time dispatchers were never asked about — an
+ * object-literal `String.prototype.*` argument (spec-arg-coercion.ts). The walk
+ * is emitted into every standalone module that reserves this driver, and the
+ * declining walk is what every other module was measured against; this keeps
+ * their bytes identical rather than asking one slice to re-measure the corpus.
+ */
+const exhaustiveModules = new WeakSet<CodegenContext>();
+
+export function requireExhaustiveClassToPrimitive(ctx: CodegenContext): void {
+  exhaustiveModules.add(ctx);
+}
+
+function exhaustiveWalkThrow(ctx: CodegenContext): (() => Instr[]) | undefined {
+  return exhaustiveModules.has(ctx) ? classToPrimitiveTypeError(ctx) : undefined;
+}
+
+/**
+ * The box for a `__call_valueOf`/`__call_toString` dispatcher's BRANDED i32
+ * result in the same modules: `__box_symbol` / `__box_boolean`, where the
+ * dispatchers box every i32 as a NUMBER. A `toString` returning `true` then
+ * renders "1", and one returning a Symbol a digit instead of throwing — the
+ * compile-time dispatch those modules' routed arguments no longer take read
+ * the brand; this is the runtime twin. `undefined` → keep the number box.
+ */
+export function brandedI32ResultBoxIdx(ctx: CodegenContext, t: ValType | null | undefined): number | undefined {
+  if (!exhaustiveModules.has(ctx) || !t || t.kind !== "i32") return undefined;
+  if (t.symbol === true) return ctx.funcMap.get("__box_symbol");
+  return t.boolean === true ? ctx.funcMap.get("__box_boolean") : undefined;
+}
+
+/**
+ * §7.1.1.1 step 6's TypeError as a factory (fresh instructions per use), or
+ * `undefined` without `__new_TypeError`. The tag and message constant register
+ * on first USE, so a dispatcher-free driver whose runtime walk is empty
+ * registers nothing new (#6651 H1).
+ */
+function classToPrimitiveTypeError(ctx: CodegenContext): (() => Instr[]) | undefined {
+  const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
+  if (typeErrorCtorIdx === undefined) return undefined;
+  return () => {
+    const exnTagIdx = ensureExnTag(ctx);
+    addStringConstantGlobal(ctx, TYPE_ERR_MSG);
+    return [
+      ...stringConstantExternrefInstrs(ctx, TYPE_ERR_MSG),
+      { op: "call", funcIdx: typeErrorCtorIdx },
+      { op: "throw", tagIdx: exnTagIdx },
+    ];
+  };
 }
 
 /**
@@ -401,12 +441,12 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
  * unaffected) and returns `[]` — emitting nothing, growing nothing — when the
  * walk's runtime natives are unavailable.
  */
-function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction): Instr[] {
+function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction, onExhausted?: () => Instr[]): Instr[] {
   const probeDeps = resolveOrdinaryToPrimitiveProbeDeps(ctx);
   if (probeDeps === undefined) return [];
   const L_OBJ = 0;
   const L_HINT = 1;
-  const L_PM = 1 + fn.locals.length; // externref: probe method slot
+  const L_PM = 2 + fn.locals.length; // externref: probe method slot
   const L_PR = L_PM + 1; // externref: probe result slot
   fn.locals.push({ name: "pm", type: { kind: "externref" } }, { name: "pr", type: { kind: "externref" } });
 
@@ -434,6 +474,8 @@ function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction)
       // check #13 measures exactly that.
       stopWhenFirstAbsent: order[0] === "toString",
       ownerCall,
+      onExhausted,
+      nullResultIsPrimitive: onExhausted !== undefined && undefinedSingletonActive(ctx),
     });
 
   // The same object/function guard `emitAddOrdinaryToPrimitiveResidue` uses:

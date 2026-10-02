@@ -28,6 +28,8 @@ import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
+import { FNINST_BAG_OWNS } from "./function-instance-props.js";
+import { carrierFnMetaEnabled, fillRuntimeEvalCarrierFnMeta } from "./runtime-eval-carrier-fn-meta.js";
 import {
   buildRuntimeEvalCallResultWrap,
   ensureRuntimeEvalCallResultUnwrapHelper,
@@ -1086,6 +1088,19 @@ export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void
       },
     );
   }
+  // (#6651 A14) Once the carrier's bag holds an entry for the key (a `delete`
+  // tombstone or a redefinition), the bag answers, not the hard-coded arm below.
+  const bagOwnsIdx = carrierFnMetaEnabled(ctx) ? ctx.funcMap.get(FNINST_BAG_OWNS) : undefined;
+  const bagFree = (): Instr[] =>
+    bagOwnsIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: bagOwnsIdx },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
+        ];
   for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
     const hasOwn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!hasOwn) continue;
@@ -1139,12 +1154,14 @@ export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void
                 blockType: { kind: "empty" },
                 then: [
                   ...keyEquals("name"),
+                  ...bagFree(),
                   {
                     op: "if",
                     blockType: { kind: "empty" },
                     then: [{ op: "i32.const", value: 1 }, { op: "return" }],
                   },
                   ...keyEquals("length"),
+                  ...bagFree(),
                   {
                     op: "if",
                     blockType: { kind: "empty" },
@@ -1158,6 +1175,7 @@ export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void
       },
     );
   }
+  fillRuntimeEvalCarrierFnMeta(ctx, carrier); // (#6651 A14) descriptor + delete for `length`/`name`
 }
 
 /** Replace an interpreted closure externref on the stack with a caller-owned

@@ -21,98 +21,30 @@
  * both callers can import it directly (no callback plumbing, no import cycle).
  */
 
+import { buildClosureResultBody } from "../../runtime/wasmgc/values/closure-result-bodies.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "../any-helpers.js";
 
-/** Preserve structural boolean/Symbol brands across the externref ABI. */
-function boxI32ClosureResult(
-  ctx: CodegenContext,
-  returnType: { kind: "i32"; boolean?: true; symbol?: true },
-  boxNumberIdx: number | undefined,
-): Instr[] {
-  // Native standalone Symbols are represented as branded i32 ids until they
-  // cross an externref boundary.  A dynamically dispatched ToPrimitive method
-  // is exactly such a boundary: treating the id as an ordinary number loses
-  // the Symbol carrier, so ToPropertyKey searches for a numeric property
-  // instead of preserving the returned Symbol.
-  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
-  if (returnType.symbol === true && boxSymbolIdx !== undefined) {
-    return [{ op: "call", funcIdx: boxSymbolIdx }];
-  }
-  const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
-  if (returnType.boolean === true && boxBooleanIdx !== undefined) {
-    return [{ op: "call", funcIdx: boxBooleanIdx }];
-  }
-  if (boxNumberIdx !== undefined) {
-    return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx }];
-  }
-  return [{ op: "drop" }, { op: "ref.null.extern" }];
-}
-
-/**
- * (#6642) Preserve the structural `bigint` brand across the externref ABI —
- * the exact i64 twin of the boolean/Symbol brands `boxI32ClosureResult` keeps.
- *
- * Without it a closure declared `(): bigint` — i.e. compiled to a native,
- * monomorphic `() -> i64` body — had its result boxed as a NUMBER the moment it
- * was reached through DYNAMIC dispatch (`NS.giveBigInt()`, a property/method
- * read, a link-boundary call): `f64.convert_i64_s` first rounds every value
- * above 2^53 (217175010123456789n → …792) and `__box_number` then erases
- * bigint-ness outright, so `typeof`, `===`, `Object.is`, `String()` and
- * arithmetic all answered as if the value had never been a BigInt. Silent: no
- * trap, no diagnostic, just a wrong number.
- */
-function boxI64ClosureResult(
-  ctx: CodegenContext,
-  returnType: Extract<ValType, { kind: "i64" }>,
-  boxNumberIdx: number | undefined,
-): Instr[] {
-  const boxBigIntIdx = ctx.funcMap.get("__box_bigint");
-  if (returnType.bigint === true && boxBigIntIdx !== undefined) {
-    return [{ op: "call", funcIdx: boxBigIntIdx }];
-  }
-  return boxNumberIdx !== undefined
-    ? [{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx }]
-    : [{ op: "drop" }, { op: "ref.null.extern" }];
-}
-
+/** Context acquisition remains conditional and at the legacy call site. */
 export function buildClosureResultBoxing(
   ctx: CodegenContext,
   returnType: ValType | null,
   boxNumberIdx: number | undefined,
 ): Instr[] {
-  // A void closure contributes no value — the ABI still owes one externref,
-  // and it owes the CANONICAL undefined (the #2106 singleton when active), not
-  // a bare null: a getter body with no return statement must read back as
-  // `undefined` (§6.2.5.5), but the raw `ref.null.extern` printed/compared as
-  // null through every dynamic consumer (measured: `Object.defineProperty(o,
-  // "p", {get: function(){}}); o.p` answered null — 15.2.3.6-4-207 family, and
-  // the same for any dynamically dispatched void method's result).
-  // Return fresh instruction objects: this sequence is spliced into several
-  // dispatch arms, whose finalize walks remap instruction indices in place.
-  if (!returnType) {
-    return undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
-  }
-  if ((ctx.standalone || ctx.wasi) && isAnyValue(returnType, ctx)) {
-    const anyToExternIdx = ensureAnyToExternHelper(ctx);
-    return anyToExternIdx !== undefined ? [{ op: "call", funcIdx: anyToExternIdx }] : [{ op: "extern.convert_any" }];
-  }
-  if (returnType.kind === "ref" || returnType.kind === "ref_null") {
-    return [{ op: "extern.convert_any" }];
-  }
-  if (returnType.kind === "f64") {
-    return boxNumberIdx !== undefined
-      ? [{ op: "call", funcIdx: boxNumberIdx }]
-      : [{ op: "drop" }, { op: "ref.null.extern" }];
-  }
+  if (!returnType) return buildClosureResultBody({ kind: "void", undefinedValue: undefinedExternInstrs(ctx) });
+  if ((ctx.standalone || ctx.wasi) && isAnyValue(returnType, ctx))
+    return buildClosureResultBody({ kind: "native-any", anyToExtern: ensureAnyToExternHelper(ctx) });
   if (returnType.kind === "i32") {
-    return boxI32ClosureResult(ctx, returnType, boxNumberIdx);
+    const boxSymbol = ctx.funcMap.get("__box_symbol");
+    if (returnType.symbol === true && boxSymbol !== undefined)
+      return buildClosureResultBody({ kind: "value", returnType, boxNumber: boxNumberIdx, boxSymbol });
+    const boxBoolean = ctx.funcMap.get("__box_boolean");
+    return buildClosureResultBody({ kind: "value", returnType, boxNumber: boxNumberIdx, boxSymbol, boxBoolean });
   }
   if (returnType.kind === "i64") {
-    return boxI64ClosureResult(ctx, returnType, boxNumberIdx);
+    const boxBigInt = ctx.funcMap.get("__box_bigint");
+    return buildClosureResultBody({ kind: "value", returnType, boxNumber: boxNumberIdx, boxBigInt });
   }
-  // Already externref (or an ABI-compatible kind): nothing to do. Matches the
-  // previous behaviour, which fell through every branch and emitted nothing.
-  return [];
+  return buildClosureResultBody({ kind: "value", returnType, boxNumber: boxNumberIdx });
 }

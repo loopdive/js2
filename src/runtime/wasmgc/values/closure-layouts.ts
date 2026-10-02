@@ -37,6 +37,35 @@
 import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
 import type { FieldDef, StructTypeDef } from "../../../wasm/model/module-records.js";
 
+/**
+ * Slice 3 / #3214 B0: WasmGC allocation/type info for a closure:
+ *   - A signature wrapper (`structTypeIdx`) contains field 0's funcref and is
+ *     shared with the legacy `__fn_wrap_*` registry. A no-capture closure
+ *     constructs it directly; it is not the cross-module carrier.
+ *   - An optional captured subtype extends that signature wrapper with capture
+ *     fields and is downcast from root `self` inside the lifted body.
+ *
+ * `funcTypeIdx` is the exact lifted function signature
+ * `(ref $wrapperRoot, ...sig.params) -> sig.returnType`. The root self type,
+ * field-0 read, and funcref signature together are independent of per-module
+ * signature-wrapper creation order.
+ */
+export interface IrClosureLowering {
+  readonly structTypeIdx: number;
+  readonly funcFieldIdx: number;
+  /** Field index for capture position `i` (0-based). Valid only for captured-subtype lowerings. */
+  capFieldIdx(index: number): number;
+  readonly funcTypeIdx: number;
+  /**
+   * Exact private singleton appended to certified standalone DOM callback
+   * carriers. The thunk resolves the live absolute global index so a late
+   * import-global insertion cannot stale the allocation operand.
+   */
+  readonly domCallbackAuthorityGlobalIdx?: () => number;
+  /** Stable handle issued by the native realm state owner; called after all captures. */
+  readonly realmStateInitializer?: FuncHandle;
+}
+
 /** Field 0 — the lifted function reference. */
 export const CLOSURE_FUNC_FIELD_IDX = 0;
 /** Field 1 — (#3673) the closure's declared user formal count. */

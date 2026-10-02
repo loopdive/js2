@@ -92,8 +92,9 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(workflow).toContain("uses: actions/upload-artifact@v6");
     expect(workflow).toContain("uses: actions/download-artifact@v7");
     expect(workflow).toContain("TEST262_FULL_RUNTIME_EVAL:");
-    // Two standalone shard jobs + (#6706) the native-first measurement lane.
-    expect(workflow.match(/--require-full-cache/g)).toHaveLength(3);
+    // Two standalone shard jobs + (#6706) the native-first measurement lane
+    // + (#6723 P2) the dispatch-only standalone linked shadow lane.
+    expect(workflow.match(/--require-full-cache/g)).toHaveLength(4);
     expect(workflow).not.toContain("Prebuild refusal runtime-eval provider (#2928)");
   });
 

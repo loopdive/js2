@@ -1493,15 +1493,12 @@ describe("#680 native generator expression continuations", () => {
         export function test(): number { return g().next().done ? 1 : 0; }
       `,
     ],
-    [
-      "computed object key",
-      `
-        function* g(): Generator<undefined, void, unknown> {
-          ({ [yield]: 1 });
-        }
-        export function test(): number { return g().next().done ? 1 : 0; }
-      `,
-    ],
+    // (#6651 A5) "computed object key" — `({ [yield]: 1 })` — used to be listed
+    // here. A yield inside a computed property name is now lowered natively by
+    // `generator-yield-nested.ts` (the statement is deferred past its
+    // suspension; the resumed value becomes the key), so it no longer fails
+    // closed; the positive pins are in
+    // `tests/issue-6651-a5-computed-key-yield.test.ts` (target 1).
     // (#6651 A4) "destructuring assignment" — `({ value = yield } = source)` —
     // used to be listed here. It is now lowered natively by
     // `generator-yield-linearize.ts` (a pattern default is a conditional

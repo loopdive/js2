@@ -146,10 +146,18 @@ it("records exactly the existing frontend debt affected by contracts-only activa
   expect(policy.layers.find((row: { id: string }) => row.id === "frontend-ts")).toEqual({
     id: "frontend-ts",
     status: "active",
-    roots: ["src/frontend/builtins/contracts.ts"],
+    roots: [
+      "src/frontend/builtins/contracts.ts",
+      "src/frontend/builtins/prepare-string-output.ts",
+      "src/frontend/typescript.ts",
+    ],
     required: true,
-    entries: ["src/frontend/builtins/contracts.ts"],
-    minModules: 1,
+    entries: [
+      "src/frontend/builtins/contracts.ts",
+      "src/frontend/builtins/prepare-string-output.ts",
+      "src/frontend/typescript.ts",
+    ],
+    minModules: 3,
   });
 });
 

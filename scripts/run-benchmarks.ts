@@ -216,7 +216,8 @@ async function runPerfSuite(): Promise<PerfBenchResult[]> {
 
     try {
       const t0 = performance.now();
-      const compileResult = await compile(workload.source, { fast: false });
+      // #6776: `validate: false` keeps compileMs comparable with pre-validation runs.
+      const compileResult = await compile(workload.source, { fast: false, validate: false });
       const compileMs = performance.now() - t0;
 
       if (!compileResult.success) {
@@ -491,7 +492,8 @@ async function runReactBench(): Promise<ReactBenchResult[]> {
 
   try {
     const t0 = performance.now();
-    const result = await compile(REACT_SOURCE, { fast: true });
+    // #6776: `validate: false` keeps compileMs comparable with pre-validation runs.
+    const result = await compile(REACT_SOURCE, { fast: true, validate: false });
     const compileMs = performance.now() - t0;
 
     if (!result.success) {

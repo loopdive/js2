@@ -18,6 +18,7 @@
  * Only used in `noJsHost` mode; JS-host mode keeps the spec-accurate host
  * accessor path unchanged.
  */
+import { createSymbolCarrierType, buildSymbolBoxBody } from "../runtime/wasmgc/values/symbol-carrier-bodies.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -70,14 +71,7 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
     ensureNativeStringHelpers(ctx);
     const anyStrTypeIdx = ctx.anyStrTypeIdx;
     const idx = ctx.mod.types.length;
-    ctx.mod.types.push({
-      kind: "struct",
-      name: "$Symbol",
-      fields: [
-        { name: "id", type: { kind: "i32" }, mutable: false },
-        { name: "desc", type: { kind: "ref_null", typeIdx: anyStrTypeIdx }, mutable: false },
-      ],
-    });
+    ctx.mod.types.push(createSymbolCarrierType(anyStrTypeIdx));
     ctx.symbolTypeIdx = idx;
   }
   if (ctx.funcMap.get("__box_symbol") === undefined) {
@@ -122,93 +116,10 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
         { name: "existing", type: symNull },
         { name: "grow", type: arrNull },
       ],
-      body: [
-        // tbl = global; allocate (id+1, min 16) slots if null.
-        { op: "global.get", index: internGlobalIdx },
-        { op: "local.tee", index: TBL },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // allocate id+1 slots; the grow loop below extends ×2 as ids climb.
-            { op: "local.get", index: 0 },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "array.new_default", typeIdx: internArrTypeIdx },
-            { op: "local.set", index: TBL },
-            { op: "local.get", index: TBL },
-            { op: "global.set", index: internGlobalIdx },
-          ],
-        },
-        // grow ×2 until id < tbl.len
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "array.len" },
-                { op: "i32.lt_s" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "array.len" },
-                { op: "i32.const", value: 2 },
-                { op: "i32.mul" },
-                { op: "array.new_default", typeIdx: internArrTypeIdx },
-                { op: "local.set", index: GROW },
-                { op: "local.get", index: GROW },
-                { op: "ref.as_non_null" },
-                { op: "i32.const", value: 0 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "i32.const", value: 0 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "array.len" },
-                { op: "array.copy", dstTypeIdx: internArrTypeIdx, srcTypeIdx: internArrTypeIdx },
-                { op: "local.get", index: GROW },
-                { op: "local.set", index: TBL },
-                { op: "local.get", index: TBL },
-                { op: "global.set", index: internGlobalIdx },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        // existing = tbl[id]; if null create + store; return extern(existing).
-        { op: "local.get", index: TBL },
-        { op: "ref.as_non_null" },
-        { op: "local.get", index: 0 },
-        { op: "array.get", typeIdx: internArrTypeIdx },
-        { op: "local.tee", index: EXISTING },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } },
-          then: [
-            // tbl[id] = new $Symbol{id, null}; tee into `existing`
-            { op: "local.get", index: TBL },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 0 },
-            { op: "ref.null", typeIdx: anyStrTypeIdx },
-            { op: "struct.new", typeIdx: symIdx },
-            { op: "local.tee", index: EXISTING },
-            { op: "array.set", typeIdx: internArrTypeIdx },
-            { op: "local.get", index: EXISTING },
-            { op: "ref.as_non_null" },
-            { op: "extern.convert_any" },
-          ],
-          else: [{ op: "local.get", index: EXISTING }, { op: "ref.as_non_null" }, { op: "extern.convert_any" }],
-        },
-      ],
+      body: buildSymbolBoxBody(
+        { symIdx, anyStrTypeIdx, internArrTypeIdx, internGlobalIdx },
+        { table: TBL, existing: EXISTING, grow: GROW },
+      ),
       exported: false,
     });
   }

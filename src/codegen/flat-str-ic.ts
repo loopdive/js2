@@ -76,9 +76,10 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 function enabled(): boolean {
-  const raw = process.env.JS2WASM_FLAT_STR_IC;
+  const raw = readEnv("JS2WASM_FLAT_STR_IC");
   return raw !== undefined && !["", "0", "off", "false", "no"].includes(raw);
 }
 
@@ -226,8 +227,6 @@ interface Targets {
   poison: boolean;
 }
 
-const POISON_ARM: Instr[] = [{ op: "unreachable" }];
-
 /** Count (but never patch) helper-family-internal sites, for reporting. */
 function countCalls(instrs: Instr[], funcIdxs: readonly number[]): number {
   let n = 0;
@@ -268,7 +267,7 @@ function rewriteInstrs(instrs: Instr[], t: Targets, scratch: (which: 0 | 1) => n
         {
           op: "if",
           blockType: { kind: "val", type: t.guard.resultType },
-          then: t.poison ? POISON_ARM : arm,
+          then: t.poison ? [{ op: "unreachable" }] : arm,
           else: [{ op: "local.get", index: s }, { op: "ref.as_non_null" }, instr],
         },
       );
@@ -287,7 +286,7 @@ function rewriteInstrs(instrs: Instr[], t: Targets, scratch: (which: 0 | 1) => n
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "i32" } },
-          then: t.poison ? POISON_ARM : [{ op: "i32.const", value: t.outs.identityAnswer }],
+          then: t.poison ? [{ op: "unreachable" }] : [{ op: "i32.const", value: t.outs.identityAnswer }],
           else: [
             { op: "local.get", index: sa },
             { op: "struct.get", typeIdx: t.outs.lenTypeIdx, fieldIdx: 0 },
@@ -297,7 +296,7 @@ function rewriteInstrs(instrs: Instr[], t: Targets, scratch: (which: 0 | 1) => n
             {
               op: "if",
               blockType: { kind: "val", type: { kind: "i32" } },
-              then: t.poison ? POISON_ARM : [{ op: "i32.const", value: t.outs.mismatchAnswer }],
+              then: t.poison ? [{ op: "unreachable" }] : [{ op: "i32.const", value: t.outs.mismatchAnswer }],
               else: [
                 { op: "local.get", index: sa },
                 { op: "ref.as_non_null" },
@@ -329,8 +328,8 @@ function rewriteInstrs(instrs: Instr[], t: Targets, scratch: (which: 0 | 1) => n
  */
 export function inlineFlatStrCallSites(ctx: CodegenContext): void {
   if (!enabled()) return; // DEFAULT OFF — byte-identical to base.
-  const debug = process.env.JS2WASM_FLAT_STR_IC_DEBUG === "1";
-  const poison = process.env.JS2WASM_FLAT_STR_IC_POISON === "1";
+  const debug = readEnv("JS2WASM_FLAT_STR_IC_DEBUG") === "1";
+  const poison = readEnv("JS2WASM_FLAT_STR_IC_POISON") === "1";
 
   // Handles in the same regime the emitters baked into call instrs: funcMap is
   // the shift-maintained authority for __str_flatten (#1618); __str_equals

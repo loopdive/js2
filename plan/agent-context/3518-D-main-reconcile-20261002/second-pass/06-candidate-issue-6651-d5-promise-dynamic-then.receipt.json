@@ -1,0 +1,34 @@
+{
+  "schema": "assignment-D-second-pass-terminal-v1",
+  "id": "06-candidate-issue-6651-d5-promise-dynamic-then",
+  "actualProcessHandle": 98019,
+  "terminal": true,
+  "exitCode": 0,
+  "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-runtime-20261002/06-candidate-issue-6651-d5-promise-dynamic-then.json tests/issue-6651-d5-promise-dynamic-then.test.ts",
+  "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+  "recordedAt": "2026-10-02T04:22:58.849Z",
+  "pinnedMain": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+  "stagedFirstProductionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+  "workingCorrectedProductionPatchSha256": "65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79",
+  "frozenFixtures": 141,
+  "fixtureMismatches": [],
+  "streams": [
+    {
+      "file": ".tmp/assignment-D-runtime-20261002/06-candidate-issue-6651-d5-promise-dynamic-then.stdout.raw",
+      "bytes": 1251,
+      "sha256": "f85ba856a7025113e28f7ab1f0de8d6fc3b8e384585a1c05ac6d3eb019f0c135"
+    },
+    {
+      "file": ".tmp/assignment-D-runtime-20261002/06-candidate-issue-6651-d5-promise-dynamic-then.stderr.raw",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "counts": {
+    "authored": 9,
+    "collected": 9,
+    "passed": 9,
+    "failed": 0,
+    "pending": 0
+  }
+}

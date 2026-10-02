@@ -16,6 +16,7 @@ import type { CodegenContext } from "./context/types.js";
 import { applyIrFinalContextFunctionRetention, closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
+import { readEnv } from "../env.js";
 
 export type IrPreparedTimerShimResolver = (
   declaration: ts.FunctionDeclaration,
@@ -76,8 +77,8 @@ export function timerShimResolver(
   if (
     ctx.fast ||
     resolveModuleBindings === false ||
-    process.env.JS2WASM_PREPARED_TIMER_SHIM_CUTOVER === "0" ||
-    process.env.JS2WASM_PREPARED_TIMER_SHIM_CUTOVER === "false"
+    readEnv("JS2WASM_PREPARED_TIMER_SHIM_CUTOVER") === "0" ||
+    readEnv("JS2WASM_PREPARED_TIMER_SHIM_CUTOVER") === "false"
   ) {
     return undefined;
   }

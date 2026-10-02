@@ -1,4 +1,6 @@
 {
+  "passingFloor": 1740,
+  "fileCount": 223,
   "knownFailures": [
     "tests/equivalence/arguments-nested-and-loops.test.ts :: Arguments object in nested functions (#211) for-loop with function declaration in body",
     "tests/equivalence/array-inline-return.test.ts :: array inline methods should not hijack function return find does not hijack return",

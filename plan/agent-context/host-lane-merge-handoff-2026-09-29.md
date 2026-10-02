@@ -1,0 +1,129 @@
+# Handoff — merging the JS-host lane into the native regime (#5385), 2026-09-29
+
+Author: Fable lane (spec/lead), session 2026-09-05 → 2026-09-29. Read
+`plan/issues/5385-merge-host-semantics-into-native-core.md` first; this file
+is the operational state, not the plan.
+
+## One-paragraph state
+
+The "merged mode" exists and is on main: a `semanticProviders: "native-first"`
+build in a JavaScript environment now lowers with the native (standalone)
+codegen regime plus the JS value bridge, by default (S5, #6191;
+`JS2WASM_NATIVE_REGIME_JS=0` is the kill switch). The regime lane out-scores
+both old lanes on test262 (36,327 vs host 34,099 / standalone 35,237 on
+48,735 rows, nightly 36399520787). The default policy is still
+host-assisted; flipping it (S6, #6708) is **blocked** on three measured
+things: real-package correctness (#6749), the per-edition ratchet floors
+(#6750), and the regime Temporal provider dying at module init (#6748).
+Deleting the host implementation (S7) comes after S6.
+
+## Landed (all merged, all byte-identical for default gc/standalone/wasi)
+
+| PR | slice | effect |
+| --- | --- | --- |
+| #6083 | S0 | `CompileTargetProfile.nativeRegime` axis; IR projection; native-first lane links the eval provider |
+| #6147 | S1 | console → platform capability in a JS env; runner drains `__stdout_*` by feature |
+| #6156 | S1b | Wasm-owned strings reach the host console (`src/runtime/console-host-marshal.ts`) |
+| #6153 | S2 | `jsValueBoundary(ctx)` (= `hostValueInterop === "required"`); string marshal, admitted objects, callbacks, bind; boundary suite 12 → 29/30 |
+| #6152 | S3-a | `__box_number` as a stable handle (index went stale during async-resume compile) |
+| #6178 | S3-c | `ref.test` before the fnctor-prototype cast in `__extern_set_decide` (latent standalone bug) |
+| #6159 | #6697 | `tests/issue-3520-…` compiles in a child process; pinned-test fork no longer OOMs |
+| #6186 | S4 | measurement lane links the QuickJS eval provider; Temporal part plumbed fail-closed |
+| #6191 | S5 | regime on by default for native-first; kill switch |
+| #6199 | S3-e | `env.__exn` (linker shared exception tag) classified instance-lifecycle |
+| #6202 | S3-b | `Array.prototype.reduce/reduceRight` as callable values (regime +213, standalone +3) |
+| #6291 | S3-f | closure dispatchers convert host args to the callee's post-widening nullable type |
+
+Docs: plan v2, checkpoints and every slice issue are on main (#6137, #6162,
+#6184, #6193, #6198, #6200, #6292).
+
+## Open, claimed, NOT started (spawns were load-gated on 2026-09-29)
+
+- **#6749 S3-h — npm-compat regime parity (CRITICAL).** Claimed
+  `ttraenkler/opus-6749`, branch `issue-6749-s3h-npm-regime-parity`, no
+  branch pushed. Do part A (uuid crypto classification; wire
+  `js2wasm:runtime-eval` into the npm harness for moment; `require` for
+  react) then part B (cookie/hono/redux wrong checksums — correctness,
+  one child issue per root cause). This is the product bar for S6.
+- **#6748 S3-g — regime Temporal provider module-init exception.** Claimed
+  `ttraenkler/opus-6748`, branch `issue-6748-s3g-temporal-init`, not started.
+  First job: make the init exception render a message (hostBridge is on).
+- **#6750 S3-i — edition ratchet floors** (ES5 −99, ES2026 −179, …). Not
+  claimed. Needs the per-test attribution table first.
+- Follow-ups noted by implementers, not yet issues: `__extern_has` fnctor
+  arm still casts without `ref.test` (object-runtime.ts ≈ L4715);
+  `allSettled/reject-immed.js` tuple-typed combinator result (`$__tuple_0`
+  vs array); the #3418 dead-binding elision runs only for host-free
+  environments (candidate slice); nightly `test262-honest-audit` shards are
+  cascade-skipped by a `needs` default (CI bug, unrelated).
+- S6 evidence item 4 (perf) needs Node ≥ 24 (the sidebar passes
+  `--experimental-wasm-custom-descriptors`); this box has 22.
+
+## How to measure (the recipe every slice used)
+
+```bash
+# three-lane census on a nightly's regime artifact
+gh run download <run> -R loopdive/js2wasm -p "test262-native-first-baseline-*" -D nf2
+node scripts/fetch-baseline-jsonl.mjs --force; node scripts/fetch-baseline-jsonl.mjs --standalone --force
+# join by file|strict; see the census script shape in #5385 "census reproducibility"
+# 321-row sample (before-state 227/321 on an unloaded box)
+JS2WASM_EVAL_ENGINE=interpreter TEST262_SEMANTIC_PROVIDERS=native-first \
+  TEST262_PATH_FILTER="built-ins/Object/keys/|built-ins/Array/prototype/map/|language/expressions/class/accessor" \
+  TEST262_WORKERS=2 pnpm run test:262
+# boundary suites (need the bigger fork heap)
+VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 npx vitest run tests/issue-4397-native-semantic-js-host.test.ts tests/issue-6686-js-value-boundary-regime.test.ts tests/issue-4396-target-profile.test.ts
+pnpm run check:host-import-policy   # measures the regime by default now
+```
+
+Known residual reds that are NOT regressions: `issue-4397` "object-rest
+CopyDataProperties…" (`assignmentRest`, fails under plain standalone too);
+`tests/issue-3518-…` optimize.ts hash (pre-existing); `#5383 S2i` static
+member on a dynamic class value (`NaN` vs 8, pre-existing on main).
+
+## Environment hazards that cost hours this session
+
+- `/Users/thomas/Code/js2/.git/config.lock` is a stale empty file from
+  Sep 13: `git checkout -B … upstream/main` fails to set tracking (use
+  `--no-track`), and a failed checkout can leave you on the OLD branch with
+  the NEW tree in the index — always `git branch --show-current` before
+  committing (one S5 commit landed on the wrong branch this way and had to
+  be undone).
+- Harness agent worktrees may lack `.claude/hooks/block-github-issue-create.py`
+  (every Bash call fails until it is copied in) and may lack `node_modules`
+  binaries (`prettier: command not found` in the pre-push gate is NOT a
+  formatting error — push the ref from a provisioned worktree instead).
+- The "changed root test files must pass" gate (#3008) roots on the whole
+  file: touching a test file that carries a pre-existing red blocks your
+  PR. Move your assertions into your own test file.
+- PRs that edit `.github/workflows/**` cannot be auto-enqueued
+  (`needs-manual-enqueue`); the sanctioned path is ONE `enqueuePullRequest`
+  GraphQL mutation with the user's token.
+- Box load from other sessions (40–190) blocks the agent-spawn gate for
+  hours; `git worktree list` is unusably slow with ~600 worktrees.
+- `check:dead-exports` can time out under load without a verdict; CI runs it.
+
+## Next actions, in order
+
+1. Spawn S3-h (#6749) when the load gate allows; A first, then B.
+2. Spawn S3-g (#6748); it lifts the Temporal share of #6750.
+3. Attribute #6750 per test with `check:edition-ratchet --compare`.
+4. Re-evaluate the S6 evidence bar after the nightly that carries those
+   fixes; then implement #6708 (default flip, per-family accelerators,
+   rollback alias); then S7 deletion per the plan.
+
+## Addendum — session stopped 2026-09-29 ~06:50Z on stakeholder instruction
+
+Two implementers had been dispatched minutes earlier and were stopped
+mid-flight; nothing is lost, nothing is pushed beyond the branch base:
+
+- **#6749 S3-h** — worktree `/Users/thomas/Code/js2/.claude/worktrees/agent-a89d656222829ab11`,
+  branch `issue-6749-s3h-npm-regime-parity` at main `46776c8864`, pushed to
+  the fork at that base. Four uncommitted edits in that worktree (its first
+  moves on part A); treat them as scratch — re-derive from the spec.
+  Claim `ttraenkler/opus-6749` still held.
+- **#6748 S3-g** — worktree `agent-acb2c9456fc2eddec`, branch
+  `issue-6748-s3g-temporal-init` at `46776c8864`, clean, pushed at base.
+  Claim `ttraenkler/opus-6748` still held.
+
+Resume by re-dispatching from the specs; release or re-point the claims with
+`claim-issue.mjs` if a different agent picks them up.

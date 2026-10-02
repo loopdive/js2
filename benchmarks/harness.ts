@@ -207,7 +207,8 @@ async function compileSource(source: string, fast: boolean, target?: "gc" | "lin
   if (cached) return cached;
 
   const t0 = performance.now();
-  const result = await compile(source, { fast, target, emitWat: false, optimize });
+  // #6776: `validate: false` keeps compileMs comparable with pre-validation runs.
+  const result = await compile(source, { fast, target, emitWat: false, optimize, validate: false });
   const compileMs = performance.now() - t0;
 
   if (!result.success) {

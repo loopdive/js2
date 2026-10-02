@@ -66,8 +66,19 @@ function envEntry(text: string, key: string): string {
   return (m as RegExpMatchArray)[1].trim();
 }
 
-/** Run the real `detect` step body against a synthetic merge_group diff. */
-function runDetect(diff: string | null, { eventName = "merge_group" } = {}) {
+/**
+ * Run the real `detect` step body against a synthetic merge_group diff.
+ *
+ * `mainTip` is what the base branch's tip resolves to (#6762). It defaults to
+ * the group's own base (`"base"`): a group built directly on the base branch.
+ * Any other value makes the group STACKED, and `stackDiff` is then what
+ * `git diff <mainTip> <head>` prints. `mainTip: null` simulates a tip that
+ * cannot be resolved.
+ */
+function runDetect(
+  diff: string | null,
+  { eventName = "merge_group", mainTip = "base" as string | null, stackDiff = null as string | null } = {},
+) {
   const detectBody = step("changes", "Detect test262-relevant changes");
   const runIdx = detectBody.indexOf("\n        run: |\n");
   expect(runIdx, "detect step body missing").toBeGreaterThan(-1);
@@ -85,10 +96,24 @@ function runDetect(diff: string | null, { eventName = "merge_group" } = {}) {
   writeFileSync(scriptPath, script);
   writeFileSync(outPath, "");
   // Stub `git` so the step sees exactly the diff under test. `diff === null`
-  // simulates a failing `git diff` (the fail-safe path).
+  // simulates a failing `git diff` (the fail-safe path). A diff FROM the
+  // stacked main tip (#6762) prints `stackDiff` instead (`null` fails it);
+  // `rev-parse` answers the main tip, failing when it is unresolvable.
   writeFileSync(
     join(binDir, "git"),
-    `#!/bin/bash\ncase "$1" in\n  diff) [ "$SYNTH_FAIL" = "1" ] && exit 128; printf '%s\\n' "$SYNTH_DIFF"; exit 0;;\n  *) exit 0;;\nesac\n`,
+    [
+      "#!/bin/bash",
+      'case "$1" in',
+      "  diff)",
+      '    if [ "$3" = "$SYNTH_MAIN_TIP" ] && [ "$SYNTH_MAIN_TIP" != "base" ]; then',
+      '      [ "$SYNTH_STACK_FAIL" = "1" ] && exit 128; printf \'%s\\n\' "$SYNTH_STACK_DIFF"; exit 0',
+      "    fi",
+      '    [ "$SYNTH_FAIL" = "1" ] && exit 128; printf \'%s\\n\' "$SYNTH_DIFF"; exit 0;;',
+      '  rev-parse) [ -n "$SYNTH_MAIN_TIP" ] || exit 128; printf \'%s\\n\' "$SYNTH_MAIN_TIP"; exit 0;;',
+      "  *) exit 0;;",
+      "esac",
+      "",
+    ].join("\n"),
     { mode: 0o755 },
   );
 
@@ -104,8 +129,12 @@ function runDetect(diff: string | null, { eventName = "merge_group" } = {}) {
         EVENT_NAME: eventName,
         MG_BASE_SHA: "base",
         MG_HEAD_SHA: "head",
+        MG_BASE_REF: "refs/heads/main",
         SYNTH_DIFF: diff ?? "",
         SYNTH_FAIL: diff === null ? "1" : "0",
+        SYNTH_MAIN_TIP: mainTip ?? "",
+        SYNTH_STACK_DIFF: stackDiff ?? "",
+        SYNTH_STACK_FAIL: stackDiff === null ? "1" : "0",
       },
     });
 
@@ -141,6 +170,7 @@ describe("test262 per-lane gating — the `detect` step", () => {
     "scripts/build-quickjs-eval-provider.mjs",
     "scripts/quickjs-eval-provider.mjs",
     "scripts/runtime-eval-provider.mjs",
+    "scripts/compiler-inputs-hash.mjs",
     "scripts/quickjs-artifact/build.sh",
   ])("classifies standalone eval-provider path %s as standalone-only", (path) => {
     expect(runDetect(path)).toEqual({
@@ -206,6 +236,44 @@ describe("test262 per-lane gating — the `detect` step", () => {
     for (const eventName of ["push", "workflow_dispatch", "pull_request"]) {
       expect(runDetect("tests/test262-slow-tests-standalone.json", { eventName }), eventName).toEqual(both);
     }
+  });
+});
+
+// #6762 — GitHub merges every queue entry UNDER a passing merge group, even
+// entries whose own group failed. On 2026-09-29 artifact-only npm-compat PRs
+// stacked on failed groups classified only their own diff, skipped every shard,
+// went green, and merged the failed entries beneath them.
+describe("#6762 — a stacked merge group is classified by the whole stack", () => {
+  const both = { run_shards: "true", run_host: "true", run_standalone: "true" };
+
+  it("an artifact-only entry on top of a compiler change runs the compiler change's lanes", () => {
+    expect(runDetect("docs/x.md", { mainTip: "main-tip", stackDiff: "docs/x.md\nsrc/codegen/expressions.ts" })).toEqual(
+      both,
+    );
+  });
+
+  it("the same artifact-only entry built directly on main still skips", () => {
+    expect(runDetect("docs/x.md")).toEqual({ run_shards: "false", run_host: "false", run_standalone: "false" });
+  });
+
+  it("a stack that is docs-only all the way down still skips", () => {
+    expect(runDetect("docs/x.md", { mainTip: "main-tip", stackDiff: "docs/x.md\nREADME.md" })).toEqual({
+      run_shards: "false",
+      run_host: "false",
+      run_standalone: "false",
+    });
+  });
+
+  it("FAIL-SAFE: an unresolvable main tip or a failing stack diff runs everything", () => {
+    expect(runDetect("docs/x.md", { mainTip: null }), "main tip unresolvable").toEqual(both);
+    expect(runDetect("docs/x.md", { mainTip: "main-tip", stackDiff: null }), "stack diff failed").toEqual(both);
+  });
+
+  it("the step reads the base ref and filters manifests against the stack's base", () => {
+    const detect = step("changes", "Detect test262-relevant changes");
+    expect(envEntry(detect, "MG_BASE_REF")).toBe("${{ github.event.merge_group.base_ref }}");
+    expect(detect).toContain('--base "$FILTER_BASE"');
+    expect(detect).not.toContain('manifest-version-only.mjs --base "$MG_BASE_SHA"');
   });
 });
 

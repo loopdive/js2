@@ -44,8 +44,10 @@ export { excludeArgumentsArrayCarrier } from "./arguments-carrier-brand.js";
 import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
+import { isRegExpProtoSymbolWrite } from "./regexp-proto-symbol-writes.js"; // (#6651 B9)
 import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolated sparse-carrier proof
 import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-carrier.js"; // (#4670)
+import { readEnv } from "../env.js";
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -134,6 +136,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoMemberDirty && isFunctionProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
     }
+    // (#6651 B9) Replacing `RegExp.prototype[Symbol.match]` & co. makes the
+    // member a runtime value (the static read declines), so the companion must
+    // hold the builtin before the write — seeded only under this flag.
+    if (!ctx.protoMemberDirty && isRegExpProtoSymbolWrite(node)) ctx.protoMemberDirty = true;
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
@@ -148,7 +154,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       // bags queue for the dedicated post-visit resolution walk.
       const poisoned = inheritedSetDescriptorUseKeys(node);
       if (poisoned === "all") {
-        if (process.env.JS2WASM_DEBUG_4602) {
+        if (readEnv("JS2WASM_DEBUG_4602")) {
           console.error(
             `[4602] ALL-trigger kind=${ts.SyntaxKind[node.kind]} text=${node.getText().slice(0, 120).replace(/\n/g, " ")}`,
           );
@@ -177,6 +183,11 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.isConcatSpreadableDirty && isIsConcatSpreadableObservable(node)) {
       ctx.isConcatSpreadableDirty = true;
     }
+    // (#6651 H6) Every Proxy VALUE this module can make starts at the identifier
+    // `Proxy`. Deliberately NOT in the dynamic-code cascade below: a proxy built
+    // by eval'd code keeps the pre-H6 array-like answers, and eval-using
+    // modules (most of ES5) keep their bytes.
+    if (!ctx.proxyDirty && ts.isIdentifier(node) && node.text === "Proxy") ctx.proxyDirty = true;
     if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
       // ArraySetLength can expose absent f64 indices even when every literal
@@ -208,11 +219,11 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (ctx.inheritedSetDescriptorDirty) break;
     const resolved = resolveBagIdentifierKeys(root, name);
     if (resolved === "all") {
-      if (process.env.JS2WASM_DEBUG_4602) console.error(`[4602] bag identifier "${name}" escapes — all-keys`);
+      if (readEnv("JS2WASM_DEBUG_4602")) console.error(`[4602] bag identifier "${name}" escapes — all-keys`);
       ctx.inheritedSetDescriptorDirty = true;
     } else for (const key of resolved) ctx.inheritedSetDirtyKeys.add(key);
   }
-  if (process.env.JS2WASM_DEBUG_4602) {
+  if (readEnv("JS2WASM_DEBUG_4602")) {
     console.error(
       `[4602] allDirty=${ctx.inheritedSetDescriptorDirty} dynamicCode=${ctx.dynamicCodeDirty} keys=${JSON.stringify([...ctx.inheritedSetDirtyKeys])}`,
     );
@@ -220,7 +231,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
   // (#6485) The gate's whole safety argument is "flag clear ⇒ not reached ⇒
   // bytes unchanged", so the flag's HIT RATE over a corpus is evidence, not a
   // detail. This makes it measurable without a second, drifting scan.
-  if (process.env.JS2WASM_DEBUG_6485) console.error(`[6485] isConcatSpreadableDirty=${ctx.isConcatSpreadableDirty}`);
+  if (readEnv("JS2WASM_DEBUG_6485")) console.error(`[6485] isConcatSpreadableDirty=${ctx.isConcatSpreadableDirty}`);
   planHoleyArrayCarrier(ctx, root);
 }
 

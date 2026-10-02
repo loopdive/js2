@@ -1,0 +1,61 @@
+diff --git a/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md b/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+index 3fa08e31f3d..c72ababa099 100644
+--- a/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
++++ b/plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+@@ -18887,3 +18887,17 @@ Final runtime/behavioral cohort passes402/402 (all331 revised controls plus71 or
+ ## 2026-10-01 — source contract PR handoff
+ 
+ The signed source checkpoint `a42694443adf30798f980616bec3ec504ac9b65f` completed normal hooks with all twelve changed-root suites passing. Fresh canonical main `18a53eeca1601e35ef511492d9929db90474c75c` is integrated for publication; both issue histories and immutable receipts are preserved. The final handoff is `plan/log/3518-source-contract-runtime-progress-2026-10-01/HANDOFF.md`. This is phase A only: full extraction and original public/backend parity remain required, and legacy retirement is not certified. Publish the ready implementation PR through the fork and verify protected main delivery before calling this checkpoint delivered.
++
++## 2026-10-01 — phase B complete verifier/allocation extraction resumed
++
++Claim `3518:validation-lowering-phase-b-20261001`, owner `ttraenkler/codex-validation-lowering-b-20261001`, branch `codex/3518-validation-lowering-b-20261001`. Source dependency is the exact signed PR6378 head `63c5ce9ae1d5a77591abaff28e27fe974926bf4f`; canonical main `f37134584ee7ce68c43d9ea66381bd80be6b660d` was checked and its intervening changes do not alter these sources. PR6378 is pending protected checks, not verified main delivery. No other open PR touches the thirteen assigned source paths; older differently scoped claims are preserved.
++
++Implementation plan follows phase B of `plan/log/3518-ir-wrap-up-2026-10-01/validation-lowering-extraction-spec.md`: repoint the five existing analysis modules to genuine clean allocation/core/string owners; extract the complete allocation provenance algorithm to analysis while retaining its optional debug wrapper at the facade; extract the complete function verifier to runtime, preserving all rules, prepared async attachments, error order, and default naive-dominance environment behavior; extract full program allocation reconstruction/metadata revalidation and nominal class-layout validation. Preserve existing values, registry namespaces and the single dominance cache through aliases.
++
++The isolated writer owns only those donor bodies, four real canonical destinations and new focused semantic/identity controls. Root owns issue/claim/metadata/budget/source-receipt composition, heavy validation and publication. Freeze source inputs before edits; preserve original hashes, malformed/mutation tests and failures. Extend historical readers only through authenticated reciprocal relocation before their unchanged existing inverses; current compiler/type/runtime reads remain raw. No checks removed, no layer edges relaxed, no fake validation permit, duplicate registry/cache, executable snapshots or debug-default suppression. Before publication, incorporate verified phase-A main delivery and fresh main, complete normal hooks/checks, and use the protected queue.
++
++Completion of this phase requires actual closed import graphs plus unchanged old/new API/semantic behavior, full original verifier/allocation failures and required refusal controls. It does not establish whole migration completion, public Number parity, full 45/44/2 catalog/source/dynamic coverage, fresh-process replay, either backend's full equality or legacy retirement. All remain required.
++
++Phase-B pre-edit evidence: production TS7 passes; thirteen original suites measure 212/219, seven failures, zero skipped and no worker errors. Nine donor source hashes match the frozen pre-edit manifest. Seven existing rows fail before B: one old selector census and three final-allocation outcome arrays omit the current non-executable module-init row; three semantic ownership receipt/catalog rows expect the earlier intrinsic source/catalog rather than current added declaration/signature behavior and 39 versus 38 catalog entries. Preserve them as baseline failures, not extraction regressions, and do not weaken their original fixtures/hashes/counts. Exact rows and raw evidence are pinned in `plan/log/3518-validation-lowering-b-2026-10-01/baseline/manifest.json`.
++
++Additional pre-B boundary baseline: 353/457, 104 existing failures, zero skipped and no worker errors. Semantic-provider boundary passes352/352. Program-data boundary has one passing row and104failures:102 fixture setups fail before mutant injection at the unchanged historical intrinsic declaration receipt; two older policy assertions have stale history selection/current floors. This is one shared setup defect rather than102independently reached refusals. The initial fixture reader now composes the already-verified 27-source runtime evolution once per proof before the unchanged historical inverse. Original fixture source/rawfailedlogs are archived, fixed40/44module denominators/hashes and all mutant assertions remain; no saved executable fallback or cross-proof cache is added. Exact policy evolution and actual-B activation changes remain to validate after frozen source integration.
+diff --git a/tests/issue-3518-program-data-contract-boundary.test.ts b/tests/issue-3518-program-data-contract-boundary.test.ts
+index fdadae83ecf..1b3953ea03a 100644
+--- a/tests/issue-3518-program-data-contract-boundary.test.ts
++++ b/tests/issue-3518-program-data-contract-boundary.test.ts
+@@ -8,6 +8,10 @@ import { dirname, resolve } from "node:path";
+ import { setImmediate } from "node:timers/promises";
+ import { afterEach, describe, expect, it } from "vitest";
+ import { historicalIntrinsicSource, liveSourceReader } from "./helpers/ir-historical-runtime-reconstruction.js";
++import {
++  reconstructRuntimeContractReceiptSources,
++  runtimeContractCurrentPaths,
++} from "./helpers/ir-runtime-contract-evolution.js";
+ 
+ const repository = resolve(import.meta.dirname, "..");
+ // Independent, fixed population: never derive required files from discovered
+@@ -145,11 +149,22 @@ function fixture() {
+   p.nonModules = [];
+   p.externalPackages = [];
+   p.externalAssets = [];
++  // Authenticate all fixed live runtime owners once for this fixture, before
++  // the unchanged historical inverse and before any copied fixture mutant.
++  // Current compiler/type inputs stay raw; this map never survives the proof.
++  const rawRead = liveSourceReader(repository);
++  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(rawRead);
++  const historicalRead = (path: string): string => {
++    if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
++    const source = initialRuntimeSources.get(path);
++    if (source === undefined) throw new Error(`missing authenticated runtime source ${path}`);
++    return source;
++  };
+   for (const path of clean)
+     put(
+       path,
+       path === "src/ir/runtime/contracts/intrinsics.ts"
+-        ? historicalIntrinsicSource(liveSourceReader(repository))
++        ? historicalIntrinsicSource(historicalRead)
+         : readFileSync(resolve(repository, path), "utf8"),
+     );
+   put(

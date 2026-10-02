@@ -1,0 +1,420 @@
+{
+  "actual": [
+    {
+      "path": "src/wasm/model/instructions.ts",
+      "bytes": 14904,
+      "sha256": "b305b96583e473272f26032cd1e4ad4653a32d4f56db74df50dac7f1c2461b6d",
+      "gitBlob": "699c7b386f529b6017659a2f4b0f3c5671235969",
+      "statements": [
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "FuncHandle",
+          "startByte": 2001,
+          "endByte": 2033,
+          "bytes": 32,
+          "sha256": "cfb41a94d3d62a730873969910c7ec1986a6b0d25a53cd963502400630c39050",
+          "gitBlob": "729ea62934fb57b778f5ef0cf77a9fcb744c086a"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "GlobalHandle",
+          "startByte": 2034,
+          "endByte": 2068,
+          "bytes": 34,
+          "sha256": "704fa587397f65c64cce010be5eba4ddce48546e5a7a575b29a2497777b4820b",
+          "gitBlob": "703c04604480f9f4251bb584e6a5188fce74b0f8"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "TypeHandle",
+          "startByte": 2069,
+          "endByte": 2101,
+          "bytes": 32,
+          "sha256": "717fcf0c2aac2a287ef03f93302858167f01f9fbe9f90d75f75bcbe0c0d55fea",
+          "gitBlob": "08562b8931efde4826a1433b864498b199399b58"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "ValType",
+          "startByte": 2103,
+          "endByte": 4035,
+          "bytes": 1932,
+          "sha256": "6c43083b32fa6be10f6d5155c96c5431627f0798961be5f3d261528c0b7e0394",
+          "gitBlob": "41a3d2a338f3f8a667e64c8c4acde50998ba2953"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "LocalDef",
+          "startByte": 4037,
+          "endByte": 4099,
+          "bytes": 62,
+          "sha256": "ef01e559030b0629087d27191174e11e0835db5a598e0bb4a12cd941c38413e8",
+          "gitBlob": "d4542eb4bd2e4526acab7c20e5ee61a07ecb1915"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "SourcePos",
+          "startByte": 4150,
+          "endByte": 4230,
+          "bytes": 80,
+          "sha256": "290b5a1b5bf3e93ab759fc25820c0a410ad3f40e353b7e2b59f9b1bd0e3b9b22",
+          "gitBlob": "bf7a90fbb7df36c089d163981337b793151c55fc"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "InstrBase",
+          "startByte": 4232,
+          "endByte": 14326,
+          "bytes": 10094,
+          "sha256": "eff26bc6a05bac44fed3b148398a1b70bc5873395aabfd48a577ae3348c83609",
+          "gitBlob": "14e4bd9309bb2a32ef252fa7bc20848739c8c624"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "Instr",
+          "startByte": 14328,
+          "endByte": 14386,
+          "bytes": 58,
+          "sha256": "c30cc12825f2718dbedc8966a3b5eaa3b10a0c6e5d3ca251801bf6f00953403d",
+          "gitBlob": "ab39a17443f532a111a2963dab2e3b5c959bcf01"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "BlockType",
+          "startByte": 14388,
+          "endByte": 14503,
+          "bytes": 115,
+          "sha256": "876dc83b48e09c862643dc0bdf14693a14f6fd97b7cf7e02039355fcf0f31c75",
+          "gitBlob": "2e2547f6a1b5bb968fdda9f66b84308a1bd71c7c"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "CatchClause",
+          "startByte": 14505,
+          "endByte": 14572,
+          "bytes": 67,
+          "sha256": "2e6876cda7174fc2ea0b678c3437966f0c234061fcacfedd18b4aa3aab927c6f",
+          "gitBlob": "e12633a9f07a3b93aafb6204d96a2ed487b41081"
+        },
+        {
+          "path": "src/wasm/model/instructions.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "TryTableCatch",
+          "startByte": 14647,
+          "endByte": 14903,
+          "bytes": 256,
+          "sha256": "64c43f0741b2dcd10c901b60154a1505dadee2cdf25f3c70c070117ebb444a73",
+          "gitBlob": "29b7a60685f22b9af09d060672bce8b9d51dd4d2"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "src/wasm/model/module-records.ts",
+      "bytes": 3867,
+      "sha256": "0de6972cbc506dc29a04119fed1efbf9a4b84e4219a52363c120e0130364ae75",
+      "gitBlob": "c700df20e0e24aa54b0dd5d4a438773c22deb6f7",
+      "statements": [
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "ImportDeclaration",
+          "name": null,
+          "startByte": 85,
+          "endByte": 175,
+          "bytes": 90,
+          "sha256": "a946662da4e376bda4d312254879217d3e54409c23fb251dd1e014afb1846f5b",
+          "gitBlob": "3f27a2b51a56ee6e9f28a8739b9c09e4c6ad2964"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "TypeDef",
+          "startByte": 177,
+          "endByte": 269,
+          "bytes": 92,
+          "sha256": "85f412c244e1a2bbed9ef9dfe7ab26bd5849491cd1c1e8bbc05543ae39363a18",
+          "gitBlob": "e0fc75322b6e2c934973d32d41c4dfcb66f1992f"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "FuncTypeDef",
+          "startByte": 271,
+          "endByte": 379,
+          "bytes": 108,
+          "sha256": "271542c387ff6b0ed09559d813472c2ca7cba93a930cd185500437ca0e4401d7",
+          "gitBlob": "30a4446ce49a4d1d5188827a05cd9dcd2a551ea0"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "StructTypeDef",
+          "startByte": 380,
+          "endByte": 694,
+          "bytes": 314,
+          "sha256": "c339d6aba8705d49ad82a422f3ecbf3d88cade353f35a45c66a56c86f76017b0",
+          "gitBlob": "e827db40658d32452e4fe553cca48456d9e1f343"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "ArrayTypeDef",
+          "startByte": 695,
+          "endByte": 801,
+          "bytes": 106,
+          "sha256": "2bbc5f4b71823ed2bd8558d20b9f755a0a475061ab19fc0e6fe83369e31cd3af",
+          "gitBlob": "7aebc5a762fb8e91bee30e8b02f58e2e6ca70d66"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "RecGroupDef",
+          "startByte": 802,
+          "endByte": 869,
+          "bytes": 67,
+          "sha256": "6b7ec52a12146533c5570fe2b1877e7c156418c234536adbbbe92e25bb488400",
+          "gitBlob": "dae4b2a4284581ce92776b5a8fd3fdb853dc978b"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "SubTypeDef",
+          "startByte": 870,
+          "endByte": 1034,
+          "bytes": 164,
+          "sha256": "4eae91ed626517c2a2e2c2b9258f901fdc6c2d104bfae4b1dfa4182607133061",
+          "gitBlob": "71f30cd8ecf8d95d486c65dd502cfe45150f95b7"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "FieldDef",
+          "startByte": 1035,
+          "endByte": 2807,
+          "bytes": 1772,
+          "sha256": "27372893e5614e6b89092e48d9efbca32990f03bc7ef66433d15927a28b1b38a",
+          "gitBlob": "ab00f457f35ea14d45e133dfaa271b9198faa062"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "WasmFunction",
+          "startByte": 2809,
+          "endByte": 2941,
+          "bytes": 132,
+          "sha256": "bf4d244a3623ee222557a9f4072d7983d6d6279c53991c618463199fed84fd25",
+          "gitBlob": "d239cea15659b8e1f9d73b1598e2655274162b4c"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "TagDef",
+          "startByte": 2943,
+          "endByte": 3089,
+          "bytes": 146,
+          "sha256": "f7ca32c899e56ca4bb49901e6e4949053aa6ce30dba596c4dd542d271f548d66",
+          "gitBlob": "f8e955df2a5c72d42bf1c96bd041246a77997837"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "Import",
+          "startByte": 3091,
+          "endByte": 3172,
+          "bytes": 81,
+          "sha256": "48cb337e0a4160e7e2692140a84c278fb2cc908cee1b958bb3c2213fbb617ed8",
+          "gitBlob": "942078f538f4149716338e9b488516c054b75846"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "TypeAliasDeclaration",
+          "name": "ImportDesc",
+          "startByte": 3173,
+          "endByte": 3457,
+          "bytes": 284,
+          "sha256": "691109a504d6b17c6ee462eb8d8a5edbfcec3f58e5cf643c61097a77c27721c4",
+          "gitBlob": "4e90c2cc65e11d14f1b8bd1070885bdaaf8376f4"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "WasmExport",
+          "startByte": 3459,
+          "endByte": 3587,
+          "bytes": 128,
+          "sha256": "71bbb433abde96b9a3ec846ef505ad5f4a15d641a1f240631aac1fa04690516a",
+          "gitBlob": "641d0d83a36394e6a5cb6b728b2e66d255eef267"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "Table",
+          "startByte": 3588,
+          "endByte": 3668,
+          "bytes": 80,
+          "sha256": "8e374c7daaebf2c202ce841d5822b0dd1daff2b338ead5a26945578b27788a57",
+          "gitBlob": "5ea46fdc40da73c262af28fe13d8d796b6cbbb8e"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "Element",
+          "startByte": 3669,
+          "endByte": 3765,
+          "bytes": 96,
+          "sha256": "839f61ff66f73eac8d9ad0d5250b4b8bcac558244f65349adf1406f6aec7b890",
+          "gitBlob": "ceb4be700106f4300900a19ed1cbcb143cdba3ef"
+        },
+        {
+          "path": "src/wasm/model/module-records.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "GlobalDef",
+          "startByte": 3766,
+          "endByte": 3866,
+          "bytes": 100,
+          "sha256": "5120440578cd082519aea992bd1dca112c801363fa99eb36bdccf03e0a744dfb",
+          "gitBlob": "52e3753ba4573c123650a6e49838595793a0e280"
+        }
+      ],
+      "imports": [
+        {
+          "module": "./instructions.js",
+          "typeOnly": true
+        }
+      ]
+    },
+    {
+      "path": "src/wasm/physical/function-handles.ts",
+      "bytes": 4317,
+      "sha256": "c6a82f897b8fa6c755b68129926e2deb9b6e885a25ecd2e253a444d0bcb5193f",
+      "gitBlob": "e4f75d1b6faba7d320b5919520fca765622fe17d",
+      "statements": [
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "ImportDeclaration",
+          "name": null,
+          "startByte": 85,
+          "endByte": 144,
+          "bytes": 59,
+          "sha256": "6aa92ae3f95ca849d4145bffaf6c13c48b08879edcfcb61556cf08764f05ddef",
+          "gitBlob": "76f3d0441c6d761fa6140c2a1ccedf151fe745f2"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "ImportDeclaration",
+          "name": null,
+          "startByte": 145,
+          "endByte": 208,
+          "bytes": 63,
+          "sha256": "a4d7dd6ebfedd26981f46dcdcaec72823fe6119649546e69e02d5458854f9560",
+          "gitBlob": "49eeb73ca71a437804bb908af7ddb384593ed00c"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "FirstStatement",
+          "name": null,
+          "startByte": 1900,
+          "endByte": 1940,
+          "bytes": 40,
+          "sha256": "55ba75f305453d5500f76fefab8dd0b7b59a66f95beb67ae482e34332767b55a",
+          "gitBlob": "1b4de04e7072286a6d2916f6d3cee627373c47a7"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "FunctionDeclaration",
+          "name": "inLiveShiftRange",
+          "startByte": 2463,
+          "endByte": 2601,
+          "bytes": 138,
+          "sha256": "298ac4912768ae4447f19653836a7f06bc2a82d835b339d2de9829218b6d5f9e",
+          "gitBlob": "82817fa9232ba7224d12626db73d70812eb3a271"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "InterfaceDeclaration",
+          "name": "DefinedFunctionStorage",
+          "startByte": 2679,
+          "endByte": 2786,
+          "bytes": 107,
+          "sha256": "7acd3c14fedd5cb276e3904706d40385a0eec018ce050d25cee5d4c6a94d5e8f",
+          "gitBlob": "d8efc75297eb0016d7b61ae50494de5c2dca537a"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "FunctionDeclaration",
+          "name": "mintDefinedFunc",
+          "startByte": 2863,
+          "endByte": 3231,
+          "bytes": 368,
+          "sha256": "eb59a1c9e1e207ea2a316451ee786554f30711c4a59e17ec27cb414051bb19f6",
+          "gitBlob": "7b686f06ef490db5616f35072e380cf71cea9108"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "FunctionDeclaration",
+          "name": "commitDefinedFuncOrdinal",
+          "startByte": 3463,
+          "endByte": 4110,
+          "bytes": 647,
+          "sha256": "599ba7fc894d108c3fb67af4a64a4a34a1653b40b63ea71bb5241c382e3a3ae5",
+          "gitBlob": "7b0d3a78863f3159547d5f0dfa1014ee5cf7ab75"
+        },
+        {
+          "path": "src/wasm/physical/function-handles.ts",
+          "kind": "FunctionDeclaration",
+          "name": "appendDefinedFunc",
+          "startByte": 4192,
+          "endByte": 4316,
+          "bytes": 124,
+          "sha256": "6d0a6bb5ddc77b4ff01a2c5402f34cfe4b8fbb2ff1d30ede2169b12d611aeaa2",
+          "gitBlob": "dc5b217153e16bc330ce28f5423564ff313a50ab"
+        }
+      ],
+      "imports": [
+        {
+          "module": "../model/instructions.js",
+          "typeOnly": true
+        },
+        {
+          "module": "../model/module-records.js",
+          "typeOnly": true
+        }
+      ]
+    }
+  ],
+  "unverifiedCandidate": {
+    "description": "Remove exactly the two allocator type imports and the four appended allocator declarations; retain complete current original kernel comments, constant and predicate. Historical full-source authority NOT yet established.",
+    "pin": {
+      "bytes": 2477,
+      "sha256": "daddc2fea3c4e2017c117b54863ec00a27341378f8acc796e54bfb751e5cdac0",
+      "gitBlob": "8b91e2391b574e75ee6db331ebaa5aaa9da5d436"
+    },
+    "deletions": [
+      {
+        "startByte": 85,
+        "endByte": 210,
+        "bytes": 125,
+        "sha256": "b306fa9802d033fd80bc0cc032787e933cd8636569f28eac4c44977e96e15232",
+        "gitBlob": "c53d8b015ae3935f20a56706e207980400084b7e"
+      },
+      {
+        "startByte": 2602,
+        "endByte": 4317,
+        "bytes": 1715,
+        "sha256": "299b3e2a0664aae68d36f60516a81d18d9e371c64f4effc5c0fb292998b7c933",
+        "gitBlob": "2767e8cfc01b48cc37589a37fc00d556e3f30bfd"
+      }
+    ],
+    "originalHistoricalTargetVerified": false
+  }
+}

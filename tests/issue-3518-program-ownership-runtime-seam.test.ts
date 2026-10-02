@@ -5,6 +5,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import {
+  historicalSource,
+  ownershipEvolutions,
+  sourceHashes,
+  inverseOwnershipEvolution,
+} from "./helpers/ir-ownership-evolution.js";
 import * as oldProgram from "../src/ir/program.js";
 import * as oldInput from "../src/ir/program-input.js";
 import * as data from "../src/ir/program/data.js";
@@ -16,8 +22,25 @@ import { captureTypedIrProgramInput } from "../src/ir/program-source.js";
 import { sourcePacket, startupFiles, typedOptions } from "./helpers/typed-program-fixtures.js";
 import { createTestIrClassId } from "./helpers/ir-identities.js";
 
+import {
+  reconstructRuntimeProgramRelocationSources,
+  runtimeProgramRelocationPairs,
+} from "./helpers/ir-runtime-program-relocation.js";
+
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+function beforeC1(readLive: (path: string) => string = read): (path: string) => string {
+  const sources = reconstructRuntimeProgramRelocationSources(readLive);
+  return (path) => {
+    if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
+      const source = sources.get(path as Parameters<typeof sources.get>[0]);
+      if (source === undefined) throw new Error(`missing checked C1 output: ${path}`);
+      return source;
+    }
+    return readLive(path);
+  };
+}
+
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 // Pinned to 3a119a88b28bb347f4faaaa2146bd991acf61228. Complete bodies,
@@ -425,7 +448,7 @@ const retainedReceipts: readonly RetainedReceipt[] = [
   },
 ] as const;
 
-function parse(path: string, source = read(path)) {
+function parse(path: string, source: string) {
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
   expect((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toEqual([]);
   return file;
@@ -471,8 +494,50 @@ const dataFunctions = [
 ] as const;
 
 describe("#3518 program ownership implementation seam", () => {
+  it.each(ownershipEvolutions)("reverses only the complete reviewed $path evolution and exactly replays it", (row) => {
+    const initialRead = beforeC1();
+    const current = initialRead(row.path),
+      original = historicalSource(row.path, current);
+    expect(sourceHashes(original)).toEqual({ sha: row.originalSha, blob: row.originalBlob });
+    expect(original).not.toBe(current);
+    expect(() => historicalSource(row.path, original)).toThrow("current file");
+    expect(() => historicalSource(row.path, current + "\n")).toThrow("unreviewed ownership evolution");
+    for (const hunk of row.hunks) {
+      // Each evolution has an added line still present in the final source,
+      // including the shared comment between the two program.ts changes.
+      const addition = hunk.after
+        .split("\n")
+        .find((line) => line && !hunk.before.split("\n").includes(line) && current.split(line).length === 2);
+      expect(addition).toBeDefined();
+      expect(current.split(addition!)).toHaveLength(2);
+      for (const replacement of ["", addition! + addition!, addition! + "/* changed */"])
+        expect(() => historicalSource(row.path, current.replace(addition!, replacement))).toThrow(
+          "unreviewed ownership evolution",
+        );
+    }
+    expect(() => historicalSource(row.path, current.replace("Copyright", "Unreviewed copyright"))).toThrow(
+      "unreviewed ownership evolution",
+    );
+  });
+
+  it("rejects a changed intermediate SHA or blob in the two-commit program evolution", () => {
+    const initialRead = beforeC1();
+    const row = ownershipEvolutions.find((entry) => entry.path === "src/ir/program.ts")!;
+    expect(row.hunks.filter((hunk) => hunk.inverseHashes)).toHaveLength(1);
+    for (const field of ["sha", "blob"] as const) {
+      const invalid = {
+        ...row,
+        hunks: row.hunks.map((hunk) =>
+          hunk.inverseHashes ? { ...hunk, inverseHashes: { ...hunk.inverseHashes, [field]: "unreviewed" } } : hunk,
+        ),
+      };
+      expect(() => inverseOwnershipEvolution(invalid, initialRead(row.path))).toThrow("intermediate file");
+    }
+  });
+
   it.each(movedReceipts)("preserves complete $path bodies, classes, private fields and initialization", (receipt) => {
-    const nodes = statements(parse(receipt.path));
+    const initialRead = beforeC1();
+    const nodes = statements(parse(receipt.path, historicalSource(receipt.path, initialRead(receipt.path))));
     expect(nodes.map(key)).toEqual(receipt.names);
     expect(nodes).toHaveLength(receipt.count);
     expect(nodes.filter(ts.isFunctionDeclaration)).toHaveLength(receipt.functions);
@@ -493,7 +558,8 @@ describe("#3518 program ownership implementation seam", () => {
   it.each(retainedReceipts)(
     "reconstructs $path in its original order without dropping retained statements",
     (receipt) => {
-      const nodes = statements(parse(receipt.path));
+      const initialRead = beforeC1();
+      const nodes = statements(parse(receipt.path, historicalSource(receipt.path, initialRead(receipt.path))));
       expect(nodes).toHaveLength(receipt.count);
       expect(nodes.filter(ts.isFunctionDeclaration)).toHaveLength(receipt.functions);
       expect(nodes.filter(ts.isExpressionStatement).map((node) => node.getText())).toEqual(receipt.initializers);
@@ -504,7 +570,7 @@ describe("#3518 program ownership implementation seam", () => {
       expect(digest(nodes.map((node) => preservedText(node)))).toBe(receipt.hash);
       const moved = movedReceipts
         .filter((row) => row.old === receipt.path)
-        .flatMap((row) => statements(parse(row.path)));
+        .flatMap((row) => statements(parse(row.path, historicalSource(row.path, initialRead(row.path)))));
       const combined = [...nodes, ...moved];
       expect(combined).toHaveLength(receipt.originalCount);
       expect(combined.filter(ts.isFunctionDeclaration)).toHaveLength(receipt.originalFunctions);
@@ -545,7 +611,7 @@ describe("#3518 program ownership implementation seam", () => {
     expect(movedReceipts.reduce((n, row) => n + row.count, 0)).toBe(22);
     expect(movedReceipts.reduce((n, row) => n + row.functions, 0)).toBe(14);
     expect(movedReceipts.flatMap((row) => row.classes).flatMap((row) => row.members)).toHaveLength(22);
-    const file = parse("src/ir/program.ts");
+    const file = parse("src/ir/program.ts", read("src/ir/program.ts"));
     expect(
       file.statements
         .filter(ts.isImportDeclaration)
@@ -560,11 +626,11 @@ describe("#3518 program ownership implementation seam", () => {
     const expectedImports = [
       [],
       ["../core/types.js", "./errors.js"],
-      ["../analysis/alloc-registry.js", "./data.js", "./errors.js", "./input-contracts.js"],
+      ["../analysis/alloc-registry.js", "./data.js", "./errors.js", "./input-contracts.js", "./runtime-support.js"],
     ];
     for (const [index, row] of movedReceipts.entries()) {
       expect(
-        parse(row.path)
+        parse(row.path, read(row.path))
           .statements.filter(ts.isImportDeclaration)
           .map((node) => {
             if (!ts.isStringLiteral(node.moduleSpecifier)) throw Error("nonliteral canonical import");
@@ -573,6 +639,10 @@ describe("#3518 program ownership implementation seam", () => {
       ).toEqual(expectedImports[index]);
       expect(read(row.path)).not.toMatch(/process\.env/);
     }
+    const runtimeImport = parse("src/ir/program/input.ts", read("src/ir/program/input.ts"))
+      .statements.filter(ts.isImportDeclaration)
+      .find((node) => ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === "./runtime-support.js");
+    expect(runtimeImport?.getText()).toBe('import { assertIrRuntimeSupport } from "./runtime-support.js";');
     expect(read("src/ir/program/input.ts")).toContain('from "../analysis/alloc-registry.js"');
   });
 

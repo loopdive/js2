@@ -1,0 +1,13 @@
+{
+  "base": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "strict_executed_tests": 152,
+  "original_tests": 20,
+  "new_tests": 132,
+  "skipped": 0,
+  "original_receipts_changed": false,
+  "production_typecheck_exit": 0,
+  "formatting_verified": true,
+  "historical_reader_scope": "only three initial receipt reads; current parse/runtime/type inputs raw",
+  "raw_result_sha256": "88abaa7c33c7d8881fd91862810fa06fce9c02eda3e6653b32d1064209b4afe4",
+  "formatted_existing_test_sha256": "ca499d1a06a36c6343659a5e5da96d10a3362d09ac3ec1a5bd63da0f47da9a90"
+}

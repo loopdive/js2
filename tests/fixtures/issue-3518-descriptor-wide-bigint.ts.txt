@@ -1,0 +1,23 @@
+function make(): any { return {}; }
+function same(a: any, b: any): number { return Object.is(a, b) ? 1 : 0; }
+function replace(before: any, after: any): number {
+  const object: any = make();
+  Object.defineProperty(object, "value", { value: before });
+  try {
+    Object.defineProperty(object, "value", { value: after });
+    return same(object.value, after);
+  } catch (error) {
+    return error instanceof TypeError && same(object.value, before) === 1 ? 0 : -1;
+  }
+}
+export function equalWide(): number { return replace(18446744073709551616n, 18446744073709551616n); }
+export function mixedLowBits(): number { return replace(18446744073709551616n, 0n) === 0 ? 1 : 0; }
+export function mixedReverse(): number { return replace(0n, 18446744073709551616n) === 0 ? 1 : 0; }
+export function signsDiffer(): number { return replace(18446744073709551616n, -18446744073709551616n) === 0 ? 1 : 0; }
+export function lengthsDiffer(): number { return replace(18446744073709551617n, 79228162514264337593543950337n) === 0 ? 1 : 0; }
+export function highLimbDiffers(): number { return replace(79228162514264337593543950337n, 79228162532711081667253501953n) === 0 ? 1 : 0; }
+export function lowLimbDiffers(): number { return replace(79228162514264337593543950337n, 79228162514264337593543950338n) === 0 ? 1 : 0; }
+export function narrowEqual(): number { return replace(1n, 1n); }
+export function narrowDifferent(): number { return replace(1n, -1n) === 0 ? 1 : 0; }
+export function sameValueMixed(): number { return same(18446744073709551616n, 0n) === 0 ? 1 : 0; }
+export function wideCarrier(): any { return 18446744073709551616n; }

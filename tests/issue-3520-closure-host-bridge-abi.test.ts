@@ -136,6 +136,9 @@ const CLOSURE_STANDALONE_HELPER_EXPORTS = [
   "__box_boolean",
   "__box_number",
   "__dynamic_boundary_tag",
+  // (#6666) the lite host-free renderer for compiler-synthesized throws
+  "__exn_render_char",
+  "__exn_render_prepare",
   "__exn_tag",
   "__to_bigint",
   "__typeof_bigint",

@@ -40,6 +40,7 @@ on:
       - "scripts/build-quickjs-eval-provider.mjs"
       - "scripts/quickjs-eval-provider.mjs"
       - "scripts/runtime-eval-provider.mjs"
+      - "scripts/compiler-inputs-hash.mjs"
       - "scripts/quickjs-artifact/**"
       - "scripts/generate-editions.ts"
       # Part of the merge_group gating logic (it decides which manifest
@@ -76,6 +77,10 @@ on:
         default: false
       honest_audit:
         description: "(#3451 slice 6) Also run the HONEST whole-assembly oracle over the same host chunks as the AUDIT lane, plus a same-run parity report against the authoritative linked-harness rows. Separate artifacts; never promotes a baseline and is never a required check. (Was `linked_lane` until the slice-6 authority flip, when the two lanes swapped roles.)"
+        type: boolean
+        default: false
+      standalone_linked:
+        description: "(#6723 P1/P2) SHADOW measurement: also pre-warm the standalone harness providers and run the STANDALONE cells a second time under the linked-harness oracle (separate `test262-standalone-linked` artifacts + a parity report vs the promoted standalone baseline). The authoritative standalone cells stay honest. A dispatch with this checked never promotes a baseline."
         type: boolean
         default: false
       include_proposals:
@@ -280,8 +285,17 @@ jobs:
           # before the explicit rc checks below. Two consequences, both real:
           # every cheap-gate failure was diagnostic-free (the log ended at a bare
           # "Process completed with exit code 1"), and a lint-only failure
-          # HARD-FAILED this required check, contradicting the "not blocking"
-          # warning at the end of this very script.
+          # hard-failed this required check while the script claimed lint was
+          # "not blocking".
+          #
+          # (#6784) Lint now blocks here ON PURPOSE. #3677 made it advisory
+          # because the failure was diagnostic-free and duplicated `quality`;
+          # the dumps below fixed the first, and a required check named
+          # "... + lint" must not pass on lint errors (docs/ci-policy.md §7
+          # describes it as a lint + typecheck reject). The same #6784 found
+          # `pnpm run lint` itself had been vacuous (Biome's 20-diagnostic cap,
+          # spent on `noExplicitAny` warnings, hid every error) — the script now
+          # passes --max-diagnostics=none, so lint_rc is real.
           #
           # `cmd || rc=$?` makes the wait a TESTED command, so `-e` does not fire
           # while the real exit status is still captured. Deliberately NOT
@@ -293,7 +307,7 @@ jobs:
           echo "--- typecheck (last 50 lines) ---"; tail -50 "$tmp_tc"
           echo "--- lint (last 50 lines) ---"; tail -50 "$tmp_lint"
           if [ "$tc_rc" -ne 0 ]; then echo "::error::typecheck failed (rc=$tc_rc)"; exit "$tc_rc"; fi
-          if [ "$lint_rc" -ne 0 ]; then echo "::warning::lint failed (rc=$lint_rc) — not blocking"; fi
+          if [ "$lint_rc" -ne 0 ]; then echo "::error::lint failed (rc=$lint_rc)"; exit "$lint_rc"; fi
 
   changes:
     # merge_group has no native `paths:` filter (unlike pull_request/push
@@ -410,6 +424,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          MG_BASE_REF: ${{ github.event.merge_group.base_ref }}
         run: |
           set -uo pipefail
           # Emit all three verdicts at once. EVERY fail-safe path calls
@@ -475,6 +490,41 @@ jobs:
             exit 0
           fi
 
+          # #6762 — a STACKED group's base_sha is the head of the queue entry
+          # ahead of it, not the base branch. When this group passes, GitHub
+          # merges every entry underneath it too, including ones whose own
+          # group FAILED. So the skip decision must see the whole stack: also
+          # diff the base branch's current tip against head, and classify the
+          # union. Without this, an artifact-only PR (npm-compat refresh) on top
+          # of failed groups skipped every shard, went green, and merged them
+          # all (#6299 under #6302; #6301/#6307/#6306 under #6309; #6285/#6308
+          # under #6315 — all 2026-09-29).
+          FILTER_BASE="$MG_BASE_SHA"
+          MAIN_TIP=""
+          if [ -n "${MG_BASE_REF:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$MG_BASE_REF" 2>/dev/null \
+              && MAIN_TIP=$(git rev-parse FETCH_HEAD 2>/dev/null) || MAIN_TIP=""
+          fi
+          if [ -z "$MAIN_TIP" ]; then
+            echo "::warning::could not resolve the tip of '${MG_BASE_REF:-}' — cannot rule out a stacked group (#6762). FAIL-SAFE run_shards=true."
+            emit_all true
+            exit 0
+          fi
+          if [ "$MAIN_TIP" != "$MG_BASE_SHA" ]; then
+            set +e
+            STACK_DIFF=$(git diff --name-only "$MAIN_TIP" "$MG_HEAD_SHA" 2>/tmp/diff_err)
+            src=$?
+            set -e
+            if [ "$src" -ne 0 ]; then
+              echo "::warning::stacked-group diff $MAIN_TIP..$MG_HEAD_SHA failed (rc=$src): $(cat /tmp/diff_err) — FAIL-SAFE run_shards=true (#6762)."
+              emit_all true
+              exit 0
+            fi
+            echo "Stacked group (#6762): base_sha $MG_BASE_SHA is not the ${MG_BASE_REF} tip $MAIN_TIP — classifying the whole stack."
+            DIFF=$(printf '%s\n%s\n' "$DIFF" "$STACK_DIFF" | sed '/^$/d' | sort -u)
+            FILTER_BASE="$MAIN_TIP"
+          fi
+
           echo "Changed paths in queued group:"
           echo "$DIFF" | sed 's/^/  /'
 
@@ -503,7 +553,7 @@ jobs:
           # Exit code, not emptiness, decides trust: empty stdout is a legal
           # success here, so a crash must be detected some other way.
           set +e
-          FILTERED=$(printf '%s\n' "$DIFF" | node scripts/manifest-version-only.mjs --base "$MG_BASE_SHA" --head "$MG_HEAD_SHA")
+          FILTERED=$(printf '%s\n' "$DIFF" | node scripts/manifest-version-only.mjs --base "$FILTER_BASE" --head "$MG_HEAD_SHA")
           filter_rc=$?
           set -e
           if [ "$filter_rc" -ne 0 ]; then
@@ -1542,6 +1592,350 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # (#6723 P1) Build every standalone harness provider ONCE and hand the cache
+  # to the standalone linked shadow shards below. A cold standalone provider
+  # build is up to ~12 s (P0, 2026-09-28) and is charged to the first row of its
+  # include-set; the fork budget is 30 s, so without this 4 of 15 linked rows
+  # timed out in the first measurement. Same shape as `temporal-provider`.
+  #
+  # DISPATCH-ONLY, and only when `standalone_linked` is checked: no push /
+  # merge_group / schedule / pull_request run ever schedules it, nothing
+  # required `needs:` it, and with the input off the run graph is unchanged.
+  #
+  # The cache dir is keyed on the compiler bundle hash inside
+  # `test262HarnessProviderCacheDir()` (`bundle-<hash>/`), so the shards find
+  # these artifacts only if they built a byte-identical `compiler-bundle.mjs` —
+  # a mismatch is a cache miss (cold build, slower), never a stale provider.
+  standalone-harness-provider:
+    name: build standalone harness providers (#6723)
+    if: github.event_name == 'workflow_dispatch' && inputs.standalone_linked
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      JS2WASM_TEST262_HARNESS_CACHE: .test262-cache/harness
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build compiler bundle
+        run: pnpm run build:compiler-bundle
+
+      # SOFT (no --strict): a prefix that fails to build is named on stderr and
+      # simply cold-builds (or falls back honest) in the shard. The prewarm is a
+      # speed input to a shadow measurement, never a verdict input.
+      - name: Pre-warm standalone harness providers
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        # tsx: the script imports the runner's own tests/*.ts split/parse.
+        run: node --import tsx scripts/prewarm-test262-harness-providers.mjs --target standalone
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: standalone-harness-provider-${{ github.run_id }}
+          path: .test262-cache/harness
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  test262-standalone-linked:
+    # (#6723 P2) SHADOW measurement of the linked-harness oracle on the
+    # STANDALONE target. The authoritative standalone cells in `test262-shard`
+    # stay HONEST and are not touched by this job or by the input: this is a
+    # separate matrix with its own result prefix (`test262-standalone-linked`)
+    # and its own artifact names, so merge-report, the regression gate,
+    # promote-baseline, the edition ratchet and Pages never see its rows.
+    # A separate job, rather than switching the standalone cells of
+    # `test262-shard`, is deliberate: renaming those cells' prefix would leave
+    # merge-report with no standalone rows and fail the run.
+    #
+    # `TEST262_STANDALONE_LINKED=1` is the runtime opt-in read by
+    # `test262OracleLane` (scripts/test262-harness-cache.mjs); without it the
+    # standalone target stays honest even under `TEST262_ORACLE_MODE=linked`.
+    #
+    # Dispatch-only, never required, never in the merge queue. A dispatch with
+    # this input also suppresses promote-baseline (see its `if:`).
+    needs: [temporal-provider, runtime-eval-provider, standalone-harness-provider]
+    if: github.event_name == 'workflow_dispatch' && inputs.standalone_linked
+    name: test262 standalone-linked shard ${{ matrix.chunk }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk:
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+          ]
+
+    env:
+      # Mirrors the standalone cells of `test262-shard`, so the only lane
+      # difference is the oracle.
+      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
+      JS2WASM_IR_FIRST: ${{ inputs.ir_first && '1' || '' }}
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ${{ inputs.layout_emit && '1' || '' }}
+      TEST262_INCLUDE_PROPOSALS: ${{ inputs.include_proposals && '1' || '0' }}
+      RUN_TIMESTAMP: ${{ github.run_id }}-standalone-linked-chunk${{ matrix.chunk }}
+      TEST262_TARGET: standalone
+      TEST262_RESULT_PREFIX: test262-standalone-linked
+      TEST262_ORACLE_MODE: linked
+      TEST262_STANDALONE_LINKED: "1"
+      JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
+      TEST262_IT_TIMEOUT_MS: "300000"
+      TEST262_FULL_RUNTIME_EVAL: "1"
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+      JS2WASM_TEST262_HARNESS_CACHE: .test262-cache/harness
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build compiler bundles
+        run: |
+          pnpm run build:compiler-bundle
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
+            --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Download compiled Temporal provider for the standalone linked shadow (#5353, #6723)
+        uses: actions/download-artifact@v7
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
+
+      - name: Download selected runtime-eval provider (#2928/#4242)
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      - name: Verify shared runtime-eval provider cache (#2928/#4242)
+        run: |
+          case "$JS2WASM_EVAL_ENGINE" in
+            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
+            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
+            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
+          esac
+
+      - name: Download pre-warmed standalone harness providers (#6723 P1)
+        uses: actions/download-artifact@v7
+        with:
+          name: standalone-harness-provider-${{ github.run_id }}
+          path: .test262-cache/harness
+
+      # Diagnostic only: names whether this shard's bundle hash found the
+      # pre-warmed providers (a miss means cold builds charged to rows).
+      - name: Report harness provider cache
+        run: |
+          node --input-type=module -e '
+            import { test262HarnessProviderCacheDir, readHarnessPrewarmStamp } from "./scripts/test262-harness-cache.mjs";
+            const dir = test262HarnessProviderCacheDir();
+            const stamp = readHarnessPrewarmStamp(dir, "standalone");
+            console.log(`harness cache ${dir}: ${stamp ? stamp.providers.length + " providers stamped" : "NO STAMP (bundle-hash miss?)"}`);
+          '
+
+      - name: Run shard
+        run: |
+          mkdir -p vitest-blob
+          set +e
+          node node_modules/vitest/dist/cli.js run tests/test262-chunk${{ matrix.chunk }}.test.ts \
+            --reporter=blob \
+            --outputFile=vitest-blob/blob-standalone-linked-${{ matrix.chunk }}.json
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
+            echo "Vitest exited with unexpected code $exit_code"
+            exit "$exit_code"
+          fi
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
+          fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
+
+      - name: Upload shard artifacts
+        id: upload_shard
+        uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 1
+          name: test262-standalone-linked-shard-${{ matrix.chunk }}
+          path: |
+            benchmarks/results/test262-standalone-linked-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/test262-standalone-linked-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
+          if-no-files-found: warn
+
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-standalone-linked-shard-${{ matrix.chunk }}
+          overwrite: true
+          path: |
+            benchmarks/results/test262-standalone-linked-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/test262-standalone-linked-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
+          if-no-files-found: warn
+
+  merge-standalone-linked-report:
+    # (#6723 P2) Merge the standalone linked shadow shards and write the parity
+    # report against (a) the PROMOTED standalone baseline and (b) this run's
+    # own honest standalone cells when `test262-shard` produced them. Evidence
+    # only: never a gate, never promotes, nothing `needs:` it.
+    name: merge standalone-linked evidence
+    needs: [test262-standalone-linked, test262-shard]
+    if: always() && needs.test262-standalone-linked.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-node-pnpm
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: test262-standalone-linked-shard-*
+          path: standalone-linked-shards
+          merge-multiple: true
+      - id: same_run_standalone
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: test262-standalone-shard-*
+          path: same-run-standalone-shards
+          merge-multiple: true
+      - name: Validate complete lane and build isolated standalone-linked artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p standalone-linked-results
+          rows=standalone-linked-results/test262-standalone-linked-current.jsonl
+          cat standalone-linked-shards/test262-standalone-linked-results-*.jsonl > "$rows"
+          manifests=()
+          for manifest in standalone-linked-shards/*.complete.json; do
+            manifests+=(--manifest "$manifest")
+          done
+          node scripts/validate-test262-completeness.mjs --input "$rows" "${manifests[@]}" --expected-shards 57
+          proposals=()
+          if [ "${{ inputs.include_proposals }}" = true ]; then
+            proposals+=(--include-proposals)
+          fi
+          node scripts/build-test262-report.mjs --input "$rows" \
+            --output standalone-linked-results/test262-standalone-linked-current.json \
+            --target standalone --baseline-sha "${{ github.sha }}" "${proposals[@]}"
+      - name: Parity vs the promoted standalone baseline and the same-run honest cells (measurement, never a gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/fetch-baseline-jsonl.mjs --standalone --force
+          cp .test262-cache/test262-standalone-current.jsonl standalone-linked-results/test262-standalone-promoted.jsonl
+          # Positional order is by LANE (honest first, linked second); the
+          # labels say which role each plays. Exit 0 always.
+          node scripts/test262-linked-parity.mjs \
+            standalone-linked-results/test262-standalone-promoted.jsonl \
+            standalone-linked-results/test262-standalone-linked-current.jsonl \
+            --authoritative-label honest \
+            --audit-label linked \
+            --out standalone-linked-results/test262-standalone-linked-parity-vs-baseline.json \
+            --allow-missing
+          same_run=standalone-linked-results/test262-standalone-same-run.jsonl
+          if compgen -G "same-run-standalone-shards/test262-standalone-results-*.jsonl" > /dev/null; then
+            cat same-run-standalone-shards/test262-standalone-results-*.jsonl > "$same_run"
+          else
+            echo "No same-run honest standalone shard artifacts — same-run parity will skip."
+          fi
+          node scripts/test262-linked-parity.mjs \
+            "$same_run" \
+            standalone-linked-results/test262-standalone-linked-current.jsonl \
+            --authoritative-label honest \
+            --audit-label linked \
+            --out standalone-linked-results/test262-standalone-linked-parity-same-run.json \
+            --allow-missing
+      - uses: actions/upload-artifact@v6
+        with:
+          name: test262-standalone-linked-${{ github.sha }}
+          path: standalone-linked-results/
+          if-no-files-found: error
+          retention-days: 30
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -1895,10 +2289,11 @@ jobs:
     #
     # With the queue serialized, the matrix instead uses 102 of the 120
     # four-core runners, split by the MEASURED per-lane work ratio — currently
-    # js-host=52 and standalone=50 at a 1.03:1 ratio (#4441, re-derived from
-    # merge_group runs 31870031833/31872537807/31873778381 on 2026-08-15).
-    # That ratio has drifted at every measurement (2.13 -> 1.835 -> 1.31 ->
-    # 1.03), each time leaving one lane the long pole, so the live numbers and
+    # js-host=20 and standalone=82 at a 0.215:1 ratio (re-derived 2026-09-28
+    # from six merge_group runs after the #3451 linked-harness flip made the
+    # js-host lane ~4x cheaper). That ratio has drifted at every measurement
+    # (2.13 -> 1.835 -> 1.31 -> 1.03 -> 0.215), each time leaving one lane the
+    # long pole, so the live numbers and
     # the re-derivation procedure live in scripts/gen-test262-mg-matrix.mjs,
     # which is the single source of truth for the split. The remaining 18
     # runners cover the overlapping CI/equivalence/differential/gate jobs —
@@ -2276,9 +2671,9 @@ jobs:
         if: env.HOST_RAN == 'true'
         env:
           # Static push/dispatch matrices have 57 shards; the capacity-sized
-          # merge_group matrix keeps 52 js-host shards. Missing artifact
+          # merge_group matrix keeps 20 js-host shards. Missing artifact
           # directories must fail the aggregate, not disappear in `find`.
-          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '52' || '57' }}
+          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '20' || '57' }}
         run: |
           mapfile -d '' manifests < <(find shard-artifacts/test262-js-host-shard-* -type f -name 'test262-results-*.shard-*.complete.json' -print0 | sort -z)
           manifest_args=()
@@ -2292,8 +2687,8 @@ jobs:
         if: env.STANDALONE_RAN == 'true'
         env:
           # Static push/dispatch matrices have 57 shards; the capacity-sized
-          # merge_group matrix keeps 50 standalone shards.
-          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '50' || '57' }}
+          # merge_group matrix keeps 82 standalone shards.
+          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '82' || '57' }}
         run: |
           mapfile -d '' manifests < <(find shard-artifacts/test262-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
           manifest_args=()
@@ -2387,8 +2782,29 @@ jobs:
       # Partially-covered editions are skipped, not scored (see the script
       # header) -- the #4412 hazard, where a scoped run's partial total was
       # posted as if it were a full one.
-      - name: Per-edition conformance ratchet (no completed edition may regress)
+      # The ratchet classifies every row by reading its test262 frontmatter, and
+      # this job's checkout above is submodule-free. Without test262 every row
+      # classified as "Unclassified (legacy)", every real edition read as NOT
+      # COVERED, and the step reported OK having checked nothing: ES5 lost 7
+      # rows between 2026-09-23 and 09-28 under that green step. The script now
+      # refuses to run without the checkout; this fetches the pinned commit only.
+      - name: Check out test262 for the edition classifier
         if: env.STANDALONE_RAN == 'true'
+        run: git submodule update --init --depth 1 test262
+
+      # Besides the per-edition floors, an edition marked `completed` in the
+      # baseline (it reached 100 %) is zero-tolerance: every one of its rows in
+      # the merged run must pass, whether or not a compare baseline is on disk.
+      #
+      # (#6760) Its failure is DEFERRED like the high-water floor's (#6461): a
+      # breach here used to skip every later step, including the #1897
+      # standalone regression guard -- the one that NAMES the moved rows -- so a
+      # park said "ES5 -1, host-free -54" and nothing else. The re-raise is the
+      # "Fail on per-edition ratchet breach (deferred)" step below.
+      - name: Per-edition conformance ratchet (no completed edition may regress)
+        id: edition_ratchet
+        if: env.STANDALONE_RAN == 'true'
+        continue-on-error: true
         run: |
           COMPARE=""
           if [ -s .test262-cache/test262-standalone-current.jsonl ]; then
@@ -2798,6 +3214,15 @@ jobs:
         if: always() && env.STANDALONE_RAN == 'true' && steps.standalone_highwater.outcome == 'failure'
         run: |
           echo "::error::STANDALONE high-water floor (#2097) breached — see the 'Standalone pass-count high-water floor (#2097)' step above for the count, and the '#1897' standalone regression guard + per-edition ratchet steps for WHICH tests moved. Failing the required check here rather than at the floor step so those diagnostics run (#6461)."
+          exit 1
+
+      # (#6760) Re-raise the per-edition ratchet's failure after the #1668 /
+      # #1897 diagnostics have run (see the ratchet step). `always()` for the
+      # same reason as the high-water re-raise above.
+      - name: Fail on per-edition ratchet breach (deferred, #6760)
+        if: always() && env.STANDALONE_RAN == 'true' && steps.edition_ratchet.outcome == 'failure'
+        run: |
+          echo "::error::Per-edition conformance ratchet failed — a ratcheted edition lost ground or a COMPLETED edition has a non-passing row. See the 'Per-edition conformance ratchet' step for the edition and rows, and the '#1897' standalone regression guard for every moved row. Failing the required check here so those diagnostics run (#6760)."
           exit 1
 
       - name: Upload merged reports
@@ -3690,6 +4115,7 @@ jobs:
       !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
       !(github.event_name == 'workflow_dispatch' && inputs.skip_promote) &&
       !(github.event_name == 'workflow_dispatch' && inputs.native_first) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.standalone_linked) &&
       !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')
     name: promote merged report to main baseline
     # Explicit interpreter dispatches are anti-rot measurements for the kept

@@ -733,9 +733,10 @@ describe("QuickJS default-readiness CI wiring", () => {
     expect(sharded).toContain("quickjs-wasi-${{ steps.quickjs-key.outputs.cache_hash }}");
     expect(sharded).toContain(".test262-cache/quickjs-artifact-*/");
     expect(sharded).toContain(".test262-cache/quickjs-eval-adapter-*.wasm");
-    // Two standalone shard jobs + (#6706) the native-first measurement lane.
-    expect(sharded.match(/build-quickjs-eval-provider\.mjs --require-cache/g)).toHaveLength(3);
-    expect(sharded.match(/build-runtime-eval-provider\.mjs --require-full-cache/g)).toHaveLength(3);
+    // Two standalone shard jobs + (#6706) the native-first measurement lane
+    // + (#6723 P2) the dispatch-only standalone linked shadow lane.
+    expect(sharded.match(/build-quickjs-eval-provider\.mjs --require-cache/g)).toHaveLength(4);
+    expect(sharded.match(/build-runtime-eval-provider\.mjs --require-full-cache/g)).toHaveLength(4);
   });
 
   it("keeps explicit interpreter dispatches measurement-only after the flip", () => {

@@ -1,0 +1,35 @@
+{
+  "sourceDonorCount": 9,
+  "sourceDonorDrift": [],
+  "supportingInputsInitiallyPinned": 44,
+  "supportingInputDrift": [
+    {
+      "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "before": {
+        "sha256": "8c637b37de043a622eda295fa319f0c4257936c6c10dddc8892580eaf6983be4",
+        "gitBlob": "fdadae83ecf8fe4972cb6e983cc1caec0b65415c",
+        "bytes": 24573
+      },
+      "observedAfter": {
+        "sha256": "83b10069f7b32298705f779df2121bcea0064f28cc7dbe10e4d113c2d32dfda6",
+        "gitBlob": "1b3953ea03a75d507c888a99f81355cbaf1974d8",
+        "bytes": 25359
+      },
+      "scope": "peer/root edit; only the observed initial historical fixture reader arm has been reviewed"
+    }
+  ],
+  "boundaryBaselinePins": {
+    ".tmp/validation-lowering-b/baseline-boundaries.json": {
+      "sha256": "5c5672c24c91e309fc1a50b87a751374c95f775f7f6a67843c1f595f392fff3f",
+      "gitBlob": "d939c4752f7ad0de1d79eb5445b92f72b236f902",
+      "bytes": 341068
+    },
+    ".tmp/validation-lowering-b/baseline-boundaries.log": {
+      "sha256": "4eca56ec654c005d50d84ffb575af7c5056abec7b906f9bb982a048d57b2bb35",
+      "gitBlob": "6601b09dd462a8404d64654e1788f412183f09b2",
+      "bytes": 108526
+    }
+  },
+  "noCompilerOrTestsExecuted": true,
+  "noTrackedWrites": true
+}

@@ -5,7 +5,7 @@ status: done
 completed: 2026-09-04
 sprint: current
 created: 2026-09-01
-updated: 2026-09-03
+updated: 2026-09-28
 priority: high
 horizon: l
 feasibility: medium
@@ -2075,3 +2075,74 @@ labelled continue/break over nested for-of with closures hangs the compiler.
 
 **Rows gated on #2864** (native generator carrier) are not this issue's.
 
+## 2026-09-28 narrow handoff — Array `@@iterator` deletion in direct array for-of (documentation only)
+
+**Status boundary.** This is a diagnostic handoff, not an implementation
+reopening or a source/test/runner change. The issue remains historically
+`done`; the slice-lock status check for `#5267:array-iterator-deletion-triage`
+was unassigned, but no claim was taken because the parent issue is closed. A
+lead must explicitly reopen/allocate a source slice before anyone changes this
+area.
+
+**Measured original identity, not a population claim.** The frozen ES2015
+manifest run on source `f924650c6c26237f62b08a362d7003d4d2b1e12d` recorded
+`test/language/statements/for-of/dstr/const-ary-init-iter-get-err-array-prototype.js`
+in shard 3/128 (`es2015-fullscope-128-f924650-chunk003-a01`): 92 registered,
+92 recorded, 92 canonical verdicts, 92 callbacks settled, and this row failed
+with `Test262Error: Expected a TypeError to be thrown but no exception was
+thrown at all` (compile 1160 ms, exec 19 ms). The original first executes
+`delete Array.prototype[Symbol.iterator]`, then expects the binding-pattern
+head `for (const [x, y, z] of [[1, 2, 3]])` to throw `TypeError`.
+
+That is one measured frozen identity only. The `let` and `var` siblings are the
+next required original controls, not inferred failures; this result also does
+not by itself prove a cause across the distinct documentation-base and frozen
+measurement snapshots.
+
+**Current direct-path source evidence (source-supported inference only).**
+
+- `src/codegen/array-proto-iterator-override-ast.ts:43-50` intentionally
+  recognizes both `delete Array.prototype[Symbol.iterator]` and `delete
+  Array.prototype.values` through the same delete-key helper.
+- `src/codegen/expressions/proto-override.ts:191-194` roots one
+  `@@iterator:deleted` slot for either recognized delete; `:225-232` writes it
+  to `1`. In that module, the ordinary function/arrow assignment capture writes
+  a separate override-closure slot (`:90-123`), not this deletion slot.
+- The deletion slot's only current read is the private guard in
+  `src/codegen/destructuring-params.ts:1802-1807`, called by its parameter
+  destructurer at `:1860-1865`. `compileForOfArray` reaches the confirmed vec
+  path in `src/codegen/statements/loops.ts:1899-1964` without a deletion-slot
+  read. Together with the frozen row, this supports the narrow hypothesis that
+  the direct array fast path can bypass the deleted-iterator state; it is not a
+  runtime attribution for every array-destructuring path.
+
+**Non-negotiable historical constraint.** Commit `fc29ea3c68` reverted
+`e939c8b838` after the earlier direct-path guard was shown to be sticky after a
+later `Array.prototype[Symbol.iterator] = ...` restoration, to fire for
+`arguments` and typed arrays, and to fire after deleting
+`Array.prototype.values`. Do not re-export/call the old broad deletion guard,
+globally tighten GetIterator, or treat `values` deletion as `@@iterator`
+deletion. The pre-existing parameter-destructuring guard has the same known
+limitations and is not proof that a direct-loop transplant is safe.
+
+**Required pre-dispatch and control plan (no execution authorized by this
+note).**
+
+1. Reconfirm the exact `const` original on a fresh, source-keyed standalone
+   provider with the maintained runner and isolation; then run the exact
+   `let`/`const`/`var` three-path cohort with an expected-path receipt. Require
+   nonempty registration, one verdict per expected path, settled callbacks and
+   zero exclusions before interpreting a result.
+2. Before proposing a fix, add focused controls for: delete → direct array
+   binding-head TypeError; delete → restore `Array.prototype[Symbol.iterator]`
+   → normal array iteration; delete → `arguments` iteration; delete → typed
+   array iteration; and `delete Array.prototype.values` → normal
+   `@@iterator`-driven array iteration. Preserve an ordinary no-delete
+   array-for-of output/behavior control.
+3. The implementation owner must first obtain explicit clearance from the
+   active IR/direct-frontend ownership program (#3518, *IR-only default and
+   direct front-end retirement*) for the direct codegen seams
+   `proto-override.ts`, `loops.ts`, and `destructuring-params.ts`. Inventory
+   the deletion-slot readers and mutators before selecting one genuine-array
+   admission point. No `src/ir/**` routing change, shared global semantic
+   change, or ownership claim follows from this handoff.

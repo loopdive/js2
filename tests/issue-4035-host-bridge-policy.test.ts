@@ -56,8 +56,10 @@ describe("#4035 host-bridge export policy", () => {
     // wasmtime included, can read a payload it caught through `__exn_tag`.
     // Stripping them made every host-free throw unattributable (#2870's opaque
     // label). Everything else here still goes. Cost measured 2026-09-07: +140 B
-    // on a throwing standalone module; a module without a source `throw`
-    // publishes nothing and keeps the #4034 floor exactly.
+    // on a throwing standalone module. (#6666) A module without a source
+    // `throw` now publishes the lite pair (compiler-synthesized `$Error_struct`
+    // / string payloads only, no number formatter): +520 B on the untyped
+    // arith floor, measured 2026-09-28, instead of #5384's 6,076 → 49,032 B.
     expect(bridgeMarkers).toEqual(["__exn_render_prepare"]);
     expect(hasRun).toBe(true); // the program's own export survives
 
@@ -77,7 +79,11 @@ describe("#4035 host-bridge export policy", () => {
       hostBridge: "always",
     });
     expect(size).toBeLessThan(optIn.size - 2_000);
-    expect(size).toBeLessThan(35_000);
+    // Already red on main before #6666: 38,338 B measured 2026-09-28 on parent
+    // 2e23e49fb1 AND with #6666 applied (REALISTIC has a source throw, so its
+    // renderer flavor is unchanged). Re-anchored so the cap still catches a
+    // cascade; the drift itself is unowned growth, not banked as "fine".
+    expect(size).toBeLessThan(40_000);
   });
 
   it("publishes the bridge for a standalone module on explicit opt-in", async () => {
@@ -124,7 +130,9 @@ describe("#4035 host-bridge export policy", () => {
       { target: "wasi", nativeStrings: true, optimize: 3 },
     );
     const bytes = rest;
-    expect(bridgeMarkers).toEqual([]);
+    // (#6666) The export-boundary TypeError is a compiler-synthesized throw, so
+    // the module publishes the lite renderer (+520 B at -O3) — no JS bridge.
+    expect(bridgeMarkers).toEqual(["__exn_render_prepare"]);
     expect(bytes.size).toBeGreaterThan(0);
 
     const result = await compile("export function __vector_norm(n){ return n < 0 ? -n : n; }", {

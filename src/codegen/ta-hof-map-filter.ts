@@ -29,10 +29,21 @@
 // follow-up; the caller (`expressions/calls.ts`) gates on that.
 // Standalone-only; gc/host keep the existing host path (byte-identical).
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
+import { allocLocal } from "./context/locals.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  emitTaDynSpeciesCreate,
+  emitTaDynViewValidate,
+  makeTaDynHelperFctx,
+  pushTaDynMethodPreamble,
+} from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { addFuncType, getArrTypeIdxFromVec, getOrRegisterTaDynViewType } from "./registry/types.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureTaDynMopElemHelpers } from "./ta-dyn-mop.js";
 
 /**
  * Ensure the native `map`/`filter` helper for the packed vec struct `vecTypeIdx`
@@ -345,4 +356,326 @@ export function ensureTaMapFilterHelper(
     exported: false,
   });
   return funcIdx;
+}
+
+// ── (#6769 S4) dyn-view species producers on the LIVE receiver ───────────────
+//
+// `map` / `filter` (here) and `slice` (`ta-dyn-proto-methods.ts`) over a
+// `$__ta_dyn_view`, in §23.2.3 order and against the receiver itself. The
+// call-site two-arm used to materialize the view into an f64 vec and REBIND the
+// receiver identifier to that copy while re-compiling the call as an array
+// method, so the callback's third argument and `arguments[2]` were the copy, a
+// closure capturing the receiver wrote through `Reflect.set` into the copy
+// (answering `false`), and `slice` copied from a snapshot taken BEFORE
+// TypedArraySpeciesCreate (a species result over the same buffer read the old
+// bytes). These helpers read every element through `__ta_dyn_get_elem` on the
+// view at the moment the spec reads it, pass the view as the callback's third
+// argument, and share the five-slot ladder ABI
+// `(recv, a0, a1, a2, argc) -> externref`, so `__extern_method_call`'s
+// dyn-view arm serves the non-identifier receivers too.
+
+/** The scaffolding every producer shares: preamble locals + runtime indices. */
+export interface TaDynProducerKit {
+  fctx: FunctionContext;
+  dynIdx: number;
+  funcIdx: number;
+  dv: number;
+  kind: number;
+  es: number;
+  len: number;
+  getElem: number;
+  setElem: number;
+  boxNum: number;
+  /** (#6769 S5) generic store for a statically-carried species result. */
+  externSet: number | undefined;
+}
+
+/**
+ * Start a producer helper `helperName`: register deps, mint its (stable)
+ * funcIdx, cast `recv`, read kind/elemSize/in-bounds length, and run
+ * ValidateTypedArray (§23.2.4.4 — a detached/out-of-bounds view throws
+ * TypeError before any argument is coerced). `undefined` (nothing minted) when
+ * the host-free substrate is missing; the caller keeps its existing lowering.
+ */
+export function beginTaDynProducer(
+  ctx: CodegenContext,
+  helperName: string,
+  paramNames: readonly [string, string, string],
+  validate = true,
+): TaDynProducerKit | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  if (dynIdx < 0) return undefined;
+  const ext: ValType = { kind: "externref" };
+  const fctx = makeTaDynHelperFctx(helperName, [
+    { name: "recv", type: ext },
+    ...paramNames.map((name) => ({ name, type: ext })),
+    { name: "argc", type: { kind: "i32" } },
+  ]);
+  ensureObjectRuntime(ctx);
+  reserveApplyClosure(ctx);
+  ensureLateImport(ctx, "__typeof_function", [ext], [{ kind: "i32" }]);
+  const elem = ensureTaDynMopElemHelpers(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const boxNum = ctx.funcMap.get("__box_number");
+  if (elem === undefined || boxNum === undefined) return undefined;
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(helperName, funcIdx);
+  const i32: ValType = { kind: "i32" };
+  const dv = allocLocal(fctx, "dv", { kind: "ref", typeIdx: dynIdx });
+  const kind = allocLocal(fctx, "kind", i32);
+  const es = allocLocal(fctx, "es", i32);
+  const len = allocLocal(fctx, "len", i32);
+  pushTaDynMethodPreamble(ctx, fctx, dynIdx, dv, kind, es, len);
+  if (validate) emitTaDynViewValidate(ctx, fctx, dv);
+  const externSet = ctx.funcMap.get("__extern_set");
+  return { fctx, dynIdx, funcIdx, dv, kind, es, len, getElem: elem.getElem, setElem: elem.setElem, boxNum, externSet };
+}
+
+/** Close a producer: return `resultLocal` and publish the function. */
+export function finishTaDynProducer(ctx: CodegenContext, kit: TaDynProducerKit, resultLocal: number): number {
+  const ext: ValType = { kind: "externref" };
+  kit.fctx.body.push({ op: "local.get", index: resultLocal });
+  pushDefinedFunc(ctx, kit.funcIdx, {
+    name: kit.fctx.name,
+    typeIdx: addFuncType(ctx, [ext, ext, ext, ext, { kind: "i32" }], [ext]),
+    locals: kit.fctx.locals,
+    body: kit.fctx.body,
+    exported: false,
+  });
+  return kit.funcIdx;
+}
+
+/** `for (counter = 0; counter < limit; counter++) body` — `body` must not branch out. */
+export function taDynCountedLoop(counter: number, limit: number, body: Instr[]): Instr[] {
+  return [
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: counter },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: counter },
+            { op: "local.get", index: limit },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            ...body,
+            { op: "local.get", index: counter },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: counter },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * `! Set(A, n, value, true)` on a TypedArraySpeciesCreate result held in
+ * `resultLocal`: the dyn-view element setter, or (#6769 S5) the generic
+ * `__extern_set` for a statically-carried result. `value` is emitted once per
+ * arm (only one runs), so it must be re-emittable.
+ */
+export function taDynResultStoreInstrs(
+  kit: TaDynProducerKit,
+  resultLocal: number,
+  indexLocal: number,
+  value: Instr[],
+): Instr[] {
+  const dynStore: Instr[] = [
+    { op: "local.get", index: resultLocal },
+    { op: "local.get", index: indexLocal },
+    { op: "f64.convert_i32_s" },
+    ...value,
+    { op: "call", funcIdx: kit.setElem },
+    { op: "drop" },
+  ];
+  if (kit.externSet === undefined) return dynStore;
+  return [
+    { op: "local.get", index: resultLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: kit.dynIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: dynStore,
+      else: [
+        { op: "local.get", index: resultLocal },
+        { op: "local.get", index: indexLocal },
+        { op: "f64.convert_i32_s" },
+        { op: "call", funcIdx: kit.boxNum },
+        ...value.map((i) => ({ ...i })),
+        { op: "call", funcIdx: kit.externSet },
+      ],
+    },
+  ];
+}
+
+/** Throw TypeError unless param 1 (`callbackfn`) is callable (§23.2.3.x step 3). */
+function emitCallbackCallableGuard(ctx: CodegenContext, fctx: FunctionContext, method: string): void {
+  const throwArm: Instr[] = [];
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = throwArm;
+  emitThrowTypeError(ctx, fctx, `TypeError: %TypedArray%.prototype.${method}: callbackfn is not a function`);
+  fctx.body = saved;
+  fctx.savedBodies.pop();
+  fctx.body.push(
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: ctx.funcMap.get("__typeof_function")! },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: throwArm },
+  );
+}
+
+/**
+ * (#6769 S4) `__ta_dyn_map` / `__ta_dyn_filter(recv, callbackfn, thisArg, _, argc)`.
+ *
+ * - map (§23.2.3.22): ValidateTypedArray → IsCallable → A =
+ *   TypedArraySpeciesCreate(O, «len») → per k: `Get(O, k)` (live), `Call(cb,
+ *   thisArg, «v, k, O»)`, `Set(A, k, r)` (the setter does ToNumber).
+ * - filter (§23.2.3.10): every callback FIRST, collecting kept values; then
+ *   TypedArraySpeciesCreate(O, «captured») and the writes. `callbackfn-called-
+ *   before-species.js` pins that order.
+ *
+ * `thisArg` is `undefined` when the call site passed fewer than two arguments
+ * (the ladder pads absent slots with a null extern, which is JS `null`).
+ */
+export function ensureTaDynMapFilterHelper(ctx: CodegenContext, method: "map" | "filter"): number | undefined {
+  const helperName = `__ta_dyn_${method}`;
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+  const kit = beginTaDynProducer(ctx, helperName, ["callbackfn", "thisArg", "unused"]);
+  if (kit === undefined) return undefined;
+  const { fctx } = kit;
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure")!;
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
+  const ext: ValType = { kind: "externref" };
+  const i32: ValType = { kind: "i32" };
+  const k = allocLocal(fctx, "k", i32);
+  const value = allocLocal(fctx, "value", ext);
+  const args = allocLocal(fctx, "args", ext);
+  const res = allocLocal(fctx, "res", ext);
+  const thisArg = allocLocal(fctx, "this", ext);
+  const countBox = allocLocal(fctx, "countBox", ext);
+
+  emitCallbackCallableGuard(ctx, fctx, method);
+  fctx.body.push(
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: ext },
+      then: undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+      else: [{ op: "local.get", index: 2 }],
+    },
+    { op: "local.set", index: thisArg },
+  );
+  // value = Get(O, k); res = Call(callbackfn, thisArg, «value, k, O»)
+  const callOnK: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: k },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: kit.getElem },
+    { op: "local.set", index: value },
+    { op: "call", funcIdx: objVecNewIdx },
+    { op: "local.tee", index: args },
+    { op: "local.get", index: value },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: args },
+    { op: "local.get", index: k },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: kit.boxNum },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: args },
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: thisArg },
+    { op: "local.get", index: args },
+    { op: "call", funcIdx: applyClosureIdx },
+    { op: "local.set", index: res },
+  ];
+  const boxCount = (countLocal: number): Instr[] => [
+    { op: "local.get", index: countLocal },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: kit.boxNum },
+    { op: "local.set", index: countBox },
+  ];
+
+  let result: number | null;
+  if (method === "map") {
+    fctx.body.push(...boxCount(kit.len));
+    result = emitTaDynSpeciesCreate(ctx, fctx, {
+      dvLocal: kit.dv,
+      argLocals: [countBox],
+      requestedLengthLocal: kit.len,
+    });
+    if (result === null) return undefined;
+    fctx.body.push(
+      ...taDynCountedLoop(k, kit.len, [
+        ...callOnK,
+        ...taDynResultStoreInstrs(kit, result, k, [{ op: "local.get", index: res }]),
+      ]),
+    );
+  } else {
+    const { objVecTypeIdx, objVecArrTypeIdx } = ctx.objectRuntimeTypes!;
+    const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
+    const kept = allocLocal(fctx, "kept", ext);
+    const captured = allocLocal(fctx, "captured", i32);
+    const n = allocLocal(fctx, "n", i32);
+    fctx.body.push(
+      { op: "call", funcIdx: objVecNewIdx },
+      { op: "local.set", index: kept },
+      ...taDynCountedLoop(k, kit.len, [
+        ...callOnK,
+        { op: "local.get", index: res },
+        { op: "call", funcIdx: isTruthyIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: kept },
+            { op: "local.get", index: value },
+            { op: "call", funcIdx: objVecPushIdx },
+          ],
+        },
+      ]),
+      { op: "local.get", index: kept },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: objVecTypeIdx },
+      { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: captured },
+      ...boxCount(captured),
+    );
+    result = emitTaDynSpeciesCreate(ctx, fctx, {
+      dvLocal: kit.dv,
+      argLocals: [countBox],
+      requestedLengthLocal: captured,
+    });
+    if (result === null) return undefined;
+    fctx.body.push(
+      ...taDynCountedLoop(
+        n,
+        captured,
+        taDynResultStoreInstrs(kit, result, n, [
+          { op: "local.get", index: kept },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: objVecTypeIdx },
+          { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+          { op: "local.get", index: n },
+          { op: "array.get", typeIdx: objVecArrTypeIdx },
+        ]),
+      ),
+    );
+  }
+  return finishTaDynProducer(ctx, kit, result);
 }

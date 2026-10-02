@@ -27,7 +27,10 @@
  * trading a loud refusal for a silent wrong answer, which is exactly what it
  * did before that carve-out existed (measured: five
  * `accessor-name-*-computed-yield-expr` rows flipped compile_error →
- * `SameValue(«undefined», «"get yield"»)`).
+ * `SameValue(«undefined», «"get yield"»)`). (#6651 A5, 2026-09-28: the
+ * computed-name case now LOWERS natively, so its pin asserts the suspension
+ * itself instead of the #680 refusal; the carve-out is what still makes the
+ * planner see that yield.)
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
@@ -49,17 +52,6 @@ async function runStandalone(src: string): Promise<unknown> {
   const r = await compileStandalone(src);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   return (instance.exports as { test?: () => unknown }).test?.();
-}
-
-/** The error-severity diagnostics of a standalone compile (empty when it succeeds). */
-async function standaloneErrors(src: string): Promise<string> {
-  const r = (await compile(src, { fileName: "t.ts", target: "standalone" })) as unknown as {
-    errors?: { severity: string; message: string }[];
-  };
-  return (r.errors ?? [])
-    .filter((e) => e.severity === "error")
-    .map((e) => e.message)
-    .join("; ");
 }
 
 describe("#6651 A2 · element defaults are admitted by SUSPENSION, not by lane", () => {
@@ -150,15 +142,24 @@ export function test(): number { g().next(); return out; }`;
     expect(await runStandalone(src)).toBe(7);
   });
 
-  it("NEGATIVE · a computed accessor NAME containing `yield` still suspends, so it still bails", async () => {
+  it("a computed accessor NAME containing `yield` still SUSPENDS (the carve-out) — and #6651 A5 now lowers it", async () => {
     // The carve-out. Without it this compiles to a generator that never
     // suspends and answers the wrong value instead of refusing — the exact
-    // trade the project treats as a regression.
+    // trade the project treats as a regression. Until #6651 A5 this case
+    // pinned the loud #680 refusal; A5 lowers a yield inside a computed key
+    // natively (`generator-yield-nested.ts`), so it now pins the suspension
+    // itself: the first `next()` stops AT the key, the class is built after.
     const src = `let out = 0;
 function* g() { class C { get [yield 1]() { return 2; } } out = C ? 7 : 0; }
-export function test(): number { g().next(); return out; }`;
-    // The refusal is the #680 diagnostic — LOUD, which is the whole point.
-    expect(await standaloneErrors(src)).toMatch(/sequential numeric yields/);
+export function test(): number {
+  const it = g();
+  const a = it.next();
+  const before = out;
+  it.next("k");
+  return (a.done ? 0 : 100) + (a.value as number) * 10 + before + out;
+}`;
+    expect(await importCount(src)).toBe(0);
+    expect(await runStandalone(src)).toBe(117);
   });
 
   it("GUARD · a plain `return` still routes through the generator terminator", async () => {

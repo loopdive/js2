@@ -39,6 +39,15 @@ export function planHostNumberBoundary(
   const unitId = demands[0]!.unitId;
   const gap = (detail: string) => ({ kind: "unsupported" as const, unitId, detail });
   const { manifest, providers } = projection.prepared;
+  // Native boxes are realized by the separately authenticated value recipe.
+  // This helper owns imports only; the physical body scan still requires that
+  // actual native setup and its reserved callable for every box occurrence.
+  if (
+    projection.backend === "wasmgc" &&
+    projection.target === "standalone" &&
+    manifest.policy.numberBoundary.box === "native"
+  )
+    return { kind: "planned", setup: { imports: [], entries: [] } };
   if (projection.backend !== "wasmgc" || projection.target !== "host" || manifest.policy.numberBoundary.box !== "host")
     return gap("number boxing requires the explicit host number-boundary provider policy");
   const canonical = NUMBER_BOUNDARY_RUNTIME_PROVIDERS.filter((provider) => provider.id === "host.js.number.box");

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { ReversePeerReadBinding } from "../runtime/wasmgc/values/object-get-arms.js";
 //
 // standalone-link-reverse-peer.ts — (#5383 S17 / #6600) the REVERSE half of the
 // #5383 S2d standalone link boundary: a CONSUMER-owned carrier read by PROVIDER
@@ -77,6 +78,7 @@
 
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { exportStandaloneLinkErrorCtorCells } from "./standalone-link-error-ctor-cells.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { ensureExnTag } from "./registry/physical-imports.js";
@@ -806,28 +808,9 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
  * The forward arm is left untouched, so the JS-host and consumer lanes are
  * byte-identical.
  */
-export function reverseGetArmInstrs(hops: ReversePeerHops, resultLocal: number): Instr[] {
-  if (hops.get === undefined || hops.ownedGlobal === undefined) return [];
-  return [
-    { op: "local.get", index: 0 },
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: hops.get },
-    { op: "local.tee", index: resultLocal },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "global.get", index: hops.ownedGlobal },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
-        },
-      ],
-      else: [{ op: "local.get", index: resultLocal }, { op: "return" }],
-    },
-  ];
+export function captureReversePeerReadBinding(hops: ReversePeerHops): ReversePeerReadBinding | undefined {
+  if (hops.get === undefined || hops.ownedGlobal === undefined) return undefined;
+  return { get: hops.get, ownedGlobal: hops.ownedGlobal };
 }
 
 /**
@@ -918,6 +901,9 @@ export function reverseProxyGetArmInstrs(hops: ReversePeerHops, resultLocal: num
  * today's answer, rather than installing somewhere unordered.
  */
 export function finalizeStandaloneLinkReversePeer(ctx: CodegenContext): void {
+  // (#6723 D4) The Error-family constructor carriers, published by the provider
+  // and imported by the consumer: one `TypeError` per linked graph.
+  exportStandaloneLinkErrorCtorCells(ctx);
   if (isProvider(ctx)) {
     const index = ctx.funcMap.get(LINK_REVERSE_PEER.install);
     if (index === undefined) return;

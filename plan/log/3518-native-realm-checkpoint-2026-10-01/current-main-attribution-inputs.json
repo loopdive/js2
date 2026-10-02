@@ -1,0 +1,39 @@
+{
+  "main": "4c5a334669d3d9ac4db29e850f73d65965ba89f6",
+  "baseline": "/private/tmp/js2-ir-native-realm-main-attribution-20261001",
+  "testOnlyInputLayers": [
+    {
+      "path": "tests/helpers/array-main-refresh-port.ts",
+      "sha256": "1e8718f5e587d22587b0c13b131ca9557b5e78bc29c8ee73f93d3880c92ad68f"
+    },
+    {
+      "path": "tests/helpers/later-main-preservation-port.ts",
+      "sha256": "26be5329c2140c618078d8a149f5983dc68fe3fa24ffbc7ce51df4ef6efc5f77"
+    },
+    {
+      "path": "tests/helpers/typedarray-main-preservation-port.ts",
+      "sha256": "7f36e6c8b5c9d3051266a1376a94549ad22f9e5112eb8e594cb26c09a26447fc"
+    },
+    {
+      "path": "tests/helpers/resume-main-composition.ts",
+      "sha256": "2f3b4cdd9007231c60a3e6dd2effa64d887ad70f6cbd7f45287f0ae29c2952eb"
+    },
+    {
+      "path": "tests/helpers/closure-state-preservation-port.ts",
+      "sha256": "79a1a15450b67cad6f00623cb0bc20d816d4f2c7e4bfbe9e1a2377d65d94b5c0"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-later-main-preservation/receipt.json",
+      "sha256": "1db8b018682040ff4d5a248b364b126c5ed6743543e40e26a72c4cfee1b5d1ea"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-typedarray-main-preservation/receipt.json",
+      "sha256": "81b51d14fa321ace63defb89741b0a1d0761c9e6ffcbb08edcde9e6e82e52dd2"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-closure-state-preservation/receipt.json",
+      "sha256": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e"
+    }
+  ],
+  "productionChanges": []
+}

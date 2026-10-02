@@ -1,0 +1,53 @@
+diff --git a/src/ir/runtime/contracts/manifest.ts b/src/ir/runtime/contracts/manifest.ts
+index fb3c13fc4a..eeefd8936b 100644
+--- a/src/ir/runtime/contracts/manifest.ts
++++ b/src/ir/runtime/contracts/manifest.ts
+@@ -35,6 +35,9 @@ export type RuntimeFeature =
+   | HostCallbackWrapRuntimeFeature
+   | FunctionPrototypeCallRuntimeFeature
+   | NativeAsyncCallableRuntimeFeature
++  | "js.closure.method"
++  | "js.closure.apply-vector"
++  | "js.closure.undefined"
+   | VectorCallableRuntimeFeature
+   | ReferenceErrorRuntimeFeature;
+ 
+@@ -94,6 +97,7 @@ export type NumericCoercionRuntimeProviderId = (typeof NUMERIC_COERCION_RUNTIME_
+ /** (#3526 F1-S1) One provider per admitted number-boundary policy arm. */
+ export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+   "host.js.number.box",
++  "native.js.number.box",
+   "host.js.number.unbox",
+   "native.js.number.unbox",
+ ] as const);
+diff --git a/src/runtime/contracts/provider-policy.ts b/src/runtime/contracts/provider-policy.ts
+index dd0b6c3c61..985a93ec1e 100644
+--- a/src/runtime/contracts/provider-policy.ts
++++ b/src/runtime/contracts/provider-policy.ts
+@@ -14,8 +14,8 @@ export type RuntimeBackend = "wasmgc" | "linear";
+  * context.
+  */
+ export interface NumberBoundaryPolicy {
+-  /** `host` selects `env.__box_number`. There is no native box arm in F1-S1. */
+-  readonly box: "host" | "unsupported";
++  /** Explicit host import or issued native number-box implementation. Omission stays unsupported. */
++  readonly box: "host" | "native" | "unsupported";
+   /** `host` selects `env.__unbox_number`; `native` the union-native function. */
+   readonly unbox: "host" | "native" | "unsupported";
+ }
+@@ -74,12 +74,9 @@ export const EXTERN_IS_UNDEFINED_POLICY_DISABLED: ExternIsUndefinedPolicy = Obje
+  * seam's numeric boxing — a sibling of {@link NumberBoundaryPolicy}, never a
+  * widening of it.
+  *
+- * The seam's truth table is deliberately WIDER than `numberBoundary`: this
+- * boxing is performed natively on the GC native-strings lane, whereas
+- * `numberBoundary.box` has no `"native"` member by design (F1-S1 excluded one
+- * so that native `__box_number` presence could not widen the from-ast arm's
+- * host-only policy). The two must therefore stay separate policies even though
+- * both name the same physical symbol.
++ * Its policy remains independent of the synchronous number boundary. The
++ * latter now has an explicit native boxing arm for an issued standalone value
++ * owner; that addition does not select or widen this generator seam.
+  */
+ export interface GeneratorNumberBoxPolicy {
+   /**

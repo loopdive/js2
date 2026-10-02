@@ -78,6 +78,11 @@ import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free l
 import { ensureMapHelpers } from "./map-runtime.js";
 import { ensureSetHelpers } from "./set-runtime.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
+import { addUnionImportsViaRegistry } from "./shared.js";
+import { emitToBoolean, runtimeToNumberInstrs, runtimeToPrimitiveInstrs } from "./coercion-engine.js";
+import { demandStringWrapperDynamicLength } from "./string-wrapper-dynamic-length.js";
 
 /** `externref × count` — the forwarder ABI every arm below declares. */
 function externrefParams(count: number): ValType[] {
@@ -410,12 +415,18 @@ export const STANDALONE_WRAPPER_BUILTIN_PARENTS: ReadonlyMap<string, string> = n
  * that keeps the forwarder's externref signature intact: declare `externref`
  * params, ignore them, and supply the f64 here.
  *
- * SCOPE: the wrapped primitive is the spec's NO-ARGUMENT value. Per §21.1.1.1 /
- * §20.3.1.1 a subclass `new Sub()` with no argument sets [[NumberData]] `+0` /
- * [[BooleanData]] `false`, so the no-argument case — which is what the
- * conformance rows use — is exactly right. Honouring `new Sub(5)` needs the
- * `$__box_number_struct` unboxing dance `emitStandaloneArrayConstructor` does,
- * and is deferred with the rest of the behaviour scope.
+ * (#6651 C5) The FIRST argument is honoured: [[BooleanData]] is
+ * `ToBoolean(value)` (§20.3.1.1 step 1) and [[NumberData]] is `ToNumber(value)`
+ * (§21.1.1.1 step 2). It used to be the no-argument value for every call, so
+ * `new (class extends Boolean {})(1).valueOf()` answered `false` and a Number
+ * subclass always wrapped `+0`.
+ *
+ * KNOWN DEVIATION: the forwarder pads missing arguments with `undefined`, so
+ * "no argument" and an explicit `undefined` look the same here. Both take the
+ * no-argument value, which is right for Boolean (`ToBoolean(undefined)` is
+ * `false`) and for an absent Number argument (`+0`), and wrong only for an
+ * explicit `new Sub(undefined)` of a Number subclass (spec: `NaN`) — the same
+ * padding trade `emitStandaloneArrayConstructor` documents.
  *
  * `String` was never refused (its `__new_String(externref) -> externref` already
  * matched the forwarder) and is deliberately absent here.
@@ -432,15 +443,90 @@ export function emitStandaloneWrapperSuperCtor(
   if (existing !== undefined) return existing;
 
   ensureObjectRuntime(ctx);
+  addUnionImportsViaRegistry(ctx); // the ToBoolean / ToNumber natives
   const wrapperIdx = ctx.funcMap.get(ctorName);
   if (wrapperIdx === undefined) return undefined; // defensive: substrate unavailable
 
   // `return_call` consumes the f64 we just pushed — that is the whole point: the
   // forwarder's externref params never reach the f64-typed callee.
   return registerSuperCtor(ctx, key, argCount, [
-    { op: "f64.const", value: 0 },
+    ...wrapperPrimitiveFromFirstArg(ctx, parentName, argCount),
     { op: "return_call", funcIdx: wrapperIdx },
   ]);
+}
+
+/**
+ * (#6651 C5) The f64 the wrapper constructor is handed for the forwarder's
+ * param 0: `ToBoolean` / `ToNumber` of it, or the no-argument value when there
+ * is no param, it is nullish, or a helper is unavailable (the pre-C5 answer).
+ */
+function wrapperPrimitiveFromFirstArg(ctx: CodegenContext, parentName: string, argCount: number): Instr[] {
+  const noArgument: Instr[] = [{ op: "f64.const", value: 0 }];
+  if (argCount === 0) return noArgument;
+  if (parentName === "Boolean") {
+    // ToBoolean through the coercion engine (externref arm → the runtime truthiness native).
+    const toBoolean = emitToBoolean(ctx, { kind: "externref" }, [{ op: "local.get", index: 0 }]);
+    return [...toBoolean, { op: "f64.convert_i32_u" }];
+  }
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "number");
+  const toNumber = runtimeToNumberInstrs(ctx);
+  if (isUndefinedIdx === undefined || toPrimitive === null || toNumber === null) return noArgument;
+  return [
+    { op: "local.get", index: 0 },
+    { op: "ref.is_null" },
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: isUndefinedIdx },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: noArgument,
+      // ToNumber = ToPrimitive(hint number) then the primitive's numeric value,
+      // both through the coercion engine's raw-runtime entry points.
+      else: [{ op: "local.get", index: 0 }, ...toPrimitive, ...toNumber],
+    },
+  ];
+}
+
+/**
+ * (#6651 C5) `class S extends String` — the forwarder's padding is not a value.
+ *
+ * `String` had no arm here: the ladder fell through to the object runtime's
+ * `__new_String(externref)`, which wraps its operand as-is. The implicit
+ * `constructor(...args) { super(...args) }` pads a missing argument with
+ * `undefined`, so `new S()` wrapped `undefined` — no `length` own property at
+ * all, where §22.1.1.1 step 1 gives the empty String (`length` 0). This arm
+ * hands `__new_String` the empty String for a missing (or `undefined`) first
+ * argument, the same padding trade the wrapper rung above documents (an
+ * explicit `new S(undefined)` should be `"undefined"`), and ignores any further
+ * forwarded argument, as `String(value)` does.
+ */
+export function emitStandaloneStringSuperCtor(ctx: CodegenContext, argCount: number): number | undefined {
+  const key = `__new_String@${argCount}`;
+  const existing = ctx.funcMap.get(key);
+  if (existing !== undefined) return existing;
+  ensureObjectRuntime(ctx);
+  const newStringIdx = ctx.funcMap.get("__new_String");
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (newStringIdx === undefined || isUndefinedIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, "");
+  const empty = stringConstantExternrefInstrs(ctx, "");
+  demandStringWrapperDynamicLength(ctx); // `s.length` through a dynamic read
+  const value: Instr[] =
+    argCount === 0
+      ? empty
+      : [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isUndefinedIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: empty,
+            else: [{ op: "local.get", index: 0 }],
+          },
+        ];
+  return registerSuperCtor(ctx, key, argCount, [...value, { op: "return_call", funcIdx: newStringIdx }]);
 }
 
 /**
@@ -467,6 +553,11 @@ export function resolveStandaloneSubclassBuiltinCtor(
   }
   if (STANDALONE_WRAPPER_BUILTIN_PARENTS.has(parentName)) {
     return emitStandaloneWrapperSuperCtor(ctx, parentName, arity) ?? null;
+  }
+  if (parentName === "String") {
+    // (#6651 C5) `undefined` → the host fallback below would be the same
+    // `__new_String`, minus the padding fix; decline to it rather than fail.
+    return emitStandaloneStringSuperCtor(ctx, arity);
   }
   return undefined;
 }

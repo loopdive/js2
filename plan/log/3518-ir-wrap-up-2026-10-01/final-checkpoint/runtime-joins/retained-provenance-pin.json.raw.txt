@@ -1,0 +1,9 @@
+{
+  "path": "/private/tmp/js2-ir-source-validation-contracts-20261001/.tmp/source-contracts/core-vocabulary-pre-a-y6hs1nun/boolean-hunk-provenance.json",
+  "pin": {
+    "sha256": "17a150f2543b6365f3edbf3f4c82c5935566915e36aabd8e334de0d419a8b25a",
+    "bytes": 7082,
+    "gitBlob": "6236de0cc49946bf5874b4945b4f4b03bf862f73"
+  },
+  "notReplaced": true
+}

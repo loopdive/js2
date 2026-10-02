@@ -41,6 +41,7 @@ import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { readEnv } from "../env.js";
 
 /**
  * ON by default since 2026-08-04. `JS2WASM_FNCTOR_TYPED_INSTANCES=0` restores
@@ -62,7 +63,7 @@ import { definedFuncAt } from "./func-space.js";
  * parks this, set the variable rather than reverting the commit.
  */
 export function fnctorTypedInstancesEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_TYPED_INSTANCES !== "0";
+  return readEnv("JS2WASM_FNCTOR_TYPED_INSTANCES") !== "0";
 }
 
 /**

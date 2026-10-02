@@ -28,6 +28,7 @@ import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
@@ -60,6 +61,7 @@ import {
 import type { ObjLitDefineCopyHelpers } from "./objlit-dynamic-accessors.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
+import { argumentsBeforeDefaults, endArgumentsBeforeDefaults } from "./object-method-arguments-first.js"; // (#6651 A11)
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { collectInstrs } from "./statements/shared.js";
@@ -118,6 +120,7 @@ import {
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
+import { foldedComputedMethodKey } from "./single-assignment-binding.js"; // (#6651 A7)
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { getToPrimitiveProvider } from "./coercion-engine.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
@@ -125,6 +128,7 @@ import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
+import { readEnv } from "../env.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -637,10 +641,8 @@ export function compileObjectLiteralAsExternref(
     // and `Object.keys`/`o[k]` missed the method. Mirrors the MethodDeclaration
     // arm in `compileObjectLiteralWithAccessors` (below): compile the method as a
     // closure via `emitObjectLiteralMethodFn` (standalone → host-free closure;
-    // gc/host → `__make_*_callback` bridge) and store it with `__extern_set`. Only
-    // PLAIN identifier/string/numeric names are handled here — computed/symbol
-    // method keys route to the accessor/host path upstream, matching the
-    // data-property arm above (which skips `keyText === undefined`).
+    // gc/host → `__make_*_callback` bridge) and store it with `__extern_set`.
+    // Symbol and runtime-only keys route upstream (`foldedComputedMethodKey`).
     else if (ts.isMethodDeclaration(prop)) {
       let methodName: string | undefined;
       if (ts.isIdentifier(prop.name)) methodName = prop.name.text;
@@ -648,7 +650,8 @@ export function compileObjectLiteralAsExternref(
       // Canonicalize a numeric method key (`{ 0x10() {} }` → "16") to match the
       // data-property arm's `resolvePropertyNameText`, so store and read agree.
       else if (ts.isNumericLiteral(prop.name)) methodName = String(Number(prop.name.text));
-      if (methodName === undefined) continue; // computed/symbol key — handled upstream
+      else methodName = foldedComputedMethodKey(ctx, prop.name, resolveComputedKeyExpression); // (#6651 A7)
+      if (methodName === undefined) continue; // symbol / runtime key — handled upstream
       const setIdx = ensureLateImport(
         ctx,
         "__extern_set",
@@ -1370,18 +1373,8 @@ function compileObjectLiteralWithAccessors(
         compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
       } else {
         if (propName === undefined) continue;
-        // (#51) Materialize the data-property key via the dual-mode helper, not a
-        // bare `global.get <stringGlobalMap.get(propName)>`. Under
-        // standalone/nativeStrings `addStringConstantGlobal` records the `-1`
-        // sentinel (there is no host string-constant global), so a bare
-        // `global.get -1` reaches binary emit as "global index out of range — -1".
-        // `stringConstantExternrefInstrs` emits the NativeString inline (externref)
-        // path under standalone and the host `global.get` only when a real import
-        // global exists — exactly the fix already applied to the accessor-key path
-        // below (#1888 S5c).
-        addStringConstantGlobal(ctx, propName);
         fctx.body.push({ op: "local.get", index: objLocal });
-        for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
+        for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
           fctx.body.push(instr);
         }
       }
@@ -1466,13 +1459,8 @@ function compileObjectLiteralWithAccessors(
         continue;
       }
       if (methodName === undefined) continue;
-      // (#2194) Same dual-mode key fix as the data-property arm above: the raw
-      // `global.get <stringGlobalMap.get(method)>` baked `global.get -1` in
-      // standalone for a method key on a literal that also takes the accessor
-      // path. Route through the guarded helper.
-      addStringConstantGlobal(ctx, methodName);
       fctx.body.push({ op: "local.get", index: objLocal });
-      for (const instr of stringConstantExternrefInstrs(ctx, methodName)) {
+      for (const instr of staticHostPropertyKeyInstrs(ctx, methodName)) {
         fctx.body.push(instr);
       }
       const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
@@ -1512,15 +1500,9 @@ function compileObjectLiteralWithAccessors(
 
       // Stack: [obj, key, getterCb | null, setterCb | null, flags]
       fctx.body.push({ op: "local.get", index: objLocal });
-      // (#1888 S5c / C5) Materialize the accessor key via the dual-mode helper.
-      // Under standalone/nativeStrings, `addStringConstantGlobal` records the
-      // `-1` sentinel (no host string-constant global), so the old
-      // `global.get <stringGlobalMap.get(prop)>` emitted `global.get -1` →
-      // "u32 out of range: -1" at serialize time (the objlit-accessor standalone
-      // defect). `stringConstantExternrefInstrs` emits the native-string inline
-      // path under standalone and the host `global.get` under GC.
-      addStringConstantGlobal(ctx, propName);
-      for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
+      // Host imports require real String keys even with native string storage.
+      // Native targets retain their existing native key representation.
+      for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
         fctx.body.push(instr);
       }
 
@@ -4603,6 +4585,7 @@ export function compileObjectLiteralForStruct(
       if (savedFunc) ctx.funcStack.push(savedFunc);
       ctx.currentFunc = methodFctx;
 
+      const argumentsFirst = argumentsBeforeDefaults(ctx, methodFctx, prop, methodFctxParams); // (#6651 A11)
       // Emit default-value initialization for parameters with initializers
       emitMethodParamDefaults(ctx, methodFctx, prop.parameters, 1); // 1 to skip 'this'
 
@@ -4620,14 +4603,14 @@ export function compileObjectLiteralForStruct(
       // Set up `arguments` object if the method body references it (#820).
       // Object literal methods need an arguments vec struct so that
       // `arguments.length` and `arguments[n]` work at runtime.
-      if (needsImplicitArgumentsObject(prop)) {
+      if (!endArgumentsBeforeDefaults(methodFctx, prop, argumentsFirst) && needsImplicitArgumentsObject(prop)) {
         const methodParamTypes = methodFctxParams.slice(1).map((p) => p.type); // skip 'this'
         // Object-literal methods inherit the surrounding code's strictness (#779e).
         // (#2743) Also unmapped when the parameter list is non-simple
         // (rest/default/destructuring) — §10.2.11 step 22.a.
         const unmapped =
           isStrictFunction(prop, ctx.inferModuleStrictArguments) || !isSimpleParameterList(prop.parameters);
-        emitArgumentsObject(ctx, methodFctx, methodParamTypes, 1, unmapped); // paramOffset 1 to skip 'this'
+        emitArgumentsObject(ctx, methodFctx, methodParamTypes, /* skip 'this' */ 1, unmapped, prop.parameters);
       }
 
       if (isGeneratorMethod && prop.body && objMethNativeGen) {
@@ -5696,7 +5679,7 @@ export function compileArrayLiteral(
     // reflective reader (String, typeof, sameValue, symbol-keying) already
     // understands. Native-symbol lanes only; the js-host lane keeps its vec
     // selection byte-identical (the 2026-08-23 park precedent for brand leaks).
-    if (process.env.JS2_SYM_DEBUG)
+    if (readEnv("JS2_SYM_DEBUG"))
       console.error(
         "[arr-lit]",
         expr.getText().slice(0, 30),

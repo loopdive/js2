@@ -372,7 +372,10 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // ref.cast.
   emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
     const authorityGlobalIdx = layout.domCallbackAuthorityGlobalIdx?.();
+    if (authorityGlobalIdx !== undefined && layout.realmStateInitializer !== undefined)
+      throw new Error("closure allocation cannot combine unrelated DOM and realm state tails");
     if (authorityGlobalIdx !== undefined) out.push({ op: "global.get", index: authorityGlobalIdx });
+    if (layout.realmStateInitializer !== undefined) out.push({ op: "call", funcIdx: layout.realmStateInitializer });
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
   }
 

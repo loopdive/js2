@@ -93,6 +93,7 @@ import {
   tryEmitTransferredObjectToStringCall,
 } from "./expressions/transferred-proto-assignment.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
+import { emitRegExpProtoToStringBody } from "./regexp-proto-to-string.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -102,6 +103,8 @@ import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-
 import { emitRegExpSymbolReplaceBody } from "./regexp-replace-protocol.js";
 import { emitRegExpSymbolSplitBody } from "./regexp-split-protocol.js";
 import { tryCompileRegExpCtorFromObject } from "./regexp-ctor-regexp-like.js";
+import { tryEmitAnyReceiverRegExpSymbolCall } from "./regexp-symbol-any-receiver.js";
+import { compiledRegExpBinding } from "./regexp-compile-binding.js";
 import { ensureSpecExternrefToStringProvider, getExternrefToStringProvider } from "./coercion-engine.js";
 import {
   emitRegExpSymbolProtocolApply,
@@ -4124,6 +4127,7 @@ function staticRegExpFlags(
   seen = new Set<ts.Symbol>(),
 ): string | null {
   if (depth > 16) return null;
+  if (compiledRegExpBinding(ctx, expr)) return null; // (#6651 B8) Annex B `compile` rewrites the flags
   const complete = staticRegExpPatternFlags(ctx, expr, depth);
   if (complete !== null) return complete.flags;
 
@@ -4967,7 +4971,11 @@ export function tryCompileStandaloneRegExpSymbolCall(
   // host import can do the fully-dynamic dispatch.
   const recvType = ctx.checker.getTypeAtLocation(regexExpr);
   if (!isGlobalRegExpType(recvType) && !isKnownBackendCreatedRegExpReceiver(ctx, regexExpr)) {
-    return undefined;
+    // (#6651 B8) an `any` receiver: Get + Call at runtime instead of the refusal.
+    return tryEmitAnyReceiverRegExpSymbolCall(ctx, fctx, expr, regexExpr, symbolMethod, {
+      ensureGlue: () => ensureRegExpNativeProtoGlue(ctx) !== undefined,
+      regexpStruct: () => ensureStandaloneRegExpStruct(ctx),
+    });
   }
 
   // (#6651 B5) `re[Symbol.split](s, lim)` routes through the reified
@@ -5921,6 +5929,9 @@ function emitRegExpProtoMemberBody(
     }
     return protocolResult;
   }
+  // (#6651 B10) §22.2.6.17 is generic over any Object — no brand recovery.
+  const toStringResult = member === "toString" ? emitRegExpProtoToStringBody(ctx, fctx, 1) : null;
+  if (toStringResult !== null) return toStringResult;
 
   // Method bodies. Brand-recovery prologue: `this` is closure param index 1
   // (externref) → `$NativeRegExp` or a catchable TypeError on a wrong `this`.

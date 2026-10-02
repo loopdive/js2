@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "fnctor-prototype-guard-forward",
+  "path": "src/codegen/object-runtime.ts",
+  "sources": {
+    "35e040c08ed10f793faf26bb0f0eac55be662627": {
+      "blob": "57375151acd765e8870c3c7f67bf7e25797fd970",
+      "sha256": "45b31c33b9524059163ddf8de9945848db3685437d72454a63e5107207fadd35"
+    },
+    "54bffc6d9afc925846729e7987b56963d0dfc5b7": {
+      "blob": "7cd81389bd077e9a2b3adfb9d55278c7a496e922",
+      "sha256": "c8c7701f3c20644e8ed66da4d49f8ccbbb56ed0f0c4cba922c460852a5354745"
+    }
+  },
+  "before": "    for (const [structName] of ctx.structFields) {\n      if (isSyntheticStructName(structName) || !isUserDeclaredStruct(ctx, structName)) continue;\n      const typeIdx = ctx.structMap.get(structName);\n      if (typeIdx !== undefined && allocatedTypes.has(typeIdx)) ordinaryReadTypeIdxs.add(typeIdx);\n    }\n  }\n  for (const [structName, fields] of ctx.structFields) {\n",
+  "after": "    for (const [structName] of ctx.structFields) {\n      if (isSyntheticStructName(structName) || !isUserDeclaredStruct(ctx, structName)) continue;\n      const typeIdx = ctx.structMap.get(structName);\n      if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;\n      // A raw function-constructor instance with a materialized live\n      // `F.prototype` must retain the established closed-struct candidate\n      // route: its indexed Has/Get miss recurses through that prototype. The\n      // ordinary dynamic helper cannot stand in for that raw fnctor receiver\n      // (and falls through to its $Object cast). This is deliberately keyed to\n      // the existing live-prototype provider, not a broad user-class/fnctor\n      // name screen, so descriptor-backed ordinary reads for other user\n      // carriers remain admitted.\n      if (fnctorArray.fnctorPrototypeGlobalForStruct(ctx, structName) !== undefined) continue;\n      ordinaryReadTypeIdxs.add(typeIdx);\n    }\n  }\n  for (const [structName, fields] of ctx.structFields) {\n",
+  "beforeSha256": "7c31d9691b02bedd600fde422b3fa08001743c0a151644ecc8ed646f7cb48ed6",
+  "afterSha256": "b2abfcb3bc34682ef249fad87e133a8e4268cf16ddfffb99a8f2e9642652dfb5"
+}

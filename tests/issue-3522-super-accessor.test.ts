@@ -51,6 +51,10 @@
 import { describe, expect, it } from "vitest";
 
 process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 const { compile } = await import("../src/index.js");
 const { buildImports } = await import("../src/runtime.js");

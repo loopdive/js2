@@ -1,0 +1,40 @@
+{
+  "runs": [
+    {
+      "stage": "typecheck",
+      "exitCode": 0,
+      "elapsed": 10.766456842422485
+    },
+    {
+      "stage": "mixed",
+      "exitCode": 0,
+      "elapsed": 9.586841106414795
+    }
+  ],
+  "pinsBefore": 7427,
+  "pinsAfter": 7427,
+  "drift": [],
+  "trackedPinsBefore": 14559,
+  "trackedPinsAfter": 14559,
+  "trackedDrift": [],
+  "receipt": "/private/tmp/js2-ir-public-native-object-number-graph-20260930/.tmp/public-native-object-number-graph/resume-20261001/request-literal-validation-4077db63",
+  "tests": {
+    "numTotalTests": 24,
+    "numPassedTests": 24,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "numTodoTests": 0,
+    "success": true
+  },
+  "files": [
+    {
+      "name": "/private/tmp/js2-ir-public-native-object-number-graph-20260930/tests/issue-3518-builtin-request-literal-authentication.test.ts",
+      "status": "passed",
+      "rows": 24,
+      "message": ""
+    }
+  ],
+  "failed": [],
+  "workerErrorLines": [],
+  "strictAcceptance": true
+}

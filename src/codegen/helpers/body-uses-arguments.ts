@@ -27,6 +27,14 @@ export function formalParametersBindArguments(parameters: readonly ts.ParameterD
 }
 
 /**
+ * (#6651 I7) Is the trailing formal a rest parameter? A rest element is always
+ * last (§15.1), so this is exactly "the last lowered formal is the rest vec".
+ */
+export function hasRestParameter(parameters: readonly ts.ParameterDeclaration[]): boolean {
+  return parameters.length > 0 && parameters[parameters.length - 1]!.dotDotDotToken !== undefined;
+}
+
+/**
  * (#6651) Does the function BODY introduce its own top-level LEXICAL binding
  * named `arguments` (`let arguments` / `const arguments` / `class arguments`)?
  *

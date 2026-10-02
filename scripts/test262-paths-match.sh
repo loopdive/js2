@@ -135,6 +135,7 @@ classify_test262_path() {
     scripts/build-quickjs-eval-provider.mjs) echo standalone ;;
     scripts/quickjs-eval-provider.mjs) echo standalone ;;
     scripts/runtime-eval-provider.mjs) echo standalone ;;
+    scripts/compiler-inputs-hash.mjs) echo standalone ;;
     scripts/quickjs-artifact/*) echo standalone ;;
     scripts/generate-editions.ts) echo both ;;
     scripts/test262-worker.mjs) echo both ;;

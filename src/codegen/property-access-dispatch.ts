@@ -39,6 +39,7 @@ import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } fr
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
+import { promiseProtoMemberSpecLength } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime, ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
@@ -67,6 +68,7 @@ import {
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
+import { tracesToTypedArrayIntrinsicProto } from "./expressions/calls.js"; // (#6769 S7a) `%TypedArray%.prototype` receiver
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
@@ -85,6 +87,7 @@ import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
 import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import {
   emitBuiltinConstructorIdentity,
@@ -226,6 +229,7 @@ import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js"
 import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
+import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -243,6 +247,23 @@ export function tryDynamicReceiverRuntimeDispatchReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // (#6769 S7a) `%TypedArray%.prototype.length` / `.byteLength` read directly
+  // off the prototype object (test262's `TypedArrayPrototype.length`, traced
+  // through the harness aliases): the getter's RequireInternalSlot throws
+  // TypeError for that receiver (§23.2.3.21 / .3 step 2). The generic reads
+  // answered normally. `byteOffset`/`buffer` already throw on their own path.
+  if (
+    (propName === "length" || propName === "byteLength") &&
+    ctx.standalone &&
+    tracesToTypedArrayIntrinsicProto(ctx, expr.expression)
+  ) {
+    emitThrowTypeError(
+      ctx,
+      fctx,
+      `TypeError: get %TypedArray%.prototype.${propName} called on an incompatible receiver`,
+    );
+    return { kind: "externref" };
+  }
   // (#3054 D) `ctor.BYTES_PER_ELEMENT` where `ctor` is a first-class `$__ta_ctor`
   // value (the kind is only known at runtime — `for (c of ctors) … c.BYTES_PER_ELEMENT`,
   // `CreateRabForTest(ctor)`'s `4 * ctor.BYTES_PER_ELEMENT`). Placed at the TOP so
@@ -2310,6 +2331,8 @@ function emitClassStaticMemberRead(
   // statics still shadow because the own lookup runs first.
   const globalIdx = ctx.staticProps.get(fullName) ?? resolveInheritedStaticProp(ctx, resolvedClass, propName);
   if (globalIdx !== undefined) {
+    const inheritedCell = tryEmitPromiseSubclassCellRead(ctx, fctx, resolvedClass, propName, globalIdx); // (#6651 D6)
+    if (inheritedCell !== undefined) return inheritedCell;
     fctx.body.push({ op: "global.get", index: globalIdx });
     const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
     return globalDef?.type ?? { kind: "f64" };
@@ -3008,7 +3031,7 @@ function propertyKeyIsCoveredFunctionDefinition(access: ts.PropertyAccessExpress
   return covered;
 }
 
-/** Emit a boxed read for standalone `IArguments.length`. */
+/** Emit a boxed read for standalone `IArguments.length` (JS host: a vec copy per read, #6756). */
 function emitArgumentsLengthRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3016,7 +3039,7 @@ function emitArgumentsLengthRead(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
-  if (propName !== "length" || objType.getSymbol?.()?.name !== "IArguments") return PA_FALLTHROUGH;
+  if (!ctx.standalone || propName !== "length" || objType.getSymbol?.()?.name !== "IArguments") return PA_FALLTHROUGH;
   const getIdx = ensureLateImport(
     ctx,
     "__extern_get",
@@ -3108,7 +3131,8 @@ export function tryLengthAndNameReads(
     // there, so the §15.1.5 prefix walk answers 1 for a member the spec pins
     // at 2). Table + gate live in function-prototype-callable.ts.
     if (!isBindResult) {
-      const specLength = functionPrototypeMemberSpecLength(ctx, expr.expression);
+      const specLength =
+        functionPrototypeMemberSpecLength(ctx, expr.expression) ?? promiseProtoMemberSpecLength(ctx, expr.expression);
       if (specLength !== undefined) {
         fctx.body.push({ op: "f64.const", value: specLength });
         return { kind: "f64" };
@@ -5286,8 +5310,7 @@ export function finalizeStructAndDynamicMemberGet(
 
         // No struct candidates — use __extern_get directly
         fctx.body.push({ op: "local.get", index: objTmp });
-        addStringConstantGlobal(ctx, propName);
-        compileStringLiteral(ctx, fctx, propName);
+        fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx });
         if (ctx.runtimeEvalGlobalFunctionBindings === true) {
           emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
@@ -5449,7 +5472,7 @@ export function finalizeStructAndDynamicMemberGet(
           fctx.body.push({ op: "extern.convert_any" });
         }
         registerLateReadStringConstant(ctx, propName);
-        fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+        fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
         if (ctx.runtimeEvalGlobalFunctionBindings === true) {
           emitRuntimeEvalSharedValueUnwrap(ctx, fctx);

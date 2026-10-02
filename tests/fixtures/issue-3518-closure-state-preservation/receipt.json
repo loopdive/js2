@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "scope": "preservation-only native realm state interface addition",
+  "baseCommit": "8a730516ced8ace5da216cbb8f5b5c54c064d421",
+  "afterProvenance": {
+    "kind": "uncommitted-working-tree",
+    "branch": "codex/3518-public-native-object-number-graph-20260930",
+    "recordedOn": "2026-09-30",
+    "frozenInputReceipt": ".tmp/public-native-object-number-graph/pending-preservation-3e7363bn/inputs-before.json"
+  },
+  "records": [
+    {
+      "path": "src/runtime/wasmgc/values/closure-layouts.ts",
+      "before": {
+        "sha256": "f79e77c4bb0a0286c0c3462d80613f8a1c3c3ee861cab689f6fb0f1ad3dc9d7b",
+        "gitBlob": "d62858d3ba7c3668a47287325410dbdbc33ec67e",
+        "bytes": 9156,
+        "utf16Units": 9128
+      },
+      "after": {
+        "sha256": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+        "gitBlob": "931d2dcbf57b4c9c19160b30f82a92ab4121712e",
+        "bytes": 9293,
+        "utf16Units": 9265
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 3405,
+          "afterOffset": 3405,
+          "before": "  readonly domCallbackAuthorityGlobalIdx?: () => number;\n}\n",
+          "after": "  readonly domCallbackAuthorityGlobalIdx?: () => number;\n  /** Stable handle issued by the native realm state owner; called after all captures. */\n  readonly realmStateInitializer?: FuncHandle;\n}\n",
+          "beforeSha256": "17da4dea00d029550882538a858904646514a233635ddb1ac03153e70dc70287",
+          "afterSha256": "18724b0feba201c3999109f4832035fe56740db109ae0f715fb1ec58277602c3"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "assignment-D-additive-execution-v1",
+  "declaredControls": 8,
+  "observedRuntimeControls": null,
+  "runtimeStatus": "NOT_RUN",
+  "firstStaticTypecheck": {
+    "step": 2,
+    "exitCode": 1,
+    "additiveDiagnostics": 1,
+    "sourceSha256": "08551a2439fb54b643f13d024ad8df2e21b86d283210ea7b06680f5c938d74b3"
+  },
+  "correctedSourceSha256": "9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387",
+  "correctedStaticTypecheck": "NOT_RUN",
+  "originalManifest": "preparation/serial-validation-manifest.NOT_RUN.json",
+  "slotReturned": true
+}

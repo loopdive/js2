@@ -408,6 +408,24 @@ export const CROSS_BACKEND_CORPUS: readonly CrossBackendProgram[] = [
     ],
   },
   {
+    // #6778: `+` with ONE string operand concatenates (ToString the other side);
+    // linear used to emit numeric f64.add on the i32 string pointer.
+    name: "string/mixed-plus",
+    category: "string",
+    source: `
+      export function strNum(): number { const s = "1" + 2; return s.length; }
+      export function numStr(n: number): number { const s = n + "px"; return s === "12.5px" ? 1 : 0; }
+      export function strBool(): number { const s = "a" + true; return s.length; }
+      export function plusEq(): number { let s = ""; for (let i = 0; i < 3; i++) s += i; return s === "012" ? 1 : 0; }
+    `,
+    calls: [
+      { fn: "strNum", args: [] },
+      { fn: "numStr", args: [12.5] },
+      { fn: "strBool", args: [] },
+      { fn: "plusEq", args: [] },
+    ],
+  },
+  {
     // `**` (exponent) is not yet lowered by the linear backend
     // (Unsupported binary operator: AsteriskAsteriskToken). Ratchet entry.
     name: "numeric/exponent",

@@ -71,10 +71,32 @@ export TEST262_INCLUDE_PROPOSALS="$INCLUDE_PROPOSALS"
 export TEST262_TARGET
 export TEST262_RESULT_PREFIX="$RESULT_PREFIX"
 
-# The runner's matching semantics are OR when both filters are supplied, but
-# the completeness gate cannot safely reconstruct a substring-selected union
-# from an exact-path file alone. Fail closed with an explicit diagnostic rather
-# than comparing only the file and rejecting valid substring-selected rows.
+# `TEST262_EXACT_MANIFEST_FILE` is a complete original-file selection, not a
+# post-discovery filter.  It must remain the single expected identity set for
+# both runner registration and completeness validation.
+if [ -n "${TEST262_EXACT_MANIFEST_FILE:-}" ]; then
+  if [ -n "${TEST262_PATH_FILTER:-}" ]; then
+    echo "ERROR: TEST262_EXACT_MANIFEST_FILE and TEST262_PATH_FILTER cannot be combined; use the manifest as the complete auditable selection."
+    exit 2
+  fi
+  if [ -n "${TEST262_PATH_FILTER_FILE:-}" ]; then
+    echo "ERROR: TEST262_EXACT_MANIFEST_FILE and TEST262_PATH_FILTER_FILE cannot be combined; use the manifest as the complete auditable selection."
+    exit 2
+  fi
+  if [ ! -f "$TEST262_EXACT_MANIFEST_FILE" ]; then
+    echo "ERROR: TEST262_EXACT_MANIFEST_FILE does not exist: $TEST262_EXACT_MANIFEST_FILE"
+    exit 2
+  fi
+  EXACT_MANIFEST_DIR="$(cd "$(dirname "$TEST262_EXACT_MANIFEST_FILE")" && pwd -P)"
+  TEST262_EXACT_MANIFEST_FILE="$EXACT_MANIFEST_DIR/$(basename "$TEST262_EXACT_MANIFEST_FILE")"
+  export TEST262_EXACT_MANIFEST_FILE
+fi
+
+# The legacy runner matching semantics are OR when both filters are supplied,
+# but the completeness gate cannot safely reconstruct a substring-selected
+# union from an exact-path file alone. Fail closed with an explicit diagnostic
+# rather than comparing only the file and rejecting valid substring-selected
+# rows.
 if [ -n "${TEST262_PATH_FILTER:-}" ] && [ -n "${TEST262_PATH_FILTER_FILE:-}" ]; then
   echo "ERROR: TEST262_PATH_FILTER and TEST262_PATH_FILTER_FILE cannot be combined by the completeness gate; use one filter source so its exact expected set is auditable."
   exit 2
@@ -104,6 +126,19 @@ resolve_esbuild() {
     return 0
   fi
   return 1
+}
+
+exact_manifest_sha256() {
+  node --input-type=module -e '
+    const { sha256Test262ExactManifestFile } = await import(process.argv[2]);
+    process.stdout.write(sha256Test262ExactManifestFile(process.argv[1]));
+  ' "$1" "$MAIN_DIR/scripts/test262-exact-manifest.mjs"
+}
+
+exact_manifest_snapshot_is_intact() {
+  [ -n "${TEST262_EXACT_MANIFEST_FILE:-}" ] || return 0
+  EXACT_MANIFEST_CURRENT_SHA256="$(exact_manifest_sha256 "$TEST262_EXACT_MANIFEST_FILE")" \
+    && [ "$EXACT_MANIFEST_CURRENT_SHA256" = "${EXACT_MANIFEST_SNAPSHOT_SHA256:-}" ]
 }
 
 cleanup_lock() {
@@ -193,6 +228,31 @@ if [ ! -d "$WT_DIR/test262/test" ]; then
   exit 1
 fi
 echo "test262 symlink OK ($(ls "$WT_DIR/test262/test/" | wc -l) dirs)"
+
+# Validate the source manifest against the actual worktree corpus before the
+# compiler build. Then snapshot the validated selection: later completeness
+# compares that original expected set, never a smaller registered/result set
+# or a manifest file modified while the run was active.
+if [ -n "${TEST262_EXACT_MANIFEST_FILE:-}" ]; then
+  echo "Validating exact Test262 manifest before compiler build..."
+  node "$MAIN_DIR/scripts/test262-exact-manifest.mjs" \
+    --input "$TEST262_EXACT_MANIFEST_FILE" \
+    --test262-root "$WT_DIR/test262"
+  EXACT_MANIFEST_SNAPSHOT="$RESULTS_DIR/${RESULT_PREFIX}-exact-manifest-${RUN_TIMESTAMP}.txt"
+  if [ -e "$EXACT_MANIFEST_SNAPSHOT" ]; then
+    echo "ERROR: exact manifest snapshot already exists: $EXACT_MANIFEST_SNAPSHOT"
+    exit 2
+  fi
+  cp "$TEST262_EXACT_MANIFEST_FILE" "$EXACT_MANIFEST_SNAPSHOT"
+  TEST262_EXACT_MANIFEST_FILE="$EXACT_MANIFEST_SNAPSHOT"
+  export TEST262_EXACT_MANIFEST_FILE
+  node "$MAIN_DIR/scripts/test262-exact-manifest.mjs" \
+    --input "$TEST262_EXACT_MANIFEST_FILE" \
+    --test262-root "$WT_DIR/test262"
+  EXACT_MANIFEST_SNAPSHOT_SHA256="$(exact_manifest_sha256 "$TEST262_EXACT_MANIFEST_FILE")"
+  echo "Exact manifest snapshot: $TEST262_EXACT_MANIFEST_FILE"
+  echo "Exact manifest snapshot SHA-256: $EXACT_MANIFEST_SNAPSHOT_SHA256"
+fi
 
 # Share the disk cache
 mkdir -p "$MAIN_DIR/.test262-cache"
@@ -394,7 +454,17 @@ REPORT_FILE="$RESULTS_DIR/${RESULT_PREFIX}-report-${RUN_TIMESTAMP}.json"
 COMPLETED=false
 COMPLETENESS_OK=false
 COMPLETENESS_REASON="missing JSONL or shard completion manifest"
-if [ -f "$JSONL_FILE" ]; then
+EXACT_MANIFEST_SNAPSHOT_INTACT=true
+if [ -n "${TEST262_EXACT_MANIFEST_FILE:-}" ]; then
+  if exact_manifest_snapshot_is_intact; then
+    :
+  else
+    EXACT_MANIFEST_SNAPSHOT_INTACT=false
+    COMPLETENESS_REASON="exact manifest snapshot changed after preflight"
+    echo "INCOMPLETE: exact manifest snapshot changed after preflight; refusing completeness validation."
+  fi
+fi
+if [ "$EXACT_MANIFEST_SNAPSHOT_INTACT" = true ] && [ -f "$JSONL_FILE" ]; then
   if [ -n "$CHUNKS" ]; then
     EXPECTED_SHARDS="$CHUNK_COUNT"
   else
@@ -406,7 +476,9 @@ if [ -f "$JSONL_FILE" ]; then
       --input "$JSONL_FILE"
       --expected-shards "$EXPECTED_SHARDS"
     )
-    if [ -n "${TEST262_PATH_FILTER_FILE:-}" ]; then
+    if [ -n "${TEST262_EXACT_MANIFEST_FILE:-}" ]; then
+      completeness_args+=(--expected-paths-file "$TEST262_EXACT_MANIFEST_FILE")
+    elif [ -n "${TEST262_PATH_FILTER_FILE:-}" ]; then
       completeness_args+=(--expected-paths-file "$TEST262_PATH_FILTER_FILE")
     fi
     for manifest in "${shard_manifests[@]}"; do

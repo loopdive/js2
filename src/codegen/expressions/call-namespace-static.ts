@@ -10,6 +10,7 @@
 // Number / Array / String / Object value-type statics). Returns `undefined` when
 // the callee is not one of these, so the caller in calls.ts continues into the
 // receiver-type method dispatch. Moved verbatim: emitted Wasm is byte-identical.
+import { jsonIsPrimitive, jsonReplacerSeesRoot, reserveJsonToJson } from "../json-stringify-carriers.js";
 import { ts } from "../../ts-api.js";
 import { tryEmitStandalonePerformanceNow } from "../standalone-unavailable-globals.js";
 import { integrityVarKey } from "../widened-var-key.js";
@@ -91,11 +92,14 @@ import {
   resolveF64VecArg,
 } from "../promise-observable-combinators.js";
 import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
+import { tryEmitClassReceiverCombinatorCall } from "../promise-class-receiver-drive.js"; // (#6651 D3)
+import { emitClassReceiverSettle, tryEmitClassReceiverSettleCall } from "../promise-class-receiver-settle.js"; // (#6651 D4)
+import { isOrdinaryFunctionCtorArg } from "../promise-class-receiver-drive.js"; // (#5197 r3)
 import { emitStandalonePromiseCombinatorDrive } from "../promise-combinator-drive.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileSpreadCallArgs } from "./extern.js";
-import { emitKnownRestMethodArguments, knownMethodRestInfo } from "./object-method-rest-abi.js";
+import { emitKnownRestMethodArguments, knownStaticMethodRestInfo } from "./object-method-rest-abi.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import {
@@ -473,6 +477,12 @@ function emitJsonCodecValueAsAnyref(
         valueType = { kind: "externref" };
       } else {
         valueType = raw;
+      }
+    } else if (jsonIsPrimitive(ctx, unwrapped)) {
+      valueType = compileExpression(ctx, fctx, value, { kind: "externref" });
+      if (valueType !== null && valueType.kind !== "externref") {
+        coerceType(ctx, fctx, valueType, { kind: "externref" });
+        valueType = { kind: "externref" };
       }
     } else {
       valueType = compileExpression(ctx, fctx, value, { kind: "anyref" });
@@ -1886,6 +1896,20 @@ export function compileNamespaceStaticCall(
         // uses); keeps the ordinary externref path for non-literal / null protos.
         compileProtoArg(ctx, fctx, protoArg);
         fctx.body.push({ op: "local.tee", index: spoProtoLocal });
+        // The static guards above cannot validate values read from the realm's
+        // heterogeneous handle table. Both operands have now been evaluated;
+        // reject invalid dynamic values before the writer can mutate anything.
+        emitNativeReflectTargetGuard(ctx, fctx, spoTargetLocal, "Reflect.setPrototypeOf called on non-object");
+        fctx.body.push({ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }, { op: "i32.eqz" });
+        const beforePrototypeGuard = fctx.body.length;
+        emitNativeReflectTargetGuard(
+          ctx,
+          fctx,
+          spoProtoLocal,
+          "Reflect.setPrototypeOf requires an object or null prototype",
+        );
+        const prototypeGuard = fctx.body.splice(beforePrototypeGuard);
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: prototypeGuard });
         const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
         // (#6651 cluster F) §28.1.14 step 4 — the REAL boolean. The KNOWN
@@ -3150,6 +3174,18 @@ export function compileNamespaceStaticCall(
     }
     if (isResolveReject) {
       const methodName = propAccess.name.text;
+      // (#5197 r3 Step 1f) `P.resolve(x)` on a Promise subclass: the inherited static's
+      // `this` is `P`, so NewPromiseCapability(P) — not the intrinsic `%Promise%` path.
+      if (isPromiseSubclassReceiver && expr.arguments.length <= 1) {
+        const settled = emitClassReceiverSettle(
+          ctx,
+          fctx,
+          propAccess.expression,
+          expr.arguments[0],
+          methodName === "reject" ? "reject" : "resolve",
+        );
+        if (settled !== undefined) return settled;
+      }
       // (#1326 Phase 1B) Standalone-mode `Promise.resolve(v)` /
       // `Promise.reject(r)` — emit Wasm-native `$Promise` struct.new instead
       // of the JS-host `Promise_{resolve,reject}_import` (unsatisfiable in
@@ -3236,15 +3272,7 @@ export function compileNamespaceStaticCall(
   ) {
     const settleKind = propAccess.expression.name.text === "reject" ? "reject" : "resolve";
     const ctorArg = unwrapReflectConstructExpr(expr.arguments[0]!);
-    const ctorDecl = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
-    const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
-    const ctorExpr = ctorInit ? unwrapReflectConstructExpr(ctorInit) : ctorDecl;
-    const isOrdinaryCtorDecl =
-      (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||
-      (ctorDecl !== undefined &&
-        ts.isFunctionDeclaration(ctorDecl) &&
-        ctorDecl.asteriskToken === undefined &&
-        !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false));
+    const isOrdinaryCtorDecl = isOrdinaryFunctionCtorArg(ctx, expr.arguments[0]!); // (#5197 r3) shared with the drive
     if (isOrdinaryCtorDecl) {
       const snap = snapshotSpeculative(ctx, fctx);
       ensurePromiseSettleFunctions(ctx);
@@ -3319,6 +3347,9 @@ export function compileNamespaceStaticCall(
       }
       rollbackSpeculative(ctx, fctx, snap);
     }
+    // (#6651 D4) A compiled-CLASS `C` (including `extends Promise`): Construct(C, «executor»).
+    const classSettled = tryEmitClassReceiverSettleCall(ctx, fctx, expr, settleKind);
+    if (classSettled !== undefined) return classSettled;
   }
   if (
     propAccess.name.text === "call" &&
@@ -3345,9 +3376,18 @@ export function compileNamespaceStaticCall(
     // unsatisfiable `Promise_all`/`Promise_race` host import. Tried BEFORE the
     // narrow #4682 empty-array arm, which remains the fallback.
     if (isStandalonePromiseActive(ctx) && isCustomCombinatorMethod(methodName)) {
+      // (#5197 r3) A function `C` over a NON-literal iterable takes D3's step-wise drive first.
+      const iterableArg = expr.arguments[1];
+      if (iterableArg === undefined || !ts.isArrayLiteralExpression(iterableArg)) {
+        const driven = tryEmitClassReceiverCombinatorCall(ctx, fctx, expr, methodName);
+        if (driven !== undefined) return driven;
+      }
       const custom = tryEmitCustomCombinatorCall(ctx, fctx, expr, methodName);
       if (custom !== undefined) return custom;
     }
+    // (#6651 D3) A compiled-CLASS receiver: Construct(C, «executor») + the step-wise drive.
+    const classDriven = tryEmitClassReceiverCombinatorCall(ctx, fctx, expr, methodName);
+    if (classDriven !== undefined) return classDriven;
 
     // (#4682) Bounded NewPromiseCapability arm: an ordinary compiled
     // constructor plus an empty array.  The existing native aggregate path
@@ -3559,7 +3599,12 @@ export function compileNamespaceStaticCall(
         // answers `1` where node answers `"w:1"`. That is base behaviour on both
         // lanes; the regression was answering `"w:null"`, i.e. handing the
         // replacer a null value, and that is gone.
-        const primitiveStringType = tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
+        // (#1599) …except under a native FUNCTION replacer: §25.5.2 step 12
+        // serialises its return for the root (`JSON.stringify(null, () => ({a: 1}))`).
+        const primitiveStringType =
+          useNativeJsonProvider && jsonReplacerSeesRoot(ctx, expr.arguments[0]!, expr.arguments[1])
+            ? undefined
+            : tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
         if (primitiveStringType !== undefined) {
           // Compile remaining args (replacer, space) for their side
           // effects only — primitive stringify ignores them per spec
@@ -3592,29 +3637,16 @@ export function compileNamespaceStaticCall(
           // PR-B threads a *static* `space` argument (number/string literal)
           // into the codec's indent path; a function/array replacer or a
           // *dynamic* space still keeps the refusal below.
+          reserveJsonToJson(ctx, fctx);
           const replacerArg = expr.arguments[1];
           const spaceArg = expr.arguments[2];
           const replacerNullish =
             replacerArg === undefined ||
             replacerArg.kind === ts.SyntaxKind.NullKeyword ||
             (ts.isIdentifier(replacerArg) && replacerArg.text === "undefined");
-          // PR-A serialises `$Object` graphs only. Arrays (closed typed-vec
-          // structs `number[]` etc.) and tuples are a separate sub-slice
-          // (PR-A2) — they are NOT `$ObjVec`, so routing them to the codec
-          // would emit wrong output. Detect an array/tuple static type via the
-          // checker and keep it on the refusal path below.
-          const arg0Type = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
-          const checkerArr = ctx.checker as unknown as {
-            isArrayType?: (t: unknown) => boolean;
-            isTupleType?: (t: unknown) => boolean;
-          };
-          const isArrayLike =
-            (checkerArr.isArrayType?.(arg0Type) ?? false) ||
-            (checkerArr.isTupleType?.(arg0Type) ?? false) ||
-            // Fallback when the internal predicates are unavailable: a numeric
-            // index type with only integer / `length` own keys looks array-like.
-            (arg0Type.getNumberIndexType() !== undefined &&
-              arg0Type.getProperties().every((p) => /^\d+$/.test(p.name) || p.name === "length"));
+          // (#1599) Only a TUPLE (a closed positional struct no codec arm reads)
+          // keeps the refusal; vecs normalise into the `$ObjVec` arm (#4085).
+          const isTupleValue = ctx.oracle.typeFactOf(expr.arguments[0]!).kind === "tuple";
           const valueExpression = unwrapReflectConstructExpr(expr.arguments[0]!);
           const arrayLiteralForCodec =
             ts.isArrayLiteralExpression(valueExpression) && !valueExpression.elements.some(ts.isSpreadElement)
@@ -3641,7 +3673,7 @@ export function compileNamespaceStaticCall(
           if (
             replacerNullish &&
             gap !== undefined &&
-            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue)
+            (!isTupleValue || arrayLiteralForCodec !== undefined || proxyShapedValue)
           ) {
             if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
             emitJsonStringifyValue(ctx);
@@ -3667,7 +3699,7 @@ export function compileNamespaceStaticCall(
           if (
             !replacerNullish &&
             gap !== undefined &&
-            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue) &&
+            (!isTupleValue || arrayLiteralForCodec !== undefined || proxyShapedValue) &&
             replacerArg !== undefined
           ) {
             const replacerCallable =
@@ -4352,7 +4384,7 @@ export function compileNamespaceStaticCall(
         // shape (object-literal method, plain function, instance method) was
         // already correct; only the static-through-a-class-object arm was
         // missing both halves of the known-callee argument ABI.
-        const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
+        const restInfoStatic = knownStaticMethodRestInfo(ctx, expr, fullName, paramTypes); // (#6699)
         const handledRestStatic =
           restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
         const hasSpreadStatic = expr.arguments.some((argument) => ts.isSpreadElement(argument));

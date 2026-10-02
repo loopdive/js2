@@ -1,0 +1,22 @@
+{
+  "originalEqualsBeforeIntroducing": true,
+  "currentEqualsAfterIntroducing": true,
+  "actualGitAuthority": true,
+  "sources": [
+    {
+      "rev": "efe352fee8afc3feb6a28c34d00fc658dc1fb205^",
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/formatter-support-before.types.ts.raw.txt",
+      "bytes": 31278,
+      "sha256": "49f0b751abc784cff47501d3309a1e2d20307ce5c3a460bab1a60ef3bb19dac5",
+      "blob": "ba531205b0429574c6e675dd456dd8487b22923f"
+    },
+    {
+      "rev": "efe352fee8afc3feb6a28c34d00fc658dc1fb205",
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/formatter-support-after.types.ts.raw.txt",
+      "bytes": 32296,
+      "sha256": "58d3795e4f38002798fbdb93c7599f74cb422555ba0ed84f160a51aec52543a2",
+      "blob": "db0b740a300009d035b7af28377bf0333e023105"
+    }
+  ],
+  "patchSha256": "19b43ecc7cb155dbc00f41388d3923e47b3147aedf4575ee5e53adfb7b474b79"
+}

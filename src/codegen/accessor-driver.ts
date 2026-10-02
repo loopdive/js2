@@ -40,6 +40,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
+import { buildAccessorCallBody, type AccessorDispatchBinding } from "../runtime/wasmgc/values/accessor-call-bodies.js";
 
 /** Reserved name for the accessor-get driver (arity-0 getter wrapper). */
 export const CALL_ACCESSOR_GET = "__call_accessor_get";
@@ -84,58 +85,32 @@ function buildAccessorCall(
 ): { body: Instr[]; locals: WasmFunction["locals"] } {
   const closureArityIdx = ctx.funcMap.get("__closure_arity");
   const argcGlobalIdx = ensureArgcGlobal(ctx);
-  const paramCount = actualArity + 2;
-  const declaredLocal = paramCount;
-
-  const undefinedArg = (): Instr[] =>
-    undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
-
-  const callAtArity = (dispatchArity: number): Instr[] => {
+  const bindAtArity = (dispatchArity: number): AccessorDispatchBinding => {
     const target = ctx.funcMap.get(`__call_fn_method_${dispatchArity}`);
-    if (target === undefined) return [{ op: "ref.null.extern" }];
-    const call: Instr[] = [
-      { op: "local.get", index: receiverLocal },
-      { op: "local.get", index: callableLocal },
-    ];
+    if (target === undefined) return { kind: "legacy-missing" };
+    const undefinedArguments = new Map<number, readonly Instr[] | undefined>();
     for (let arg = 0; arg < dispatchArity; arg++) {
-      const local = argumentLocals[arg];
-      call.push(...(local === undefined ? undefinedArg() : [{ op: "local.get", index: local } satisfies Instr]));
+      if (argumentLocals[arg] === undefined) {
+        // Snapshot at the donor's acquisition point, before another reservation.
+        undefinedArguments.set(
+          arg,
+          undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })),
+        );
+      }
     }
-    call.push({ op: "call", funcIdx: target });
-    return call;
+    return { kind: "resolved", target, undefinedArguments };
   };
-
-  // Non-closure callables report -1. Preserve the historical actual-arity
-  // dispatcher for them; its runtime-callable front guard remains authoritative.
-  let dispatch = callAtArity(actualArity);
+  const dispatches = new Map<number, AccessorDispatchBinding>([[actualArity, bindAtArity(actualArity)]]);
   for (let declared = 8; declared > actualArity; declared--) {
-    dispatch = [
-      { op: "local.get", index: declaredLocal },
-      { op: "i32.const", value: declared },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: callAtArity(declared),
-        else: dispatch,
-      },
-    ];
+    dispatches.set(declared, bindAtArity(declared));
   }
-
-  if (closureArityIdx === undefined) {
-    return { body: callAtArity(actualArity), locals: [] };
-  }
-  return {
-    locals: [{ name: "__declared_arity", type: { kind: "i32" } }],
-    body: [
-      { op: "i32.const", value: actualArity },
-      { op: "global.set", index: argcGlobalIdx },
-      { op: "local.get", index: callableLocal },
-      { op: "call", funcIdx: closureArityIdx },
-      { op: "local.set", index: declaredLocal },
-      ...dispatch,
-    ],
-  };
+  const withoutArity = closureArityIdx === undefined ? bindAtArity(actualArity) : undefined;
+  return buildAccessorCallBody(actualArity, receiverLocal, callableLocal, argumentLocals, {
+    closureArity: closureArityIdx,
+    argcGlobal: argcGlobalIdx,
+    dispatches,
+    withoutArity,
+  });
 }
 
 /**

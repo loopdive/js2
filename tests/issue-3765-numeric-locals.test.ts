@@ -27,6 +27,10 @@ import {
 } from "../src/codegen/numeric-property-analysis.js";
 import { ts } from "../src/ts-api.js";
 import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 // (#4157) One case here asserts that the numeric-locals KILL SWITCH restores
 // the boxed carrier, and detects the boxed carrier by `call $__unbox_number`.

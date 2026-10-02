@@ -116,7 +116,6 @@ describe("#1539 capture groups", () => {
 
 describe("#1539 narrowed refusals (2d Slice B residue after #1911)", () => {
   const refused = [
-    "\\p{L}", // unicode property — 2d Slice B
     "\\b*", // quantified non-lookaround assertion — real SyntaxError, never a VM spin
     "[b-a]", // class range out of order — real SyntaxError
     "a**", // nothing to repeat — real SyntaxError
@@ -130,6 +129,13 @@ describe("#1539 narrowed refusals (2d Slice B residue after #1911)", () => {
       expect(() => compilePattern(p, 0)).toThrow(RegexUnsupportedError);
     });
   }
+
+  it("matches non-Unicode property-looking p syntax as an Annex B identity escape", () => {
+    const pattern = "\\p{L}";
+    for (const input of ["p{L}", "xp{L}y", "A"]) {
+      expect(ourMatch(pattern, "", input)).toEqual(nativeMatch(pattern, "", input));
+    }
+  });
 });
 
 // #1911 Phase 2d Slice A — lookarounds + inline modifiers. Dual-run vs native.

@@ -75,6 +75,7 @@ import {
   multiPreparedStringMergedReportForTest,
   tamperMultiPreparedStringSkipReport,
 } from "./multi-prepared-string-leaf-test-tamper.js";
+import { readEnv } from "../env.js";
 
 export interface MultiPreparedStringLeafProofContext {
   readonly checker: ts.TypeChecker;
@@ -1247,7 +1248,7 @@ export function planEarlyMultiPreparedStringLeafRoute<Plan extends MultiPrepared
   };
   const candidate = resolveMultiPreparedStringLeafCandidate(resolverInput);
   if (!candidate) {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_STRING_LEAF === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_STRING_LEAF") === "1") {
       requiredStringLeafInvariant("resolve", "required candidate failed exact C1 certification");
     }
     return states;

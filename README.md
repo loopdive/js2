@@ -13,7 +13,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,188 / 48,232 (81.2 %)
+**test262 conformance**: 39,239 / 48,232 (81.4 %)
 
 <!-- AUTO:conformance-end -->
 
@@ -21,7 +21,7 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 40,912 / 48,232 (84.8 %)
+**standalone (host-free) test262 conformance**: 41,411 / 48,232 (85.9 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
@@ -39,7 +39,7 @@ Most JavaScript-on-Wasm systems work by putting a JavaScript engine inside a Was
 
 This matters for infrastructure workloads where artifact size, cold start, density, and host integration are first-order constraints — edge and serverless runtimes, Wasm-first platforms, plugin and extension systems, embedders that want JavaScript semantics without shipping an interpreter, and desktop applications that want a lighter, safer alternative to Electron-style runtime bundling (e.g. shipping compiler output as executable Wasm artifacts under a host like Tauri instead of bundling a full browser-plus-JS-engine).
 
-It also matters for security boundaries. In browsers, Node.js, and other JavaScript-capable hosts, compiling modules to Wasm introduces an isolation boundary that can limit how much third-party dependencies and user-provided code can affect the surrounding process — relevant for supply-chain defense, plugin systems, and multi-tenant execution.
+It may also matter for security boundaries — supply-chain defense, plugin systems, multi-tenant execution — but compiling to Wasm is not one by itself. A compiled module in a JavaScript host reaches the outside world only through its import object, so the host decides what it can touch; the default JS-host import object exposes the host's global object. Runtime `eval` / `new Function` strings are governed by the `dynamicCode` policy: only the default, `"deny"`, keeps them from running outside the module; `"evaluator"` runs them in a realm or Worker you supply (separate globals, not a security boundary); `"hostEval"` and `"native"` run them with the host's globals. See [Isolated JS-host eval](docs/js-host-eval-isolation.md).
 
 The open question the project is testing is whether direct AOT compilation can become a viable alternative to bundling a runtime for these workloads. That is not settled — it is what the conformance and benchmark work is investigating.
 
@@ -155,7 +155,8 @@ The imports a module needs depend on the compile target:
   (instance.exports as any).add(2, 3); // → 5
   ```
 
-  Dynamic `eval` / `new Function` can instead use an isolated JS evaluator
+  Runtime `eval` / `new Function` strings throw `EvalError` by default
+  (`dynamicCode: "deny"`); they can instead use an isolated JS evaluator
   while the AOT Wasm instance stays in its original host. See
   [Isolated JS-host eval](docs/js-host-eval-isolation.md).
 - **Standalone mode** (`target: "standalone"`, also `target: "wasi"`) emits a
@@ -173,6 +174,24 @@ npm test
 pnpm run test:262
 pnpm dev
 ```
+
+### Exact Test262 selections
+
+The default Test262 runner discovers its maintained category list. For an
+auditable original-file cohort that includes a path outside that list, pass a
+newline-delimited canonical `test/...` manifest instead:
+
+```bash
+TEST262_EXACT_MANIFEST_FILE=scripts/test262-es2015-11778-manifest.txt pnpm run test:262
+```
+
+Exact manifests are validated against the provisioned Test262 corpus before a
+compiler build, then snapshotted so completion is checked against the original
+selection. They cannot be combined with `TEST262_PATH_FILTER` or
+`TEST262_PATH_FILTER_FILE`. The committed ES2015 manifest contains 11,778
+original paths, including 74 `intl402` paths omitted by default discovery; it
+is a selection/completeness input, not evidence that those paths pass at
+runtime.
 
 To independently cross-check compiler compatibility with test262.fyi's
 literal, unmodified harness assembler, initialize its optional data submodule

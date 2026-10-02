@@ -371,7 +371,7 @@ const VERDICTS = {
         quote: "Repeat a string using ECMAScript `String.prototype.repeat` count semantics.",
       },
       {
-        file: "src/ir/string-runtime.ts",
+        file: "src/ir/core/string-runtime.ts",
         quote: 'readonly negative: "range-error-or-backend-trap";',
       },
     ],
@@ -416,7 +416,7 @@ const VERDICTS = {
         quote: "Return one UTF-16 code unit as a string, or the empty string out of bounds.",
       },
       {
-        file: "src/ir/string-runtime.ts",
+        file: "src/ir/core/string-runtime.ts",
         quote: "ECMAScript ToIntegerOrInfinity after the caller has performed ToNumber.",
       },
     ],
@@ -429,7 +429,7 @@ const VERDICTS = {
       "representation choice.",
     evidence: [
       { file: path.join(DIALECT_DIR, "js.ts"), quote: "Return one UTF-16 code unit as f64, or NaN out of bounds." },
-      { file: "src/ir/string-runtime.ts", quote: "export function utf16CharCodeAt" },
+      { file: "src/ir/core/string-runtime.ts", quote: "export function utf16CharCodeAt" },
     ],
   },
 

@@ -138,7 +138,7 @@ interface PrototypeEdge {
  * assignment may cause a missed edge, never a wrong prototype identity.
  */
 function hasModuleBindingAssignment(ctx: CodegenContext, name: string): boolean {
-  const declaration = ctx.fnctorEscapeGate?.ctorDeclByName.get(name);
+  const declaration = ctx.fnctorEscapeGate?.ctorDeclByName.get(name) ?? singletonFunctionDeclaration(ctx, name);
   const sourceFile = declaration?.getSourceFile();
   if (sourceFile === undefined) return ctx.liveFuncBindingGlobals?.has(name) === true;
 
@@ -167,6 +167,26 @@ function hasModuleBindingAssignment(ctx: CodegenContext, name: string): boolean 
   };
   visit(sourceFile);
   return reassigned;
+}
+
+/**
+ * (#6684) The source declaration behind a function DECLARATION's cached value
+ * singleton (`__fn_closure_<name>`), when the escape gate did not record one.
+ *
+ * Under a runtime-eval consumer (any module containing `Function(…)`/`eval`,
+ * e.g. lodash-es's `template`) every top-level function binding is a #2931 live
+ * binding, so the bare `liveFuncBindingGlobals` fallback above rejected EVERY
+ * edge: `F.prototype` read dynamically answered `undefined` (lodash-es:
+ * `hasOwnProperty.call(lodash.prototype, name)` threw at module init). The
+ * singleton is the function object's own identity — replacing the binding
+ * later cannot make it name another function — so the source scan for a
+ * source-level reassignment is the right test here too. Only the singleton arm
+ * is widened; the mutable-module-global fallback keeps its conservative answer.
+ */
+function singletonFunctionDeclaration(ctx: CodegenContext, name: string): ts.FunctionDeclaration | undefined {
+  if (!ctx.funcClosureGlobals.has(name)) return undefined;
+  const handle = ctx.funcMap.get(name);
+  return handle === undefined ? undefined : ctx.sourceFunctionDeclarationByHandle.get(handle);
 }
 
 /** Return the canonical function-value global for an approved fnctor name. */

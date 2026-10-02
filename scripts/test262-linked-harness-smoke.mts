@@ -30,7 +30,7 @@ import type { HarnessProvider } from "../src/test262-harness-provider.js";
 import { buildHarnessProvider, compileHarnessLinkedBody } from "./compiler-bundle.mjs";
 import { compile } from "./compiler-bundle.mjs";
 import * as runtimeBundle from "./runtime-bundle.mjs";
-import { instantiateTest262Module } from "./test262-import-object.mjs";
+import { instantiateTest262Module, TEST262_DYNAMIC_CODE_POLICY } from "./test262-import-object.mjs";
 import { assembleLinkedHarness } from "../tests/test262-original-harness.js";
 import { parseMeta } from "../tests/test262-runner.js";
 
@@ -56,7 +56,9 @@ async function runVerdict(result: CompileResult): Promise<string> {
       .join("; ");
     return `compile_error: ${errors.slice(0, 120)}`;
   }
-  const importObj = runtimeBundle.buildImports(result.imports, { console }, result.stringPool);
+  const importObj = runtimeBundle.buildImports(result.imports, { console }, result.stringPool, {
+    dynamicCode: TEST262_DYNAMIC_CODE_POLICY,
+  });
   try {
     await instantiateTest262Module(result.binary, importObj, {
       linkedModules: result.linkedModules ?? [],

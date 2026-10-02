@@ -184,8 +184,10 @@ import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callabl
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
 import { finalizeStandaloneLinkReversePeer } from "./standalone-link-reverse-peer.js"; // (#5383 S17)
+import { importStandaloneLinkErrorCtorCells } from "./standalone-link-error-ctor-cells.js"; // (#6723 D4)
 import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
+import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
@@ -335,6 +337,7 @@ import { fillNativeGeneratorMethodDispatches } from "./generators-native-consume
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
+import { fillPromiseSpeciesOfClass } from "./promise-species-then.js"; // (#5197 r3)
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
 import { fillOwnShadowWrappers } from "./expressions/own-property-method-shadow.js";
 import { noteRetUnboxStats, retUnboxNumericFilterEnabled } from "./ret-unbox-abi.js"; // (#4406) return-ABI funnel census + the Phase-4 admission filter
@@ -392,6 +395,7 @@ import {
   unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillClassObjectExpandoArms, recordClassObjectExpandoCell } from "./class-object-expando.js"; // (#6651 C)
 import { fillArrayProtoSingleton, fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2; #6651 R1)
 import { prependNativeGeneratorResultPrototypeArm } from "./generators-native-protocol.js"; // (#6651 SG1)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
@@ -413,6 +417,8 @@ import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484
 import { unshiftRegExpAccessorGetArm } from "./regexp-accessor-get-arm.js"; // (#6651 B4) §22.2.6 accessor reads
 import { installRegExpLastIndexCarrierArms } from "./regexp-lastindex-carrier.js"; // (#6651 B6) lastIndex MOP
 import { unshiftDateCarrierMemberArms } from "./date-carrier-dynamic-member.js"; // (#6678) untyped Date members
+import { unshiftExternGetPromiseMemberArm } from "./promise-dynamic-member-read.js"; // (#6651 D5)
+import { noteUntypedRegExpDemand, unshiftUntypedRegExpReceiverArms } from "./regexp-untyped-receiver.js"; // (#6651 B10)
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import {
   noteNumberPrimitiveMethodDemand,
@@ -446,7 +452,13 @@ import {
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
 import { fillNumberToLocaleString, fillTaToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1)
 import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
-import { fillClassToPrimitive } from "./class-to-primitive.js";
+import { brandedI32ResultBoxIdx, fillClassToPrimitive } from "./class-to-primitive.js";
+import {
+  captureToPrimitiveDispatchFrame,
+  ensureToPrimitiveDispatchBoxing,
+  markToPrimitiveDispatchCall,
+  publishToPrimitiveMethodDispatcher,
+} from "./to-primitive-dispatch-presence.js";
 import {
   fixupExternConvertAny,
   fixupStructNewArgCounts,
@@ -457,6 +469,7 @@ import {
 import { emitInlineMathFunctions } from "./math-helpers.js";
 import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
+import { instrArraySharing } from "./call-arg-producers.js";
 import { repairCrossHierarchyOperands } from "./cross-hierarchy-operands.js"; // (#4157 park 6)
 import { validateFinalStructHierarchies } from "./struct-hierarchy-layout.js";
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
@@ -531,6 +544,7 @@ import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 import { zeroArgCallPadInstrs } from "./zero-arg-method-pad.js";
 import {
   buildIsUndefinedExternBody,
+  canonicalUndefinedExternInstrs,
   emitWrapperValueOfFunctions,
   ensureAnyFromExternHelper,
   ensureAnyHelpers,
@@ -721,6 +735,7 @@ import {
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
+import { readEnv } from "../env.js";
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -2896,7 +2911,7 @@ function planIrOverlay(
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW === "1") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW") === "1") {
       throw new Error("injected TypeMap failure");
     }
     identityMaps = irOverlayIdentity.buildIrOverlayIdentityMaps(
@@ -2936,7 +2951,7 @@ function planIrOverlay(
   // affected node kinds. Telemetry mode (`JS2WASM_LOG_IR_FALLBACKS=1`)
   // continues to enable the histogram log; the strict set additionally
   // forces collection.
-  const logFallbacks = process.env.JS2WASM_LOG_IR_FALLBACKS === "1" || STRICT_IR_REASONS.size > 0;
+  const logFallbacks = readEnv("JS2WASM_LOG_IR_FALLBACKS") === "1" || STRICT_IR_REASONS.size > 0;
   const collectFallbacks = ctx.irOutcomes !== undefined || logFallbacks;
   const preparationFailuresByUnitId = new Map<IrUnitId, IrPreparationFailure>();
   // (#2856) Host-extern claiming: mode gate + checker-backed ambient-global
@@ -3626,7 +3641,7 @@ function consumeIrOverlayReport(
     // `body-shape-rejected` units cannot be grouped into coherent fixes. The
     // `detail` field is populated by select.ts only under
     // JS2WASM_IR_SHAPE_DIAG=1, so this line is silent on the normal path.
-    if (process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+    if (readEnv("JS2WASM_IR_SHAPE_DIAG") === "1") {
       for (const fb of selection.fallbacks) {
         process.stderr.write(
           `[ir-fallback-unit] file=${sourceFile.fileName || "<source>"} name=${fb.name} reason=${fb.reason} arm=${fb.detail ?? "<none>"}\n`,
@@ -4010,7 +4025,7 @@ function compileMultiIrOverlaySource(
     planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, identityResolver, hostImportedFunctions, {
       experimentalIR: true,
       postLegacyPhysicalReservation: true,
-      irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+      irFirstEnvironment: readEnv("JS2WASM_IR_FIRST"),
     });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
@@ -5229,6 +5244,7 @@ export function generateModule(
     : undefined;
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = [ast.sourceFile];
+  importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
@@ -5485,7 +5501,7 @@ export function generateModule(
       });
       // JS2WASM_LIB_SCAN=checker forces the legacy checker-driven walk — the
       // A/B escape hatch for parity triage (#4218).
-      const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
+      const libIndex = readEnv("JS2WASM_LIB_SCAN") === "checker" ? undefined : buildLibDeclIndex(libSfs);
       for (const sf of libSfs) {
         collectExternDeclarations(ctx, sf, libRefs, libIndex);
         collectDeclaredGlobals(ctx, sf, ast.sourceFile, libIndex);
@@ -5735,6 +5751,7 @@ export function generateModule(
     // Off by default — programs without holes are byte-identical.
     scanForArrayHoles(ctx, ast.sourceFile);
     noteRegexPropertySource(ctx, ast.sourceFile); // (#6677) link the \p{…} table only if spellable
+    noteUntypedRegExpDemand(ctx, ast.sourceFile); // (#6651 B10)
 
     if (
       options?.experimentalIR &&
@@ -5835,7 +5852,7 @@ export function generateModule(
     // error is not swallowed by the shim's fallback catch into a silent
     // `undefined`. The ordinary IR overlay (`experimentalIR`) still runs.
     const irFirst =
-      !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST);
+      !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(readEnv("JS2WASM_IR_FIRST"));
     // (#3521 R2-T1) The R2 selector only runs on the IR-first route, so with it
     // off no per-unit withdrawal can exist. Record the source-level reason here,
     // where the decision is actually made — `irPlan` is still null at this point.
@@ -5995,7 +6012,7 @@ export function generateModule(
           fnctorArgumentProjectionRoute: {
             experimentalIR: true,
             postLegacyPhysicalReservation: true,
-            irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+            irFirstEnvironment: readEnv("JS2WASM_IR_FIRST"),
           },
         });
       const { classShapes, overrideMap } = plan;
@@ -6503,6 +6520,7 @@ export function generateModule(
     // dispatcher the thenable job invokes. Read-only over funcMap. No-op unless
     // the async scheduler's thenable substrate reserved it (standalone/wasi).
     fillPromiseThenableHelpers(ctx);
+    fillPromiseSpeciesOfClass(ctx); // (#5197 r3) Promise-rooted class objects, identity arms
 
     // (#3172) Fill the reserved `__setrec_field_{size,has,keys}` GetSetRecord
     // readers — one ref.test arm per closed struct carrying the field, bottom
@@ -6588,6 +6606,8 @@ export function generateModule(
     // one through `__iter_rec_proto`. No-op unless the module demanded it.
     unshiftExternGetIterRecArm(ctx);
     unshiftDateCarrierMemberArms(ctx); // (#6678) untyped Date members
+    unshiftExternGetPromiseMemberArm(ctx); // (#6651 D5) %Promise.prototype% members off a `$Promise`
+    unshiftUntypedRegExpReceiverArms(ctx); // (#6651 B10) untyped-RegExp proto reads
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
@@ -6911,6 +6931,7 @@ export function generateModule(
     // install the identity-guarded standalone view after all competing MOP
     // prefixes have been finalized.
     fillClassObjectNameArms(ctx);
+    fillClassObjectExpandoArms(ctx); // (#6651 C) module-scope `C.p = v` cells, seen by the dynamic MOP
 
     // (#5270 step 2) Fill the reserved `%Object.prototype%` carrier helper —
     // `__getPrototypeOf` bakes a `call` to it for a null-`$proto` ordinary
@@ -7036,10 +7057,12 @@ export function generateModule(
     profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    profilePhase("finalize/repair-struct-types", () => repairStructTypeMismatches(mod, ctx.errors));
+    // (#6759) Both repairs only touch leaf instructions: one sharing analysis serves both.
+    const leafRepairSharing = instrArraySharing(mod);
+    profilePhase("finalize/repair-struct-types", () => repairStructTypeMismatches(mod, ctx.errors, leafRepairSharing));
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
-    profilePhase("finalize/peephole", () => peepholeOptimize(mod));
+    profilePhase("finalize/peephole", () => peepholeOptimize(mod, leafRepairSharing));
 
     // (#3921) Allocation census — no-op unless JS2WASM_ALLOC_CENSUS=1. Placed
     // here because dead-type elimination has already remapped every `typeIdx`,
@@ -7051,6 +7074,7 @@ export function generateModule(
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     profilePhase("finalize/ir-inline", () => inlineUserFunctions(ctx));
+    profilePhase("finalize/function-sweep", () => sweepAfterInline(ctx)); // (#6768) inlined callees
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -7069,19 +7093,27 @@ export function generateModule(
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    profilePhase("finalize/cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod, ctx.errors));
+    // (#6759) These three repairs add no multi-parent or cross-function array (leaf
+    // edits, dead-code removal, fresh `else` arms), so one analysis serves them all.
+    const repairSharing = instrArraySharing(mod);
+    profilePhase("finalize/cross-hierarchy-operands", () =>
+      repairCrossHierarchyOperands(mod, ctx.errors, repairSharing),
+    );
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     reportModuleScale("before-stack-balance", mod);
-    profilePhase("finalize/stack-balance", () => stackBalance(mod, ctx.errors));
+    profilePhase("finalize/stack-balance", () => stackBalance(mod, ctx.errors, repairSharing));
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     drainStackBalanceTelemetry(ctx, ast.sourceFile.fileName);
 
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
-    profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
+    profilePhase("finalize/extern-convert-any", () =>
+      fixupExternConvertAny(ctx, repairSharing.shared.size === 0 ? repairSharing : undefined),
+    );
     // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
     // types. Nothing after this retypes a function or edits a body.
     promoteTrampolineTailCalls(ctx);
+    verifyFunctionSweep(mod); // #6768 no-op unless JS2WASM_FUNC_SWEEP_VERIFY=1
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
@@ -7125,7 +7157,7 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
   const severity: "error" | "warning" | null = ctx.strictNoHostImports
     ? "error"
     : // (#6686) audits the standalone deliverable, not the regime in a JS env
-      ctx.targetProfile.target === "standalone" && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+      ctx.targetProfile.target === "standalone" && readEnv("JS2WASM_STANDALONE_LEAK_SCAN") !== "0"
       ? "warning"
       : null;
   if (severity === null) return;
@@ -7237,7 +7269,7 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
  */
 function drainStackBalanceTelemetry(ctx: CodegenContext, fileLabel: string): void {
   const events = getFixupEvents();
-  if (process.env.JS2WASM_LOG_STACK_BALANCE === "1") {
+  if (readEnv("JS2WASM_LOG_STACK_BALANCE") === "1") {
     const counts = summarizeFixups(events);
     const hist = Object.entries(counts)
       .filter(([, n]) => n > 0)
@@ -7364,7 +7396,7 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
   const reservation = ctx.preparedWasiModuleInitGuard;
   const planted = reservation?.planted;
   if (planted) {
-    if (process.env.JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD === "1") {
+    if (readEnv("JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD") === "1") {
       // Anti-vacuity seam: hand the authentication below a genuinely unguarded
       // prepared body, so "fails closed" is a measured property.
       initFn.body = initFn.body.filter((instr) => instr !== planted.guard);
@@ -9189,6 +9221,7 @@ function toPrimitiveNeedsBoxing(ctx: CodegenContext, methodSuffix: string): bool
  */
 function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   const mod = ctx.mod;
+  ensureToPrimitiveDispatchBoxing(ctx);
   // (#4644) A `toString(hint)` / `valueOf(hint)` reached ONLY through
   // ToPrimitive needs the host `undefined` for its padded argument, and
   // nothing else in such a module necessarily imports it — `__get_undefined`
@@ -9219,14 +9252,14 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   }
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_toPrim_type");
 
-  const emitDispatchForMethod = (methodName: string, exportName: string) => {
+  const emitDispatchForMethod = (methodName: string, exportName: "__call_valueOf" | "__call_toString") => {
     type DispatchEntry =
       | {
           structName: string;
           typeIdx: number;
           mode: "standalone";
           funcIdx: number;
-          resultType: ValType;
+          resultType: ValType | undefined;
           /**
            * (#4644) Operands for the callee's params BEYOND `this`. ToPrimitive
            * invokes `toString`/`valueOf` with ZERO arguments, but the method may
@@ -9420,10 +9453,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       if (funcIdx !== undefined) {
         const funcDef = definedFuncAt(ctx, funcIdx);
         const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
-        const resultType: ValType =
-          funcType && funcType.kind === "func" && funcType.results.length > 0
-            ? funcType.results[0]!
-            : { kind: "externref" };
+        const resultType = funcType?.kind === "func" ? funcType.results[0] : { kind: "externref" as const };
         // (#4644) Pad the declared-but-unpassed params. A method whose extra
         // params we cannot supply a value for (a non-nullable GC ref) is
         // skipped entirely rather than emitted short — an arm that cannot be
@@ -9436,34 +9466,21 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
 
     if (entries.length === 0) return;
 
-    const funcIdx = ctx.numImportFuncs + mod.functions.length;
     const anyLocal = 1;
 
-    const boxResult = (resultType: ValType, instrs: Instr[]) => {
-      if (resultType.kind === "f64") {
+    const boxResult = (resultType: ValType | null | undefined, instrs: Instr[]) => {
+      if (resultType === null || resultType === undefined) {
+        // A completed void method returns undefined, never a dispatch miss.
+        instrs.push(...canonicalUndefinedExternInstrs(ctx));
+      } else if (brandedI32ResultBoxIdx(ctx, resultType) !== undefined) {
+        instrs.push({ op: "call", funcIdx: brandedI32ResultBoxIdx(ctx, resultType)! }); // (#6651 H1) not a number
+      } else if (resultType.kind === "f64" || resultType.kind === "i32" || resultType.kind === "i64") {
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
-        else {
-          instrs.push({ op: "drop" });
-          instrs.push({ op: "ref.null.extern" });
-        }
-      } else if (resultType.kind === "i32") {
-        instrs.push({ op: "f64.convert_i32_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
-        else {
-          instrs.push({ op: "drop" });
-          instrs.push({ op: "ref.null.extern" });
-        }
-      } else if (resultType.kind === "i64") {
-        // i64 (BigInt) — convert to f64 then box, or drop and return null
-        instrs.push({ op: "f64.convert_i64_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
-        else {
-          instrs.push({ op: "drop" });
-          instrs.push({ op: "ref.null.extern" });
-        }
+        if (boxIdx === undefined) throw new Error("ToPrimitive method result requires __box_number");
+        if (resultType.kind === "i32") instrs.push({ op: "f64.convert_i32_s" });
+        // Retain the legacy i64 numeric bridge; this does not certify BigInt branding.
+        if (resultType.kind === "i64") instrs.push({ op: "f64.convert_i64_s" });
+        instrs.push({ op: "call", funcIdx: boxIdx });
       } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
         instrs.push({ op: "extern.convert_any" });
       }
@@ -9476,6 +9493,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       const thenInstrs: Instr[] = [];
       if (entry.mode === "standalone") {
         thenInstrs.push(
+          ...markToPrimitiveDispatchCall(),
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           // (#4644) `this`, then one operand per DECLARED param — the callee's
@@ -9494,6 +9512,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         const ci = entry.closureInfo;
         const closureLocal = 2; // eqref scratch local
         thenInstrs.push(
+          ...markToPrimitiveDispatchCall(),
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
@@ -9522,11 +9541,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           { op: "ref.cast", typeIdx: ci.funcTypeIdx },
           { op: "call_ref", typeIdx: ci.funcTypeIdx },
         );
-        if (!ci.returnType) {
-          thenInstrs.push({ op: "ref.null.extern" });
-        } else {
-          boxResult(ci.returnType, thenInstrs);
-        }
+        boxResult(ci.returnType, thenInstrs);
       } else if (entry.mode === "callable-dynamic") {
         // (ES5 standalone lane) Untracked callable in a method field: read it,
         // confirm it is callable, and invoke it with `this` bound to the
@@ -9552,6 +9567,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "val" as const, type: { kind: "externref" as const } },
             then: [
+              ...markToPrimitiveDispatchCall(),
               // receiver (externref) — `this` for the call
               { op: "local.get", index: anyLocal },
               { op: "extern.convert_any" },
@@ -9574,6 +9590,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           const { closureTypeIdx, closureInfo } = fieldEntry.candidates[ci]!;
           // Body run when BOTH the struct cast and the funcref type match.
           const callInstrs: Instr[] = [
+            ...markToPrimitiveDispatchCall(),
             // self-param: the closure struct (cast is safe — struct ref.test passed)
             { op: "local.get", index: closureLocal },
             { op: "ref.cast", typeIdx: closureTypeIdx },
@@ -9582,11 +9599,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             { op: "ref.cast", typeIdx: closureInfo.funcTypeIdx },
             { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
           ];
-          if (!closureInfo.returnType) {
-            callInstrs.push({ op: "ref.null.extern" });
-          } else {
-            boxResult(closureInfo.returnType, callInstrs);
-          }
+          boxResult(closureInfo.returnType, callInstrs);
           // Guard 1: the stored closure must be (a subtype of) this candidate's
           // struct type. Guard 2: its funcref (field 0) must be this candidate's
           // func type — distinct methods can share a struct type but differ in
@@ -9626,6 +9639,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         // Closure field: extract closure, get funcref, call_ref
         const ci = entry.closureInfo;
         thenInstrs.push(
+          ...markToPrimitiveDispatchCall(),
           { op: "local.get", index: anyLocal },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           {
@@ -9648,13 +9662,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           { op: "ref.cast", typeIdx: ci.funcTypeIdx },
           { op: "call_ref", typeIdx: ci.funcTypeIdx },
         );
-        const retType = ci.returnType ?? { kind: "externref" as const };
-        if (!ci.returnType) {
-          // void — push null externref
-          thenInstrs.push({ op: "ref.null.extern" });
-        } else {
-          boxResult(retType, thenInstrs);
-        }
+        boxResult(ci.returnType, thenInstrs);
       }
 
       // (#5268 r3 R3-5c) OrdinaryToPrimitive step 5.b.i is `IsCallable(method)`:
@@ -9714,78 +9722,14 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       ];
     };
 
-    // Determine locals: param 0 (externref), local 1 (anyref), local 2 (eqref for closure)
-    // (#2679) locals 3/4 (__prev_this / __tp_result) thread `__current_this`.
     const hasClosureEntry = entries.some(
       (e) => e.mode === "closure" || e.mode === "closure-extern" || e.mode === "closure-eqref-multi",
     );
-    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
-    if (hasClosureEntry) {
-      locals.push({ name: "__closure", type: { kind: "eqref" } });
-    } else {
-      // Reserve slot 2 so the prevThis/result locals land at fixed indices 3/4
-      // regardless of the closure-entry branch.
-      locals.push({ name: "__closure_unused", type: { kind: "eqref" } });
-    }
-    // (#2679) `__call_valueOf`/`__call_toString` must invoke the method with the
-    // RECEIVER as `this` (§7.1.1.1 OrdinaryToPrimitive step 4.b `Call(method, O)`).
-    // A compiled `valueOf(){…this…}` reads `this` from `__current_this`; the
-    // dispatch below `call_ref`s the closure body WITHOUT installing it, so the
-    // body saw a stale `this`. Install `__current_this` = param 0 (the receiver)
-    // around the dispatch and restore it afterward (nesting-safe).
-    const prevThisLocal2 = 3;
-    const tpResultLocal = 4;
-    locals.push({ name: "__prev_this", type: { kind: "externref" } });
-    locals.push({ name: "__tp_result", type: { kind: "externref" } });
-    // (#2891) funcref scratch (index 5) for the guarded `closure-eqref-multi`
-    // dispatch — distinct method closures can share one closure STRUCT type but
-    // carry different FUNC types, so the candidate is discriminated by a guarded
-    // `ref.test` on the funcref (field 0), not by the struct type alone.
-    locals.push({ name: "__tp_funcref", type: { kind: "funcref" } });
+    // Preserve the original current-this acquisition before building the arms.
+    // The guarded multi-candidate arm retains its fixed funcref scratch slot.
     const eqrefFuncLocal = 5;
-    // (ES5 standalone lane) externref scratch (index 6) for the
-    // `callable-dynamic` arm — the untracked method value read out of the
-    // struct field, held across the `__typeof_function` guard and the
-    // `__call_accessor_get` invocation.
-    locals.push({ name: "__tp_callable", type: { kind: "externref" } });
-    const currentThisGlobalIdx2 = ensureCurrentThisGlobal(ctx);
-
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: anyLocal },
-      // save __current_this, install the receiver
-      { op: "global.get", index: currentThisGlobalIdx2 },
-      { op: "local.set", index: prevThisLocal2 },
-      { op: "local.get", index: 0 },
-      { op: "global.set", index: currentThisGlobalIdx2 },
-      // dispatch (leaves result externref on stack) → capture
-      ...buildDispatch(0),
-      { op: "local.set", index: tpResultLocal },
-      // restore __current_this, return the captured result
-      { op: "local.get", index: prevThisLocal2 },
-      { op: "global.set", index: currentThisGlobalIdx2 },
-      { op: "local.get", index: tpResultLocal },
-    ];
-
-    mod.functions.push({
-      name: exportName,
-      typeIdx: dispatchTypeIdx,
-      locals,
-      body,
-      exported: true,
-    } as WasmFunction);
-
-    mod.exports.push({
-      name: exportName,
-      desc: { kind: "func", index: funcIdx },
-    });
-
-    // (#2638) Record the dispatcher funcIdx so `fillClassToPrimitive` can `call`
-    // it from the reserved `__class_to_primitive` driver. The host-side
-    // `_hostToPrimitive` loop reaches these via the export, not funcMap, so this
-    // is purely additive (the iterator dispatchers already use this convention).
-    ctx.funcMap.set(exportName, funcIdx);
+    const frame = captureToPrimitiveDispatchFrame(ctx, hasClosureEntry);
+    publishToPrimitiveMethodDispatcher(ctx, exportName, dispatchTypeIdx, frame, buildDispatch(0));
   };
 
   emitDispatchForMethod("toString", "__call_toString");
@@ -10134,6 +10078,7 @@ function registerModuleClassStaticAssignments(ctx: CodegenContext, sourceFiles: 
           init: [{ op: "ref.null.extern" }],
         });
         ctx.staticProps.set(fullName, globalIdx);
+        recordClassObjectExpandoCell(ctx, resolvedClass, propName); // (#6651 C) the dynamic MOP finds this cell
       }
     }
   }
@@ -10621,6 +10566,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = multiAst.sourceFiles;
+  importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
   const irAuthority = makeIrPlanningAuthority(multiAst.checker, irPlanningIdentityContext, options?.experimentalIR);
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
@@ -10776,7 +10722,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
           return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
         });
-        const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
+        const libIndex = readEnv("JS2WASM_LIB_SCAN") === "checker" ? undefined : buildLibDeclIndex(libSfs);
         for (const libSf of libSfs) {
           collectExternDeclarations(ctx, libSf, libRefs, libIndex);
           for (const sf of multiAst.sourceFiles) {
@@ -10869,7 +10815,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // field-shape promotion remains owned by the existing single-source path.
     let linkedNumericHost: NumericPropertyAnalysisHost | undefined;
     let linkedPriorNumericFunctions: ReadonlySet<string> | undefined;
-    if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+    if (ctx.standalone && readEnv("JS2WASM_NUMERIC_LOCALS") !== "0") {
       // (#4406 Phase 4) Both exclusions here too — assigning in only one of the
       // two lanes makes them disagree about which names are numeric.
       linkedNumericHost = {
@@ -10936,6 +10882,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       for (const sf of multiAst.sourceFiles) {
         scanForArrayHoles(ctx, sf);
         noteRegexPropertySource(ctx, sf); // (#6677)
+        noteUntypedRegExpDemand(ctx, sf); // (#6651 B10)
       }
     });
 
@@ -11292,6 +11239,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // after every source has contributed its closed structs and closures, so
     // their finalized ref.test ladders see the complete graph.
     fillPromiseThenableHelpers(ctx);
+    fillPromiseSpeciesOfClass(ctx); // (#5197 r3)
     fillSetRecFieldGetters(ctx);
 
     // (#3493) compileMulti shares the same property-access lowering as the
@@ -11354,6 +11302,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // body's PREFIX for the #4157 inline extractor.
     profilePhase("unshift-extern-get-iter-rec", () => unshiftExternGetIterRecArm(ctx));
     profilePhase("unshift-date-carrier-member", () => unshiftDateCarrierMemberArms(ctx)); // (#6678)
+    profilePhase("unshift-extern-get-promise-member", () => unshiftExternGetPromiseMemberArm(ctx)); // (#6651 D5)
+    profilePhase("unshift-untyped-regexp-receiver", () => unshiftUntypedRegExpReceiverArms(ctx)); // (#6651 B10)
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
@@ -11658,6 +11608,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4770) Multi-source parity for the dynamic class-constructor `name`
     // property view; see the single-source placement above.
     profilePhase("fill-class-object-name-arms", () => fillClassObjectNameArms(ctx));
+    fillClassObjectExpandoArms(ctx); // (#6651 C) module-scope `C.p = v` cells, seen by the dynamic MOP
 
     // (#5270 step 2) Multi-source parity for the `%Object.prototype%` carrier;
     // see the single-source placement above.
@@ -11801,10 +11752,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("eliminate-dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
-    profilePhase("repair-struct-type-mismatches", () => repairStructTypeMismatches(mod, ctx.errors));
+    // (#6759) Both repairs only touch leaf instructions: one sharing analysis serves both.
+    const leafRepairSharing = instrArraySharing(mod);
+    profilePhase("repair-struct-type-mismatches", () => repairStructTypeMismatches(mod, ctx.errors, leafRepairSharing));
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
-    profilePhase("peephole-optimize", () => peepholeOptimize(mod));
+    profilePhase("peephole-optimize", () => peepholeOptimize(mod, leafRepairSharing));
 
     // (#3921) Allocation census — no-op unless JS2WASM_ALLOC_CENSUS=1. Placed
     // here because dead-type elimination has already remapped every `typeIdx`,
@@ -11816,6 +11769,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     profilePhase("inline-user-functions", () => inlineUserFunctions(ctx));
+    profilePhase("function-sweep", () => sweepAfterInline(ctx)); // (#6768) inlined callees
 
     // Mirror the single-source ES5 Function `caller` finalizer.
     profilePhase("finalize-function-poison-pill-calls", () => finalizeFunctionPoisonPillCalls(ctx));
@@ -11832,10 +11786,13 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
     // position-guessing repairs inside stackBalance. See its own header.
-    profilePhase("repair-cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod, ctx.errors));
+    // (#6759) These three repairs add no multi-parent or cross-function array (leaf
+    // edits, dead-code removal, fresh `else` arms), so one analysis serves them all.
+    const repairSharing = instrArraySharing(mod);
+    profilePhase("repair-cross-hierarchy-operands", () => repairCrossHierarchyOperands(mod, ctx.errors, repairSharing));
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     reportModuleScale("before-stack-balance", mod);
-    profilePhase("stack-balance", () => stackBalance(mod, ctx.errors));
+    profilePhase("stack-balance", () => stackBalance(mod, ctx.errors, repairSharing));
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
     profilePhase("drain-stack-balance-telemetry", () => drainStackBalanceTelemetry(ctx, multiAst.entryFile.fileName));
 
@@ -11847,7 +11804,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // extern.convert_any ops, the second of which fails validation
     // ("found extern.convert_any of type externref" — externref is NOT a
     // subtype of anyref). Mirror the single-module pipeline at line 1053.
-    profilePhase("fixup-extern-convert-any", () => fixupExternConvertAny(ctx));
+    profilePhase("fixup-extern-convert-any", () =>
+      fixupExternConvertAny(ctx, repairSharing.shared.size === 0 ? repairSharing : undefined),
+    );
+    verifyFunctionSweep(mod); // #6768 no-op unless JS2WASM_FUNC_SWEEP_VERIFY=1
   } catch (e) {
     const failure = classifyIrFailure(e, "build");
     for (const sourceFile of multiAst.sourceFiles) {
@@ -11872,7 +11832,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // already inconsistent when codegen finished; one that is clean here but
   // rejected at emit was corrupted by a later pass. Inert unless set.
   profilePhase("report-out-of-frame-locals", () => {
-    if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    if (typeof process !== "undefined" && readEnv("JS2WASM_CHECK_FRAMES")) {
       reportOutOfFrameLocals(ctx, mod);
     }
   });
@@ -11935,7 +11895,7 @@ let frameStagePrev = 0;
 
 /** (#4134) Report the first pass boundary at which the breach count grows. */
 function frameStage(ctx: CodegenContext, label: string): void {
-  if (!process.env?.JS2WASM_FRAME_STAGES) return;
+  if (!readEnv("JS2WASM_FRAME_STAGES")) return;
   const n = countOutOfFrameLocals(ctx.mod);
   if (n !== frameStagePrev) {
     process.stderr.write(`[js2:frame-stage] after ${label}: ${frameStagePrev} -> ${n}\n`);
@@ -13193,9 +13153,12 @@ function typeHasObjLitAccessorProperty(tsType: ts.Type): boolean {
  * #2724 object-REST steering (see the note in `resolveWasmType`).
  */
 export function resolveWasmTypeForClosureReturn(ctx: CodegenContext, retType: ts.Type): ValType {
-  const symName = retType.getSymbol()?.name;
-  if ((symName === "__type" || symName === "__object") && typeHasObjLitAccessorProperty(retType)) {
-    return { kind: "externref" };
+  // (#6651 B8) Each union member too: `exec` overrides return `null | { get 0() {…} }`.
+  for (const member of retType.isUnion() ? retType.types : [retType]) {
+    const symName = member.getSymbol()?.name;
+    if ((symName === "__type" || symName === "__object") && typeHasObjLitAccessorProperty(member)) {
+      return { kind: "externref" };
+    }
   }
   return resolveWasmType(ctx, retType);
 }

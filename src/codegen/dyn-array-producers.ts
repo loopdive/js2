@@ -55,6 +55,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureNativeArrayFlat, isNativeFlatForm, NATIVE_FLAT_METHODS } from "./array-flat-native.js"; // (#2717)
 import { ensureNativeArraySlice, isNativeSliceForm, NATIVE_SLICE_METHODS } from "./array-slice-native.js"; // (#6683)
+import { ensureNativeArraySplice } from "./array-splice-native.js"; // (#6701)
 
 /**
  * Method names served by {@link ensureNativeArrayProducer} — the single source
@@ -65,6 +66,7 @@ export const DYN_ARRAY_PRODUCER_METHODS: ReadonlySet<string> = new Set([
   "sort",
   ...NATIVE_FLAT_METHODS,
   ...NATIVE_SLICE_METHODS, // (#6683) slice / at / reverse
+  "splice", // (#6701)
 ]);
 
 /**
@@ -75,7 +77,7 @@ export const DYN_ARRAY_PRODUCER_METHODS: ReadonlySet<string> = new Set([
  * loses an answer it had.
  */
 export function isDynArrayProducerForm(methodName: string, arity: number): boolean {
-  if (methodName === "concat") return arity >= 0;
+  if (methodName === "concat" || methodName === "splice") return arity >= 0;
   if (methodName === "sort") return arity === 0 || arity === 1;
   if (NATIVE_SLICE_METHODS.has(methodName)) return isNativeSliceForm(methodName, arity); // (#6683)
   return isNativeFlatForm(methodName, arity); // (#2717) flat / flatMap
@@ -615,6 +617,7 @@ export function ensureNativeArrayProducer(ctx: CodegenContext, methodName: strin
   if (!DYN_ARRAY_PRODUCER_METHODS.has(methodName)) return undefined;
   if (NATIVE_FLAT_METHODS.has(methodName)) return ensureNativeArrayFlat(ctx, methodName); // (#2717)
   if (NATIVE_SLICE_METHODS.has(methodName)) return ensureNativeArraySlice(ctx, methodName); // (#6683)
+  if (methodName === "splice") return ensureNativeArraySplice(ctx); // (#6701)
   const helperName = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;

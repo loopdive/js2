@@ -1,0 +1,8 @@
+{
+  "files": {
+    "./entry.ts": "export function run() {\n  let trace = 0;\n  const object = {\n    get valueOf() {\n      trace = trace * 10 + 1;\n      return function () {\n        trace = trace * 10 + 2;\n        return 7;\n      };\n    },\n    get toString() {\n      throw 99;\n    },\n  };\n  return Number(object) * 100 + trace;\n}\n"
+  },
+  "export": "run",
+  "args": [],
+  "expected": 712
+}

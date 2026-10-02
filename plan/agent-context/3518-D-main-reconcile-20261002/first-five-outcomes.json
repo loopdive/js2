@@ -1,0 +1,266 @@
+{
+  "schema": "assignment-D-pinned-main-first-five-outcomes-v1",
+  "subject": {
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "productionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "evidenceLabel": "pinned-main evidence; not e473d92460af75ced29e9666e7e97cdde8df12ca"
+  },
+  "outcomes": [
+    {
+      "ordinal": 1,
+      "id": "candidate-source-ts7",
+      "exitCode": 1,
+      "signal": null,
+      "terminal": true,
+      "startedAt": "2026-10-02T04:08:56.481Z",
+      "endedAt": "2026-10-02T04:09:20.066Z",
+      "childPid": 56167,
+      "stdout": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/01-candidate-source-ts7.stdout.raw",
+        "bytes": 1721,
+        "sha256": "a39fac8b367063661c40c44e6894da3bd1123b4ebf11584b1be9a46c52cf4b04"
+      },
+      "stderr": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/01-candidate-source-ts7.stderr.raw",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "pinsPreserved": true,
+      "boundarySummary": null
+    },
+    {
+      "ordinal": 2,
+      "id": "candidate-scoped-tests-ts7",
+      "exitCode": 1,
+      "signal": null,
+      "terminal": true,
+      "startedAt": "2026-10-02T04:09:35.861Z",
+      "endedAt": "2026-10-02T04:09:53.744Z",
+      "childPid": 61526,
+      "stdout": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/02-candidate-scoped-tests-ts7.stdout.raw",
+        "bytes": 9734,
+        "sha256": "232183f5377fb3c39bb7c6ce5a7189b027a68e3fdd423a034de52d67187920c6"
+      },
+      "stderr": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/02-candidate-scoped-tests-ts7.stderr.raw",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "pinsPreserved": true,
+      "boundarySummary": null
+    },
+    {
+      "ordinal": 3,
+      "id": "candidate-format",
+      "exitCode": 0,
+      "signal": null,
+      "terminal": true,
+      "startedAt": "2026-10-02T04:09:59.992Z",
+      "endedAt": "2026-10-02T04:10:01.009Z",
+      "childPid": 64687,
+      "stdout": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/03-candidate-format.stdout.raw",
+        "bytes": 66,
+        "sha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+      },
+      "stderr": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/03-candidate-format.stderr.raw",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "pinsPreserved": true,
+      "boundarySummary": null
+    },
+    {
+      "ordinal": 4,
+      "id": "candidate-inventory",
+      "exitCode": 0,
+      "signal": null,
+      "terminal": true,
+      "startedAt": "2026-10-02T04:10:11.825Z",
+      "endedAt": "2026-10-02T04:10:16.540Z",
+      "childPid": 64778,
+      "stdout": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/04-candidate-inventory.stdout.raw",
+        "bytes": 10274171,
+        "sha256": "4983d9bf4e2656bf6fbdf111560e8739583b8688b944b77036ab3e1119a2ad90"
+      },
+      "stderr": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/04-candidate-inventory.stderr.raw",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "pinsPreserved": true,
+      "boundarySummary": {
+        "mode": "inventory",
+        "status": "inventory-valid-architecture-incomplete",
+        "counts": {
+          "total": 1783,
+          "tracked": 1783,
+          "untracked": 0,
+          "excludedNonModules": 2,
+          "byState": {
+            "unmigrated": 1481,
+            "clean": 297,
+            "compatibility-adapter": 5
+          },
+          "byLayer": {
+            "mixed-needs-split": 1395,
+            "backend-wasmgc": 57,
+            "frontend-ts": 6,
+            "legacy-linear": 24,
+            "wasm-emit": 9,
+            "ir-analysis": 11,
+            "ir-core": 29,
+            "ir-passes": 1,
+            "ir-program": 44,
+            "ir-runtime": 19,
+            "legacy-host": 55,
+            "runtime-contracts": 10,
+            "native-runtime": 106,
+            "foundation": 9,
+            "wasm-model": 3,
+            "wasm-physical": 5
+          },
+          "edgesBySyntax": {
+            "import": 13163,
+            "import-type": 202,
+            "export-from": 335,
+            "require": 4,
+            "dynamic-import": 10,
+            "export-star": 29
+          },
+          "edgesByType": {
+            "typeOnly": 3627,
+            "runtime": 10116
+          },
+          "resolvedEdgesBySyntax": {
+            "import": 13163,
+            "import-type": 202,
+            "export-from": 335,
+            "require": 4,
+            "dynamic-import": 6,
+            "export-star": 29
+          },
+          "resolvedEdgesByType": {
+            "typeOnly": 3627,
+            "runtime": 10112
+          }
+        },
+        "inventoryValid": true,
+        "architectureComplete": false,
+        "resolvedEdgeCount": 13739,
+        "unknownEdges": 4,
+        "unresolvedEdges": 0,
+        "forbiddenEdges": 13050,
+        "debt": 1486,
+        "errors": []
+      }
+    },
+    {
+      "ordinal": 5,
+      "id": "candidate-full-boundaries",
+      "exitCode": 1,
+      "signal": null,
+      "terminal": true,
+      "startedAt": "2026-10-02T04:10:36.761Z",
+      "endedAt": "2026-10-02T04:10:42.676Z",
+      "childPid": 64957,
+      "stdout": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/05-candidate-full-boundaries.stdout.raw",
+        "bytes": 10274170,
+        "sha256": "0baeb9cf8eaba9e49946d71b9ddf43ce0e25cfad26c024cc8c24aebc019990b2"
+      },
+      "stderr": {
+        "file": ".tmp/assignment-D-first-steps1-5-20261002/05-candidate-full-boundaries.stderr.raw",
+        "bytes": 85,
+        "sha256": "0db109391ebba28e05c3d748ba26964d453338801285fc953381e6b7f1ec8961"
+      },
+      "pinsPreserved": true,
+      "boundarySummary": {
+        "mode": "complete",
+        "status": "inventory-valid-architecture-incomplete",
+        "counts": {
+          "total": 1783,
+          "tracked": 1783,
+          "untracked": 0,
+          "excludedNonModules": 2,
+          "byState": {
+            "unmigrated": 1481,
+            "clean": 297,
+            "compatibility-adapter": 5
+          },
+          "byLayer": {
+            "mixed-needs-split": 1395,
+            "backend-wasmgc": 57,
+            "frontend-ts": 6,
+            "legacy-linear": 24,
+            "wasm-emit": 9,
+            "ir-analysis": 11,
+            "ir-core": 29,
+            "ir-passes": 1,
+            "ir-program": 44,
+            "ir-runtime": 19,
+            "legacy-host": 55,
+            "runtime-contracts": 10,
+            "native-runtime": 106,
+            "foundation": 9,
+            "wasm-model": 3,
+            "wasm-physical": 5
+          },
+          "edgesBySyntax": {
+            "import": 13163,
+            "import-type": 202,
+            "export-from": 335,
+            "require": 4,
+            "dynamic-import": 10,
+            "export-star": 29
+          },
+          "edgesByType": {
+            "typeOnly": 3627,
+            "runtime": 10116
+          },
+          "resolvedEdgesBySyntax": {
+            "import": 13163,
+            "import-type": 202,
+            "export-from": 335,
+            "require": 4,
+            "dynamic-import": 6,
+            "export-star": 29
+          },
+          "resolvedEdgesByType": {
+            "typeOnly": 3627,
+            "runtime": 10112
+          }
+        },
+        "inventoryValid": true,
+        "architectureComplete": false,
+        "resolvedEdgeCount": 13739,
+        "unknownEdges": 4,
+        "unresolvedEdges": 0,
+        "forbiddenEdges": 13050,
+        "debt": 1486,
+        "errors": []
+      }
+    }
+  ],
+  "diagnostics": {
+    "sourceTs7": 10,
+    "scopedTs7": 27,
+    "sourceExportErrors": 10,
+    "testTypingErrors": 17,
+    "additiveTestBufferSourceErrors": 1,
+    "unchangedHistoricalTestTypingErrors": 16,
+    "correctionNotRerun": true
+  },
+  "runtimeTests": "NOT_RUN; additive 8 NOT_RUN; baseline NOT_CREATED",
+  "slot": "returned after all five terminal; parent/B now owns execution",
+  "archiveVerification": {
+    "streams": 15,
+    "mismatches": 0,
+    "fixtureFiles": 141,
+    "firstResultsUnmodified": true
+  }
+}

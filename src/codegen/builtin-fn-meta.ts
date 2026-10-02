@@ -66,6 +66,8 @@ export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; lengt
   "Array.isArray": { name: "isArray", length: 1 },
   "Object.assign": { name: "assign", length: 2 },
   "Object.keys": { name: "keys", length: 1 },
+  // (#6684) One-slot closure ABI (see the builtin-value-read case); spec `.length` 2.
+  "Object.create": { name: "create", length: 2 },
   "Object.getOwnPropertyDescriptor": { name: "getOwnPropertyDescriptor", length: 2 },
   // (#2933) Fixed-arity Reflect.* namespace static-method value reads. Spec
   // `length` per §28.1 (receiver arg is optional and not counted).

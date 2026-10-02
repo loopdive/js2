@@ -1,0 +1,186 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-integration-20261001
+
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts (47 tests | 10 failed) 85563ms
+   ✓ connected program-data declaration seam > pins the complete 41-declaration, 40-public-name, ten-owner extraction 1ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/shared/contracts/ir-preparation-failure.ts 4ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/shared/contracts/ir-unit-inventory.ts 2ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/callable-bindings.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/analysis/contracts/allocations.ts 1ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/passes/contracts/gvn.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/controls.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/abi-lookup.ts 1ms
+   × connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/input-contracts.ts 4ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/prepared-contracts.ts 1ms
+     → src/ir/program/prepared-contracts.ts:PreparedIrProgram: expected 'fcc2e17fa5248895562819c3278c03370abda…' to be '83eff15645a15944208dbc46f9dd83bace7fc…' // Object.is equality
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/select.ts' 44ms
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/outcomes.ts' 2ms
+     → src/ir/outcomes.ts: expected [ Array(11) ] to have a length of 15 but got 11
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/identity.ts' 6ms
+     → src/ir/identity.ts: expected [ …(60) ] to have a length of 62 but got 60
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/program-callable-bindings.ts' 3ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/alloc-registry.ts' 2ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/passes/gvn-core.ts' 1ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/program-middleend-ir.ts' 1ms
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/prepared-component-dependencie…' 6ms
+     → src/ir/prepared-component-dependencies.ts: expected [ …(42) ] to have a length of 41 but got 42
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/program-input.ts' 1ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/program.ts' 3ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/select.ts' 22ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/outcomes.ts' 1ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/identity.ts' 4ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program-callable-bindings.ts' 2ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/alloc-registry.ts' 0ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/passes/gvn-core.ts' 1ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program-middleend-ir.ts' 1ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/prepared-component-dependencie…' 3ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program-input.ts' 0ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program.ts' 2ms
+   ✓ connected program-data declaration seam > exports exactly three input, one controls and ten prepared types, with no runtime authority 0ms
+   × connected program-data declaration seam > rejects a missing declaration in the declaration detector 1ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a changed readonly field in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a changed documentation in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a extra runtime authority in the declaration detector 1ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a malformed declaration in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   ✓ connected program-data declaration seam > detects a changed retained ownership algorithm 4ms
+   ✓ connected program-data declaration seam > actually compiles old/new identities, attachment joins and positive/negative type controls  85380ms
+   ✓ connected program-data declaration seam > rejects missing freeze while reconstructing the original runtime receipt 10ms
+   ✓ connected program-data declaration seam > rejects duplicate freeze while reconstructing the original runtime receipt 7ms
+   ✓ connected program-data declaration seam > rejects renamed function while reconstructing the original runtime receipt 7ms
+   ✓ connected program-data declaration seam > rejects changed body while reconstructing the original runtime receipt 5ms
+   ✓ connected program-data declaration seam > rejects reordered freezes while reconstructing the original runtime receipt 6ms
+   ✓ connected program-data declaration seam > rejects changed method while reconstructing the original runtime receipt 6ms
+   ✓ connected program-data declaration seam > rejects changed getter while reconstructing the original runtime receipt 5ms
+   ✓ connected program-data declaration seam > rejects changed private initialization while reconstructing the original runtime receipt 6ms
+   ✓ connected program-data declaration seam > rejects missing moved declaration while reconstructing the original runtime receipt 6ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/input-contracts.ts
+AssertionError: src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+
+Expected: "1dc69663b93552c16a75cac76486906801e697cb33dcc3cfe1201f1717824805"
+Received: "c173dceb8682751ebcace76047de8bfa678da7a11c6174ca1eec64659586b538"
+
+ ❯ verifyDestination tests/issue-3518-program-data-contract-seam.test.ts:357:73
+    355|   for (const row of expected) {
+    356|     const declaration = declarations.find((node) => node.name.text ===…
+    357|     expect(digest(declarationText(declaration)), `${path}:${row.name}`…
+       |                                                                         ^
+    358|   }
+    359|   return file;
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:668:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/prepared-contracts.ts
+AssertionError: src/ir/program/prepared-contracts.ts:PreparedIrProgram: expected 'fcc2e17fa5248895562819c3278c03370abda…' to be '83eff15645a15944208dbc46f9dd83bace7fc…' // Object.is equality
+
+Expected: "83eff15645a15944208dbc46f9dd83bace7fc7f74fca8fcfdf450568c6381392"
+Received: "fcc2e17fa5248895562819c3278c03370abdafb709b21d92166dfb368ffba964"
+
+ ❯ verifyDestination tests/issue-3518-program-data-contract-seam.test.ts:357:73
+    355|   for (const row of expected) {
+    356|     const declaration = declarations.find((node) => node.name.text ===…
+    357|     expect(digest(declarationText(declaration)), `${path}:${row.name}`…
+       |                                                                         ^
+    358|   }
+    359|   return file;
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:668:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/outcomes.ts'
+AssertionError: src/ir/outcomes.ts: expected [ Array(11) ] to have a length of 15 but got 11
+
+- Expected
++ Received
+
+- 15
++ 11
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:385:29
+    383|     retained = [...retained.slice(0, 9), ...errors, ...retained.slice(…
+    384|   }
+    385|   expect(retained, row.old).toHaveLength(row.retainedCount);
+       |                             ^
+    386|   expect(retained.filter(ts.isFunctionDeclaration), row.old).toHaveLen…
+    387|   const originalText = retained.map((node) => {
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:672:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/identity.ts'
+AssertionError: src/ir/identity.ts: expected [ …(60) ] to have a length of 62 but got 60
+
+- Expected
++ Received
+
+- 62
++ 60
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:385:29
+    383|     retained = [...retained.slice(0, 9), ...errors, ...retained.slice(…
+    384|   }
+    385|   expect(retained, row.old).toHaveLength(row.retainedCount);
+       |                             ^
+    386|   expect(retained.filter(ts.isFunctionDeclaration), row.old).toHaveLen…
+    387|   const originalText = retained.map((node) => {
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:672:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/prepared-component-dependencie…'
+AssertionError: src/ir/prepared-component-dependencies.ts: expected [ …(42) ] to have a length of 41 but got 42
+
+- Expected
++ Received
+
+- 41
++ 42
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:385:29
+    383|     retained = [...retained.slice(0, 9), ...errors, ...retained.slice(…
+    384|   }
+    385|   expect(retained, row.old).toHaveLength(row.retainedCount);
+       |                             ^
+    386|   expect(retained.filter(ts.isFunctionDeclaration), row.old).toHaveLen…
+    387|   const originalText = retained.map((node) => {
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:672:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a missing declaration in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a changed readonly field in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a changed documentation in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a extra runtime authority in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a malformed declaration in the declaration detector
+AssertionError: src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+
+Expected: "1dc69663b93552c16a75cac76486906801e697cb33dcc3cfe1201f1717824805"
+Received: "c173dceb8682751ebcace76047de8bfa678da7a11c6174ca1eec64659586b538"
+
+ ❯ verifyDestination tests/issue-3518-program-data-contract-seam.test.ts:357:73
+    355|   for (const row of expected) {
+    356|     const declaration = declarations.find((node) => node.name.text ===…
+    357|     expect(digest(declarationText(declaration)), `${path}:${row.name}`…
+       |                                                                         ^
+    358|   }
+    359|   return file;
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:729:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  10 failed | 37 passed (47)
+   Start at  05:08:54
+   Duration  85.91s (transform 27ms, setup 0ms, collect 198ms, tests 85.56s, environment 0ms, prepare 29ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/program-data-current.json

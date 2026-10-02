@@ -412,6 +412,9 @@ export function reserveOpaqueNativeGeneratorDispatch(
   if (externrefResultAbi) {
     ensureNativeDelegatedResultHelpers(ctx);
     if (methodName !== "throw") ensureNativeGeneratorNumericPayload(ctx);
+    // (#6651 A14) Those helpers reserve THIS dispatcher re-entrantly (the protocol closures' bodies).
+    const reentered = dispatches.get(methodName);
+    if (reentered) return reentered;
   }
   const params: ValType[] =
     methodName === "throw"

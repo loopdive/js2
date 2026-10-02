@@ -1,0 +1,40 @@
+{
+  "donorPath": "src/ir/program/runtime-abi-identity.ts",
+  "donorFullSha256": "a3d26cbc0e6b8f084825d83786c7c7b2e45714e2335c6c87b8b427c64476dd7f",
+  "bytes": 1242,
+  "links": [
+    "import { irCallableBindingKey } from \"../core/callable-bindings.js\";",
+    "import { createIrBindingId } from \"../../shared/contracts/identity-values.js\";",
+    "import type { IrBindingId } from \"../../shared/contracts/ir-identity.js\";",
+    "import type { IrSourceRecord, IrUnitInventory } from \"../../shared/contracts/ir-unit-inventory.js\";",
+    "import type { IrFuncRef } from \"../core/value-references.js\";",
+    "import { PreparedIrProgramInvariantError } from \"./errors.js\";"
+  ],
+  "exactFunctionOrder": [
+    "preparedIrRuntimeAbiAnchor",
+    "preparedIrRuntimeCallableBindingId"
+  ],
+  "functions": [
+    {
+      "name": "preparedIrRuntimeAbiAnchor",
+      "currentDoc": "/** Shared ABI identity is anchored at the entry source, never at a guessed requesting unit. */",
+      "currentText": "export function preparedIrRuntimeAbiAnchor(inventory: IrUnitInventory): IrSourceRecord {\n  const entries = inventory.sources.filter((source) => source.kind === \"entry\");\n  if (entries.length !== 1)\n    throw new PreparedIrProgramInvariantError(\"invalid-prepared-data\", \"runtime ABI requires one exact entry source\");\n  return entries[0]!;\n}",
+      "currentBodySha256": "1d5dcd0d069ebc6c5dbe0dfe8e4731b8cc779be45c5149157e66da318302c7cf",
+      "oldBodySha256": "1d5dcd0d069ebc6c5dbe0dfe8e4731b8cc779be45c5149157e66da318302c7cf",
+      "exactDocAndDeclarationEqual": true,
+      "currentFullText": "\n\n/** Shared ABI identity is anchored at the entry source, never at a guessed requesting unit. */\nexport function preparedIrRuntimeAbiAnchor(inventory: IrUnitInventory): IrSourceRecord {\n  const entries = inventory.sources.filter((source) => source.kind === \"entry\");\n  if (entries.length !== 1)\n    throw new PreparedIrProgramInvariantError(\"invalid-prepared-data\", \"runtime ABI requires one exact entry source\");\n  return entries[0]!;\n}",
+      "fullTextEqualsHistorical": true
+    },
+    {
+      "name": "preparedIrRuntimeCallableBindingId",
+      "currentDoc": "",
+      "currentText": "export function preparedIrRuntimeCallableBindingId(inventory: IrUnitInventory, ref: IrFuncRef): IrBindingId {\n  return createIrBindingId({\n    ownerId: preparedIrRuntimeAbiAnchor(inventory).id,\n    domain: \"callable\",\n    role: irCallableBindingKey(ref.binding),\n  });\n}",
+      "currentBodySha256": "cfb88735d5da35c5b25ffcb71dac940d32cbecfbbd8659cf32666859ba5649b3",
+      "oldBodySha256": "cfb88735d5da35c5b25ffcb71dac940d32cbecfbbd8659cf32666859ba5649b3",
+      "exactDocAndDeclarationEqual": true,
+      "currentFullText": "\n\nexport function preparedIrRuntimeCallableBindingId(inventory: IrUnitInventory, ref: IrFuncRef): IrBindingId {\n  return createIrBindingId({\n    ownerId: preparedIrRuntimeAbiAnchor(inventory).id,\n    domain: \"callable\",\n    role: irCallableBindingKey(ref.binding),\n  });\n}",
+      "fullTextEqualsHistorical": true
+    }
+  ],
+  "spec": "Authenticate entire live donor (links/docs/all declarations), check exact named forward in current program-runtime-abi, then splice these actual current full bodies into the historical target location. Never substitute static saved body or select first matching declaration."
+}

@@ -180,6 +180,7 @@ import type {
   LinearRefCellLowering,
   LinearVecLowering,
 } from "./handles.js";
+import { readEnv } from "../../env.js";
 
 /** One function routed to the direct path, and its stable bucketed reason. */
 export interface LinearIrRejection {
@@ -409,7 +410,7 @@ export interface LinearIrHelper {
 
 /** L4 gate: default-on, with an explicit `=0` direct-backend escape hatch. */
 export function linearIrEnabled(): boolean {
-  return typeof process === "undefined" || process.env?.JS2WASM_LINEAR_IR !== "0";
+  return readEnv("JS2WASM_LINEAR_IR") !== "0";
 }
 
 /**
@@ -1645,7 +1646,7 @@ export function compileLinearIrFunctions(
   }
   preparedCountedStringAppendReceipts = preparedCountedStringAppendReceiptCandidates;
 
-  if (typeof process !== "undefined" && process.env?.JS2WASM_LINEAR_IR_DEBUG === "1") {
+  if (readEnv("JS2WASM_LINEAR_IR_DEBUG") === "1") {
     console.error("[linear-ir] compiled:", JSON.stringify(compiled));
     console.error("[linear-ir] rejected:", JSON.stringify(result.rejected, null, 1));
   }
@@ -1759,7 +1760,7 @@ function authenticatePreparedLinearStringRepeatProvider(ctx: LinearContext, prep
     if (!prepared.reservationReceipt) {
       throw new Error("linear-ir: counted string.repeat has no exact early reservation receipt");
     }
-    if (typeof process !== "undefined" && process.env?.JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION === "1") {
+    if (readEnv("JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION") === "1") {
       const provider = prepared.reservationReceipt.reservation.provider;
       const originalName = provider.name;
       provider.name = `${originalName}$tampered`;

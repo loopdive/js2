@@ -26,7 +26,8 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { addFuncType } from "./registry/types.js";
+import { emitHostCarrierToStringTail, isHostArrayCarrier } from "./host-carrier-to-primitive.js"; // (#6788)
 import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
@@ -39,7 +40,8 @@ import {
   reserveTypedMemberGetF64DispatchLate,
   unpackedElemType,
 } from "./shared.js";
-import { emitStandaloneObjectToNumber, tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated
+import { tryRuntimeRefToNumber } from "./runtime-ref-number.js";
+import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
@@ -3586,6 +3588,9 @@ export function coerceType(
       return;
     }
     fctx.body.push({ op: "extern.convert_any" });
+    // (#6788) No in-Wasm `@@toPrimitive`/`toString` reduced the carrier above;
+    // a string-hint consumer needs its ToString, not the object itself.
+    if (toPrimitiveHint === "string" && emitHostCarrierToStringTail(ctx, fctx, typeIdx)) return;
     // Vec structs (arrays) need Symbol.iterator to be iterable by JS APIs (#854).
     // After extern.convert_any, call __make_iterable to attach Symbol.iterator via sidecar.
     // Skip i32_byte vec structs (ArrayBuffer/DataView backing) — neither is
@@ -3598,13 +3603,7 @@ export function coerceType(
     // JS boundary exposes the identity-cached live array view. Materializing a
     // detached JS array merely because an internal type widens to externref
     // would make the embedder a semantic provider again and lose ownership.
-    if (
-      !ctx.standalone &&
-      !ctx.wasi &&
-      ctx.targetProfile.semanticProviders !== "native-first" &&
-      getArrTypeIdxFromVec(ctx, typeIdx) >= 0 &&
-      ctx.vecTypeMap.get("i32_byte") !== typeIdx
-    ) {
+    if (isHostArrayCarrier(ctx, typeIdx)) {
       const makeIterIdx = ensureLateImport(ctx, "__make_iterable", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (makeIterIdx !== undefined) {
         flushLateImportShifts(ctx, fctx);
@@ -3811,42 +3810,7 @@ export function coerceType(
   // Re-entrancy guard: prevent infinite recursion when valueOf itself returns a struct.
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "f64") {
     const typeIdx = (from as { typeIdx: number }).typeIdx;
-    if (
-      ctx.nativeStrings &&
-      (typeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && typeIdx === ctx.nativeStrTypeIdx))
-    ) {
-      let strToNumberIdx = ctx.funcMap.get("__str_to_number");
-      if (strToNumberIdx === undefined) {
-        addUnionImports(ctx);
-        strToNumberIdx = ctx.funcMap.get("__str_to_number");
-      }
-      if (strToNumberIdx !== undefined) {
-        fctx.body.push({ op: "extern.convert_any" });
-        fctx.body.push({ op: "call", funcIdx: strToNumberIdx });
-        return;
-      }
-      addUnionImports(ctx);
-      const unboxIdx = ctx.funcMap.get("__unbox_number");
-      if (unboxIdx !== undefined) {
-        fctx.body.push({ op: "extern.convert_any" });
-        fctx.body.push({ op: "call", funcIdx: unboxIdx });
-        return;
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "f64.const", value: NaN });
-      return;
-    }
-    // The runtime's open `$Object` carrier is intentionally absent from the
-    // nominal type-name map below, but it remains an ordinary ECMAScript
-    // object. Route only this exact standalone carrier through the native
-    // ToPrimitive/ToNumber helpers before the re-entrancy bookkeeping so a
-    // provider decline leaves both the value stack and guard state untouched.
-    if (
-      typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx &&
-      emitStandaloneObjectToNumber(ctx, fctx, toPrimitiveHint ?? "number")
-    ) {
-      return;
-    }
+    if (tryRuntimeRefToNumber(ctx, fctx, typeIdx, toPrimitiveHint)) return;
     const wasInsideValueOf = (ctx as any).__insideValueOfCoercion ?? false;
     if (wasInsideValueOf) {
       // Already inside a valueOf coercion — don't recurse, return NaN

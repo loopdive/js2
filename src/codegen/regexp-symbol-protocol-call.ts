@@ -68,6 +68,8 @@ import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-r
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+// (#6651 B9) Invoke through a real [[Get]] when the program replaces the member.
+import { emitRegExpProtoSymbolCheckedApply, replacedRegExpProtoSymbolGet } from "./regexp-proto-symbol-invoke.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -238,6 +240,8 @@ export function emitRegExpSymbolProtocolApply(
   if (rxType === null) return undefined;
   if (rxType.kind !== "externref") coerceType(ctx, fctx, rxType, EXTERNREF);
   fctx.body.push({ op: "local.set", index: rxLocal });
+  // (#6651 B9) A replaced member: a real [[Get]] before the arguments, not the singleton.
+  const replaced = replacedRegExpProtoSymbolGet(ctx, fctx, regexExpr, rxLocal, symbolId);
 
   // «S» — passed RAW. §22.2.6.8/.12 step 3 does the `ToString`, inside the
   // method body, exactly once (`coerce-string` passes an object whose
@@ -253,6 +257,9 @@ export function emitRegExpSymbolProtocolApply(
     fctx.body.push({ op: "call", funcIdx: objVecPush });
   }
 
+  if (replaced !== undefined) {
+    return emitRegExpProtoSymbolCheckedApply(ctx, fctx, replaced.fLocal, rxLocal, argsLocal, replaced.name);
+  }
   fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, resolved.closure));
   fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "local.get", index: rxLocal });

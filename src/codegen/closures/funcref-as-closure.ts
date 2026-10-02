@@ -42,12 +42,7 @@ import {
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
-
-function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration is ts.FunctionDeclaration {
-  if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
-  const first = declaration.parameters[0];
-  return first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
-}
+import { hasExplicitThisParameter } from "./func-value-callable-signature.js";
 
 /**
  * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the

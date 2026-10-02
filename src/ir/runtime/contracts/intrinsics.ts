@@ -55,8 +55,8 @@ export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"] 
 /** Feature rows mirror the number-boundary intrinsic IDs 1:1. */
 export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.number.box", "js.number.unbox"] as const);
 
-/** (#3526 F1-S2) The boolean-boundary feature row, 1:1 with its one ID. */
-export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"] as const);
+/** Boolean carrier features mirror the semantic intrinsic IDs. */
+export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box", "js.boolean.unbox"] as const);
 
 /** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */
 export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);

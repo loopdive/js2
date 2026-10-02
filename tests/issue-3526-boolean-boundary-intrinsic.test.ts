@@ -228,8 +228,8 @@ async function instantiate(result: CompileResult): Promise<Record<string, (n: nu
 }
 
 describe("#3526 F1-S2 boolean-boundary contract", () => {
-  it("adds exactly ONE versioned ID with a 1:1 feature row and the exact carrier ABI", () => {
-    expect(BOOLEAN_BOUNDARY_INTRINSIC_IDS).toEqual(["js.boolean.box"]);
+  it("retains the boxing ABI alongside explicit Boolean extraction", () => {
+    expect(BOOLEAN_BOUNDARY_INTRINSIC_IDS).toEqual(["js.boolean.box", "js.boolean.unbox"]);
     expect([...BOOLEAN_BOUNDARY_RUNTIME_FEATURES]).toEqual([...BOOLEAN_BOUNDARY_INTRINSIC_IDS]);
     expect(INTRINSIC_DEFINITIONS["js.boolean.box"].feature).toBe("js.boolean.box");
     expect(INTRINSIC_DEFINITIONS["js.boolean.box"].signature).toBe(I32_TO_EXTERNREF_INTRINSIC_SIGNATURE);
@@ -237,12 +237,11 @@ describe("#3526 F1-S2 boolean-boundary contract", () => {
     expect(I32_TO_EXTERNREF_INTRINSIC_SIGNATURE.params).toEqual([I32]);
     expect(I32_TO_EXTERNREF_INTRINSIC_SIGNATURE.result).toEqual(EXTERNREF);
 
-    // A SIBLING of the number family, never a widening of it. The one-armed
-    // shape is deliberate: `__unbox_boolean` has no IR producer.
+    // Boolean extraction remains a separate family from numeric conversion.
     expect(NUMBER_BOUNDARY_INTRINSIC_IDS).toEqual(["js.number.box", "js.number.unbox"]);
     expect([...NUMBER_BOUNDARY_RUNTIME_FEATURES]).toEqual([...NUMBER_BOUNDARY_INTRINSIC_IDS]);
     expect([...(NUMBER_BOUNDARY_INTRINSIC_IDS as readonly string[])]).not.toContain("js.boolean.box");
-    expect(INTRINSIC_DEFINITIONS).not.toHaveProperty("js.boolean.unbox");
+    expect(INTRINSIC_DEFINITIONS["js.boolean.unbox"].signature.result).toEqual(irVal({ kind: "i32", boolean: true }));
   });
 
   it("keeps ONE central catalogue, and the async projection excludes the row BY ID", () => {
@@ -479,6 +478,8 @@ describe("#3526 F1-S2 host-lane parity", () => {
       "__box_number",
       "__box_boolean",
       "__get_undefined",
+      // c111f2f032 (#5357): the probe's any-value === true comparison uses strict host equality.
+      "__host_eq",
     ]);
     expect(result.wat).toContain("__box_boolean");
 

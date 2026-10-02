@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { readArgumentVectorObjectSource } from "./helpers/argument-vector-source-composition.js";
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -134,7 +135,7 @@ function between(source: string, first: string, last: string): string {
   if (start < 0 || end < start) throw new Error(`missing live donor boundary: ${first}`);
   return source.slice(start, end);
 }
-const liveObject = readFileSync(new URL("../src/codegen/object-runtime.ts", import.meta.url), "utf8");
+const liveObject = readArgumentVectorObjectSource();
 const liveLinear = readFileSync(new URL("../src/codegen/linear-type-reservations.ts", import.meta.url), "utf8");
 const liveLayout = between(liveObject, "  // $ObjVec backing array:", "  // (#1100/#1355)");
 const liveHelpers = between(liveObject, "  // Canonical ObjVec bodies,", "  // ── __hasOwnProperty");

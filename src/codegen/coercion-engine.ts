@@ -58,6 +58,7 @@ import {
   registerEnsureExternrefToStringProvider,
 } from "./shared.js";
 import { coerceType, tryStructToString } from "./type-coercion.js";
+import { symbolWrapperToStringThrowArm } from "./symbol-to-primitive-arms.js"; // (#6651 H1)
 
 /**
  * The three coercion modes the backend dispatches over. Derived once from the
@@ -651,10 +652,14 @@ export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: F
     buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", { flush: fctx });
   const inputThrow = throwSym();
   const primitiveThrow = throwSym();
+  const wrapperThrow = throwSym();
   flushLateImportShifts(ctx, fctx);
   const toStr = getExternrefToStringProvider(ctx)!;
   const toPrim = getToPrimitiveProvider(ctx)!;
   const sym = ctx.symbolTypeIdx;
+  // (#6651 H1) `Object(sym)`: the intrinsic @@toPrimitive answers the Symbol.
+  const L_ENTRY = 2;
+  const wrapperArm = symbolWrapperToStringThrowArm(ctx, L_ENTRY, wrapperThrow);
   const body: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "ref.is_null" },
@@ -667,6 +672,7 @@ export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: F
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: sym },
     { op: "if", blockType: { kind: "empty" }, then: inputThrow },
+    ...wrapperArm,
     { op: "local.get", index: 0 },
     ...stringConstantExternrefInstrs(ctx, "string"),
     { op: "call", funcIdx: toPrim },
@@ -683,7 +689,12 @@ export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: F
   pushDefinedFunc(ctx, funcIdx, {
     name: NAME,
     typeIdx,
-    locals: [{ name: "prim", type: { kind: "externref" } }],
+    locals: [
+      { name: "prim", type: { kind: "externref" } },
+      ...(wrapperArm.length === 0
+        ? []
+        : [{ name: "entry", type: { kind: "ref_null", typeIdx: ctx.objectRuntimeTypes!.propEntryTypeIdx } } as const]),
+    ],
     body,
     exported: false,
   });

@@ -45,7 +45,7 @@ export interface NativeVectorHelperReservation {
 // exclusively owned by the caller's PhysicalModuleReservations transaction.
 const typeOwners = new WeakMap<
   NativeVectorTypeReservations,
-  { transaction: PhysicalModuleReservations; plan: NativeVectorResourcePlan }
+  { transaction: PhysicalModuleReservations; plan: NativeVectorResourcePlan; snapshot: NativeVectorResourcePlan }
 >();
 const helperOwners = new WeakMap<
   NativeVectorHelperReservation,
@@ -138,8 +138,26 @@ export function reserveNativeVectorTypes(
     });
   });
   const result = Object.freeze({ ...(base ? { base } : {}), layouts: Object.freeze(layouts) });
-  typeOwners.set(result, { transaction, plan });
+  typeOwners.set(result, { transaction, plan, snapshot: structuredClone(plan) });
   return result;
+}
+
+/** Read-only producer/ledger check before another owner uses these physical carriers. */
+export function requireNativeVectorTypeReservations(
+  transaction: PhysicalModuleReservations,
+  types: NativeVectorTypeReservations,
+  expectedPlan: NativeVectorResourcePlan,
+): NativeVectorTypeReservations {
+  const owner = typeOwners.get(types);
+  if (!owner || owner.plan !== expectedPlan) fail("foreign or substituted vector plan");
+  validateTypes(types, transaction);
+  equal(owner.plan, owner.snapshot, "stale vector resource plan");
+  for (const token of [types.base, ...types.layouts.flatMap((row) => [row.array, row.carrier])]) {
+    if (!token) continue;
+    if (transaction.state === "reserving") transaction.assertTypeReservation(token);
+    else if (transaction.physicalIndex(token) !== token.typeIndex) fail("changed vector type coordinate");
+  }
+  return types;
 }
 
 export function resolveNativeVectorForElement(

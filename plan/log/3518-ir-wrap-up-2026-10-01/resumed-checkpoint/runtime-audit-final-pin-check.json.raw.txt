@@ -1,0 +1,8 @@
+{
+  "productionPopulation": 27,
+  "rawDrift": [],
+  "writerReceiptAuditPin": "5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5",
+  "writerReceiptFinalPin": "5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5",
+  "writerChangedSinceAudit": false,
+  "findingsSha256": "b8486e84cf53e3e45752d272efb632c1ed44867db32ae96c1a4b71b600f2e52e"
+}

@@ -1,0 +1,179 @@
+{
+  "schema": "assignment-D-second-pass-receipts-v1",
+  "recordedAt": "2026-10-02T04:22:58.849Z",
+  "evidence": "pinned main 2bfe3eddf84d4d27f471eddb91e441709b7f6eff; no e473 import",
+  "checks": [
+    {
+      "id": "canonical-source-ts7",
+      "handle": 46562,
+      "terminal": true,
+      "exitCode": 0,
+      "command": "node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json"
+    },
+    {
+      "id": "full13-scoped-ts7",
+      "handle": 76057,
+      "terminal": true,
+      "exitCode": 1,
+      "command": "node node_modules/typescript7/lib/tsc.js --noEmit -p .tmp/assignment-D/tsconfig.tests.json",
+      "diagnostics": 16,
+      "sourceDiagnostics": 0,
+      "additiveDiagnostics": 0,
+      "historicalDiagnosticsMatchFirstByteForByte": true
+    },
+    {
+      "id": "runtime-step6",
+      "handle": 98019,
+      "terminal": true,
+      "exitCode": 0,
+      "declared": 9,
+      "actualTests": 9,
+      "passed": 9,
+      "failed": 0,
+      "json": ".tmp/assignment-D-runtime-20261002/06-candidate-issue-6651-d5-promise-dynamic-then.json"
+    }
+  ],
+  "pins": {
+    "stagedFirstPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "workingCorrectedPatchSha256": "65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79",
+    "sourceSha256": "2d4eec2bf3a6ae4a6be1093314789bc2ad9d5323591021227fb172b1c86e055f",
+    "additiveSha256": "9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387",
+    "full13ConfigSha256": "fef58df43a183e2f30d9210acef4db8ca04cb140e261cd1e18869d239c99b7cb",
+    "fixtures": 141,
+    "fixtureMismatches": []
+  },
+  "historical12": {
+    "status": "NOT_RUN",
+    "configSha256": "76ac638f55278f136a3f6513b239a35cee7fb12080ce13aa95c635e4646c7c7a",
+    "baselineConfigSha256": "76ac638f55278f136a3f6513b239a35cee7fb12080ce13aa95c635e4646c7c7a",
+    "tests": [
+      {
+        "path": "tests/issue-6651-d5-promise-dynamic-then.test.ts",
+        "declaredControls": 9,
+        "sourceCountFormula": "9 direct it declarations",
+        "additive": false,
+        "sha256": "a4bffb45a38666c0b3f3afc73fb89edf1baa14caaa6718d6f577e2fa22861316",
+        "candidateSha256": "a4bffb45a38666c0b3f3afc73fb89edf1baa14caaa6718d6f577e2fa22861316",
+        "baselineSha256": "a4bffb45a38666c0b3f3afc73fb89edf1baa14caaa6718d6f577e2fa22861316"
+      },
+      {
+        "path": "tests/issue-5197-r3-promise.test.ts",
+        "declaredControls": 21,
+        "sourceCountFormula": "21 literal PROBES rows, one it per row",
+        "additive": false,
+        "sha256": "bc9be31ba3c17d149afa578cc00ba9b58ca0fb438da05396ec324c1305862c7a",
+        "candidateSha256": "bc9be31ba3c17d149afa578cc00ba9b58ca0fb438da05396ec324c1305862c7a",
+        "baselineSha256": "bc9be31ba3c17d149afa578cc00ba9b58ca0fb438da05396ec324c1305862c7a"
+      },
+      {
+        "path": "tests/issue-5197-promise-observable-combinator-r3-2.test.ts",
+        "declaredControls": 13,
+        "sourceCountFormula": "13 direct it declarations",
+        "additive": false,
+        "sha256": "223af80a8f6cbf59ed7a87f7c1187095b81f7b1c8f64b14637369bdf8888182e",
+        "candidateSha256": "223af80a8f6cbf59ed7a87f7c1187095b81f7b1c8f64b14637369bdf8888182e",
+        "baselineSha256": "223af80a8f6cbf59ed7a87f7c1187095b81f7b1c8f64b14637369bdf8888182e"
+      },
+      {
+        "path": "tests/issue-3518-promise-getter-capture.test.ts",
+        "declaredControls": 14,
+        "sourceCountFormula": "7 it declarations x describe.each([false,true])",
+        "additive": false,
+        "sha256": "63d8e92868efba1f7f0b7eee96645b295a59c71125f046c241cc0637e49d6f1d",
+        "candidateSha256": "63d8e92868efba1f7f0b7eee96645b295a59c71125f046c241cc0637e49d6f1d",
+        "baselineSha256": "63d8e92868efba1f7f0b7eee96645b295a59c71125f046c241cc0637e49d6f1d"
+      },
+      {
+        "path": "tests/issue-6651-promise-combinator-drive.test.ts",
+        "declaredControls": 10,
+        "sourceCountFormula": "10 direct it declarations",
+        "additive": false,
+        "sha256": "d31c4127739f3ee3c733cb9d58914ce6f68ff4bae6d524332d68b3b33ef96d71",
+        "candidateSha256": "d31c4127739f3ee3c733cb9d58914ce6f68ff4bae6d524332d68b3b33ef96d71",
+        "baselineSha256": "d31c4127739f3ee3c733cb9d58914ce6f68ff4bae6d524332d68b3b33ef96d71"
+      },
+      {
+        "path": "tests/issue-6651-promise-custom-combinator.test.ts",
+        "declaredControls": 8,
+        "sourceCountFormula": "8 direct it declarations",
+        "additive": false,
+        "sha256": "4374ed045e70ede9ac6312b6d6720e98dc080753c913e38abac5bb969a5ca175",
+        "candidateSha256": "4374ed045e70ede9ac6312b6d6720e98dc080753c913e38abac5bb969a5ca175",
+        "baselineSha256": "4374ed045e70ede9ac6312b6d6720e98dc080753c913e38abac5bb969a5ca175"
+      },
+      {
+        "path": "tests/issue-6651-d3-class-receiver-combinator.test.ts",
+        "declaredControls": 12,
+        "sourceCountFormula": "8 direct + 4 methods x 1 it",
+        "additive": false,
+        "sha256": "a78814ff82b3b07d93fd95cf9071e7735819cc9c555ecb89a91a65346a13d20d",
+        "candidateSha256": "a78814ff82b3b07d93fd95cf9071e7735819cc9c555ecb89a91a65346a13d20d",
+        "baselineSha256": "a78814ff82b3b07d93fd95cf9071e7735819cc9c555ecb89a91a65346a13d20d"
+      },
+      {
+        "path": "tests/issue-6651-d4-promise-subclass.test.ts",
+        "declaredControls": 12,
+        "sourceCountFormula": "8 direct + 4 literal label/call rows x 1 it",
+        "additive": false,
+        "sha256": "e10504dfe639eaf53e18381a4a57bbc017de24d2b442e7a5ad903b6665c2a2c3",
+        "candidateSha256": "e10504dfe639eaf53e18381a4a57bbc017de24d2b442e7a5ad903b6665c2a2c3",
+        "baselineSha256": "e10504dfe639eaf53e18381a4a57bbc017de24d2b442e7a5ad903b6665c2a2c3"
+      },
+      {
+        "path": "tests/issue-2918-promise-then-funcidx-shift.test.ts",
+        "declaredControls": 4,
+        "sourceCountFormula": "4 direct it declarations",
+        "additive": false,
+        "sha256": "373829785990baa97c778a4800e8026dd5adb0690735a94b8012d7949129e300",
+        "candidateSha256": "373829785990baa97c778a4800e8026dd5adb0690735a94b8012d7949129e300",
+        "baselineSha256": "373829785990baa97c778a4800e8026dd5adb0690735a94b8012d7949129e300"
+      },
+      {
+        "path": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+        "declaredControls": 33,
+        "sourceCountFormula": "9 direct + 2 missing paths + 9 edges + 3 invalid resolve handles + 3 mark handles + 3 emptyResult variants + 4 methods",
+        "additive": false,
+        "sha256": "2435faf193032711a3187ec3eb4339eef2e0a9e9e96851c42b5d824a4f8bab69",
+        "candidateSha256": "2435faf193032711a3187ec3eb4339eef2e0a9e9e96851c42b5d824a4f8bab69",
+        "baselineSha256": "2435faf193032711a3187ec3eb4339eef2e0a9e9e96851c42b5d824a4f8bab69"
+      },
+      {
+        "path": "tests/issue-3518-promise-earlier-main-port.test.ts",
+        "declaredControls": 216,
+        "sourceCountFormula": "1 pin + 3 records x (1 replay + 2 inverses x 3 outside-span controls + 1 wrong direction) + 28 spans x 2 inverses x 3 mutations + 4 direct tail controls + 3 receipt mutations + 8 dependencies x 2 controls",
+        "additive": false,
+        "sha256": "ddc7d98c8c83c61fa671942f0041d7ac81ef5454342445d8cce205e97bf2d046",
+        "candidateSha256": "ddc7d98c8c83c61fa671942f0041d7ac81ef5454342445d8cce205e97bf2d046",
+        "baselineSha256": "ddc7d98c8c83c61fa671942f0041d7ac81ef5454342445d8cce205e97bf2d046"
+      },
+      {
+        "path": "tests/issue-3518-promise-export-main-port.test.ts",
+        "declaredControls": 24,
+        "sourceCountFormula": "2 initial + 2 inverses x (3 span mutations + 3 outside-span controls) + 5 direct tail controls + 3 receipt mutations + 2 dependency controls",
+        "additive": false,
+        "sha256": "c3aed1e80b815ec15600e5faff0cf70133eb11ab5df1135334e4f860ec3f917d",
+        "candidateSha256": "c3aed1e80b815ec15600e5faff0cf70133eb11ab5df1135334e4f860ec3f917d",
+        "baselineSha256": "c3aed1e80b815ec15600e5faff0cf70133eb11ab5df1135334e4f860ec3f917d"
+      }
+    ]
+  },
+  "remainingRuntime": "steps 7–21 NOT_RUN",
+  "setupFailure": {
+    "terminal": true,
+    "exitCode": 1,
+    "command": "node .tmp/assignment-D/run-runtime-paired.mjs",
+    "failedPreflight": "git diff --name-only in exact-main baseline",
+    "actualGitPid": 76611,
+    "gitExitCode": 128,
+    "message": "Git LFS attempted .git/lfs/tmp/2807853797 write while checking unrelated website/public/acorn/acorn.wasm; sandbox operation not permitted. No step 7 child launched.",
+    "remedyProposal": "Use targeted byte comparisons against exact main/index for measured sources, configs, tests and fixtures to avoid unrelated LFS clean-filter writes; requires parent instruction to resume after infrastructure stop."
+  },
+  "slot": "RETURNED; no validation process remains active",
+  "holds": [
+    "historical12 TS7 pair unmeasured",
+    "remaining runtime manifest unmeasured",
+    "first full boundary failure remains retirement block",
+    "broader original regressions required before landing",
+    "no hooks/commit/push/newmain merge"
+  ]
+}

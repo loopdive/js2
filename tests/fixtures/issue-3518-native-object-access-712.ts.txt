@@ -1,0 +1,16 @@
+export function run() {
+  let trace = 0;
+  const object = {
+    get valueOf() {
+      trace = trace * 10 + 1;
+      return function () {
+        trace = trace * 10 + 2;
+        return 7;
+      };
+    },
+    get toString() {
+      throw 99;
+    },
+  };
+  return Number(object) * 100 + trace;
+}

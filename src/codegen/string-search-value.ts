@@ -48,6 +48,9 @@ import {
 import { compileStringIntegerArg, emitArgAsNativeString } from "./string-ops.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneStringSearchFunctionReplace } from "./regex-replace-fn.js";
+import { getWellKnownSymbolId } from "./literals.js";
+import { sourceWritesRegExpProtoSymbol } from "./regexp-proto-symbol-writes.js"; // (#6651 B9)
+import { emitRegExpCreateInvoke, tryInvokeReplacedOnSearchValue } from "./regexp-proto-symbol-invoke.js"; // (#6651 B9)
 
 /**
  * The well-known symbol each `String.prototype` search-value method consults
@@ -221,6 +224,28 @@ function stageCoercedOperands(
 }
 
 /**
+ * (#6651 B9) §22.1.3.11/.17 step 5 is `Invoke(rx, @@<m>, «S»)`. When the program
+ * replaces `RegExp.prototype[Symbol.<m>]`, the inline builtin body below is not
+ * that Invoke, so run it through a real [[Get]] (`regexp-proto-symbol-invoke.ts`).
+ * `undefined` = not replaced; the caller keeps the inline lowering.
+ */
+function tryInvokeReplacedProtocol(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  protocol: "match" | "search",
+  staged: NonNullable<ReturnType<typeof stageCoercedOperands>>,
+): ValType | null | undefined {
+  const symbolId = getWellKnownSymbolId(protocol);
+  if (symbolId === undefined || !sourceWritesRegExpProtoSymbol(expr, protocol)) return undefined;
+  return emitRegExpCreateInvoke(ctx, fctx, staged.regexpOverride.regexpLocal, symbolId, protocol, () => {
+    if (staged.inputOverride() === null) return false;
+    fctx.body.push({ op: "extern.convert_any" });
+    return true;
+  });
+}
+
+/**
  * Does this call take the plain-ToString path at all? Absent / definitely-
  * undefined arguments do (they build the EMPTY pattern per RegExpInitialize
  * step 1 — `"".search()` is 0, not a search for the text `"undefined"`); so does
@@ -249,9 +274,14 @@ export function tryCompileCoercedStringSearch(
   argExpr: ts.Expression | undefined,
   subjectOverride?: () => ValType | null,
 ): ValType | null | undefined {
+  // (#6651 B9) Step 2 on a RegExp argument whose @@search the program replaced.
+  const viaGet = tryInvokeReplacedOnSearchValue(ctx, fctx, subjExpr, argExpr, "search", subjectOverride);
+  if (viaGet !== undefined) return viaGet;
   if (!takesCoercedPath(ctx, argExpr, "search")) return undefined;
   const staged = stageCoercedOperands(ctx, fctx, subjExpr, argExpr, subjectOverride, "");
   if (staged === null) return null;
+  const invoked = tryInvokeReplacedProtocol(ctx, fctx, expr, "search", staged);
+  if (invoked !== undefined) return invoked;
   const emitted = emitRegexSearchCall(ctx, fctx, argExpr ?? expr, subjExpr, staged);
   if (emitted === null) return null;
   const i32Arr = regexI32ArrayType(ctx);
@@ -282,9 +312,13 @@ export function tryCompileCoercedStringMatch(
   argExpr: ts.Expression | undefined,
   subjectOverride?: () => ValType | null,
 ): ValType | null | undefined {
+  const viaGet = tryInvokeReplacedOnSearchValue(ctx, fctx, subjExpr, argExpr, "match", subjectOverride);
+  if (viaGet !== undefined) return viaGet;
   if (!takesCoercedPath(ctx, argExpr, "match")) return undefined;
   const staged = stageCoercedOperands(ctx, fctx, subjExpr, argExpr, subjectOverride, "");
   if (staged === null) return null;
+  const invoked = tryInvokeReplacedProtocol(ctx, fctx, expr, "match", staged);
+  if (invoked !== undefined) return invoked;
   return emitRegexExecArrayCall(ctx, fctx, argExpr ?? expr, subjExpr, staged);
 }
 
