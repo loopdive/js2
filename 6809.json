@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-intl-locale-parser",
   "requested_by": "ttraenkler/codex-intl-locale-parser",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-10-02T06:35:44Z",
-  "claimed_at": "2026-10-02T06:35:44Z",
-  "updated_at": "2026-10-02T06:35:44Z",
-  "write_id": "19136-868yzbbi",
-  "pr_scan": "ok"
+  "branch": "codex/6809-intl-locale-canonicalization",
+  "claimed_at": "2026-10-02T06:36:14Z",
+  "updated_at": "2026-10-02T06:36:14Z",
+  "write_id": "19582-0dxf0fqb"
 }
