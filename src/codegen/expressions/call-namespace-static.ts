@@ -78,13 +78,19 @@ import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "
 import { tryEmitLinkedStaticCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import {
   emitStandalonePromiseCombinator,
+  emitStandalonePromiseCombinatorRuntime,
+} from "../promises/promise-combinator-observable-protocol.js";
+import {
   emitStandalonePromiseCustomCapabilityCheck,
   emitStandalonePromiseCustomSettle,
-  emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
-  resolveF64VecArg,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
+import {
+  emitObservableStandalonePromiseCombinatorLiteral,
+  emitObservableStandalonePromiseCombinatorRuntime,
+  resolveF64VecArg,
+} from "../promises/promise-observable-combinators.js";
 import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
 import { tryEmitClassReceiverCombinatorCall } from "../promise-class-receiver-drive.js"; // (#6651 D3)
 import { emitClassReceiverSettle, tryEmitClassReceiverSettleCall } from "../promise-class-receiver-settle.js"; // (#6651 D4)
@@ -3070,11 +3076,9 @@ export function compileNamespaceStaticCall(
         // emitStandalonePromiseCombinator) compile: a late import landing
         // mid-compile walks fctx.body + fctx.savedBodies to shift baked
         // `call`/`ref.func` indices — a bare local swap orphans them.
-        // NOTE the buffers are popped only AFTER emitStandalonePromiseCombinator
-        // returns; its ensure* registration (the only possible import trigger
-        // inside it) runs BEFORE it copies the buffers into fctx.body, so no
-        // instruction is ever reachable via two walked arrays at shift time
-        // (the shared-Instr double-remap hazard).
+        // Pop buffers after the emitter returns: helper registration precedes
+        // copying buffers into fctx.body, so late-import shifting never walks
+        // the same instructions through both arrays.
         const savedBody = fctx.body;
         fctx.savedBodies.push(savedBody);
         let pushedBufs = 0;
@@ -3091,13 +3095,9 @@ export function compileNamespaceStaticCall(
             fctx.savedBodies.push(buf);
             pushedBufs++;
           }
-          return emitStandalonePromiseCombinator(
-            ctx,
-            fctx,
-            methodName,
-            elementInstrs,
-            observableCombinator ? { observableResolve: true } : undefined,
-          );
+          return observableCombinator
+            ? emitObservableStandalonePromiseCombinatorLiteral(ctx, fctx, methodName, elementInstrs)
+            : emitStandalonePromiseCombinator(ctx, fctx, methodName, elementInstrs);
         } finally {
           fctx.savedBodies.length -= pushedBufs + 1;
         }
@@ -3187,15 +3187,24 @@ export function compileNamespaceStaticCall(
             typeIdx: admittedVecShape.vecTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: argVecLocal });
-          return emitStandalonePromiseCombinatorRuntime(
-            ctx,
-            fctx,
-            methodName,
-            argVecLocal,
-            admittedVecShape.vecTypeIdx,
-            admittedVecShape.arrTypeIdx,
-            observableCombinator ? { observableResolve: true, boxF64Elements: observableF64Vec } : undefined,
-          );
+          return observableCombinator
+            ? emitObservableStandalonePromiseCombinatorRuntime(
+                ctx,
+                fctx,
+                methodName,
+                argVecLocal,
+                admittedVecShape.vecTypeIdx,
+                admittedVecShape.arrTypeIdx,
+                { boxF64Elements: observableF64Vec },
+              )
+            : emitStandalonePromiseCombinatorRuntime(
+                ctx,
+                fctx,
+                methodName,
+                argVecLocal,
+                admittedVecShape.vecTypeIdx,
+                admittedVecShape.arrTypeIdx,
+              );
         }
         // Didn't lower as an externref vec — roll back, then either take the
         // (#2922 arms 2+3) dynamic path or fall through to the host path.

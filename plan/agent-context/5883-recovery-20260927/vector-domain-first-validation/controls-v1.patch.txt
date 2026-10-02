@@ -1,0 +1,386 @@
+diff --git a/tests/issue-5748-vector-domain-reservations.test.ts b/tests/issue-5748-vector-domain-reservations.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/issue-5748-vector-domain-reservations.test.ts
+@@ -0,0 +1,381 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++import { describe, expect, it } from "vitest";
++import { createEmptyModule } from "../src/ir/types.js";
++import { emitBinary } from "../src/emit/binary.js";
++import type { Instr, ValType } from "../src/wasm/model/instructions.js";
++import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
++import {
++  planVectorDomains, VECTOR_DOMAIN_SERVICES, VECTOR_DOMAIN_VALIDATOR_SIGNATURE,
++  vectorDomainManifestRoles, type VectorDomainAllocationRole,
++} from "../src/ir/program/vector-domain-plan.js";
++import {
++  reserveVectorDomains, fillVectorDomainServices, sealVectorDomainResources,
++  vectorDomainPhysicalRoles, type ReservedVectorDomains, type VectorDomainFunctionFill,
++} from "../src/backend/wasmgc/resources/native-vector-domains.js";
++
++const allocation: VectorDomainAllocationRole = {
++  allocationRole: "literal:ordinary", layoutBinding: "layout:externref",
++  semanticKind: 1, storageKind: 1,
++};
++
++function setup(options: { imports?: boolean; element?: "externref" | "f64"; twoRoles?: boolean } = {}) {
++  const module = createEmptyModule();
++  const tx = new PhysicalModuleReservations(module);
++  if (options.imports) {
++    tx.reserveFunctionImport("preceding:function", "prior", "fn", { params: [], results: [] });
++    tx.reserveGlobalImport("preceding:global", "prior", "number", { kind: "i32" }, false);
++  }
++  const element = options.element ?? "externref";
++  const backing = tx.reserveType("backing:" + element,
++    { kind: "array", name: "test_backing", element: { kind: element }, mutable: true });
++  const carrier = tx.reserveType("layout:" + element, {
++    kind: "struct", name: "test_existing_carrier", fields: [
++      { name: "length", type: { kind: "i32" }, mutable: true },
++      { name: "data", type: { kind: "ref", typeIdx: backing.typeIndex }, mutable: true },
++    ],
++  });
++  const row: VectorDomainAllocationRole = {
++    ...allocation, layoutBinding: carrier.key, storageKind: element === "f64" ? 2 : 1,
++  };
++  const rows = options.twoRoles ? [row, { ...row, allocationRole: "call:pack", semanticKind: 4 as const }] : [row];
++  const plan = planVectorDomains("test:domain", rows);
++  const bindings = rows.map((value) => ({ allocationRole: value.allocationRole,
++    layoutBinding: value.layoutBinding, carrier, backing }));
++  return { module, tx, carrier, backing, plan, bindings };
++}
++
++function reserve(options: Parameters<typeof setup>[0] = {}) {
++  const value = setup(options);
++  return { ...value, pack: reserveVectorDomains(value.tx, value.plan, value.bindings) };
++}
++
++/**
++ * Test-only trapping bodies: exercise physical completion, NEVER semantic readiness.
++ * Every service and validator traps when called; no fake success implementation.
++ */
++function physicalOnlyFills(pack: ReservedVectorDomains): VectorDomainFunctionFill[] {
++  return pack.rows.flatMap((row) => [row.validator, ...row.operations.map((entry) => entry.function)])
++    .map((target): VectorDomainFunctionFill => ({ target, locals: [], body: [{ op: "unreachable" }] }));
++}
++
++function population(module: ReturnType<typeof createEmptyModule>) {
++  return {
++    types: module.types.length, functions: module.functions.length, globals: module.globals.length,
++    imports: module.imports.length, tables: module.tables.length, exports: module.exports.length,
++    tags: module.tags.length, memories: module.memories.length, elements: module.elements.length,
++    strings: module.stringPool.length, data: module.dataSegments.length,
++  };
++}
++
++describe("DomainV1 dormant physical reservations", () => {
++  it("pins all 17 ordered signatures independently, including boolean Set and descriptor multi-result", () => {
++    expect(VECTOR_DOMAIN_SERVICES.map(([name, sig]) => [name, sig.params.join(","), sig.results.join(",")])).toEqual([
++      ["rawLength", "externref", "i32"],
++      ["rawOwnPresent", "externref,i32", "i32"],
++      ["rawLoadPresent", "externref,i32", "externref"],
++      ["rawStorePresent", "externref,i32,externref", ""],
++      ["rawMarkAbsent", "externref,i32,i32", ""],
++      ["hasOwn", "externref,externref", "i32"],
++      ["has", "externref,externref", "i32"],
++      ["get", "externref,externref,externref", "externref"],
++      ["set", "externref,externref,externref,externref", "i32"],
++      ["getOwnDescriptor", "externref,externref", "i32,externref"],
++      ["defineOwn", "externref,externref,externref", "i32"],
++      ["deleteOwn", "externref,externref", "i32"],
++      ["ownKeys", "externref", "externref"],
++      ["getPrototype", "externref", "externref"],
++      ["setPrototype", "externref,externref", "i32"],
++      ["isExtensible", "externref", "i32"],
++      ["preventExtensions", "externref", "i32"],
++    ]);
++    expect(VECTOR_DOMAIN_VALIDATOR_SIGNATURE).toEqual({ params: ["externref", "externref"], results: ["i32"] });
++    expect(Object.isFrozen(VECTOR_DOMAIN_SERVICES)).toBe(true);
++    for (const entry of VECTOR_DOMAIN_SERVICES) {
++      expect(Object.isFrozen(entry)).toBe(true);
++      expect(Object.isFrozen(entry[1].params)).toBe(true);
++      expect(Object.isFrozen(entry[1].results)).toBe(true);
++    }
++  });
++
++  it("reserves exact immutable record fields and function-reference signatures without adding field2", () => {
++    const value = reserve();
++    const roles = vectorDomainPhysicalRoles(value.tx, value.pack);
++    expect(roles.domainType.object).toEqual({
++      kind: "struct", name: "__vector_domain_v1", fields: [
++        { name: "version", type: { kind: "i32" }, mutable: false },
++        { name: "semanticKind", type: { kind: "i32" }, mutable: false },
++        { name: "storageKind", type: { kind: "i32" }, mutable: false },
++        { name: "origin", type: { kind: "ref", typeIdx: roles.originType.typeIndex }, mutable: false },
++        { name: "hole", type: { kind: "externref" }, mutable: false },
++        { name: "services", type: { kind: "ref", typeIdx: roles.servicesType.typeIndex }, mutable: false },
++      ],
++    });
++    const services = roles.servicesType.object;
++    if (services.kind !== "struct" || value.carrier.object.kind !== "struct") throw new Error("fixture shape");
++    expect(value.carrier.object.fields).toHaveLength(2);
++    expect(services.fields).toHaveLength(17);
++    for (const [index, entry] of value.pack.rows[0]!.operations.entries()) {
++      expect(services.fields[index]).toEqual({
++        name: entry.operation, type: { kind: "ref", typeIdx: entry.function.object.typeIdx }, mutable: false,
++      });
++    }
++    expect(roles.rows[0]!.binding.carrier).toBe(value.carrier);
++    expect(roles.rows[0]!.binding.backing).toBe(value.backing);
++    expect(value.module.exports).toEqual([]);
++    expect(value.module.imports).toEqual([]);
++  });
++
++  it("keeps same-layout ordinary Array and internal pack roles separate with one origin allocation", () => {
++    const value = reserve({ twoRoles: true });
++    const roles = vectorDomainPhysicalRoles(value.tx, value.pack);
++    expect(roles.rows.map((row) => row.manifest.allocation.semanticKind)).toEqual([1, 4]);
++    expect(roles.rows[0]!.binding.carrier).toBe(roles.rows[1]!.binding.carrier);
++    expect(roles.rows[0]!.domain).not.toBe(roles.rows[1]!.domain);
++    expect(value.module.globals.filter((global) => global === roles.origin.object)).toHaveLength(1);
++    const before = population(value.module);
++    expect(() => reserveVectorDomains(value.tx, value.plan, value.bindings)).toThrow("already reserved");
++    expect(population(value.module)).toEqual(before);
++  });
++
++  it("copies role input and carries exact layout/operation locators without claiming enrollment", () => {
++    const input = { ...allocation };
++    const plan = planVectorDomains("a", [input]);
++    input.layoutBinding = "changed";
++    const roles = vectorDomainManifestRoles(plan, allocation.allocationRole);
++    expect(roles.allocation.layoutBinding).toBe(allocation.layoutBinding);
++    expect(roles.lifecycle).toBe("instantiate-bind-all-explicit-init");
++    expect(roles.serviceRoles.map((entry) => entry.operation)).toEqual(VECTOR_DOMAIN_SERVICES.map(([name]) => name));
++    expect(new Set([roles.domainGlobalRole, roles.validatorRole, ...roles.serviceRoles.map((entry) => entry.role)]).size).toBe(19);
++    expect(Object.hasOwn(roles, "ready")).toBe(false);
++    expect(() => vectorDomainManifestRoles(plan, "missing")).toThrow("unknown");
++  });
++
++  it.each(["empty-anchor", "empty-rows", "duplicate-role", "missing-layout"] as const)(
++    "rejects invalid plan %s", (mutation) => {
++      const rows = mutation === "empty-rows" ? [] :
++        mutation === "duplicate-role" ? [allocation, allocation] :
++        [{ ...allocation, layoutBinding: mutation === "missing-layout" ? "" : allocation.layoutBinding }];
++      expect(() => planVectorDomains(mutation === "empty-anchor" ? "" : "a", rows)).toThrow();
++    });
++
++  it.each(["wrong-role", "wrong-layout", "missing-binding"] as const)(
++    "rejects %s before dependent allocation", (mutation) => {
++      const value = setup();
++      const before = population(value.module);
++      const bindings = mutation === "missing-binding" ? [] : [{
++        ...value.bindings[0]!,
++        ...(mutation === "wrong-role" ? { allocationRole: "other" } : { layoutBinding: "other" }),
++      }];
++      expect(() => reserveVectorDomains(value.tx, value.plan, bindings)).toThrow();
++      expect(population(value.module)).toEqual(before);
++    });
++
++  it.each(["copied", "foreign"] as const)("rejects %s carrier token despite matching shape and key", (mutation) => {
++    const value = setup(), other = setup();
++    const before = population(value.module);
++    const binding = { ...value.bindings[0]!, carrier: mutation === "copied" ? { ...value.carrier } : other.carrier };
++    expect(() => reserveVectorDomains(value.tx, value.plan, [binding])).toThrow("foreign or forged");
++    expect(population(value.module)).toEqual(before);
++  });
++
++  it("rejects an owned but different backing allocation", () => {
++    const value = setup();
++    const backing = value.tx.reserveType("other:backing",
++      { kind: "array", name: "same_shape", element: { kind: "externref" }, mutable: true });
++    const before = population(value.module);
++    expect(() => reserveVectorDomains(value.tx, value.plan, [{ ...value.bindings[0]!, backing }]))
++      .toThrow("carrier/backing allocation mismatch");
++    expect(population(value.module)).toEqual(before);
++  });
++
++  it.each(["externref", "f64"] as const)("rejects incompatible storage kind on %s backing", (element) => {
++    const value = setup({ element });
++    const plan = planVectorDomains(value.plan.anchor, [{
++      ...value.plan.allocations[0]!, storageKind: element === "externref" ? 2 : 1,
++    }]);
++    expect(() => reserveVectorDomains(value.tx, plan, value.bindings)).toThrow(/requires .* backing/);
++  });
++
++  it("rejects fill before reservation freeze", () => {
++    const value = reserve();
++    expect(() => fillVectorDomainServices(value.tx, value.pack, physicalOnlyFills(value.pack))).toThrow("freeze");
++    expect(value.tx.state).toBe("reserving");
++  });
++
++  it.each(["copied", "foreign"] as const)("rejects %s domain packet ownership", (mutation) => {
++    const value = reserve(), other = reserve();
++    value.tx.freezeReservations();
++    const pack = mutation === "copied" ? { ...value.pack } : other.pack;
++    expect(() => fillVectorDomainServices(value.tx, pack, physicalOnlyFills(value.pack))).toThrow("foreign or stale");
++    expect(() => vectorDomainPhysicalRoles(value.tx, pack)).toThrow("foreign or failed");
++  });
++
++  it.each(["missing", "duplicate", "foreign"] as const)("rejects %s fill population before changing bodies", (mutation) => {
++    const value = reserve(), other = reserve();
++    value.tx.freezeReservations();
++    const definitions = physicalOnlyFills(value.pack);
++    if (mutation === "missing") definitions.pop();
++    if (mutation === "duplicate") definitions[1] = definitions[0]!;
++    if (mutation === "foreign") definitions[0] = physicalOnlyFills(other.pack)[0]!;
++    const before = structuredClone(value.module);
++    expect(() => fillVectorDomainServices(value.tx, value.pack, definitions)).toThrow();
++    expect(value.module).toEqual(before);
++  });
++
++  it("fills exactly once without allocating resources or changing the existing carrier", () => {
++    const value = reserve();
++    const before = population(value.module), carrierBefore = structuredClone(value.carrier.object);
++    value.tx.freezeReservations();
++    const filled = fillVectorDomainServices(value.tx, value.pack, physicalOnlyFills(value.pack));
++    expect(population(value.module)).toEqual(before);
++    expect(value.carrier.object).toEqual(carrierBefore);
++    expect(value.module.declaredFuncRefs).toEqual(value.pack.rows[0]!.operations.map((entry) => entry.function.handle));
++    expect(() => fillVectorDomainServices(value.tx, value.pack, physicalOnlyFills(value.pack))).toThrow("foreign or stale");
++    expect(() => sealVectorDomainResources(value.tx, filled)).toThrow("must be sealed first");
++    const census = value.tx.seal();
++    expect(census.completedFunctions).toBe(18);
++    expect(census.completedGlobals).toBe(4);
++    const sealed = sealVectorDomainResources(value.tx, filled);
++    expect(vectorDomainPhysicalRoles(value.tx, sealed).rows).toBe(value.pack.rows);
++    expect(Object.hasOwn(sealed, "ready")).toBe(false);
++    expect(() => sealVectorDomainResources(value.tx, filled)).toThrow("foreign or stale");
++  });
++
++  it("cannot physically seal a packet with missing real function/global fills", () => {
++    const value = reserve();
++    value.tx.freezeReservations();
++    expect(() => value.tx.seal()).toThrow(/missing .* fill/);
++    expect(value.tx.state).toBe("failed");
++    expect(() => vectorDomainPhysicalRoles(value.tx, value.pack)).toThrow("foreign or failed");
++  });
++
++  it("revokes failed fill without claiming module rollback", () => {
++    const value = reserve();
++    value.tx.freezeReservations();
++    const definitions = physicalOnlyFills(value.pack);
++    definitions[1]!.body = [{ op: "ref.null", typeIdx: 999999 }];
++    expect(() => fillVectorDomainServices(value.tx, value.pack, definitions)).toThrow();
++    // The first actual body was already attached; revocation is not rollback.
++    expect(definitions[0]!.target.object.body).toBe(definitions[0]!.body);
++    expect(value.tx.state).toBe("failed");
++    expect(() => vectorDomainPhysicalRoles(value.tx, value.pack)).toThrow("foreign or failed");
++    expect(() => fillVectorDomainServices(value.tx, value.pack, physicalOnlyFills(value.pack))).toThrow("foreign or stale");
++  });
++
++  it("detects mutation of filled body before transaction seal", () => {
++    const value = reserve();
++    value.tx.freezeReservations();
++    fillVectorDomainServices(value.tx, value.pack, physicalOnlyFills(value.pack));
++    value.pack.rows[0]!.validator.object.body.push({ op: "nop" });
++    expect(() => value.tx.seal()).toThrow(/altered/);
++  });
++});
++
++/** Emit-only diagnostic accessors; not production field2 attachment or public service publication. */
++function binaryFixture(options: { imports?: boolean; f64?: boolean; invalidResult?: boolean } = {}) {
++  const value = reserve({ imports: options.imports, element: options.f64 ? "f64" : "externref", twoRoles: true });
++  const roles = vectorDomainPhysicalRoles(value.tx, value.pack);
++  const row = value.pack.rows[0]!;
++  const read = (name: string, results: ValType[]) => value.tx.reserveFunction("test:" + name, name, { params: [], results });
++  const origin = read("origin", [{ kind: "externref" }]);
++  const domain = read("domain", [{ kind: "externref" }]);
++  const hole = read("hole", [{ kind: "externref" }]);
++  const info = read("info", [{ kind: "i32" }, { kind: "i32" }, { kind: "i32" }]);
++  const shared = read("sharedOrigin", [{ kind: "i32" }]);
++  const invoke = read("invokeRawLength", [{ kind: "i32" }]);
++  value.tx.freezeReservations();
++  const definitions = physicalOnlyFills(value.pack);
++  if (options.invalidResult) {
++    definitions.find((entry) => entry.target === row.operations[0]!.function)!.body = [{ op: "ref.null.extern" }];
++  }
++  const filled = fillVectorDomainServices(value.tx, value.pack, definitions);
++  const domainGet = (index = 0): Instr => ({ op: "global.get", index: value.tx.physicalIndex(value.pack.rows[index]!.domain) });
++  const field = (fieldIdx: number): Instr => ({ op: "struct.get", typeIdx: roles.domainType.typeIndex, fieldIdx });
++  value.tx.fillFunction(origin, { locals: [], body: [domainGet(), field(3), { op: "extern.convert_any" }] });
++  value.tx.fillFunction(domain, { locals: [], body: [domainGet(), { op: "extern.convert_any" }] });
++  value.tx.fillFunction(hole, { locals: [], body: [domainGet(), field(4)] });
++  value.tx.fillFunction(info, { locals: [], body: [domainGet(), field(0), domainGet(), field(1), domainGet(), field(2)] });
++  value.tx.fillFunction(shared, { locals: [], body: [domainGet(), field(3), domainGet(1), field(3), { op: "ref.eq" }] });
++  value.tx.fillFunction(invoke, { locals: [], body: [
++    { op: "ref.null.extern" }, domainGet(), field(5),
++    { op: "struct.get", typeIdx: roles.servicesType.typeIndex, fieldIdx: 0 },
++    { op: "call_ref", typeIdx: row.operations[0]!.function.object.typeIdx },
++  ] });
++  for (const fn of [origin, domain, hole, info, shared, invoke]) value.tx.defineExport("export:" + fn.key, fn.object.name, fn);
++  value.tx.seal();
++  sealVectorDomainResources(value.tx, filled);
++  return { bytes: Uint8Array.from(emitBinary(value.module)), value };
++}
++
++interface ProbeExports {
++  origin(): unknown;
++  domain(): unknown;
++  hole(): unknown;
++  info(): number[];
++  sharedOrigin(): number;
++  invokeRawLength(): number;
++}
++function probes(instance: WebAssembly.Instance): ProbeExports {
++  return instance.exports as unknown as ProbeExports;
++}
++
++describe("DomainV1 physical-only real Wasm", () => {
++  it("initializes exact records with zero imports and fresh same-binary origins/domains/tokens", () => {
++    const { bytes } = binaryFixture();
++    expect(WebAssembly.validate(bytes)).toBe(true);
++    const module = new WebAssembly.Module(bytes);
++    expect(WebAssembly.Module.imports(module)).toEqual([]);
++    const sharedImports = {};
++    const a = probes(new WebAssembly.Instance(module, sharedImports));
++    const b = probes(new WebAssembly.Instance(module, sharedImports));
++    expect(a.info()).toEqual([1, 1, 1]);
++    expect(b.info()).toEqual([1, 1, 1]);
++    expect(a.sharedOrigin()).toBe(1);
++    expect(Object.is(a.origin(), a.origin())).toBe(true);
++    expect(Object.is(a.domain(), a.domain())).toBe(true);
++    expect(Object.is(a.hole(), a.hole())).toBe(true);
++    expect(Object.is(a.origin(), b.origin())).toBe(false);
++    expect(Object.is(a.domain(), b.domain())).toBe(false);
++    expect(Object.is(a.hole(), b.hole())).toBe(false);
++    // Completion does not make these deliberately trapping services semantically ready.
++    expect(() => a.invokeRawLength()).toThrow(WebAssembly.RuntimeError);
++    expect(() => b.invokeRawLength()).toThrow(WebAssembly.RuntimeError);
++  });
++
++  it("initializes null hole for f64 domain without pretending f64 absence semantics are implemented", () => {
++    const { bytes } = binaryFixture({ f64: true });
++    expect(WebAssembly.validate(bytes)).toBe(true);
++    const api = probes(new WebAssembly.Instance(new WebAssembly.Module(bytes)));
++    expect(api.info()).toEqual([1, 1, 2]);
++    expect(api.hole()).toBeNull();
++    expect(api.sharedOrigin()).toBe(1);
++  });
++
++  it("resolves ordinary function/global coordinates after preceding imports without adding domain imports", () => {
++    const { bytes, value } = binaryFixture({ imports: true });
++    expect(WebAssembly.validate(bytes)).toBe(true);
++    const module = new WebAssembly.Module(bytes);
++    expect(WebAssembly.Module.imports(module)).toEqual([
++      { module: "prior", name: "fn", kind: "function" },
++      { module: "prior", name: "number", kind: "global" },
++    ]);
++    let calls = 0;
++    const api = probes(new WebAssembly.Instance(module, {
++      prior: { fn: () => { calls++; }, number: new WebAssembly.Global({ value: "i32", mutable: false }, 91) },
++    }));
++    expect(api.info()).toEqual([1, 1, 1]);
++    expect(api.sharedOrigin()).toBe(1);
++    expect(() => api.invokeRawLength()).toThrow(WebAssembly.RuntimeError);
++    expect(calls).toBe(0);
++    const roles = vectorDomainPhysicalRoles(value.tx, value.pack);
++    expect(value.tx.physicalIndex(roles.origin)).toBe(1);
++    expect(value.tx.physicalIndex(roles.rows[0]!.validator)).toBe(1);
++  });
++
++  it("uses actual Wasm validation to reject a wrong-result service despite physical completion", () => {
++    const { bytes } = binaryFixture({ invalidResult: true });
++    expect(WebAssembly.validate(bytes)).toBe(false);
++    expect(() => new WebAssembly.Module(bytes)).toThrow(WebAssembly.CompileError);
++  });
++});

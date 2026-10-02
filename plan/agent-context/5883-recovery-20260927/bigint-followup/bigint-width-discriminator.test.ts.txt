@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Supplemental localization controls. Original acceptance fixtures remain unchanged.
+const cases = [
+  {
+    "name": "wide high-bit observable without valueOf",
+    "source": "export function test(){try{const box={v:18446744073709551617n};const value=Reflect.get(box,\"v\"); return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+    "expectedNative": 1
+  },
+  {
+    "name": "narrow negative control for high-bit observable",
+    "source": "export function test(){try{const box={v:1n};const value=Reflect.get(box,\"v\"); return (value >> 64n) === 0n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+    "expectedNative": 1
+  },
+  {
+    "name": "wide reference primitive through extracted valueOf",
+    "source": "export function test(){try{const box={v:18446744073709551617n};const input=Reflect.get(box,\"v\");const method=BigInt.prototype.valueOf;const value=method.call(input); return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+    "expectedNative": 1
+  },
+  {
+    "name": "wide reference primitive through direct valueOf",
+    "source": "export function test(){try{const box={v:18446744073709551617n};const input=Reflect.get(box,\"v\");const value=BigInt.prototype.valueOf.call(input); return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+    "expectedNative": 1
+  },
+  {
+    "name": "wide runtime wrapper through extracted valueOf",
+    "source": "export function test(){try{let wrapper;Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";wrapper=this;return 0;}});Array.prototype.values.call(18446744073709551617n).next();const method=BigInt.prototype.valueOf;const value=method.call(wrapper);return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+    "expectedNative": 1
+  },
+  {
+    "name": "wide static wrapper separate constructor boundary",
+    "source": "export function test(){try{const wrapper=Object(18446744073709551617n);const method=BigInt.prototype.valueOf;const value=method.call(wrapper);return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+    "expectedNative": 1
+  }
+];
+for (const {name, source} of cases) {
+  it(name, async () => {
+    const sha256 = createHash("sha256").update(source).digest("hex");
+    const native = runInNewContext(source.replace("export function test", "function test") + ";test()", {}, { timeout: 5000 });
+    const receipt: Record<string, unknown> = {name,source,sha256,native};
+    try {
+      const result = await compile(source, {fileName:"5883-bigint-width-discriminator.js",allowJs:true,skipSemanticDiagnostics:true,target:"standalone",nativeStrings:true});
+      receipt.success=result.success; receipt.errors=result.errors;
+      expect(result.success, JSON.stringify(result.errors)).toBe(true);
+      const module=new WebAssembly.Module(result.binary);
+      receipt.imports=WebAssembly.Module.imports(module);
+      expect(receipt.imports).toEqual([]);
+      const instance=new WebAssembly.Instance(module,{});
+      receipt.actual=(instance.exports.test as ()=>number)();
+      expect(native).toBe(1);
+      expect(receipt.actual).toBe(1);
+    } catch(error) {
+      receipt.failure=String(error);
+      throw error;
+    } finally { console.log(JSON.stringify(receipt)); }
+  });
+}

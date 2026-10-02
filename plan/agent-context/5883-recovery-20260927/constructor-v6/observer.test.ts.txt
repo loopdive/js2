@@ -1,0 +1,737 @@
+// Additive manual observer. Copy unchanged into tests/ in a full source tree.
+// No fabricated contexts, flags or providers. No binary instrumentation.
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+import { expect, it, vi } from "vitest";
+import { compile } from "../src/index.js";
+import { ts } from "../src/ts-api.js";
+import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
+import * as constructors from "../src/codegen/builtin-static-globals.js";
+import * as regions from "../src/codegen/builtin-constructor-prepared.js";
+import * as seeds from "../src/codegen/builtin-ctor-own-props.js";
+import * as companion from "../src/codegen/builtin-proto-constructor-seed.js";
+import * as speculative from "../src/codegen/context/speculative.js";
+import * as bindings from "../src/codegen/staging-bindings.js";
+import * as drive from "../src/codegen/promise-combinator-drive.js";
+import * as functionBodies from "../src/codegen/function-body.js";
+import * as binaryEmitter from "../src/emit/binary.js";
+import type { WasmModule, WasmFunction } from "../src/ir/types.js";
+
+const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+function encode(root: unknown): string {
+  const seen = new Map<object, number>();
+  function visit(value: unknown): unknown {
+    if (value === undefined) return { atom: "undefined" };
+    if (typeof value === "bigint") return { bigint: String(value) };
+    if (typeof value === "number" && (!Number.isFinite(value) || Object.is(value, -0)))
+      return { number: Object.is(value, -0) ? "-0" : String(value) };
+    if (typeof value === "function" || typeof value === "symbol")
+      throw new Error(`Unsupported snapshot value: ${typeof value}`);
+    if (value === null || typeof value !== "object") return value;
+    const previous = seen.get(value);
+    if (previous !== undefined) return { ref: previous };
+    const id = seen.size;
+    seen.set(value, id);
+    if (value instanceof Map) return { id, map: [...value].map(([k, v]) => [visit(k), visit(v)]) };
+    if (value instanceof Set) return { id, set: [...value].map(visit) };
+    if (ArrayBuffer.isView(value))
+      return { id, view: value.constructor.name, bytes: [...new Uint8Array(value.buffer, value.byteOffset, value.byteLength)] };
+    if (value instanceof ArrayBuffer) return { id, buffer: [...new Uint8Array(value)] };
+    const entries = Reflect.ownKeys(value).map((key) => {
+      if (typeof key !== "string") throw new Error("Symbol snapshot key");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!("value" in descriptor)) throw new Error(`Accessor snapshot key: ${key}`);
+      return [key, visit(descriptor.value)];
+    });
+    return { id, kind: Array.isArray(value) ? "array" : "object", entries };
+  }
+  return JSON.stringify(visit(root));
+}
+
+
+// Read-only identity reachability; no providers, lazy accessors or getters.
+function reachableObjects(roots: readonly unknown[]): Set<object> {
+  const seen = new Set<object>();
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof Map) { for (const [key, item] of value) { visit(key); visit(item); } return; }
+    if (value instanceof Set) { for (const item of value) visit(item); return; }
+    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+      if (!("value" in descriptor)) throw new Error("Accessor in physical witness graph");
+      visit(descriptor.value);
+    }
+  };
+  // Only caller-supplied emitter-owned function bodies are admissible roots.
+  // A held FunctionContext or module metadata is NEVER a reachability root.
+  roots.forEach(visit);
+  return seen;
+}
+
+type State = "cold" | "controlled-reserved" | "already-emitted";
+type Case = { id: string; group: "seam"; state: State } | { id: string; group: "drive"; method: "all" | "race" };
+const cases: Case[] = [
+  { id: "seam-cold", group: "seam", state: "cold" },
+  { id: "seam-controlled-reserved", group: "seam", state: "controlled-reserved" },
+  { id: "seam-already-emitted", group: "seam", state: "already-emitted" },
+  { id: "drive-all", group: "drive", method: "all" },
+  { id: "drive-race", group: "drive", method: "race" },
+];
+function sourceFor(row: Case): string {
+  if (row.group === "seam") return `export function test(marker: any): number {
+  ${row.state === "already-emitted" ? "const warm: any = Promise;" : ""}
+  const first: any = Promise;
+  const second: any = Promise;
+  const proto: any = Promise.prototype;
+  const key: any = "constructor";
+  const descriptor: any = Object.getOwnPropertyDescriptor(proto, key);
+  return ${row.state === "already-emitted" ? "warm === first && " : ""}first === second && descriptor.value === first ? 1 : -1;
+}`;
+  return `declare function __drain_microtasks(): void;
+export function test(marker: any): number {
+  let answer = -100;
+  const before: any = Promise;
+  const input: any[] = [1, 2];
+  (Promise as any).resolve = function(value: any): any {
+    return {then: function(ok: any): void { ok(value); }};
+  };
+  const aggregate = Promise.${row.method}(input).then(function(value: any): void {
+    answer = ${row.method === "all" ? "value[0] * 10 + value[1]" : "value"};
+  }, function(): void { answer = -200; });
+  const after: any = Promise;
+  const proto: any = Promise.prototype;
+  const key: any = "constructor";
+  const descriptor: any = Object.getOwnPropertyDescriptor(proto, key);
+  __drain_microtasks();
+  return before === after && descriptor.value === before && answer === ${row.method === "all" ? 12 : 1} ? 1 : -1;
+}`;
+}
+
+function existingSlot(ctx: CodegenContext, name: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(ctx, name);
+  if (!descriptor) return undefined;
+  if (!("value" in descriptor)) throw new Error(`Accessor observation slot: ${name}`);
+  return descriptor.value;
+}
+function physical(ctx: CodegenContext, fctx: FunctionContext): string {
+  return encode({
+    module: ctx.mod, funcMap: ctx.funcMap, structMap: ctx.structMap,
+    structFields: ctx.structFields, typeNames: ctx.typeIdxToStructName,
+    stringGlobals: ctx.stringGlobalMap, nativeStringGlobals: ctx.nativeStrLiteralGlobals,
+    nativeStringHelpers: ctx.nativeStrHelpers, ctorGlobals: ctx.builtinObjectGlobals,
+    imports: [ctx.numImportFuncs, ctx.numImportGlobals], errors: ctx.errors,
+    pendingShift: ctx.pendingLateImportShift, liveBodies: ctx.liveBodies,
+    caller: { name: fctx.name, params: fctx.params, locals: fctx.locals,
+      localMap: fctx.localMap, body: fctx.body, savedBodies: fctx.savedBodies,
+      returnType: fctx.returnType, blockDepth: fctx.blockDepth,
+      breakStack: fctx.breakStack, continueStack: fctx.continueStack, labelMap: fctx.labelMap },
+    sourceDerivedFlags: { standalone: ctx.standalone, nativeStrings: ctx.nativeStrings,
+      protoNamedDirty: ctx.protoNamedDirty, protoMemberDirty: ctx.protoMemberDirty,
+      protoNamedWrittenMembers: ctx.protoNamedWrittenMembers },
+    seeders: existingSlot(ctx, "__nativeProtoSeeders"),
+    seededCtors: existingSlot(ctx, "__nativeProtoSeededCtors"),
+    pendingSeeds: existingSlot(ctx, "__nativeProtoPendingSeeds"),
+  });
+}
+
+for (const row of cases) {
+  it(`real Promise constructor correspondence ${row.id}`, async () => {
+    const arm = process.env.CTOR_OBSERVER_ARM;
+    const output = process.env.CTOR_OBSERVER_OUTPUT;
+    if (!output || (arm !== "B" && arm !== "C")) throw new Error("Set CTOR_OBSERVER_ARM=B|C and a fresh CTOR_OBSERVER_OUTPUT");
+    mkdirSync(output, { recursive: true });
+    const save = (suffix: string, value: string | Uint8Array) => writeFileSync(resolve(output, `${row.id}.${suffix}`), value, { flag: "wx" });
+    const observerErrors: string[] = [];
+    const record = (fn: () => void) => { try { fn(); } catch (error) { observerErrors.push(String(error)); } };
+    const source = sourceFor(row);
+    save("source.ts", source);
+    const events: unknown[] = [];
+    const selected: Array<Record<string, unknown>> = [];
+    const driveHits: Array<Record<string, unknown>> = [];
+    type BodyEmission = { id: number; ctx: CodegenContext; func: WasmFunction; completed: boolean };
+    type Boundary = { id: number; label: string; ctx: CodegenContext; fctx: FunctionContext; completed: boolean;
+      bodyEmission?: BodyEmission; handoffVerified: boolean };
+    type FinalEmission = { id: number; mod: WasmModule; functions: Array<{ func: WasmFunction; body: WasmFunction["body"] }>;
+      reachable: Set<object>; binaryHash: string | null; completed: boolean; snapshot: string };
+    type Transaction = { id: number; parentIds: number[]; kind: "conditional" | "type-probe"; status: "open" | "committed" | "declined" | "rolled-back" | "threw" };
+    type SeedSpan = { id: number; ctx: CodegenContext; fctx: FunctionContext; name: string;
+      publication: boolean; publishedIndex: () => number | undefined; publishInstruction: object | undefined;
+      boundary: Boundary | undefined; parentSeedIds: number[]; transactionIds: number[];
+      eligible: boolean; completed: boolean };
+    type Witness = { kind: "seed" | "commit" | "decline" | "compiler-reentry"; seed: SeedSpan;
+      transactionIds: number[]; ownTransactionId?: number; anchors: object[]; samePublishedGlobal?: boolean };
+    const boundaries: Boundary[] = [], boundaryStack: Boundary[] = [];
+    const bodyEmissions: BodyEmission[] = [], bodyEmissionStack: BodyEmission[] = [], finalEmissions: FinalEmission[] = [];
+    const transactions: Transaction[] = [], transactionStack: Transaction[] = [];
+    const seedSpans: SeedSpan[] = [], seedStack: SeedSpan[] = [], witnesses: Witness[] = [];
+    const openBoundary = (label: string, ctx: CodegenContext, fctx: FunctionContext) => {
+      const bodyEmission = [...bodyEmissionStack].reverse().find((entry) => entry.ctx === ctx);
+      const boundary: Boundary = { id: boundaries.length, label, ctx, fctx, completed: false, bodyEmission, handoffVerified: false };
+      boundaries.push(boundary); boundaryStack.push(boundary); return boundary;
+    };
+    const readEvidence: Array<{ name: string; frame: string; phase: string; global: number | null }> = [];
+    let driveDepth = 0, completedDrives = 0;
+    let committed = 0, declined = 0, reentries = 0, publishedReentries = 0, seedCalls = 0;
+    let sourceReads = 0, probeOrdinal = 0, rootOrdinal = 0, regionCalls = 0, transfers = 0;
+    const snapshots: string[] = [];
+    const probes: string[] = [];
+    const roots: string[] = [];
+    const graph = (label: string, ctx: CodegenContext, fctx: FunctionContext) => record(() => {
+      const suffix = `${label}.json`; save(suffix, physical(ctx, fctx)); snapshots.push(suffix);
+    });
+    const transient = (phase: string, ctx: CodegenContext, fctx: FunctionContext, child?: unknown) => record(() => {
+      const suffix = `roots-${rootOrdinal++}.json`;
+      save(suffix, encode({ phase, liveBodies: ctx.liveBodies, body: fctx.body,
+        savedBodies: fctx.savedBodies, child }));
+      roots.push(suffix);
+    });
+    const rawRead = constructors.emitBuiltinConstructorIdentity;
+    const rawSeed = seeds.pushBuiltinCtorOwnPropSeed;
+    const rawCompanion = companion.pushCompanionConstructorSeed;
+    const rawProbe = speculative.withSpeculativeCompile;
+    const rawTypeProbe = speculative.probeCompiledType;
+    const rawDrive = drive.emitStandalonePromiseCombinatorDrive;
+    const rawRegion = regions.prepareBuiltinConstructorRegion;
+    const rawAttach = bindings.attachRenderedCapturedDrive;
+    const restorers: Array<() => void> = [];
+    const track = (spy: { mockRestore(): void }) => restorers.push(() => spy.mockRestore());
+
+    // Correlate the actual allocated WasmFunction object, not its name/index.
+    // At this real producer's return function-body.ts assigns func.body=fctx.body.
+    const rawFunctionBody = functionBodies.compileFunctionBody;
+    track(vi.spyOn(functionBodies, "compileFunctionBody").mockImplementation((ctx, decl, func) => {
+      const emission: BodyEmission = { id: bodyEmissions.length, ctx, func, completed: false };
+      bodyEmissions.push(emission); bodyEmissionStack.push(emission);
+      try {
+        const result = rawFunctionBody(ctx, decl, func);
+        emission.completed = true;
+        for (const boundary of boundaries) if (boundary.bodyEmission === emission)
+          boundary.handoffVerified = func.body === boundary.fctx.body && ctx.mod.functions.includes(func);
+        return result;
+      } finally { bodyEmissionStack.pop(); }
+    }));
+    const captureFinal = (mod: WasmModule): FinalEmission => {
+      const emission: FinalEmission = { id: finalEmissions.length, mod,
+        functions: mod.functions.map((func) => ({ func, body: func.body })),
+        reachable: new Set(), binaryHash: null, completed: false,
+        snapshot: `final-module-${finalEmissions.length}.json` };
+      finalEmissions.push(emission);
+      record(() => {
+        emission.reachable = reachableObjects(emission.functions.map((entry) => entry.body));
+        save(emission.snapshot, encode({ module: mod,
+          // References below are diagnostic cross-links, NOT reachability roots.
+          callers: boundaries.map((boundary) => ({ id: boundary.id,
+            function: boundary.bodyEmission?.func, heldBody: boundary.fctx.body,
+            handoffVerified: boundary.handoffVerified })),
+          witnesses: witnesses.map((witness) => ({ seedId: witness.seed.id,
+            publication: witness.seed.publishInstruction, anchors: witness.anchors })),
+        }));
+      });
+      return emission;
+    };
+    const rawBinary = binaryEmitter.emitBinary;
+    track(vi.spyOn(binaryEmitter, "emitBinary").mockImplementation((mod) => {
+      const emission = captureFinal(mod);
+      const bytes = rawBinary(mod);
+      emission.binaryHash = sha(bytes); emission.completed = true;
+      return bytes;
+    }));
+    const rawMappedBinary = binaryEmitter.emitBinaryWithSourceMap;
+    track(vi.spyOn(binaryEmitter, "emitBinaryWithSourceMap").mockImplementation((mod) => {
+      const emission = captureFinal(mod);
+      const result = rawMappedBinary(mod);
+      emission.binaryHash = sha(result.binary); emission.completed = true;
+      return result;
+    }));
+
+    track(vi.spyOn(seeds, "pushBuiltinCtorOwnPropSeed").mockImplementation((ctx, fctx, name, objLocal) => {
+      let publication = false;
+      const publishInstruction = fctx.body[3];
+      record(() => {
+        seedCalls++;
+        const prefix = fctx.body.slice(0, 4);
+        const global = ctx.builtinObjectGlobals.get(`ctor:${name}`);
+        publication = prefix[2]?.op === "local.get" && prefix[2].index === objLocal &&
+          prefix[3]?.op === "global.set" && prefix[3].index === global;
+        events.push({ kind: "seed-enter", name, frame: fctx.name, objLocal, global, publication,
+          prefix: encode(prefix), depth: seedStack.length });
+      });
+      transient("seed-enter", ctx, fctx);
+      const boundary = boundaryStack.at(-1);
+      const parent = seedStack.at(-1);
+      const seed: SeedSpan = { id: seedSpans.length, ctx, fctx, name, publication,
+        publishedIndex: () => publishInstruction?.op === "global.set" ? publishInstruction.index : undefined,
+        publishInstruction, boundary, parentSeedIds: seedStack.map((entry) => entry.id),
+        transactionIds: transactionStack.map((entry) => entry.id), completed: false,
+        eligible: name === "Promise" && boundary?.ctx === ctx &&
+          (boundary.fctx === fctx || (parent?.eligible === true && parent.boundary === boundary)),
+      };
+      seedSpans.push(seed); seedStack.push(seed);
+      try {
+        const result = rawSeed(ctx, fctx, name, objLocal);
+        seed.completed = true;
+        witnesses.push({ kind: "seed", seed, transactionIds: [...seed.transactionIds], anchors: [] });
+        return result;
+      }
+      finally {
+        seedStack.pop();
+        transient("seed-leave", ctx, fctx);
+        record(() => events.push({ kind: "seed-leave", name, frame: fctx.name }));
+      }
+    }));
+    track(vi.spyOn(companion, "pushCompanionConstructorSeed").mockImplementation((...args) => {
+      const value = rawCompanion(...args);
+      record(() => events.push({ kind: "companion", name: args[2], frame: args[1].name, result: value }));
+      return value;
+    }));
+    const probeWrapper: typeof speculative.withSpeculativeCompile = (ctx, fctx, fn) => {
+      // Track all enclosing transactions, including ones begun before a
+      // selected boundary. Only exact Promise seed callbacks earn coverage.
+      const transaction: Transaction = { id: transactions.length, parentIds: transactionStack.map((entry) => entry.id), kind: "conditional", status: "open" };
+      transactions.push(transaction); transactionStack.push(transaction);
+      const seed = seedStack.at(-1);
+      const insideSeed = seedStack.some((entry) => entry.ctx === ctx);
+      const ordinal = insideSeed ? probeOrdinal++ : -1;
+      const ownerSeed = seed?.ctx === ctx && seed.fctx === fctx ? seed : undefined;
+      const body = fctx.body, bodyLength = body.length;
+      let outcomeCommit: boolean | undefined;
+      const capture = (phase: string) => record(() => {
+        if (!insideSeed) return;
+        const suffix = `probe-${ordinal}-${phase}.json`;
+        save(suffix, encode({ body: fctx.body, locals: fctx.locals, localMap: fctx.localMap,
+          imports: ctx.mod.imports, numImportFuncs: ctx.numImportFuncs,
+          numImportGlobals: ctx.numImportGlobals, funcs: ctx.funcMap,
+          errors: ctx.errors, pendingShift: ctx.pendingLateImportShift }));
+        probes.push(suffix);
+      });
+      capture("before");
+      try {
+        const value = rawProbe(ctx, fctx, () => {
+          const outcome = fn();
+          outcomeCommit = outcome.commit;
+          record(() => {
+            if (insideSeed) {
+              if (outcome.commit) committed++; else declined++;
+              events.push({ kind: "probe", ordinal, frame: fctx.name, seed: seed?.name,
+                seedId: seed?.id, boundaryId: seed?.boundary?.id ?? null,
+                transactionId: transaction.id, commit: outcome.commit });
+            }
+            if (ownerSeed) witnesses.push({
+              kind: outcome.commit ? "commit" : "decline", seed: ownerSeed,
+              transactionIds: [...transaction.parentIds], ownTransactionId: transaction.id,
+              anchors: outcome.commit && fctx.body === body ? body.slice(bodyLength) : [],
+            });
+          });
+          capture("callback-return");
+          return outcome;
+        });
+        transaction.status = outcomeCommit === true ? "committed" : "declined";
+        return value;
+      } catch (error) { transaction.status = "threw"; throw error; }
+      finally { transactionStack.pop(); capture("after"); }
+    };
+    track(vi.spyOn(speculative, "withSpeculativeCompile").mockImplementation(probeWrapper));
+    const typeProbeWrapper: typeof speculative.probeCompiledType = (ctx, fctx, fn) => {
+      const transaction: Transaction = { id: transactions.length, parentIds: transactionStack.map((entry) => entry.id), kind: "type-probe", status: "open" };
+      transactions.push(transaction); transactionStack.push(transaction);
+      try {
+        const value = rawTypeProbe(ctx, fctx, fn);
+        transaction.status = "rolled-back";
+        return value;
+      } catch (error) { transaction.status = "threw"; throw error; }
+      finally { transactionStack.pop(); }
+    };
+    track(vi.spyOn(speculative, "probeCompiledType").mockImplementation(typeProbeWrapper));
+    track(vi.spyOn(regions, "prepareBuiltinConstructorRegion").mockImplementation((...args) => {
+      regionCalls++;
+      transient("region-enter", args[0], args[1]);
+      const child = rawRegion(...args);
+      transient("region-finished", args[0], args[1]);
+      return child;
+    }));
+    // Owners contain private state; attach instrumentation does not inspect or
+    // fabricate it. Selected-region roots are captured with real ctx/frame below.
+    track(vi.spyOn(bindings, "attachRenderedCapturedDrive").mockImplementation((...args) => {
+      const value = rawAttach(...args);
+      transfers++;
+      return value;
+    }));
+    track(vi.spyOn(constructors, "emitBuiltinConstructorIdentity").mockImplementation((ctx, fctx, name) => {
+      const outer = [...seedStack].reverse().find((seed) => seed.ctx === ctx && seed.name === name);
+      let reentryWitness: Witness | undefined;
+      if (outer) record(() => {
+        reentries++;
+        const samePublishedGlobal = outer.publication && outer.publishedIndex() === ctx.builtinObjectGlobals.get(`ctor:${name}`);
+        if (samePublishedGlobal) publishedReentries++;
+        events.push({ kind: "constructor-reentry", name, frame: fctx.name,
+          global: ctx.builtinObjectGlobals.get(`ctor:${name}`), published: samePublishedGlobal,
+          seedId: outer.id, boundaryId: outer.boundary?.id ?? null });
+        reentryWitness = { kind: "compiler-reentry", seed: outer,
+          transactionIds: transactionStack.map((entry) => entry.id), anchors: [], samePublishedGlobal };
+        witnesses.push(reentryWitness);
+      });
+      if (name === "Promise" && fctx.name === "test" && seedStack.length === 0 && driveDepth === 0)
+        record(() => readEvidence.push({ name, frame: fctx.name,
+          phase: completedDrives === 0 ? "before-drive" : "after-drive",
+          global: ctx.builtinObjectGlobals.get("ctor:Promise") ?? null }));
+      // Only actual source reads in test are switched. Nested provider frames
+      // and unrelated compiler emissions always use the original provider.
+      if (row.group !== "seam" || name !== "Promise" || fctx.name !== "test" || seedStack.length !== 0) {
+        const body = fctx.body, start = body.length;
+        const value = rawRead(ctx, fctx, name);
+        if (reentryWitness && fctx.body === body) reentryWitness.anchors = body.slice(start);
+        return value;
+      }
+      const occurrence = sourceReads++;
+      if (row.state === "already-emitted" && occurrence === 0) return rawRead(ctx, fctx, name);
+      const ordinal = selected.length;
+      const beforeReservation = ctx.builtinObjectGlobals.has("ctor:Promise");
+      if (row.state === "controlled-reserved" && ordinal === 0) {
+        const global = constructors.reserveBuiltinConstructorIdentityGlobal(ctx, "Promise");
+        events.push({ kind: "controlled-real-reservation", global, alreadyPresent: beforeReservation,
+          claim: "harness calls real provider; not source-native reservation" });
+      }
+      const hit: Record<string, unknown> = { occurrence, ordinal, beforeReservation,
+        globalAtEntry: ctx.builtinObjectGlobals.get("ctor:Promise") ?? null,
+        requestedState: row.state, active: ctx.currentFunc === fctx || ctx.funcStack.includes(fctx) };
+      selected.push(hit);
+      graph(`selected-${ordinal}-before`, ctx, fctx);
+      const boundary = openBoundary(`selected-${ordinal}`, ctx, fctx);
+      try {
+        if (arm === "B") {
+          const result = rawRead(ctx, fctx, name);
+          boundary.completed = true;
+          return result;
+        }
+        const marker = fctx.localMap.get("marker");
+        if (marker === undefined) throw new Error("Real marker declaration missing");
+        const owner = bindings.beginCapturedFrame(ctx, fctx, "all", marker);
+        try {
+          transient("frame-begun", ctx, fctx);
+          const construction = bindings.beginRetainedChild(owner, [{ kind: "externref" }]);
+          regions.prepareBuiltinConstructorRegion(ctx, fctx, name, construction);
+          const authorization = bindings.authorizeCapturedRender(owner);
+          if (authorization.children.length !== 1) throw new Error("Expected one real constructor child");
+          const child = authorization.children[0]!;
+          const instructions = [...child.instructions];
+          transient("authorized", ctx, fctx, child.instructions);
+          const value = bindings.attachRenderedCapturedDrive(owner, {
+            authorization, instructions,
+            childPlacements: [{ child, destination: instructions, start: 0 }],
+            result: [{ kind: "externref" }],
+          });
+          transient("attached", ctx, fctx);
+          boundary.completed = true;
+          return value;
+        } catch (error) {
+          try { bindings.abortCapturedFrame(owner); } catch (cleanup) { record(() => observerErrors.push(`abort: ${String(cleanup)}`)); }
+          throw error;
+        }
+      } finally { boundaryStack.pop(); graph(`selected-${ordinal}-after`, ctx, fctx); }
+    }));
+    track(vi.spyOn(drive, "emitStandalonePromiseCombinatorDrive").mockImplementation((...args) => {
+      const [ctx, fctx, method, arg, observable, options] = args;
+      const ordinal = driveHits.length;
+      driveHits.push({ method, arg: arg.getText(), observable,
+        captured: options?.iteratorProtocol === "captured-source-vector" });
+      graph(`drive-${ordinal}-before`, ctx, fctx);
+      transient("drive-enter", ctx, fctx);
+      driveDepth++;
+      const boundary = openBoundary(`drive-${ordinal}`, ctx, fctx);
+      try {
+        const result = rawDrive(...args);
+        boundary.completed = true;
+        return result;
+      }
+      finally {
+        boundaryStack.pop();
+        driveDepth--; completedDrives++;
+        graph(`drive-${ordinal}-after`, ctx, fctx); transient("drive-leave", ctx, fctx);
+      }
+    }));
+    let result: Awaited<ReturnType<typeof compile>> | undefined;
+    let compileError: string | null = null;
+    try { result = await compile(source, { fileName: `5883-constructor-${row.id}.ts`, target: "standalone", nativeStrings: true, optimize: false, emitWat: true }); }
+    catch (error) { compileError = String(error); }
+    finally { restorers.reverse().forEach((restore) => restore()); }
+    const nativeSource = row.group === "drive"
+      ? source.replace("export function test(", "async function test(").replace("__drain_microtasks();", "await aggregate;") + "\ntest(null);"
+      : source.replace("export function test(", "function test(") + "\ntest(null);";
+    const nativeJS = ts.transpileModule(nativeSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+    save("native.js", nativeJS);
+    let nativeActual: unknown = null, actual: unknown = null;
+    let nativeError: string | null = null, runtimeError: string | null = null;
+    let imports: WebAssembly.ModuleImportDescriptor[] | null = null;
+    try { nativeActual = await runInNewContext(nativeJS, {}, { timeout: 5000 }); }
+    catch (error) { nativeError = String(error); }
+    if (result) {
+      save("wat", result.wat); save("wasm", result.binary);
+      if (result.success) try {
+        const module = await WebAssembly.compile(new Uint8Array(result.binary));
+        imports = WebAssembly.Module.imports(module);
+        const instance = await WebAssembly.instantiate(module, {});
+        actual = (instance.exports.test as (marker: unknown) => number)(null);
+      } catch (error) { runtimeError = String(error); }
+    }
+    // Evaluate evidence only after the real observed transactions settle.
+    // A callback event alone is never proof its enclosing emission survived.
+    const returnedBinaryHash = result ? sha(result.binary) : null;
+    const matchingEmissions = finalEmissions.filter((entry) => entry.completed && entry.binaryHash === returnedBinaryHash);
+    const finalEmission = matchingEmissions.length === 1 ? matchingEmissions[0] : undefined;
+    const evaluateWitness = (witness: Witness, finalEmission: FinalEmission | undefined) => {
+      const seed = witness.seed, boundary = seed.boundary;
+      const transactionIds = [...new Set([...seed.transactionIds, ...witness.transactionIds])];
+      const ancestorOutcomes = transactionIds.map((id) => ({ id, status: transactions[id]!.status }));
+      const ownOutcome = witness.ownTransactionId === undefined ? null : transactions[witness.ownTransactionId]!.status;
+      let publicationReachable = false, anchorsReachable = false;
+      const callerFunctionOrdinal = finalEmission && boundary?.bodyEmission
+        ? finalEmission.functions.findIndex((entry) => entry.func === boundary.bodyEmission!.func) : -1;
+      const moduleAttachmentKnown = finalEmission !== undefined && boundary !== undefined &&
+        finalEmission.mod === boundary.ctx.mod && boundary.handoffVerified &&
+        boundary.bodyEmission?.completed === true && callerFunctionOrdinal >= 0;
+      record(() => {
+        if (!moduleAttachmentKnown || !finalEmission) return;
+        const reachable = finalEmission.reachable;
+        publicationReachable = seed.publishInstruction !== undefined && reachable.has(seed.publishInstruction);
+        anchorsReachable = witness.anchors.length > 0 && witness.anchors.every((instruction) => reachable.has(instruction));
+      });
+      const scopeReasons: string[] = [];
+      if (!seed.eligible || seed.name !== "Promise") scopeReasons.push("not a Promise seed descended from the selected real frame");
+      if (!boundary?.completed) scopeReasons.push("selected boundary did not complete");
+      if (!moduleAttachmentKnown) scopeReasons.push("UNKNOWN: no exact producer-to-final-module caller attachment");
+      if (!seed.completed) scopeReasons.push("seed did not complete");
+      if (!seed.publication) scopeReasons.push("actual publication prefix not validated");
+      if (!publicationReachable) scopeReasons.push("publication instruction not reachable in surviving physical output");
+      if (ancestorOutcomes.some((entry) => entry.status !== "committed")) scopeReasons.push("enclosing transaction not committed");
+      const sourceScopeSurvives = scopeReasons.length === 0;
+      const emittedAnchorsSurvive = sourceScopeSurvives && anchorsReachable;
+      type Proposition =
+        | { kind: "seed"; publicationObserved: boolean; outputSurvival: "NOT_APPLICABLE" }
+        | { kind: "commit"; callbackCommitted: boolean; committedOutputSurvives: boolean }
+        | { kind: "compiler-reentry"; publishedReadSurvives: boolean; compilerOrderOnly: true }
+        | { kind: "decline"; callbackDeclined: boolean; scopedDeclineObserved: boolean;
+            outputSurvival: "NOT_APPLICABLE"; rollbackVerified: "UNOBSERVED" };
+      let proposition: Proposition;
+      switch (witness.kind) {
+        case "seed":
+          proposition = { kind: "seed", publicationObserved: sourceScopeSurvives, outputSurvival: "NOT_APPLICABLE" };
+          break;
+        case "commit":
+          proposition = { kind: "commit", callbackCommitted: ownOutcome === "committed",
+            committedOutputSurvives: ownOutcome === "committed" && emittedAnchorsSurvive };
+          break;
+        case "compiler-reentry":
+          proposition = { kind: "compiler-reentry", publishedReadSurvives: emittedAnchorsSurvive && witness.samePublishedGlobal === true,
+            compilerOrderOnly: true };
+          break;
+        case "decline":
+          proposition = { kind: "decline", callbackDeclined: ownOutcome === "declined",
+            scopedDeclineObserved: sourceScopeSurvives && ownOutcome === "declined",
+            outputSurvival: "NOT_APPLICABLE", rollbackVerified: "UNOBSERVED" };
+      }
+      return { kind: witness.kind, seedId: seed.id, seedName: seed.name,
+        seedFrame: seed.fctx.name, parentSeedIds: seed.parentSeedIds,
+        boundaryId: boundary?.id ?? null, boundaryLabel: boundary?.label ?? null,
+        ownTransactionId: witness.ownTransactionId ?? null, ownOutcome, ancestorOutcomes,
+        moduleAttachment: { status: moduleAttachmentKnown ? "ATTACHED" : "UNKNOWN",
+          emissionId: finalEmission?.id ?? null, bodyEmissionId: boundary?.bodyEmission?.id ?? null,
+          callerFunctionOrdinal, handoffVerified: boundary?.handoffVerified ?? false },
+        publicationPrefixValidated: seed.publication, sourceScopeSurvives, scopeReasons,
+        emittedAnchorsSurvive, publicationReachable, anchorsReachable, anchorCount: witness.anchors.length,
+        samePublishedGlobal: witness.samePublishedGlobal ?? null, proposition };
+
+    };
+    const witnessRecords = witnesses.map((witness) => evaluateWitness(witness, finalEmission));
+    const outputPositive = (entry: ReturnType<typeof evaluateWitness>) =>
+      entry.proposition.kind === "commit" ? entry.proposition.committedOutputSurvives :
+      entry.proposition.kind === "compiler-reentry" ? entry.proposition.publishedReadSurvives : false;
+    // Diagnostic shadow views only: never mutate the compiler module, functions,
+    // fctx, instructions or binary. Every outcome uses the SAME actual predicate.
+    const contractFailures: string[] = [];
+    const contractRows: Array<{
+      label: string; witnessIndex: number; expectedOutputSurvival: boolean;
+      actual: ReturnType<typeof evaluateWitness>; passed: boolean;
+      oldHeldBodyReachable?: boolean;
+    }> = [];
+    const positives = witnessRecords.flatMap((entry, index) => outputPositive(entry) && entry.anchorCount > 0 ? [index] : []);
+    const assertView = (label: string, index: number, witness: Witness,
+      view: FinalEmission | undefined, expectedOutputSurvival: boolean, oldHeldBodyReachable?: boolean) => {
+      const actual = evaluateWitness(witness, view);
+      const passed = outputPositive(actual) === expectedOutputSurvival;
+      contractRows.push({ label, witnessIndex: index, expectedOutputSurvival, actual, passed, oldHeldBodyReachable });
+      if (!passed) contractFailures.push(label);
+      return actual;
+    };
+    record(() => {
+      if (!finalEmission || positives.length === 0) {
+        contractFailures.push("INCONCLUSIVE: no real nonempty eligible positive witness");
+        return;
+      }
+      const index = positives.find((candidate) => {
+        const witness = witnesses[candidate]!;
+        const held = reachableObjects([witness.seed.boundary!.fctx.body]);
+        return witness.seed.publishInstruction !== undefined && held.has(witness.seed.publishInstruction) &&
+          witness.anchors.every((anchor) => held.has(anchor));
+      });
+      if (index === undefined) {
+        contractFailures.push("INCONCLUSIVE: no real positive also reachable from held caller body alone");
+        return;
+      }
+      const witness = witnesses[index]!;
+      const boundary = witness.seed.boundary!;
+      const caller = boundary.bodyEmission!.func;
+      const shadow = (functions: FinalEmission["functions"]): FinalEmission => ({
+        ...finalEmission, functions,
+        reachable: reachableObjects(functions.map((entry) => entry.body)),
+      });
+      // Held body ALONE must witness the old false acceptance; the unchanged
+      // real module cannot accidentally provide this negative's positive floor.
+      const held = reachableObjects([boundary.fctx.body]);
+      const oldHeldBodyReachable = witness.anchors.every((anchor) => held.has(anchor)) &&
+        witness.seed.publishInstruction !== undefined && held.has(witness.seed.publishInstruction);
+      if (!oldHeldBodyReachable) contractFailures.push("old held-body positive control did not fire");
+      assertView("real-nonempty-positive", index, witness, finalEmission, true, oldHeldBodyReachable);
+      assertView("orphan-caller-held-body-retained", index, witness,
+        shadow(finalEmission.functions.filter((entry) => entry.func !== caller)), false, oldHeldBodyReachable);
+      assertView("same-name-distinct-allocation", index, witness,
+        shadow(finalEmission.functions.map((entry) => entry.func === caller
+          ? { func: { ...entry.func }, body: entry.body } : entry)), false, oldHeldBodyReachable);
+      // Remove all emitted roots, retaining all actual held references. This is
+      // a diagnostic adverse view, NOT a claim real compilation emitted empties.
+      assertView("all-bodies-detached-held-metadata-retained", index, witness,
+        shadow(finalEmission.functions.map((entry) => ({ ...entry, body: [] }))), false, oldHeldBodyReachable);
+      assertView("missing-final-emission", index, witness, undefined, false);
+      assertView("nonempty-positive-repeated", index, witness, finalEmission, true);
+      const committedIndex = witnessRecords.findIndex((entry) =>
+        entry.proposition.kind === "commit" && entry.proposition.committedOutputSurvives && entry.anchorCount > 0);
+      if (committedIndex < 0) {
+        contractFailures.push("INCONCLUSIVE: no real nonempty surviving committed callback for empty-output control");
+      } else {
+        const empty = assertView("actual-committed-callback-empty-output", committedIndex,
+          { ...witnesses[committedIndex]!, anchors: [] }, finalEmission, false);
+        if (empty.proposition.kind !== "commit" || !empty.proposition.callbackCommitted || empty.proposition.committedOutputSurvives || empty.anchorsReachable)
+          contractFailures.push("empty callback output conflated with survival");
+      }
+    });
+    // Publication and decline controls never masquerade as output positives.
+    const kindControlFailures: string[] = [];
+    const kindControls: Array<{ label: string; witnessIndex: number;
+      status: "OBSERVED" | "INCONCLUSIVE"; actual: ReturnType<typeof evaluateWitness> | null }> = [];
+    record(() => {
+      const seedIndex = witnessRecords.findIndex((entry) => entry.proposition.kind === "seed" &&
+        entry.proposition.publicationObserved && entry.anchorCount === 0);
+      if (seedIndex < 0 || !finalEmission) {
+        kindControls.push({ label: "real-empty-anchor-seed-publication", witnessIndex: -1, status: "INCONCLUSIVE", actual: null });
+        kindControls.push({ label: "orphan-seed-publication", witnessIndex: -1, status: "INCONCLUSIVE", actual: null });
+        kindControlFailures.push("no real empty-anchor seed publication positive");
+      } else {
+        const seedWitness = witnesses[seedIndex]!;
+        const actual = evaluateWitness(seedWitness, finalEmission);
+        kindControls.push({ label: "real-empty-anchor-seed-publication", witnessIndex: seedIndex, status: "OBSERVED", actual });
+        const caller = seedWitness.seed.boundary!.bodyEmission!.func;
+        const functions = finalEmission.functions.filter((entry) => entry.func !== caller);
+        const orphan = evaluateWitness(seedWitness, { ...finalEmission, functions,
+          reachable: reachableObjects(functions.map((entry) => entry.body)) });
+        kindControls.push({ label: "orphan-seed-publication", witnessIndex: seedIndex, status: "OBSERVED", actual: orphan });
+        if (actual.emittedAnchorsSurvive || actual.proposition.kind !== "seed" || !actual.proposition.publicationObserved ||
+          orphan.proposition.kind !== "seed" || orphan.proposition.publicationObserved)
+          kindControlFailures.push("seed publication/output discrimination failed");
+      }
+      for (const [label, predicate] of [
+        ["real-scoped-decline", (entry: ReturnType<typeof evaluateWitness>) =>
+          entry.proposition.kind === "decline" && entry.proposition.scopedDeclineObserved],
+        ["real-decline-with-rolled-back-ancestor", (entry: ReturnType<typeof evaluateWitness>) =>
+          entry.proposition.kind === "decline" && entry.proposition.callbackDeclined &&
+          // The actual predicate must reject ONLY for the ancestor outcome.
+          // No altered ancestry or unrelated/unattached decline may supply this control.
+          entry.scopeReasons.length === 1 && entry.scopeReasons[0] === "enclosing transaction not committed" &&
+          entry.ancestorOutcomes.every((ancestor) =>
+            ancestor.status === "committed" || ancestor.status === "declined" || ancestor.status === "rolled-back") &&
+          entry.ancestorOutcomes.some((ancestor) => ancestor.status === "declined" || ancestor.status === "rolled-back")],
+      ] as const) {
+        const index = witnessRecords.findIndex(predicate);
+        if (index < 0) {
+          kindControls.push({ label, witnessIndex: -1, status: "INCONCLUSIVE", actual: null });
+          kindControlFailures.push(label + ": no real capture");
+          continue;
+        }
+        const actual = evaluateWitness(witnesses[index]!, finalEmission);
+        kindControls.push({ label, witnessIndex: index, status: "OBSERVED", actual });
+        if (actual.proposition.kind !== "decline" || actual.proposition.rollbackVerified !== "UNOBSERVED" ||
+          (label === "real-decline-with-rolled-back-ancestor" && actual.proposition.scopedDeclineObserved))
+          kindControlFailures.push(label + ": outcome incorrectly credited");
+      }
+    });
+    const observerContract = { evidence: "diagnostic shadow views of real captured data",
+      positiveCount: positives.length, rows: contractRows, kindControls,
+      failures: [...contractFailures, ...kindControlFailures] };
+    save("observer-contract.json", JSON.stringify(observerContract, null, 2));
+    const scopedEvidence = {
+      seedPublications: witnessRecords.filter((entry) => entry.proposition.kind === "seed" && entry.proposition.publicationObserved).length,
+      committedOutputs: witnessRecords.filter((entry) => entry.proposition.kind === "commit" && entry.proposition.committedOutputSurvives).length,
+      publishedCompilerReads: witnessRecords.filter((entry) => entry.proposition.kind === "compiler-reentry" && entry.proposition.publishedReadSurvives).length,
+      scopedDeclineEvents: witnessRecords.filter((entry) => entry.proposition.kind === "decline" && entry.proposition.scopedDeclineObserved).length,
+      verifiedDeclineRollbacks: 0,
+    };
+    const rollbackProof = { status: "UNOBSERVED", reason: "callback outcome is not restoration proof" };
+    const coverageFailures: string[] = [];
+    for (const [name, count] of Object.entries(scopedEvidence))
+      if (count === 0) coverageFailures.push(name + " not observed");
+    coverageFailures.push("runtime seed reentry unobserved: binaries intentionally uninstrumented");
+    const basis = Object.fromEntries([
+      "src/codegen/promise-combinator-drive.ts", "src/codegen/promise-combinator-observable-protocol.ts",
+      "src/codegen/builtin-static-globals.ts", "src/codegen/builtin-constructor-prepared.ts",
+      "src/codegen/staging-bindings.ts", "src/codegen/builtin-ctor-own-props.ts",
+      "src/codegen/builtin-proto-constructor-seed.ts", "src/codegen/context/speculative.ts",
+      "src/codegen/native-proto.ts", "src/codegen/function-body.ts", "src/emit/binary.ts", "src/compiler.ts",
+      "tests/issue-5883-real-constructor-observer-v6.test.ts",
+    ].map((path) => [path, sha(readFileSync(resolve(path)))]));
+    save("receipt.json", JSON.stringify({ arm, row, basis, sourceHash: sha(source),
+      selected, sourceReads, readEvidence, driveHits, observerErrors, snapshots, probes,
+      compilationWideDiagnostics: { seedCalls, committed, declined, reentries, publishedReentries },
+      scopedEvidence, witnessRecords, transactions, observerContract, rollbackProof,
+      finalModuleEvidence: { returnedBinaryHash, matchingEmissionIds: matchingEmissions.map((entry) => entry.id),
+        emissions: finalEmissions.map((entry) => ({ id: entry.id, completed: entry.completed,
+          binaryHash: entry.binaryHash, snapshot: entry.snapshot, functionCount: entry.functions.length })) },
+      selectedBoundaries: boundaries.map(({ id, label, completed }) => ({ id, label, completed })),
+      seedRecords: seedSpans.map((seed) => ({ id: seed.id, name: seed.name, frame: seed.fctx.name,
+        boundaryId: seed.boundary?.id ?? null, parentSeedIds: seed.parentSeedIds,
+        transactionIds: seed.transactionIds, completed: seed.completed, publication: seed.publication,
+        boundaryContextMatches: seed.boundary?.ctx === seed.ctx,
+        boundaryFrameMatches: seed.boundary?.fctx === seed.fctx })),
+      transientEvidence: { files: roots, regionCalls, transfers },
+      events, coverageFailures, runtimeReentry: { status: "UNOBSERVED", instrumentation: "none" },
+      compileError, success: result?.success, errors: result?.errors,
+      binaryHash: result ? sha(result.binary) : null, nativeActual, nativeError, actual, runtimeError, imports,
+    }, null, 2));
+    expect(observerErrors).toEqual([]);
+    expect(observerContract.positiveCount).toBeGreaterThan(0);
+    expect(observerContract.failures).toEqual([]);
+    expect(observerContract.rows).toHaveLength(7);
+    if (row.group === "seam") {
+      expect(selected).toHaveLength(2);
+      expect(driveHits).toHaveLength(0);
+      expect(selected.every((hit) => hit.active === true)).toBe(true);
+      if (row.state === "cold" || row.state === "controlled-reserved") expect(selected[0]!.beforeReservation).toBe(false);
+      else expect(selected[0]!.beforeReservation).toBe(true);
+      expect(sourceReads).toBe(row.state === "already-emitted" ? 3 : 2);
+      expect(regionCalls).toBe(arm === "C" ? 2 : 0);
+      expect(transfers).toBe(arm === "C" ? 2 : 0);
+    } else {
+      expect(driveHits).toEqual([{ method: row.method, arg: "input", observable: true, captured: true }]);
+      expect(readEvidence.some((hit) => hit.phase === "before-drive")).toBe(true);
+      expect(readEvidence.some((hit) => hit.phase === "after-drive")).toBe(true);
+      expect(regionCalls).toBe(arm === "C" ? 1 : 0);
+      expect(transfers).toBe(arm === "C" ? 1 : 0);
+    }
+    expect(compileError).toBeNull();
+    expect(result?.success, JSON.stringify(result?.errors)).toBe(true);
+    expect(nativeError).toBeNull(); expect(nativeActual).toBe(1);
+    expect(imports).toEqual([]); expect(runtimeError).toBeNull(); expect(actual).toBe(1);
+    // Honest coverage failure is separate from preserved correspondence data.
+    // This cannot go green merely because identical uninstrumented rows pass.
+    expect(coverageFailures, "mandatory constructor coverage remains unmet").toEqual([]);
+  }, 120000);
+}

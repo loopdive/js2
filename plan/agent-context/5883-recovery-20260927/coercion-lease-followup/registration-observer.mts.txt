@@ -1,0 +1,52 @@
+import { createHash } from "node:crypto";
+import "../src/index.ts";
+import { analyzeSource } from "../src/checker/index.ts";
+import { createEmptyModule } from "../src/ir/types.ts";
+import { createCodegenContext } from "../src/codegen/context/create-context.ts";
+import type { FunctionContext } from "../src/codegen/context/types.ts";
+import { ensurePromiseVectorIteratorRuntime } from "../src/codegen/promise-vector-iterator.ts";
+import { ensureNativeLiveArrayValues } from "../src/codegen/iterator-live-array.ts";
+import { ensureNativeIteratorReceiverToObject } from "../src/codegen/iterator-receiver-to-object.ts";
+
+function serialize(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "bigint") return { bigint: item.toString() };
+    if (typeof item === "number" && (!Number.isFinite(item) || Object.is(item, -0))) {
+      return { number: Object.is(item, -0) ? "-0" : String(item) };
+    }
+    if (item instanceof Map) return { map: [...item] };
+    if (item instanceof Set) return { set: [...item] };
+    return item;
+  });
+}
+const hash = (value: unknown) => createHash("sha256").update(serialize(value)).digest("hex");
+const records = [];
+for (const kind of ["live-array", "receiver-to-object", "promise-vector"] as const) {
+  const source = analyzeSource("export function test(): number { return 1; }", "coercion-observe.ts");
+  const ctx = createCodegenContext(createEmptyModule(), source.checker, { standalone: true, nativeStrings: true });
+  const fctx: FunctionContext = {
+    name: "coercion-observe", params: [], locals: [], localMap: new Map(),
+    returnType: { kind: "externref" }, body: [], blockDepth: 0,
+    breakStack: [], continueStack: [], labelMap: new Map(), savedBodies: [],
+  };
+  const names = kind === "live-array"
+    ? ["__live_array_length", "__live_array_next", "__live_array_values"]
+    : kind === "receiver-to-object" ? ["__iterator_receiver_to_object"]
+      : ["__promise_vector_iterator_acquire", "__promise_vector_iterator_step", "__promise_vector_iterator_close_throw"];
+  if (kind === "live-array") ensureNativeLiveArrayValues(ctx);
+  else if (kind === "receiver-to-object") ensureNativeIteratorReceiverToObject(ctx);
+  else ensurePromiseVectorIteratorRuntime(ctx, fctx);
+  const helpers = names.map(name => {
+    const matches = ctx.mod.functions.filter(fn => fn.name === name);
+    if (matches.length !== 1 || matches[0]!.body.length === 0) throw new Error(`Missing/duplicate/empty ${name}`);
+    return { name, bodyLength: matches[0]!.body.length, definitionSha256: hash(matches[0]) };
+  });
+  if (ctx.mod.functions.length < names.length) throw new Error("Empty registration observation");
+  records.push({
+    kind, helpers, functionCount: ctx.mod.functions.length, typeCount: ctx.mod.types.length,
+    moduleSha256: hash(ctx.mod), orderedFuncMapSha256: hash([...ctx.funcMap]),
+    structMapSha256: hash([...ctx.structMap]), structFieldsSha256: hash([...ctx.structFields]),
+    callerSha256: hash(fctx),
+  });
+}
+console.log(JSON.stringify({ lane: "standalone nativeStrings", scope: "Actual helper registration and emitted module, not full runtime equivalence", records }, null, 2));

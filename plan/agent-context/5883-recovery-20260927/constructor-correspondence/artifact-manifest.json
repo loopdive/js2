@@ -1,0 +1,512 @@
+{
+  "worktree": "/private/tmp/js2-5883-main-6eac-20260927",
+  "pinnedHead": "fda4b498696f395889e199756c6b8c27a629387c",
+  "arms": {
+    "B": {
+      "tests": 5,
+      "pass": 0,
+      "fail": 5,
+      "receipts": [
+        {
+          "file": "drive-all.receipt.json",
+          "sha256": "bdbbf34e00b42b058468ce74ed4f46046f1e98234aae7f7db22b58b94f4a1378",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "drive-all",
+            "group": "drive",
+            "method": "all"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 2,
+          "probeCount": 159,
+          "transientCount": 16
+        },
+        {
+          "file": "drive-race.receipt.json",
+          "sha256": "7b92afc605addd02741d78d661940d8c300e8de225d97b55f10c21527a02003b",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "drive-race",
+            "group": "drive",
+            "method": "race"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 2,
+          "probeCount": 159,
+          "transientCount": 16
+        },
+        {
+          "file": "seam-already-emitted.receipt.json",
+          "sha256": "7604d811603aeedd9dcce08329ef25cd5196bd1496ca068859bede43ebeed4ad",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "seam-already-emitted",
+            "group": "seam",
+            "state": "already-emitted"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 6,
+            "committed": 43,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 4,
+          "probeCount": 129,
+          "transientCount": 12
+        },
+        {
+          "file": "seam-cold.receipt.json",
+          "sha256": "ca177bb2f639235d795cf094d4a3511d990937a66d051124f12647997e82447b",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "seam-cold",
+            "group": "seam",
+            "state": "cold"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 4,
+          "probeCount": 99,
+          "transientCount": 10
+        },
+        {
+          "file": "seam-controlled-reserved.receipt.json",
+          "sha256": "67554fdef9614286c1daf121569fb93ff6147912e2c7db76d154dabc5aba9c5a",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "seam-controlled-reserved",
+            "group": "seam",
+            "state": "controlled-reserved"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 4,
+          "probeCount": 99,
+          "transientCount": 10
+        }
+      ],
+      "catalog": {
+        "count": 750,
+        "bytes": 84761284,
+        "sha256": "f33d6cf25aab2e514978bb69937a8f9ac6d732691c701df874ec4d4d30bb611d",
+        "encoding": "JSON.stringify of sorted filename records {file,bytes,sha256}; raw files retained locally"
+      }
+    },
+    "C": {
+      "tests": 5,
+      "pass": 0,
+      "fail": 5,
+      "receipts": [
+        {
+          "file": "drive-all.receipt.json",
+          "sha256": "e77a03054a42f32f318fc8c56cfbebc110a8e7d30b66e3ac9cc53fb121b6b265",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "drive-all",
+            "group": "drive",
+            "method": "all"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 2,
+          "probeCount": 159,
+          "transientCount": 18
+        },
+        {
+          "file": "drive-race.receipt.json",
+          "sha256": "8095617de275d3e62247af3b21ed94bf2f5e986bc14f5617a4f95e12cf148c77",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "drive-race",
+            "group": "drive",
+            "method": "race"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 2,
+          "probeCount": 159,
+          "transientCount": 18
+        },
+        {
+          "file": "seam-already-emitted.receipt.json",
+          "sha256": "f16bb5ea3f3770ac8430438ceb54053cedfe2979c5c083338c22839ab856e964",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "seam-already-emitted",
+            "group": "seam",
+            "state": "already-emitted"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 6,
+            "committed": 43,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 4,
+          "probeCount": 129,
+          "transientCount": 22
+        },
+        {
+          "file": "seam-cold.receipt.json",
+          "sha256": "0c7a88037a61c80548a8a7293df43ae72d2380d4e3d0622ea5b0b7bc2455ff55",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "seam-cold",
+            "group": "seam",
+            "state": "cold"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 4,
+          "probeCount": 99,
+          "transientCount": 20
+        },
+        {
+          "file": "seam-controlled-reserved.receipt.json",
+          "sha256": "c59a0f7e6790b5a13ff7aa406b63ef279d00c9087eb72d5c717de5a3a3f5ef7f",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "src/codegen/builtin-ctor-own-props.ts": "1944944a30f9bc6a1e78a8575fa858b5737a7d7673170b3eb646a369dcb38871",
+            "src/codegen/builtin-proto-constructor-seed.ts": "612448e6024bda32f4d3c95786088c11b660d7cb8155a64456166d9a3206c3f8",
+            "src/codegen/context/speculative.ts": "ba2c77f8c3c86d6790f4c4c733c2b7a65981a5a26a054e21e6f6cae4e2efaa02",
+            "src/codegen/native-proto.ts": "c9add4fe5fe692f1e1933affd72a665c90e7de04ce27db2f0b7daae46aad91cf",
+            "tests/issue-5883-real-constructor-observer.test.ts": "63ef291f2cf5a0ffecf087e90b21a0b509a2de481961d4d2c385be96889b0afd"
+          },
+          "row": {
+            "id": "seam-controlled-reserved",
+            "group": "seam",
+            "state": "controlled-reserved"
+          },
+          "success": true,
+          "native": 1,
+          "actual": 1,
+          "observerErrors": [],
+          "seedEvidence": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "coverageFailures": [
+            "real declined seed probe not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "constructorReentries": [
+            {
+              "kind": "constructor-reentry",
+              "name": "Promise",
+              "frame": "__nativeproto_seed_-1073741794",
+              "global": 148,
+              "published": true
+            }
+          ],
+          "snapshotCount": 4,
+          "probeCount": 99,
+          "transientCount": 20
+        }
+      ],
+      "catalog": {
+        "count": 784,
+        "bytes": 85821298,
+        "sha256": "fb0855dbee8325c45b600d2c8e4aed708ae5d92782d2ec48600690aa0ffec64b",
+        "encoding": "JSON.stringify of sorted filename records {file,bytes,sha256}; raw files retained locally"
+      }
+    }
+  }
+}

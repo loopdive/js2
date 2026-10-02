@@ -1,0 +1,207 @@
+diff --git a/src/codegen/promise-combinator-drive.ts b/src/codegen/promise-combinator-drive.ts
+index 6a2ac4a89b..b2d82e4dfb 100644
+--- a/src/codegen/promise-combinator-drive.ts
++++ b/src/codegen/promise-combinator-drive.ts
+@@ -76,6 +76,7 @@ import { ensureExnTag } from "./registry/imports.js";
+ import { ensureNativeIteratorRuntime } from "./iterator-native.js";
+ import { compileExpression } from "./shared.js";
+ import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ import {
+   observableCombinatorReactionFns,
+   emitObservableCombinatorElement,
+@@ -181,7 +182,7 @@ function ensureDriveAllRuntime(
+         ...captures,
+         arrTypeIdx: ids.arrTypeIdx,
+         vecTypeIdx: ids.vecTypeIdx,
+-        fulfillFuncIdx: rt.fulfillFuncIdx,
++        fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
+       }),
+       exported: false,
+     });
+@@ -680,7 +681,7 @@ function emitDriveAllComplete(
+             { op: "struct.get", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },
+             { op: "struct.new", typeIdx: ids.vecTypeIdx },
+             { op: "extern.convert_any" },
+-            { op: "call", funcIdx: rt.fulfillFuncIdx },
++            { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
+             { op: "drop" },
+           ],
+         },
+diff --git a/src/codegen/promise-combinator-observable-protocol.ts b/src/codegen/promise-combinator-observable-protocol.ts
+index ed4c12fcef..f03733870e 100644
+--- a/src/codegen/promise-combinator-observable-protocol.ts
++++ b/src/codegen/promise-combinator-observable-protocol.ts
+@@ -15,6 +15,8 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+ import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+ import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+ import { buildClosureRefTestArms } from "./closure-classifier.js";
++import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+ import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+ import { stringConstantExternrefInstrs } from "./native-strings.js";
+@@ -437,6 +439,11 @@ function emitObservableCombinatorState(
+   return { stateLocal, arrLocal, lengthLocal };
+ }
+ 
++/** (#5197 r3) Settle an observable aggregate through Resolve when required. */
++function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
++  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
++}
++
+ /**
+  * Drop Promise.all's remaining-elements completion sentinel after its admitted
+  * literal/direct-VEC iteration finishes. The final decrement is intentionally
+@@ -543,6 +550,7 @@ export function emitObservableCombinatorElement(
+     buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),
+   },
+ ): void {
++  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
+   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
+   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
+@@ -602,6 +610,8 @@ export function emitObservableCombinatorElement(
+     { op: "call", funcIdx: carrier.subscribeFuncIdx },
+   ];
+   const buildNativeInvoke = (): Instr[] => {
++    // (#6651 D5) A replaceable `%Promise.prototype%.then` must be Got, not bypassed.
++    if (protoThenReplaceable) return buildNonNativeInvoke();
+     const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
+     return [
+@@ -805,7 +815,7 @@ function emitObservableStandalonePromiseCombinatorLiteral(
+       [{ op: "local.get", index: inputLocals[i]! }],
+     );
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }
+@@ -925,7 +935,7 @@ function emitObservableStandalonePromiseCombinatorRuntime(
+     fctx.savedBodies.pop();
+     fctx.body = savedBody;
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }
+diff --git a/src/codegen/promise-combinators.ts b/src/codegen/promise-combinators.ts
+index 55f7951d0a..1d5d4b6bf1 100644
+--- a/src/codegen/promise-combinators.ts
++++ b/src/codegen/promise-combinators.ts
+@@ -107,6 +107,7 @@ import {
+   PROMISE_STATE_REJECTED,
+   isStandalonePromiseActive,
+ } from "./async-scheduler.js";
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ 
+ const EXTERNREF: ValType = { kind: "externref" };
+ 
+@@ -635,7 +636,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
+       stateTypeIdx: ids.stateTypeIdx,
+       arrTypeIdx: ids.arrTypeIdx,
+       vecTypeIdx: ids.vecTypeIdx,
+-      fulfillFuncIdx: rt.fulfillFuncIdx,
++      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
+     }),
+     exported: false,
+   });
+@@ -686,7 +687,7 @@ type SettledAnyCombinatorRuntime = CombinatorRuntime &
+  * COMBINATOR_FUNC_IDX_KEYS (async-scheduler.ts) for the #2918 late-import
+  * lockstep shift.
+  */
+-function ensureSettledAnyCombinators(ctx: CodegenContext): SettledAnyCombinatorRuntime {
++export function ensureSettledAnyCombinators(ctx: CodegenContext): SettledAnyCombinatorRuntime {
+   const ids = ensureCombinatorFunctions(ctx);
+   if (ids.allSettledFulfillFuncIdx !== undefined && ids.anyRejectFuncIdx !== undefined) {
+     return ids as SettledAnyCombinatorRuntime;
+@@ -945,7 +946,7 @@ function buildAllSettledBody(
+         { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },
+         { op: "struct.new", typeIdx: ids.vecTypeIdx },
+         { op: "extern.convert_any" },
+-        { op: "call", funcIdx: rt.fulfillFuncIdx },
++        { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
+         { op: "drop" },
+       ],
+     },
+@@ -1126,7 +1127,7 @@ export function emitStandalonePromiseCombinator(
+       fctx.body.push({ op: "local.get", index: arrLocal });
+       fctx.body.push({ op: "struct.new", typeIdx: ids.vecTypeIdx });
+       fctx.body.push({ op: "extern.convert_any" });
+-      fctx.body.push({ op: "call", funcIdx: rt.fulfillFuncIdx });
++      fctx.body.push({ op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }); // (#5197 r3)
+       fctx.body.push({ op: "drop" });
+     } else if (method === "any") {
+       fctx.body.push({ op: "local.get", index: resultLocal });
+@@ -1251,7 +1252,7 @@ export function emitStandalonePromiseCombinatorRuntime(
+       subscribeFuncIdx: ids.subscribeFuncIdx,
+       fulfillReactionFuncIdx: reaction.fulfillIdx,
+       rejectReactionFuncIdx: reaction.rejectIdx,
+-      fulfillFuncIdx: rt.fulfillFuncIdx,
++      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) all/allSettled empty aggregate
+       rejectFuncIdx: rt.rejectFuncIdx,
+       bagInit: combinatorBagInit(),
+       emptyResult:
+diff --git a/src/codegen/promise-observable-combinators.ts b/src/codegen/promise-observable-combinators.ts
+index b248cfb008..f2ee76db92 100644
+--- a/src/codegen/promise-observable-combinators.ts
++++ b/src/codegen/promise-observable-combinators.ts
+@@ -21,6 +21,8 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+ import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+ import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+ import { buildClosureRefTestArms } from "./closure-classifier.js";
++import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+ import { allocLocal } from "./context/locals.js";
+ import type { CodegenContext, FunctionContext } from "./context/types.js";
+@@ -399,6 +401,11 @@ function emitObservableCombinatorState(
+   return { stateLocal, arrLocal, lengthLocal };
+ }
+ 
++/** (#5197 r3) Settle an observable aggregate through Resolve when required. */
++function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
++  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
++}
++
+ /** Drop Promise.all's iteration-completion sentinel after every admitted element ran. */
+ function emitObservableAllIterationComplete(
+   fctx: FunctionContext,
+@@ -479,6 +486,7 @@ function emitObservableCombinatorElement(
+   indexInstrs: readonly Instr[],
+   inputInstrs: readonly Instr[],
+ ): void {
++  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
+   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
+   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
+@@ -541,6 +549,8 @@ function emitObservableCombinatorElement(
+     { op: "drop" },
+   ];
+   const buildNativeInvoke = (): Instr[] => {
++    // (#6651 D5) A replaceable `%Promise.prototype%.then` must be Got, not bypassed.
++    if (protoThenReplaceable) return buildNonNativeInvoke();
+     const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
+     return [
+@@ -706,7 +716,7 @@ export function emitObservableStandalonePromiseCombinatorLiteral(
+       [{ op: "local.get", index: inputLocals[i]! }],
+     );
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }
+@@ -812,7 +822,7 @@ export function emitObservableStandalonePromiseCombinatorRuntime(
+     fctx.savedBodies.pop();
+     fctx.body = savedBody;
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }

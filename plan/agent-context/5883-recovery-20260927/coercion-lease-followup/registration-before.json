@@ -1,0 +1,77 @@
+{
+  "lane": "standalone nativeStrings",
+  "scope": "Actual helper registration and emitted module, not full runtime equivalence",
+  "records": [
+    {
+      "kind": "live-array",
+      "helpers": [
+        {
+          "name": "__live_array_length",
+          "bodyLength": 18,
+          "definitionSha256": "60889b6ec6744b8acc501b5b8949af3b99518b4009ff82aa167113e6acf824c7"
+        },
+        {
+          "name": "__live_array_next",
+          "bodyLength": 26,
+          "definitionSha256": "f52329d6587f9f9fc2eafd22a98c08af431bcc16c1cfe77389e11dc1189cf78c"
+        },
+        {
+          "name": "__live_array_values",
+          "bodyLength": 12,
+          "definitionSha256": "16c43fbc8152a48282498159ed05b94305a054d755bbfd3bc80c38fd5e131ba0"
+        }
+      ],
+      "functionCount": 308,
+      "typeCount": 124,
+      "moduleSha256": "e712272ab2a1dfab22c4123973f419013a2ffa6f0df16d407036f77947d33c5d",
+      "orderedFuncMapSha256": "c6a403346d7ae0e0023da6bf3e9c3e78bf51e1f305b79e1b21f9110c263617a1",
+      "structMapSha256": "45e85bbbf514411db452aefbd4858c29c984616bbce9132744928f3b359492e7",
+      "structFieldsSha256": "7e73908c23486e7476bcd7ee087b03646665ec3c21b5fa0d6e4e66a925ad8ae7",
+      "callerSha256": "08b23f8a5fa5266fb2814e0b315cc0937c932143e3871698986bd147dd6a2427"
+    },
+    {
+      "kind": "receiver-to-object",
+      "helpers": [
+        {
+          "name": "__iterator_receiver_to_object",
+          "bodyLength": 23,
+          "definitionSha256": "8bf7effbefd6ed8827fd67b40d883264a7317f4d13c8af2034a5441b6401a64a"
+        }
+      ],
+      "functionCount": 300,
+      "typeCount": 120,
+      "moduleSha256": "0e4c32999a345ac9e0b45e3b52a49faf200cc98223911a2504af68ce78e675ba",
+      "orderedFuncMapSha256": "7728ec90bfd423846ad045241639299bee73fac1ad8c49faf3e36ce6383d1eb6",
+      "structMapSha256": "fea4fe8b18484e3c9f1985473e86ebb9ea92094ce9aefba8de51132e36d1d01d",
+      "structFieldsSha256": "704f2ea8ce99a801172a38ac7ac3d60b8cbb54c0117b363d0d6f2ed9e22b2a28",
+      "callerSha256": "08b23f8a5fa5266fb2814e0b315cc0937c932143e3871698986bd147dd6a2427"
+    },
+    {
+      "kind": "promise-vector",
+      "helpers": [
+        {
+          "name": "__promise_vector_iterator_acquire",
+          "bodyLength": 34,
+          "definitionSha256": "7e89e46085dc1b7f31f9fc7fcdfb1239d05b05f5664d94860a767943793645ae"
+        },
+        {
+          "name": "__promise_vector_iterator_step",
+          "bodyLength": 9,
+          "definitionSha256": "d4b5ba0925566419a2fb48daaf9877e87aa3c02553fb808529dad8d8df0b5c55"
+        },
+        {
+          "name": "__promise_vector_iterator_close_throw",
+          "bodyLength": 12,
+          "definitionSha256": "fdb79b83bb174f5a4c5350dc5136d8d4c6034253543d8676e45d97d8dc120172"
+        }
+      ],
+      "functionCount": 419,
+      "typeCount": 208,
+      "moduleSha256": "46fce944180c62fa484b9553c97acf9af4a1f7d56bdc1d20ae3f939149304580",
+      "orderedFuncMapSha256": "09e2fa5f79b209e5563b233d8ef6221d351b03417d41b8391a201d76aad11620",
+      "structMapSha256": "70cf8bde321a5e9d0594513f99c1c7588d04137143d3f6d123912ca3292a354f",
+      "structFieldsSha256": "dbf0c27bcf3f5f1c419612e8cf337cf628d598e2326811357e43f96e6864fdc8",
+      "callerSha256": "08b23f8a5fa5266fb2814e0b315cc0937c932143e3871698986bd147dd6a2427"
+    }
+  ]
+}

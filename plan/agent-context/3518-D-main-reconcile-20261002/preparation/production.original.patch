@@ -1,0 +1,957 @@
+diff --git a/scripts/compiler-boundaries.json b/scripts/compiler-boundaries.json
+index 1af4a0749c..0cb0b058c5 100644
+--- a/scripts/compiler-boundaries.json
++++ b/scripts/compiler-boundaries.json
+@@ -8185,15 +8185,6 @@
+       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+     },
+     {
+-<<<<<<< HEAD
+-      "path": "src/codegen/promise-combinator-drive.ts",
+-      "state": "unmigrated",
+-      "layer": "mixed-needs-split",
+-      "destination": "backend-wasmgc",
+-      "owner": "3518-coordinator",
+-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+-    },
+-    {
+       "path": "src/codegen/promise-combinator-observable-protocol.ts",
+       "state": "unmigrated",
+       "layer": "mixed-needs-split",
+@@ -8201,14 +8192,6 @@
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
+     },
+-    {
+-      "path": "src/codegen/promise-custom-combinator.ts",
+-      "state": "unmigrated",
+-      "layer": "mixed-needs-split",
+-      "destination": "backend-wasmgc",
+-      "owner": "3518-coordinator",
+-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+-    },
+     {
+       "path": "src/codegen/promise-observable-combinators.ts",
+       "state": "unmigrated",
+@@ -8218,8 +8201,6 @@
+       "nextBoundary": "Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction."
+     },
+     {
+-=======
+->>>>>>> 2bfe3eddf84d4d27f471eddb91e441709b7f6eff
+       "path": "src/codegen/promise-executor.ts",
+       "state": "unmigrated",
+       "layer": "mixed-needs-split",
+diff --git a/src/codegen/promise-combinator-drive.ts b/src/codegen/promise-combinator-drive.ts
+index 6a2ac4a89b..b2d82e4dfb 100644
+--- a/src/codegen/promise-combinator-drive.ts
++++ b/src/codegen/promise-combinator-drive.ts
+@@ -76,6 +76,7 @@ import { ensureExnTag } from "./registry/imports.js";
+ import { ensureNativeIteratorRuntime } from "./iterator-native.js";
+ import { compileExpression } from "./shared.js";
+ import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ import {
+   observableCombinatorReactionFns,
+   emitObservableCombinatorElement,
+@@ -181,7 +182,7 @@ function ensureDriveAllRuntime(
+         ...captures,
+         arrTypeIdx: ids.arrTypeIdx,
+         vecTypeIdx: ids.vecTypeIdx,
+-        fulfillFuncIdx: rt.fulfillFuncIdx,
++        fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
+       }),
+       exported: false,
+     });
+@@ -680,7 +681,7 @@ function emitDriveAllComplete(
+             { op: "struct.get", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },
+             { op: "struct.new", typeIdx: ids.vecTypeIdx },
+             { op: "extern.convert_any" },
+-            { op: "call", funcIdx: rt.fulfillFuncIdx },
++            { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
+             { op: "drop" },
+           ],
+         },
+diff --git a/src/codegen/promise-combinator-observable-protocol.ts b/src/codegen/promise-combinator-observable-protocol.ts
+index ed4c12fcef..f03733870e 100644
+--- a/src/codegen/promise-combinator-observable-protocol.ts
++++ b/src/codegen/promise-combinator-observable-protocol.ts
+@@ -15,6 +15,8 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+ import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+ import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+ import { buildClosureRefTestArms } from "./closure-classifier.js";
++import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+ import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+ import { stringConstantExternrefInstrs } from "./native-strings.js";
+@@ -437,6 +439,11 @@ function emitObservableCombinatorState(
+   return { stateLocal, arrLocal, lengthLocal };
+ }
+ 
++/** (#5197 r3) Settle an observable aggregate through Resolve when required. */
++function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
++  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
++}
++
+ /**
+  * Drop Promise.all's remaining-elements completion sentinel after its admitted
+  * literal/direct-VEC iteration finishes. The final decrement is intentionally
+@@ -543,6 +550,7 @@ export function emitObservableCombinatorElement(
+     buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),
+   },
+ ): void {
++  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
+   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
+   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
+@@ -602,6 +610,8 @@ export function emitObservableCombinatorElement(
+     { op: "call", funcIdx: carrier.subscribeFuncIdx },
+   ];
+   const buildNativeInvoke = (): Instr[] => {
++    // (#6651 D5) A replaceable `%Promise.prototype%.then` must be Got, not bypassed.
++    if (protoThenReplaceable) return buildNonNativeInvoke();
+     const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
+     return [
+@@ -805,7 +815,7 @@ function emitObservableStandalonePromiseCombinatorLiteral(
+       [{ op: "local.get", index: inputLocals[i]! }],
+     );
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }
+@@ -925,7 +935,7 @@ function emitObservableStandalonePromiseCombinatorRuntime(
+     fctx.savedBodies.pop();
+     fctx.body = savedBody;
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }
+diff --git a/src/codegen/promise-combinators.ts b/src/codegen/promise-combinators.ts
+index 24664907f9..1d5d4b6bf1 100644
+--- a/src/codegen/promise-combinators.ts
++++ b/src/codegen/promise-combinators.ts
+@@ -99,15 +99,6 @@ import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "
+ import { addStringConstantGlobal } from "./registry/imports.js";
+ import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
+ import { BUILTIN_TYPE_TAGS } from "./builtin-tags.js";
+-<<<<<<< HEAD
+-=======
+-import { buildClosureRefTestArms } from "./closure-classifier.js";
+-import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+-import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+-import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+-import { buildTargetTaggedTry } from "../ir/try-table.js";
+-import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
+->>>>>>> 2bfe3eddf84d4d27f471eddb91e441709b7f6eff
+ import {
+   ensureAsyncDriveRuntime,
+   getOrRegisterPromiseType,
+@@ -1071,612 +1062,6 @@ function buildNewAggregateErrorBody(
+   ];
+ }
+ 
+-<<<<<<< HEAD
+-=======
+-// ── (#5197 R3-2) Observable Promise.all / Promise.race pipeline ───────────
+-
+-/** Build `RejectPromise(result, reason)` plus the local abrupt-completion bit. */
+-function buildObservableRejectInstrs(
+-  rt: AsyncDriveRuntimeT,
+-  preparation: ObservableCombinatorPreparation,
+-  reasonInstrs: readonly Instr[],
+-): Instr[] {
+-  return [
+-    { op: "local.get", index: preparation.resultLocal },
+-    ...reasonInstrs,
+-    { op: "call", funcIdx: rt.rejectFuncIdx },
+-    { op: "drop" },
+-    { op: "i32.const", value: 1 },
+-    { op: "local.set", index: preparation.abortedLocal },
+-  ];
+-}
+-
+-/** The observable path's `IsCallable` predicate over the shared closure set. */
+-function buildObservableCallableCheckInstrs(
+-  ctx: CodegenContext,
+-  valueLocal: number,
+-  callableLocal: number,
+-  anyLocal: number,
+-): Instr[] {
+-  return [
+-    { op: "i32.const", value: 0 },
+-    { op: "local.set", index: callableLocal },
+-    { op: "local.get", index: valueLocal },
+-    { op: "ref.is_null" },
+-    {
+-      op: "if",
+-      blockType: { kind: "empty" },
+-      then: [],
+-      else: [
+-        { op: "local.get", index: valueLocal },
+-        { op: "any.convert_extern" },
+-        { op: "local.set", index: anyLocal },
+-        ...buildClosureRefTestArms(ctx, anyLocal, [
+-          { op: "i32.const", value: 1 },
+-          { op: "local.set", index: callableLocal },
+-        ]),
+-      ],
+-    },
+-  ];
+-}
+-
+-/** Emit a native TypeError rejection for a non-callable observable method. */
+-function buildObservableTypeErrorRejectInstrs(
+-  ctx: CodegenContext,
+-  rt: AsyncDriveRuntimeT,
+-  preparation: ObservableCombinatorPreparation,
+-  observable: ObservableCombinatorRuntime,
+-  message: string,
+-): Instr[] {
+-  return buildObservableRejectInstrs(rt, preparation, [
+-    ...stringConstantExternrefInstrs(ctx, message),
+-    { op: "call", funcIdx: ctx.funcMap.get("__new_TypeError")! },
+-  ]);
+-}
+-
+-/**
+- * Set up NewPromiseCapability's native result carrier and the one observable
+- * `Get(C, "resolve")`.  The get is wrapped in the target-standard EH builder;
+- * an abrupt completion rejects the already-created result and prevents any
+- * later iterator/pipeline work.  The resolve value is intentionally held in a
+- * local so later source writes cannot replace the captured method.
+- */
+-export function emitObservableCombinatorPreparation(
+-  ctx: CodegenContext,
+-  fctx: FunctionContext,
+-  ids: CombinatorRuntime,
+-  rt: AsyncDriveRuntimeT,
+-  observable: ObservableCombinatorRuntime,
+-  method: "all" | "race",
+-): ObservableCombinatorPreparation {
+-  const resultLocal = allocLocal(fctx, `__comb_observable_result_${fctx.locals.length}`, {
+-    kind: "ref",
+-    typeIdx: ids.promiseTypeIdx,
+-  });
+-  const ctorLocal = allocLocal(fctx, `__comb_observable_ctor_${fctx.locals.length}`, EXTERNREF);
+-  const resolveLocal = allocLocal(fctx, `__comb_observable_resolve_${fctx.locals.length}`, EXTERNREF);
+-  const abortedLocal = allocLocal(fctx, `__comb_observable_abrupt_${fctx.locals.length}`, { kind: "i32" });
+-  const reasonLocal = allocLocal(fctx, `__comb_observable_reason_${fctx.locals.length}`, EXTERNREF);
+-  const callableLocal = allocLocal(fctx, `__comb_observable_callable_${fctx.locals.length}`, { kind: "i32" });
+-  const callableAnyLocal = allocLocal(fctx, `__comb_observable_callable_any_${fctx.locals.length}`, {
+-    kind: "anyref",
+-  });
+-  // §27.2.4.3.1 creates the aggregate capability's resolve/reject exactly
+-  // once, then passes those same function *objects* to each `then` Invoke.
+-  // Keep them in externref locals so a thenable can observe handler identity.
+-  const raceFulfillLocal =
+-    method === "race" ? allocLocal(fctx, `__comb_observable_race_fulfill_${fctx.locals.length}`, EXTERNREF) : -1;
+-  const rejectLocal = allocLocal(fctx, `__comb_observable_reject_${fctx.locals.length}`, EXTERNREF);
+-  const preparation = { resultLocal, ctorLocal, resolveLocal, abortedLocal, raceFulfillLocal, rejectLocal };
+-
+-  // New native result promise: `Promise.all` / `race`'s capability promise.
+-  fctx.body.push(
+-    { op: "i32.const", value: PROMISE_STATE_PENDING },
+-    { op: "ref.null.extern" },
+-    { op: "ref.null.extern" },
+-    closureBagInitInstr(),
+-    { op: "struct.new", typeIdx: ids.promiseTypeIdx },
+-    { op: "local.set", index: resultLocal },
+-    { op: "i32.const", value: 0 },
+-    { op: "local.set", index: abortedLocal },
+-  );
+-
+-  if (method === "race") {
+-    fctx.body.push(
+-      ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_resolve_cl")!, [
+-        { op: "local.get", index: resultLocal },
+-      ]),
+-      { op: "extern.convert_any" },
+-      { op: "local.set", index: raceFulfillLocal },
+-    );
+-  }
+-  fctx.body.push(
+-    ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_reject_cl")!, [
+-      { op: "local.get", index: resultLocal },
+-    ]),
+-    { op: "extern.convert_any" },
+-    { op: "local.set", index: rejectLocal },
+-  );
+-
+-  // `Promise` is the same identity-stable carrier the source-level mutation
+-  // writes target.  Do this before iterator draining so a throwing getter wins
+-  // over an observable iterator getter, as required by GetPromiseResolve.
+-  emitBuiltinConstructorIdentity(ctx, fctx, "Promise");
+-  fctx.body.push({ op: "local.set", index: ctorLocal });
+-  fctx.body.push(
+-    buildTargetTaggedTry(
+-      ctx,
+-      { kind: "empty" },
+-      [
+-        { op: "local.get", index: ctorLocal },
+-        ...stringConstantExternrefInstrs(ctx, "resolve"),
+-        { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
+-        { op: "local.set", index: resolveLocal },
+-      ],
+-      [
+-        {
+-          tagIdx: observable.exnTagIdx,
+-          body: [
+-            { op: "local.set", index: reasonLocal },
+-            ...buildObservableRejectInstrs(rt, preparation, [{ op: "local.get", index: reasonLocal }]),
+-          ],
+-        },
+-      ],
+-    ),
+-  );
+-
+-  // IsCallable(promiseResolve). A non-callable resolve is an abrupt completion
+-  // converted to a rejected capability, never a synchronous throw from the
+-  // direct-call lowering.
+-  fctx.body.push(
+-    { op: "local.get", index: abortedLocal },
+-    { op: "i32.eqz" },
+-    {
+-      op: "if",
+-      blockType: { kind: "empty" },
+-      then: [
+-        ...buildObservableCallableCheckInstrs(ctx, resolveLocal, callableLocal, callableAnyLocal),
+-        { op: "local.get", index: callableLocal },
+-        { op: "i32.eqz" },
+-        {
+-          op: "if",
+-          blockType: { kind: "empty" },
+-          then: buildObservableTypeErrorRejectInstrs(
+-            ctx,
+-            rt,
+-            preparation,
+-            observable,
+-            "Promise resolve is not callable",
+-          ),
+-        },
+-      ],
+-    },
+-  );
+-  return preparation;
+-}
+-
+-/** Allocate the aggregate state once its (already-evaluated) input count is known. */
+-function emitObservableCombinatorState(
+-  fctx: FunctionContext,
+-  ids: CombinatorRuntime,
+-  preparation: ObservableCombinatorPreparation,
+-  method: "all" | "race",
+-  lengthInstrs: readonly Instr[],
+-): { stateLocal: number; arrLocal: number; lengthLocal: number } {
+-  const arrLocal = allocLocal(fctx, `__comb_observable_arr_${fctx.locals.length}`, {
+-    kind: "ref",
+-    typeIdx: ids.arrTypeIdx,
+-  });
+-  const stateLocal = allocLocal(fctx, `__comb_observable_state_${fctx.locals.length}`, {
+-    kind: "ref",
+-    typeIdx: ids.stateTypeIdx,
+-  });
+-  const lengthLocal = allocLocal(fctx, `__comb_observable_length_${fctx.locals.length}`, { kind: "i32" });
+-  fctx.body.push(
+-    ...lengthInstrs,
+-    { op: "local.set", index: lengthLocal },
+-    { op: "local.get", index: lengthLocal },
+-    { op: "array.new_default", typeIdx: ids.arrTypeIdx },
+-    { op: "local.set", index: arrLocal },
+-    { op: "local.get", index: preparation.resultLocal },
+-    { op: "local.get", index: arrLocal },
+-    { op: "local.get", index: lengthLocal },
+-    // Promise.all's remaining-elements count begins with its completion
+-    // sentinel. Each successfully-resolved element increments it immediately
+-    // before Invoke(next, "then", ...); iteration drops this final unit only
+-    // after every Invoke has returned. This prevents an eager thenable from
+-    // fulfilling the aggregate before a later abrupt Invoke can reject it.
+-    ...(method === "all"
+-      ? ([{ op: "i32.const", value: 1 }] satisfies Instr[])
+-      : ([{ op: "local.get", index: lengthLocal }] satisfies Instr[])),
+-    { op: "struct.new", typeIdx: ids.stateTypeIdx },
+-    { op: "local.set", index: stateLocal },
+-  );
+-  return { stateLocal, arrLocal, lengthLocal };
+-}
+-
+-/**
+- * Drop Promise.all's remaining-elements completion sentinel after its admitted
+- * literal/direct-VEC iteration finishes. The final decrement is intentionally
+- * absent when an earlier Get/Call/Invoke rejected the aggregate.
+- */
+-/** (#5197 r3) `rt` whose fulfil settles an aggregate through Resolve when observable. */
+-function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
+-  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
+-}
+-
+-function emitObservableAllIterationComplete(
+-  fctx: FunctionContext,
+-  ids: CombinatorRuntime,
+-  rt: AsyncDriveRuntimeT,
+-  method: NativeCombinator,
+-  preparation: ObservableCombinatorPreparation,
+-  state: { stateLocal: number; arrLocal: number; lengthLocal: number },
+-): void {
+-  if (method !== "all") return;
+-  const remainingLocal = allocLocal(fctx, `__comb_observable_remaining_${fctx.locals.length}`, { kind: "i32" });
+-  fctx.body.push(
+-    { op: "local.get", index: preparation.abortedLocal },
+-    { op: "i32.eqz" },
+-    {
+-      op: "if",
+-      blockType: { kind: "empty" },
+-      then: [
+-        { op: "local.get", index: state.stateLocal },
+-        { op: "local.get", index: state.stateLocal },
+-        { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },
+-        { op: "i32.const", value: 1 },
+-        { op: "i32.sub" },
+-        { op: "local.tee", index: remainingLocal },
+-        { op: "struct.set", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },
+-        { op: "local.get", index: remainingLocal },
+-        { op: "i32.eqz" },
+-        {
+-          op: "if",
+-          blockType: { kind: "empty" },
+-          then: [
+-            { op: "local.get", index: preparation.resultLocal },
+-            { op: "local.get", index: state.lengthLocal },
+-            { op: "local.get", index: state.arrLocal },
+-            { op: "struct.new", typeIdx: ids.vecTypeIdx },
+-            { op: "extern.convert_any" },
+-            { op: "call", funcIdx: rt.fulfillFuncIdx },
+-            { op: "drop" },
+-          ],
+-        },
+-      ],
+-    },
+-  );
+-}
+-
+-/** Mint the `resolveElement` closure passed to one observable `Promise.all` then call. */
+-function buildObservableAllResolveClosureInstrs(
+-  ctx: CodegenContext,
+-  observable: ObservableCombinatorRuntime,
+-  elemCapsLocal: number,
+-): Instr[] {
+-  return [
+-    { op: "ref.func", funcIdx: ctx.funcMap.get("__combinator_all_resolve_element")! },
+-    { op: "i32.const", value: 1 },
+-    closureBagInitInstr(),
+-    { op: "i32.const", value: 0 },
+-    { op: "i32.const", value: observable.allResolveMetaTypeIdx },
+-    { op: "local.get", index: elemCapsLocal },
+-    { op: "i32.const", value: 0 },
+-    { op: "struct.new", typeIdx: observable.allResolveCapTypeIdx },
+-    { op: "extern.convert_any" },
+-  ];
+-}
+-
+-/**
+- * (#6651 D2b) The aggregate-state types an observable element pipeline writes.
+- * The literal/direct-VEC callers pass none and get `$CombinatorState`; the
+- * driven dynamic-iterable `Promise.all` (`promise-combinator-drive.ts`) passes
+- * its growable `$CombinatorDriveState` twin, which has the same field order.
+- */
+-export interface ObservableElementCarrier {
+-  stateTypeIdx: number;
+-  elemCapsTypeIdx: number;
+-  subscribeFuncIdx: number;
+-  buildAllResolveClosure: (elemCapsLocal: number) => Instr[];
+-}
+-
+-/**
+- * Append one `Call(resolve, C, [value])` then `Invoke(next, "then", …)`
+- * pipeline.  This is intentionally emitted at the call site: the captured
+- * resolve method and constructor are per-combinator invocation, while the
+- * legacy `__combinator_subscribe` helper is source-agnostic.
+- */
+-export function emitObservableCombinatorElement(
+-  ctx: CodegenContext,
+-  fctx: FunctionContext,
+-  ids: CombinatorRuntime,
+-  rt: AsyncDriveRuntimeT,
+-  observable: ObservableCombinatorRuntime,
+-  preparation: ObservableCombinatorPreparation,
+-  method: "all" | "race",
+-  reaction: { fulfillIdx: number; rejectIdx: number },
+-  stateLocal: number,
+-  indexInstrs: readonly Instr[],
+-  inputInstrs: readonly Instr[],
+-  carrier: ObservableElementCarrier = {
+-    stateTypeIdx: ids.stateTypeIdx,
+-    elemCapsTypeIdx: ids.elemCapsTypeIdx,
+-    subscribeFuncIdx: ids.subscribeFuncIdx,
+-    buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),
+-  },
+-): void {
+-  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+-  const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
+-  const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
+-  const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
+-  const nextLocal = allocLocal(fctx, `__comb_observable_next_${fctx.locals.length}`, EXTERNREF);
+-  const errorLocal = allocLocal(fctx, `__comb_observable_error_${fctx.locals.length}`, EXTERNREF);
+-  const thenLocal = allocLocal(fctx, `__comb_observable_then_${fctx.locals.length}`, EXTERNREF);
+-  const callableLocal = allocLocal(fctx, `__comb_observable_then_callable_${fctx.locals.length}`, { kind: "i32" });
+-  const callableAnyLocal = allocLocal(fctx, `__comb_observable_then_any_${fctx.locals.length}`, { kind: "anyref" });
+-  const nextAnyLocal = allocLocal(fctx, `__comb_observable_next_any_${fctx.locals.length}`, { kind: "anyref" });
+-  const elemCapsLocal =
+-    method === "all"
+-      ? allocLocal(fctx, `__comb_observable_elem_caps_${fctx.locals.length}`, {
+-          kind: "ref",
+-          typeIdx: carrier.elemCapsTypeIdx,
+-        })
+-      : -1;
+-
+-  // Literal callers pass a pre-evaluated local; direct-vector callers pass the
+-  // current slot. No source argument expression is evaluated here, so an
+-  // earlier abrupt pipeline element cannot change argument-list evaluation.
+-  fctx.body.push(...inputInstrs, { op: "local.set", index: inputLocal });
+-
+-  const buildRejectFromError = (): Instr[] => [
+-    { op: "local.set", index: errorLocal },
+-    ...buildObservableRejectInstrs(rt, preparation, [{ op: "local.get", index: errorLocal }]),
+-  ];
+-  const buildFulfilHandler = (): Instr[] => {
+-    if (method === "all") {
+-      return [
+-        { op: "local.get", index: stateLocal },
+-        ...indexInstrs,
+-        { op: "struct.new", typeIdx: carrier.elemCapsTypeIdx },
+-        { op: "local.set", index: elemCapsLocal },
+-        ...carrier.buildAllResolveClosure(elemCapsLocal),
+-      ];
+-    }
+-    return [{ op: "local.get", index: preparation.raceFulfillLocal }];
+-  };
+-  const buildRejectHandler = (): Instr[] => [{ op: "local.get", index: preparation.rejectLocal }];
+-  const buildThenArgs = (): Instr[] => [
+-    { op: "call", funcIdx: ctx.funcMap.get("__objvec_new")! },
+-    { op: "local.set", index: thenArgsLocal },
+-    { op: "local.get", index: thenArgsLocal },
+-    ...buildFulfilHandler(),
+-    { op: "call", funcIdx: ctx.funcMap.get("__objvec_push")! },
+-    { op: "local.get", index: thenArgsLocal },
+-    ...buildRejectHandler(),
+-    { op: "call", funcIdx: ctx.funcMap.get("__objvec_push")! },
+-  ];
+-  const buildLegacySubscribe = (): Instr[] => [
+-    { op: "local.get", index: nextLocal },
+-    { op: "local.get", index: stateLocal },
+-    { op: "extern.convert_any" },
+-    ...indexInstrs,
+-    { op: "ref.func", funcIdx: reaction.fulfillIdx },
+-    { op: "ref.func", funcIdx: reaction.rejectIdx },
+-    { op: "call", funcIdx: carrier.subscribeFuncIdx },
+-  ];
+-  const buildNativeInvoke = (): Instr[] => {
+-    // (#6651 D5) A replaceable `%Promise.prototype%.then` must be Got, not bypassed.
+-    if (protoThenReplaceable) return buildNonNativeInvoke();
+-    const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+-    if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
+-    return [
+-      { op: "local.get", index: nextLocal },
+-      ...stringConstantExternrefInstrs(ctx, "then"),
+-      { op: "call", funcIdx: carrierBagHasIdx },
+-      {
+-        op: "if",
+-        blockType: { kind: "empty" },
+-        then: [
+-          buildTargetTaggedTry(
+-            ctx,
+-            { kind: "empty" },
+-            [
+-              { op: "local.get", index: nextLocal },
+-              ...stringConstantExternrefInstrs(ctx, "then"),
+-              { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
+-              { op: "local.set", index: thenLocal },
+-              ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),
+-              { op: "local.get", index: callableLocal },
+-              {
+-                op: "if",
+-                blockType: { kind: "empty" },
+-                then: [
+-                  { op: "local.get", index: thenLocal },
+-                  { op: "local.get", index: nextLocal },
+-                  { op: "local.get", index: thenArgsLocal },
+-                  { op: "call", funcIdx: ctx.funcMap.get("__apply_closure")! },
+-                  { op: "drop" },
+-                ],
+-                else: buildObservableTypeErrorRejectInstrs(
+-                  ctx,
+-                  rt,
+-                  preparation,
+-                  observable,
+-                  "Promise then is not callable",
+-                ),
+-              },
+-            ],
+-            [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],
+-          ),
+-        ],
+-        else: buildLegacySubscribe(),
+-      },
+-    ];
+-  };
+-  // `Invoke(nextPromise, "then", handlers)` performs ONE Get, then calls the
+-  // captured value.  Do not route through `__promise_has_callable_then` plus
+-  // `__call_m_then_vararg`: that pair gets an accessor once to classify it and
+-  // again to dispatch it, which is observably wrong when the getter changes its
+-  // answer. `__extern_get` is the runtime's ordinary property read for open
+-  // objects, closure bags, and finalized closed-struct field ladders.
+-  const buildNonNativeInvoke = (): Instr[] => [
+-    buildTargetTaggedTry(
+-      ctx,
+-      { kind: "empty" },
+-      [
+-        { op: "local.get", index: nextLocal },
+-        ...stringConstantExternrefInstrs(ctx, "then"),
+-        { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
+-        { op: "local.set", index: thenLocal },
+-        ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),
+-        { op: "local.get", index: callableLocal },
+-        {
+-          op: "if",
+-          blockType: { kind: "empty" },
+-          then: [
+-            { op: "local.get", index: thenLocal },
+-            { op: "local.get", index: nextLocal },
+-            { op: "local.get", index: thenArgsLocal },
+-            { op: "call", funcIdx: ctx.funcMap.get("__apply_closure")! },
+-            { op: "drop" },
+-          ],
+-          else: buildObservableTypeErrorRejectInstrs(ctx, rt, preparation, observable, "Promise then is not callable"),
+-        },
+-      ],
+-      [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],
+-    ),
+-  ];
+-  // §27.2.4.1's remainingElementsCount gains one for this element only after
+-  // Call(resolve, C, value) succeeds, and before a synchronously-calling
+-  // thenable can invoke the resolve-element closure. The final completion
+-  // sentinel remains until the enclosing literal/VEC iteration has finished.
+-  const buildAllRemainingIncrement = (): Instr[] =>
+-    method === "all"
+-      ? [
+-          { op: "local.get", index: stateLocal },
+-          { op: "local.get", index: stateLocal },
+-          { op: "struct.get", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },
+-          { op: "i32.const", value: 1 },
+-          { op: "i32.add" },
+-          { op: "struct.set", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },
+-        ]
+-      : [];
+-
+-  const pipeline: Instr[] = [
+-    // Call(promiseResolve, C, «nextValue»).
+-    buildTargetTaggedTry(
+-      ctx,
+-      { kind: "empty" },
+-      [
+-        { op: "call", funcIdx: ctx.funcMap.get("__objvec_new")! },
+-        { op: "local.set", index: resolveArgsLocal },
+-        { op: "local.get", index: resolveArgsLocal },
+-        { op: "local.get", index: inputLocal },
+-        { op: "call", funcIdx: ctx.funcMap.get("__objvec_push")! },
+-        ...buildThenArgs(),
+-        { op: "local.get", index: preparation.resolveLocal },
+-        { op: "local.get", index: preparation.ctorLocal },
+-        { op: "local.get", index: resolveArgsLocal },
+-        { op: "call", funcIdx: ctx.funcMap.get("__apply_closure")! },
+-        { op: "local.set", index: nextLocal },
+-      ],
+-      [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],
+-    ),
+-    // Invoke(nextPromise, "then", «fulfill, reject»). A `$Promise` without an
+-    // own `then` keeps the tested legacy subscription path; an own slot is
+-    // retrieved and called with the native promise as receiver. Other values
+-    // use the same one-Get/captured-call Invoke sequence.
+-    { op: "local.get", index: preparation.abortedLocal },
+-    { op: "i32.eqz" },
+-    {
+-      op: "if",
+-      blockType: { kind: "empty" },
+-      then: [
+-        ...buildAllRemainingIncrement(),
+-        { op: "local.get", index: nextLocal },
+-        { op: "ref.is_null" },
+-        {
+-          op: "if",
+-          blockType: { kind: "empty" },
+-          then: buildNonNativeInvoke(),
+-          else: [
+-            { op: "local.get", index: nextLocal },
+-            { op: "any.convert_extern" },
+-            { op: "local.set", index: nextAnyLocal },
+-            { op: "local.get", index: nextAnyLocal },
+-            { op: "ref.test", typeIdx: ids.promiseTypeIdx },
+-            {
+-              op: "if",
+-              blockType: { kind: "empty" },
+-              then: buildNativeInvoke(),
+-              else: buildNonNativeInvoke(),
+-            },
+-          ],
+-        },
+-      ],
+-    },
+-  ];
+-
+-  fctx.body.push(
+-    { op: "local.get", index: preparation.abortedLocal },
+-    { op: "i32.eqz" },
+-    { op: "if", blockType: { kind: "empty" }, then: pipeline },
+-  );
+-}
+-
+-/**
+- * Bounded R3-2 literal route. It shares the old result/reaction substrate but
+- * replaces only the per-element normalization shortcut with the observable
+- * Get/Call/Invoke protocol. `allSettled`/`any`, custom constructors, and
+- * iterator-closing stay on their existing/future slices.
+- */
+-function emitObservableStandalonePromiseCombinatorLiteral(
+-  ctx: CodegenContext,
+-  fctx: FunctionContext,
+-  method: "all" | "race",
+-  elementInstrs: Instr[][],
+-  ids: CombinatorRuntime,
+-  rt: AsyncDriveRuntimeT,
+-  observable: ObservableCombinatorRuntime,
+-): ValType {
+-  const reaction = combinatorReactionFns(ctx, ids, method);
+-  // Argument-list evaluation finishes BEFORE the static call begins. The
+-  // buffers above are compile-time staging only; execute every element now and
+-  // retain its value before `Get(Promise, "resolve")`. In particular,
+-  // `Promise.all([first(), second()])` must run both calls even when resolve's
+-  // getter subsequently throws.
+-  const inputLocals: number[] = [];
+-  for (const element of elementInstrs) {
+-    const inputLocal = allocLocal(fctx, `__comb_observable_literal_input_${fctx.locals.length}`, EXTERNREF);
+-    fctx.body.push(...element, { op: "local.set", index: inputLocal });
+-    inputLocals.push(inputLocal);
+-  }
+-  const preparation = emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method);
+-  const state = emitObservableCombinatorState(fctx, ids, preparation, method, [
+-    { op: "i32.const", value: elementInstrs.length },
+-  ]);
+-  for (let i = 0; i < inputLocals.length; i++) {
+-    emitObservableCombinatorElement(
+-      ctx,
+-      fctx,
+-      ids,
+-      rt,
+-      observable,
+-      preparation,
+-      method,
+-      reaction,
+-      state.stateLocal,
+-      [{ op: "i32.const", value: i }],
+-      [{ op: "local.get", index: inputLocals[i]! }],
+-    );
+-  }
+-  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+-  fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+-  return EXTERNREF;
+-}
+-
+->>>>>>> 2bfe3eddf84d4d27f471eddb91e441709b7f6eff
+ /**
+  * Emit a native `Promise.all([...])` / `Promise.race([...])`. `elementInstrs` is
+  * the pre-compiled list of element expressions (each already coerced to
+@@ -1800,129 +1185,6 @@ export function resolveExternrefVecArg(
+ }
+ 
+ /**
+-<<<<<<< HEAD
+-=======
+- * Bounded R3-2 admission for a native `number[]` carrier. Unlike the legacy
+- * generic path, the observable loop reads and boxes each f64 slot only when
+- * its turn reaches `Call(resolve, C, value)`, leaving earlier resolve calls
+- * able to mutate a later vector element before it is observed.
+- */
+-export function resolveF64VecArg(
+-  ctx: CodegenContext,
+-  argType: ValType | null,
+-): { vecTypeIdx: number; arrTypeIdx: number } | null {
+-  if (!argType || (argType.kind !== "ref" && argType.kind !== "ref_null")) return null;
+-  const vecTypeIdx = (argType as { typeIdx?: number }).typeIdx;
+-  if (typeof vecTypeIdx !== "number" || vecTypeIdx < 0) return null;
+-  const structName = ctx.typeIdxToStructName.get(vecTypeIdx);
+-  if (!structName || !structName.startsWith("__vec_")) return null;
+-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+-  if (arrTypeIdx < 0) return null;
+-  const arrDef = ctx.mod.types[arrTypeIdx];
+-  if (!arrDef || arrDef.kind !== "array" || arrDef.element.kind !== "f64") return null;
+-  return { vecTypeIdx, arrTypeIdx };
+-}
+-
+-/** Observable R3-2 analogue of the pre-existing externref-vector loop. */
+-function emitObservableStandalonePromiseCombinatorRuntime(
+-  ctx: CodegenContext,
+-  fctx: FunctionContext,
+-  method: "all" | "race",
+-  argVecLocal: number,
+-  argVecTypeIdx: number,
+-  argArrTypeIdx: number,
+-  ids: CombinatorRuntime,
+-  rt: AsyncDriveRuntimeT,
+-  observable: ObservableCombinatorRuntime,
+-  boxF64Elements: boolean,
+-): ValType {
+-  const reaction = combinatorReactionFns(ctx, ids, method);
+-  const preparation = emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method);
+-  const boxNumberIdx = boxF64Elements ? ctx.funcMap.get("__box_number") : undefined;
+-  if (boxF64Elements && boxNumberIdx === undefined) {
+-    throw new Error("observable f64 Promise combinator requires __box_number");
+-  }
+-  const state = emitObservableCombinatorState(fctx, ids, preparation, method, [
+-    { op: "local.get", index: argVecLocal },
+-    { op: "ref.as_non_null" },
+-    { op: "struct.get", typeIdx: argVecTypeIdx, fieldIdx: 0 },
+-  ]);
+-  const iLocal = allocLocal(fctx, `__comb_observable_i_${fctx.locals.length}`, { kind: "i32" });
+-
+-  fctx.body.push(
+-    { op: "i32.const", value: 0 },
+-    { op: "local.set", index: iLocal },
+-    {
+-      op: "block",
+-      blockType: { kind: "empty" },
+-      body: [
+-        {
+-          op: "loop",
+-          blockType: { kind: "empty" },
+-          body: [
+-            { op: "local.get", index: iLocal },
+-            { op: "local.get", index: state.lengthLocal },
+-            { op: "i32.ge_s" },
+-            { op: "br_if", depth: 1 },
+-            { op: "local.get", index: preparation.abortedLocal },
+-            { op: "br_if", depth: 1 },
+-            // `emitObservableCombinatorElement` needs to append nested
+-            // instructions to the loop, so its body is patched below rather
+-            // than built as an opaque detached array.
+-          ],
+-        },
+-      ],
+-    },
+-  );
+-
+-  // Replace the just-emitted loop body with the element pipeline while it is
+-  // still live in fctx.body. This avoids a second runtime implementation and
+-  // keeps every late-index shifter able to walk the nested instructions.
+-  const outerBlock = fctx.body[fctx.body.length - 1] as Extract<Instr, { op: "block" }>;
+-  const loop = outerBlock.body[0] as Extract<Instr, { op: "loop" }>;
+-  const loopBody = loop.body;
+-  const savedBody = fctx.body;
+-  fctx.body = loopBody;
+-  fctx.savedBodies.push(savedBody);
+-  try {
+-    emitObservableCombinatorElement(
+-      ctx,
+-      fctx,
+-      ids,
+-      rt,
+-      observable,
+-      preparation,
+-      method,
+-      reaction,
+-      state.stateLocal,
+-      [{ op: "local.get", index: iLocal }],
+-      [
+-        { op: "local.get", index: argVecLocal },
+-        { op: "ref.as_non_null" },
+-        { op: "struct.get", typeIdx: argVecTypeIdx, fieldIdx: 1 },
+-        { op: "local.get", index: iLocal },
+-        { op: "array.get", typeIdx: argArrTypeIdx },
+-        ...(boxF64Elements ? ([{ op: "call", funcIdx: boxNumberIdx! }] satisfies Instr[]) : []),
+-      ],
+-    );
+-    loopBody.push(
+-      { op: "local.get", index: iLocal },
+-      { op: "i32.const", value: 1 },
+-      { op: "i32.add" },
+-      { op: "local.set", index: iLocal },
+-      { op: "br", depth: 0 },
+-    );
+-  } finally {
+-    fctx.savedBodies.pop();
+-    fctx.body = savedBody;
+-  }
+-  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+-  fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+-  return EXTERNREF;
+-}
+-
+-/**
+->>>>>>> 2bfe3eddf84d4d27f471eddb91e441709b7f6eff
+  * (#2919 arm 1) Emit a native `Promise.all(arrVar)` / `Promise.race(arrVar)`
+  * over an ARRAY-TYPED (non-literal) argument: the runtime-count analogue of the
+  * compile-time-unrolled `emitStandalonePromiseCombinator`. The argument vec is
+diff --git a/src/codegen/promise-observable-combinators.ts b/src/codegen/promise-observable-combinators.ts
+index b248cfb008..f2ee76db92 100644
+--- a/src/codegen/promise-observable-combinators.ts
++++ b/src/codegen/promise-observable-combinators.ts
+@@ -21,6 +21,8 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+ import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+ import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+ import { buildClosureRefTestArms } from "./closure-classifier.js";
++import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
++import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
+ import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+ import { allocLocal } from "./context/locals.js";
+ import type { CodegenContext, FunctionContext } from "./context/types.js";
+@@ -399,6 +401,11 @@ function emitObservableCombinatorState(
+   return { stateLocal, arrLocal, lengthLocal };
+ }
+ 
++/** (#5197 r3) Settle an observable aggregate through Resolve when required. */
++function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
++  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
++}
++
+ /** Drop Promise.all's iteration-completion sentinel after every admitted element ran. */
+ function emitObservableAllIterationComplete(
+   fctx: FunctionContext,
+@@ -479,6 +486,7 @@ function emitObservableCombinatorElement(
+   indexInstrs: readonly Instr[],
+   inputInstrs: readonly Instr[],
+ ): void {
++  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
+   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
+   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
+@@ -541,6 +549,8 @@ function emitObservableCombinatorElement(
+     { op: "drop" },
+   ];
+   const buildNativeInvoke = (): Instr[] => {
++    // (#6651 D5) A replaceable `%Promise.prototype%.then` must be Got, not bypassed.
++    if (protoThenReplaceable) return buildNonNativeInvoke();
+     const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
+     return [
+@@ -706,7 +716,7 @@ export function emitObservableStandalonePromiseCombinatorLiteral(
+       [{ op: "local.get", index: inputLocals[i]! }],
+     );
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }
+@@ -812,7 +822,7 @@ export function emitObservableStandalonePromiseCombinatorRuntime(
+     fctx.savedBodies.pop();
+     fctx.body = savedBody;
+   }
+-  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);
++  emitObservableAllIterationComplete(fctx, ids, aggregateRt(ctx, rt), method, preparation, state);
+   fctx.body.push({ op: "local.get", index: preparation.resultLocal }, { op: "extern.convert_any" });
+   return EXTERNREF;
+ }

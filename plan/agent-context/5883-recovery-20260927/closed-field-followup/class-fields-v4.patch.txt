@@ -1,0 +1,313 @@
+--- a/src/codegen/class-bodies.ts
++++ b/src/codegen/class-bodies.ts
+@@ -1,4 +1,6 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { ensureAnyValueType } from "./any-helpers.js";
++import { classReferenceDefaultInstrs } from "./class-reference-default.js";
+ /**
+  * Class declaration collection and class body compilation.
+  *
+@@ -13,6 +15,8 @@
+   isStaticCtorMethod,
+ } from "./ast-modifiers.js";
+ import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
++import { resolveClosedDataFieldStorage } from "./bigint-field-carrier.js";
++import { compileReferenceStorageOperand } from "./reference-storage-operand.js";
+ import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+ import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+ import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
+@@ -1276,7 +1280,10 @@
+         // ordinary TypeScript shape) silently keeps the f64 slot while its
+         // locals narrow, which measures WORSE than no narrowing at all.
+         const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, declaredPropertyByName.get(fieldName));
+-        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
++        const fieldStorage = resolveClosedDataFieldStorage(
++          ctx, fieldTsType, nativeFieldType ?? resolveWasmType(ctx, fieldTsType), nativeFieldType,
++        );
++        let fieldType = fieldStorage.type;
+         if (
+           nativeFieldType === null &&
+           voidClearedInstanceFields.has(fieldName) &&
+@@ -1293,6 +1300,7 @@
+             name: fieldName,
+             type: fieldType,
+             mutable: true,
++            ...(fieldStorage.nativeBigIntReference && fieldType.kind === "externref" ? { undefinedDefault: true as const } : {}),
+             ...(declaration?.questionToken && !declaration.initializer && fieldType.kind === "f64"
+               ? { undefinedDefault: true as const }
+               : {}),
+@@ -1318,7 +1326,10 @@
+         // pessimises (see the issue's round-34 table), so the field, the
+         // params and the locals must move together.
+         const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, member);
+-        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
++        const fieldStorage = resolveClosedDataFieldStorage(
++          ctx, fieldTsType, nativeFieldType ?? resolveWasmType(ctx, fieldTsType), nativeFieldType,
++        );
++        let fieldType = fieldStorage.type;
+         if (
+           nativeFieldType === null &&
+           voidClearedInstanceFields.has(fieldName) &&
+@@ -1333,6 +1344,7 @@
+           name: fieldName,
+           type: fieldType,
+           mutable: true,
++          ...(fieldStorage.nativeBigIntReference && fieldType.kind === "externref" ? { undefinedDefault: true as const } : {}),
+           ...(member.questionToken && !member.initializer && fieldType.kind === "f64"
+             ? { undefinedDefault: true as const }
+             : {}),
+@@ -1423,6 +1435,11 @@
+     structDef.superTypeIdx = parentStructTypeIdx;
+   }
+   commitClassStructLayout(ctx, decl, className, structTypeIdx, structDef, fields);
++  // Prepare before any constructor/lazy allocation body captures global indices.
++  if (fields.some(field => field.undefinedDefault && field.type.kind === "externref")) {
++    ensureAnyValueType(ctx);
++    if (ctx.undefinedGlobalIdx === undefined) throw new Error("Class undefined default was not prepared");
++  }
+ 
+   // Register a prototype singleton global (externref, lazily initialized)
+   // Used by ClassName.prototype and Object.getPrototypeOf(instance).
+@@ -2660,7 +2677,7 @@
+         } else if (field.type.kind === "i32") {
+           fctx.body.push({ op: "i32.const", value: 0 });
+         } else if (field.type.kind === "externref") {
+-          fctx.body.push({ op: "ref.null.extern" });
++          fctx.body.push(...classReferenceDefaultInstrs(ctx, field));
+         } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
+           fctx.body.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+         } else if ((field.type as any).kind === "i64") {
+@@ -2916,7 +2933,7 @@
+               const fieldIdx = fields.findIndex((f) => f.name === fieldName);
+               if (fieldIdx !== -1) {
+                 fctx.body.push({ op: "local.get", index: selfLocal });
+-                compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
++                compileReferenceStorageOperand(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
+                 fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+               }
+             }
+@@ -2942,7 +2959,7 @@
+           const fieldIdx = fields.findIndex((f) => f.name === fieldName);
+           if (fieldIdx !== -1) {
+             fctx.body.push({ op: "local.get", index: selfLocal });
+-            compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
++            compileReferenceStorageOperand(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
+             fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+           }
+         }
+--- a/src/codegen/class-constructor-wrapper.ts
++++ b/src/codegen/class-constructor-wrapper.ts
+@@ -1,4 +1,5 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { classReferenceDefaultInstrs } from "./class-reference-default.js";
+ 
+ import type { FieldDef, FuncHandle, Instr, ValType } from "../ir/types.js";
+ import type { CodegenContext } from "./context/types.js";
+@@ -86,7 +87,7 @@
+     } else if (field.type.kind === "i32") {
+       body.push({ op: "i32.const", value: 0 });
+     } else if (field.type.kind === "externref") {
+-      body.push({ op: "ref.null.extern" });
++      body.push(...classReferenceDefaultInstrs(ctx, field));
+     } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
+       body.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+     } else if (field.type.kind === "i64") {
+--- a/src/codegen/class-instance-proto.ts
++++ b/src/codegen/class-instance-proto.ts
+@@ -1,4 +1,5 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { classReferenceDefaultInstrs } from "./class-reference-default.js";
+ //
+ // (#5347) `__class_instance_proto` — the reverse map from a compiled class
+ // INSTANCE back to the class's prototype carrier, for the JS host.
+@@ -227,6 +228,7 @@
+     const initBody: Instr[] = [];
+     for (const field of fields) {
+       if (field.name === "__tag") initBody.push({ op: "i32.const", value: ctx.classTagMap.get(className) ?? 0 });
++      else if (field.type.kind === "externref") initBody.push(...classReferenceDefaultInstrs(ctx, field));
+       else initBody.push(defaultFieldInstr(field.type));
+     }
+     initBody.push({ op: "struct.new", typeIdx: structTypeIdx });
+--- a/src/codegen/expressions/extern.ts
++++ b/src/codegen/expressions/extern.ts
+@@ -1,4 +1,5 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { classReferenceDefaultInstrs } from "../class-reference-default.js";
+ /**
+  * Extern class helpers, spread call args, lazy prototype initialization,
+  * and dynamic struct patching.
+@@ -365,7 +366,7 @@
+           initBody.push({ op: "i64.const", value: 0n });
+           break;
+         case "externref":
+-          initBody.push({ op: "ref.null.extern" });
++          initBody.push(...classReferenceDefaultInstrs(ctx, field));
+           break;
+         case "ref_null":
+           initBody.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+@@ -516,7 +517,7 @@
+           initBody.push({ op: "i64.const", value: 0n });
+           break;
+         case "externref":
+-          initBody.push({ op: "ref.null.extern" });
++          initBody.push(...classReferenceDefaultInstrs(ctx, field));
+           break;
+         case "ref_null":
+           initBody.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+--- a/src/wasm/model/module-records.ts
++++ b/src/wasm/model/module-records.ts
+@@ -41,9 +41,11 @@
+   type: ValType;
+   mutable: boolean;
+   /**
+-   * An uninitialized optional numeric class field starts as JavaScript
++   * A marked class field starts as JavaScript
+    * `undefined`, represented in an f64 slot by the canonical signaling-NaN
+-   * sentinel rather than Wasm's numeric zero default.
++   * sentinel rather than Wasm's numeric zero default. Marked externref fields
++   * use the prepared canonical undefined singleton; unmarked references retain
++   * their existing defaults. This logical marker is not a physical layout key.
+    */
+   undefinedDefault?: true;
+   /**
+--- /dev/null
++++ b/src/codegen/class-reference-default.ts
+@@ -0,0 +1,11 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import type { FieldDef, Instr } from "../ir/types.js";
++import type { CodegenContext } from "./context/types.js";
++
++/** Read-only: safe in allocation assertion planners. No registration/fallback. */
++export function classReferenceDefaultInstrs(ctx: Pick<CodegenContext, "undefinedGlobalIdx">, field: FieldDef): Instr[] {
++  if (field.type.kind !== "externref") throw new Error("Expected class reference field");
++  if (!field.undefinedDefault) return [{ op: "ref.null.extern" }];
++  if (ctx.undefinedGlobalIdx === undefined) throw new Error("Class undefined default was not prepared");
++  return [{ op: "global.get", index: ctx.undefinedGlobalIdx }, { op: "extern.convert_any" }];
++}
+--- /dev/null
++++ b/tests/issue-5883-class-parameter-property-pair.test.ts
+@@ -0,0 +1,36 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { createHash } from "node:crypto";
++import ts from "typescript";
++import { expect, it } from "vitest";
++import { compile } from "../src/index.js";
++
++// Run byte-identical fixtures on parent baseline and class candidate. No
++// parameter-property/ABI claim until both sides have measured receipts.
++for (const decimal of ["1", "18446744073709551617"] as const) {
++  for (const spelling of ["parameter-property", "explicit-store"] as const) {
++    const declaration = spelling === "parameter-property"
++      ? "class Box { constructor(public value: bigint) {} }"
++      : "class Box { value: bigint; constructor(value: bigint) { this.value = value; } }";
++    const source = `${declaration}\nexport function test() { const box = new Box(BigInt("${decimal}")); return String(box.value) === "${decimal}" ? 1 : -1; }`;
++    for (const optimize of [0, 2] as const) {
++      it(`${spelling} ${decimal} O${optimize}`, async () => {
++        const sourceHash = createHash("sha256").update(source).digest("hex");
++        const js = ts.transpileModule(source.replace("export function", "function"), {
++          compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
++        }).outputText;
++        const native = new Function(js + "; return test();")();
++        const result = await compile(source, { fileName: "class-parameter-property.ts", target: "standalone", optimize });
++        console.log(JSON.stringify({ source, sourceHash, native, success: result.success, errors: result.errors }));
++        expect(native).toBe(1);
++        expect(result.success).toBe(true);
++        const module = new WebAssembly.Module(result.binary);
++        const imports = WebAssembly.Module.imports(module);
++        console.log(JSON.stringify({ sourceHash, optimize, imports }));
++        expect(imports).toEqual([]);
++        const actual = (new WebAssembly.Instance(module, {}).exports.test as () => number)();
++        console.log(JSON.stringify({ sourceHash, optimize, native, actual }));
++        expect(actual).toBe(1);
++      });
++    }
++  }
++}
+--- /dev/null
++++ b/tests/issue-5883-class-reference-default.test.ts
+@@ -0,0 +1,31 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { expect, it } from "vitest";
++import { classReferenceDefaultInstrs } from "../src/codegen/class-reference-default.js";
++import type { FieldDef } from "../src/ir/types.js";
++
++const marked: FieldDef = { name: "value", type: { kind: "externref" }, mutable: true, undefinedDefault: true };
++it("uses prepared canonical undefined including global zero without mutating inputs", () => {
++  const ctx = Object.freeze({ undefinedGlobalIdx: 0 });
++  const field = Object.freeze({ ...marked });
++  expect(classReferenceDefaultInstrs(ctx, field)).toEqual([{ op: "global.get", index: 0 }, { op: "extern.convert_any" }]);
++  expect(ctx).toEqual({ undefinedGlobalIdx: 0 });
++});
++it("emits fresh instruction identities for repeated allocation/assertion planning", () => {
++  const a = classReferenceDefaultInstrs({ undefinedGlobalIdx: 7 }, marked);
++  const b = classReferenceDefaultInstrs({ undefinedGlobalIdx: 7 }, marked);
++  expect(a).toEqual(b);
++  expect(a).not.toBe(b);
++  expect(a[0]).not.toBe(b[0]);
++  expect(a[1]).not.toBe(b[1]);
++});
++it("fails on missing preparation rather than returning null", () => {
++  expect(() => classReferenceDefaultInstrs({}, marked)).toThrow("Class undefined default was not prepared");
++});
++it("leaves unmarked externref defaults unchanged without a provider", () => {
++  expect(classReferenceDefaultInstrs({}, { name: "ordinary", type: { kind: "externref" }, mutable: true }))
++    .toEqual([{ op: "ref.null.extern" }]);
++});
++it("rejects accidental scalar use", () => {
++  expect(() => classReferenceDefaultInstrs({}, { name: "native", type: { kind: "i64" }, mutable: true }))
++    .toThrow("Expected class reference field");
++});
+--- /dev/null
++++ b/tests/issue-5883-class-bigint-default-runtime.test.ts
+@@ -0,0 +1,51 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { createHash } from "node:crypto";
++import ts from "typescript";
++import { expect, it } from "vitest";
++import { compile } from "../src/index.js";
++
++const fixtures = [
++  { name: "initialized reference field evaluates once and preserves wide value", source: `
++    let calls = 0;
++    function decimal() { calls++; return "18446744073709551617"; }
++    class Box { value = BigInt(decimal()); }
++    export function test() { const b = new Box(); return calls === 1 && String(b.value) === "18446744073709551617" ? 1 : -1; }` },
++  { name: "uninitialized bigint is undefined before direct runtime-wide write", source: `
++    class Box { value!: bigint; }
++    export function test() {
++      const b = new Box();
++      if (b.value !== undefined || b.value === null) return -1;
++      b.value = BigInt("18446744073709551617");
++      return String(b.value) === "18446744073709551617" ? 1 : -2;
++    }` },
++  { name: "inherited field defaults and initialization order retain reference values", source: `
++    let order = 0;
++    function decimal() { order = order * 10 + 1; return "18446744073709551617"; }
++    class Base { value = BigInt(decimal()); missing!: bigint; constructor() { order = order * 10 + 2; } }
++    class Child extends Base { own = BigInt("36893488147419103233"); constructor() { super(); order = order * 10 + 3; } }
++    export function test() {
++      const b = new Child();
++      if (order !== 123 || b.missing !== undefined || b.missing === null) return -1;
++      return String(b.value) === "18446744073709551617" && String(b.own) === "36893488147419103233" ? 1 : -2;
++    }` },
++] as const;
++for (const fixture of fixtures) for (const optimize of [0, 2] as const) {
++  it(`${fixture.name} O${optimize}`, async () => {
++    const sourceHash = createHash("sha256").update(fixture.source).digest("hex");
++    const js = ts.transpileModule(fixture.source.replace("export function", "function"), {
++      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
++    }).outputText;
++    const native = new Function(js + "; return test();")();
++    const result = await compile(fixture.source, { fileName: "class-bigint-default.ts", target: "standalone", optimize });
++    console.log(JSON.stringify({ name: fixture.name, source: fixture.source, sourceHash, optimize, native, success: result.success, errors: result.errors }));
++    expect(native).toBe(1);
++    expect(result.success).toBe(true);
++    const module = new WebAssembly.Module(result.binary);
++    const imports = WebAssembly.Module.imports(module);
++    console.log(JSON.stringify({ sourceHash, imports }));
++    expect(imports).toEqual([]);
++    const actual = (new WebAssembly.Instance(module, {}).exports.test as () => number)();
++    console.log(JSON.stringify({ sourceHash, optimize, actual }));
++    expect(actual).toBe(1);
++  });
++}

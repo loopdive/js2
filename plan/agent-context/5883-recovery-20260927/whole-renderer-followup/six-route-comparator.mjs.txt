@@ -1,0 +1,61 @@
+// Read-only comparison. Original receipts and identity graphs are never rewritten.
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import assert from "node:assert/strict";
+const [leftArm, rightArm, leftDir, rightDir] = process.argv.slice(2);
+const provenance = {
+  A: ["4533f252a35fbebaa4feb9582d29cdd84a289040b33cd179dda64a5b6ab011f7", "cd9f65ea77c9418874bdd69f9666e27c25259ed93f35656b41f2ad3357afa8ac"],
+  B: ["3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2", "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b"],
+  C: ["19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813", "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b"],
+};
+assert((leftArm === "A" && rightArm === "B") || (leftArm === "B" && rightArm === "C"), "only reviewed A/B or B/C pairs");
+const observerHash = "38b6daeb30abf7d2805b0df63903044612c6cd560783dbc6902e588a903d6a1a";
+const ids = ["all", "race"].flatMap(method => ["captured-observable", "legacy-observable", "legacy-plain"].map(mode => `${method}-${mode}`));
+const read = (dir, suffix) => readFileSync(resolve(dir, suffix));
+const hash = buffer => createHash("sha256").update(buffer).digest("hex");
+for (const dir of [leftDir, rightDir]) assert.deepEqual(
+  readdirSync(dir).filter(file => file.endsWith(".receipt.json")).sort(),
+  ids.map(id => `${id}.receipt.json`).sort(), "exact six original receipts required");
+const rows = ids.map(id => {
+  const records = [leftDir, rightDir].map((dir, side) => {
+    const arm = side ? rightArm : leftArm;
+    const record = JSON.parse(read(dir, `${id}.receipt.json`));
+    assert.equal(record.driveHash, provenance[arm][0], `${id} ${arm} drive provenance`);
+    assert.equal(record.protocolHash, provenance[arm][1], `${id} ${arm} protocol provenance`);
+    assert.equal(record.observerHash, observerHash, "unchanged observer required");
+    assert.equal(hash(read(dir, `${id}.source.ts`)), record.sourceHash);
+    // Verified source provenance is the only excluded receipt metadata.
+    const { driveHash, protocolHash, ...comparable } = record;
+    return comparable;
+  });
+  const evidence = {};
+  for (const suffix of ["source.ts", "native.js", "entry-0-before.json", "entry-0-after.json", "wat", "wasm"]) {
+    const left = read(leftDir, `${id}.${suffix}`), right = read(rightDir, `${id}.${suffix}`);
+    evidence[suffix] = { equal: left.equals(right), leftHash: hash(left), rightHash: hash(right) };
+  }
+  const observed = records.every(record => record.observerErrors.length === 0 && record.hits.length === 1);
+  const healthy = records.every(record => record.success === true && record.compileError === null &&
+    record.runtimeError === null && record.nativeError === null && isDeepStrictEqual(record.imports, []) &&
+    record.nativeActual === (id.startsWith("all-") ? "12" : "1") && record.actual === record.nativeActual);
+  const positiveEmission = [leftDir, rightDir].every(dir =>
+    !read(dir, `${id}.entry-0-before.json`).equals(read(dir, `${id}.entry-0-after.json`)));
+  const receiptEqual = isDeepStrictEqual(records[0], records[1]);
+  const exact = observed && healthy && positiveEmission && receiptEqual && Object.values(evidence).every(e => e.equal);
+  // A/B is a reviewed repair, not an exact-preservation claim: retain the raw
+  // captured after-graph mismatch and require every other surface unchanged.
+  const allowedAB = observed && healthy && positiveEmission && receiptEqual &&
+    Object.entries(evidence).every(([suffix, e]) => e.equal ||
+      (suffix === "entry-0-after.json" && id.includes("captured-observable")));
+  return { id, observed, healthy, positiveEmission, receiptEqual, exact, allowedAB,
+    evidence, outcomes: records.map(r => ({ success: r.success, errors: r.errors, compileError: r.compileError,
+      nativeActual: r.nativeActual, nativeError: r.nativeError, actual: r.actual, runtimeError: r.runtimeError })),
+    internalInterval: "UNKNOWN: full entry only" };
+});
+const accepted = rows.every(r => leftArm === "A" ? r.allowedAB : r.exact);
+console.log(JSON.stringify({ leftArm, rightArm, denominator: 6, exact: rows.filter(r => r.exact).length,
+  surfaceCheckPassed: accepted, exactEqualityPassed: rows.every(r => r.exact),
+  repairGraphDeltaReviewed: leftArm === "A" ? false : null,
+  identityEvidenceNormalized: false, rows }, null, 2));
+if (!accepted) process.exitCode = 1;

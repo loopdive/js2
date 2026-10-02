@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { beforeEach, expect, it, vi } from "vitest";
+import type { ValType } from "../src/ir/types.js";
+import type { ts } from "../src/ts-api.js";
+import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
+
+const calls = vi.hoisted(() => ({ compile: vi.fn(), prepare: vi.fn(), order: [] as string[] }));
+vi.mock("../src/codegen/shared.js", () => ({ compileExpression: calls.compile }));
+vi.mock("../src/codegen/bigint-field-carrier.js", () => ({ prepareClosedFieldValue: calls.prepare }));
+import { compileReferenceStorageOperand } from "../src/codegen/reference-storage-operand.js";
+
+const value = {} as ts.Expression;
+const frame = {} as FunctionContext;
+function context(type = "bigint", standalone = true, nativeStrings = true) {
+  return { standalone, nativeStrings, oracle: { staticJsTypeOf: vi.fn(() => type) } } as unknown as CodegenContext;
+}
+beforeEach(() => {
+  calls.order.length = 0;
+  calls.prepare.mockReset().mockImplementation(() => calls.order.push("prepare"));
+  calls.compile.mockReset().mockImplementation(() => {
+    calls.order.push("compile");
+    return { kind: "externref" };
+  });
+});
+
+it("prepares a proven native BigInt before its sole evaluation", () => {
+  const ctx = context();
+  expect(compileReferenceStorageOperand(ctx, frame, value)).toEqual({ kind: "externref" });
+  expect(calls.order).toEqual(["prepare", "compile"]);
+  expect(calls.compile).toHaveBeenCalledExactlyOnceWith(ctx, frame, value, { kind: "externref" });
+  expect(calls.prepare).toHaveBeenCalledExactlyOnceWith(ctx, frame, value, { kind: "externref" });
+});
+
+it("retains the caller's existing reference hint", () => {
+  const hint: ValType = { kind: "externref" };
+  compileReferenceStorageOperand(context(), frame, value, hint);
+  expect(calls.compile.mock.calls[0]?.[3]).toBe(hint);
+});
+
+it.each(["number", "mixed", "string"])("preserves the original absent hint for %s", (type) => {
+  const ctx = context(type);
+  compileReferenceStorageOperand(ctx, frame, value);
+  expect(calls.prepare).not.toHaveBeenCalled();
+  expect(calls.compile).toHaveBeenCalledExactlyOnceWith(ctx, frame, value, undefined);
+});
+
+it.each([
+  [false, true],
+  [true, false],
+])("preserves target gating %s/%s", (standalone, nativeStrings) => {
+  compileReferenceStorageOperand(context("bigint", standalone, nativeStrings), frame, value);
+  expect(calls.prepare).not.toHaveBeenCalled();
+  expect(calls.compile.mock.calls[0]?.[3]).toBeUndefined();
+});
+
+it("does not override an explicit native scalar ABI", () => {
+  const hint: ValType = { kind: "i64" };
+  compileReferenceStorageOperand(context(), frame, value, hint);
+  expect(calls.prepare).not.toHaveBeenCalled();
+  expect(calls.compile.mock.calls[0]?.[3]).toBe(hint);
+});
+
+it("does not reconstruct an operand producer's already narrowed result", () => {
+  const result: ValType = { kind: "i64", bigint: true };
+  calls.compile.mockReturnValue(result);
+  expect(compileReferenceStorageOperand(context(), frame, value)).toBe(result);
+  expect(calls.compile).toHaveBeenCalledTimes(1);
+});
+
+it("propagates failed compilation without a substitute value", () => {
+  calls.compile.mockReturnValue(null);
+  expect(compileReferenceStorageOperand(context(), frame, value)).toBeNull();
+  expect(calls.compile).toHaveBeenCalledTimes(1);
+});

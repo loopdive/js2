@@ -1,0 +1,10 @@
+src/codegen/promise-class-receiver-drive.ts(81,3): error TS2459: Module '"./promise-combinators.js"' declares 'buildCustomCapabilityExecutorInstrs' locally, but it is not exported.
+src/codegen/promise-class-receiver-drive.ts(82,3): error TS2459: Module '"./promise-combinators.js"' declares 'customCapabilityTypeError' locally, but it is not exported.
+src/codegen/promise-class-receiver-drive.ts(84,3): error TS2459: Module '"./promise-combinators.js"' declares 'ensureCustomCapabilityRuntime' locally, but it is not exported.
+src/codegen/promise-class-receiver-settle.ts(35,3): error TS2459: Module '"./promise-combinators.js"' declares 'buildCustomCapabilityExecutorInstrs' locally, but it is not exported.
+src/codegen/promise-class-receiver-settle.ts(36,3): error TS2459: Module '"./promise-combinators.js"' declares 'customCapabilityTypeError' locally, but it is not exported.
+src/codegen/promise-class-receiver-settle.ts(37,3): error TS2459: Module '"./promise-combinators.js"' declares 'ensureCustomCapabilityRuntime' locally, but it is not exported.
+src/codegen/promise-species-then.ts(52,3): error TS2459: Module '"./promise-combinators.js"' declares 'buildCustomCapabilityExecutorInstrs' locally, but it is not exported.
+src/codegen/promise-species-then.ts(53,3): error TS2459: Module '"./promise-combinators.js"' declares 'customCapabilityTypeError' locally, but it is not exported.
+src/codegen/promise-species-then.ts(54,3): error TS2459: Module '"./promise-combinators.js"' declares 'ensureCustomCapabilityRuntime' locally, but it is not exported.
+src/codegen/promise-species-then.ts(55,8): error TS2459: Module '"./promise-combinators.js"' declares 'CustomCapabilityRuntime' locally, but it is not exported.

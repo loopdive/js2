@@ -1,0 +1,103 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawn, execFileSync } from 'node:child_process';
+
+const root = process.cwd();
+const preparation = path.join(root, '.tmp/assignment-D');
+const receiptRoot = path.join(root, '.tmp/assignment-D-first-steps1-5-20261002');
+const manifest = JSON.parse(fs.readFileSync(path.join(preparation, 'serial-validation-manifest.json'), 'utf8'));
+const ordinal = Number(process.argv[2]);
+if (!Number.isInteger(ordinal) || ordinal < 1 || ordinal > 5) throw Error('grant covers steps 1–5 only');
+if (root !== manifest.candidate.worktree) throw Error('wrong worktree');
+const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+const env = { ...process.env };
+const removedGitEnvironment = [];
+for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) {
+  if (key in env) removedGitEnvironment.push(key);
+  delete env[key];
+}
+const git = args => execFileSync('git', args, { cwd: root, env, maxBuffer: 32 * 1024 * 1024 });
+function preflight() {
+  const head = git(['rev-parse', 'HEAD']).toString().trim();
+  const mergeHead = git(['rev-parse', 'MERGE_HEAD']).toString().trim();
+  const branch = git(['branch', '--show-current']).toString().trim();
+  if (head !== manifest.candidate.head || mergeHead !== manifest.candidate.mergeHead || branch !== manifest.candidate.branch)
+    throw Error('candidate ancestry/branch pin changed');
+  if (git(['ls-files', '-u']).length) throw Error('unmerged entries');
+  const productionPatch = git(['diff', '--cached', '--binary', 'f814b9c61b6ee142cca4cfea33457525151da4af']);
+  if (hash(productionPatch) !== manifest.candidate.productionPatchSha256) throw Error('production patch pin changed');
+  if (git(['diff', '--name-only']).length) throw Error('unstaged tracked changes');
+  let fixtures = 0;
+  for (const line of fs.readFileSync(path.join(preparation, 'fixture-hashes.txt'), 'utf8').split('\n')) {
+    const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
+    if (!match) continue;
+    if (hash(fs.readFileSync(path.join(root, match[2]))) !== match[1]) throw Error('fixture pin changed: ' + match[2]);
+    fixtures++;
+  }
+  if (fixtures !== 141) throw Error('fixture denominator changed');
+  for (const test of manifest.tests)
+    if (hash(fs.readFileSync(path.join(root, test.path))) !== test.sha256) throw Error('test source pin changed: ' + test.path);
+  return { head, mergeHead, branch, productionPatchSha256: hash(productionPatch), frozenFixtures: fixtures,
+    selectedTestFiles: manifest.tests.length, additiveControls: 8 };
+}
+const pinsBefore = preflight();
+const step = manifest.steps[ordinal - 1];
+fs.mkdirSync(receiptRoot, { recursive: true });
+const stem = String(ordinal).padStart(2, '0') + '-' + step.id;
+const stdoutPath = path.join(receiptRoot, stem + '.stdout.raw');
+const stderrPath = path.join(receiptRoot, stem + '.stderr.raw');
+const receiptPath = path.join(receiptRoot, stem + '.receipt.json');
+if ([stdoutPath, stderrPath, receiptPath].some(file => fs.existsSync(file))) throw Error('first receipt already exists');
+if (ordinal > 1) {
+  const prior = manifest.steps[ordinal - 2];
+  const priorReceipt = JSON.parse(fs.readFileSync(path.join(receiptRoot,
+    String(ordinal - 1).padStart(2, '0') + '-' + prior.id + '.receipt.json'), 'utf8'));
+  if (priorReceipt.terminal !== true) throw Error('prior step not terminal');
+}
+const stdoutFd = fs.openSync(stdoutPath, 'wx');
+const stderrFd = fs.openSync(stderrPath, 'wx');
+const startedAt = new Date().toISOString();
+const child = spawn('/bin/zsh', ['-c', step.command], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+const childPid = child.pid;
+child.stdout.on('data', bytes => fs.writeSync(stdoutFd, bytes));
+child.stderr.on('data', bytes => fs.writeSync(stderrFd, bytes));
+let spawnError = null;
+child.on('error', error => { spawnError = error.message; });
+const terminal = await new Promise(resolve => child.on('close', (exitCode, signal) => resolve({ exitCode, signal })));
+fs.closeSync(stdoutFd);
+fs.closeSync(stderrFd);
+const endedAt = new Date().toISOString();
+let pinsAfter = null;
+let pinError = null;
+try { pinsAfter = preflight(); } catch (error) { pinError = error.message; }
+const stdout = fs.readFileSync(stdoutPath);
+const stderr = fs.readFileSync(stderrPath);
+let boundarySummary = null;
+if (ordinal >= 4) {
+  try {
+    const report = JSON.parse(stdout);
+    boundarySummary = { mode: report.mode, status: report.status, counts: report.counts,
+      inventoryValid: report.inventoryValid, architectureComplete: report.architectureComplete,
+      resolvedEdgeCount: report.resolvedEdgeCount, unknownEdges: report.unknownEdges?.length,
+      unresolvedEdges: report.unresolvedEdges?.length, forbiddenEdges: report.forbiddenEdges?.length,
+      debt: report.debt?.length, errors: report.errors };
+  } catch (error) { boundarySummary = { parseError: error.message }; }
+}
+const receipt = { schema: 'assignment-D-first-check-receipt-v1', ordinal, id: step.id,
+  command: step.command, cwd: root, grant: 'parent explicit steps 1–5 only after A release/C terminal',
+  startedAt, endedAt, runnerPid: process.pid, childPid, terminal: true, ...terminal, spawnError,
+  node: { version: process.version, executable: process.execPath },
+  dependencies: { link: fs.readlinkSync(path.join(root, 'node_modules')),
+    ts7EntrypointSha256: hash(fs.readFileSync(path.join(root, 'node_modules/typescript7/lib/tsc.js'))),
+    prettierEntrypointSha256: hash(fs.readFileSync(path.join(root, 'node_modules/prettier/bin/prettier.cjs'))) },
+  removedGitEnvironment, compilerControlEnvironment: Object.fromEntries(Object.entries(env)
+    .filter(([key]) => /^(JS2WASM_|IR_VERIFY_|NODE_OPTIONS$|TSX_|NODE_V8_COVERAGE$)/.test(key))),
+  pinsBefore, pinsAfter, pinError,
+  stdout: { file: path.relative(root, stdoutPath), bytes: stdout.length, sha256: hash(stdout) },
+  stderr: { file: path.relative(root, stderrPath), bytes: stderr.length, sha256: hash(stderr) },
+  boundarySummary, additiveExecution: 'NOT_RUN; only additive test static typecheck/format check are in this grant' };
+fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
+console.log(JSON.stringify({ ordinal, id: step.id, childPid, ...terminal, terminal: true,
+  stdoutBytes: stdout.length, stderrBytes: stderr.length, pinsPreserved: pinError === null,
+  boundarySummary, firstDiagnostics: ordinal < 4 ? (stdout.toString() + stderr.toString()).slice(0, 4500) : stderr.toString().slice(0, 2500) }));

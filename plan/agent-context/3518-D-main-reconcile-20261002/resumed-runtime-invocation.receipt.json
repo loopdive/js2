@@ -1,0 +1,149 @@
+{
+  "actualHandle": 7777,
+  "runnerPid": 77726,
+  "terminal": true,
+  "exitCode": 0,
+  "command": "node .tmp/assignment-D/run-runtime-paired.mjs",
+  "revisionSha256": "09fd08e2d5660a9e8ff63142fdb289919ea17a5934035e0850a3a9bd2e263da4",
+  "stdout": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-runtime-20261002/resumed-runner.stdout.raw",
+  "stderr": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-runtime-20261002/resumed-runner.stderr.raw",
+  "events": [
+    {
+      "id": "candidate-issue-5197-r3-promise",
+      "pid": 77763,
+      "startedAt": "2026-10-02T04:24:57.345Z",
+      "endedAt": "2026-10-02T04:25:28.286Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-5197-promise-observable-combinator-r3-2",
+      "pid": 77933,
+      "startedAt": "2026-10-02T04:25:28.470Z",
+      "endedAt": "2026-10-02T04:25:52.184Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-3518-promise-getter-capture",
+      "pid": 78046,
+      "startedAt": "2026-10-02T04:25:52.360Z",
+      "endedAt": "2026-10-02T04:26:16.942Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-6651-promise-combinator-drive",
+      "pid": 78180,
+      "startedAt": "2026-10-02T04:26:17.144Z",
+      "endedAt": "2026-10-02T04:26:40.517Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-6651-promise-custom-combinator",
+      "pid": 78439,
+      "startedAt": "2026-10-02T04:26:40.716Z",
+      "endedAt": "2026-10-02T04:27:03.519Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-6651-d3-class-receiver-combinator",
+      "pid": 83664,
+      "startedAt": "2026-10-02T04:27:03.699Z",
+      "endedAt": "2026-10-02T04:27:26.791Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-6651-d4-promise-subclass",
+      "pid": 86856,
+      "startedAt": "2026-10-02T04:27:26.965Z",
+      "endedAt": "2026-10-02T04:27:49.406Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-2918-promise-then-funcidx-shift",
+      "pid": 87577,
+      "startedAt": "2026-10-02T04:27:49.566Z",
+      "endedAt": "2026-10-02T04:28:06.227Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "main-issue-3518-native-delay-combinator-body-ownership",
+      "pid": 87732,
+      "startedAt": "2026-10-02T04:28:06.386Z",
+      "endedAt": "2026-10-02T04:28:26.821Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-issue-3518-native-delay-combinator-body-ownership",
+      "pid": 88089,
+      "startedAt": "2026-10-02T04:28:27.029Z",
+      "endedAt": "2026-10-02T04:28:49.643Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "main-issue-3518-promise-earlier-main-port",
+      "pid": 90561,
+      "startedAt": "2026-10-02T04:28:49.831Z",
+      "endedAt": "2026-10-02T04:28:51.748Z",
+      "terminal": true,
+      "exit": 1
+    },
+    {
+      "id": "candidate-issue-3518-promise-earlier-main-port",
+      "pid": 90983,
+      "startedAt": "2026-10-02T04:28:51.944Z",
+      "endedAt": "2026-10-02T04:28:53.689Z",
+      "terminal": true,
+      "exit": 1
+    },
+    {
+      "id": "main-issue-3518-promise-export-main-port",
+      "pid": 91380,
+      "startedAt": "2026-10-02T04:28:53.874Z",
+      "endedAt": "2026-10-02T04:28:55.557Z",
+      "terminal": true,
+      "exit": 1
+    },
+    {
+      "id": "candidate-issue-3518-promise-export-main-port",
+      "pid": 91807,
+      "startedAt": "2026-10-02T04:28:55.755Z",
+      "endedAt": "2026-10-02T04:28:57.428Z",
+      "terminal": true,
+      "exit": 1
+    },
+    {
+      "id": "candidate-additive",
+      "pid": 92265,
+      "startedAt": "2026-10-02T04:28:57.614Z",
+      "endedAt": "2026-10-02T04:29:16.930Z",
+      "terminal": true,
+      "exit": 0
+    },
+    {
+      "id": "candidate-historical12-ts7",
+      "pid": 92368,
+      "startedAt": "2026-10-02T04:29:17.106Z",
+      "endedAt": "2026-10-02T04:29:33.753Z",
+      "terminal": true,
+      "exit": 1
+    },
+    {
+      "id": "main-historical12-ts7",
+      "pid": 92471,
+      "startedAt": "2026-10-02T04:29:33.912Z",
+      "endedAt": "2026-10-02T04:29:51.790Z",
+      "terminal": true,
+      "exit": 1
+    }
+  ],
+  "originalInfrastructureExit1Preserved": "second-pass/outcomes.json"
+}

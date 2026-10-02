@@ -1,0 +1,15 @@
+
+ RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+
+ ✓ tests/issue-6651-d5-promise-dynamic-then.test.ts (9 tests) 3325ms
+   ✓ #6651 D5 — dynamic reads of Promise.prototype members on a native promise > typeof id(p).then / .catch / .finally is 'function'  984ms
+   ✓ #6651 D5 — dynamic reads of Promise.prototype members on a native promise > Promise.all.call(C) over a C.resolve that answers native promises settles (D1 Invoke)  349ms
+   ✓ #6651 D5 — dynamic reads of Promise.prototype members on a native promise > control: a program that WRITES Promise.prototype.then reads the override back (companion path, green on base too)  468ms
+   ✓ #6651 D5 — dynamic reads of Promise.prototype members on a native promise > Promise.all([...]) Invokes an overridden Promise.prototype.then on native elements (§27.2.4.1.1)  326ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  06:20:34
+   Duration  17.70s (transform 10.09s, setup 0ms, collect 14.06s, tests 3.32s, environment 0ms, prepare 50ms)
+
+JSON report written to /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-runtime-20261002/06-candidate-issue-6651-d5-promise-dynamic-then.json

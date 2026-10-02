@@ -1,0 +1,128 @@
+{
+  "schema": "assignment-D-checkpoint-and-latest-main-v1",
+  "recordedAt": "2026-10-02T04:52:46.906Z",
+  "checkpoint": {
+    "head": "9feade6d771a1b61d5e42b15954addfd25b64314",
+    "parents": "32c2da64881923d67f0f53c6019a475db6ee1ecd 2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "fixtureCount": 141,
+    "fixtureMismatches": [],
+    "productionPatchSha256": "65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79",
+    "additiveSha256": "9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387",
+    "measuredFiles": 7511,
+    "graphSha256": "3ae4327497eb3f91d15133b693fd483eef2f305ac1fc037b2db894ce19becfbe",
+    "outsideApproved": [],
+    "measuredChanges": [
+      "scripts/compiler-boundaries.json",
+      "src/codegen/promise-combinator-drive.ts",
+      "src/codegen/promise-combinator-observable-protocol.ts",
+      "src/codegen/promise-combinators.ts",
+      "src/codegen/promise-observable-combinators.ts",
+      "tests/issue-3518-promise-main-reconcile-20261002.test.ts"
+    ],
+    "hasSshSignature": false,
+    "workingMeasuredDiff": "",
+    "commitMessage": "fix(promise): reconcile extracted owners with pinned main\n\nComplete the pending merge of main 2bfe3edd into the recovery checkpoint,\nporting prototype-then and aggregate-resolution changes to the extracted\nPromise owners and deduplicating inventory rows without changing ownership.\n\nRestore four required capability exports and add eight standalone controls.\nPreserve the parent issue-plan transplants and bounded validation receipts.\nCanonical TS7 passes; historical typing, preservation failures, uncollected\nsource-pin controls and full boundary retirement debt remain visible holds.\n\nCo-authored-by: Codex <codex@openai.com>\nModel: Codex GPT-6.1 Sol Medium\n\n✓\n\n"
+  },
+  "checkpointCommitHandle": 37888,
+  "checkpointCommitExit": 0,
+  "normalFastHooks": true,
+  "hookSkip": "SKIP_SLOW_PRECOMMIT=1; no --no-verify/signing override",
+  "firstRawArchiveStreamsVerifiedByteIdentical": 15,
+  "originalArchiveJsonVerification": [
+    {
+      "archive": "preparation/serial-validation-manifest.NOT_RUN.json",
+      "original": ".tmp/assignment-D/serial-validation-manifest.json",
+      "byteIdentical": true,
+      "parsedEquivalent": true
+    },
+    {
+      "archive": "preparation/tsconfig.tests.original.json",
+      "original": ".tmp/assignment-D/tsconfig.tests.json",
+      "byteIdentical": false,
+      "parsedEquivalent": true
+    }
+  ],
+  "latestMain": {
+    "head": "9feade6d771a1b61d5e42b15954addfd25b64314",
+    "mergeHead": "e473d92460af75ced29e9666e7e97cdde8df12ca",
+    "remoteVerifiedTwice": "e473d92460af75ced29e9666e7e97cdde8df12ca",
+    "mergeExit": 0,
+    "conflicts": 0,
+    "status": "pending commit; parent review",
+    "changedPaths": [
+      "benchmarks/results/npm-compat-history.json",
+      "benchmarks/results/npm-compat-perf.json",
+      "benchmarks/results/npm-compat.json",
+      "plan/issues/6792-dom-containment-exempts-domroot.md",
+      "scripts/compiler-boundaries.json",
+      "src/runtime-containment.ts",
+      "src/runtime.ts",
+      "tests/issue-6792-domroot-containment.test.ts",
+      "website/public/benchmarks/results/npm-compat-history.json",
+      "website/public/benchmarks/results/npm-compat-perf.json",
+      "website/public/benchmarks/results/npm-compat.json"
+    ],
+    "canonical": {
+      "handle": 8711,
+      "exit": 0,
+      "command": "node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json"
+    },
+    "targeted6792": {
+      "handle": 48644,
+      "exit": 0,
+      "tests": 11,
+      "passed": 11,
+      "failed": 0,
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-latest-main-20261002/02-issue-6792-domroot-containment.json tests/issue-6792-domroot-containment.test.ts"
+    },
+    "sourceDiff": "Only inventory containment-row deletion, src/runtime-containment.ts deletion, and upstream DOM containment update in src/runtime.ts; no Promise owner/startup/IR changes.",
+    "inventory": {
+      "mainRecords": 1778,
+      "candidateRecords": 1782,
+      "missingOrChangedMainRecords": 0,
+      "removedRuntimeContainmentRowPresent": false,
+      "checkpointExtrasPreserved": 4
+    },
+    "runtimeSourceMatchesExactMain": true,
+    "sourceDiffSha256": "6e419cfd7a9155f9d5f61075321afb6d204a328fc36613aae0e2748fc4fc5991",
+    "inventorySha256": "70b9db65da9041d7ec3af5743a6139228692ea147fd1eeb09febefeede3d79fe"
+  },
+  "fixtures": {
+    "count": 141,
+    "mismatches": []
+  },
+  "reviewedSourceSha256": "2d4eec2bf3a6ae4a6be1093314789bc2ad9d5323591021227fb172b1c86e055f",
+  "reviewedAdditiveSha256": "9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387",
+  "streams": [
+    {
+      "path": ".tmp/assignment-D-latest-main-20261002/01-source-ts7.stdout.raw",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".tmp/assignment-D-latest-main-20261002/01-source-ts7.stderr.raw",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".tmp/assignment-D-latest-main-20261002/02-issue-6792-domroot-containment.stdout.raw",
+      "bytes": 521,
+      "sha256": "906e2d194cf3ad12a6b6cd9bcbb9e7c81a552361b1d36d42677693ee6673e7a3"
+    },
+    {
+      "path": ".tmp/assignment-D-latest-main-20261002/02-issue-6792-domroot-containment.stderr.raw",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".tmp/assignment-D-latest-main-20261002/02-issue-6792-domroot-containment.json",
+      "bytes": 5053,
+      "sha256": "f752015b5a16dc290666f578b3df4080e32ca2e045d78d14f962a9fc9cbf1f39"
+    }
+  ],
+  "holdsUnchanged": "See bounded-validation-handoff.json: full architecture debt, historical typing,113 inherited broader failures,240 uncollected controls and8 original Test262 pending remain visible.",
+  "slot": "RELEASED after latest checks; no process active",
+  "noPush": true,
+  "noHoldRemoval": true,
+  "noEnqueue": true
+}

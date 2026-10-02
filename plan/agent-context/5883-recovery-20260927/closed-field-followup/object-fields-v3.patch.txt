@@ -1,0 +1,479 @@
+--- a/src/codegen/bigint-field-carrier.ts
++++ b/src/codegen/bigint-field-carrier.ts
+@@ -0,0 +1,50 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { getNullablePrimitiveInfo, isBigIntType } from "../checker/type-mapper.js";
++import type { ValType } from "../ir/types.js";
++import type { ts } from "../ts-api.js";
++import type { CodegenContext, FunctionContext } from "./context/types.js";
++import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
++
++/** Logical field intent, not a second registry of physical layouts. */
++export interface ClosedDataFieldStoragePlan {
++  readonly type: ValType;
++  readonly nativeBigIntReference: boolean;
++}
++
++/** Pure: choose storage BEFORE layout hashing/publication; never mint helpers. */
++export function resolveClosedDataFieldStorage(
++  ctx: CodegenContext,
++  semanticType: ts.Type,
++  scalarMapping: ValType,
++  explicitNativeOverride?: ValType | null,
++): ClosedDataFieldStoragePlan {
++  if (explicitNativeOverride) return { type: explicitNativeOverride, nativeBigIntReference: false };
++  const nativeBigInt =
++    ctx.standalone &&
++    ctx.nativeStrings &&
++    (isBigIntType(semanticType) || getNullablePrimitiveInfo(semanticType)?.primitiveKind === "bigint");
++  const widen = nativeBigInt && scalarMapping.kind === "i64" && scalarMapping.bigint === true;
++  return {
++    type: widen ? { kind: "externref" } : scalarMapping,
++    nativeBigIntReference: nativeBigInt && (widen || scalarMapping.kind === "externref"),
++  };
++}
++
++/**
++ * Before the caller's ONE compileExpression(rhs, storage). No RHS evaluation,
++ * runtime conversion, cached numeric handle, or reconstruction from low64.
++ * A supplied plan must describe the logical source field, not a dedup cache's
++ * same-shaped externref field. Dynamic/Reflect callers instead prove the RHS.
++ */
++export function prepareClosedFieldValue(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  rhs: ts.Expression,
++  storage: ValType,
++  semanticPlan?: ClosedDataFieldStoragePlan,
++): void {
++  if (!ctx.standalone || !ctx.nativeStrings || (storage.kind !== "externref" && storage.kind !== "anyref")) return;
++  if (!semanticPlan?.nativeBigIntReference && ctx.oracle.staticJsTypeOf(rhs) !== "bigint") return;
++  addUnionImportsViaRegistry(ctx);
++  flushLateImportShifts(ctx, fctx);
++}
+--- a/src/codegen/index.ts
++++ b/src/codegen/index.ts
+@@ -1,5 +1,6 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ import { ts, forEachChild } from "../ts-api.js";
++import { resolveClosedDataFieldStorage } from "./bigint-field-carrier.js";
+ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
+ import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
+ import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
+@@ -13603,7 +13604,15 @@
+     if (wasmType.kind === "externref" && callSigs.length > 0 && (prop.name === "valueOf" || prop.name === "toString")) {
+       wasmType = { kind: "eqref" };
+     }
+-    fields.push({ name: prop.name, type: wasmType, mutable: true });
++    // Choose physical storage before hashing/publication, after refinements.
++    const fieldStorage = resolveClosedDataFieldStorage(
++      ctx,
++      propType,
++      wasmType,
++      resolveNativeTypeAnnotation(propType),
++    );
++    // Physical dedup must not transfer semantic intent to unrelated fields.
++    fields.push({ name: prop.name, type: fieldStorage.type, mutable: true });
+     if (callSigs.length > 0) {
+       const sig = callSigs[0]!;
+       // Include arity AND return-type signature in the hash key. Two object
+--- a/src/codegen/declarations/struct-type-registration.ts
++++ b/src/codegen/declarations/struct-type-registration.ts
+@@ -6,7 +6,8 @@
+  */
+ import { getNullablePrimitiveInfo, isBigIntType, mapTsTypeToWasm } from "../../checker/type-mapper.js";
+ import { ts } from "../../ts-api.js";
+-import { fieldsHashKey, resolveWasmType } from "../index.js";
++import { fieldsHashKey, resolveNativeTypeAnnotation, resolveWasmType } from "../index.js";
++import { resolveClosedDataFieldStorage, type ClosedDataFieldStoragePlan } from "../bigint-field-carrier.js";
+ import { registerStructType } from "../registry/types.js";
+ import type { FieldDef, StructTypeDef } from "../../ir/types.js";
+ import type { CodegenContext } from "../context/types.js";
+@@ -281,7 +282,7 @@
+   });
+ }
+ 
+-function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDef["type"] {
++function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): ClosedDataFieldStoragePlan {
+   // `mapTsTypeToWasm` intentionally models BigInt as the host-free i64
+   // carrier. Interface/object fields are value boundaries too, though: in a
+   // JS-host module a bigint field must remain an externref, otherwise a wide
+@@ -289,7 +290,8 @@
+   const nullable = getNullablePrimitiveInfo(memberType);
+   const isBigIntField =
+     usesHostBigIntCarrier(ctx) && (isBigIntType(memberType) || nullable?.primitiveKind === "bigint");
+-  return isBigIntField ? resolveWasmType(ctx, memberType) : mapTsTypeToWasm(memberType, ctx.checker);
++  const scalar = isBigIntField ? resolveWasmType(ctx, memberType) : mapTsTypeToWasm(memberType, ctx.checker);
++  return resolveClosedDataFieldStorage(ctx, memberType, scalar, resolveNativeTypeAnnotation(memberType));
+ }
+ 
+ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclaration): void {
+@@ -393,10 +395,10 @@
+   for (const prop of properties) {
+     if (inheritedNames.has(prop.name)) continue;
+     const memberType = ctx.checker.getTypeOfSymbol(prop);
+-    const wasmType = mapDeclaredFieldType(ctx, memberType);
++    const storage = mapDeclaredFieldType(ctx, memberType);
+     fields.push({
+       name: prop.name,
+-      type: wasmType,
++      type: storage.type,
+       mutable: true,
+     });
+   }
+@@ -717,12 +719,24 @@
+   let changed = false;
+   for (let fieldIdx = startIndex; fieldIdx < fields.length; fieldIdx++) {
+     const field = fields[fieldIdx]!;
++    // Native BigInt data fields are widened by mapDeclaredFieldType BEFORE
++    // publication. This revisit resolves forward object references, not stale
++    // scalar layouts: widening a published i64 here could invalidate existing
++    // producers/nominal prefixes. Direct aliases are skipped by the caller;
++    // inherited prefixes remain the original parent's layout responsibility.
++    // Keep the host-only legacy repair separate from that native invariant.
+     const mayBeHostBigInt = usesHostBigIntCarrier(ctx) && field.type.kind === "i64" && field.type.bigint === true;
+     if (field.type.kind !== "externref" && !mayBeHostBigInt) continue;
+ 
+     const property = propertiesByName.get(field.name);
+     if (!property) continue;
+-    const resolved = resolveWasmType(ctx, ctx.checker.getTypeOfSymbol(property));
++    const memberType = ctx.checker.getTypeOfSymbol(property);
++    const resolved = resolveClosedDataFieldStorage(
++      ctx,
++      memberType,
++      resolveWasmType(ctx, memberType),
++      resolveNativeTypeAnnotation(memberType),
++    ).type;
+     if (resolved.kind === "ref" || resolved.kind === "ref_null" || (mayBeHostBigInt && resolved.kind === "externref")) {
+       field.type = resolved;
+       changed = true;
+@@ -888,7 +902,7 @@
+     const property = properties.get(targetField.name);
+     if (!property) return undefined;
+     const aliasFieldType = mapDeclaredFieldType(ctx, ctx.checker.getTypeOfSymbol(property));
+-    if (!sameCarrierValType(aliasFieldType, targetField.type)) return undefined;
++    if (!sameCarrierValType(aliasFieldType.type, targetField.type)) return undefined;
+   }
+   return { typeIdx, fields: targetFields };
+ }
+@@ -934,10 +948,10 @@
+   const fields: FieldDef[] = [];
+   for (const prop of type.getProperties()) {
+     const propType = ctx.checker.getTypeOfSymbol(prop);
+-    const wasmType = mapDeclaredFieldType(ctx, propType);
++    const storage = mapDeclaredFieldType(ctx, propType);
+     fields.push({
+       name: prop.name,
+-      type: wasmType,
++      type: storage.type,
+       mutable: true,
+     });
+   }
+--- a/src/codegen/literals.ts
++++ b/src/codegen/literals.ts
+@@ -35,6 +35,7 @@
+ import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+ import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
+ import { ensureAnyToStringHelper, ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
++import { prepareClosedFieldValue, resolveClosedDataFieldStorage } from "./bigint-field-carrier.js";
+ import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation } from "./iterator-native.js"; // (#3100 S5, #5131 provenance)
+ import { popBody, pushBody } from "./context/bodies.js";
+ import { reportError } from "./context/errors.js";
+@@ -68,12 +69,14 @@
+   destructureParamArray,
+   destructureParamObject,
+   ensureStructForType,
++  fieldsHashKey,
+   extractConstantDefault,
+   getOrRegisterTupleType,
+   getTupleElementTypes,
+   hoistLetConstWithTdz,
+   hoistVarDeclarations,
+   isTupleType,
++  resolveNativeTypeAnnotation,
+   resolveWasmType,
+ } from "./index.js";
+ import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+@@ -106,7 +109,8 @@
+   valTypesMatch,
+   VOID_RESULT,
+ } from "./shared.js";
+-import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
++import { buildVecFromExternref, coercionInstrs, getVecInfo, pushDefaultValue } from "./type-coercion.js";
++import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
+ import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
+ import { compileOneElementArray, widenDenseArrayElementType } from "./expressions/array-constructor-carrier.js";
+ import {
+@@ -392,6 +396,19 @@
+ 
+   if (resolvedProps.length === 0) return undefined;
+ 
++  // Decide each new field once, before either publication or old-allocation
++  // padding. A physical dedup entry is never semantic BigInt evidence.
++  const additions = resolvedProps.map((rp) => {
++    const propType = ctx.checker.getTypeAtLocation(rp.valueExpr);
++    const storage = resolveClosedDataFieldStorage(
++      ctx,
++      propType,
++      resolveWasmType(ctx, propType),
++      resolveNativeTypeAnnotation(propType),
++    );
++    return { ...rp, storage };
++  });
++
+   const structTypeIdx = ctx.structMap.get(existingName)!;
+   if (isSealedNominalStructParent(ctx, structTypeIdx)) {
+     const parent = ctx.mod.types[structTypeIdx];
+@@ -404,11 +421,10 @@
+     if (parent.superTypeIdx === undefined) parent.superTypeIdx = -1;
+     const replacementName = `__sealed_literal_${ctx.anonTypeCounter++}`;
+     const replacementFields = existingFields.map((field) => ({ ...field, type: { ...field.type } }));
+-    for (const rp of resolvedProps) {
+-      const propType = ctx.checker.getTypeAtLocation(rp.valueExpr);
++    for (const rp of additions) {
+       replacementFields.push({
+         name: rp.name,
+-        type: resolveWasmType(ctx, propType),
++        type: rp.storage.type,
+         mutable: true,
+       });
+     }
+@@ -427,22 +443,39 @@
+ 
+   // Need to add new fields. Create a replacement struct with the combined fields.
+   const fields = [...existingFields];
+-  for (const rp of resolvedProps) {
+-    const propType = ctx.checker.getTypeAtLocation(rp.valueExpr);
+-    const wasmType = resolveWasmType(ctx, propType);
+-    fields.push({ name: rp.name, type: wasmType, mutable: true });
++  for (const rp of additions) {
++    fields.push({ name: rp.name, type: rp.storage.type, mutable: true });
+   }
+ 
+   // Update the existing struct in-place
++  const oldHash = fieldsHashKey(existingFields);
+   const typeDef = ctx.mod.types[structTypeIdx] as any;
+   typeDef.fields = fields;
+   ctx.structFields.set(existingName, fields);
++  // Preserve method-signature suffixes without retaining stale physical keys.
++  for (const [key, name] of [...ctx.anonStructHash]) {
++    if (name === existingName && (key === oldHash || key.startsWith(oldHash + "||"))) {
++      ctx.anonStructHash.delete(key);
++      ctx.anonStructHash.set(fieldsHashKey(fields) + key.slice(oldHash.length), existingName);
++    }
++  }
+ 
+   // Patch existing struct.new instructions for this type with defaults for new fields
+-  for (const rp of resolvedProps) {
+-    const propType = ctx.checker.getTypeAtLocation(rp.valueExpr);
+-    const wasmType = resolveWasmType(ctx, propType);
+-    patchStructNewForAddedField(ctx, fctx, structTypeIdx, wasmType);
++  for (const rp of additions) {
++    let defaultValue: (() => Instr[]) | undefined;
++    if (rp.storage.nativeBigIntReference) {
++      prepareClosedFieldValue(ctx, fctx, rp.valueExpr, rp.storage.type, rp.storage);
++      // Reserve before the walk. Each allocation gets independent instructions;
++      // no boxed0n/null default and no dependencies minted inside the callback.
++      canonicalUndefinedExternInstrs(ctx);
++      if (ctx.undefinedGlobalIdx === undefined) throw new Error("BigInt field default requires canonical undefined");
++      const undefinedGlobal = ctx.undefinedGlobalIdx;
++      defaultValue = () => [
++        { op: "global.get", index: undefinedGlobal },
++        { op: "extern.convert_any" },
++      ];
++    }
++    patchStructNewForAddedField(ctx, fctx, structTypeIdx, rp.storage.type, defaultValue);
+   }
+   return undefined;
+ }
+@@ -3302,13 +3335,7 @@
+   return { kind: "ref", typeIdx: structTypeIdx };
+ }
+ 
+-/**
+- * (#4616) The struct-field "missing property" default — undefined sentinels so
+- * destructuring default-value checks can detect absence (f64: the sNaN
+- * sentinel matching emitDefaultValueCheck #866; externref: JS `undefined`, not
+- * ref.null.extern, because destructuring defaults fire only on `=== undefined`).
+- * Shared by the spread null-guard arms and the no-writer fallback below.
+- */
++/** Missing fields use undefined sentinels, not JavaScript null or numeric zero. */
+ function pushStructFieldDefault(ctx: CodegenContext, fctx: FunctionContext, fieldType: ValType): void {
+   if (fieldType.kind === "f64") {
+     fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+@@ -3352,13 +3379,42 @@
+   fieldType: ValType,
+   fallback: Instr[],
+ ): Instr[] {
++  const sourceStruct = ctx.mod.types[src.srcStructTypeIdx];
++  if (!sourceStruct || sourceStruct.kind !== "struct" || !sourceStruct.fields[fieldIdx]) {
++    throw new Error("Spread field requires its actual source layout");
++  }
++  const sourceField = sourceStruct.fields[fieldIdx]!;
++  const sourceType = sourceField.type;
++  // A source scalar cannot recover lost limbs; an existing reference is never
++  // routed through an i64 temporary just because the checker calls it bigint.
++  const hadFallback = ctx.liveBodies.has(fallback);
++  ctx.liveBodies.add(fallback);
++  let conversion: Instr[];
++  try {
++    conversion = valTypesMatch(sourceType, fieldType) ? [] : coercionInstrs(ctx, sourceType, fieldType, fctx);
++  } finally {
++    if (!hadFallback) ctx.liveBodies.delete(fallback);
++  }
+   const read: Instr[] = [
+     { op: "local.get", index: src.local },
+     { op: "struct.get", typeIdx: src.srcStructTypeIdx, fieldIdx },
+   ];
+-  if (fieldType.kind === "externref") {
++  const presence = presenceSlotOf(sourceStruct.fields, sourceField.name);
++  if (presence) {
++    return [
++      { op: "local.get", index: src.local },
++      ...presenceTestInstrs(src.srcStructTypeIdx, presence),
++      {
++        op: "if",
++        blockType: { kind: "val", type: spreadGuardBlockType(fieldType) },
++        then: [...read, ...conversion],
++        else: fallback,
++      },
++    ];
++  }
++  if (sourceType.kind === "externref") {
+     const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+-    if (isUndefIdx === undefined) return read;
++    if (isUndefIdx === undefined) return [...read, ...conversion];
+     const vTmp = allocTempLocal(fctx, { kind: "externref" });
+     const out: Instr[] = [
+       ...read,
+@@ -3366,15 +3422,15 @@
+       { op: "call", funcIdx: isUndefIdx },
+       {
+         op: "if",
+-        blockType: { kind: "val", type: fieldType },
++        blockType: { kind: "val", type: spreadGuardBlockType(fieldType) },
+         then: fallback,
+-        else: [{ op: "local.get", index: vTmp }],
++        else: [{ op: "local.get", index: vTmp }, ...conversion],
+       },
+     ];
+     releaseTempLocal(fctx, vTmp);
+     return out;
+   }
+-  if (fieldType.kind === "f64") {
++  if (sourceType.kind === "f64") {
+     const vTmp = allocTempLocal(fctx, { kind: "f64" });
+     const out: Instr[] = [
+       ...read,
+@@ -3384,15 +3440,15 @@
+       { op: "i64.eq" },
+       {
+         op: "if",
+-        blockType: { kind: "val", type: fieldType },
++        blockType: { kind: "val", type: spreadGuardBlockType(fieldType) },
+         then: fallback,
+-        else: [{ op: "local.get", index: vTmp }],
++        else: [{ op: "local.get", index: vTmp }, ...conversion],
+       },
+     ];
+     releaseTempLocal(fctx, vTmp);
+     return out;
+   }
+-  return read;
++  return [...read, ...conversion];
+ }
+ 
+ function pushStrictMethodLiteralAllocation(
+@@ -3932,9 +3988,11 @@
+       const fieldIdx = overridingSpread.srcFields.findIndex((f) => f.name === field.name);
+       const namedTmp = allocTempLocal(fctx, field.type);
+       if (lastMatch && ts.isPropertyAssignment(lastMatch)) {
++        prepareClosedFieldValue(ctx, fctx, lastMatch.initializer, field.type);
+         compileExpression(ctx, fctx, lastMatch.initializer, field.type);
+         fctx.body.push({ op: "local.set", index: namedTmp });
+       } else if (lastMatch && ts.isShorthandPropertyAssignment(lastMatch)) {
++        prepareClosedFieldValue(ctx, fctx, lastMatch.name, field.type);
+         compileExpression(ctx, fctx, lastMatch.name, field.type);
+         fctx.body.push({ op: "local.set", index: namedTmp });
+       } else {
+@@ -4045,6 +4103,7 @@
+       const bodyLenBefore = fctx.body.length;
+       const hostFieldValue = mayHaveModuleHostSpreadField && isModuleGlobalHostSpreadIdentifier(ctx, prop.initializer);
+       if (!hostFieldValue || compileHostObjectAsStruct(ctx, fctx, prop.initializer, field.type) === null) {
++        prepareClosedFieldValue(ctx, fctx, prop.initializer, field.type);
+         compileExpression(ctx, fctx, prop.initializer, field.type);
+       }
+       trackToPrimitiveClosureTypes(ctx, fctx, typeName, field, bodyLenBefore);
+@@ -4055,6 +4114,7 @@
+       // untracked eqref field left the per-instance `__call_toString` dispatch
+       // with zero candidates — ToPrimitive fell to "[object Object]".
+       const bodyLenBefore = fctx.body.length;
++      prepareClosedFieldValue(ctx, fctx, shorthandProp.name, field.type);
+       compileExpression(ctx, fctx, shorthandProp.name, field.type);
+       trackToPrimitiveClosureTypes(ctx, fctx, typeName, field, bodyLenBefore);
+     } else {
+@@ -4080,6 +4140,16 @@
+         const src = spreadSources[si]!;
+         const fieldIdx = src.srcFields.findIndex((f) => f.name === field.name);
+         if (fieldIdx < 0) continue;
++        // Conversion can register helpers. Both independent fallback trees
++        // must remain reachable while their function indices are shifted.
++        const hadChain = ctx.liveBodies.has(chain);
++        ctx.liveBodies.add(chain);
++        let spreadRead: Instr[];
++        try {
++          spreadRead = spreadFieldReadWithAbsentFallback(ctx, fctx, src, fieldIdx, field.type, structuredClone(chain));
++        } finally {
++          if (!hadChain) ctx.liveBodies.delete(chain);
++        }
+         chain = [
+           { op: "local.get", index: src.local },
+           { op: "ref.is_null" },
+@@ -4090,7 +4160,7 @@
+             // structuredClone: the fallback re-embeds the inner chain, and the
+             // late-import shifter must never see the SAME instr object through
+             // two parent arrays (it would double-shift its funcIdx).
+-            else: spreadFieldReadWithAbsentFallback(ctx, fctx, src, fieldIdx, field.type, structuredClone(chain)),
++            else: spreadRead,
+           },
+         ];
+       }
+--- a/src/codegen/char-at-transfer.ts
++++ b/src/codegen/char-at-transfer.ts
+@@ -31,6 +31,7 @@
+ import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+ import { getArrTypeIdxFromVec } from "./index.js"; // (#4531) raw vec box on externref field stores
+ import { coerceType } from "./type-coercion.js";
++import { prepareClosedFieldValue } from "./bigint-field-carrier.js";
+ 
+ /**
+  * Unbox an externref native-prototype argument to i32. Keeping this beside the
+@@ -103,6 +104,8 @@
+   }
+   const before =
+     fieldName === "toString" || fieldName === "valueOf" ? new Set(ctx.closureInfoByTypeIdx.keys()) : undefined;
++  // RHS proof, not a same-shaped field's semantic annotation, owns preparation.
++  prepareClosedFieldValue(ctx, fctx, value, expectedType);
+   const valueType = compileExpression(ctx, fctx, value, expectedType);
+   if (!valueType) return null;
+ 
+--- a/src/codegen/expressions/late-imports.ts
++++ b/src/codegen/expressions/late-imports.ts
+@@ -798,6 +798,8 @@
+   fctx: FunctionContext,
+   typeIdx: number,
+   fieldType: ValType,
++  // Prepared before this walk; must return fresh instructions for every site.
++  defaultValue?: () => Instr[],
+ ): void {
+   function defaultInstrFor(ft: ValType): Instr[] {
+     switch (ft.kind) {
+@@ -847,7 +849,7 @@
+           // Insert a default value right before the struct.new. The inserted
+           // instr has no nested blocks, so enqueueing children of `instr`
+           // below is still correct — `instr` is captured by reference.
+-          arr.splice(i, 0, ...defaultInstrFor(fieldType));
++          arr.splice(i, 0, ...(defaultValue ? defaultValue() : defaultInstrFor(fieldType)));
+         }
+         if ("body" in instr && Array.isArray((instr as any).body)) {
+           work.push((instr as any).body);

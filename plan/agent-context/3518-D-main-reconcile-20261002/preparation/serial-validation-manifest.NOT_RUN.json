@@ -1,0 +1,313 @@
+{
+  "schema": "assignment-D-serial-validation-v1",
+  "executionAuthorized": false,
+  "slotOwner": "A; parent grants transfer after A correction and sequencing with C",
+  "candidate": {
+    "worktree": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+    "branch": "codex/5883-main-reconcile-20261002",
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "productionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "planCommitExcluded": "373a50e70e"
+  },
+  "baseline": {
+    "worktree": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002",
+    "head": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "setup": "NOT_CREATED; after slot grant inspect existing suitable exact-main worktrees before creating this isolated detached checkout; disable checkout hooks. Never use shared root or recovery checkout as baseline."
+  },
+  "declaredPopulation": {
+    "candidateExistingFiles": 12,
+    "candidateExistingControls": 376,
+    "candidateAdditiveFiles": 1,
+    "candidateAdditiveControls": 8,
+    "candidateTotalControls": 384,
+    "baselinePairedFiles": 3,
+    "baselinePairedDeclaredControls": 273
+  },
+  "tests": [
+    {
+      "path": "tests/issue-6651-d5-promise-dynamic-then.test.ts",
+      "declaredControls": 9,
+      "sourceCountFormula": "9 direct it declarations",
+      "additive": false,
+      "sha256": "a4bffb45a38666c0b3f3afc73fb89edf1baa14caaa6718d6f577e2fa22861316"
+    },
+    {
+      "path": "tests/issue-5197-r3-promise.test.ts",
+      "declaredControls": 21,
+      "sourceCountFormula": "21 literal PROBES rows, one it per row",
+      "additive": false,
+      "sha256": "bc9be31ba3c17d149afa578cc00ba9b58ca0fb438da05396ec324c1305862c7a"
+    },
+    {
+      "path": "tests/issue-5197-promise-observable-combinator-r3-2.test.ts",
+      "declaredControls": 13,
+      "sourceCountFormula": "13 direct it declarations",
+      "additive": false,
+      "sha256": "223af80a8f6cbf59ed7a87f7c1187095b81f7b1c8f64b14637369bdf8888182e"
+    },
+    {
+      "path": "tests/issue-3518-promise-getter-capture.test.ts",
+      "declaredControls": 14,
+      "sourceCountFormula": "7 it declarations x describe.each([false,true])",
+      "additive": false,
+      "sha256": "63d8e92868efba1f7f0b7eee96645b295a59c71125f046c241cc0637e49d6f1d"
+    },
+    {
+      "path": "tests/issue-6651-promise-combinator-drive.test.ts",
+      "declaredControls": 10,
+      "sourceCountFormula": "10 direct it declarations",
+      "additive": false,
+      "sha256": "d31c4127739f3ee3c733cb9d58914ce6f68ff4bae6d524332d68b3b33ef96d71"
+    },
+    {
+      "path": "tests/issue-6651-promise-custom-combinator.test.ts",
+      "declaredControls": 8,
+      "sourceCountFormula": "8 direct it declarations",
+      "additive": false,
+      "sha256": "4374ed045e70ede9ac6312b6d6720e98dc080753c913e38abac5bb969a5ca175"
+    },
+    {
+      "path": "tests/issue-6651-d3-class-receiver-combinator.test.ts",
+      "declaredControls": 12,
+      "sourceCountFormula": "8 direct + 4 methods x 1 it",
+      "additive": false,
+      "sha256": "a78814ff82b3b07d93fd95cf9071e7735819cc9c555ecb89a91a65346a13d20d"
+    },
+    {
+      "path": "tests/issue-6651-d4-promise-subclass.test.ts",
+      "declaredControls": 12,
+      "sourceCountFormula": "8 direct + 4 literal label/call rows x 1 it",
+      "additive": false,
+      "sha256": "e10504dfe639eaf53e18381a4a57bbc017de24d2b442e7a5ad903b6665c2a2c3"
+    },
+    {
+      "path": "tests/issue-2918-promise-then-funcidx-shift.test.ts",
+      "declaredControls": 4,
+      "sourceCountFormula": "4 direct it declarations",
+      "additive": false,
+      "sha256": "373829785990baa97c778a4800e8026dd5adb0690735a94b8012d7949129e300"
+    },
+    {
+      "path": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+      "declaredControls": 33,
+      "sourceCountFormula": "9 direct + 2 missing paths + 9 edges + 3 invalid resolve handles + 3 mark handles + 3 emptyResult variants + 4 methods",
+      "additive": false,
+      "sha256": "2435faf193032711a3187ec3eb4339eef2e0a9e9e96851c42b5d824a4f8bab69"
+    },
+    {
+      "path": "tests/issue-3518-promise-earlier-main-port.test.ts",
+      "declaredControls": 216,
+      "sourceCountFormula": "1 pin + 3 records x (1 replay + 2 inverses x 3 outside-span controls + 1 wrong direction) + 28 spans x 2 inverses x 3 mutations + 4 direct tail controls + 3 receipt mutations + 8 dependencies x 2 controls",
+      "additive": false,
+      "sha256": "ddc7d98c8c83c61fa671942f0041d7ac81ef5454342445d8cce205e97bf2d046"
+    },
+    {
+      "path": "tests/issue-3518-promise-export-main-port.test.ts",
+      "declaredControls": 24,
+      "sourceCountFormula": "2 initial + 2 inverses x (3 span mutations + 3 outside-span controls) + 5 direct tail controls + 3 receipt mutations + 2 dependency controls",
+      "additive": false,
+      "sha256": "c3aed1e80b815ec15600e5faff0cf70133eb11ab5df1135334e4f860ec3f917d"
+    },
+    {
+      "path": "tests/issue-3518-promise-main-reconcile-20261002.test.ts",
+      "declaredControls": 8,
+      "sourceCountFormula": "3 Resolve shapes x 2 empty/nonempty + 2 prototype-then shapes",
+      "additive": true,
+      "sha256": "08551a2439fb54b643f13d024ad8df2e21b86d283210ea7b06680f5c938d74b3"
+    }
+  ],
+  "rules": [
+    "Source-derived counts are authored registration populations, NOT observed collection/execution counts. Import-time authenticate failures can yield 0 collected of 216/24; preserve suite errors and treat unavailable rows as uncollected, never skipped/passed.",
+    "No tests/typecheck/compiler/formatter/gate execution until parent explicitly grants slot. This manifest is preparation only.",
+    "Execute steps strictly serially, waiting for each process terminal exit. Preserve first raw stdout/stderr, command, cwd, environment, pid/handle, timestamps, exit, JSON report and hashes independently. Do not overwrite first failed results.",
+    "Create a new unused .tmp/assignment-D-validation directory in each owned checkout before execution. If already used, keep it and update all output destinations to a fresh named receipt directory before starting.",
+    "Sanitize inherited GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE and record compiler/runtime-control environment identically across paired arms. Do not silently switch JS2WASM/IR_VERIFY options between arms or mutate controls embedded in tests.",
+    "Resolve existing dependency access without shared install/update. Pin same Node, pnpm, Vitest, TS7 and dependency bytes for both arms; unavailable shared dependencies are a setup hold, not a test result.",
+    "Before launch verify exact HEAD/MERGE_HEAD/branch, no new unmerged entries, production patch hash, all selected source pins and 141-file frozen fixture manifest. Parent plan integration needs a new documented subject pin if done before measurements.",
+    "Compare paired historical tests per suite/row, phase, first error text and dependency/source pin. Equal errors on exact main establish inherited failure only, not runtime equivalence or positive source-preservation proof.",
+    "Candidate-only or changed historical failure remains a composition hold. No fixture replacement, receipt hash/offset edits, skips, test deletion, or weakening of validators.",
+    "After a gate/typecheck failure record its independent result; parent decides dependent execution scope. No automatic production fixes, hooks, commits or push.",
+    "Other historical source/settlement/equivalence suites from initial handoff are deferred expanded coverage, not declared passing or deleted. No whole-program equivalence claim follows from this bounded manifest."
+  ],
+  "steps": [
+    {
+      "ordinal": 1,
+      "id": "candidate-source-ts7",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json",
+      "status": "NOT_RUN",
+      "scope": "full source TS7; tests excluded by repository project"
+    },
+    {
+      "ordinal": 2,
+      "id": "candidate-scoped-tests-ts7",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "node node_modules/typescript7/lib/tsc.js --noEmit -p .tmp/assignment-D/tsconfig.tests.json",
+      "status": "NOT_RUN",
+      "scope": "strict inherited source/test TS7 over these 13 exact entry files and their imported graph; allowJs resolves imported historical mjs helpers, not a checkJs grant"
+    },
+    {
+      "ordinal": 3,
+      "id": "candidate-format",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "pnpm exec prettier --check scripts/compiler-boundaries.json src/codegen/promise-combinators.ts src/codegen/promise-combinator-observable-protocol.ts src/codegen/promise-observable-combinators.ts src/codegen/promise-combinator-drive.ts tests/issue-3518-promise-main-reconcile-20261002.test.ts",
+      "status": "NOT_RUN"
+    },
+    {
+      "ordinal": 4,
+      "id": "candidate-inventory",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "node scripts/check-compiler-boundaries.mjs --mode inventory",
+      "status": "NOT_RUN"
+    },
+    {
+      "ordinal": 5,
+      "id": "candidate-full-boundaries",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "node scripts/check-compiler-boundaries.mjs",
+      "status": "NOT_RUN",
+      "interpretation": "Preserved full-separation debt may fail; never convert this into an inventory success/retirement claim."
+    },
+    {
+      "ordinal": 6,
+      "id": "candidate-issue-6651-d5-promise-dynamic-then",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-d5-promise-dynamic-then.json tests/issue-6651-d5-promise-dynamic-then.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 9
+    },
+    {
+      "ordinal": 7,
+      "id": "candidate-issue-5197-r3-promise",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-5197-r3-promise.json tests/issue-5197-r3-promise.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 21
+    },
+    {
+      "ordinal": 8,
+      "id": "candidate-issue-5197-promise-observable-combinator-r3-2",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-5197-promise-observable-combinator-r3-2.json tests/issue-5197-promise-observable-combinator-r3-2.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 13
+    },
+    {
+      "ordinal": 9,
+      "id": "candidate-issue-3518-promise-getter-capture",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-getter-capture.json tests/issue-3518-promise-getter-capture.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 14
+    },
+    {
+      "ordinal": 10,
+      "id": "candidate-issue-6651-promise-combinator-drive",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-promise-combinator-drive.json tests/issue-6651-promise-combinator-drive.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 10
+    },
+    {
+      "ordinal": 11,
+      "id": "candidate-issue-6651-promise-custom-combinator",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-promise-custom-combinator.json tests/issue-6651-promise-custom-combinator.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 8
+    },
+    {
+      "ordinal": 12,
+      "id": "candidate-issue-6651-d3-class-receiver-combinator",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-d3-class-receiver-combinator.json tests/issue-6651-d3-class-receiver-combinator.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 12
+    },
+    {
+      "ordinal": 13,
+      "id": "candidate-issue-6651-d4-promise-subclass",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-d4-promise-subclass.json tests/issue-6651-d4-promise-subclass.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 12
+    },
+    {
+      "ordinal": 14,
+      "id": "candidate-issue-2918-promise-then-funcidx-shift",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-2918-promise-then-funcidx-shift.json tests/issue-2918-promise-then-funcidx-shift.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 4
+    },
+    {
+      "ordinal": 15,
+      "id": "main-issue-3518-native-delay-combinator-body-ownership",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-native-delay-combinator-body-ownership.json tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 33,
+      "pair": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+      "subject": "exact main 2bfe3eddf84d4d27f471eddb91e441709b7f6eff, unchanged published tests/fixtures"
+    },
+    {
+      "ordinal": 16,
+      "id": "candidate-issue-3518-native-delay-combinator-body-ownership",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-native-delay-combinator-body-ownership.json tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 33,
+      "pair": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+      "subject": "checkpoint plus exact main and approved D source resolution"
+    },
+    {
+      "ordinal": 17,
+      "id": "main-issue-3518-promise-earlier-main-port",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-earlier-main-port.json tests/issue-3518-promise-earlier-main-port.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 216,
+      "pair": "tests/issue-3518-promise-earlier-main-port.test.ts",
+      "subject": "exact main 2bfe3eddf84d4d27f471eddb91e441709b7f6eff, unchanged published tests/fixtures"
+    },
+    {
+      "ordinal": 18,
+      "id": "candidate-issue-3518-promise-earlier-main-port",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-earlier-main-port.json tests/issue-3518-promise-earlier-main-port.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 216,
+      "pair": "tests/issue-3518-promise-earlier-main-port.test.ts",
+      "subject": "checkpoint plus exact main and approved D source resolution"
+    },
+    {
+      "ordinal": 19,
+      "id": "main-issue-3518-promise-export-main-port",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-export-main-port.json tests/issue-3518-promise-export-main-port.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 24,
+      "pair": "tests/issue-3518-promise-export-main-port.test.ts",
+      "subject": "exact main 2bfe3eddf84d4d27f471eddb91e441709b7f6eff, unchanged published tests/fixtures"
+    },
+    {
+      "ordinal": 20,
+      "id": "candidate-issue-3518-promise-export-main-port",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-export-main-port.json tests/issue-3518-promise-export-main-port.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 24,
+      "pair": "tests/issue-3518-promise-export-main-port.test.ts",
+      "subject": "checkpoint plus exact main and approved D source resolution"
+    },
+    {
+      "ordinal": 21,
+      "id": "candidate-additive",
+      "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-main-reconcile-20261002.json tests/issue-3518-promise-main-reconcile-20261002.test.ts",
+      "status": "NOT_RUN",
+      "declaredControls": 8
+    }
+  ]
+}

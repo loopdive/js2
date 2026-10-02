@@ -1818,6 +1818,18 @@
   ],
   "moves": [
     {
+      "from": "src/codegen/promise-combinator-observable-protocol.ts",
+      "to": "src/codegen/promises/promise-combinator-observable-protocol.ts"
+    },
+    {
+      "from": "src/codegen/promise-observable-combinators.ts",
+      "to": "src/codegen/promises/promise-observable-combinators.ts"
+    },
+    {
+      "from": "src/codegen/vec-pop-body.ts",
+      "to": "src/codegen/vectors/vec-pop-body.ts"
+    },
+    {
       "from": "src/codegen/prepared-async-frame-engine.ts",
       "to": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts"
     },
@@ -2152,6 +2164,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/vector-grow-store.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/vector-storage-copy-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -8412,6 +8429,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
+    },
+    {
+      "path": "src/codegen/promises/promise-observable-combinators.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction."
+    },
+    {
       "path": "src/codegen/promise-executor.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10250,6 +10283,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/vectors/vec-pop-body.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer."
     },
     {
       "path": "src/codegen/vec-props.ts",

@@ -1,0 +1,1484 @@
+{
+  "purpose": "Unchanged full four-file population before/after prepared coercion-engine delegation; no exclusions or expectation edits.",
+  "cwd": "/private/tmp/js2-5883-main-688-20260927",
+  "command": "VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 VITEST_MAX_FORKS=1 pnpm exec vitest run tests/issue-5883-iterator-protocol-get.test.ts tests/issue-5883-runtime-to-object.test.ts tests/issue-5883-promise-vector-iterator.test.ts tests/issue-5883-promise-vector-acquisition.test.ts --reporter=json --outputFile=<arm>",
+  "exactRowsEqual": true,
+  "limitation": "Four failures per arm serialize null exception detail; matching status does not establish equality of their thrown values. Registration/module snapshots are separate preservation evidence, not full IR equivalence.",
+  "reports": [
+    {
+      "arm": "baseline",
+      "path": ".tmp/prepared-coercion-baseline.json",
+      "sha256": "ec7cdb15ab49b3dbb52e88508cecba46ff48becb14d8fbbcf5b259ae2a79c46e",
+      "total": 136,
+      "passed": 113,
+      "failed": 23,
+      "pending": 0
+    },
+    {
+      "arm": "candidate",
+      "path": ".tmp/prepared-coercion-candidate.json",
+      "sha256": "4e63fd2deb968e19b71d7cbb5ecffff1528572ad8652dddb859ff7904171c6dd",
+      "total": 136,
+      "passed": 113,
+      "failed": 23,
+      "pending": 0
+    }
+  ],
+  "rows": [
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own undefined is a hit and the genuine symbol differs from its textual spelling",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get captures an inherited next getter once with the actual iterator receiver",
+      "status": "failed",
+      "failures": [null],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get keeps values and Symbol.iterator independent after assignment and deletion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "d38b2393465523d5cee3a1506136f0169d64e7e611a6eaf97ab3fca78d8939e0"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get retains top-level writes before and after acquisition in source order",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get a deleted prototype method continues to the parent without reviving a cached assignment",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "b035c60d72a9ba360d88505d3c792e0e29a2a5b7478d480f83e58458d2ddff44"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get IterRec prototype getters retain this across nested and throwing Reflect.get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get proxy Get traps receive the actual iterator and next is captured once",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "2daa7994c14c8459706e6c52deb0e84bd1b5b6d220b441512594929c7efcea7e"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own undefined next on IterRec rejects instead of selecting the intrinsic",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own IterRec next accessor returns undefined without inherited fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own IterRec next accessor throws without inherited fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own IterRec return data preserves the original abrupt completion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "6d0a3445e7f6436420b803e72461e7a83b5d3e69b67562707a85703c19fd1244"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own IterRec return undefined-getter preserves the original abrupt completion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "6d0a3445e7f6436420b803e72461e7a83b5d3e69b67562707a85703c19fd1244"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get own IterRec return throwing-getter preserves the original abrupt completion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "6d0a3445e7f6436420b803e72461e7a83b5d3e69b67562707a85703c19fd1244"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get IterRec assignment, descriptors, deletion and integrity share one private-field-free identity bag",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "a5f5efc19253748c6d9170394e134026b1b1d5baab7a12acdf384e7dbdcc3043"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get dynamic prototype chains preserve nested explicit and proxy receivers after a throw",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected '(module\\n  (type $__vec_base (sub (st…' to contain '__iterator_protocol_get'",
+          "sha256": "4a20094929ad06fd1af6bfd484fbe1d1c1756e9058d2ae7454dce7b5d92c121e"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured all: semantic protocol Get uses a custom source-vector prototype (storage prerequisite)",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "2c3c8e1393a599e483deb84aab383231d9a613058ed03154aa0ea7cea9f16bb8"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own undefined is a hit and the genuine symbol differs from its textual spelling",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get captures an inherited next getter once with the actual iterator receiver",
+      "status": "failed",
+      "failures": [null],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get keeps values and Symbol.iterator independent after assignment and deletion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "d38b2393465523d5cee3a1506136f0169d64e7e611a6eaf97ab3fca78d8939e0"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get retains top-level writes before and after acquisition in source order",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get a deleted prototype method continues to the parent without reviving a cached assignment",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "b035c60d72a9ba360d88505d3c792e0e29a2a5b7478d480f83e58458d2ddff44"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get IterRec prototype getters retain this across nested and throwing Reflect.get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get proxy Get traps receive the actual iterator and next is captured once",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "2daa7994c14c8459706e6c52deb0e84bd1b5b6d220b441512594929c7efcea7e"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own undefined next on IterRec rejects instead of selecting the intrinsic",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own IterRec next accessor returns undefined without inherited fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own IterRec next accessor throws without inherited fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own IterRec return data preserves the original abrupt completion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "6d0a3445e7f6436420b803e72461e7a83b5d3e69b67562707a85703c19fd1244"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own IterRec return undefined-getter preserves the original abrupt completion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "6d0a3445e7f6436420b803e72461e7a83b5d3e69b67562707a85703c19fd1244"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get own IterRec return throwing-getter preserves the original abrupt completion",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "6d0a3445e7f6436420b803e72461e7a83b5d3e69b67562707a85703c19fd1244"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get IterRec assignment, descriptors, deletion and integrity share one private-field-free identity bag",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "a5f5efc19253748c6d9170394e134026b1b1d5baab7a12acdf384e7dbdcc3043"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get dynamic prototype chains preserve nested explicit and proxy receivers after a throw",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected '(module\\n  (type $__vec_base (sub (st…' to contain '__iterator_protocol_get'",
+          "sha256": "4a20094929ad06fd1af6bfd484fbe1d1c1756e9058d2ae7454dce7b5d92c121e"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-iterator-protocol-get.test.ts",
+      "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+      "name": "captured race: semantic protocol Get uses a custom source-vector prototype (storage prerequisite)",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected +0 to be 1 // Object.is equality",
+          "sha256": "2c3c8e1393a599e483deb84aab383231d9a613058ed03154aa0ea7cea9f16bb8"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all evaluates the original argument once and interleaves the protocol in order",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all rejects a throwing resolve getter before iterator acquisition",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all closes before rejecting resolve; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all closes before rejecting then-get; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all closes before rejecting then-noncallable; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all closes before rejecting then-call; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all keeps iterating after synchronous rejection callbacks without closing",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all keeps iterating after synchronous fulfillment",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all keeps nested close reasons and iterator records independent",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all performs inherited then Get on a native Promise result",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all keeps empty all fulfilled and empty race pending",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive all leaves ordinary nonobservable vector callers on their existing path",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race evaluates the original argument once and interleaves the protocol in order",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race rejects a throwing resolve getter before iterator acquisition",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race closes before rejecting resolve; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race closes before rejecting then-get; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race closes before rejecting then-noncallable; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race closes before rejecting then-call; return can win race settlement",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race keeps iterating after synchronous rejection callbacks without closing",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race keeps iterating after synchronous fulfillment",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race keeps nested close reasons and iterator records independent",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race performs inherited then Get on a native Promise result",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race keeps empty all fulfilled and empty race pending",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector drive race leaves ordinary nonobservable vector callers on their existing path",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector stable all state retains ordered slots across growth and reverse/duplicate callbacks (any)",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector stable all state retains ordered slots across growth and reverse/duplicate callbacks (number)",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector stable all state mixes live growth, synchronous duplicates, and deferred callbacks",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-acquisition.test.ts",
+      "fixtureSha256": "0b9449c77a0af25fd307ff219167c80ff0e81566c3f4fc2470f1c1f7c3adfedb",
+      "name": "captured vector stable all state preserves undefined and genuine NaN as distinct aggregate values",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "private captured iterator registration reserves exactly three unexported helpers and keeps the record out of JS field enumeration",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "private captured iterator registration has no shared instruction identities, generic iterator dispatch, or catch-all",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects null iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects undefined iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects 7 iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects {} iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all propagates the identical throwing iterator getter reason once",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all accepts callable iterator/results and ToBoolean(done) skips value",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all captures next once, preserves both receivers and zero arguments, skips terminal value",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects primitive iterator null before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects primitive iterator undefined before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects primitive iterator 7 before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects primitive iterator 'x' before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects primitive iterator true before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all rejects primitive iterator Symbol('x') before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all does not close after next-get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all does not close after noncallable-next",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all does not close after next-call",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all does not close after primitive-result",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all does not close after done-get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all does not close after value-get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with absent return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with null return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with undefined return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with noncallable return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with getter-throw return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with call-throw return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with primitive return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.all keeps the original throw with object return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects null iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects undefined iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects 7 iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects {} iterator method without intrinsic fallback",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race propagates the identical throwing iterator getter reason once",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race accepts callable iterator/results and ToBoolean(done) skips value",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race captures next once, preserves both receivers and zero arguments, skips terminal value",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects primitive iterator null before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects primitive iterator undefined before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects primitive iterator 7 before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects primitive iterator 'x' before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects primitive iterator true before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race rejects primitive iterator Symbol('x') before next/close",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race does not close after next-get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race does not close after noncallable-next",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race does not close after next-call",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race does not close after primitive-result",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race does not close after done-get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race does not close after value-get",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with absent return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with null return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with undefined return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with noncallable return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with getter-throw return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with call-throw return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with primitive return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-promise-vector-iterator.test.ts",
+      "fixtureSha256": "6c8a06dd1120159948ab794d66f0d97c5cdc00e4ff5e81b4cff811da59981e87",
+      "name": "captured source vector Promise.race keeps the original throw with object return and closes before rejection",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps number once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps negative zero once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps genuine NaN once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps boolean false once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps bigint once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps wide bigint once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "wraps symbol once and preserves its primitive slot",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "string primitive yields UTF-16 indexed values, not code points",
+      "status": "failed",
+      "failures": [
+        {
+          "firstLine": "AssertionError: expected -1 to be 1 // Object.is equality",
+          "sha256": "5bc5de17d58c21cdcf5fa1ef48be680a6a18d981dbdf31312da541f4b193a0e6"
+        }
+      ],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "retains existing Number wrapper identity",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "retains existing Boolean wrapper identity",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "retains existing BigInt wrapper identity",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "retains existing Symbol wrapper identity",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "retains a String wrapper target and its explicit proxy receiver",
+      "status": "failed",
+      "failures": [null],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "preserves ordinary object receiver identity",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "preserves array receiver identity",
+      "status": "failed",
+      "failures": [null],
+      "baselineStatus": "failed",
+      "candidateStatus": "failed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "preserves function receiver identity",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "does not Get or coerce an object receiver at factory creation",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "allocates fresh primitive wrappers per factory call and retains each across steps",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "rejects null at factory creation with TypeError",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    },
+    {
+      "file": "issue-5883-runtime-to-object.test.ts",
+      "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+      "name": "rejects undefined at factory creation with TypeError",
+      "status": "passed",
+      "failures": [],
+      "baselineStatus": "passed",
+      "candidateStatus": "passed",
+      "exactRecordEqual": true
+    }
+  ]
+}

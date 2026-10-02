@@ -1,0 +1,296 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// Isolated physical/ledger editor controls. Authored only; not executed.
+import { describe, expect, it } from "vitest";
+import { EmissionOwnership, type BodyEpoch } from "../src/codegen/context/emission-ownership.js";
+import { StagingBodyEditor } from "../src/codegen/staging-edit.js";
+import { inspectStageBody, type StagePlacement } from "../src/codegen/staging-census.js";
+import { stageContainer, stageLeaf, stageRegion } from "../src/codegen/staging-instr.js";
+
+const provenance = (unitId: string) => ({ sourceId: "editor.ts", unitId });
+const empty = { kind: "empty" as const };
+function setup(graph = new EmissionOwnership(), adopted?: BodyEpoch) {
+  const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+  const body = graph.createBodyEpoch(provenance("body"), identity);
+  const token = graph.beginContentTransaction(body);
+  const root = graph.createRegion(body);
+  graph.attachRegion(body, root);
+  function leaf(index: number) {
+    const nodeIdentity = {};
+    const kind = "protocol-choice" as const;
+    const occurrence = graph.recordOccurrence(root, provenance(`leaf-${index}`), { nodeIdentity, kind });
+    return stageLeaf({ op: "local.get", index }, { nodeIdentity, occurrence: { occurrence, kind } });
+  }
+  let x = leaf(0);
+  const y = leaf(1);
+  if (adopted) {
+    const useSiteIdentity = {};
+    const edge = graph.adoptBody(root, adopted, useSiteIdentity);
+    x = stageLeaf(x.instruction, { ...x, adoptions: [{ edge, body: adopted, useSiteIdentity }] });
+  }
+  const staged = { body, ...identity, root: stageRegion(body, root, [x, y]) };
+  // Expected physical layout is assembled from the intended construction, not
+  // from inspectStageBody's result or the ledger's retained edge enumeration.
+  const expected: StagePlacement[] = [
+    { region: root, parent: { kind: "body", body }, nodeIdentities: [x.nodeIdentity, y.nodeIdentity] },
+  ];
+  const editor = new StagingBodyEditor(graph, staged, token, expected);
+  return { graph, body, token, root, x, y, staged, expected, editor };
+}
+
+describe("paired immutable staging edits", () => {
+  it("removes one physical leaf and its occurrence before authenticated completion", () => {
+    const f = setup();
+    const before = f.editor.snapshot();
+    f.editor.removeLeaf(f.x.nodeIdentity);
+    expect(before.root.nodes).toEqual([f.x, f.y]);
+    expect(f.editor.snapshot().root.nodes).toEqual([f.y]);
+    const done = f.editor.complete();
+    const manifest = inspectStageBody(done.body).manifest;
+    const publication = f.graph.createPublication("function", provenance("root"));
+    f.graph.publishBody(publication, f.body);
+    const result = f.graph.sealWithManifest({
+      publications: [{ publication, receipt: done.receipt }],
+      bodies: [manifest],
+    });
+    expect(result.ownership.occurrences.map((o) => o.occurrence)).toEqual([f.y.occurrence!.occurrence]);
+  });
+
+  it("rollback restores the exact physical root and occurrence membership", () => {
+    const f = setup();
+    const before = f.editor.snapshot();
+    const membership = f.graph.occurrenceMembership(f.x.occurrence!.occurrence);
+    const token = f.editor.beginEdit();
+    f.editor.removeLeaf(f.x.nodeIdentity);
+    f.editor.rollbackEdit(token);
+    expect(f.editor.snapshot()).toBe(before);
+    expect(f.graph.occurrenceMembership(f.x.occurrence!.occurrence)).toBe(membership);
+    expect(inspectStageBody(f.editor.complete().body).manifest.occurrences).toHaveLength(2);
+  });
+
+  it("same-body child commit remains cancellable by its editor parent", () => {
+    const f = setup();
+    const before = f.editor.snapshot();
+    const outer = f.editor.beginEdit();
+    const inner = f.editor.beginEdit();
+    f.editor.removeLeaf(f.x.nodeIdentity);
+    f.editor.commitEdit(inner);
+    expect(f.editor.snapshot().root.nodes).toEqual([f.y]);
+    f.editor.rollbackEdit(outer);
+    expect(f.editor.snapshot()).toBe(before);
+    expect(inspectStageBody(f.editor.complete().body).manifest.occurrences).toHaveLength(2);
+  });
+
+  it("reorders physical siblings and expected order without changing ledger memberships", () => {
+    const f = setup();
+    f.editor.reorderSequence(f.root, [f.y.nodeIdentity, f.x.nodeIdentity]);
+    expect(f.editor.snapshot().root.nodes).toEqual([f.y, f.x]);
+    expect(f.editor.expectedLayout()[0]?.nodeIdentities).toEqual([f.y.nodeIdentity, f.x.nodeIdentity]);
+    expect(inspectStageBody(f.editor.complete().body).manifest.occurrences.map((o) => o.occurrence)).toEqual([
+      f.y.occurrence!.occurrence,
+      f.x.occurrence!.occurrence,
+    ]);
+  });
+
+  it("a reordered physical version is discarded by local rollback", () => {
+    const f = setup();
+    const before = f.editor.snapshot();
+    const expected = f.editor.expectedLayout();
+    const token = f.editor.beginEdit();
+    f.editor.reorderSequence(f.root, [f.y.nodeIdentity, f.x.nodeIdentity]);
+    f.editor.rollbackEdit(token);
+    expect(f.editor.snapshot()).toBe(before);
+    expect(f.editor.expectedLayout()).toBe(expected);
+    f.editor.complete();
+  });
+
+  it("updates descendant expected preorder when containers exchange sibling positions", () => {
+    const graph = new EmissionOwnership();
+    const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+    const body = graph.createBodyEpoch(provenance("containers"), identity);
+    const token = graph.beginContentTransaction(body);
+    const root = graph.createRegion(body),
+      a = graph.createRegion(body),
+      b = graph.createRegion(body);
+    graph.attachRegion(body, root);
+    graph.attachRegion(root, a);
+    graph.attachRegion(root, b);
+    const left = stageContainer(
+      { op: "block", blockType: empty, body: stageRegion(body, a, []) },
+      { nodeIdentity: {} },
+    );
+    const right = stageContainer(
+      { op: "loop", blockType: empty, body: stageRegion(body, b, []) },
+      { nodeIdentity: {} },
+    );
+    const staged = { body, ...identity, root: stageRegion(body, root, [left, right]) };
+    const editor = new StagingBodyEditor(graph, staged, token, [
+      { region: root, parent: { kind: "body", body }, nodeIdentities: [left.nodeIdentity, right.nodeIdentity] },
+      {
+        region: a,
+        parent: { kind: "node", nodeIdentity: left.nodeIdentity, slot: { kind: "body" } },
+        nodeIdentities: [],
+      },
+      {
+        region: b,
+        parent: { kind: "node", nodeIdentity: right.nodeIdentity, slot: { kind: "body" } },
+        nodeIdentities: [],
+      },
+    ]);
+    expect(() => editor.removeLeaf(left.nodeIdentity)).toThrow("attachment-receipt");
+    editor.reorderSequence(root, [right.nodeIdentity, left.nodeIdentity]);
+    expect(editor.expectedLayout().map((p) => p.region)).toEqual([root, b, a]);
+    expect(editor.snapshot().root.nodes).toEqual([right, left]);
+    editor.complete();
+  });
+
+  it("copies a frozen try/catch ancestor while retaining unrelated regions and logical identities", () => {
+    const graph = new EmissionOwnership();
+    const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+    const body = graph.createBodyEpoch(provenance("catch"), identity);
+    const token = graph.beginContentTransaction(body);
+    const root = graph.createRegion(body),
+      protectedId = graph.createRegion(body),
+      handlerId = graph.createRegion(body);
+    graph.attachRegion(body, root);
+    graph.attachRegion(root, protectedId);
+    graph.attachRegion(root, handlerId);
+    const nodeIdentity = {};
+    const kind = "protocol-choice" as const;
+    const occurrence = graph.recordOccurrence(handlerId, provenance("handler"), { nodeIdentity, kind });
+    const leaf = stageLeaf({ op: "local.get", index: 0 }, { nodeIdentity, occurrence: { occurrence, kind } });
+    const protectedRegion = stageRegion(body, protectedId, []);
+    const handler = stageRegion(body, handlerId, [leaf]);
+    const container = stageContainer(
+      { op: "try", blockType: empty, body: protectedRegion, catches: [{ tagIdx: 3, body: handler }] },
+      { nodeIdentity: {} },
+    );
+    const editor = new StagingBodyEditor(
+      graph,
+      { body, ...identity, root: stageRegion(body, root, [container]) },
+      token,
+      [
+        { region: root, parent: { kind: "body", body }, nodeIdentities: [container.nodeIdentity] },
+        {
+          region: protectedId,
+          parent: { kind: "node", nodeIdentity: container.nodeIdentity, slot: { kind: "body" } },
+          nodeIdentities: [],
+        },
+        {
+          region: handlerId,
+          parent: { kind: "node", nodeIdentity: container.nodeIdentity, slot: { kind: "catch", index: 0 } },
+          nodeIdentities: [leaf.nodeIdentity],
+        },
+      ],
+    );
+    editor.removeLeaf(leaf.nodeIdentity);
+    const updated = editor.snapshot().root.nodes[0]!;
+    expect(updated).not.toBe(container);
+    expect(updated.nodeIdentity).toBe(container.nodeIdentity);
+    if (updated.kind !== "container" || updated.instruction.op !== "try") throw new Error("positive control");
+    expect(updated.instruction.body).toBe(protectedRegion);
+    expect(updated.instruction.catches[0]?.tagIdx).toBe(3);
+    expect(updated.instruction.catches[0]?.body.nodes).toEqual([]);
+    expect(handler.nodes).toEqual([leaf]);
+    editor.complete();
+  });
+
+  it("rejects stale or non-bijective commands without changing the physical root", () => {
+    const f = setup();
+    const before = f.editor.snapshot();
+    expect(() => f.editor.removeLeaf({})).toThrow("Unknown physical node");
+    expect(() => f.editor.reorderSequence(f.root, [f.x.nodeIdentity, f.x.nodeIdentity])).toThrow("permutation");
+    expect(() => f.editor.reorderSequence(f.root, [f.y.nodeIdentity])).toThrow("permutation");
+    expect(f.editor.snapshot()).toBe(before);
+    f.editor.complete();
+  });
+
+  it("checks nested token order before closing either physical or ledger scope", () => {
+    const f = setup();
+    const outer = f.editor.beginEdit(),
+      inner = f.editor.beginEdit();
+    expect(() => f.editor.rollbackEdit(outer)).toThrow("LIFO");
+    expect(() => f.editor.complete()).toThrow("nested");
+    f.editor.rollbackEdit(inner);
+    f.editor.commitEdit(outer);
+    expect(() => f.editor.commitEdit(outer)).toThrow("LIFO");
+    f.editor.complete();
+  });
+
+  it("construction rollback never promotes the restored physical snapshot to a completed body", () => {
+    const f = setup();
+    f.editor.removeLeaf(f.x.nodeIdentity);
+    f.editor.rollbackEdit(f.token);
+    expect(f.editor.snapshot().root).toBe(f.staged.root);
+    expect(() => f.editor.complete()).toThrow("closed");
+    expect(() => f.graph.retainBodyEpoch(f.body)).toThrow("failed");
+  });
+
+  it("completed body content cannot be edited or completed again", () => {
+    const f = setup();
+    f.editor.complete();
+    expect(() => f.editor.beginEdit()).toThrow("closed");
+    expect(() => f.editor.removeLeaf(f.x.nodeIdentity)).toThrow("closed");
+    expect(() => f.editor.complete()).toThrow("closed");
+  });
+
+  it("independent child completion survives parent abort and fresh later adoption", () => {
+    const graph = new EmissionOwnership();
+    const parent = setup(graph);
+    const child = setup(graph);
+    child.editor.removeLeaf(child.x.nodeIdentity);
+    const done = child.editor.complete();
+    parent.editor.rollbackEdit(parent.token);
+    const later = setup(graph, child.body);
+    const selected = later.editor.complete();
+    const publication = graph.createPublication("function", provenance("later"));
+    graph.publishBody(publication, later.body);
+    const result = graph.sealWithManifest({
+      publications: [{ publication, receipt: selected.receipt }],
+      bodies: [inspectStageBody(selected.body).manifest, inspectStageBody(done.body).manifest],
+    });
+    expect(result.ownership.bodies).not.toContain(parent.body);
+    expect(result.ownership.occurrences.map((o) => o.occurrence)).toContain(child.y.occurrence!.occurrence);
+    expect(result.ownership.occurrences.map((o) => o.occurrence)).not.toContain(child.x.occurrence!.occurrence);
+  });
+
+  it("leaf removal cancels its exact child-use edge as well as its occurrence", () => {
+    const graph = new EmissionOwnership();
+    const child = setup(graph);
+    child.editor.complete();
+    const parent = setup(graph, child.body);
+    parent.editor.removeLeaf(parent.x.nodeIdentity);
+    const done = parent.editor.complete();
+    const manifest = inspectStageBody(done.body).manifest;
+    expect(manifest.adoptions).toEqual([]);
+    const publication = graph.createPublication("function", provenance("parent"));
+    graph.publishBody(publication, parent.body);
+    const result = graph.sealWithManifest({
+      publications: [{ publication, receipt: done.receipt }],
+      bodies: [manifest],
+    });
+    expect(result.ownership.bodies).toEqual([parent.body]);
+    expect(result.ownership.unselectedBodies).toContain(child.body);
+  });
+
+  it("ledger-step failure rolls back earlier occurrence removal without installing the physical version", () => {
+    const f = setup();
+    const foreign = setup();
+    const useSiteIdentity = {};
+    const edge = foreign.graph.adoptBody(foreign.root, foreign.body, useSiteIdentity);
+    // Deliberate malformed adapter input. The one-body physical census cannot
+    // authenticate a foreign edge; ledger mutation must refuse it atomically.
+    const bad = stageLeaf(f.x.instruction, { ...f.x, adoptions: [{ edge, body: foreign.body, useSiteIdentity }] });
+    const staged = { ...f.staged, root: stageRegion(f.body, f.root, [bad, f.y]) };
+    // Transfer the still-open token instead of using the original test editor.
+    const editor = new StagingBodyEditor(f.graph, staged, f.token, f.expected);
+    const before = editor.snapshot();
+    expect(() => editor.removeLeaf(bad.nodeIdentity)).toThrow("foreign");
+    expect(editor.snapshot()).toBe(before);
+    // A missing undo would instead report an already-detached occurrence here.
+    expect(() => editor.removeLeaf(bad.nodeIdentity)).toThrow("foreign");
+    expect(editor.snapshot()).toBe(before);
+    editor.rollbackEdit(f.token);
+    foreign.editor.rollbackEdit(foreign.token);
+  });
+});
+

@@ -1,0 +1,346 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// Isolated staging foundation, source-only; no execution grant for these cases.
+import { describe, expect, it } from "vitest";
+import type { Instr } from "../src/wasm/model/instructions.js";
+import { EmissionOwnership, type EmissionRegion } from "../src/codegen/context/emission-ownership.js";
+import {
+  isExecutableStageLeaf,
+  materializedStageChildren,
+  stageContainer,
+  stageLeaf,
+  stageRegion,
+  type ExecutableStageLeaf,
+  type StageContainerInstruction,
+  type StageNode,
+  type StageRegion,
+} from "../src/codegen/staging-instr.js";
+import { assertStageLayout, inspectStageBody } from "../src/codegen/staging-census.js";
+
+const provenance = (unitId: string) => ({ sourceId: "staging.ts", unitId });
+const empty = { kind: "empty" as const };
+const leaf = (value: number) => stageLeaf({ op: "i32.const", value }, { nodeIdentity: {} });
+
+function fixture(graph = new EmissionOwnership()) {
+  const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+  const body = graph.createBodyEpoch(provenance("body"), identity);
+  const token = graph.beginContentTransaction(body);
+  const root = graph.createRegion(body);
+  graph.attachRegion(body, root);
+  function region(owner = root) {
+    const id = graph.createRegion(body);
+    graph.attachRegion(owner, id);
+    return id;
+  }
+  function occurrence(owner = root) {
+    const nodeIdentity = {};
+    const kind = "required-drive" as const;
+    const occurrence = graph.recordOccurrence(owner, provenance("node"), { nodeIdentity, kind });
+    // Synthetic binding evidence, NOT an implementation of a pending recipe.
+    const node = stageLeaf({ op: "local.get", index: 0 }, { nodeIdentity, occurrence: { occurrence, kind } });
+    return { node, occurrence };
+  }
+  function tree(nodes: readonly StageNode[]) {
+    return { body, ...identity, root: stageRegion(body, root, nodes) };
+  }
+  return { graph, body, token, root, region, occurrence, tree };
+}
+
+describe("isolated typed staging / independent census", () => {
+  it("keeps executable Instr closed and recursively excludes all existing container shapes from leaves", () => {
+    type HiddenRecursiveLeaf = Extract<
+      ExecutableStageLeaf,
+      { body: Instr[] } | { then: Instr[] } | { else: Instr[] } | { catches: { body: Instr[] }[] }
+    >;
+    const excluded: [HiddenRecursiveLeaf] extends [never] ? true : false = true;
+    expect(excluded).toBe(true);
+    const f = fixture();
+    const region = stageRegion(f.body, f.root, []);
+    const node = stageContainer({ op: "block", blockType: empty, body: region }, { nodeIdentity: {} });
+    if (false) {
+      // @ts-expect-error Staged wrappers are not executable Wasm instructions.
+      const executable: Instr = node;
+      // @ts-expect-error Recursive executable children cannot enter a stage leaf.
+      stageLeaf({ op: "block", blockType: empty, body: [] }, { nodeIdentity: {} });
+      // @ts-expect-error Recursive staged children cannot be Instr[].
+      const container: StageContainerInstruction = { op: "loop", blockType: empty, body: [] };
+      void executable;
+      void container;
+    }
+    expect(isExecutableStageLeaf({ op: "try", blockType: empty, body: [], catches: [] })).toBe(false);
+    expect(isExecutableStageLeaf({ op: "ref.func", funcIdx: 1 })).toBe(true);
+  });
+
+  it("walks all recursive variants including catches in lexical preorder and exact label depth", () => {
+    const f = fixture();
+    const blockId = f.region();
+    const loopId = f.region(blockId);
+    const thenId = f.region();
+    const elseId = f.region();
+    const tryId = f.region();
+    const catch0 = f.region();
+    const catch1 = f.region();
+    const catchAll = f.region();
+    const tableId = f.region();
+    const r = (id: EmissionRegion, value: number) => stageRegion(f.body, id, [leaf(value)]);
+    const loop = stageContainer({ op: "loop", blockType: empty, body: r(loopId, 1) }, { nodeIdentity: {} });
+    const nodes = [
+      stageContainer(
+        { op: "block", blockType: empty, body: stageRegion(f.body, blockId, [loop]) },
+        { nodeIdentity: {} },
+      ),
+      stageContainer({ op: "if", blockType: empty, then: r(thenId, 2), else: r(elseId, 3) }, { nodeIdentity: {} }),
+      stageContainer(
+        {
+          op: "try",
+          blockType: empty,
+          body: r(tryId, 4),
+          catches: [
+            { tagIdx: 0, body: r(catch0, 5) },
+            { tagIdx: 1, body: r(catch1, 6) },
+          ],
+          catchAll: r(catchAll, 7),
+        },
+        { nodeIdentity: {} },
+      ),
+      stageContainer(
+        {
+          op: "try_table",
+          blockType: empty,
+          body: r(tableId, 8),
+          catches: [
+            { kind: "catch", tagIdx: 0, depth: 2 },
+            { kind: "catch_all", depth: 3 },
+          ],
+        },
+        { nodeIdentity: {} },
+      ),
+    ];
+    const census = inspectStageBody(f.tree(nodes));
+    expect(census.visits.map((v) => v.node.instruction.op)).toEqual([
+      "block",
+      "loop",
+      "i32.const",
+      "if",
+      "i32.const",
+      "i32.const",
+      "try",
+      "i32.const",
+      "i32.const",
+      "i32.const",
+      "i32.const",
+      "try_table",
+      "i32.const",
+    ]);
+    expect(census.visits.map((v) => v.labelDepth)).toEqual([0, 1, 2, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1]);
+    expect(materializedStageChildren(nodes[2]!).map((c) => c.slot)).toEqual([
+      { kind: "body" },
+      { kind: "catch", index: 0 },
+      { kind: "catch", index: 1 },
+      { kind: "catchAll" },
+    ]);
+    expect(materializedStageChildren(nodes[3]!)).toHaveLength(1);
+    f.graph.commitTransaction(f.token);
+    f.graph.completeBodyEpoch(f.body, census.manifest);
+  });
+
+  it("supplies the independent physical node census to authenticated completion and seal", () => {
+    const f = fixture();
+    const { node, occurrence } = f.occurrence();
+    const census = inspectStageBody(f.tree([node]));
+    expect(census.manifest.occurrences).toEqual([
+      {
+        occurrence,
+        owner: f.root,
+        nodeIdentity: node.nodeIdentity,
+        kind: "required-drive",
+      },
+    ]);
+    f.graph.commitTransaction(f.token);
+    const receipt = f.graph.completeBodyEpoch(f.body, census.manifest);
+    const publication = f.graph.createPublication("function", provenance("root"));
+    f.graph.publishBody(publication, f.body);
+    const verified = f.graph.sealWithManifest({ publications: [{ publication, receipt }], bodies: [census.manifest] });
+    expect(verified.requiredOccurrences).toEqual([occurrence]);
+    expect(Object.isFrozen(census.manifest.occurrences[0])).toBe(true);
+  });
+
+  it("does not invent pending operations or change executable leaf identity/source positions", () => {
+    const instruction: ExecutableStageLeaf = {
+      op: "call",
+      funcIdx: 9,
+      sourcePos: { file: "x.ts", line: 2, column: 3 },
+    };
+    const f = fixture();
+    const node = stageLeaf(instruction, { nodeIdentity: {} });
+    const census = inspectStageBody(f.tree([node]));
+    expect(census.visits[0]?.node.instruction).toBe(instruction);
+    expect(census.visits[0]?.node.instruction.sourcePos).toBe(instruction.sourcePos);
+    expect(census.manifest.occurrences).toEqual([]);
+    expect(census.manifest.adoptions).toEqual([]);
+  });
+
+  it("owns structural arrays and annotation records without cloning opaque identities", () => {
+    const f = fixture();
+    const { node } = f.occurrence();
+    const input = [node];
+    const tree = f.tree(input);
+    input.length = 0;
+    expect(tree.root.nodes).toEqual([node]);
+    expect(Object.isFrozen(tree.root.nodes)).toBe(true);
+    const body = stageRegion(f.body, f.region(), []);
+    const catches = [{ tagIdx: 7, body: stageRegion(f.body, f.region(), []) }];
+    const container = stageContainer({ op: "try", blockType: empty, body, catches }, { nodeIdentity: {} });
+    catches[0]!.tagIdx = 8;
+    catches.length = 0;
+    if (container.kind !== "container" || container.instruction.op !== "try") throw new Error("positive control");
+    expect(container.instruction.catches[0]?.tagIdx).toBe(7);
+    expect(Object.isFrozen(container.instruction.catches)).toBe(true);
+  });
+
+  it.each(["node", "identity", "instruction"] as const)(
+    "rejects aliased physical %s without deduplicating it away",
+    (kind) => {
+      const f = fixture();
+      const first = leaf(1);
+      const second =
+        kind === "node"
+          ? first
+          : kind === "identity"
+            ? stageLeaf({ op: "i32.const", value: 2 }, { nodeIdentity: first.nodeIdentity })
+            : stageLeaf(first.instruction, { nodeIdentity: {} });
+      expect(() => inspectStageBody(f.tree([first, second]))).toThrow("multiple physical positions");
+    },
+  );
+
+  it("rejects shared then/else regions rather than hiding multiple parents behind a visited set", () => {
+    const f = fixture();
+    const child = stageRegion(f.body, f.region(), [leaf(1)]);
+    const node = stageContainer({ op: "if", blockType: empty, then: child, else: child }, { nodeIdentity: {} });
+    expect(() => inspectStageBody(f.tree([node]))).toThrow("multiple physical parents");
+  });
+
+  it("rejects a containment cycle in a structurally supplied tree", () => {
+    const f = fixture();
+    const nodes: StageNode[] = [];
+    const root: StageRegion = { kind: "stage-region", body: f.body, region: f.root, nodes };
+    nodes.push(stageContainer({ op: "block", blockType: empty, body: root }, { nodeIdentity: {} }));
+    expect(() => inspectStageBody({ ...f.tree([]), root })).toThrow("cycle");
+  });
+
+  it("rejects two physical versions of the same region handle", () => {
+    const f = fixture();
+    const id = f.region();
+    const node = stageContainer(
+      { op: "if", blockType: empty, then: stageRegion(f.body, id, []), else: stageRegion(f.body, id, []) },
+      { nodeIdentity: {} },
+    );
+    expect(() => inspectStageBody(f.tree([node]))).toThrow("multiple physical versions");
+  });
+
+  it("rejects a foreign-body child before it can contribute to a manifest", () => {
+    const f = fixture();
+    const other = fixture();
+    const child = stageContainer({ op: "block", blockType: empty, body: other.tree([]).root }, { nodeIdentity: {} });
+    expect(() => inspectStageBody(f.tree([child]))).toThrow("different body epoch");
+  });
+
+  it("rejects one occurrence annotated onto two distinct physical nodes", () => {
+    const f = fixture();
+    const { node } = f.occurrence();
+    const extra = stageLeaf({ op: "local.get", index: 1 }, { nodeIdentity: {}, occurrence: node.occurrence });
+    expect(() => inspectStageBody(f.tree([node, extra]))).toThrow("Occurrence has multiple physical nodes");
+  });
+
+  it.each(["missing", "removed", "wrong-node"] as const)(
+    "independent census detects %s ledger/node disagreement",
+    (kind) => {
+      const f = fixture();
+      const { node, occurrence } = f.occurrence();
+      if (kind === "removed") f.graph.removeOccurrence(occurrence);
+      const nodes =
+        kind === "missing"
+          ? []
+          : kind === "wrong-node"
+            ? [stageLeaf({ op: "local.get", index: 0 }, { nodeIdentity: {}, occurrence: node.occurrence })]
+            : [node];
+      const census = inspectStageBody(f.tree(nodes));
+      f.graph.commitTransaction(f.token);
+      expect(() => f.graph.completeBodyEpoch(f.body, census.manifest)).toThrow("census mismatch");
+    },
+  );
+
+  it("excludes detached physical fragments instead of enumerating every ledger record", () => {
+    const f = fixture();
+    const detached = f.graph.createRegion(f.body);
+    const { node } = f.occurrence(detached);
+    const orphan = stageRegion(f.body, detached, [node]);
+    const census = inspectStageBody(f.tree([]));
+    expect(census.manifest.regions).toEqual([f.root]);
+    expect(census.manifest.occurrences).toEqual([]);
+    expect(orphan.nodes).toHaveLength(1); // Physical disposal/remap remains a separate obligation.
+    f.graph.commitTransaction(f.token);
+    f.graph.completeBodyEpoch(f.body, census.manifest);
+  });
+
+  it("checks parent slots independently even when the ledger region and occurrence sets match", () => {
+    const f = fixture();
+    const child = stageRegion(f.body, f.region(), [leaf(1)]);
+    const emptyElse = stageRegion(f.body, f.region(), []);
+    const nodeIdentity = {};
+    const before = inspectStageBody(
+      f.tree([stageContainer({ op: "if", blockType: empty, then: child, else: emptyElse }, { nodeIdentity })]),
+    );
+    const after = inspectStageBody(
+      f.tree([stageContainer({ op: "if", blockType: empty, then: emptyElse, else: child }, { nodeIdentity })]),
+    );
+    expect(new Set(after.manifest.regions)).toEqual(new Set(before.manifest.regions));
+    expect(() => assertStageLayout(after, before.layout)).toThrow("parent or region order mismatch");
+    assertStageLayout(before, before.layout);
+    // Set census equality is NOT proof of physical parent/slot/order equality.
+  });
+
+  it("checks exact sibling instruction order outside the ledger's unordered occurrence census", () => {
+    const f = fixture();
+    const x = f.occurrence();
+    const y = f.occurrence();
+    const before = inspectStageBody(f.tree([x.node, y.node]));
+    const after = inspectStageBody(f.tree([y.node, x.node]));
+    expect(new Set(after.manifest.occurrences.map((o) => o.occurrence))).toEqual(
+      new Set(before.manifest.occurrences.map((o) => o.occurrence)),
+    );
+    expect(() => assertStageLayout(after, before.layout)).toThrow("node order mismatch");
+  });
+
+  it("reads exact adoption edges from physical nodes without traversing adopted body content", () => {
+    const f = fixture();
+    const child = fixture(f.graph);
+    const cm = inspectStageBody(child.tree([])).manifest;
+    child.graph.commitTransaction(child.token);
+    child.graph.completeBodyEpoch(child.body, cm);
+    const useSiteIdentity = {};
+    const edge = f.graph.adoptBody(f.root, child.body, useSiteIdentity);
+    const adoptions = [{ edge, body: child.body, useSiteIdentity }];
+    const node = stageLeaf({ op: "ref.func", funcIdx: 5 }, { nodeIdentity: {}, adoptions });
+    const census = inspectStageBody(f.tree([node]));
+    expect(census.manifest.adoptions).toEqual([{ ...adoptions[0], owner: f.root }]);
+    expect(census.manifest.regions).not.toContain(child.root);
+    f.graph.commitTransaction(f.token);
+    const receipt = f.graph.completeBodyEpoch(f.body, census.manifest);
+    const publication = f.graph.createPublication("function", provenance("root"));
+    f.graph.publishBody(publication, f.body);
+    expect(
+      f.graph.sealWithManifest({ publications: [{ publication, receipt }], bodies: [census.manifest, cm] }).ownership
+        .bodies,
+    ).toHaveLength(2);
+  });
+
+  it("rejects an adoption duplicated across physical nodes", () => {
+    const f = fixture();
+    const useSiteIdentity = {};
+    const edge = f.graph.adoptBody(f.root, f.body, useSiteIdentity);
+    const adoptions = [{ edge, body: f.body, useSiteIdentity }];
+    const a = stageLeaf({ op: "ref.func", funcIdx: 0 }, { nodeIdentity: {}, adoptions });
+    const b = stageLeaf({ op: "ref.func", funcIdx: 1 }, { nodeIdentity: {}, adoptions });
+    expect(() => inspectStageBody(f.tree([a, b]))).toThrow("Adoption edge or use site");
+  });
+});

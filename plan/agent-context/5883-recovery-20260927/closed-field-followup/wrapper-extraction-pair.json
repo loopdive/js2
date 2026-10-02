@@ -1,0 +1,648 @@
+{
+  "baseCommit": "a3c3d9fb1c2b8edae526bf7e89081d5f62d6dc9a",
+  "description": "Owned dirty integration before/after exact wrapper-brand extraction; both contain the pre-existing runtime repairs, no closed-field widening yet.",
+  "beforeSession": 85592,
+  "afterSession": 47429,
+  "total": 44,
+  "passing": 29,
+  "failing": 15,
+  "zeroImports": 44,
+  "logs": [
+    {
+      "path": ".tmp/pre-closed-field-runtime.log",
+      "sha256": "75f873b86718e1a7e92e69290cfbf2107e4d90e7ef85a478dce3c01b1bc6ae01"
+    },
+    {
+      "path": ".tmp/reference-brand-extracted-runtime.log",
+      "sha256": "6086f4aa2da4f3ed1551da43c501bee32a6ce03abe16bc88a5409b47bb5ac6c5"
+    }
+  ],
+  "pairs": [
+    {
+      "name": "dynamic dot write",
+      "sha256": "f2855e8869bfdef9537b81f7d9b7a39d6d891cf2ccd754c241536a0500fc3002",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "primitive: direct call",
+      "sha256": "43a08c59ecf57f1de5a0c206f722d99982254bae33142dd9e3bee3d06ce0402c",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "dynamic computed write",
+      "sha256": "e0d8b76c9a95c96f1f6bb7eab6dbd54396cb818bdf4c3caa15722625366c6636",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "primitive: direct apply",
+      "sha256": "62d85af3b4dc2ca501367043cfbfeabab6b808f1a5598be8ab0c5b5383094903",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "Reflect.set value",
+      "sha256": "2c9dd22c4f359d85a0da1f592dd0737ac21cdd171a30792485089a7b193be198",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "primitive: extracted call",
+      "sha256": "d50d54f40e73505e853203f21d98669f4271aa124299df5ce52ad18b373b49e4",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "Reflect.set assignment trace",
+      "sha256": "20d1430574ce9892d2ca4d75fec25988bde885e64d046fadac90e7a1d7582c84",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "primitive: extracted apply",
+      "sha256": "186d6655da028dddecfdd5cae6b7f05ff9f871c0655be32137b926d1bfd2cff4",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "closed field direct write",
+      "sha256": "8027fb737465b63cbb448bed1d81bd3b33c342c154baa7ba4b07e2ba5042ae6a",
+      "native": 1,
+      "before": {
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "actual": -1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "literal narrow",
+      "sha256": "8148a23a3bfbf838e6613fa6d6503cfd3306363b99c910d6a8255224257b06ed",
+      "native": "1",
+      "before": {
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "33c9833f53db002ffe4fd039eb17a8321c1f57d5db084e585209915b6b6631a9"
+      },
+      "after": {
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "33c9833f53db002ffe4fd039eb17a8321c1f57d5db084e585209915b6b6631a9"
+      },
+      "unchanged": true
+    },
+    {
+      "name": "literal wide",
+      "sha256": "28fff675cd24ecb5b75349815c5a5a9bf1e3a0a0713f19f27285424dd36929be",
+      "native": "18446744073709551617",
+      "before": {
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "f23d4c4990e08e93420d4812f552b581d25ada8ed266421dbb7bdc4e9674dd19"
+      },
+      "after": {
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "f23d4c4990e08e93420d4812f552b581d25ada8ed266421dbb7bdc4e9674dd19"
+      },
+      "unchanged": true
+    },
+    {
+      "name": "narrow wrapper: direct call",
+      "sha256": "170644a169bae80f5140c7a8f2eb0a1fd142b8772d6e6ef5c76c3752b6bb2a87",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "reference wide",
+      "sha256": "ea7dacf0b598a22534d48451cf20e93becbe8042cef42e561d5a4a9e3c9f3114",
+      "native": "18446744073709551617",
+      "before": {
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "99dcb2e7542069501b412ecb3e4b8e48b4336f2d9a4b7fc2d6383913f8e56c2b"
+      },
+      "after": {
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "99dcb2e7542069501b412ecb3e4b8e48b4336f2d9a4b7fc2d6383913f8e56c2b"
+      },
+      "unchanged": true
+    },
+    {
+      "name": "provider wide reference",
+      "sha256": "902d687cebf9b510eb068a376dba374bf7dd7a0c41a3cc837d60a1415cf29332",
+      "native": "18446744073709551617",
+      "before": {
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "31fd2a409c93819abbe3053c201a2e14f6207b72863e23cd7e0ab5684772e71b"
+      },
+      "after": {
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "31fd2a409c93819abbe3053c201a2e14f6207b72863e23cd7e0ab5684772e71b"
+      },
+      "unchanged": true
+    },
+    {
+      "name": "decoder text positive control",
+      "sha256": "f99c2fa552fceb909a8be4c46a63b1c6125a2e2fcba0064d46ec7f6a710c1deb",
+      "native": "18446744073709551617",
+      "before": {
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "8f5c3b8dcf0f62f4c478eca214d000b20c88928fbf71e8189fa6ef92ba99b199"
+      },
+      "after": {
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "8f5c3b8dcf0f62f4c478eca214d000b20c88928fbf71e8189fa6ef92ba99b199"
+      },
+      "unchanged": true
+    },
+    {
+      "name": "closed descriptor value",
+      "sha256": "47eca0781f91383fdb7a0a2f22fca7dd4010b1edb9223686e3dbb61b0b9024a9",
+      "native": 1,
+      "before": {
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "actual": -1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "narrow wrapper: direct apply",
+      "sha256": "7f3685ad58a687ad3b356d970046dae2a629663157479dd587b0509b48219730",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "dynamic number control",
+      "sha256": "1340c1abd940802ecefc1e9c869ab042dd861e1353c62aafcf31c60661725062",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "narrow wrapper: extracted call",
+      "sha256": "4560de1c4b7b78805d4306fc265bdb515383cc2b933d8005cd9afee8a0df0e13",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "throwing receiver stops later arguments",
+      "sha256": "c899a1cc11743801eb7470e06411dc411dd19e421a23fedba4d120ebdd9ca61c",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "narrow wrapper: extracted apply",
+      "sha256": "c5931c80a05d2a071b1259e985e8d7907e59f7a281a8991771ef2b817d65b16d",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide primitive: direct call",
+      "sha256": "a4d7dbc8979dbb5d15b79e4c899f9a617398b930a2a4aeaf6f7b878f7d575a51",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide primitive: direct apply",
+      "sha256": "24554809d41e744f70559c80a9345a6ff7f1c474b7a6e2f598d1205a6d779ad5",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide primitive: extracted call",
+      "sha256": "e2993320cefe803b92403798a0b8d4e18e07341bed7a1c2fc194387cbe52fbbf",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide primitive: extracted apply",
+      "sha256": "c06a4b5771afd35220cba9b8cb20c3710c73282d9db04f4ff0b7b9975963eba6",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide wrapper: direct call",
+      "sha256": "bf5b839b1adec0f0a5e0227490fc6cca7fe8cc87fc38f1839946eeae74642ac4",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide wrapper: direct apply",
+      "sha256": "e1f5c7fd21d0564b9289b800dc622cc12e2758f6751f57c0826e1a456e7119a3",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide wrapper: extracted call",
+      "sha256": "305758ce32166b8a9f856f57875ff6a503c8172c6d12ffc00d80c80fffdf2751",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide wrapper: extracted apply",
+      "sha256": "6e1f736fb443ccff59ff10194344c98dce87c55649fd3057e6ffe10313790a40",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide runtime ToObject wrapper retains all limbs",
+      "sha256": "84c0750a8962fac8bc987d68a78ff3cae9ea3559d198bb5b56c05a08b8f8c479",
+      "native": 1,
+      "before": {
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "actual": -2,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible null",
+      "sha256": "09db641a67f87ce7470ca72d2ffbfafe3782769e3ec6b00db31bbfac8ac6b601",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible undefined",
+      "sha256": "ed17ca77c916c3b7da78decf834b073fe50aaeb14f87bcb45ffcb90a873b020e",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible 7",
+      "sha256": "34b10fd2077b0bae348fa11cc7b6034a3d2fbd8dbfeb4fa7441df8d1a0025cc3",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible \"7\"",
+      "sha256": "7a2940b386727f94e0f46f40d279e81154334ec04d8bfc63efc7d563a275de1a",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible true",
+      "sha256": "251bbfc574dc42b037f8e6d3be130150d4bc78feeef6e02fb7b105d8afdce22e",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible Symbol(\"wrong\")",
+      "sha256": "fb9699df340a66c5ccb5a7ade8d7847f76f0f2fab61cf7b107988e6b705e1f11",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible {}",
+      "sha256": "a8665f0f10970f34f4b14af90757f5c4c96327e3e7ca73874f9d687c919fbdf4",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible Object(7)",
+      "sha256": "ad30f52a641fa8b63d5b45e7e75a37cd909358d2e610b29452890b9e9967a977",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible ({ \"[[PrimitiveValue]]\": 7n })",
+      "sha256": "b18cbcc32da66c96da31897e9d85908c72a239478097849a9efa26121a9c9b49",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "rejects incompatible BigInt.prototype",
+      "sha256": "9a78086db06703b7b99b1faeb7545d106722ba274dc0960acc8f9d8bfb225896",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "prototype override is observed and prior extraction retained",
+      "sha256": "1fdd88bc7bb4fe931ee6122fec98dada18376aa3d71e8b01651b36a3ba63a416",
+      "native": 1,
+      "before": {
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "actual": -1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "local BigInt spelling does not select intrinsic",
+      "sha256": "b7b41a38399c993ca06af30dd1daea659e4486f48a10b3edd055dd015bc96b89",
+      "native": 1,
+      "before": {
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "actual": -1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "reassigned extracted method uses current value",
+      "sha256": "bde358e32be3512242ee016741b048b51eb974eebdb1d01d11c1b5e00bac403c",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    },
+    {
+      "name": "wide primitive formatting control without valueOf",
+      "sha256": "45b5a8166a0e1d36980a7e2cdb836df65cd9af17b5084e9a3bc2dae3c28c0d30",
+      "native": 1,
+      "before": {
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "actual": 1,
+        "imports": []
+      },
+      "unchanged": true
+    }
+  ]
+}

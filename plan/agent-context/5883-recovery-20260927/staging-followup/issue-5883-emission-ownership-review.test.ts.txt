@@ -1,0 +1,315 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// R1/R2/R3 and adapter census regressions. Authored only; NOT executed.
+import { describe, expect, it } from "vitest";
+import {
+  EmissionOwnership,
+  type BodyEpoch,
+  type RetainedBodyManifest,
+  type RetainedOccurrence,
+} from "../src/codegen/context/emission-ownership.js";
+
+const provenance = (unitId: string) => ({ sourceId: "review.ts", unitId });
+function candidate(graph: EmissionOwnership, name: string) {
+  const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+  const body = graph.createBodyEpoch(provenance(name), identity);
+  const manifest: RetainedBodyManifest = { body, ...identity, regions: [], occurrences: [], adoptions: [] };
+  return { body, manifest };
+}
+function pending(graph: EmissionOwnership, body: BodyEpoch, label: string): RetainedOccurrence {
+  const binding = { nodeIdentity: {}, kind: "required-drive" as const };
+  const occurrence = graph.recordOccurrence(body, provenance(label), binding);
+  return { occurrence, owner: body, ...binding };
+}
+
+describe("emission ownership review corrections", () => {
+  it.each(["rollback", "commit"] as const)(
+    "caller nested inside content: %s cannot clear unscoped-content refusal",
+    (exit) => {
+      const graph = new EmissionOwnership();
+      const c = candidate(graph, "c");
+      const content = graph.beginContentTransaction(c.body);
+      const caller = graph.beginTransaction();
+      const x = pending(graph, c.body, "caller-write");
+      if (exit === "rollback") graph.rollbackTransaction(caller);
+      else graph.commitTransaction(caller);
+      graph.commitTransaction(content);
+      // Abort removes x; commit retains x. Neither authenticates its owner.
+      const manifest = { ...c.manifest, occurrences: exit === "commit" ? [x] : [] };
+      expect(() => graph.completeBodyEpoch(c.body, manifest)).toThrow("settled explicit");
+      // Inspect membership without pretending the raw ledger is adapter approval.
+      graph.retainBodyEpoch(c.body);
+      graph.publishBody(graph.createPublication("function", provenance("c")), c.body);
+      expect(graph.sealSourcePublication().occurrences).toHaveLength(exit === "commit" ? 1 : 0);
+    },
+  );
+
+  it("R1: a construction token predating its epoch must be bound and closed before retention", () => {
+    const graph = new EmissionOwnership();
+    const token = graph.beginContentTransaction();
+    const { body, manifest } = candidate(graph, "B");
+    expect(() => graph.recordOccurrence(body, provenance("unbound"))).toThrow("Bind");
+    graph.bindContentTransaction(token, body);
+    const x = pending(graph, body, "x");
+    expect(() => graph.retainBodyEpoch(body)).toThrow("Close internal");
+    expect(() => graph.completeBodyEpoch(body, { ...manifest, occurrences: [x] })).toThrow("settled explicit");
+    graph.rollbackTransaction(token);
+    expect(() => graph.retainBodyEpoch(body)).toThrow();
+    expect(() => graph.publishBody(graph.createPublication("function", provenance("B")), body)).toThrow("discarded");
+  });
+
+  it("R1: same-body nested commit is cancelled by construction-parent abort", () => {
+    const graph = new EmissionOwnership();
+    const { body, manifest } = candidate(graph, "B");
+    const outer = graph.beginContentTransaction(body);
+    const inner = graph.beginContentTransaction(body);
+    pending(graph, body, "x");
+    graph.commitTransaction(inner);
+    expect(() => graph.retainBodyEpoch(body)).toThrow("Close internal");
+    graph.rollbackTransaction(outer);
+    expect(() => graph.completeBodyEpoch(body, manifest)).toThrow("settled explicit");
+    expect(() => graph.retainBodyEpoch(body)).toThrow("failed body");
+  });
+
+  it("R1: independent C completion keeps x, excludes local y, and survives P rollback", () => {
+    const graph = new EmissionOwnership();
+    const p = candidate(graph, "P");
+    const outer = graph.beginContentTransaction(p.body);
+    const c = candidate(graph, "C");
+    const ct = graph.beginContentTransaction(c.body);
+    const x = pending(graph, c.body, "x");
+    const inner = graph.beginContentTransaction(c.body);
+    pending(graph, c.body, "y");
+    graph.rollbackTransaction(inner);
+    graph.commitTransaction(ct);
+    const cm = { ...c.manifest, occurrences: [x] };
+    graph.completeBodyEpoch(c.body, cm);
+    graph.adoptBody(p.body, c.body, {});
+    graph.rollbackTransaction(outer);
+    const q = candidate(graph, "Q");
+    const qt = graph.beginContentTransaction(q.body);
+    const site = {};
+    const edge = graph.adoptBody(q.body, c.body, site);
+    graph.commitTransaction(qt);
+    const qm = { ...q.manifest, adoptions: [{ edge, owner: q.body, body: c.body, useSiteIdentity: site }] };
+    const qr = graph.completeBodyEpoch(q.body, qm);
+    const root = graph.createPublication("function", provenance("Q"));
+    graph.publishBody(root, q.body);
+    const result = graph.sealWithManifest({ publications: [{ publication: root, receipt: qr }], bodies: [qm, cm] });
+    expect(result.requiredOccurrences).toEqual([x.occurrence]);
+    expect(result.ownership.bodies).not.toContain(p.body);
+  });
+
+  it("R1: wrong-body writes and closed/unbound token reuse are rejected", () => {
+    const graph = new EmissionOwnership();
+    const a = candidate(graph, "a"),
+      b = candidate(graph, "b");
+    const token = graph.beginContentTransaction(a.body);
+    expect(() => pending(graph, b.body, "wrong")).toThrow("Wrong body");
+    graph.commitTransaction(token);
+    expect(() => graph.bindContentTransaction(token, b.body)).toThrow("LIFO");
+    const unbound = graph.beginContentTransaction();
+    expect(() => graph.commitTransaction(unbound)).toThrow("unbound");
+    graph.rollbackTransaction(unbound);
+  });
+
+  it("R2: removes y alone from a shared region while retaining x and its membership identity", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("b"));
+    const region = graph.createRegion(body);
+    graph.attachRegion(body, region);
+    const x = graph.recordOccurrence(region, provenance("x"));
+    const y = graph.recordOccurrence(region, provenance("y"));
+    const membership = graph.occurrenceMembership(x);
+    graph.removeOccurrence(y);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("b")), body);
+    expect(graph.sealSourcePublication().occurrences.map((o) => o.occurrence)).toEqual([x]);
+    expect(graph.occurrenceMembership(x)).toBe(membership);
+  });
+
+  it("R2: aborted occurrence removal restores both siblings", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("b"));
+    const x = graph.recordOccurrence(body, provenance("x"));
+    const y = graph.recordOccurrence(body, provenance("y"));
+    const tx = graph.beginTransaction();
+    graph.removeOccurrence(y);
+    graph.rollbackTransaction(tx);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("b")), body);
+    expect(new Set(graph.sealSourcePublication().occurrences.map((o) => o.occurrence))).toEqual(new Set([x, y]));
+  });
+
+  it("R2: committed removal remains absent through later orphan adoption and region movement", () => {
+    const graph = new EmissionOwnership();
+    const parent = graph.createBodyEpoch(provenance("p"));
+    const probe = graph.beginTransaction();
+    const child = graph.createBodyEpoch(provenance("c"));
+    const a = graph.createRegion(child),
+      b = graph.createRegion(child);
+    const ae = graph.attachRegion(child, a);
+    graph.attachRegion(child, b);
+    const x = graph.recordOccurrence(a, provenance("x"));
+    const y = graph.recordOccurrence(a, provenance("y"));
+    const local = graph.beginTransaction();
+    graph.removeOccurrence(y);
+    graph.commitTransaction(local);
+    graph.detachEdge(ae);
+    graph.attachRegion(b, a);
+    graph.retainBodyEpoch(child);
+    graph.adoptBody(parent, child);
+    graph.rollbackTransaction(probe);
+    graph.adoptBody(parent, child);
+    graph.retainBodyEpoch(parent);
+    graph.publishBody(graph.createPublication("function", provenance("p")), parent);
+    expect(graph.sealSourcePublication().occurrences.map((o) => o.occurrence)).toEqual([x]);
+  });
+
+  it("R2: retained, sealed and foreign occurrence removals are rejected", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("b"));
+    const x = graph.recordOccurrence(body, provenance("x"));
+    graph.retainBodyEpoch(body);
+    expect(() => graph.removeOccurrence(x)).toThrow("not editable");
+    expect(() => new EmissionOwnership().removeOccurrence(x)).toThrow("foreign");
+    graph.sealSourcePublication();
+    expect(() => graph.removeOccurrence(x)).toThrow("sealed");
+  });
+
+  it("R3: rejects self-containment before any edge is installed", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("b"));
+    const region = graph.createRegion(body);
+    expect(() => graph.attachRegion(region, region)).toThrow("containment cycle");
+    graph.attachRegion(body, region);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("b")), body);
+    expect(graph.sealSourcePublication().regions).toEqual([region]);
+  });
+
+  it("R3: ancestor-under-descendant fails and rollback restores the old tree", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("b"));
+    const a = graph.createRegion(body),
+      b = graph.createRegion(body);
+    const ae = graph.attachRegion(body, a);
+    graph.attachRegion(a, b);
+    const x = graph.recordOccurrence(b, provenance("x"));
+    const tx = graph.beginTransaction();
+    graph.detachEdge(ae);
+    expect(() => graph.attachRegion(b, a)).toThrow("containment cycle");
+    graph.rollbackTransaction(tx);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("b")), body);
+    expect(graph.sealSourcePublication().occurrences[0]?.occurrence).toBe(x);
+  });
+
+  it("R3: valid sibling reattachment and recursive body adoption remain legal", () => {
+    const graph = new EmissionOwnership();
+    const body = graph.createBodyEpoch(provenance("b"));
+    const a = graph.createRegion(body),
+      b = graph.createRegion(body);
+    const ae = graph.attachRegion(body, a);
+    graph.attachRegion(body, b);
+    const x = graph.recordOccurrence(a, provenance("x"));
+    graph.detachEdge(ae);
+    graph.attachRegion(b, a);
+    graph.adoptBody(b, body);
+    graph.retainBodyEpoch(body);
+    graph.publishBody(graph.createPublication("function", provenance("b")), body);
+    expect(graph.sealSourcePublication().occurrences.map((o) => o.occurrence)).toEqual([x]);
+  });
+
+  it("manifest: missing/extra occurrence and stale frame/body identities cannot complete a body", () => {
+    const graph = new EmissionOwnership();
+    const c = candidate(graph, "c");
+    const tx = graph.beginContentTransaction(c.body);
+    const x = pending(graph, c.body, "x");
+    graph.commitTransaction(tx);
+    expect(() => graph.completeBodyEpoch(c.body, c.manifest)).toThrow("census mismatch");
+    expect(() => graph.completeBodyEpoch(c.body, { ...c.manifest, occurrences: [x, x] })).toThrow("census mismatch");
+    expect(() => graph.completeBodyEpoch(c.body, { ...c.manifest, bodyIdentity: {}, occurrences: [x] })).toThrow(
+      "Stale",
+    );
+    expect(() => graph.completeBodyEpoch(c.body, { ...c.manifest, bindingEnvironment: {}, occurrences: [x] })).toThrow(
+      "Stale",
+    );
+    graph.completeBodyEpoch(c.body, { ...c.manifest, occurrences: [x] });
+  });
+
+  it("manifest: one pending node cannot own multiple occurrences and evidence cannot change kind", () => {
+    const graph = new EmissionOwnership();
+    const c = candidate(graph, "c");
+    const tx = graph.beginContentTransaction(c.body);
+    const x = pending(graph, c.body, "x");
+    expect(() => graph.recordOccurrence(c.body, provenance("duplicate"), x)).toThrow("already has an occurrence");
+    graph.commitTransaction(tx);
+    expect(() =>
+      graph.completeBodyEpoch(c.body, { ...c.manifest, occurrences: [{ ...x, kind: "seed-edge" }] }),
+    ).toThrow("census mismatch");
+  });
+
+  it("manifest: conflicting use-site targets are rejected without disturbing the original adoption", () => {
+    const graph = new EmissionOwnership();
+    const p = candidate(graph, "p"),
+      a = candidate(graph, "a"),
+      b = candidate(graph, "b");
+    const tx = graph.beginContentTransaction(p.body);
+    const site = {};
+    const edge = graph.adoptBody(p.body, a.body, site);
+    expect(() => graph.adoptBody(p.body, b.body, site)).toThrow("already has an adoption target");
+    graph.commitTransaction(tx);
+    graph.completeBodyEpoch(p.body, {
+      ...p.manifest,
+      adoptions: [{ edge, owner: p.body, body: a.body, useSiteIdentity: site }],
+    });
+  });
+
+  it("manifest: root omission and missing selected bodies refuse seal without caching partial approval", () => {
+    const graph = new EmissionOwnership();
+    const c = candidate(graph, "c");
+    const tx = graph.beginContentTransaction(c.body);
+    graph.commitTransaction(tx);
+    const receipt = graph.completeBodyEpoch(c.body, c.manifest);
+    const root = graph.createPublication("function", provenance("c"));
+    graph.publishBody(root, c.body);
+    expect(() => graph.sealWithManifest({ publications: [], bodies: [c.manifest] })).toThrow("root census");
+    expect(() => graph.sealWithManifest({ publications: [{ publication: root, receipt }], bodies: [] })).toThrow(
+      "body census",
+    );
+    const selected = { publications: [{ publication: root, receipt }], bodies: [c.manifest] };
+    expect(graph.sealWithManifest(selected).ownership.bodies).toEqual([c.body]);
+    expect(graph.sealWithManifest(selected)).toBe(graph.sealWithManifest(selected));
+  });
+
+  it("manifest: choices/seeds are not activation witnesses and snapshots defensively copy arrays", () => {
+    const graph = new EmissionOwnership();
+    const c = candidate(graph, "c");
+    const tx = graph.beginContentTransaction(c.body);
+    const binding = { nodeIdentity: {}, kind: "protocol-choice" as const };
+    const occurrence = graph.recordOccurrence(c.body, provenance("choice"), binding);
+    graph.commitTransaction(tx);
+    const items = [{ occurrence, owner: c.body, ...binding }];
+    const manifest = { ...c.manifest, occurrences: items };
+    const receipt = graph.completeBodyEpoch(c.body, manifest);
+    const root = graph.createPublication("function", provenance("c"));
+    graph.publishBody(root, c.body);
+    const result = graph.sealWithManifest({ publications: [{ publication: root, receipt }], bodies: [manifest] });
+    items.length = 0;
+    expect(result.requiredOccurrences).toEqual([]);
+    expect(result.manifests[0]?.occurrences).toHaveLength(1);
+    expect(Object.isFrozen(result.manifests[0]?.occurrences[0])).toBe(true);
+  });
+
+  it("manifest: legacy caller-scope retention cannot authenticate an independent completion", () => {
+    const graph = new EmissionOwnership();
+    const caller = graph.beginTransaction();
+    const c = candidate(graph, "c");
+    const x = pending(graph, c.body, "x");
+    expect(() => graph.completeBodyEpoch(c.body, { ...c.manifest, occurrences: [x] })).toThrow("settled explicit");
+    graph.retainBodyEpoch(c.body); // original inspection API, deliberately no receipt
+    graph.rollbackTransaction(caller);
+    graph.publishBody(graph.createPublication("function", provenance("c")), c.body);
+    expect(() => graph.sealWithManifest({ publications: [], bodies: [] })).toThrow("root census");
+  });
+});

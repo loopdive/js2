@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { ValType } from "../ir/types.js";
+import type { ts } from "../ts-api.js";
+import { prepareClosedFieldValue } from "./bigint-field-carrier.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { compileExpression } from "./shared.js";
+
+/** Preserve a proven BigInt before emitting an already-selected reference boundary. */
+export function compileReferenceStorageOperand(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  value: ts.Expression,
+  expectedType?: ValType,
+): ValType | null {
+  const nativeBigInt =
+    ctx.standalone &&
+    ctx.nativeStrings &&
+    (expectedType === undefined || expectedType.kind === "externref" || expectedType.kind === "anyref") &&
+    ctx.oracle.staticJsTypeOf(value) === "bigint";
+  const hint = expectedType ?? (nativeBigInt ? { kind: "externref" as const } : undefined);
+  if (nativeBigInt) prepareClosedFieldValue(ctx, fctx, value, hint!);
+  // Other values keep their original hint. This neither changes a scalar ABI
+  // nor reconstructs limbs already lost by the operand's producer.
+  return compileExpression(ctx, fctx, value, hint);
+}

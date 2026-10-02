@@ -1,0 +1,1238 @@
+{
+  "baseCommit": "a3c3d9fb1c2b8edae526bf7e89081d5f62d6dc9a",
+  "candidate": "Owned integration plus Curie v3/Mendel v4 closed-field patches; unchanged 58 runtime fixtures, separate 10 helper-unit tests",
+  "beforeSessions": [85592, 65717],
+  "candidateSession": 86246,
+  "total": 58,
+  "beforePass": 31,
+  "afterPass": 41,
+  "gains": [
+    "tests/issue-5883-bigint-string-raw-observation.test.ts > reference wide",
+    "tests/issue-5883-bigint-string-raw-observation.test.ts > provider wide reference",
+    "tests/issue-5883-reference-write-runtime.test.ts > closed field direct write",
+    "tests/issue-5883-reference-write-runtime.test.ts > closed descriptor value",
+    "tests/issue-5883-class-bigint-default-runtime.test.ts > initialized reference field evaluates once and preserves wide value O0",
+    "tests/issue-5883-class-bigint-default-runtime.test.ts > initialized reference field evaluates once and preserves wide value O2",
+    "tests/issue-5883-class-bigint-default-runtime.test.ts > uninitialized bigint is undefined before direct runtime-wide write O0",
+    "tests/issue-5883-class-bigint-default-runtime.test.ts > uninitialized bigint is undefined before direct runtime-wide write O2",
+    "tests/issue-5883-class-bigint-default-runtime.test.ts > inherited field defaults and initialization order retain reference values O0",
+    "tests/issue-5883-class-bigint-default-runtime.test.ts > inherited field defaults and initialization order retain reference values O2"
+  ],
+  "regressions": [],
+  "logs": [
+    {
+      "path": ".tmp/pre-closed-field-runtime.log",
+      "sha256": "75f873b86718e1a7e92e69290cfbf2107e4d90e7ef85a478dce3c01b1bc6ae01"
+    },
+    {
+      "path": ".tmp/closed-class-baseline.log",
+      "sha256": "48b367f0db51a97861aa9372d613714ad3954e40f95c6ebe8d74bfac5fb19db1"
+    },
+    {
+      "path": ".tmp/closed-field-candidate.log",
+      "sha256": "1fb5cfd1912a983716468b28c7dcb3a2bd2fa2c68743abd4823d79680ceb464d"
+    }
+  ],
+  "pairs": [
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > primitive: direct call",
+      "sourceHash": "43a08c59ecf57f1de5a0c206f722d99982254bae33142dd9e3bee3d06ce0402c",
+      "source": "export function test() { \n        const receiver = 7n;\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > dynamic dot write",
+      "sourceHash": "f2855e8869bfdef9537b81f7d9b7a39d6d891cf2ccd754c241536a0500fc3002",
+      "source": "function put(o){o.v=18446744073709551617n;return String(o.v);} function test(){return put({})===\"18446744073709551617\"?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > primitive: direct apply",
+      "sourceHash": "62d85af3b4dc2ca501367043cfbfeabab6b808f1a5598be8ab0c5b5383094903",
+      "source": "export function test() { \n        const receiver = 7n;\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > dynamic computed write",
+      "sourceHash": "e0d8b76c9a95c96f1f6bb7eab6dbd54396cb818bdf4c3caa15722625366c6636",
+      "source": "function put(o,k){o[k]=-18446744073709551617n;return String(o[k]);} function test(){return put({},\"v\")===\"-18446744073709551617\"?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > primitive: extracted call",
+      "sourceHash": "d50d54f40e73505e853203f21d98669f4271aa124299df5ce52ad18b373b49e4",
+      "source": "export function test() { \n        const receiver = 7n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > Reflect.set value",
+      "sourceHash": "2c9dd22c4f359d85a0da1f592dd0737ac21cdd171a30792485089a7b193be198",
+      "source": "function test(){const o={};const ok=Reflect.set(o,\"v\",18446744073709551617n);return ok&&String(Reflect.get(o,\"v\"))===\"18446744073709551617\"?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > primitive: extracted apply",
+      "sourceHash": "186d6655da028dddecfdd5cae6b7f05ff9f871c0655be32137b926d1bfd2cff4",
+      "source": "export function test() { \n        const receiver = 7n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > Reflect.set assignment trace",
+      "sourceHash": "20d1430574ce9892d2ca4d75fec25988bde885e64d046fadac90e7a1d7582c84",
+      "source": "function test(){let trace=0;const o={};function receiver(){trace=trace*10+1;return o;}function key(){trace=trace*10+2;return \"v\";}const ok=Reflect.set(receiver(),key(),(trace=trace*10+3,18446744073709551617n));return ok&&trace===123&&String(Reflect.get(o,\"v\"))===\"18446744073709551617\"?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-string-raw-observation.test.ts > literal narrow",
+      "sourceHash": "8148a23a3bfbf838e6613fa6d6503cfd3306363b99c910d6a8255224257b06ed",
+      "source": "function output(){return String(1n);}\nexport function length(){return output().length;}\nexport function unit(index:number){return output().charCodeAt(index);}",
+      "before": {
+        "native": "1",
+        "success": true,
+        "errors": [],
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "33c9833f53db002ffe4fd039eb17a8321c1f57d5db084e585209915b6b6631a9"
+      },
+      "after": {
+        "native": "1",
+        "success": true,
+        "errors": [],
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "33c9833f53db002ffe4fd039eb17a8321c1f57d5db084e585209915b6b6631a9"
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > narrow wrapper: direct call",
+      "sourceHash": "170644a169bae80f5140c7a8f2eb0a1fd142b8772d6e6ef5c76c3752b6bb2a87",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-string-raw-observation.test.ts > literal wide",
+      "sourceHash": "28fff675cd24ecb5b75349815c5a5a9bf1e3a0a0713f19f27285424dd36929be",
+      "source": "function output(){return String(18446744073709551617n);}\nexport function length(){return output().length;}\nexport function unit(index:number){return output().charCodeAt(index);}",
+      "before": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "f23d4c4990e08e93420d4812f552b581d25ada8ed266421dbb7bdc4e9674dd19"
+      },
+      "after": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "f23d4c4990e08e93420d4812f552b581d25ada8ed266421dbb7bdc4e9674dd19"
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-string-raw-observation.test.ts > reference wide",
+      "sourceHash": "ea7dacf0b598a22534d48451cf20e93becbe8042cef42e561d5a4a9e3c9f3114",
+      "source": "function output(){const box={v:18446744073709551617n};return String(Reflect.get(box,\"v\"));}\nexport function length(){return output().length;}\nexport function unit(index:number){return output().charCodeAt(index);}",
+      "before": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "99dcb2e7542069501b412ecb3e4b8e48b4336f2d9a4b7fc2d6383913f8e56c2b",
+        "failure": "AssertionError: expected '1' to be '18446744073709551617' // Object.is equality"
+      },
+      "after": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "31840a29b70522e9a286f69dd7d28b4468d9464b4ef3118b3a689dc714f467d1"
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-bigint-string-raw-observation.test.ts > provider wide reference",
+      "sourceHash": "902d687cebf9b510eb068a376dba374bf7dd7a0c41a3cc837d60a1415cf29332",
+      "source": "function output(){const box={v:18446744073709551617n};const method=BigInt.prototype.valueOf;return String(method.call(Reflect.get(box,\"v\")));}\nexport function length(){return output().length;}\nexport function unit(index:number){return output().charCodeAt(index);}",
+      "before": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "1",
+        "imports": [],
+        "binarySha256": "31fd2a409c93819abbe3053c201a2e14f6207b72863e23cd7e0ab5684772e71b",
+        "failure": "AssertionError: expected '1' to be '18446744073709551617' // Object.is equality"
+      },
+      "after": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "936c88c170ffc80ebdb46fa1082e73e29e8bde64ccd3cce1d81a630a2b99a0c0"
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-bigint-string-raw-observation.test.ts > decoder text positive control",
+      "sourceHash": "f99c2fa552fceb909a8be4c46a63b1c6125a2e2fcba0064d46ec7f6a710c1deb",
+      "source": "function output(){return \"18446744073709551617\";}\nexport function length(){return output().length;}\nexport function unit(index:number){return output().charCodeAt(index);}",
+      "before": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "8f5c3b8dcf0f62f4c478eca214d000b20c88928fbf71e8189fa6ef92ba99b199"
+      },
+      "after": {
+        "native": "18446744073709551617",
+        "success": true,
+        "errors": [],
+        "actual": "18446744073709551617",
+        "imports": [],
+        "binarySha256": "8f5c3b8dcf0f62f4c478eca214d000b20c88928fbf71e8189fa6ef92ba99b199"
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > closed field direct write",
+      "sourceHash": "8027fb737465b63cbb448bed1d81bd3b33c342c154baa7ba4b07e2ba5042ae6a",
+      "source": "function test(){const o={v:0n};o.v=18446744073709551617n;return String(o.v)===\"18446744073709551617\"?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > narrow wrapper: direct apply",
+      "sourceHash": "7f3685ad58a687ad3b356d970046dae2a629663157479dd587b0509b48219730",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > closed descriptor value",
+      "sourceHash": "47eca0781f91383fdb7a0a2f22fca7dd4010b1edb9223686e3dbb61b0b9024a9",
+      "source": "function test(){const o={};Reflect.defineProperty(o,\"v\",{value:18446744073709551617n});return String(Reflect.get(o,\"v\"))===\"18446744073709551617\"?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > narrow wrapper: extracted call",
+      "sourceHash": "4560de1c4b7b78805d4306fc265bdb515383cc2b933d8005cd9afee8a0df0e13",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > dynamic number control",
+      "sourceHash": "1340c1abd940802ecefc1e9c869ab042dd861e1353c62aafcf31c60661725062",
+      "source": "function put(o){o.v=1.5;return o.v;} function test(){return put({})===1.5?1:-1;}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > narrow wrapper: extracted apply",
+      "sourceHash": "c5931c80a05d2a071b1259e985e8d7907e59f7a281a8991771ef2b817d65b16d",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-reference-write-runtime.test.ts > throwing receiver stops later arguments",
+      "sourceHash": "c899a1cc11743801eb7470e06411dc411dd19e421a23fedba4d120ebdd9ca61c",
+      "source": "function test(){let count=0;const reason={};function receiver(){throw reason;}try{Reflect.set(receiver(),(count++,\"v\"),18446744073709551617n);return -1;}catch(e){return e===reason&&count===0?1:-2;}}\nexport { test };",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide primitive: direct call",
+      "sourceHash": "a4d7dbc8979dbb5d15b79e4c899f9a617398b930a2a4aeaf6f7b878f7d575a51",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide primitive: direct apply",
+      "sourceHash": "24554809d41e744f70559c80a9345a6ff7f1c474b7a6e2f598d1205a6d779ad5",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide primitive: extracted call",
+      "sourceHash": "e2993320cefe803b92403798a0b8d4e18e07341bed7a1c2fc194387cbe52fbbf",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide primitive: extracted apply",
+      "sourceHash": "c06a4b5771afd35220cba9b8cb20c3710c73282d9db04f4ff0b7b9975963eba6",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide wrapper: direct call",
+      "sourceHash": "bf5b839b1adec0f0a5e0227490fc6cca7fe8cc87fc38f1839946eeae74642ac4",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide wrapper: direct apply",
+      "sourceHash": "e1f5c7fd21d0564b9289b800dc622cc12e2758f6751f57c0826e1a456e7119a3",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide wrapper: extracted call",
+      "sourceHash": "305758ce32166b8a9f856f57875ff6a503c8172c6d12ffc00d80c80fffdf2751",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide wrapper: extracted apply",
+      "sourceHash": "6e1f736fb443ccff59ff10194344c98dce87c55649fd3057e6ffe10313790a40",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide runtime ToObject wrapper retains all limbs",
+      "sourceHash": "84c0750a8962fac8bc987d68a78ff3cae9ea3559d198bb5b56c05a08b8f8c479",
+      "source": "export function test() { \n  let wrapper;\n  Object.defineProperty(BigInt.prototype, \"length\", {\n    configurable: true, get: function () { \"use strict\"; wrapper = this; return 0; }\n  });\n  const iterator = Array.prototype.values.call(18446744073709551617n);\n  iterator.next();\n  if (typeof wrapper !== \"object\") return -1;\n  const method = BigInt.prototype.valueOf;\n  const value = method.call(wrapper);\n  return typeof value === \"bigint\" && String(value) === \"18446744073709551617\" ? 1 : -2;\n }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible null",
+      "sourceHash": "09db641a67f87ce7470ca72d2ffbfafe3782769e3ec6b00db31bbfac8ac6b601",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(null); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(null, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible undefined",
+      "sourceHash": "ed17ca77c916c3b7da78decf834b073fe50aaeb14f87bcb45ffcb90a873b020e",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(undefined); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(undefined, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible 7",
+      "sourceHash": "34b10fd2077b0bae348fa11cc7b6034a3d2fbd8dbfeb4fa7441df8d1a0025cc3",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(7); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(7, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible \"7\"",
+      "sourceHash": "7a2940b386727f94e0f46f40d279e81154334ec04d8bfc63efc7d563a275de1a",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(\"7\"); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(\"7\", []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible true",
+      "sourceHash": "251bbfc574dc42b037f8e6d3be130150d4bc78feeef6e02fb7b105d8afdce22e",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(true); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(true, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible Symbol(\"wrong\")",
+      "sourceHash": "fb9699df340a66c5ccb5a7ade8d7847f76f0f2fab61cf7b107988e6b705e1f11",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(Symbol(\"wrong\")); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(Symbol(\"wrong\"), []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible {}",
+      "sourceHash": "a8665f0f10970f34f4b14af90757f5c4c96327e3e7ca73874f9d687c919fbdf4",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call({}); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply({}, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible Object(7)",
+      "sourceHash": "ad30f52a641fa8b63d5b45e7e75a37cd909358d2e610b29452890b9e9967a977",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(Object(7)); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(Object(7), []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible ({ \"[[PrimitiveValue]]\": 7n })",
+      "sourceHash": "b18cbcc32da66c96da31897e9d85908c72a239478097849a9efa26121a9c9b49",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(({ \"[[PrimitiveValue]]\": 7n })); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(({ \"[[PrimitiveValue]]\": 7n }), []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > rejects incompatible BigInt.prototype",
+      "sourceHash": "9a78086db06703b7b99b1faeb7545d106722ba274dc0960acc8f9d8bfb225896",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(BigInt.prototype); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(BigInt.prototype, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > prototype override is observed and prior extraction retained",
+      "sourceHash": "1fdd88bc7bb4fe931ee6122fec98dada18376aa3d71e8b01651b36a3ba63a416",
+      "source": "export function test() { \n  const saved = BigInt.prototype.valueOf;\n  BigInt.prototype.valueOf = function () { return 19n; };\n  const direct = BigInt.prototype.valueOf.call(Object(7n));\n  const extracted = saved.call(Object(7n));\n  return direct === 19n && extracted === 7n ? 1 : -1;\n }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > local BigInt spelling does not select intrinsic",
+      "sourceHash": "b7b41a38399c993ca06af30dd1daea659e4486f48a10b3edd055dd015bc96b89",
+      "source": "export function test() { \n  const BigInt = { prototype: { valueOf: function () { \"use strict\"; return this.answer; } } };\n  return BigInt.prototype.valueOf.call({answer: 23}) === 23 ? 1 : -1;\n }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > reassigned extracted method uses current value",
+      "sourceHash": "bde358e32be3512242ee016741b048b51eb974eebdb1d01d11c1b5e00bac403c",
+      "source": "export function test() { \n  let method = BigInt.prototype.valueOf;\n  method = function () { return 29n; };\n  return method.call(Object(7n)) === 29n ? 1 : -1;\n }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-bigint-valueof.test.ts > wide primitive formatting control without valueOf",
+      "sourceHash": "45b5a8166a0e1d36980a7e2cdb836df65cd9af17b5084e9a3bc2dae3c28c0d30",
+      "source": "export function test() { \n  return String(18446744073709551617n) === \"18446744073709551617\" ? 1 : -1;\n }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > parameter-property 1 O0",
+      "sourceHash": "7ad27a4e13e7a4a1229432bee62ce2cc94e3c1a9d61452d9cd7c4552733971d9",
+      "source": "class Box { constructor(public value: bigint) {} }\nexport function test() { const box = new Box(BigInt(\"1\")); return String(box.value) === \"1\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-class-bigint-default-runtime.test.ts > initialized reference field evaluates once and preserves wide value O0",
+      "sourceHash": "07d385a8ed5ff660170c2f9e8a5543898e0ab5358f554f9e3596316706fb2190",
+      "source": "\n    let calls = 0;\n    function decimal() { calls++; return \"18446744073709551617\"; }\n    class Box { value = BigInt(decimal()); }\n    export function test() { const b = new Box(); return calls === 1 && String(b.value) === \"18446744073709551617\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > parameter-property 1 O2",
+      "sourceHash": "7ad27a4e13e7a4a1229432bee62ce2cc94e3c1a9d61452d9cd7c4552733971d9",
+      "source": "class Box { constructor(public value: bigint) {} }\nexport function test() { const box = new Box(BigInt(\"1\")); return String(box.value) === \"1\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-class-bigint-default-runtime.test.ts > initialized reference field evaluates once and preserves wide value O2",
+      "sourceHash": "07d385a8ed5ff660170c2f9e8a5543898e0ab5358f554f9e3596316706fb2190",
+      "source": "\n    let calls = 0;\n    function decimal() { calls++; return \"18446744073709551617\"; }\n    class Box { value = BigInt(decimal()); }\n    export function test() { const b = new Box(); return calls === 1 && String(b.value) === \"18446744073709551617\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > explicit-store 1 O0",
+      "sourceHash": "90a3af9dd6819cb398f2afd50ff7801def85b9b13903c392660d395fbdf039e4",
+      "source": "class Box { value: bigint; constructor(value: bigint) { this.value = value; } }\nexport function test() { const box = new Box(BigInt(\"1\")); return String(box.value) === \"1\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-class-bigint-default-runtime.test.ts > uninitialized bigint is undefined before direct runtime-wide write O0",
+      "sourceHash": "635e2e92289584cfc657ff0e65a9600044b2c386d9ccbd831307ec8e2d1668bf",
+      "source": "\n    class Box { value!: bigint; }\n    export function test() {\n      const b = new Box();\n      if (b.value !== undefined || b.value === null) return -1;\n      b.value = BigInt(\"18446744073709551617\");\n      return String(b.value) === \"18446744073709551617\" ? 1 : -2;\n    }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > explicit-store 1 O2",
+      "sourceHash": "90a3af9dd6819cb398f2afd50ff7801def85b9b13903c392660d395fbdf039e4",
+      "source": "class Box { value: bigint; constructor(value: bigint) { this.value = value; } }\nexport function test() { const box = new Box(BigInt(\"1\")); return String(box.value) === \"1\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "pass-preserved"
+    },
+    {
+      "key": "tests/issue-5883-class-bigint-default-runtime.test.ts > uninitialized bigint is undefined before direct runtime-wide write O2",
+      "sourceHash": "635e2e92289584cfc657ff0e65a9600044b2c386d9ccbd831307ec8e2d1668bf",
+      "source": "\n    class Box { value!: bigint; }\n    export function test() {\n      const b = new Box();\n      if (b.value !== undefined || b.value === null) return -1;\n      b.value = BigInt(\"18446744073709551617\");\n      return String(b.value) === \"18446744073709551617\" ? 1 : -2;\n    }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > parameter-property 18446744073709551617 O0",
+      "sourceHash": "1461868e1bc3d517388dcc788dd157243dda29c0ea258ced75dcc45467cd88f3",
+      "source": "class Box { constructor(public value: bigint) {} }\nexport function test() { const box = new Box(BigInt(\"18446744073709551617\")); return String(box.value) === \"18446744073709551617\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-class-bigint-default-runtime.test.ts > inherited field defaults and initialization order retain reference values O0",
+      "sourceHash": "07df81958e5e700748f528b66e8004ce0b7756c899f09072c8101e05250554c9",
+      "source": "\n    let order = 0;\n    function decimal() { order = order * 10 + 1; return \"18446744073709551617\"; }\n    class Base { value = BigInt(decimal()); missing!: bigint; constructor() { order = order * 10 + 2; } }\n    class Child extends Base { own = BigInt(\"36893488147419103233\"); constructor() { super(); order = order * 10 + 3; } }\n    export function test() {\n      const b = new Child();\n      if (order !== 123 || b.missing !== undefined || b.missing === null) return -1;\n      return String(b.value) === \"18446744073709551617\" && String(b.own) === \"36893488147419103233\" ? 1 : -2;\n    }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > parameter-property 18446744073709551617 O2",
+      "sourceHash": "1461868e1bc3d517388dcc788dd157243dda29c0ea258ced75dcc45467cd88f3",
+      "source": "class Box { constructor(public value: bigint) {} }\nexport function test() { const box = new Box(BigInt(\"18446744073709551617\")); return String(box.value) === \"18446744073709551617\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > explicit-store 18446744073709551617 O0",
+      "sourceHash": "498abacfc1b20ab94fe4e1a479fce411c415d80f3a0e5caa8b2515d28a323bb9",
+      "source": "class Box { value: bigint; constructor(value: bigint) { this.value = value; } }\nexport function test() { const box = new Box(BigInt(\"18446744073709551617\")); return String(box.value) === \"18446744073709551617\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 0
+      },
+      "transition": "still-failing"
+    },
+    {
+      "key": "tests/issue-5883-class-bigint-default-runtime.test.ts > inherited field defaults and initialization order retain reference values O2",
+      "sourceHash": "07df81958e5e700748f528b66e8004ce0b7756c899f09072c8101e05250554c9",
+      "source": "\n    let order = 0;\n    function decimal() { order = order * 10 + 1; return \"18446744073709551617\"; }\n    class Base { value = BigInt(decimal()); missing!: bigint; constructor() { order = order * 10 + 2; } }\n    class Child extends Base { own = BigInt(\"36893488147419103233\"); constructor() { super(); order = order * 10 + 3; } }\n    export function test() {\n      const b = new Child();\n      if (order !== 123 || b.missing !== undefined || b.missing === null) return -1;\n      return String(b.value) === \"18446744073709551617\" && String(b.own) === \"36893488147419103233\" ? 1 : -2;\n    }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "gain"
+    },
+    {
+      "key": "tests/issue-5883-class-parameter-property-pair.test.ts > explicit-store 18446744073709551617 O2",
+      "sourceHash": "498abacfc1b20ab94fe4e1a479fce411c415d80f3a0e5caa8b2515d28a323bb9",
+      "source": "class Box { value: bigint; constructor(value: bigint) { this.value = value; } }\nexport function test() { const box = new Box(BigInt(\"18446744073709551617\")); return String(box.value) === \"18446744073709551617\" ? 1 : -1; }",
+      "before": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "after": {
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": [],
+        "optimize": 2
+      },
+      "transition": "still-failing"
+    }
+  ]
+}

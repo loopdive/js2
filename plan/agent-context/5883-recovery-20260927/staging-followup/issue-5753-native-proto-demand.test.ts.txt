@@ -1,0 +1,141 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { describe, expect, it } from "vitest";
+import { EmissionOwnership } from "../src/codegen/context/emission-ownership.js";
+import type { RetainedBodyManifest, SelectedBodyManifest } from "../src/codegen/context/emission-ownership.js";
+import { NativeProtoDemandCollection } from "../src/codegen/native-proto-demand.js";
+
+const provenance = { sourceId: "pure-test", unitId: "body" };
+function body(arena: EmissionOwnership, kind: "required-drive" | "protocol-choice" = "required-drive") {
+  const transaction = arena.beginContentTransaction();
+  const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+  const epoch = arena.createBodyEpoch(provenance, identity);
+  arena.bindContentTransaction(transaction, epoch);
+  const nodeIdentity = {};
+  const occurrence = arena.recordOccurrence(epoch, provenance, { nodeIdentity, kind });
+  arena.commitTransaction(transaction);
+  const manifest: RetainedBodyManifest = {
+    body: epoch, ...identity, regions: [],
+    occurrences: [{ occurrence, owner: epoch, nodeIdentity, kind }], adoptions: [],
+  };
+  const receipt = arena.completeBodyEpoch(epoch, manifest);
+  return { epoch, occurrence, manifest, receipt };
+}
+function publish(arena: EmissionOwnership, value: ReturnType<typeof body>): SelectedBodyManifest {
+  const publication = arena.createPublication("function", provenance);
+  arena.publishBody(publication, value.epoch);
+  return { publications: [{ publication, receipt: value.receipt }], bodies: [value.manifest] };
+}
+const recipe = (occurrence: ReturnType<typeof body>["occurrence"], reason: "mixed-generator-then" | "observable-vector" = "mixed-generator-then") =>
+  ({ brand: "Promise", requiredMembers: ["then"], reason, occurrence } as const);
+
+describe("metadata-only native prototype demand", () => {
+  it("preparation publishes no capability and does not seal the shared arena", () => {
+    const arena = new EmissionOwnership();
+    const value = body(arena);
+    const demands = new NativeProtoDemandCollection(arena);
+    const prepared = demands.prepare(recipe(value.occurrence));
+    expect(Object.isFrozen(prepared)).toBe(true);
+    expect(Object.isFrozen(prepared.requiredMembers)).toBe(true);
+    expect(demands.state).toBe("collecting");
+    expect(demands.selected).toEqual([]);
+    // Continued ordinary ownership construction is legal after preparation.
+    body(arena);
+    expect(demands.select(publish(arena, value))[0]?.consumers).toEqual([prepared]);
+    expect(demands.state).toBe("selected-awaiting-registration");
+  });
+
+  it("does not activate an authenticated but unpublished orphan", () => {
+    const arena = new EmissionOwnership();
+    const orphan = body(arena);
+    const demands = new NativeProtoDemandCollection(arena);
+    demands.prepare(recipe(orphan.occurrence));
+    expect(demands.select({ publications: [], bodies: [] })).toEqual([]);
+    expect(demands.state).toBe("inactive");
+  });
+
+  it("a selected protocol choice is not a required operation", () => {
+    const arena = new EmissionOwnership();
+    const value = body(arena, "protocol-choice");
+    const demands = new NativeProtoDemandCollection(arena);
+    demands.prepare(recipe(value.occurrence));
+    expect(demands.select(publish(arena, value))).toEqual([]);
+  });
+
+  it("keeps reasons independent while deduplicating each exact consumer", () => {
+    const arena = new EmissionOwnership();
+    const generator = body(arena);
+    const vector = body(arena);
+    const demands = new NativeProtoDemandCollection(arena);
+    const first = demands.prepare(recipe(generator.occurrence));
+    expect(demands.prepare(recipe(generator.occurrence))).toBe(first);
+    demands.prepare(recipe(vector.occurrence, "observable-vector"));
+    const selected = demands.select(publish(arena, generator));
+    expect(selected[0]?.consumers.map(r => r.reason)).toEqual(["mixed-generator-then"]);
+    expect(selected[0]?.initializer).toBe("full-Promise-brand");
+  });
+
+  it("vector-only selection does not invent a generator consumer", () => {
+    const arena = new EmissionOwnership();
+    const vector = body(arena);
+    const demands = new NativeProtoDemandCollection(arena);
+    demands.prepare(recipe(vector.occurrence, "observable-vector"));
+    expect(demands.select(publish(arena, vector))[0]?.consumers.map(r => r.reason)).toEqual(["observable-vector"]);
+  });
+
+  it("rejects foreign occurrences without changing collection state", () => {
+    const demands = new NativeProtoDemandCollection(new EmissionOwnership());
+    expect(() => demands.prepare(recipe(body(new EmissionOwnership()).occurrence))).toThrow();
+    expect(demands.state).toBe("collecting");
+    expect(demands.selected).toEqual([]);
+  });
+
+  it("rejects an incomplete census and allows a corrected verified selection", () => {
+    const arena = new EmissionOwnership();
+    const value = body(arena);
+    const demands = new NativeProtoDemandCollection(arena);
+    demands.prepare(recipe(value.occurrence));
+    const selected = publish(arena, value);
+    expect(() => demands.select({ ...selected, bodies: [] })).toThrow();
+    expect(demands.state).toBe("collecting");
+    expect(demands.select(selected)).toHaveLength(1);
+    expect(() => demands.select(selected)).toThrow();
+    expect(() => demands.prepare(recipe(value.occurrence))).toThrow();
+  });
+
+  it("rejects a legacy-retained child despite authenticated parent and matching census", () => {
+    const arena = new EmissionOwnership();
+    const childIdentity = { bodyIdentity: {}, bindingEnvironment: {} };
+    const child = arena.createBodyEpoch(provenance, childIdentity);
+    const childTransaction = arena.beginContentTransaction(child);
+    const nodeIdentity = {};
+    const occurrence = arena.recordOccurrence(child, provenance, { nodeIdentity, kind: "required-drive" });
+    arena.commitTransaction(childTransaction);
+    const childManifest: RetainedBodyManifest = {
+      body: child, ...childIdentity, regions: [], adoptions: [],
+      occurrences: [{ occurrence, owner: child, nodeIdentity, kind: "required-drive" }],
+    };
+    // Every child field is valid except the deliberately absent completion receipt.
+    arena.retainBodyEpoch(child);
+    const parentIdentity = { bodyIdentity: {}, bindingEnvironment: {} };
+    const parent = arena.createBodyEpoch(provenance, parentIdentity);
+    const parentTransaction = arena.beginContentTransaction(parent);
+    const useSiteIdentity = {};
+    const edge = arena.adoptBody(parent, child, useSiteIdentity);
+    arena.commitTransaction(parentTransaction);
+    const parentManifest: RetainedBodyManifest = {
+      body: parent, ...parentIdentity, regions: [], occurrences: [],
+      adoptions: [{ edge, owner: parent, body: child, useSiteIdentity }],
+    };
+    const receipt = arena.completeBodyEpoch(parent, parentManifest);
+    const publication = arena.createPublication("function", provenance);
+    arena.publishBody(publication, parent);
+    const demands = new NativeProtoDemandCollection(arena);
+    demands.prepare(recipe(occurrence));
+    const selected: SelectedBodyManifest = {
+      publications: [{ publication, receipt }], bodies: [parentManifest, childManifest],
+    };
+    expect(() => demands.select(selected)).toThrow("Selected body has no authenticated receipt");
+    expect(demands.state).toBe("collecting");
+    expect(demands.selected).toEqual([]);
+  });
+});

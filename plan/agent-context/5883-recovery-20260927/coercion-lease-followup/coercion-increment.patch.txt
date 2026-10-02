@@ -1,0 +1,333 @@
+diff --git a/src/codegen/coercion-engine.ts b/src/codegen/coercion-engine.ts
+index 97c1829511..f179581835 100644
+--- a/src/codegen/coercion-engine.ts
++++ b/src/codegen/coercion-engine.ts
+@@ -103,6 +103,35 @@ export function runtimeToNumberInstrs(ctx: CodegenContext): Instr[] | null {
+   return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
+ }
+ 
++/**
++ * Read-only detached-body emission: externref JS value -> i32 truthiness.
++ * Resolve the current prepared provider; absence is not a non-null fallback.
++ * Unlike ensureRuntimeToBooleanProvider, this never registers or flushes.
++ */
++export function runtimeToBooleanInstrs(ctx: CodegenContext): Instr[] | null {
++  const funcIdx = ctx.funcMap.get("__is_truthy");
++  return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
++}
++
++/**
++ * Read-only Number primitive conversion: unbranded f64 -> externref string.
++ * The operand must be an actual Number, not an encoded hole/undefined or box.
++ * Preserve the provider's mode-dependent string representation without adapters.
++ */
++export function runtimeNumberToStringInstrs(ctx: CodegenContext): Instr[] | null {
++  const funcIdx = ctx.funcMap.get("number_toString");
++  return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
++}
++
++/**
++ * Registration phase only: prepare externref -> i32 JavaScript truthiness.
++ * May mutate function space; do not retain its provisional index across later
++ * preparation. No union warming, flushing, emitted instructions or fallback.
++ */
++export function ensureRuntimeToBooleanProvider(ctx: CodegenContext): number | undefined {
++  return ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
++}
++
+ /** True when the active mode represents strings as a native `$AnyString` GC ref. */
+ function isNativeStringMode(mode: CoercionMode): boolean {
+   return mode === "standalone" || mode === "native-strings-host";
+@@ -731,7 +760,7 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
+   }
+   if (kind === "externref") {
+     addUnionImports(ctx);
+-    const isTruthyIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
++    const isTruthyIdx = ensureRuntimeToBooleanProvider(ctx);
+     if (isTruthyIdx !== undefined) {
+       // Registering a late helper can shift every subsequent function index.
+       // Always re-read the canonical map entry before emitting the call; using
+diff --git a/src/codegen/iterator-live-array.ts b/src/codegen/iterator-live-array.ts
+index a6ba512a34..bab08ada0d 100644
+--- a/src/codegen/iterator-live-array.ts
++++ b/src/codegen/iterator-live-array.ts
+@@ -2,7 +2,12 @@
+ import type { Instr, ValType } from "../ir/types.js";
+ import type { CodegenContext } from "./context/types.js";
+ import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+-import { getStringToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
++import {
++  getStringToNumberProvider,
++  getToPrimitiveProvider,
++  runtimeNumberToStringInstrs,
++  runtimeToNumberInstrs,
++} from "./coercion-engine.js";
+ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+ import {
+   ensureNativeIteratorRuntime,
+@@ -79,9 +84,9 @@ export function ensureNativeLiveArrayValues(ctx: CodegenContext): number {
+     getToPrimitiveProvider(ctx) === undefined ||
+     getStringToNumberProvider(ctx) === undefined ||
+     !ctx.funcMap.has("__typeof_string") ||
+-    !ctx.funcMap.has("__unbox_number") ||
++    runtimeToNumberInstrs(ctx) === null ||
+     !ctx.funcMap.has("__extern_get") ||
+-    !ctx.funcMap.has("number_toString") ||
++    runtimeNumberToStringInstrs(ctx) === null ||
+     ctx.nativeStrTypeIdx < 0
+   )
+     throw new Error("Live array iterator requires semantic Get and complete ToLength providers");
+@@ -127,6 +132,11 @@ export function ensureNativeLiveArrayValues(ctx: CodegenContext): number {
+   );
+   const load = (): Instr[] => [{ op: "local.get", index: 1 }];
+   const source = (): Instr[] => [...load(), { op: "struct.get", typeIdx: payloadTypeIdx, fieldIdx: 0 }];
++  const indexKey = (): Instr[] => {
++    const instructions = runtimeNumberToStringInstrs(ctx);
++    if (instructions === null) throw new Error("Live array iterator requires Number-to-string provider");
++    return instructions;
++  };
+   register(
+     STEP,
+     [{ kind: "i32" }, EXTERN],
+@@ -173,7 +183,7 @@ export function ensureNativeLiveArrayValues(ctx: CodegenContext): number {
+       // ArrayIterator next performs Get(source, ToString(index)), including
+       // callable receivers and descriptor/proxy accessors. The storage-index
+       // helper does not cover that full receiver domain.
+-      { op: "call", funcIdx: ctx.funcMap.get("number_toString")! },
++      ...indexKey(),
+       { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
+     ],
+   );
+diff --git a/src/codegen/iterator-receiver-to-object.ts b/src/codegen/iterator-receiver-to-object.ts
+index 70269f5837..5bc0f6e69c 100644
+--- a/src/codegen/iterator-receiver-to-object.ts
++++ b/src/codegen/iterator-receiver-to-object.ts
+@@ -1,6 +1,7 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ import type { Instr, ValType } from "../ir/types.js";
+ import type { CodegenContext } from "./context/types.js";
++import { runtimeToNumberInstrs } from "./coercion-engine.js";
+ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+ import { buildThrowJsErrorInstrs } from "./js-errors.js";
+ import { ensureObjectRuntime } from "./object-runtime.js";
+@@ -36,6 +37,8 @@ export function ensureNativeIteratorReceiverToObject(ctx: CodegenContext): numbe
+     if (handle === undefined) throw new Error(`Missing native iterator ToObject dependency: ${name}`);
+     return handle;
+   };
++  const numberConversion = runtimeToNumberInstrs(ctx);
++  if (numberConversion === null) throw new Error("Missing native iterator ToObject numeric conversion provider");
+   // Capture only after every ensure above. Missing native dependencies fail
+   // registration rather than adding a host import or treating a primitive as
+   // an object. Each arm owns its instruction objects.
+@@ -55,7 +58,7 @@ export function ensureNativeIteratorReceiverToObject(ctx: CodegenContext): numbe
+     { op: "call", funcIdx: required("__extern_is_undefined") },
+     { op: "i32.or" },
+     { op: "if", blockType: { kind: "empty" }, then: nullishThrow },
+-    ...primitiveArm("__typeof_number", "__new_Number", [{ op: "call", funcIdx: required("__unbox_number") }]),
++    ...primitiveArm("__typeof_number", "__new_Number", numberConversion),
+     ...primitiveArm("__typeof_boolean", "__new_Boolean", [
+       { op: "call", funcIdx: required("__unbox_boolean") },
+       { op: "f64.convert_i32_s" },
+diff --git a/src/codegen/promise-vector-iterator.ts b/src/codegen/promise-vector-iterator.ts
+index ee4b6e733c..a82e632ac2 100644
+--- a/src/codegen/promise-vector-iterator.ts
++++ b/src/codegen/promise-vector-iterator.ts
+@@ -12,7 +12,7 @@ import { ensureIteratorProtocolGetRuntime } from "./iterator-protocol-get.js";
+ import { stringConstantExternrefInstrs } from "./native-strings.js";
+ import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+ import { buildThrowJsErrorInstrs } from "./js-errors.js";
+-import { emitToBoolean } from "./coercion-engine.js";
++import { emitToBoolean, ensureRuntimeToBooleanProvider, runtimeToBooleanInstrs } from "./coercion-engine.js";
+ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+ 
+ const ER: ValType = { kind: "externref" };
+@@ -58,15 +58,13 @@ export function ensurePromiseVectorIteratorRuntime(ctx: CodegenContext, fctx: Fu
+     reserveApplyClosure(ctx);
+     ensureIteratorProtocolGetRuntime(ctx, fctx);
+     addStringConstantGlobals(ctx, ["next", "done", "value", "return", ERROR]);
+-    for (const name of [
+-      "__typeof_object",
+-      "__typeof_function",
+-      "__is_callable",
+-      "__is_truthy",
+-      "__extern_is_undefined",
+-    ]) {
++    for (const name of ["__typeof_object", "__typeof_function", "__is_callable"]) {
+       ensureLateImport(ctx, name, [ER], [I32]);
+     }
++    // Keep truthiness preparation in its original registration slot, before
++    // undefined detection and before the allocating union warm-up below.
++    ensureRuntimeToBooleanProvider(ctx);
++    ensureLateImport(ctx, "__extern_is_undefined", [ER], [I32]);
+     // Warm allocating providers BEFORE retaining any detached instructions.
+     emitToBoolean(ctx, ER, []);
+     canonicalUndefinedExternInstrs(ctx);
+@@ -74,6 +72,11 @@ export function ensurePromiseVectorIteratorRuntime(ctx: CodegenContext, fctx: Fu
+     ensureExnTag(ctx);
+     for (const key of ["next", "done", "value", "return"]) stringConstantExternrefInstrs(ctx, key);
+     flushLateImportShifts(ctx, fctx);
++    const truthiness = (): Instr[] => {
++      const instructions = runtimeToBooleanInstrs(ctx);
++      if (instructions === null) throw new Error("Promise vector iterator requires prepared truthiness provider");
++      return instructions;
++    };
+     for (const name of [
+       "__iterator_protocol_get",
+       "__apply_closure",
+@@ -82,11 +85,10 @@ export function ensurePromiseVectorIteratorRuntime(ctx: CodegenContext, fctx: Fu
+       "__typeof_object",
+       "__typeof_function",
+       "__is_callable",
+-      "__is_truthy",
+-      "__extern_is_undefined",
+-      "__new_TypeError",
+     ])
+       call(ctx, name);
++    truthiness(); // Readiness only; resolve a fresh call again at detached emission.
++    for (const name of ["__extern_is_undefined", "__new_TypeError"]) call(ctx, name);
+ 
+     const recordType = ctx.mod.types.length;
+     ctx.mod.types.push({
+@@ -205,7 +207,7 @@ export function ensurePromiseVectorIteratorRuntime(ctx: CodegenContext, fctx: Fu
+           set(4),
+           ...object(4),
+           ...property(4, "done"),
+-          call(ctx, "__is_truthy"),
++          ...truthiness(),
+           when([...markDone(1), ...terminal()]),
+           int(0),
+           ...property(4, "value"),
+diff --git a/tests/issue-5883-prepared-coercion-engine.test.ts b/tests/issue-5883-prepared-coercion-engine.test.ts
+new file mode 100644
+index 0000000000..d40dc1411b
+--- /dev/null
++++ b/tests/issue-5883-prepared-coercion-engine.test.ts
+@@ -0,0 +1,128 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { afterEach, expect, it, vi } from "vitest";
++import type { Instr } from "../src/ir/types.js";
++import type { CodegenContext } from "../src/codegen/context/types.js";
++import * as shared from "../src/codegen/shared.js";
++import * as index from "../src/codegen/index.js";
++import {
++  emitToBoolean,
++  ensureRuntimeToBooleanProvider,
++  runtimeNumberToStringInstrs,
++  runtimeToBooleanInstrs,
++  runtimeToNumberInstrs,
++} from "../src/codegen/coercion-engine.js";
++
++afterEach(() => vi.restoreAllMocks());
++
++function context(entries: [string, number][] = []) {
++  // Deliberately incomplete: these boundaries require only the canonical map.
++  // Mutation sentinels cover module, local and registration state as well.
++  const state = {
++    funcMap: new Map(entries),
++    mod: { functions: [], types: [], imports: [], globals: [] },
++    locals: [],
++    registrationState: { phase: "prepared" },
++  };
++  return { state, ctx: state as unknown as CodegenContext };
++}
++
++for (const [name, provider, build] of [
++  ["truthiness", "__is_truthy", runtimeToBooleanInstrs],
++  ["number string", "number_toString", runtimeNumberToStringInstrs],
++] as const) {
++  it(name + ": missing provider is null without mutation", () => {
++    const { ctx, state } = context();
++    const before = structuredClone(state);
++    expect(build(ctx)).toBeNull();
++    expect(state).toEqual(before);
++  });
++  it(name + ": index zero is valid", () => {
++    const { ctx } = context([[provider, 0]]);
++    expect(build(ctx)).toEqual([{ op: "call", funcIdx: 0 }]);
++  });
++  it(name + ": reads a shifted current map rather than caching", () => {
++    const { ctx } = context([[provider, 7]]);
++    const first = build(ctx);
++    ctx.funcMap.set(provider, 19);
++    expect(build(ctx)).toEqual([{ op: "call", funcIdx: 19 }]);
++    expect(first).toEqual([{ op: "call", funcIdx: 7 }]);
++  });
++  it(name + ": instructions and arrays have fresh identity", () => {
++    const { ctx } = context([[provider, 2]]);
++    const a = build(ctx)!;
++    const b = build(ctx)!;
++    expect(a).not.toBe(b);
++    expect(a[0]).not.toBe(b[0]);
++    expect(a).toEqual(b);
++  });
++  it(name + ": present provider does not allocate or mutate", () => {
++    const { ctx, state } = context([[provider, 4]]);
++    const before = structuredClone(state);
++    const ensure = vi.spyOn(shared, "ensureLateImport").mockImplementation(() => {
++      throw new Error("unexpected preparation");
++    });
++    const union = vi.spyOn(index, "addUnionImports").mockImplementation(() => {
++      throw new Error("unexpected union warming");
++    });
++    expect(build(ctx)).toEqual([{ op: "call", funcIdx: 4 }]);
++    expect(state).toEqual(before);
++    expect(ensure).not.toHaveBeenCalled();
++    expect(union).not.toHaveBeenCalled();
++  });
++}
++
++for (const initial of [undefined, 0] as const) {
++  it(
++    "preparation delegates exact ABI with " + (initial === undefined ? "missing" : "existing zero") + " provider",
++    () => {
++      const { ctx } = context(initial === undefined ? [] : [["__is_truthy", initial]]);
++      const union = vi.spyOn(index, "addUnionImports").mockImplementation(() => {
++        throw new Error("unexpected union warming");
++      });
++      const flush = vi.spyOn(shared, "flushLateImportShifts").mockImplementation(() => {
++        throw new Error("unexpected flush");
++      });
++      const ensure = vi.spyOn(shared, "ensureLateImport").mockReturnValue(initial);
++      expect(ensureRuntimeToBooleanProvider(ctx)).toBe(initial);
++      expect(ensure).toHaveBeenCalledExactlyOnceWith(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
++      expect(union).not.toHaveBeenCalled();
++      expect(flush).not.toHaveBeenCalled();
++    },
++  );
++}
++
++for (const mode of ["canonical", "provisional", "missing"] as const) {
++  it("emitToBoolean preserves union/ensure order and " + mode + " result", () => {
++    const { ctx } = context();
++    const order: string[] = [];
++    vi.spyOn(index, "addUnionImports").mockImplementation(() => {
++      order.push("union");
++    });
++    vi.spyOn(shared, "ensureLateImport").mockImplementation((_ctx, name, params, results) => {
++      order.push("ensure");
++      expect(name).toBe("__is_truthy");
++      expect(params).toEqual([{ kind: "externref" }]);
++      expect(results).toEqual([{ kind: "i32" }]);
++      if (mode === "canonical") ctx.funcMap.set("__is_truthy", 0);
++      return mode === "missing" ? undefined : 7;
++    });
++    const sink: Instr[] = [{ op: "local.get", index: 1 }];
++    expect(emitToBoolean(ctx, { kind: "externref" }, sink)).toBe(sink);
++    expect(order).toEqual(["union", "ensure"]);
++    expect(sink).toEqual(
++      mode === "missing"
++        ? [{ op: "local.get", index: 1 }, { op: "ref.is_null" }, { op: "i32.eqz" }]
++        : [
++            { op: "local.get", index: 1 },
++            { op: "call", funcIdx: mode === "canonical" ? 0 : 7 },
++          ],
++    );
++  });
++}
++
++it("existing runtimeToNumber bridge retains missing and current index-zero behavior", () => {
++  const { ctx } = context();
++  expect(runtimeToNumberInstrs(ctx)).toBeNull();
++  ctx.funcMap.set("__unbox_number", 0);
++  expect(runtimeToNumberInstrs(ctx)).toEqual([{ op: "call", funcIdx: 0 }]);
++});

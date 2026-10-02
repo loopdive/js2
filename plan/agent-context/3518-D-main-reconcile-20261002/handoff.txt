@@ -1,0 +1,56 @@
+All five granted checks are terminal; execution slot returned. Evidence is for
+the frozen checkpoint 32c2da64881923d67f0f53c6019a475db6ee1ecd plus exact pinned
+main 2bfe3eddf84d4d27f471eddb91e441709b7f6eff, not subsequently fetched e473d924.
+
+First independent outcomes:
+1 source TS7: exit 1, ten TS2459 capability export diagnostics.
+2 scoped TS7: exit 1, 27 diagnostics: the same ten production errors plus 17
+  test typing diagnostics, one in the additive test and 16 in unchanged tests.
+3 scoped Prettier CHECK: exit 0; six explicitly requested source/test paths;
+  stdout says all matched files use Prettier style. No rewrite was performed.
+4 inventory: exit 0; 1783 modules, zero inventory errors, architecture false.
+5 full boundaries: exit 1, inventory-valid-architecture-incomplete; 1486 debt
+  modules, four unknown edges, 13050 forbidden edges. This is not retirement.
+All five terminal receipts attest unchanged first production/test/fixture pins.
+
+preparation/ preserves the original NOT_RUN manifest, config, commands, test
+patch/source, production patches, frozen 141-fixture manifest and exact runner.
+first-receipts/ preserves all 15 original receipt/stdout/stderr streams. The two
+~10 MB boundary JSON outputs are losslessly archived as ordered gzip/base64
+parts; archive-index.json supplies decoding instructions, original sizes and
+SHA256s. All 15 decoded streams were verified identical. Raw first files also
+remain in .tmp/assignment-D-first-steps1-5-20261002. No failure was overwritten.
+first-five-outcomes.json records handles, timings, exits and gate summaries.
+additive-execution-receipt.json expressly retains eight runtime tests NOT_RUN.
+
+Authorized correction is now source-only and ready for immediate parent review:
+correction/four-exports-additive-bytes.patch (five hunks, two files).
+Four export modifiers restore main's capability API used by class-drive,
+class-settle and species consumers. Entire capability bodies remain identical.
+The additive helper compiles Uint8Array.from(result.binary), copying into owned
+ArrayBuffer-backed bytes, without casts or assertion changes. Historical tests
+and their typing errors remain untouched. No formatting or rerun occurred.
+correction/production.corrected.patch is the complete five-production-file
+resolution diff against automatic merge tree f814b9c61b6ee142cca4cfea33457525151da4af.
+correction/corrected-subject-pins.json gives all new source/patch hashes.
+Frozen staged source remains available; four export edits are unstaged, and the
+additive test plus durable archive are untracked. No commit/push was performed.
+Old runner/manifest intentionally retain old pins and must not be reused as a
+corrected-subject execution receipt without an explicit amended manifest/grant.
+
+Latest-main import proposal only (not executed): after parent review and bounded
+corrected-subject measurement, compose exact e473d92460af75ced29e9666e7e97cdde8df12ca
+in the parent's isolated integration sequence. Parent reports its delta contains
+DOM containment/runtime, a removed runtime-containment inventory row, issue/test
+6792 and npm benchmarks, with no Promise owner edits. Preserve main's deletion:
+do not union the prior inventory row back in. Check the refreshed inventory
+against new main and retain the reviewed extracted Promise owners without new
+duplicate rows. This proposal relies on parent's delta inspection, not a new
+main review or validation by this worker. No refresh happened during measurement.
+Only then compose parent plan commits 373a50e70e and 21811a67ab while preserving
+incoming main issue history. They remain absent from this worker's merge.
+
+Remaining holds: corrected canonical/scoped checks are unrun; unchanged historical
+typing and receipt failures need exact-main pairing; additive runtime eight are
+unrun; architecture is incomplete; latest-main composition is unmeasured. Parent
+owns further grants and publication. B may use the idle execution slot meanwhile.

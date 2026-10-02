@@ -1,0 +1,57 @@
+// A/B diagnostic only. Does not rewrite snapshots or weaken exact B/C comparison.
+import { readFileSync } from "node:fs";
+import assert from "node:assert/strict";
+const [aPath, bPath] = process.argv.slice(2);
+const A = JSON.parse(readFileSync(aPath)), B = JSON.parse(readFileSync(bPath));
+function index(root) {
+  const result = new Map();
+  function walk(value) {
+    if (!value || typeof value !== "object") return;
+    if (Object.hasOwn(value, "id")) {
+      assert(!result.has(value.id), "duplicate encoded definition");
+      result.set(value.id, value);
+    }
+    for (const child of Object.values(value)) walk(child);
+  }
+  walk(root); return result;
+}
+const ai = index(A), bi = index(B), aToB = new Map(), bToA = new Map(), seen = new Set();
+const differences = [];
+function resolve(value, definitions) {
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "ref")) {
+    assert.deepEqual(Object.keys(value), ["ref"]);
+    assert(definitions.has(value.ref), "dangling encoded reference");
+    return definitions.get(value.ref);
+  }
+  return value;
+}
+function relate(map, a, b) { if (!map.has(a)) map.set(a, new Set()); map.get(a).add(b); }
+function visit(left, right, path) {
+  left = resolve(left, ai); right = resolve(right, bi);
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") {
+    if (!Object.is(left, right)) differences.push({ path, left, right });
+    return;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) { differences.push({ path, kind: "array/object mismatch" }); return; }
+  if (Object.hasOwn(left, "id") || Object.hasOwn(right, "id")) {
+    if (!Object.hasOwn(left, "id") || !Object.hasOwn(right, "id")) { differences.push({ path, kind: "definition mismatch" }); return; }
+    relate(aToB, left.id, right.id); relate(bToA, right.id, left.id);
+    const pair = `${left.id}:${right.id}`;
+    if (seen.has(pair)) return;
+    seen.add(pair);
+  }
+  const lk = Object.keys(left).filter(k => k !== "id"), rk = Object.keys(right).filter(k => k !== "id");
+  if (JSON.stringify(lk) !== JSON.stringify(rk)) { differences.push({ path, leftKeys: lk, rightKeys: rk }); return; }
+  for (const key of lk) visit(left[key], right[key], `${path}/${key}`);
+}
+visit(A, B, "$root");
+const describe = node => node?.entries ? Object.fromEntries(node.entries.filter(([,value]) => value === null || typeof value !== "object")) : node;
+const splits = [...aToB].filter(([,set]) => set.size > 1).map(([id,set]) => ({ originalId: id, candidateIds: [...set], instruction: describe(ai.get(id)) }));
+const merges = [...bToA].filter(([,set]) => set.size > 1).map(([id,set]) => ({ candidateId: id, originalIds: [...set] }));
+const expectedLeavesOnly = differences.length === 0 && merges.length === 0 && splits.length === 2 &&
+  splits.some(s => s.instruction.op === "i32.const" && s.instruction.value === 1) &&
+  splits.some(s => s.instruction.op === "local.set" && Number.isInteger(s.instruction.index)) &&
+  splits[0].candidateIds.length === splits[1].candidateIds.length && splits[0].candidateIds.length > 1;
+console.log(JSON.stringify({ purpose: "A/B graph-delta diagnosis only; raw equality remains false", valueDifferences: differences,
+  splits, merges, expectedLeavesOnly, originalDefinitions: ai.size, candidateDefinitions: bi.size }, null, 2));
+if (!expectedLeavesOnly) process.exitCode = 1;

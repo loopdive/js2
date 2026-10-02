@@ -1,0 +1,950 @@
+{
+  "schema": "assignment-D-bounded-validation-handoff-v3",
+  "recordedAt": "2026-10-02T04:41:42.455Z",
+  "slot": "RELEASED; no validation process active",
+  "frozenSubject": {
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "stagedFirstPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "workingCorrectedPatchSha256": "65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79",
+    "frozenFixtures": 141,
+    "fixtureMismatches": [],
+    "measuredGraphBefore": {
+      "recordedAt": "2026-10-02T04:26:33.952Z",
+      "measuredFiles": 7511,
+      "workingGraphSha256": "3ae4327497eb3f91d15133b693fd483eef2f305ac1fc037b2db894ce19becfbe",
+      "changedPaths": ["src/codegen/promise-combinators.ts"],
+      "approvedFourExportsOnly": true,
+      "nonOwnerTrackedMeasuredPathsEqualIndex": true,
+      "gitWorkingDiffSha256": "5a421c14bce20c3ce9d13cca3bead78b7f3804bac55f58683610488a9565efc6"
+    },
+    "measuredGraphAfter": {
+      "measuredFiles": 7511,
+      "workingGraphSha256": "3ae4327497eb3f91d15133b693fd483eef2f305ac1fc037b2db894ce19becfbe",
+      "changedPaths": ["src/codegen/promise-combinators.ts"]
+    },
+    "unmeasuredParentPlanTransplants": [
+      "plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md",
+      "plan/issues/5197-es2015-standalone-promise-r2.md"
+    ],
+    "parentRecoverableCommits": ["373a50e70e", "21811a67ab", "30842439ad"],
+    "latestMainNotImported": "e473d92460af75ced29e9666e7e97cdde8df12ca"
+  },
+  "canonical": {
+    "handle": 46562,
+    "exit": 0
+  },
+  "full13Scoped": {
+    "handle": 76057,
+    "exit": 1,
+    "historicalDiagnostics": 16,
+    "productionDiagnostics": 0,
+    "additiveDiagnostics": 0
+  },
+  "historical12Ts7": {
+    "candidateExit": 1,
+    "baselineExit": 1,
+    "byteIdentical": true,
+    "candidateSha256": "9511004f5c7a076dca1f8271bb641610f8a977aca0fefedea937be1d1c44e6bb",
+    "baselineSha256": "9511004f5c7a076dca1f8271bb641610f8a977aca0fefedea937be1d1c44e6bb",
+    "candidateDiagnostics": 16,
+    "baselineDiagnostics": 16
+  },
+  "runtimeManifest": {
+    "runnerHandle": 7777,
+    "runnerPid": 77726,
+    "runnerExit": 0,
+    "candidate": {
+      "authored": 384,
+      "collected": 144,
+      "passed": 144,
+      "failed": 0,
+      "uncollected": 240
+    },
+    "baseline": {
+      "authored": 273,
+      "collected": 33,
+      "passed": 33,
+      "failed": 0,
+      "uncollected": 240
+    },
+    "pairs": [
+      {
+        "path": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+        "baseline": {
+          "authored": 33,
+          "collected": 33,
+          "passed": 33,
+          "failed": 0,
+          "uncollected": 0
+        },
+        "candidate": {
+          "authored": 33,
+          "collected": 33,
+          "passed": 33,
+          "failed": 0,
+          "uncollected": 0
+        },
+        "rowNamesAndStatusesEqual": true,
+        "stderrByteIdentical": true,
+        "baselineStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "candidateStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tests/issue-3518-promise-earlier-main-port.test.ts",
+        "baseline": {
+          "authored": 216,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 216
+        },
+        "candidate": {
+          "authored": 216,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 216
+        },
+        "rowNamesAndStatusesEqual": true,
+        "stderrByteIdentical": true,
+        "baselineStderrSha256": "eb99d384861c333e4ec5ea059bd603ecfe32d5eed86fdce166eb649e0693d9ca",
+        "candidateStderrSha256": "eb99d384861c333e4ec5ea059bd603ecfe32d5eed86fdce166eb649e0693d9ca"
+      },
+      {
+        "path": "tests/issue-3518-promise-export-main-port.test.ts",
+        "baseline": {
+          "authored": 24,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 24
+        },
+        "candidate": {
+          "authored": 24,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 24
+        },
+        "rowNamesAndStatusesEqual": true,
+        "stderrByteIdentical": true,
+        "baselineStderrSha256": "3a30e414cfde7cc64ba8acdd7a7c0d0af14987e9c54fd10cd3e3e60598251614",
+        "candidateStderrSha256": "3a30e414cfde7cc64ba8acdd7a7c0d0af14987e9c54fd10cd3e3e60598251614"
+      }
+    ],
+    "files": [
+      {
+        "ordinal": 6,
+        "id": "candidate-issue-6651-d5-promise-dynamic-then",
+        "path": "tests/issue-6651-d5-promise-dynamic-then.test.ts",
+        "exit": 0,
+        "pid": null,
+        "handle": 98019,
+        "counts": {
+          "authored": 9,
+          "collected": 9,
+          "passed": 9,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 7,
+        "id": "candidate-issue-5197-r3-promise",
+        "path": "tests/issue-5197-r3-promise.test.ts",
+        "exit": 0,
+        "pid": 77763,
+        "handle": null,
+        "counts": {
+          "authored": 21,
+          "collected": 21,
+          "passed": 21,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 8,
+        "id": "candidate-issue-5197-promise-observable-combinator-r3-2",
+        "path": "tests/issue-5197-promise-observable-combinator-r3-2.test.ts",
+        "exit": 0,
+        "pid": 77933,
+        "handle": null,
+        "counts": {
+          "authored": 13,
+          "collected": 13,
+          "passed": 13,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 9,
+        "id": "candidate-issue-3518-promise-getter-capture",
+        "path": "tests/issue-3518-promise-getter-capture.test.ts",
+        "exit": 0,
+        "pid": 78046,
+        "handle": null,
+        "counts": {
+          "authored": 14,
+          "collected": 14,
+          "passed": 14,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 10,
+        "id": "candidate-issue-6651-promise-combinator-drive",
+        "path": "tests/issue-6651-promise-combinator-drive.test.ts",
+        "exit": 0,
+        "pid": 78180,
+        "handle": null,
+        "counts": {
+          "authored": 10,
+          "collected": 10,
+          "passed": 10,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 11,
+        "id": "candidate-issue-6651-promise-custom-combinator",
+        "path": "tests/issue-6651-promise-custom-combinator.test.ts",
+        "exit": 0,
+        "pid": 78439,
+        "handle": null,
+        "counts": {
+          "authored": 8,
+          "collected": 8,
+          "passed": 8,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 12,
+        "id": "candidate-issue-6651-d3-class-receiver-combinator",
+        "path": "tests/issue-6651-d3-class-receiver-combinator.test.ts",
+        "exit": 0,
+        "pid": 83664,
+        "handle": null,
+        "counts": {
+          "authored": 12,
+          "collected": 12,
+          "passed": 12,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 13,
+        "id": "candidate-issue-6651-d4-promise-subclass",
+        "path": "tests/issue-6651-d4-promise-subclass.test.ts",
+        "exit": 0,
+        "pid": 86856,
+        "handle": null,
+        "counts": {
+          "authored": 12,
+          "collected": 12,
+          "passed": 12,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 14,
+        "id": "candidate-issue-2918-promise-then-funcidx-shift",
+        "path": "tests/issue-2918-promise-then-funcidx-shift.test.ts",
+        "exit": 0,
+        "pid": 87577,
+        "handle": null,
+        "counts": {
+          "authored": 4,
+          "collected": 4,
+          "passed": 4,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 15,
+        "id": "main-issue-3518-native-delay-combinator-body-ownership",
+        "path": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+        "exit": 0,
+        "pid": 87732,
+        "handle": null,
+        "counts": {
+          "authored": 33,
+          "collected": 33,
+          "passed": 33,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 16,
+        "id": "candidate-issue-3518-native-delay-combinator-body-ownership",
+        "path": "tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+        "exit": 0,
+        "pid": 88089,
+        "handle": null,
+        "counts": {
+          "authored": 33,
+          "collected": 33,
+          "passed": 33,
+          "failed": 0,
+          "uncollected": 0
+        }
+      },
+      {
+        "ordinal": 17,
+        "id": "main-issue-3518-promise-earlier-main-port",
+        "path": "tests/issue-3518-promise-earlier-main-port.test.ts",
+        "exit": 1,
+        "pid": 90561,
+        "handle": null,
+        "counts": {
+          "authored": 216,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 216
+        }
+      },
+      {
+        "ordinal": 18,
+        "id": "candidate-issue-3518-promise-earlier-main-port",
+        "path": "tests/issue-3518-promise-earlier-main-port.test.ts",
+        "exit": 1,
+        "pid": 90983,
+        "handle": null,
+        "counts": {
+          "authored": 216,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 216
+        }
+      },
+      {
+        "ordinal": 19,
+        "id": "main-issue-3518-promise-export-main-port",
+        "path": "tests/issue-3518-promise-export-main-port.test.ts",
+        "exit": 1,
+        "pid": 91380,
+        "handle": null,
+        "counts": {
+          "authored": 24,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 24
+        }
+      },
+      {
+        "ordinal": 20,
+        "id": "candidate-issue-3518-promise-export-main-port",
+        "path": "tests/issue-3518-promise-export-main-port.test.ts",
+        "exit": 1,
+        "pid": 91807,
+        "handle": null,
+        "counts": {
+          "authored": 24,
+          "collected": 0,
+          "passed": 0,
+          "failed": 0,
+          "uncollected": 24
+        }
+      },
+      {
+        "ordinal": 21,
+        "id": "candidate-additive",
+        "path": "tests/issue-3518-promise-main-reconcile-20261002.test.ts",
+        "exit": 0,
+        "pid": 92265,
+        "handle": null,
+        "counts": {
+          "authored": 8,
+          "collected": 8,
+          "passed": 8,
+          "failed": 0,
+          "uncollected": 0
+        }
+      }
+    ],
+    "rawReceiptsRoot": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-runtime-20261002"
+  },
+  "broader": {
+    "runnerHandle": 33169,
+    "runnerPid": 94023,
+    "runnerExit": 0,
+    "runnerRevisionSha256": "b589c7dc6f145a6f835e19edbb04bc54345bf0cedbf6d84522e93886b7755d00",
+    "sourceDeclaredControls": 401,
+    "candidate": {
+      "collected": 401,
+      "passed": 280,
+      "failed": 113,
+      "pending": 8
+    },
+    "pairedBaseline": {
+      "collected": 205,
+      "passed": 92,
+      "failed": 113,
+      "pending": 0
+    },
+    "files": [
+      {
+        "id": "candidate-issue-5197-promise-generic-capability",
+        "path": "tests/issue-5197-promise-generic-capability.test.ts",
+        "exit": 0,
+        "pid": 94063,
+        "counts": {
+          "collected": 10,
+          "passed": 2,
+          "failed": 0,
+          "pending": 8
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/01-candidate-issue-5197-promise-generic-capability.stdout.raw",
+            "bytes": 832,
+            "sha256": "bacd659bb9a26f71ea715725f078642370188d9cc2b0862cead5840743390de1"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/01-candidate-issue-5197-promise-generic-capability.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/01-candidate-issue-5197-promise-generic-capability.json",
+            "bytes": 4462,
+            "sha256": "82d3784c6ace2db80fe6a96a4ea6b8ebea3ca32723d24d7a874d330f6bb54d46"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-3518-native-delay-combinator-source-preservation",
+        "path": "tests/issue-3518-native-delay-combinator-source-preservation.test.ts",
+        "exit": 1,
+        "pid": 94297,
+        "counts": {
+          "collected": 145,
+          "passed": 64,
+          "failed": 81,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-candidate-issue-3518-native-delay-combinator-source-preservation.stdout.raw",
+            "bytes": 62460,
+            "sha256": "4c82df48937a88a01ef662e8834ff17abe1b3a0961c5866af08a33d3f4008f32"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-candidate-issue-3518-native-delay-combinator-source-preservation.stderr.raw",
+            "bytes": 32094,
+            "sha256": "922e6af0184341070a7ffb94afba22a1a71970808f46b4aee46f05ceb6c932bf"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-candidate-issue-3518-native-delay-combinator-source-preservation.json",
+            "bytes": 188682,
+            "sha256": "38bdea4b84e2ddfa75cf97a28a666c9fce854ebaa2b697e08518ddeb5a270654"
+          }
+        }
+      },
+      {
+        "id": "main-issue-3518-native-delay-combinator-source-preservation",
+        "path": "tests/issue-3518-native-delay-combinator-source-preservation.test.ts",
+        "exit": 1,
+        "pid": 94463,
+        "counts": {
+          "collected": 145,
+          "passed": 64,
+          "failed": 81,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-main-issue-3518-native-delay-combinator-source-preservation.stdout.raw",
+            "bytes": 64077,
+            "sha256": "f681bcc4b079a1260ab57b2b34592ce212dae2ab4f0cdc57435fb739e8520c6b"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-main-issue-3518-native-delay-combinator-source-preservation.stderr.raw",
+            "bytes": 32094,
+            "sha256": "922e6af0184341070a7ffb94afba22a1a71970808f46b4aee46f05ceb6c932bf"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-main-issue-3518-native-delay-combinator-source-preservation.json",
+            "bytes": 191581,
+            "sha256": "ada8b1b6c9a556429f2357ac883f0944cfb521733ac2a1ebb876ed561cb699e5"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-3518-promise-resolution-preservation",
+        "path": "tests/issue-3518-promise-resolution-preservation.test.ts",
+        "exit": 1,
+        "pid": 94859,
+        "counts": {
+          "collected": 52,
+          "passed": 22,
+          "failed": 30,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-candidate-issue-3518-promise-resolution-preservation.stdout.raw",
+            "bytes": 10421,
+            "sha256": "571f2c6bd505d7c44c6c1c6ea549233ef9e6609504d60d06f3762bb2bd98ac39"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-candidate-issue-3518-promise-resolution-preservation.stderr.raw",
+            "bytes": 15051,
+            "sha256": "68dd3f015873fdf94f544ef91f36d34a5db01c0386bae8c0f6ebb8f2374c3a3f"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-candidate-issue-3518-promise-resolution-preservation.json",
+            "bytes": 61964,
+            "sha256": "25dd08cca5e9e0964bcd6eccf94be5f445e127dbd8b78c279ec386a24cd3b469"
+          }
+        }
+      },
+      {
+        "id": "main-issue-3518-promise-resolution-preservation",
+        "path": "tests/issue-3518-promise-resolution-preservation.test.ts",
+        "exit": 1,
+        "pid": 95091,
+        "counts": {
+          "collected": 52,
+          "passed": 22,
+          "failed": 30,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-main-issue-3518-promise-resolution-preservation.stdout.raw",
+            "bytes": 10423,
+            "sha256": "eb5d012c13bc0ed63872a926e0068828902ddd7710db1ba285404b4817e24b7d"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-main-issue-3518-promise-resolution-preservation.stderr.raw",
+            "bytes": 15051,
+            "sha256": "68dd3f015873fdf94f544ef91f36d34a5db01c0386bae8c0f6ebb8f2374c3a3f"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-main-issue-3518-promise-resolution-preservation.json",
+            "bytes": 62365,
+            "sha256": "73a63c6d274aa8b72d05e45fe3b0e2dde1ba700d3850ec8b4d50173761fa6e9c"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-3518-promise-settlement-source-preservation",
+        "path": "tests/issue-3518-promise-settlement-source-preservation.test.ts",
+        "exit": 0,
+        "pid": 95328,
+        "counts": {
+          "collected": 19,
+          "passed": 19,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/04-candidate-issue-3518-promise-settlement-source-preservation.stdout.raw",
+            "bytes": 1156,
+            "sha256": "219e7c5aefca9c3747a9d7311ce11a9c9691eb29e8da772002d7355724873378"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/04-candidate-issue-3518-promise-settlement-source-preservation.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/04-candidate-issue-3518-promise-settlement-source-preservation.json",
+            "bytes": 9887,
+            "sha256": "c8bdbcf58aa5acd098fd6400a72de95033b7a12f40c4f897e0a9804e36f6a5a5"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-3518-compiler-boundaries",
+        "path": "tests/issue-3518-compiler-boundaries.test.ts",
+        "exit": 0,
+        "pid": 95589,
+        "counts": {
+          "collected": 125,
+          "passed": 125,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/05-candidate-issue-3518-compiler-boundaries.stdout.raw",
+            "bytes": 15506,
+            "sha256": "8dfe294eb1626df0d5f590f27b95e9c3742be7e79a471fbc5a764e2facf195e1"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/05-candidate-issue-3518-compiler-boundaries.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/05-candidate-issue-3518-compiler-boundaries.json",
+            "bytes": 42744,
+            "sha256": "0104db2f20b052b650c0427985ea53f2d2d626496354b1f77fb695a0038af324"
+          }
+        }
+      },
+      {
+        "id": "candidate-promise-combinators",
+        "path": "tests/promise-combinators.test.ts",
+        "exit": 1,
+        "pid": 99714,
+        "counts": {
+          "collected": 8,
+          "passed": 6,
+          "failed": 2,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-candidate-promise-combinators.stdout.raw",
+            "bytes": 1800,
+            "sha256": "eba8336695c4d42bc4ba6cbcc27de1894b9e8d84e89dc74b63de66eb9b253013"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-candidate-promise-combinators.stderr.raw",
+            "bytes": 1290,
+            "sha256": "95d9f966df70759ca372f8bca6b43a362fb19ce5ef31e7dc694de07307d13649"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-candidate-promise-combinators.json",
+            "bytes": 8012,
+            "sha256": "2957ad3e8286e4fa7fa829130c7f97458543ec9192829a01dcb93c19e45a91b4"
+          }
+        }
+      },
+      {
+        "id": "main-promise-combinators",
+        "path": "tests/promise-combinators.test.ts",
+        "exit": 1,
+        "pid": 99991,
+        "counts": {
+          "collected": 8,
+          "passed": 6,
+          "failed": 2,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-main-promise-combinators.stdout.raw",
+            "bytes": 1802,
+            "sha256": "fba0da1f0de5c1d362ec8f88963a0fe573baa5927a3e46e3b92c808fd5dd9f45"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-main-promise-combinators.stderr.raw",
+            "bytes": 1290,
+            "sha256": "95d9f966df70759ca372f8bca6b43a362fb19ce5ef31e7dc694de07307d13649"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-main-promise-combinators.json",
+            "bytes": 8037,
+            "sha256": "94caebe722ac9f04a2f17ebe30832684e278759773ae0ec5bebdc5a8197b3b6c"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-2867-string-combinator",
+        "path": "tests/issue-2867-string-combinator.test.ts",
+        "exit": 0,
+        "pid": 823,
+        "counts": {
+          "collected": 12,
+          "passed": 12,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/07-candidate-issue-2867-string-combinator.stdout.raw",
+            "bytes": 860,
+            "sha256": "cf5baebfde8802c3ee5067b59b77078d5f337d0fb35d2229bcf8dff7ee27893f"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/07-candidate-issue-2867-string-combinator.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/07-candidate-issue-2867-string-combinator.json",
+            "bytes": 4634,
+            "sha256": "4733849eb5eaa7558758773301e2d2dc62e919d20e9c24e7f50f333d10dfde5a"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-3134-promise-value-slot-rep",
+        "path": "tests/issue-3134-promise-value-slot-rep.test.ts",
+        "exit": 0,
+        "pid": 951,
+        "counts": {
+          "collected": 5,
+          "passed": 5,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/08-candidate-issue-3134-promise-value-slot-rep.stdout.raw",
+            "bytes": 675,
+            "sha256": "edd490ea79e5ae3a198d9c322b58c55b334cd6181b2ca7d28a1b4d489df76d5c"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/08-candidate-issue-3134-promise-value-slot-rep.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/08-candidate-issue-3134-promise-value-slot-rep.json",
+            "bytes": 2801,
+            "sha256": "6275426458e011345ef131ce44869e1c03ca0be2066bf42ee2eb75a8fd05361a"
+          }
+        }
+      },
+      {
+        "id": "candidate-issue-3220-promise-return-double-wrap",
+        "path": "tests/issue-3220-promise-return-double-wrap.test.ts",
+        "exit": 0,
+        "pid": 1366,
+        "counts": {
+          "collected": 6,
+          "passed": 6,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/09-candidate-issue-3220-promise-return-double-wrap.stdout.raw",
+            "bytes": 924,
+            "sha256": "451cde9a685751658fc08d3c9237ee1fba56139e983c668c06d244c793923925"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/09-candidate-issue-3220-promise-return-double-wrap.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/09-candidate-issue-3220-promise-return-double-wrap.json",
+            "bytes": 3579,
+            "sha256": "28830e0e281b5cd8ad504b6ab5ff7c5f6b3d469726b0a6a8295ce6ccc55d1902"
+          }
+        }
+      },
+      {
+        "id": "candidate-promise-chains",
+        "path": "tests/equivalence/promise-chains.test.ts",
+        "exit": 0,
+        "pid": 1543,
+        "counts": {
+          "collected": 8,
+          "passed": 8,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/10-candidate-promise-chains.stdout.raw",
+            "bytes": 581,
+            "sha256": "f904d941622cd33141aac7c4846c2e8dc5fe1414580d1a39d49c4ec3e76dfddf"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/10-candidate-promise-chains.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/10-candidate-promise-chains.json",
+            "bytes": 2872,
+            "sha256": "dd243f029ecdc02d22609d44e8117039e0b83088d3ad4d07129a81c4d899cb32"
+          }
+        }
+      },
+      {
+        "id": "candidate-ir-slice10-promise",
+        "path": "tests/equivalence/ir-slice10-promise.test.ts",
+        "exit": 0,
+        "pid": 1686,
+        "counts": {
+          "collected": 11,
+          "passed": 11,
+          "failed": 0,
+          "pending": 0
+        },
+        "pinError": null,
+        "raw": {
+          "stdout": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/11-candidate-ir-slice10-promise.stdout.raw",
+            "bytes": 670,
+            "sha256": "c65d62c54d1e968cd4accdc29fdb83ab8306e57a2c0f012d9d21063dd350818c"
+          },
+          "stderr": {
+            "file": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/11-candidate-ir-slice10-promise.stderr.raw",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "json": {
+            "path": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/11-candidate-ir-slice10-promise.json",
+            "bytes": 4766,
+            "sha256": "7411f90b4ec3a81f77ddad0b3d859dc690bdeb3b83b2d56a9c3a3c36eb4cd242"
+          }
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "path": "tests/issue-3518-native-delay-combinator-source-preservation.test.ts",
+        "candidate": {
+          "collected": 145,
+          "passed": 64,
+          "failed": 81,
+          "pending": 0
+        },
+        "baseline": {
+          "collected": 145,
+          "passed": 64,
+          "failed": 81,
+          "pending": 0
+        },
+        "rowDifferences": [],
+        "comparedRows": 145,
+        "baselineRows": 145,
+        "normalization": "checkout root paths only"
+      },
+      {
+        "path": "tests/issue-3518-promise-resolution-preservation.test.ts",
+        "candidate": {
+          "collected": 52,
+          "passed": 22,
+          "failed": 30,
+          "pending": 0
+        },
+        "baseline": {
+          "collected": 52,
+          "passed": 22,
+          "failed": 30,
+          "pending": 0
+        },
+        "rowDifferences": [],
+        "comparedRows": 52,
+        "baselineRows": 52,
+        "normalization": "checkout root paths only"
+      },
+      {
+        "path": "tests/promise-combinators.test.ts",
+        "candidate": {
+          "collected": 8,
+          "passed": 6,
+          "failed": 2,
+          "pending": 0
+        },
+        "baseline": {
+          "collected": 8,
+          "passed": 6,
+          "failed": 2,
+          "pending": 0
+        },
+        "rowDifferences": [],
+        "comparedRows": 8,
+        "baselineRows": 8,
+        "normalization": "checkout root paths only"
+      }
+    ],
+    "pendingRows": [
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/resolve/capability-invocation-error.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/resolve/ctx-ctor-throws.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/reject/capability-invocation-error.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/reject/ctx-ctor-throws.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/reject/capability-executor-not-callable.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/reject/S25.4.4.4_A3.1_T1.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/executor-function-extensible.js",
+        "status": "skipped"
+      },
+      {
+        "name": "#5197 Slice D — generic NewPromiseCapability(C) passes the exact standalone Test262 row built-ins/Promise/executor-function-length.js",
+        "status": "skipped"
+      }
+    ],
+    "rawReceiptsRoot": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002"
+  },
+  "preservedInfrastructureFailure": {
+    "exit": 1,
+    "receipt": "second-pass/outcomes.json",
+    "originalRunner": ".tmp/assignment-D/run-runtime-paired.original.mjs.txt",
+    "originalRunnerSha256": "45453d727f43080af047d87ee467209f0fa0b188e627f25a5cac6e2598c3d3b8",
+    "remedy": "Only baseline broad Git diff was restricted to entire src/scripts, relevant root configs/manifests, historical12 tests and141 fixture paths; HEAD and measured index pinned to exact 2bfe. No LFS config or asset modification."
+  },
+  "provenance": {
+    "node": "v22.23.2",
+    "nodeExecutable": "/Users/thomas/.nvm/versions/node/v22.23.2/bin/node",
+    "candidateAndBaselineDependencies": "/Users/thomas/Code/js2/node_modules",
+    "ts7EntrypointSha256": "cbdfbf11c26ed00dfc073155e316a42d6d6d8a387be61006b82fa9aa93ac572e",
+    "vitestEntrypointSha256": "39db22f579acf5639bbb17a261408debbde03f4692c0c439e77e7f13aeba74d6",
+    "forks": 1,
+    "fileParallelism": false,
+    "maxConcurrency": 1,
+    "fixtureOrConfigChanges": false
+  },
+  "holds": [
+    "Full architecture boundary failure remains retirement blocker, not waived by125 detector unit tests.",
+    "Historical earlier-main216/export24 controls uncollected on both arms; exact dependency failures preserved.",
+    "Broader113 failing controls match exact main (source81, resolution30, Promise all/race2 timeout rows). No row differences after only checkout-root normalization.",
+    "Generic capability8 original Test262 rows pending/skipped via original availability guard; never claimed passed.",
+    "Current e473 main composition and any checkpoint publication remain unperformed and require serialized parent-controlled steps. No full-migration/retirement certification."
+  ],
+  "noActions": [
+    "no semantic retries",
+    "no source fixes beyond reviewed four exports/additive bytes",
+    "no fixture refresh/skip/rebaseline",
+    "no new-main merge",
+    "no hooks",
+    "no commits",
+    "no push"
+  ],
+  "archivePolicy": "Compact metadata only. All fresh per-process JSON/raw/exit receipts remain at the durable owned worktree paths above. Original first boundary archive and NOT_RUN manifest are untouched; no duplicate giant boundary archive."
+}

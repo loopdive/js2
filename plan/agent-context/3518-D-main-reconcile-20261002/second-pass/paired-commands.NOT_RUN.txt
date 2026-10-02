@@ -1,0 +1,4 @@
+Deploy the archived identical config bytes at .tmp/assignment-D/tsconfig.historical12.json in candidate and isolated exact 2bfe baseline (already present). Do not run this archive path as a project: extends is deployment-relative.
+Candidate: node node_modules/typescript7/lib/tsc.js --noEmit -p .tmp/assignment-D/tsconfig.historical12.json
+Exact main: same command in /Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002
+Compare full diagnostics for the same 12 historical entry files: path, line, column, TS code, message and continuation bytes. Source diagnostics separately; additive absent from baseline. No loosened flags or suppressed errors.

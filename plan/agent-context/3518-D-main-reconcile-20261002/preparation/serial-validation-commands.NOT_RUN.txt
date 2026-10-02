@@ -1,0 +1,97 @@
+Serial validation commands (NOT EXECUTED; no slot grant)
+
+Candidate: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+Paired exact-main checkout: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002 (setup pending)
+
+Two typechecks, formatting and two boundary gates; then one test file per process.
+Candidate existing: 12 files / 376 source-declared controls.
+Additive: 1 file / 8 source-declared controls. Candidate total: 13 / 384.
+Paired exact main: ownership 33 + earlier pins 216 + export pins 24 = 273 declarations.
+Collection/import failures must report actual collected/executed separately from these source counts.
+
+For each step capture separate first raw log and exit alongside its JSON result; do not use && to hide later results.
+
+1. candidate-source-ts7
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+
+2. candidate-scoped-tests-ts7
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+node node_modules/typescript7/lib/tsc.js --noEmit -p .tmp/assignment-D/tsconfig.tests.json
+
+3. candidate-format
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+pnpm exec prettier --check scripts/compiler-boundaries.json src/codegen/promise-combinators.ts src/codegen/promise-combinator-observable-protocol.ts src/codegen/promise-observable-combinators.ts src/codegen/promise-combinator-drive.ts tests/issue-3518-promise-main-reconcile-20261002.test.ts
+
+4. candidate-inventory
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+node scripts/check-compiler-boundaries.mjs --mode inventory
+
+5. candidate-full-boundaries
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+node scripts/check-compiler-boundaries.mjs
+
+6. candidate-issue-6651-d5-promise-dynamic-then (9 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-d5-promise-dynamic-then.json tests/issue-6651-d5-promise-dynamic-then.test.ts
+
+7. candidate-issue-5197-r3-promise (21 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-5197-r3-promise.json tests/issue-5197-r3-promise.test.ts
+
+8. candidate-issue-5197-promise-observable-combinator-r3-2 (13 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-5197-promise-observable-combinator-r3-2.json tests/issue-5197-promise-observable-combinator-r3-2.test.ts
+
+9. candidate-issue-3518-promise-getter-capture (14 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-getter-capture.json tests/issue-3518-promise-getter-capture.test.ts
+
+10. candidate-issue-6651-promise-combinator-drive (10 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-promise-combinator-drive.json tests/issue-6651-promise-combinator-drive.test.ts
+
+11. candidate-issue-6651-promise-custom-combinator (8 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-promise-custom-combinator.json tests/issue-6651-promise-custom-combinator.test.ts
+
+12. candidate-issue-6651-d3-class-receiver-combinator (12 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-d3-class-receiver-combinator.json tests/issue-6651-d3-class-receiver-combinator.test.ts
+
+13. candidate-issue-6651-d4-promise-subclass (12 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-6651-d4-promise-subclass.json tests/issue-6651-d4-promise-subclass.test.ts
+
+14. candidate-issue-2918-promise-then-funcidx-shift (4 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-2918-promise-then-funcidx-shift.json tests/issue-2918-promise-then-funcidx-shift.test.ts
+
+15. main-issue-3518-native-delay-combinator-body-ownership (33 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-native-delay-combinator-body-ownership.json tests/issue-3518-native-delay-combinator-body-ownership.test.ts
+
+16. candidate-issue-3518-native-delay-combinator-body-ownership (33 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-native-delay-combinator-body-ownership.json tests/issue-3518-native-delay-combinator-body-ownership.test.ts
+
+17. main-issue-3518-promise-earlier-main-port (216 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-earlier-main-port.json tests/issue-3518-promise-earlier-main-port.test.ts
+
+18. candidate-issue-3518-promise-earlier-main-port (216 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-earlier-main-port.json tests/issue-3518-promise-earlier-main-port.test.ts
+
+19. main-issue-3518-promise-export-main-port (24 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-exact-main-validation-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-export-main-port.json tests/issue-3518-promise-export-main-port.test.ts
+
+20. candidate-issue-3518-promise-export-main-port (24 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-export-main-port.json tests/issue-3518-promise-export-main-port.test.ts
+
+21. candidate-additive (8 source-declared controls)
+cwd: /Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002
+VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=.tmp/assignment-D-validation/issue-3518-promise-main-reconcile-20261002.json tests/issue-3518-promise-main-reconcile-20261002.test.ts
+

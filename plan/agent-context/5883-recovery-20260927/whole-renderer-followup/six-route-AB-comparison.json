@@ -1,0 +1,384 @@
+{
+  "leftArm": "A",
+  "rightArm": "B",
+  "denominator": 6,
+  "exact": 6,
+  "surfaceCheckPassed": true,
+  "exactEqualityPassed": true,
+  "repairGraphDeltaReviewed": false,
+  "identityEvidenceNormalized": false,
+  "rows": [
+    {
+      "id": "all-captured-observable",
+      "observed": true,
+      "healthy": true,
+      "positiveEmission": true,
+      "receiptEqual": true,
+      "exact": true,
+      "allowedAB": true,
+      "evidence": {
+        "source.ts": {
+          "equal": true,
+          "leftHash": "5dbe6ee6e660f1d0668a3c83bd8b520cd61edfa82d27dd58032c3c4fc2f70c4c",
+          "rightHash": "5dbe6ee6e660f1d0668a3c83bd8b520cd61edfa82d27dd58032c3c4fc2f70c4c"
+        },
+        "native.js": {
+          "equal": true,
+          "leftHash": "70d33caf083a2885c28693cde467493cf5d22b7ea7f95d2c1fff932706935754",
+          "rightHash": "70d33caf083a2885c28693cde467493cf5d22b7ea7f95d2c1fff932706935754"
+        },
+        "entry-0-before.json": {
+          "equal": true,
+          "leftHash": "a82a7ee03a5cd3ca52ca88403b4a81c87c2aee81541a56d84a321db0c77b4cae",
+          "rightHash": "a82a7ee03a5cd3ca52ca88403b4a81c87c2aee81541a56d84a321db0c77b4cae"
+        },
+        "entry-0-after.json": {
+          "equal": true,
+          "leftHash": "1b0872bbf428e29a1461811941c77bc107d344dbc15b95f96987f61f99294b85",
+          "rightHash": "1b0872bbf428e29a1461811941c77bc107d344dbc15b95f96987f61f99294b85"
+        },
+        "wat": {
+          "equal": true,
+          "leftHash": "9d604cec7c806fa60515e0d7499e43417abf8e633c937a845ae4c983608adfca",
+          "rightHash": "9d604cec7c806fa60515e0d7499e43417abf8e633c937a845ae4c983608adfca"
+        },
+        "wasm": {
+          "equal": true,
+          "leftHash": "887ea61463938c00907504c189c1159077c000d628575554a6f06e63faac72fb",
+          "rightHash": "887ea61463938c00907504c189c1159077c000d628575554a6f06e63faac72fb"
+        }
+      },
+      "outcomes": [
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "12",
+          "nativeError": null,
+          "actual": "12",
+          "runtimeError": null
+        },
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "12",
+          "nativeError": null,
+          "actual": "12",
+          "runtimeError": null
+        }
+      ],
+      "internalInterval": "UNKNOWN: full entry only"
+    },
+    {
+      "id": "all-legacy-observable",
+      "observed": true,
+      "healthy": true,
+      "positiveEmission": true,
+      "receiptEqual": true,
+      "exact": true,
+      "allowedAB": true,
+      "evidence": {
+        "source.ts": {
+          "equal": true,
+          "leftHash": "e0390d9cc28eb537fb6e0ffb51bfdececc909d6cadf1a7e3bd824c425943247d",
+          "rightHash": "e0390d9cc28eb537fb6e0ffb51bfdececc909d6cadf1a7e3bd824c425943247d"
+        },
+        "native.js": {
+          "equal": true,
+          "leftHash": "5a7945ad189a7069f234b55de8a2ed4c9d6e8595147eee5de0f527f16fff1052",
+          "rightHash": "5a7945ad189a7069f234b55de8a2ed4c9d6e8595147eee5de0f527f16fff1052"
+        },
+        "entry-0-before.json": {
+          "equal": true,
+          "leftHash": "052960978c16ee48672fac8cd93da70c937c65a698c859dd7d9e3443be2a4fa8",
+          "rightHash": "052960978c16ee48672fac8cd93da70c937c65a698c859dd7d9e3443be2a4fa8"
+        },
+        "entry-0-after.json": {
+          "equal": true,
+          "leftHash": "cba4b4b5c72e3fa018d09bf0751976c11034578ff182264d75c4d99b3b3eca27",
+          "rightHash": "cba4b4b5c72e3fa018d09bf0751976c11034578ff182264d75c4d99b3b3eca27"
+        },
+        "wat": {
+          "equal": true,
+          "leftHash": "668c8b16f631d78886d6d0179fbb4275e11f65731afd2af95e24831dedec02d9",
+          "rightHash": "668c8b16f631d78886d6d0179fbb4275e11f65731afd2af95e24831dedec02d9"
+        },
+        "wasm": {
+          "equal": true,
+          "leftHash": "afb99c89d94f22ca8198c9ab0dc99ff788b33fc55c55543ddf161dc42f01a51c",
+          "rightHash": "afb99c89d94f22ca8198c9ab0dc99ff788b33fc55c55543ddf161dc42f01a51c"
+        }
+      },
+      "outcomes": [
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "12",
+          "nativeError": null,
+          "actual": "12",
+          "runtimeError": null
+        },
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "12",
+          "nativeError": null,
+          "actual": "12",
+          "runtimeError": null
+        }
+      ],
+      "internalInterval": "UNKNOWN: full entry only"
+    },
+    {
+      "id": "all-legacy-plain",
+      "observed": true,
+      "healthy": true,
+      "positiveEmission": true,
+      "receiptEqual": true,
+      "exact": true,
+      "allowedAB": true,
+      "evidence": {
+        "source.ts": {
+          "equal": true,
+          "leftHash": "c67f4ae0423fe9db1fa995fb4a1e2f1889d4a98cba8b1fc4c174dfd24bf24b1e",
+          "rightHash": "c67f4ae0423fe9db1fa995fb4a1e2f1889d4a98cba8b1fc4c174dfd24bf24b1e"
+        },
+        "native.js": {
+          "equal": true,
+          "leftHash": "e9d2deecc3dbd73becae92362450695ee13292beadc9e983a3b89dbe1a7a0dff",
+          "rightHash": "e9d2deecc3dbd73becae92362450695ee13292beadc9e983a3b89dbe1a7a0dff"
+        },
+        "entry-0-before.json": {
+          "equal": true,
+          "leftHash": "40fe74ed8aef3d78bbd42f4be199b1c49b902b687b537434cba22d8d73a6c335",
+          "rightHash": "40fe74ed8aef3d78bbd42f4be199b1c49b902b687b537434cba22d8d73a6c335"
+        },
+        "entry-0-after.json": {
+          "equal": true,
+          "leftHash": "feff52f15794c0657dab0b7a3579dca11714423e9dd948e49bfcda31c41abf07",
+          "rightHash": "feff52f15794c0657dab0b7a3579dca11714423e9dd948e49bfcda31c41abf07"
+        },
+        "wat": {
+          "equal": true,
+          "leftHash": "114a3f74f63d9667147df9cd5a42022618aa035f6a50b71ed57553d1ed31e660",
+          "rightHash": "114a3f74f63d9667147df9cd5a42022618aa035f6a50b71ed57553d1ed31e660"
+        },
+        "wasm": {
+          "equal": true,
+          "leftHash": "ccd0fe975995d913fdaade03aa7caf2bade1553b227f8043bbbf5d9d119bbf4d",
+          "rightHash": "ccd0fe975995d913fdaade03aa7caf2bade1553b227f8043bbbf5d9d119bbf4d"
+        }
+      },
+      "outcomes": [
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "12",
+          "nativeError": null,
+          "actual": "12",
+          "runtimeError": null
+        },
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "12",
+          "nativeError": null,
+          "actual": "12",
+          "runtimeError": null
+        }
+      ],
+      "internalInterval": "UNKNOWN: full entry only"
+    },
+    {
+      "id": "race-captured-observable",
+      "observed": true,
+      "healthy": true,
+      "positiveEmission": true,
+      "receiptEqual": true,
+      "exact": true,
+      "allowedAB": true,
+      "evidence": {
+        "source.ts": {
+          "equal": true,
+          "leftHash": "dd5c3d8334e884c44ab2e22f6e5479d8fc84e83cb05a3fc4a983c5559121dd43",
+          "rightHash": "dd5c3d8334e884c44ab2e22f6e5479d8fc84e83cb05a3fc4a983c5559121dd43"
+        },
+        "native.js": {
+          "equal": true,
+          "leftHash": "c61ae8dc2b419cc2d834d7882fc6b3ac9c34968783982c10e755e7289c931de4",
+          "rightHash": "c61ae8dc2b419cc2d834d7882fc6b3ac9c34968783982c10e755e7289c931de4"
+        },
+        "entry-0-before.json": {
+          "equal": true,
+          "leftHash": "a82a7ee03a5cd3ca52ca88403b4a81c87c2aee81541a56d84a321db0c77b4cae",
+          "rightHash": "a82a7ee03a5cd3ca52ca88403b4a81c87c2aee81541a56d84a321db0c77b4cae"
+        },
+        "entry-0-after.json": {
+          "equal": true,
+          "leftHash": "0e3cd852f3601adc75df5fee328982b4af4974ef4afcaab6a51245547b38492c",
+          "rightHash": "0e3cd852f3601adc75df5fee328982b4af4974ef4afcaab6a51245547b38492c"
+        },
+        "wat": {
+          "equal": true,
+          "leftHash": "3f71d780e68403474dd629abf2a9e7dbc09983ca0537b02234e19ac1c290691b",
+          "rightHash": "3f71d780e68403474dd629abf2a9e7dbc09983ca0537b02234e19ac1c290691b"
+        },
+        "wasm": {
+          "equal": true,
+          "leftHash": "73652e77e8f2495972fed0726c47145558c45725a6e2eac8c48307a2181db283",
+          "rightHash": "73652e77e8f2495972fed0726c47145558c45725a6e2eac8c48307a2181db283"
+        }
+      },
+      "outcomes": [
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "1",
+          "nativeError": null,
+          "actual": "1",
+          "runtimeError": null
+        },
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "1",
+          "nativeError": null,
+          "actual": "1",
+          "runtimeError": null
+        }
+      ],
+      "internalInterval": "UNKNOWN: full entry only"
+    },
+    {
+      "id": "race-legacy-observable",
+      "observed": true,
+      "healthy": true,
+      "positiveEmission": true,
+      "receiptEqual": true,
+      "exact": true,
+      "allowedAB": true,
+      "evidence": {
+        "source.ts": {
+          "equal": true,
+          "leftHash": "174aaaba117b77933ba56b3110a7bb7e72b28d7ab461be9c57272f3cc9e50468",
+          "rightHash": "174aaaba117b77933ba56b3110a7bb7e72b28d7ab461be9c57272f3cc9e50468"
+        },
+        "native.js": {
+          "equal": true,
+          "leftHash": "e471e19c47b58b97f875963406ec673e25a7d4cdcda814f9eb8f3371690e22d3",
+          "rightHash": "e471e19c47b58b97f875963406ec673e25a7d4cdcda814f9eb8f3371690e22d3"
+        },
+        "entry-0-before.json": {
+          "equal": true,
+          "leftHash": "052960978c16ee48672fac8cd93da70c937c65a698c859dd7d9e3443be2a4fa8",
+          "rightHash": "052960978c16ee48672fac8cd93da70c937c65a698c859dd7d9e3443be2a4fa8"
+        },
+        "entry-0-after.json": {
+          "equal": true,
+          "leftHash": "dce2e544c0510d1d8a6414d1181bdeb62271adaa2f2cd930c8337f5f610f4b75",
+          "rightHash": "dce2e544c0510d1d8a6414d1181bdeb62271adaa2f2cd930c8337f5f610f4b75"
+        },
+        "wat": {
+          "equal": true,
+          "leftHash": "d4e6a19a8d9fa5eda14dc3cc142b3f311485431be9d6d277e97b24b57b575d0e",
+          "rightHash": "d4e6a19a8d9fa5eda14dc3cc142b3f311485431be9d6d277e97b24b57b575d0e"
+        },
+        "wasm": {
+          "equal": true,
+          "leftHash": "49a3d0e5a25feb7df8eb0cffcae92c384e8a73df00a55d51f98d6218bdfc6062",
+          "rightHash": "49a3d0e5a25feb7df8eb0cffcae92c384e8a73df00a55d51f98d6218bdfc6062"
+        }
+      },
+      "outcomes": [
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "1",
+          "nativeError": null,
+          "actual": "1",
+          "runtimeError": null
+        },
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "1",
+          "nativeError": null,
+          "actual": "1",
+          "runtimeError": null
+        }
+      ],
+      "internalInterval": "UNKNOWN: full entry only"
+    },
+    {
+      "id": "race-legacy-plain",
+      "observed": true,
+      "healthy": true,
+      "positiveEmission": true,
+      "receiptEqual": true,
+      "exact": true,
+      "allowedAB": true,
+      "evidence": {
+        "source.ts": {
+          "equal": true,
+          "leftHash": "da65843317a12d306ca832bcc0a1c937f4c353ecb816d35bd4daf6866ab6e66b",
+          "rightHash": "da65843317a12d306ca832bcc0a1c937f4c353ecb816d35bd4daf6866ab6e66b"
+        },
+        "native.js": {
+          "equal": true,
+          "leftHash": "5bb72bf22ef88307efe4138a054fe5058d9cf10e09b4b14f6b73ae72254849d0",
+          "rightHash": "5bb72bf22ef88307efe4138a054fe5058d9cf10e09b4b14f6b73ae72254849d0"
+        },
+        "entry-0-before.json": {
+          "equal": true,
+          "leftHash": "40fe74ed8aef3d78bbd42f4be199b1c49b902b687b537434cba22d8d73a6c335",
+          "rightHash": "40fe74ed8aef3d78bbd42f4be199b1c49b902b687b537434cba22d8d73a6c335"
+        },
+        "entry-0-after.json": {
+          "equal": true,
+          "leftHash": "439d6806a8a53aeab2993f5338a83abcd676f2a424e686f9300bb88c7b1c7e36",
+          "rightHash": "439d6806a8a53aeab2993f5338a83abcd676f2a424e686f9300bb88c7b1c7e36"
+        },
+        "wat": {
+          "equal": true,
+          "leftHash": "79a20e95f88f86d9e79e0ef577c2f60137009bc4753d664c16bffecaa003b403",
+          "rightHash": "79a20e95f88f86d9e79e0ef577c2f60137009bc4753d664c16bffecaa003b403"
+        },
+        "wasm": {
+          "equal": true,
+          "leftHash": "a435987b2744bbd195a7a3e73a6a32fc660f4005662d22928b955aabf005a62f",
+          "rightHash": "a435987b2744bbd195a7a3e73a6a32fc660f4005662d22928b955aabf005a62f"
+        }
+      },
+      "outcomes": [
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "1",
+          "nativeError": null,
+          "actual": "1",
+          "runtimeError": null
+        },
+        {
+          "success": true,
+          "errors": [],
+          "compileError": null,
+          "nativeActual": "1",
+          "nativeError": null,
+          "actual": "1",
+          "runtimeError": null
+        }
+      ],
+      "internalInterval": "UNKNOWN: full entry only"
+    }
+  ]
+}

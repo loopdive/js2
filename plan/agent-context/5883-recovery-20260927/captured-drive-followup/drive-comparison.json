@@ -1,0 +1,54 @@
+{
+  "denominator": 6,
+  "equal": 6,
+  "rows": [
+    {
+      "id": "all-captured-observable",
+      "entrySnapshotsEqual": true,
+      "binaryEqual": true,
+      "nativeActual": "12",
+      "actual": "12",
+      "internalInterval": "unknown"
+    },
+    {
+      "id": "all-legacy-observable",
+      "entrySnapshotsEqual": true,
+      "binaryEqual": true,
+      "nativeActual": "12",
+      "actual": "12",
+      "internalInterval": "unknown"
+    },
+    {
+      "id": "all-legacy-plain",
+      "entrySnapshotsEqual": true,
+      "binaryEqual": true,
+      "nativeActual": "12",
+      "actual": "12",
+      "internalInterval": "unknown"
+    },
+    {
+      "id": "race-captured-observable",
+      "entrySnapshotsEqual": true,
+      "binaryEqual": true,
+      "nativeActual": "1",
+      "actual": "1",
+      "internalInterval": "unknown"
+    },
+    {
+      "id": "race-legacy-observable",
+      "entrySnapshotsEqual": true,
+      "binaryEqual": true,
+      "nativeActual": "1",
+      "actual": "1",
+      "internalInterval": "unknown"
+    },
+    {
+      "id": "race-legacy-plain",
+      "entrySnapshotsEqual": true,
+      "binaryEqual": true,
+      "nativeActual": "1",
+      "actual": "1",
+      "internalInterval": "unknown"
+    }
+  ]
+}

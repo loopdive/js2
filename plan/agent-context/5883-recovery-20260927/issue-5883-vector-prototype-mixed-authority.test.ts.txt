@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Source-only acceptance additions. Existing eight parent controls are unchanged.
+// No expectation is conditional on the currently representable carrier subset.
+for (const [name, body] of [
+  [
+    "ordinary Object stores raw vector identity and inherits",
+    `
+    const o = {}; const a = [41]; Object.setPrototypeOf(o, a);
+    return Object.getPrototypeOf(o) === a && o[0] === 41 ? 1 : -1;`,
+  ],
+  [
+    "vector to Object then Object to vector throws",
+    `
+    const a = []; const o = {}; const before = Object.getPrototypeOf(o);
+    Object.setPrototypeOf(a, o); let threw = false;
+    try { Object.setPrototypeOf(o, a); } catch(e) { threw = e instanceof TypeError; }
+    return threw && Object.getPrototypeOf(a) === o && Object.getPrototypeOf(o) === before ? 1 : -1;`,
+  ],
+  [
+    "Object to vector then vector to Object throws",
+    `
+    const a = []; const o = {}; const before = Object.getPrototypeOf(a);
+    Object.setPrototypeOf(o, a); let threw = false;
+    try { Object.setPrototypeOf(a, o); } catch(e) { threw = e instanceof TypeError; }
+    return threw && Object.getPrototypeOf(o) === a && Object.getPrototypeOf(a) === before ? 1 : -1;`,
+  ],
+  [
+    "Reflect mixed-cycle refusal is false",
+    `
+    const a = []; const o = {}; const before = Object.getPrototypeOf(o);
+    Object.setPrototypeOf(a, o);
+    return Reflect.setPrototypeOf(o, a) === false && Object.getPrototypeOf(o) === before ? 1 : -1;`,
+  ],
+  [
+    "vector proxy prototype cycle validation invokes no trap",
+    `
+    let calls = 0; const a = []; const p = new Proxy({}, {
+      getPrototypeOf() { calls++; return a; }
+    });
+    Object.setPrototypeOf(a, p);
+    return calls === 0 && Object.getPrototypeOf(a) === p ? 1 : -1;`,
+  ],
+  [
+    "ordinary Object retains proxy identity without cycle trap",
+    `
+    let calls = 0; const o = {}; const p = new Proxy({}, {
+      getPrototypeOf() { calls++; return o; }
+    });
+    Object.setPrototypeOf(o, p);
+    return calls === 0 && Object.getPrototypeOf(o) === p ? 1 : -1;`,
+  ],
+] as const) {
+  it(`mixed prototype authority: ${name}`, async () => {
+    const source = `export function test() { ${body} }`;
+    const receipt = { name, source, sha256: createHash("sha256").update(source).digest("hex") };
+    let boundary = "native";
+    try {
+      const native = runInNewContext(`"use strict"; (function() { ${body} })()`, {}, { timeout: 5000 });
+      console.log(JSON.stringify({ ...receipt, native }));
+      expect(native).toBe(1);
+      boundary = "compile";
+      const result = await compile(source, {
+        target: "standalone",
+        nativeStrings: true,
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+      });
+      console.log(JSON.stringify({ ...receipt, success: result.success, errors: result.errors }));
+      expect(result.success).toBe(true);
+      boundary = "validate/import";
+      const module = new WebAssembly.Module(result.binary);
+      const imports = WebAssembly.Module.imports(module);
+      console.log(JSON.stringify({ ...receipt, imports }));
+      expect(imports).toEqual([]);
+      boundary = "instantiate/runtime";
+      const instance = new WebAssembly.Instance(module, {});
+      const actual = (instance.exports.test as () => number)();
+      console.log(JSON.stringify({ ...receipt, actual, native }));
+      expect(actual).toBe(native);
+    } catch (error) {
+      console.log(JSON.stringify({ ...receipt, boundary, error: String(error) }));
+      throw error;
+    }
+  });
+}

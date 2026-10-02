@@ -1,0 +1,269 @@
+{
+  "date": "2026-09-27",
+  "base": "dc1a9f02ba89a44af6ee264b41872ddf37f714b2",
+  "productionBase": "61d206221baa9e007d1da44233bce925952ebb03",
+  "node": "v22.23.2",
+  "runner": {
+    "path": "tests/issue-5197-observable-vector-original-review.test.ts",
+    "sha256": "95bc8fbfcd51bcedf4e832c9e0bc0af2423a70832f50a5c4114025c86628e8aa",
+    "source": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { createHash } from \"node:crypto\";\nimport { readFileSync } from \"node:fs\";\nimport { runInNewContext } from \"node:vm\";\nimport { expect, it } from \"vitest\";\nimport { compile } from \"../src/index.js\";\nimport { ts } from \"../src/ts-api.js\";\n\n// Original September 15 sources and expectations are immutable. Historical\n// compiler answers are evidence only, never the expected result of this test.\nconst bytes = readFileSync(\n  new URL(\"../plan/agent-context/5883-observable-vector-review-20260915.jsonl\", import.meta.url),\n);\nif (\n  createHash(\"sha256\").update(bytes).digest(\"hex\") !==\n  \"d9d792883c09853383845195ca9868ed97e506c6526b2434384c49a7f2d5f806\"\n) {\n  throw new Error(\"Original observable-vector review receipt changed\");\n}\ninterface ReviewCase {\n  method: \"all\" | \"race\";\n  variant: string;\n  source: string;\n  reference: number | { calls: number; length: number; trace: string };\n}\nconst cases: ReviewCase[] = bytes\n  .toString(\"utf8\")\n  .trim()\n  .split(\"\\n\")\n  .map((line) => JSON.parse(line));\nif (cases.length !== 12 || new Set(cases.map((row) => `${row.method}/${row.variant}`)).size !== 12) {\n  throw new Error(\"Expected all twelve unique original review cases\");\n}\n\nfor (const row of cases) {\n  it(`original review: Promise.${row.method} ${row.variant}`, async () => {\n    const expected =\n      typeof row.reference === \"number\"\n        ? row.reference\n        : row.reference.calls * 1_000_000 + Number(row.reference.trace) * 10 + row.reference.length;\n    // A fresh realm prevents the fixture's Promise.resolve replacement from\n    // modifying Vitest or another case. Only types/module syntax are removed.\n    const nativeSource = ts.transpileModule(row.source, {\n      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },\n    }).outputText;\n    const native = runInNewContext(\n      `${nativeSource}\\nexports.test();`,\n      { exports: {} },\n      {\n        timeout: 5000,\n        microtaskMode: \"afterEvaluate\",\n      },\n    );\n    expect(native).toBe(expected);\n    const result = await compile(row.source, {\n      fileName: `5197-original-${row.method}-${row.variant}.ts`,\n      target: \"standalone\",\n      nativeStrings: true,\n      emitWat: true,\n    });\n    expect(result.success, JSON.stringify(result.errors)).toBe(true);\n    const module = new WebAssembly.Module(result.binary);\n    const imports = WebAssembly.Module.imports(module);\n    expect(imports).toEqual([]);\n    const instance = new WebAssembly.Instance(module, {});\n    const actual = (instance.exports.test as () => number)();\n    console.log(\n      JSON.stringify({\n        method: row.method,\n        variant: row.variant,\n        sourceSha256: createHash(\"sha256\").update(row.source).digest(\"hex\"),\n        native,\n        expected,\n        actual,\n        imports,\n        observableBody: result.wat?.includes(\"__comb_observable_\") ?? false,\n      }),\n    );\n    expect(actual).toBe(expected);\n  });\n}\n"
+  },
+  "logs": [
+    {
+      "path": ".tmp/5883-original-vector-replay-dc1.log",
+      "sha256": "cbfbcfe2588c9e85f9e761a91179781cbcc6b92c10ee2074995908a667cd7d5d",
+      "source": "\n RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5883-preservation-repair-20260927\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all none\n{\"method\":\"all\",\"variant\":\"none\",\"sourceSha256\":\"031017ed51247fe152e2ff001f6e9aaa2d516370930aece5eefc28866a677368\",\"native\":3001233,\"expected\":3001233,\"actual\":3001233,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all grow-holes\n{\"method\":\"all\",\"variant\":\"grow-holes\",\"sourceSha256\":\"6bb205dc465d3442891f44217474e225980a1109e1f41143015e27303c326bf9\",\"native\":5123005,\"expected\":5123005,\"actual\":3001235,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-same\n{\"method\":\"all\",\"variant\":\"shrink-regrow-same\",\"sourceSha256\":\"2e89ca6eb5bc73fc5b17c06632fd2f8071c29ac8502191748ede8570221a293a\",\"native\":3001003,\"expected\":3001003,\"actual\":3001883,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-next\n{\"method\":\"all\",\"variant\":\"shrink-regrow-next\",\"sourceSha256\":\"4a0f121e31c040ef51cdfd82a0b93dbae3d9f334c36741d15372498c9de278a2\",\"native\":5120005,\"expected\":5120005,\"actual\":3001285,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race none\n{\"method\":\"race\",\"variant\":\"none\",\"sourceSha256\":\"03e2f2e94366cc197ffc195381daf760ed62c436772cca3b88ac752351e8fbae\",\"native\":3001233,\"expected\":3001233,\"actual\":3001233,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race grow-holes\n{\"method\":\"race\",\"variant\":\"grow-holes\",\"sourceSha256\":\"46cbbcce3353a106b75af748dcbfe70ee8135792fe96692ce5415cffa4d88461\",\"native\":5123005,\"expected\":5123005,\"actual\":3001235,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-same\n{\"method\":\"race\",\"variant\":\"shrink-regrow-same\",\"sourceSha256\":\"02fd637a54fe3aac3fcf5b8b142f3b0285745bd986f2b0a61a617cad7f1741c0\",\"native\":3001003,\"expected\":3001003,\"actual\":3001883,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-next\n{\"method\":\"race\",\"variant\":\"shrink-regrow-next\",\"sourceSha256\":\"5d417957aa674768c9eca21c0da6c0ad4168b82f794a274f9b7a051f2e8b7455\",\"native\":5120005,\"expected\":5120005,\"actual\":3001285,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all literal-hole\n{\"method\":\"all\",\"variant\":\"literal-hole\",\"sourceSha256\":\"28dc6d1587aca52133dbb93e042896600917871726e071cc5ca0323dafb3141f\",\"native\":3103,\"expected\":3103,\"actual\":3183,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all undefined-nan\n{\"method\":\"all\",\"variant\":\"undefined-nan\",\"sourceSha256\":\"83bbbcf84ce05ef2b924de7a86b0a5cbabf2ff00dc6603abe5c35a953ca55fff\",\"native\":3108,\"expected\":3108,\"actual\":3108,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race literal-hole\n{\"method\":\"race\",\"variant\":\"literal-hole\",\"sourceSha256\":\"1668ff69bbca99df8356254b68318becdce44cc9894deb39f6fa76f0e4ea6d55\",\"native\":3103,\"expected\":3103,\"actual\":3183,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race undefined-nan\n{\"method\":\"race\",\"variant\":\"undefined-nan\",\"sourceSha256\":\"dfa8f498024a99060f276560c46e601b6a4731582879a4403a11095efdfdadac\",\"native\":3108,\"expected\":3108,\"actual\":3108,\"imports\":[],\"observableBody\":true}\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts (12 tests | 8 failed) 4695ms\n   ✓ original review: Promise.all none  1231ms\n   × original review: Promise.all grow-holes 441ms\n     → expected 3001235 to be 5123005 // Object.is equality\n   × original review: Promise.all shrink-regrow-same 371ms\n     → expected 3001883 to be 3001003 // Object.is equality\n   × original review: Promise.all shrink-regrow-next 352ms\n     → expected 3001285 to be 5120005 // Object.is equality\n   ✓ original review: Promise.race none 300ms\n   × original review: Promise.race grow-holes 275ms\n     → expected 3001235 to be 5123005 // Object.is equality\n   × original review: Promise.race shrink-regrow-same 273ms\n     → expected 3001883 to be 3001003 // Object.is equality\n   × original review: Promise.race shrink-regrow-next 280ms\n     → expected 3001285 to be 5120005 // Object.is equality\n   × original review: Promise.all literal-hole 301ms\n     → expected 3183 to be 3103 // Object.is equality\n   ✓ original review: Promise.all undefined-nan 255ms\n   × original review: Promise.race literal-hole 266ms\n     → expected 3183 to be 3103 // Object.is equality\n   ✓ original review: Promise.race undefined-nan  350ms\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all grow-holes\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race grow-holes\nAssertionError: expected 3001235 to be 5123005 // Object.is equality\n\n- Expected\n+ Received\n\n- 5123005\n+ 3001235\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-same\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-same\nAssertionError: expected 3001883 to be 3001003 // Object.is equality\n\n- Expected\n+ Received\n\n- 3001003\n+ 3001883\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-next\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-next\nAssertionError: expected 3001285 to be 5120005 // Object.is equality\n\n- Expected\n+ Received\n\n- 5120005\n+ 3001285\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all literal-hole\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race literal-hole\nAssertionError: expected 3183 to be 3103 // Object.is equality\n\n- Expected\n+ Received\n\n- 3103\n+ 3183\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯\n\n\n Test Files  1 failed (1)\n      Tests  8 failed | 4 passed (12)\n   Start at  02:57:31\n   Duration  20.45s (transform 11.21s, setup 0ms, collect 15.44s, tests 4.70s, environment 0ms, prepare 55ms)\n\n",
+      "rows": [
+        {
+          "method": "all",
+          "variant": "none",
+          "sourceSha256": "031017ed51247fe152e2ff001f6e9aaa2d516370930aece5eefc28866a677368",
+          "native": 3001233,
+          "expected": 3001233,
+          "actual": 3001233,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "grow-holes",
+          "sourceSha256": "6bb205dc465d3442891f44217474e225980a1109e1f41143015e27303c326bf9",
+          "native": 5123005,
+          "expected": 5123005,
+          "actual": 3001235,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "shrink-regrow-same",
+          "sourceSha256": "2e89ca6eb5bc73fc5b17c06632fd2f8071c29ac8502191748ede8570221a293a",
+          "native": 3001003,
+          "expected": 3001003,
+          "actual": 3001883,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "shrink-regrow-next",
+          "sourceSha256": "4a0f121e31c040ef51cdfd82a0b93dbae3d9f334c36741d15372498c9de278a2",
+          "native": 5120005,
+          "expected": 5120005,
+          "actual": 3001285,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "none",
+          "sourceSha256": "03e2f2e94366cc197ffc195381daf760ed62c436772cca3b88ac752351e8fbae",
+          "native": 3001233,
+          "expected": 3001233,
+          "actual": 3001233,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "grow-holes",
+          "sourceSha256": "46cbbcce3353a106b75af748dcbfe70ee8135792fe96692ce5415cffa4d88461",
+          "native": 5123005,
+          "expected": 5123005,
+          "actual": 3001235,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "shrink-regrow-same",
+          "sourceSha256": "02fd637a54fe3aac3fcf5b8b142f3b0285745bd986f2b0a61a617cad7f1741c0",
+          "native": 3001003,
+          "expected": 3001003,
+          "actual": 3001883,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "shrink-regrow-next",
+          "sourceSha256": "5d417957aa674768c9eca21c0da6c0ad4168b82f794a274f9b7a051f2e8b7455",
+          "native": 5120005,
+          "expected": 5120005,
+          "actual": 3001285,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "literal-hole",
+          "sourceSha256": "28dc6d1587aca52133dbb93e042896600917871726e071cc5ca0323dafb3141f",
+          "native": 3103,
+          "expected": 3103,
+          "actual": 3183,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "undefined-nan",
+          "sourceSha256": "83bbbcf84ce05ef2b924de7a86b0a5cbabf2ff00dc6603abe5c35a953ca55fff",
+          "native": 3108,
+          "expected": 3108,
+          "actual": 3108,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "literal-hole",
+          "sourceSha256": "1668ff69bbca99df8356254b68318becdce44cc9894deb39f6fa76f0e4ea6d55",
+          "native": 3103,
+          "expected": 3103,
+          "actual": 3183,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "undefined-nan",
+          "sourceSha256": "dfa8f498024a99060f276560c46e601b6a4731582879a4403a11095efdfdadac",
+          "native": 3108,
+          "expected": 3108,
+          "actual": 3108,
+          "imports": [],
+          "observableBody": true
+        }
+      ]
+    },
+    {
+      "path": ".tmp/5883-original-vector-replay-drive.log",
+      "sha256": "abf6ddcbf6f4f78e851003ebaf68ac5fdd1ee2e252cf7129f2aaa06c323ddc9b",
+      "source": "\n RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5883-preservation-repair-20260927\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all none\n{\"method\":\"all\",\"variant\":\"none\",\"sourceSha256\":\"031017ed51247fe152e2ff001f6e9aaa2d516370930aece5eefc28866a677368\",\"native\":3001233,\"expected\":3001233,\"actual\":3001233,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all grow-holes\n{\"method\":\"all\",\"variant\":\"grow-holes\",\"sourceSha256\":\"6bb205dc465d3442891f44217474e225980a1109e1f41143015e27303c326bf9\",\"native\":5123005,\"expected\":5123005,\"actual\":3001235,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-same\n{\"method\":\"all\",\"variant\":\"shrink-regrow-same\",\"sourceSha256\":\"2e89ca6eb5bc73fc5b17c06632fd2f8071c29ac8502191748ede8570221a293a\",\"native\":3001003,\"expected\":3001003,\"actual\":3001233,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-next\n{\"method\":\"all\",\"variant\":\"shrink-regrow-next\",\"sourceSha256\":\"4a0f121e31c040ef51cdfd82a0b93dbae3d9f334c36741d15372498c9de278a2\",\"native\":5120005,\"expected\":5120005,\"actual\":3001235,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race none\n{\"method\":\"race\",\"variant\":\"none\",\"sourceSha256\":\"03e2f2e94366cc197ffc195381daf760ed62c436772cca3b88ac752351e8fbae\",\"native\":3001233,\"expected\":3001233,\"actual\":3001233,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race grow-holes\n{\"method\":\"race\",\"variant\":\"grow-holes\",\"sourceSha256\":\"46cbbcce3353a106b75af748dcbfe70ee8135792fe96692ce5415cffa4d88461\",\"native\":5123005,\"expected\":5123005,\"actual\":3001235,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-same\n{\"method\":\"race\",\"variant\":\"shrink-regrow-same\",\"sourceSha256\":\"02fd637a54fe3aac3fcf5b8b142f3b0285745bd986f2b0a61a617cad7f1741c0\",\"native\":3001003,\"expected\":3001003,\"actual\":3001233,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-next\n{\"method\":\"race\",\"variant\":\"shrink-regrow-next\",\"sourceSha256\":\"5d417957aa674768c9eca21c0da6c0ad4168b82f794a274f9b7a051f2e8b7455\",\"native\":5120005,\"expected\":5120005,\"actual\":3001235,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all literal-hole\n{\"method\":\"all\",\"variant\":\"literal-hole\",\"sourceSha256\":\"28dc6d1587aca52133dbb93e042896600917871726e071cc5ca0323dafb3141f\",\"native\":3103,\"expected\":3103,\"actual\":3183,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all undefined-nan\n{\"method\":\"all\",\"variant\":\"undefined-nan\",\"sourceSha256\":\"83bbbcf84ce05ef2b924de7a86b0a5cbabf2ff00dc6603abe5c35a953ca55fff\",\"native\":3108,\"expected\":3108,\"actual\":3108,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race literal-hole\n{\"method\":\"race\",\"variant\":\"literal-hole\",\"sourceSha256\":\"1668ff69bbca99df8356254b68318becdce44cc9894deb39f6fa76f0e4ea6d55\",\"native\":3103,\"expected\":3103,\"actual\":3183,\"imports\":[],\"observableBody\":true}\n\nstdout | tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race undefined-nan\n{\"method\":\"race\",\"variant\":\"undefined-nan\",\"sourceSha256\":\"dfa8f498024a99060f276560c46e601b6a4731582879a4403a11095efdfdadac\",\"native\":3108,\"expected\":3108,\"actual\":3108,\"imports\":[],\"observableBody\":true}\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts (12 tests | 8 failed) 7491ms\n   ✓ original review: Promise.all none  1538ms\n   × original review: Promise.all grow-holes 531ms\n     → expected 3001235 to be 5123005 // Object.is equality\n   × original review: Promise.all shrink-regrow-same 447ms\n     → expected 3001233 to be 3001003 // Object.is equality\n   × original review: Promise.all shrink-regrow-next 536ms\n     → expected 3001235 to be 5120005 // Object.is equality\n   ✓ original review: Promise.race none  469ms\n   × original review: Promise.race grow-holes 549ms\n     → expected 3001235 to be 5123005 // Object.is equality\n   × original review: Promise.race shrink-regrow-same 575ms\n     → expected 3001233 to be 3001003 // Object.is equality\n   × original review: Promise.race shrink-regrow-next 567ms\n     → expected 3001235 to be 5120005 // Object.is equality\n   × original review: Promise.all literal-hole 538ms\n     → expected 3183 to be 3103 // Object.is equality\n   ✓ original review: Promise.all undefined-nan  577ms\n   × original review: Promise.race literal-hole 548ms\n     → expected 3183 to be 3103 // Object.is equality\n   ✓ original review: Promise.race undefined-nan  612ms\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all grow-holes\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race grow-holes\nAssertionError: expected 3001235 to be 5123005 // Object.is equality\n\n- Expected\n+ Received\n\n- 5123005\n+ 3001235\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-same\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-same\nAssertionError: expected 3001233 to be 3001003 // Object.is equality\n\n- Expected\n+ Received\n\n- 3001003\n+ 3001233\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all shrink-regrow-next\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race shrink-regrow-next\nAssertionError: expected 3001235 to be 5120005 // Object.is equality\n\n- Expected\n+ Received\n\n- 5120005\n+ 3001235\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯\n\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.all literal-hole\n FAIL  tests/issue-5197-observable-vector-original-review.test.ts > original review: Promise.race literal-hole\nAssertionError: expected 3183 to be 3103 // Object.is equality\n\n- Expected\n+ Received\n\n- 3103\n+ 3183\n\n ❯ tests/issue-5197-observable-vector-original-review.test.ts:79:20\n     77|       }),\n     78|     );\n     79|     expect(actual).toBe(expected);\n       |                    ^\n     80|   });\n     81| }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯\n\n\n Test Files  1 failed (1)\n      Tests  8 failed | 4 passed (12)\n   Start at  02:59:00\n   Duration  27.20s (transform 13.60s, setup 0ms, collect 19.30s, tests 7.49s, environment 0ms, prepare 59ms)\n\n",
+      "rows": [
+        {
+          "method": "all",
+          "variant": "none",
+          "sourceSha256": "031017ed51247fe152e2ff001f6e9aaa2d516370930aece5eefc28866a677368",
+          "native": 3001233,
+          "expected": 3001233,
+          "actual": 3001233,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "grow-holes",
+          "sourceSha256": "6bb205dc465d3442891f44217474e225980a1109e1f41143015e27303c326bf9",
+          "native": 5123005,
+          "expected": 5123005,
+          "actual": 3001235,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "shrink-regrow-same",
+          "sourceSha256": "2e89ca6eb5bc73fc5b17c06632fd2f8071c29ac8502191748ede8570221a293a",
+          "native": 3001003,
+          "expected": 3001003,
+          "actual": 3001233,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "shrink-regrow-next",
+          "sourceSha256": "4a0f121e31c040ef51cdfd82a0b93dbae3d9f334c36741d15372498c9de278a2",
+          "native": 5120005,
+          "expected": 5120005,
+          "actual": 3001235,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "none",
+          "sourceSha256": "03e2f2e94366cc197ffc195381daf760ed62c436772cca3b88ac752351e8fbae",
+          "native": 3001233,
+          "expected": 3001233,
+          "actual": 3001233,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "grow-holes",
+          "sourceSha256": "46cbbcce3353a106b75af748dcbfe70ee8135792fe96692ce5415cffa4d88461",
+          "native": 5123005,
+          "expected": 5123005,
+          "actual": 3001235,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "shrink-regrow-same",
+          "sourceSha256": "02fd637a54fe3aac3fcf5b8b142f3b0285745bd986f2b0a61a617cad7f1741c0",
+          "native": 3001003,
+          "expected": 3001003,
+          "actual": 3001233,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "shrink-regrow-next",
+          "sourceSha256": "5d417957aa674768c9eca21c0da6c0ad4168b82f794a274f9b7a051f2e8b7455",
+          "native": 5120005,
+          "expected": 5120005,
+          "actual": 3001235,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "literal-hole",
+          "sourceSha256": "28dc6d1587aca52133dbb93e042896600917871726e071cc5ca0323dafb3141f",
+          "native": 3103,
+          "expected": 3103,
+          "actual": 3183,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "all",
+          "variant": "undefined-nan",
+          "sourceSha256": "83bbbcf84ce05ef2b924de7a86b0a5cbabf2ff00dc6603abe5c35a953ca55fff",
+          "native": 3108,
+          "expected": 3108,
+          "actual": 3108,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "literal-hole",
+          "sourceSha256": "1668ff69bbca99df8356254b68318becdce44cc9894deb39f6fa76f0e4ea6d55",
+          "native": 3103,
+          "expected": 3103,
+          "actual": 3183,
+          "imports": [],
+          "observableBody": true
+        },
+        {
+          "method": "race",
+          "variant": "undefined-nan",
+          "sourceSha256": "dfa8f498024a99060f276560c46e601b6a4731582879a4403a11095efdfdadac",
+          "native": 3108,
+          "expected": 3108,
+          "actual": 3108,
+          "imports": [],
+          "observableBody": true
+        }
+      ]
+    }
+  ],
+  "conclusion": "Both arms 4/12; all native controls pass. Existing drive snapshots numeric arrays. Candidate not a repair; production patch removed after preservation. No retirement or hold removal.",
+  "experimentalPatch": "diff --git a/src/codegen/expressions/call-namespace-static.ts b/src/codegen/expressions/call-namespace-static.ts\nindex db66414ecd..bfa76e8bc3 100644\n--- a/src/codegen/expressions/call-namespace-static.ts\n+++ b/src/codegen/expressions/call-namespace-static.ts\n@@ -3030,6 +3030,12 @@ export function compileNamespaceStaticCall(\n             typeIdx: admittedVecShape.vecTypeIdx,\n           });\n           fctx.body.push({ op: \"local.set\", index: argVecLocal });\n+          // Consume the same evaluated vector through its iterator. Observable\n+          // callbacks can change its length, holes, or iteration protocol.\n+          const driven = observableCombinator\n+            ? emitStandalonePromiseCombinatorDrive(ctx, fctx, methodName, arg0, true, argVecLocal)\n+            : undefined;\n+          if (driven) return driven;\n           return observableCombinator\n             ? emitObservableStandalonePromiseCombinatorRuntime(\n                 ctx,\ndiff --git a/src/codegen/promise-combinator-drive.ts b/src/codegen/promise-combinator-drive.ts\nindex 6a2ac4a89b..24d2b34a54 100644\n--- a/src/codegen/promise-combinator-drive.ts\n+++ b/src/codegen/promise-combinator-drive.ts\n@@ -295,6 +295,7 @@ export function emitStandalonePromiseCombinatorDrive(\n   method: NativeCombinator,\n   arg0: ts.Expression,\n   observableProtocol: boolean,\n+  evaluatedVecLocal?: number,\n ): ValType | undefined {\n   // `allSettled` / `any` keep the legacy drain (their reaction bodies are\n   // index-array based; no measured row needs them driven yet).\n@@ -318,7 +319,8 @@ export function emitStandalonePromiseCombinatorDrive(\n   }\n \n   // Argument evaluation completes before the builtin runs.\n-  compileExpression(ctx, fctx, arg0, EXTERNREF);\n+  if (evaluatedVecLocal === undefined) compileExpression(ctx, fctx, arg0, EXTERNREF);\n+  else fctx.body.push({ op: \"local.get\", index: evaluatedVecLocal }, { op: \"extern.convert_any\" });\n   const L: DriveLocals = {\n     argLocal: allocLocal(fctx, `__comb_drive_arg_${fctx.locals.length}`, EXTERNREF),\n     iterLocal: allocLocal(fctx, `__comb_drive_iter_${fctx.locals.length}`, EXTERNREF),\n"
+}

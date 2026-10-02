@@ -1,0 +1,26 @@
+diff --git a/src/codegen/expressions/call-identifier.ts b/src/codegen/expressions/call-identifier.ts
+index 9ecbb70baa..098bcfc711 100644
+--- a/src/codegen/expressions/call-identifier.ts
++++ b/src/codegen/expressions/call-identifier.ts
+@@ -1424,8 +1424,19 @@ function compileBoundIdentifierCall(
+         if (reToStr !== undefined && reToStr !== null) return reToStr;
+       }
+ 
+-      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(strArg0) === "bigint";
+-      const argType = compileExpression(ctx, fctx, strArg0, hostBigIntArg ? { kind: "externref" } : undefined);
++      const isBigIntArg = ctx.oracle.staticJsTypeOf(strArg0) === "bigint";
++      const hostBigIntArg = usesHostBigIntCarrier(ctx) && isBigIntArg;
++      // Native BigInt literals/expressions wider than i64 need a reference
++      // result BEFORE compilation; boxing an already-truncated i64 is too late.
++      // Only proven BigInt operands take this path. Number, Symbol, unknown and
++      // object arguments retain their existing evaluation/coercion branches.
++      const nativeBigIntArg = ctx.standalone && ctx.nativeStrings && isBigIntArg;
++      const argType = compileExpression(
++        ctx,
++        fctx,
++        strArg0,
++        hostBigIntArg || nativeBigIntArg ? { kind: "externref" } : undefined,
++      );
+ 
+       if (argType === null) {
+         // String(void-expr) → "undefined"

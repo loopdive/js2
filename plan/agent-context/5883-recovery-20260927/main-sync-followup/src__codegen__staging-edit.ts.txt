@@ -1,0 +1,266 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * First isolated editor slice: materialized leaf removal and sequence reorder.
+ * Uses the existing arena/tokens; owns physical snapshots, not another ledger.
+ * No pending recipe, operand edit, provider readiness, lowering or caller wiring.
+ */
+import type {
+  CompletedBody,
+  EmissionOwnership,
+  EmissionRegion,
+  EmissionTransaction,
+} from "./context/emission-ownership.js";
+import { assertStageLayout, inspectStageBody, type StagePlacement } from "./staging-census.js";
+import {
+  materializedStageChildren,
+  stageContainer,
+  stageRegion,
+  type StageBody,
+  type StageChildSlot,
+  type StageContainerNode,
+  type StageNode,
+  type StageRegion,
+} from "./staging-instr.js";
+
+interface PhysicalVersion {
+  readonly body: StageBody;
+  readonly expected: readonly StagePlacement[];
+}
+interface EditFrame {
+  readonly token: EmissionTransaction;
+  readonly before: PhysicalVersion;
+}
+
+function copyLayout(layout: readonly StagePlacement[]): readonly StagePlacement[] {
+  return Object.freeze(
+    layout.map((placement) =>
+      Object.freeze({
+        region: placement.region,
+        parent:
+          placement.parent.kind === "body"
+            ? Object.freeze({ ...placement.parent })
+            : Object.freeze({ ...placement.parent, slot: Object.freeze({ ...placement.parent.slot }) }),
+        nodeIdentities: Object.freeze([...placement.nodeIdentities]),
+      }),
+    ),
+  );
+}
+
+/** Reorder only the independent expected layout, not the observed physical tree. */
+function changeExpectedSequence(
+  expected: readonly StagePlacement[],
+  region: EmissionRegion,
+  order: readonly object[],
+): readonly StagePlacement[] {
+  const updated = expected.map((p) => (p.region === region ? { ...p, nodeIdentities: order } : p));
+  const children = new Map<object, StagePlacement[]>();
+  const roots: StagePlacement[] = [];
+  for (const p of updated) {
+    if (p.parent.kind === "body") roots.push(p);
+    else {
+      const entries = children.get(p.parent.nodeIdentity) ?? [];
+      entries.push(p); // Existing child-slot order is unchanged by these edits.
+      children.set(p.parent.nodeIdentity, entries);
+    }
+  }
+  const ordered: StagePlacement[] = [];
+  const stack = [...roots].reverse();
+  while (stack.length) {
+    const p = stack.pop()!;
+    ordered.push(p);
+    for (let i = p.nodeIdentities.length - 1; i >= 0; i--) {
+      const descendants = children.get(p.nodeIdentities[i]!) ?? [];
+      for (let j = descendants.length - 1; j >= 0; j--) stack.push(descendants[j]!);
+    }
+  }
+  if (ordered.length !== updated.length) throw new Error("Edit would lose a materialized child region");
+  return copyLayout(ordered);
+}
+
+function replaceChild(node: StageContainerNode, slot: StageChildSlot, child: StageRegion): StageContainerNode {
+  const instruction = node.instruction;
+  switch (instruction.op) {
+    case "block":
+    case "loop":
+    case "try_table":
+      if (slot.kind === "body") return stageContainer({ ...instruction, body: child }, node);
+      break;
+    case "if":
+      if (slot.kind === "then") return stageContainer({ ...instruction, then: child }, node);
+      if (slot.kind === "else" && instruction.else) return stageContainer({ ...instruction, else: child }, node);
+      break;
+    case "try":
+      if (slot.kind === "body") return stageContainer({ ...instruction, body: child }, node);
+      if (slot.kind === "catchAll" && instruction.catchAll) {
+        return stageContainer({ ...instruction, catchAll: child }, node);
+      }
+      if (slot.kind === "catch" && instruction.catches[slot.index]) {
+        return stageContainer(
+          {
+            ...instruction,
+            catches: instruction.catches.map((c, i) => (i === slot.index ? { ...c, body: child } : c)),
+          },
+          node,
+        );
+      }
+  }
+  throw new Error("Stale materialized child slot");
+}
+
+/** Iterative path copying; no mutation of frozen containers or old snapshots. */
+function replaceSequence(body: StageBody, target: EmissionRegion, nodes: readonly StageNode[]): StageBody {
+  const census = inspectStageBody(body);
+  const regions = new Map<EmissionRegion, StageRegion>([[body.root.region, body.root]]);
+  const placements = new Map(census.layout.map((p) => [p.region, p]));
+  const visits = new Map(census.visits.map((v) => [v.node.nodeIdentity, v]));
+  for (const visit of census.visits) {
+    for (const child of materializedStageChildren(visit.node)) regions.set(child.region.region, child.region);
+  }
+  const original = regions.get(target);
+  if (!original) throw new Error("Unknown physical region");
+  let replacement = stageRegion(body.body, target, nodes);
+  for (;;) {
+    const placement = placements.get(replacement.region)!;
+    if (placement.parent.kind === "body") return Object.freeze({ ...body, root: replacement });
+    const parent = visits.get(placement.parent.nodeIdentity)!;
+    if (parent.node.kind !== "container") throw new Error("Physical parent is not a container");
+    const container = replaceChild(parent.node, placement.parent.slot, replacement);
+    const parentRegion = regions.get(parent.region)!;
+    replacement = stageRegion(
+      body.body,
+      parent.region,
+      parentRegion.nodes.map((node, index) => (index === parent.index ? container : node)),
+    );
+  }
+}
+
+/**
+ * Transfer exclusive close authority for an OPEN construction token to this
+ * editor. The adapter must route all subsequent body edits/token closes here.
+ * Current ledger API cannot enforce that discipline against external callers.
+ * Expected layout must be supplied independently, not echoed from this class.
+ */
+export class StagingBodyEditor {
+  private current: PhysicalVersion;
+  private readonly frames: EditFrame[];
+  private closed = false;
+
+  constructor(
+    private readonly ownership: EmissionOwnership,
+    body: StageBody,
+    constructionToken: EmissionTransaction,
+    expected: readonly StagePlacement[],
+  ) {
+    const copy = copyLayout(expected);
+    assertStageLayout(inspectStageBody(body), copy);
+    this.current = Object.freeze({ body: Object.freeze({ ...body }), expected: copy });
+    this.frames = [{ token: constructionToken, before: this.current }];
+  }
+
+  snapshot(): StageBody {
+    return this.current.body;
+  }
+  expectedLayout(): readonly StagePlacement[] {
+    return this.current.expected;
+  }
+
+  private editable(): void {
+    if (this.closed) throw new Error("Staging editor is closed");
+    assertStageLayout(inspectStageBody(this.current.body), this.current.expected);
+  }
+  private top(token: EmissionTransaction): EditFrame {
+    this.editable();
+    const top = this.frames[this.frames.length - 1];
+    if (!top || top.token !== token) throw new Error("Editor scopes must close in LIFO order");
+    return top;
+  }
+  beginEdit(): EmissionTransaction {
+    this.editable();
+    const token = this.ownership.beginContentTransaction(this.current.body.body);
+    this.frames.push({ token, before: this.current });
+    return token;
+  }
+  commitEdit(token: EmissionTransaction): void {
+    this.top(token);
+    if (this.frames.length === 1) throw new Error("Use complete for the construction scope");
+    this.ownership.commitTransaction(token);
+    this.frames.pop(); // Parent's saved physical version still owns rollback.
+  }
+  rollbackEdit(token: EmissionTransaction): void {
+    const frame = this.top(token);
+    this.ownership.rollbackTransaction(token);
+    this.current = frame.before;
+    this.frames.pop();
+    if (this.frames.length === 0) this.closed = true;
+  }
+
+  /** No generic rewrite callback: exact removal of one existing concrete leaf. */
+  removeLeaf(nodeIdentity: object): void {
+    this.editable();
+    const census = inspectStageBody(this.current.body);
+    const location = census.visits.find((visit) => visit.node.nodeIdentity === nodeIdentity);
+    if (!location) throw new Error("Unknown physical node");
+    if (location.node.kind !== "leaf") throw new Error("Subtree removal requires an attachment-receipt contract");
+    const nodes = census.visits
+      .filter((visit) => visit.region === location.region)
+      .map((visit) => visit.node)
+      .filter((node) => node.nodeIdentity !== nodeIdentity);
+    const next = this.prepareSequence(location.region, nodes);
+    const token = this.ownership.beginContentTransaction(this.current.body.body);
+    try {
+      if (location.node.occurrence) this.ownership.removeOccurrence(location.node.occurrence.occurrence);
+      for (const adoption of location.node.adoptions ?? []) this.ownership.detachEdge(adoption.edge);
+    } catch (error) {
+      this.ownership.rollbackTransaction(token);
+      throw error;
+    }
+    // Both roots and journal data are prepared before closing the local scope.
+    // No source callbacks or fallible preparation between commit and install.
+    this.ownership.commitTransaction(token);
+    this.current = next;
+  }
+
+  /** Bijection only: cannot insert, remove or reparent a node under this name. */
+  reorderSequence(region: EmissionRegion, order: readonly object[]): void {
+    this.editable();
+    const census = inspectStageBody(this.current.body);
+    if (!census.layout.some((p) => p.region === region)) throw new Error("Unknown physical region");
+    const old = census.visits.filter((visit) => visit.region === region).map((visit) => visit.node);
+    const byIdentity = new Map(old.map((node) => [node.nodeIdentity, node]));
+    if (order.length !== old.length || new Set(order).size !== old.length || order.some((id) => !byIdentity.has(id))) {
+      throw new Error("Reorder requires an exact identity permutation");
+    }
+    const next = this.prepareSequence(
+      region,
+      order.map((id) => byIdentity.get(id)!),
+    );
+    const token = this.ownership.beginContentTransaction(this.current.body.body);
+    this.ownership.commitTransaction(token); // Membership unchanged; paired physical scope remains rollbackable.
+    this.current = next;
+  }
+
+  private prepareSequence(region: EmissionRegion, nodes: readonly StageNode[]): PhysicalVersion {
+    const expected = changeExpectedSequence(
+      this.current.expected,
+      region,
+      nodes.map((node) => node.nodeIdentity),
+    );
+    const body = replaceSequence(this.current.body, region, nodes);
+    assertStageLayout(inspectStageBody(body), expected);
+    return Object.freeze({ body, expected });
+  }
+
+  complete(): Readonly<{ body: StageBody; receipt: CompletedBody }> {
+    this.editable();
+    if (this.frames.length !== 1) throw new Error("Close nested editor scopes before completion");
+    const census = inspectStageBody(this.current.body);
+    assertStageLayout(census, this.current.expected);
+    this.ownership.commitTransaction(this.frames[0]!.token);
+    this.frames.pop();
+    this.closed = true;
+    // A mismatch is an integration defect. No raw seal, retry, or receipt stub.
+    const receipt = this.ownership.completeBodyEpoch(this.current.body.body, census.manifest);
+    return Object.freeze({ body: this.current.body, receipt });
+  }
+}
+

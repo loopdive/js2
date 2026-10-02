@@ -1,0 +1,121 @@
+{
+  "numTotalTestSuites": 2,
+  "numPassedTestSuites": 2,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 9,
+  "numPassedTests": 9,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1790914834909,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise typeof id(p).then / .catch / .finally is 'function'",
+          "status": "passed",
+          "title": "typeof id(p).then / .catch / .finally is 'function'",
+          "duration": 984.4740000000002,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise the read is the %Promise.prototype% member itself (identity), typed or untyped",
+          "status": "passed",
+          "title": "the read is the %Promise.prototype% member itself (identity), typed or untyped",
+          "duration": 285.88629200000105,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise p.then.length / p.catch.length on a Promise-typed receiver are the spec lengths (S25.4.5.3_A1.1_T2)",
+          "status": "passed",
+          "title": "p.then.length / p.catch.length on a Promise-typed receiver are the spec lengths (S25.4.5.3_A1.1_T2)",
+          "duration": 263.8368329999994,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise an extracted then, called with the promise as this, subscribes",
+          "status": "passed",
+          "title": "an extracted then, called with the promise as this, subscribes",
+          "duration": 246.46124999999847,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise Promise.all.call(C) over a C.resolve that answers native promises settles (D1 Invoke)",
+          "status": "passed",
+          "title": "Promise.all.call(C) over a C.resolve that answers native promises settles (D1 Invoke)",
+          "duration": 349.24012500000026,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise control: a program that WRITES Promise.prototype.then reads the override back (companion path, green on base too)",
+          "status": "passed",
+          "title": "control: a program that WRITES Promise.prototype.then reads the override back (companion path, green on base too)",
+          "duration": 468.342666999999,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise Promise.all([...]) Invokes an overridden Promise.prototype.then on native elements (§27.2.4.1.1)",
+          "status": "passed",
+          "title": "Promise.all([...]) Invokes an overridden Promise.prototype.then on native elements (§27.2.4.1.1)",
+          "duration": 326.01233299999876,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise control: an OWN then still shadows the prototype member",
+          "status": "passed",
+          "title": "control: an OWN then still shadows the prototype member",
+          "duration": 193.93287500000224,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["#6651 D5 — dynamic reads of Promise.prototype members on a native promise"],
+          "fullName": "#6651 D5 — dynamic reads of Promise.prototype members on a native promise control: a module that never reads a promise member as a value does not mint the member closure",
+          "status": "passed",
+          "title": "control: a module that never reads a promise member as a value does not mint the member closure",
+          "duration": 204.8134170000012,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790914849246,
+      "endTime": 1790914852570.8135,
+      "status": "passed",
+      "message": "",
+      "name": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/tests/issue-6651-d5-promise-dynamic-then.test.ts"
+    }
+  ]
+}

@@ -1,0 +1,951 @@
+{
+  "purpose": "Preservation check for dynamic-proto and instance-props extraction only; not IR equivalence or retirement proof.",
+  "command": "VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 VITEST_MAX_FORKS=1 pnpm exec vitest run tests/issue-5883-iterator-protocol-get.test.ts tests/issue-5883-runtime-to-object.test.ts --reporter=json --outputFile=<arm-report>",
+  "originalAttempts": "Both default-512MB attempts failed with heap OOM; logs retained locally; no usable reports.",
+  "limitation": "Four failing rows per arm have null failure messages in the JSON reporter. Matching statuses do not establish equality of those exception values. All original tests and expectations remain unchanged.",
+  "rowsEqual": true,
+  "arms": [
+    {
+      "arm": "baseline",
+      "root": "/private/tmp/js2-5883-main-sync-20260927",
+      "reportPath": "/private/tmp/js2-5883-main-sync-20260927/.tmp/last-two-extraction-baseline-2gb.json",
+      "reportSha256": "3ba21eb63eb3ef006105ab7c468498185de9a397e5dd5a1ec86efe054e9ead45",
+      "total": 52,
+      "passed": 29,
+      "failed": 23,
+      "pending": 0,
+      "rows": [
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own undefined is a hit and the genuine symbol differs from its textual spelling",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get captures an inherited next getter once with the actual iterator receiver",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get keeps values and Symbol.iterator independent after assignment and deletion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "01e45a194e1c9cf97e5d931c256b9657d4702f0f6d836c681aa340ffd00d3880"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get retains top-level writes before and after acquisition in source order",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get a deleted prototype method continues to the parent without reviving a cached assignment",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "b91666ebb9f63d02cd33a8e39defc60cf5713a68cc030e338d7ee6f393a3b8d6"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get IterRec prototype getters retain this across nested and throwing Reflect.get",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get proxy Get traps receive the actual iterator and next is captured once",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "296d4605137e3b5123772cca2d821536512dcb68fcf9ead7aa2342625578216e"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own undefined next on IterRec rejects instead of selecting the intrinsic",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec next accessor returns undefined without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec next accessor throws without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec return data preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec return undefined-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec return throwing-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get IterRec assignment, descriptors, deletion and integrity share one private-field-free identity bag",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "4870c4730b9418b0ca013d79d336b5bcfe0c39d0af13ceecd8bf086d48f39e1c"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get dynamic prototype chains preserve nested explicit and proxy receivers after a throw",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected '(module\\n  (type $__vec_base (sub (st…' to contain '__iterator_protocol_get'",
+              "normalizedSha256": "138a5f850c0373e90d16f471b8384f3b1be98d6381dc453fcc9f8b3ee3ea0ae2"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get uses a custom source-vector prototype (storage prerequisite)",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "7b9ee7e421394925ecff23e70bcf05d10e5765469008635789d40dd03cb71e77"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own undefined is a hit and the genuine symbol differs from its textual spelling",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get captures an inherited next getter once with the actual iterator receiver",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get keeps values and Symbol.iterator independent after assignment and deletion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "01e45a194e1c9cf97e5d931c256b9657d4702f0f6d836c681aa340ffd00d3880"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get retains top-level writes before and after acquisition in source order",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get a deleted prototype method continues to the parent without reviving a cached assignment",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "b91666ebb9f63d02cd33a8e39defc60cf5713a68cc030e338d7ee6f393a3b8d6"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get IterRec prototype getters retain this across nested and throwing Reflect.get",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get proxy Get traps receive the actual iterator and next is captured once",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "296d4605137e3b5123772cca2d821536512dcb68fcf9ead7aa2342625578216e"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own undefined next on IterRec rejects instead of selecting the intrinsic",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec next accessor returns undefined without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec next accessor throws without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec return data preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec return undefined-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec return throwing-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get IterRec assignment, descriptors, deletion and integrity share one private-field-free identity bag",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "4870c4730b9418b0ca013d79d336b5bcfe0c39d0af13ceecd8bf086d48f39e1c"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get dynamic prototype chains preserve nested explicit and proxy receivers after a throw",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected '(module\\n  (type $__vec_base (sub (st…' to contain '__iterator_protocol_get'",
+              "normalizedSha256": "138a5f850c0373e90d16f471b8384f3b1be98d6381dc453fcc9f8b3ee3ea0ae2"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get uses a custom source-vector prototype (storage prerequisite)",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "7b9ee7e421394925ecff23e70bcf05d10e5765469008635789d40dd03cb71e77"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps number once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps negative zero once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps genuine NaN once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps boolean false once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps bigint once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps wide bigint once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps symbol once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "string primitive yields UTF-16 indexed values, not code points",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected -1 to be 1 // Object.is equality",
+              "normalizedSha256": "c35f2dba0548c5a04493aeba46d8630fc5e737d6eda3aa2b15236b768697630e"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing Number wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing Boolean wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing BigInt wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing Symbol wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains a String wrapper target and its explicit proxy receiver",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "preserves ordinary object receiver identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "preserves array receiver identity",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "preserves function receiver identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "does not Get or coerce an object receiver at factory creation",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "allocates fresh primitive wrappers per factory call and retains each across steps",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "rejects null at factory creation with TypeError",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "rejects undefined at factory creation with TypeError",
+          "status": "passed",
+          "failures": []
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "root": "/private/tmp/js2-5883-main-b922-20260927",
+      "reportPath": "/private/tmp/js2-5883-main-sync-20260927/.tmp/last-two-extraction-candidate-2gb.json",
+      "reportSha256": "0373988b2281f25d232f55dd5c585957a598bbe1caf57c60a52f7f31c9bec206",
+      "total": 52,
+      "passed": 29,
+      "failed": 23,
+      "pending": 0,
+      "rows": [
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own undefined is a hit and the genuine symbol differs from its textual spelling",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get captures an inherited next getter once with the actual iterator receiver",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get keeps values and Symbol.iterator independent after assignment and deletion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "01e45a194e1c9cf97e5d931c256b9657d4702f0f6d836c681aa340ffd00d3880"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get retains top-level writes before and after acquisition in source order",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get a deleted prototype method continues to the parent without reviving a cached assignment",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "b91666ebb9f63d02cd33a8e39defc60cf5713a68cc030e338d7ee6f393a3b8d6"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get IterRec prototype getters retain this across nested and throwing Reflect.get",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get proxy Get traps receive the actual iterator and next is captured once",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "296d4605137e3b5123772cca2d821536512dcb68fcf9ead7aa2342625578216e"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own undefined next on IterRec rejects instead of selecting the intrinsic",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec next accessor returns undefined without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec next accessor throws without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec return data preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec return undefined-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get own IterRec return throwing-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get IterRec assignment, descriptors, deletion and integrity share one private-field-free identity bag",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "4870c4730b9418b0ca013d79d336b5bcfe0c39d0af13ceecd8bf086d48f39e1c"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get dynamic prototype chains preserve nested explicit and proxy receivers after a throw",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected '(module\\n  (type $__vec_base (sub (st…' to contain '__iterator_protocol_get'",
+              "normalizedSha256": "138a5f850c0373e90d16f471b8384f3b1be98d6381dc453fcc9f8b3ee3ea0ae2"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured all: semantic protocol Get uses a custom source-vector prototype (storage prerequisite)",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "7b9ee7e421394925ecff23e70bcf05d10e5765469008635789d40dd03cb71e77"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own undefined is a hit and the genuine symbol differs from its textual spelling",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get captures an inherited next getter once with the actual iterator receiver",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get keeps values and Symbol.iterator independent after assignment and deletion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "01e45a194e1c9cf97e5d931c256b9657d4702f0f6d836c681aa340ffd00d3880"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get retains top-level writes before and after acquisition in source order",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get a deleted prototype method continues to the parent without reviving a cached assignment",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "b91666ebb9f63d02cd33a8e39defc60cf5713a68cc030e338d7ee6f393a3b8d6"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get IterRec prototype getters retain this across nested and throwing Reflect.get",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get proxy Get traps receive the actual iterator and next is captured once",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "296d4605137e3b5123772cca2d821536512dcb68fcf9ead7aa2342625578216e"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own undefined next on IterRec rejects instead of selecting the intrinsic",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec next accessor returns undefined without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec next accessor throws without inherited fallback",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec return data preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec return undefined-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get own IterRec return throwing-getter preserves the original abrupt completion",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "453d6dcc4d88fc549623e881e14eb8e04acb710b1d70627346482f10769c314f"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get IterRec assignment, descriptors, deletion and integrity share one private-field-free identity bag",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "4870c4730b9418b0ca013d79d336b5bcfe0c39d0af13ceecd8bf086d48f39e1c"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get dynamic prototype chains preserve nested explicit and proxy receivers after a throw",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected '(module\\n  (type $__vec_base (sub (st…' to contain '__iterator_protocol_get'",
+              "normalizedSha256": "138a5f850c0373e90d16f471b8384f3b1be98d6381dc453fcc9f8b3ee3ea0ae2"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-iterator-protocol-get.test.ts",
+          "fixtureSha256": "7ba9060d3351ca3c7fe37d68c4919eece925d58e6e7e6e6d2b5283c77b49ecfc",
+          "name": "captured race: semantic protocol Get uses a custom source-vector prototype (storage prerequisite)",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected +0 to be 1 // Object.is equality",
+              "normalizedSha256": "7b9ee7e421394925ecff23e70bcf05d10e5765469008635789d40dd03cb71e77"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps number once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps negative zero once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps genuine NaN once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps boolean false once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps bigint once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps wide bigint once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "wraps symbol once and preserves its primitive slot",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "string primitive yields UTF-16 indexed values, not code points",
+          "status": "failed",
+          "failures": [
+            {
+              "summary": "AssertionError: expected -1 to be 1 // Object.is equality",
+              "normalizedSha256": "c35f2dba0548c5a04493aeba46d8630fc5e737d6eda3aa2b15236b768697630e"
+            }
+          ]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing Number wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing Boolean wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing BigInt wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains existing Symbol wrapper identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "retains a String wrapper target and its explicit proxy receiver",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "preserves ordinary object receiver identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "preserves array receiver identity",
+          "status": "failed",
+          "failures": [null]
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "preserves function receiver identity",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "does not Get or coerce an object receiver at factory creation",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "allocates fresh primitive wrappers per factory call and retains each across steps",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "rejects null at factory creation with TypeError",
+          "status": "passed",
+          "failures": []
+        },
+        {
+          "file": "issue-5883-runtime-to-object.test.ts",
+          "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+          "name": "rejects undefined at factory creation with TypeError",
+          "status": "passed",
+          "failures": []
+        }
+      ]
+    }
+  ]
+}

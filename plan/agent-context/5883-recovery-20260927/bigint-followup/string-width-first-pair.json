@@ -1,0 +1,836 @@
+{
+  "candidateProcess": {
+    "id": 41933,
+    "exit": 1
+  },
+  "baselineProcess": {
+    "id": 89673,
+    "exit": 1
+  },
+  "widthProcess": {
+    "id": 38522,
+    "exit": 1
+  },
+  "baseline": "608be80f6beef338665fdcdb834e7d9b9f20b925",
+  "candidate": "Parent18f1bd8 plus recovery integration, Symbol, BigInt provider/dynamic calls, first String reference patch",
+  "candidateTotals": {
+    "pass": 27,
+    "total": 44
+  },
+  "stringPair": {
+    "baselinePass": 8,
+    "candidatePass": 8,
+    "total": 13,
+    "pairs": [
+      {
+        "name": "wide positive literal",
+        "baseline": {
+          "name": "wide positive literal",
+          "source": "export function test() { return String(18446744073709551617n) === \"18446744073709551617\" ? 1 : -1; }",
+          "sha256": "4d016cc5ec85d74de2019b731653cd5e153972eea6b91ddc24f6be6b212736b9",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "wide positive literal",
+          "source": "export function test() { return String(18446744073709551617n) === \"18446744073709551617\" ? 1 : -1; }",
+          "sha256": "4d016cc5ec85d74de2019b731653cd5e153972eea6b91ddc24f6be6b212736b9",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        }
+      },
+      {
+        "name": "wide negative literal",
+        "baseline": {
+          "name": "wide negative literal",
+          "source": "export function test() { return String(-18446744073709551617n) === \"-18446744073709551617\" ? 1 : -1; }",
+          "sha256": "1514f08dee574d65b4f17fb22e7a60bbcc31225814b024f94aeba756c0aa0743",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "wide negative literal",
+          "source": "export function test() { return String(-18446744073709551617n) === \"-18446744073709551617\" ? 1 : -1; }",
+          "sha256": "1514f08dee574d65b4f17fb22e7a60bbcc31225814b024f94aeba756c0aa0743",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        }
+      },
+      {
+        "name": "wide unsigned64 edge",
+        "baseline": {
+          "name": "wide unsigned64 edge",
+          "source": "export function test() { return String(18446744073709551615n) === \"18446744073709551615\" ? 1 : -1; }",
+          "sha256": "7b98a491e6411944951180136eb9b001c3d3d794da0a1d05f591acb99db83ebf",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "wide unsigned64 edge",
+          "source": "export function test() { return String(18446744073709551615n) === \"18446744073709551615\" ? 1 : -1; }",
+          "sha256": "7b98a491e6411944951180136eb9b001c3d3d794da0a1d05f591acb99db83ebf",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        }
+      },
+      {
+        "name": "wide constant expression",
+        "baseline": {
+          "name": "wide constant expression",
+          "source": "export function test() { return String(18446744073709551616n + 3n) === \"18446744073709551619\" ? 1 : -1; }",
+          "sha256": "ec638e432ce41d8dec2695bfc75448778026adb96c3c5ae69aebf634f5dd9bd8",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "wide constant expression",
+          "source": "export function test() { return String(18446744073709551616n + 3n) === \"18446744073709551619\" ? 1 : -1; }",
+          "sha256": "ec638e432ce41d8dec2695bfc75448778026adb96c3c5ae69aebf634f5dd9bd8",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        }
+      },
+      {
+        "name": "narrow bigint",
+        "baseline": {
+          "name": "narrow bigint",
+          "source": "export function test() { return String(7n) === \"7\" && String(-7n) === \"-7\" && String(0n) === \"0\" ? 1 : -1; }",
+          "sha256": "8ba0a753f3b7479707eb362741aefa11c32bed0f295c5d8a1c5697335de9853b",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "narrow bigint",
+          "source": "export function test() { return String(7n) === \"7\" && String(-7n) === \"-7\" && String(0n) === \"0\" ? 1 : -1; }",
+          "sha256": "8ba0a753f3b7479707eb362741aefa11c32bed0f295c5d8a1c5697335de9853b",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "exact signed64 edge",
+        "baseline": {
+          "name": "exact signed64 edge",
+          "source": "export function test() { return String(9223372036854775807n) === \"9223372036854775807\" ? 1 : -1; }",
+          "sha256": "e22416e42bcc8810f01637c0ed498029d56af1883f7e0781eb77990f8538c850",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "exact signed64 edge",
+          "source": "export function test() { return String(9223372036854775807n) === \"9223372036854775807\" ? 1 : -1; }",
+          "sha256": "e22416e42bcc8810f01637c0ed498029d56af1883f7e0781eb77990f8538c850",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "number controls",
+        "baseline": {
+          "name": "number controls",
+          "source": "export function test() { return String(1.5) === \"1.5\" && String(-0) === \"0\" && String(NaN) === \"NaN\" ? 1 : -1; }",
+          "sha256": "f0a7ccc2b86065504a04abbe33aa66fcd59876c878d1c4d70524924478abcf03",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "number controls",
+          "source": "export function test() { return String(1.5) === \"1.5\" && String(-0) === \"0\" && String(NaN) === \"NaN\" ? 1 : -1; }",
+          "sha256": "f0a7ccc2b86065504a04abbe33aa66fcd59876c878d1c4d70524924478abcf03",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "symbol control",
+        "baseline": {
+          "name": "symbol control",
+          "source": "export function test() { return String(Symbol(\"x\")) === \"Symbol(x)\" ? 1 : -1; }",
+          "sha256": "572cfcb625fb1c654644fad05b0b673f7c5550e3f0a531dd740ac1858804cd5e",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "symbol control",
+          "source": "export function test() { return String(Symbol(\"x\")) === \"Symbol(x)\" ? 1 : -1; }",
+          "sha256": "572cfcb625fb1c654644fad05b0b673f7c5550e3f0a531dd740ac1858804cd5e",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "boolean nullish and string controls",
+        "baseline": {
+          "name": "boolean nullish and string controls",
+          "source": "export function test() { return String(true) === \"true\" && String(false) === \"false\" && String(null) === \"null\" && String(undefined) === \"undefined\" && String(\"ok\") === \"ok\" ? 1 : -1; }",
+          "sha256": "d0eb153a2337f2c8eb90585eed14de1f6af2b5b02f49b57f402dfb3c4f014877",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "boolean nullish and string controls",
+          "source": "export function test() { return String(true) === \"true\" && String(false) === \"false\" && String(null) === \"null\" && String(undefined) === \"undefined\" && String(\"ok\") === \"ok\" ? 1 : -1; }",
+          "sha256": "d0eb153a2337f2c8eb90585eed14de1f6af2b5b02f49b57f402dfb3c4f014877",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "string hint and single evaluation",
+        "baseline": {
+          "name": "string hint and single evaluation",
+          "source": "export function test() { let evaluations=0;let reads=0;let hint;function source(){evaluations++;return {[Symbol.toPrimitive]:function(h){reads++;hint=h;return 7n;}};}const result=String(source());return result===\"7\" && evaluations===1 && reads===1 && hint===\"string\" ? 1 : -1; }",
+          "sha256": "7a471734af1600b3e8d07462cc64d12f4e9d549f403371c41c0bc8bfc7e99e8b",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "string hint and single evaluation",
+          "source": "export function test() { let evaluations=0;let reads=0;let hint;function source(){evaluations++;return {[Symbol.toPrimitive]:function(h){reads++;hint=h;return 7n;}};}const result=String(source());return result===\"7\" && evaluations===1 && reads===1 && hint===\"string\" ? 1 : -1; }",
+          "sha256": "7a471734af1600b3e8d07462cc64d12f4e9d549f403371c41c0bc8bfc7e99e8b",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "throwing conversion preserved",
+        "baseline": {
+          "name": "throwing conversion preserved",
+          "source": "export function test() { const reason={};const source={[Symbol.toPrimitive]:function(){throw reason;}};try{String(source);return -1;}catch(e){return e===reason?1:-2;} }",
+          "sha256": "ec1f36cae9eb4280d3dc62c43ee27e5643e39d26194f1f44ff7a976d118d3e73",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "throwing conversion preserved",
+          "source": "export function test() { const reason={};const source={[Symbol.toPrimitive]:function(){throw reason;}};try{String(source);return -1;}catch(e){return e===reason?1:-2;} }",
+          "sha256": "ec1f36cae9eb4280d3dc62c43ee27e5643e39d26194f1f44ff7a976d118d3e73",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      },
+      {
+        "name": "argument side effect once",
+        "baseline": {
+          "name": "argument side effect once",
+          "source": "export function test() { let count=0;const result=String((count++,18446744073709551617n));return count===1 && result===\"18446744073709551617\" ? 1 : -1; }",
+          "sha256": "de71fe46cea9e6eb5c82b8ab251eb3a6d7f1eaf0af1e715e3fdd9623a6faf224",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "argument side effect once",
+          "source": "export function test() { let count=0;const result=String((count++,18446744073709551617n));return count===1 && result===\"18446744073709551617\" ? 1 : -1; }",
+          "sha256": "de71fe46cea9e6eb5c82b8ab251eb3a6d7f1eaf0af1e715e3fdd9623a6faf224",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": -1,
+          "imports": []
+        }
+      },
+      {
+        "name": "ordinary conversion preference",
+        "baseline": {
+          "name": "ordinary conversion preference",
+          "source": "export function test() { let trace=0;const source={toString:function(){trace=trace*10+1;return \"ok\";},valueOf:function(){trace=trace*10+2;return 7n;}};return String(source)===\"ok\" && trace===1 ? 1 : -1; }",
+          "sha256": "168be82793a934eced069c0d74c912494f9eec7c442f371555e0bc1b3fa5c0bc",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        },
+        "candidate": {
+          "name": "ordinary conversion preference",
+          "source": "export function test() { let trace=0;const source={toString:function(){trace=trace*10+1;return \"ok\";},valueOf:function(){trace=trace*10+2;return 7n;}};return String(source)===\"ok\" && trace===1 ? 1 : -1; }",
+          "sha256": "168be82793a934eced069c0d74c912494f9eec7c442f371555e0bc1b3fa5c0bc",
+          "native": 1,
+          "success": true,
+          "errors": [],
+          "actual": 1,
+          "imports": []
+        }
+      }
+    ]
+  },
+  "width": {
+    "pass": 5,
+    "total": 6,
+    "interpretation": "Negative control fails, invalidates these passing wide rows as preservation proof; no full-width claim.",
+    "rows": [
+      {
+        "name": "wide high-bit observable without valueOf",
+        "source": "export function test(){try{const box={v:18446744073709551617n};const value=Reflect.get(box,\"v\"); return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+        "sha256": "44be68717800b4f9ab3cd9a96462f855c0345cbf55b5d44af2232d67b403e1ff",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      {
+        "name": "narrow negative control for high-bit observable",
+        "source": "export function test(){try{const box={v:1n};const value=Reflect.get(box,\"v\"); return (value >> 64n) === 0n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+        "sha256": "21a25b06c70597fcc51840faff15767781445b16ae71b165460c240f41483bc1",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -1,
+        "failure": "AssertionError: expected -1 to be 1 // Object.is equality"
+      },
+      {
+        "name": "wide reference primitive through extracted valueOf",
+        "source": "export function test(){try{const box={v:18446744073709551617n};const input=Reflect.get(box,\"v\");const method=BigInt.prototype.valueOf;const value=method.call(input); return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+        "sha256": "ebb9af54e18ad8cafdb7bf6c516390134d3576493847f8db7845ec844efc9769",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      {
+        "name": "wide reference primitive through direct valueOf",
+        "source": "export function test(){try{const box={v:18446744073709551617n};const input=Reflect.get(box,\"v\");const value=BigInt.prototype.valueOf.call(input); return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+        "sha256": "785389f8ebce8202f8b79dfe26166e9ce20707c509cf87d01f1d4c6b76656cb0",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      {
+        "name": "wide runtime wrapper through extracted valueOf",
+        "source": "export function test(){try{let wrapper;Object.defineProperty(BigInt.prototype,\"length\",{configurable:true,get:function(){\"use strict\";wrapper=this;return 0;}});Array.prototype.values.call(18446744073709551617n).next();const method=BigInt.prototype.valueOf;const value=method.call(wrapper);return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+        "sha256": "109ced1d296e0d91898032ba3c3b7378955d60e66abc4d5e9185fab076cdc64f",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      {
+        "name": "wide static wrapper separate constructor boundary",
+        "source": "export function test(){try{const wrapper=Object(18446744073709551617n);const method=BigInt.prototype.valueOf;const value=method.call(wrapper);return (value >> 64n) === 1n && (value & 4294967295n) === 1n ? 1 : -1;}catch(e){return -90;}}",
+        "sha256": "5b1c4b935287a4b2bb69c24f2e8a4b7e76caa0e246594fdc1a5c5f97be941cec",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    ]
+  },
+  "candidateRows": [
+    {
+      "name": "primitive: direct call",
+      "source": "export function test() { \n        const receiver = 7n;\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "43a08c59ecf57f1de5a0c206f722d99982254bae33142dd9e3bee3d06ce0402c",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "primitive: direct apply",
+      "source": "export function test() { \n        const receiver = 7n;\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "62d85af3b4dc2ca501367043cfbfeabab6b808f1a5598be8ab0c5b5383094903",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "primitive: extracted call",
+      "source": "export function test() { \n        const receiver = 7n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "d50d54f40e73505e853203f21d98669f4271aa124299df5ce52ad18b373b49e4",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "primitive: extracted apply",
+      "source": "export function test() { \n        const receiver = 7n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "186d6655da028dddecfdd5cae6b7f05ff9f871c0655be32137b926d1bfd2cff4",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "narrow wrapper: direct call",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "170644a169bae80f5140c7a8f2eb0a1fd142b8772d6e6ef5c76c3752b6bb2a87",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "narrow wrapper: direct apply",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "7f3685ad58a687ad3b356d970046dae2a629663157479dd587b0509b48219730",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "narrow wrapper: extracted call",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "4560de1c4b7b78805d4306fc265bdb515383cc2b933d8005cd9afee8a0df0e13",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "narrow wrapper: extracted apply",
+      "source": "export function test() { \n        const receiver = Object(7n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"7\" ? 1 : -2;\n       }",
+      "sha256": "c5931c80a05d2a071b1259e985e8d7907e59f7a281a8991771ef2b817d65b16d",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "wide primitive: direct call",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "a4d7dbc8979dbb5d15b79e4c899f9a617398b930a2a4aeaf6f7b878f7d575a51",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide primitive: direct apply",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "24554809d41e744f70559c80a9345a6ff7f1c474b7a6e2f598d1205a6d779ad5",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide primitive: extracted call",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "e2993320cefe803b92403798a0b8d4e18e07341bed7a1c2fc194387cbe52fbbf",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide primitive: extracted apply",
+      "source": "export function test() { \n        const receiver = 18446744073709551617n;\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "c06a4b5771afd35220cba9b8cb20c3710c73282d9db04f4ff0b7b9975963eba6",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide wrapper: direct call",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        \n        const value = BigInt.prototype.valueOf.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "bf5b839b1adec0f0a5e0227490fc6cca7fe8cc87fc38f1839946eeae74642ac4",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide wrapper: direct apply",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        \n        const value = BigInt.prototype.valueOf.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "e1f5c7fd21d0564b9289b800dc622cc12e2758f6751f57c0826e1a456e7119a3",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide wrapper: extracted call",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.call(receiver);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "305758ce32166b8a9f856f57875ff6a503c8172c6d12ffc00d80c80fffdf2751",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide wrapper: extracted apply",
+      "source": "export function test() { \n        const receiver = Object(18446744073709551617n);\n        const method = BigInt.prototype.valueOf;\n        const value = method.apply(receiver, []);\n        if (typeof value !== \"bigint\") return -1;\n        return String(value) === \"18446744073709551617\" ? 1 : -2;\n       }",
+      "sha256": "6e1f736fb443ccff59ff10194344c98dce87c55649fd3057e6ffe10313790a40",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "wide runtime ToObject wrapper retains all limbs",
+      "source": "export function test() { \n  let wrapper;\n  Object.defineProperty(BigInt.prototype, \"length\", {\n    configurable: true, get: function () { \"use strict\"; wrapper = this; return 0; }\n  });\n  const iterator = Array.prototype.values.call(18446744073709551617n);\n  iterator.next();\n  if (typeof wrapper !== \"object\") return -1;\n  const method = BigInt.prototype.valueOf;\n  const value = method.call(wrapper);\n  return typeof value === \"bigint\" && String(value) === \"18446744073709551617\" ? 1 : -2;\n }",
+      "sha256": "84c0750a8962fac8bc987d68a78ff3cae9ea3559d198bb5b56c05a08b8f8c479",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -2,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible null",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(null); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(null, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "09db641a67f87ce7470ca72d2ffbfafe3782769e3ec6b00db31bbfac8ac6b601",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible undefined",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(undefined); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(undefined, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "ed17ca77c916c3b7da78decf834b073fe50aaeb14f87bcb45ffcb90a873b020e",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible 7",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(7); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(7, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "34b10fd2077b0bae348fa11cc7b6034a3d2fbd8dbfeb4fa7441df8d1a0025cc3",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible \"7\"",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(\"7\"); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(\"7\", []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "7a2940b386727f94e0f46f40d279e81154334ec04d8bfc63efc7d563a275de1a",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible true",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(true); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(true, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "251bbfc574dc42b037f8e6d3be130150d4bc78feeef6e02fb7b105d8afdce22e",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible Symbol(\"wrong\")",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(Symbol(\"wrong\")); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(Symbol(\"wrong\"), []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "fb9699df340a66c5ccb5a7ade8d7847f76f0f2fab61cf7b107988e6b705e1f11",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible {}",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call({}); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply({}, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "a8665f0f10970f34f4b14af90757f5c4c96327e3e7ca73874f9d687c919fbdf4",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible Object(7)",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(Object(7)); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(Object(7), []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "ad30f52a641fa8b63d5b45e7e75a37cd909358d2e610b29452890b9e9967a977",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible ({ \"[[PrimitiveValue]]\": 7n })",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(({ \"[[PrimitiveValue]]\": 7n })); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(({ \"[[PrimitiveValue]]\": 7n }), []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "b18cbcc32da66c96da31897e9d85908c72a239478097849a9efa26121a9c9b49",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "rejects incompatible BigInt.prototype",
+      "source": "export function test() { \n    const method = BigInt.prototype.valueOf;\n    let rejected = 0;\n    try { BigInt.prototype.valueOf.call(BigInt.prototype); } catch (e) { if (e instanceof TypeError) rejected++; }\n    try { method.apply(BigInt.prototype, []); } catch (e) { if (e instanceof TypeError) rejected++; }\n    return rejected === 2 ? 1 : -1;\n   }",
+      "sha256": "9a78086db06703b7b99b1faeb7545d106722ba274dc0960acc8f9d8bfb225896",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "prototype override is observed and prior extraction retained",
+      "source": "export function test() { \n  const saved = BigInt.prototype.valueOf;\n  BigInt.prototype.valueOf = function () { return 19n; };\n  const direct = BigInt.prototype.valueOf.call(Object(7n));\n  const extracted = saved.call(Object(7n));\n  return direct === 19n && extracted === 7n ? 1 : -1;\n }",
+      "sha256": "1fdd88bc7bb4fe931ee6122fec98dada18376aa3d71e8b01651b36a3ba63a416",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "local BigInt spelling does not select intrinsic",
+      "source": "export function test() { \n  const BigInt = { prototype: { valueOf: function () { \"use strict\"; return this.answer; } } };\n  return BigInt.prototype.valueOf.call({answer: 23}) === 23 ? 1 : -1;\n }",
+      "sha256": "b7b41a38399c993ca06af30dd1daea659e4486f48a10b3edd055dd015bc96b89",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "reassigned extracted method uses current value",
+      "source": "export function test() { \n  let method = BigInt.prototype.valueOf;\n  method = function () { return 29n; };\n  return method.call(Object(7n)) === 29n ? 1 : -1;\n }",
+      "sha256": "bde358e32be3512242ee016741b048b51eb974eebdb1d01d11c1b5e00bac403c",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "wide primitive formatting control without valueOf",
+      "source": "export function test() { \n  return String(18446744073709551617n) === \"18446744073709551617\" ? 1 : -1;\n }",
+      "sha256": "45b5a8166a0e1d36980a7e2cdb836df65cd9af17b5084e9a3bc2dae3c28c0d30",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "wide positive literal",
+      "source": "export function test() { return String(18446744073709551617n) === \"18446744073709551617\" ? 1 : -1; }",
+      "sha256": "4d016cc5ec85d74de2019b731653cd5e153972eea6b91ddc24f6be6b212736b9",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "wide negative literal",
+      "source": "export function test() { return String(-18446744073709551617n) === \"-18446744073709551617\" ? 1 : -1; }",
+      "sha256": "1514f08dee574d65b4f17fb22e7a60bbcc31225814b024f94aeba756c0aa0743",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "wide unsigned64 edge",
+      "source": "export function test() { return String(18446744073709551615n) === \"18446744073709551615\" ? 1 : -1; }",
+      "sha256": "7b98a491e6411944951180136eb9b001c3d3d794da0a1d05f591acb99db83ebf",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "wide constant expression",
+      "source": "export function test() { return String(18446744073709551616n + 3n) === \"18446744073709551619\" ? 1 : -1; }",
+      "sha256": "ec638e432ce41d8dec2695bfc75448778026adb96c3c5ae69aebf634f5dd9bd8",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "narrow bigint",
+      "source": "export function test() { return String(7n) === \"7\" && String(-7n) === \"-7\" && String(0n) === \"0\" ? 1 : -1; }",
+      "sha256": "8ba0a753f3b7479707eb362741aefa11c32bed0f295c5d8a1c5697335de9853b",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "exact signed64 edge",
+      "source": "export function test() { return String(9223372036854775807n) === \"9223372036854775807\" ? 1 : -1; }",
+      "sha256": "e22416e42bcc8810f01637c0ed498029d56af1883f7e0781eb77990f8538c850",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "number controls",
+      "source": "export function test() { return String(1.5) === \"1.5\" && String(-0) === \"0\" && String(NaN) === \"NaN\" ? 1 : -1; }",
+      "sha256": "f0a7ccc2b86065504a04abbe33aa66fcd59876c878d1c4d70524924478abcf03",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "symbol control",
+      "source": "export function test() { return String(Symbol(\"x\")) === \"Symbol(x)\" ? 1 : -1; }",
+      "sha256": "572cfcb625fb1c654644fad05b0b673f7c5550e3f0a531dd740ac1858804cd5e",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "boolean nullish and string controls",
+      "source": "export function test() { return String(true) === \"true\" && String(false) === \"false\" && String(null) === \"null\" && String(undefined) === \"undefined\" && String(\"ok\") === \"ok\" ? 1 : -1; }",
+      "sha256": "d0eb153a2337f2c8eb90585eed14de1f6af2b5b02f49b57f402dfb3c4f014877",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "string hint and single evaluation",
+      "source": "export function test() { let evaluations=0;let reads=0;let hint;function source(){evaluations++;return {[Symbol.toPrimitive]:function(h){reads++;hint=h;return 7n;}};}const result=String(source());return result===\"7\" && evaluations===1 && reads===1 && hint===\"string\" ? 1 : -1; }",
+      "sha256": "7a471734af1600b3e8d07462cc64d12f4e9d549f403371c41c0bc8bfc7e99e8b",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "throwing conversion preserved",
+      "source": "export function test() { const reason={};const source={[Symbol.toPrimitive]:function(){throw reason;}};try{String(source);return -1;}catch(e){return e===reason?1:-2;} }",
+      "sha256": "ec1f36cae9eb4280d3dc62c43ee27e5643e39d26194f1f44ff7a976d118d3e73",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    },
+    {
+      "name": "argument side effect once",
+      "source": "export function test() { let count=0;const result=String((count++,18446744073709551617n));return count===1 && result===\"18446744073709551617\" ? 1 : -1; }",
+      "sha256": "de71fe46cea9e6eb5c82b8ab251eb3a6d7f1eaf0af1e715e3fdd9623a6faf224",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": -1,
+      "imports": []
+    },
+    {
+      "name": "ordinary conversion preference",
+      "source": "export function test() { let trace=0;const source={toString:function(){trace=trace*10+1;return \"ok\";},valueOf:function(){trace=trace*10+2;return 7n;}};return String(source)===\"ok\" && trace===1 ? 1 : -1; }",
+      "sha256": "168be82793a934eced069c0d74c912494f9eec7c442f371555e0bc1b3fa5c0bc",
+      "native": 1,
+      "success": true,
+      "errors": [],
+      "actual": 1,
+      "imports": []
+    }
+  ]
+}

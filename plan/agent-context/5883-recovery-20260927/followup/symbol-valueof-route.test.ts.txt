@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Supplemental localization controls. Original acceptance fixtures remain unchanged.
+const cases = [
+  {
+    "name": "Symbol valueOf apply primitive",
+    "source": "export function test(){const p=Symbol(\"p\");const v=Symbol.prototype.valueOf.apply(p,[]);return v===p?1:-1;}"
+  },
+  {
+    "name": "Symbol valueOf apply wrapper",
+    "source": "export function test(){const p=Symbol(\"p\");const v=Symbol.prototype.valueOf.apply(Object(p),[]);return v===p?1:-1;}"
+  },
+  {
+    "name": "Symbol valueOf rejects plain object",
+    "source": "export function test(){try{Symbol.prototype.valueOf.call({});return -1;}catch(e){return e instanceof TypeError?1:-2;}}"
+  },
+  {
+    "name": "Symbol valueOf rejects number",
+    "source": "export function test(){try{Symbol.prototype.valueOf.call(7);return -1;}catch(e){return e instanceof TypeError?1:-2;}}"
+  },
+  {
+    "name": "Symbol valueOf rejects null",
+    "source": "export function test(){try{Symbol.prototype.valueOf.call(null);return -1;}catch(e){return e instanceof TypeError?1:-2;}}"
+  },
+  {
+    "name": "Symbol valueOf replacement retains receiver",
+    "source": "export function test(){const p=Symbol(\"p\");Symbol.prototype.valueOf=function(){\"use strict\";return this===p?17:-1;};return Symbol.prototype.valueOf.call(p)===17?1:-2;}"
+  },
+  {
+    "name": "Symbol name shadowing retains user method",
+    "source": "export function test(){const p={tag:17};const Symbol={prototype:{valueOf:function(){\"use strict\";return this===p?17:-1;}}};return Symbol.prototype.valueOf.call(p)===17?1:-2;}"
+  }
+];
+for (const {name, source} of cases) {
+  it(name, async () => {
+    const sha256 = createHash("sha256").update(source).digest("hex");
+    const native = runInNewContext(source.replace("export function test", "function test") + ";test()", {}, { timeout: 5000 });
+    const receipt: Record<string, unknown> = {name,source,sha256,native};
+    try {
+      const result = await compile(source, {fileName:"5883-symbol-valueof-route.js",allowJs:true,skipSemanticDiagnostics:true,target:"standalone",nativeStrings:true});
+      receipt.success=result.success; receipt.errors=result.errors;
+      expect(result.success, JSON.stringify(result.errors)).toBe(true);
+      const module=new WebAssembly.Module(result.binary);
+      receipt.imports=WebAssembly.Module.imports(module);
+      expect(receipt.imports).toEqual([]);
+      const instance=new WebAssembly.Instance(module,{});
+      receipt.actual=(instance.exports.test as ()=>number)();
+      expect(native).toBe(1);
+      expect(receipt.actual).toBe(1);
+    } catch(error) {
+      receipt.failure=String(error);
+      throw error;
+    } finally { console.log(JSON.stringify(receipt)); }
+  });
+}
+
+
+

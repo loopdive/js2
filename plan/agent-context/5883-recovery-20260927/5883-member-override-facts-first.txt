@@ -1,0 +1,9 @@
+
+ RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5883-preservation-repair-20260927
+
+ ✓ tests/issue-5883-member-override-facts.test.ts (36 tests) 22ms
+
+ Test Files  1 passed (1)
+      Tests  36 passed (36)
+   Start at  04:47:26
+   Duration  11.79s (transform 8.45s, setup 0ms, collect 11.48s, tests 22ms, environment 0ms, prepare 49ms)
