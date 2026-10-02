@@ -175,3 +175,25 @@ runtime/fixture slice to isolate the six undefined failures and replace the
 stale NaN-gap assertion with standards-backed positive descriptor controls.
 Do not edit held runtime/IR files, weaken expectations, or count infrastructure
 checks toward the frozen 11,778-file goal.
+
+### 2026-10-02 latest-main structural revalidation
+
+Upstream main `ff310447e51b6443c5a3c34c62bd80f38c64269e` is integrated in
+`deff58b34a8d47d3d69d52e9794eefe65343e73a`, following the earlier `437636697`
+integration. The newly fetched upstream delta is npm compatibility report data,
+not native evaluator code. The merge completed without conflicts and normal
+fast hooks passed (formatting and both source budget gates). The branch was
+clean immediately afterward and retains exactly four owned PR-diff files.
+
+Focused structural revalidation at this head: terminal session `1863` is the
+successful merge commit; the separate Vitest invocation at 17:17:20 reports
+**8 pass / 8 registered, one file, zero skipped**, exit 0, for
+`tests/issue-6810-native-eval-ci-contract.test.ts` under Node 24 with a bounded
+single-fork worker. These tests assert workflow preparation and engine selection,
+not native semantic behavior. The earlier 60/67 receipt remains historical at
+`1f1b0ad61c`; the seven retained native failures have not been remeasured or
+fixed at this head. No Test262 gain is attributed to these structural checks.
+
+Publication remains pending a fresh PR queue/head/fork check and normal push
+gates. Keep #6435 unfinished until the actual native semantic guards are green;
+do not mark ready merely because this behind-main integration is conflict-free.
