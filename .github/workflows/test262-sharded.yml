@@ -285,8 +285,17 @@ jobs:
           # before the explicit rc checks below. Two consequences, both real:
           # every cheap-gate failure was diagnostic-free (the log ended at a bare
           # "Process completed with exit code 1"), and a lint-only failure
-          # HARD-FAILED this required check, contradicting the "not blocking"
-          # warning at the end of this very script.
+          # hard-failed this required check while the script claimed lint was
+          # "not blocking".
+          #
+          # (#6784) Lint now blocks here ON PURPOSE. #3677 made it advisory
+          # because the failure was diagnostic-free and duplicated `quality`;
+          # the dumps below fixed the first, and a required check named
+          # "... + lint" must not pass on lint errors (docs/ci-policy.md §7
+          # describes it as a lint + typecheck reject). The same #6784 found
+          # `pnpm run lint` itself had been vacuous (Biome's 20-diagnostic cap,
+          # spent on `noExplicitAny` warnings, hid every error) — the script now
+          # passes --max-diagnostics=none, so lint_rc is real.
           #
           # `cmd || rc=$?` makes the wait a TESTED command, so `-e` does not fire
           # while the real exit status is still captured. Deliberately NOT
@@ -298,7 +307,7 @@ jobs:
           echo "--- typecheck (last 50 lines) ---"; tail -50 "$tmp_tc"
           echo "--- lint (last 50 lines) ---"; tail -50 "$tmp_lint"
           if [ "$tc_rc" -ne 0 ]; then echo "::error::typecheck failed (rc=$tc_rc)"; exit "$tc_rc"; fi
-          if [ "$lint_rc" -ne 0 ]; then echo "::warning::lint failed (rc=$lint_rc) — not blocking"; fi
+          if [ "$lint_rc" -ne 0 ]; then echo "::error::lint failed (rc=$lint_rc)"; exit "$lint_rc"; fi
 
   changes:
     # merge_group has no native `paths:` filter (unlike pull_request/push

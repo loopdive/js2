@@ -64,3 +64,23 @@ export const PROMISE_INTRINSICS: {
   allSettled: has ? (Promise.allSettled as PromiseMethod | undefined) : undefined,
   any: has ? ((Promise as any).any as PromiseMethod | undefined) : undefined,
 };
+
+const discardSettlement = async (value: unknown): Promise<void> => {
+  try {
+    await value;
+  } catch {}
+};
+
+/**
+ * (#6791) React to a promise the way a native `Await` does — PromiseResolve then
+ * PerformPromiseThen: one `constructor` read, no species lookup — and discard
+ * the outcome, so a rejected promise counts as handled. Used for `for await`
+ * sync-drive elements, which the drive binds without awaiting. Anything that is
+ * not a promise of the host or `sandboxPromise` realm is left untouched.
+ */
+export function markPromiseHandled(value: unknown, sandboxPromise?: PromiseConstructor): unknown {
+  if (has && (value instanceof Promise || (sandboxPromise !== undefined && value instanceof sandboxPromise))) {
+    void discardSettlement(value);
+  }
+  return value;
+}

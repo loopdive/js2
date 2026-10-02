@@ -1192,14 +1192,14 @@ function _installIteratorHelperPolyfills(): void {
   }
 
   if (typeof Iproto.reduce !== "function") {
-    _installBuiltinMethod(Iproto, "reduce", 1, function (this: any, reducer: any, initial?: any) {
+    _installBuiltinMethod(Iproto, "reduce", 1, function (this: any, reducer: any, ...rest: any[]) {
       const iter = _requireIteratorReceiver(this, "reduce");
       if (typeof reducer !== "function") {
         throw new TypeError("Iterator.prototype.reduce: reducer is not a function");
       }
       let counter = 0;
-      let acc: any = initial;
-      if (arguments.length < 2) {
+      let acc: any = rest[0];
+      if (rest.length === 0) {
         const first = iter.next();
         if (first && first.done) {
           throw new TypeError("Iterator.prototype.reduce: empty iterator with no initial value");
