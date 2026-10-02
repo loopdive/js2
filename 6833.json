@@ -1,12 +1,10 @@
 {
   "id": "6833",
-  "assignee": "ttraenkler/typedarray_some_internal_length_terra",
-  "requested_by": "ttraenkler/typedarray_some_internal_length_terra",
+  "assignee": "ttraenkler/typedarray_find_sol",
+  "requested_by": "ttraenkler/typedarray_find_sol",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-10-02T20:06:17Z",
-  "claimed_at": "2026-10-02T20:06:18Z",
-  "updated_at": "2026-10-02T20:06:18Z",
-  "write_id": "72295-p7y4vknn",
-  "pr_scan": "ok"
+  "branch": "codex/6833-typedarray-find-internal-length",
+  "claimed_at": "2026-10-02T20:08:13Z",
+  "updated_at": "2026-10-02T20:08:13Z",
+  "write_id": "73496-ika3f4tj"
 }
