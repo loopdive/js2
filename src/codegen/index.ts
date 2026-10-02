@@ -1217,6 +1217,12 @@ function nestedVecElementValType(elemIr: IrType, ctx: CodegenContext): ValType |
   return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, inner.kind, inner) };
 }
 
+// (#6798) Every throw in `resolvePositionType` is a DESIGNED demote (the #1921
+// contract): typed, so the resolve-stage catch can tell it from a real bug.
+function unresolvablePosition(detail: string): never {
+  throw new IrUnsupportedError("type-resolution-unsupported", "resolve", detail);
+}
+
 function resolvePositionType(
   node: ts.TypeNode | undefined,
   mapped: LatticeType | undefined,
@@ -1272,7 +1278,7 @@ function resolvePositionType(
             : // (#5166) `number[][]` — carry the inner array as a concrete ref.
               nestedVecElementValType(elemIr, ctx);
       if (!elemVal) {
-        throw new Error(
+        unresolvablePosition(
           `array element TypeNode ${ts.SyntaxKind[node.elementType.kind]} could not be lowered to a primitive ValType`,
         );
       }
@@ -1328,7 +1334,7 @@ function resolvePositionType(
                 : // (#5166) `Array<Array<number>>` — same concrete-ref carrier.
                   nestedVecElementValType(elemIr, ctx);
           if (!elemVal) {
-            throw new Error(
+            unresolvablePosition(
               `Array<T> element TypeNode ${ts.SyntaxKind[typeArgs[0]!.kind]} could not be lowered to a primitive ValType`,
             );
           }
@@ -1393,7 +1399,7 @@ function resolvePositionType(
       }
       const ir = objectIrTypeFromTsType(ctx, tsType);
       if (ir) return ir;
-      throw new Error(`object TypeNode ${ts.SyntaxKind[node.kind]} could not be lowered to IrType.object`);
+      unresolvablePosition(`object TypeNode ${ts.SyntaxKind[node.kind]} could not be lowered to IrType.object`);
     }
     // #2859 / #3214 B0+B3 — function-typed source boundary
     // (`fn: () => number` or `(): () => number`). Mirrors the selector's
@@ -1407,9 +1413,9 @@ function resolvePositionType(
     if (ts.isFunctionTypeNode(node)) {
       const signature = irClosureSignatureFromFunctionTypeNode(node);
       if (signature) return { kind: "callable", signature };
-      throw new Error(`function TypeNode not expressible as an IR callable signature`);
+      unresolvablePosition(`function TypeNode not expressible as an IR callable signature`);
     }
-    throw new Error(`unsupported TypeNode kind ${ts.SyntaxKind[node.kind]}`);
+    unresolvablePosition(`unsupported TypeNode kind ${ts.SyntaxKind[node.kind]}`);
   }
   if (isConcreteLattice(mapped)) return latticeToIr(mapped);
   if (mapped?.kind === "object") {
@@ -1420,7 +1426,7 @@ function resolvePositionType(
     // unannotated functions like `function createPoint(x, y) { return {x, y}; }`.
     const ir = objectIrTypeFromLattice(mapped);
     if (ir) return ir;
-    throw new Error(`object position type — lattice shape not lowerable to IrType.object`);
+    unresolvablePosition(`object position type — lattice shape not lowerable to IrType.object`);
   }
   // #2949 slice 2 — UNANNOTATED position whose lattice converged to `unknown`
   // (no evidence) or `dynamic` (top): the position is honestly dynamic. MUST
@@ -1438,7 +1444,7 @@ function resolvePositionType(
   if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
     return irDynamic();
   }
-  throw new Error(`no concrete type (mapped=${mapped?.kind ?? "missing"})`);
+  unresolvablePosition(`no concrete type (mapped=${mapped?.kind ?? "missing"})`);
 }
 
 /**
@@ -3376,20 +3382,18 @@ function planIrOverlay(
       // (#2138) NOTE: a resolve-time drop is exactly why `safeSelection`
       // — not the raw `selection` — feeds `computeIrFirstSkipSet`: this
       // function keeps its legacy body under IR-first.
-      const resolveMsg = e instanceof Error ? e.message : String(e);
-      recordPreparationFailure(name, {
-        kind: "unsupported",
-        code: "type-resolution-unsupported",
-        stage: "resolve",
-        detail: resolveMsg,
-        cause: e,
-      });
-      (ctx.irPostClaimErrors ??= []).push({
-        kind: "resolve",
-        func: name,
-        message: resolveMsg,
-      });
-      reportErrorNoNode(ctx, `IR path: could not resolve types for ${name}: ${resolveMsg}`, "warning");
+      //
+      // (#6798) Only a TYPED `IrUnsupportedError` is that designed demote. Any
+      // other throw (a `TypeError` from a real bug) classifies as the
+      // `unexpected-internal-throw` invariant and hard-errors, as the
+      // build/verify/lower stages already do.
+      const failure = classifyIrFailure(e, "resolve");
+      const resolveMsg = failure.detail;
+      recordPreparationFailure(name, failure);
+      (ctx.irPostClaimErrors ??= []).push({ kind: "resolve", func: name, message: resolveMsg });
+      const hard = failure.kind === "invariant";
+      const resolveDiag = `IR path: could not resolve types for ${name}: ${resolveMsg}`;
+      reportErrorNoNode(ctx, hard ? `Codegen error: ${resolveDiag}` : resolveDiag, hard ? "error" : "warning");
     }
   }
   // Only request IR compilation for functions we successfully built

@@ -753,7 +753,7 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
     return [...names].sort();
   };
   const FN_CACHE_MAX = 256;
-  // key (`${params} ${body}`) → the callable child-export wrapper.
+  // key (`${params}\0${body}`) → the callable child-export wrapper.
   const fnCache = new Map<string, Function>();
   const fnNegCache = new Map<string, SyntaxError>();
 
@@ -761,7 +761,7 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
   function buildNewFunction(params: any, body: any): Function {
     const paramStr = params == null ? "" : String(params);
     const bodyStr = body == null ? "" : String(body);
-    const key = paramStr + " " + bodyStr;
+    const key = paramStr + "\0" + bodyStr;
 
     const cached = fnCache.get(key);
     if (cached !== undefined) {

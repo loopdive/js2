@@ -6,36 +6,69 @@
 // sharing the successful runtime cache and its resource names with this module.
 
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { buildTargetTaggedTry } from "../wasm/physical/exception-control.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
-import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
-import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
-import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+import type { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
+import type { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+import type { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+import type { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js";
-import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
-import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
-import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
-import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { emitWasiErrorConstructor } from "./registry/error-types.js";
-import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
-import { getArrTypeIdxFromVec } from "./registry/types.js";
-import {
+import type { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js";
+import type { aggregateSettleFuncIdx } from "./promise-species-then.js";
+import { closureBagInitInstr } from "./closures/closure-header-layout.js";
+import type { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+import type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import type { stringConstantExternrefInstrs } from "./native-strings.js";
+import type { emitWasiErrorConstructor } from "./registry/error-types.js";
+import type { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import type { getArrTypeIdxFromVec } from "./registry/types.js";
+import type {
   ensureCombinatorFunctions,
   emitStandalonePromiseCombinator as emitLegacyPromiseCombinator,
   emitStandalonePromiseCombinatorRuntime as emitLegacyPromiseCombinatorRuntime,
-  type NativeCombinator,
+  NativeCombinator,
 } from "./promise-combinators.js";
-import {
+import type {
   buildPromiseSettleClosureInstrs,
   ensureAsyncDriveRuntime,
   ensurePromiseExecutorClosures,
   PROMISE_STATE_PENDING,
-  type PromiseExecutorClosures,
+  PromiseExecutorClosures,
 } from "./async-scheduler.js";
+
+/** Explicit compiler services; constructing the record performs no registration. */
+export interface ObservableCombinatorProtocolServices {
+  readonly ensureCombinatorFunctions: typeof ensureCombinatorFunctions;
+  readonly ensureAsyncDriveRuntime: typeof ensureAsyncDriveRuntime;
+  readonly ensurePromiseExecutorClosures: typeof ensurePromiseExecutorClosures;
+  readonly ensureObjectRuntime: typeof ensureObjectRuntime;
+  readonly ensureObjVecBuilders: typeof ensureObjVecBuilders;
+  readonly reserveApplyClosure: typeof reserveApplyClosure;
+  readonly ensureBuiltinFnMetaType: typeof ensureBuiltinFnMetaType;
+  readonly getOrCreateFuncRefWrapperTypes: typeof getOrCreateFuncRefWrapperTypes;
+  readonly ensureStandaloneBuiltinStaticMethodClosure: typeof ensureStandaloneBuiltinStaticMethodClosure;
+  readonly emitBuiltinConstructorIdentity: typeof emitBuiltinConstructorIdentity;
+  readonly reserveCarrierBagVisibility: typeof reserveCarrierBagVisibility;
+  readonly promiseProtoThenMayBeReplaced: typeof promiseProtoThenMayBeReplaced;
+  readonly aggregateSettleFuncIdx: typeof aggregateSettleFuncIdx;
+  readonly buildPromiseSettleClosureInstrs: typeof buildPromiseSettleClosureInstrs;
+  readonly emitWasiErrorConstructor: typeof emitWasiErrorConstructor;
+  readonly stringConstantExternrefInstrs: typeof stringConstantExternrefInstrs;
+  readonly addStringConstantGlobal: typeof addStringConstantGlobal;
+  readonly ensureExnTag: typeof ensureExnTag;
+  readonly getArrTypeIdxFromVec: typeof getArrTypeIdxFromVec;
+  readonly emitLegacyPromiseCombinator: typeof emitLegacyPromiseCombinator;
+  readonly emitLegacyPromiseCombinatorRuntime: typeof emitLegacyPromiseCombinatorRuntime;
+  readonly pendingState: typeof PROMISE_STATE_PENDING;
+}
+
+function observableServices(ctx: CodegenContext): ObservableCombinatorProtocolServices {
+  const services = ctx.promiseCombinatorProtocolServices;
+  if (!services) throw new Error("Missing observable Promise combinator protocol services");
+  return services;
+}
 
 const EXTERNREF: ValType = { kind: "externref" };
 type AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;
@@ -113,18 +146,18 @@ export function ensureObservableCombinatorRuntime(
   // `Promise.resolve` must be a reified closure in the unmodified case too: the
   // observable route always performs the actual Get/Call rather than assuming
   // the direct native entry point.
-  ensureObjectRuntime(ctx);
-  ensureObjVecBuilders(ctx);
+  observableServices(ctx).ensureObjectRuntime(ctx);
+  observableServices(ctx).ensureObjVecBuilders(ctx);
   // A source that assigns/defines an own Promise `then` has already reserved
   // its carrier substrate. Make the shared presence predicate available before
   // observable native-own Invoke arms are emitted.
-  reserveCarrierBagVisibility(ctx);
-  const applyClosureIdx = reserveApplyClosure(ctx);
-  ensureStandaloneBuiltinStaticMethodClosure(ctx, "Promise", "resolve");
-  const executorClosures = ensurePromiseExecutorClosures(ctx);
-  emitWasiErrorConstructor(ctx, "TypeError", 1);
-  addStringConstantGlobal(ctx, "Promise resolve is not callable");
-  addStringConstantGlobal(ctx, "Promise then is not callable");
+  observableServices(ctx).reserveCarrierBagVisibility(ctx);
+  const applyClosureIdx = observableServices(ctx).reserveApplyClosure(ctx);
+  observableServices(ctx).ensureStandaloneBuiltinStaticMethodClosure(ctx, "Promise", "resolve");
+  const executorClosures = observableServices(ctx).ensurePromiseExecutorClosures(ctx);
+  observableServices(ctx).emitWasiErrorConstructor(ctx, "TypeError", 1);
+  observableServices(ctx).addStringConstantGlobal(ctx, "Promise resolve is not callable");
+  observableServices(ctx).addStringConstantGlobal(ctx, "Promise then is not callable");
 
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const newTypeErrorIdx = ctx.funcMap.get("__new_TypeError");
@@ -138,12 +171,12 @@ export function ensureObservableCombinatorRuntime(
     return null;
   }
 
-  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF], []);
+  const wrapper = observableServices(ctx).getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF], []);
   if (!wrapper) {
     cache.__promiseObservableCombinators = null;
     return null;
   }
-  const allResolveMetaTypeIdx = ensureBuiltinFnMetaType(
+  const allResolveMetaTypeIdx = observableServices(ctx).ensureBuiltinFnMetaType(
     ctx,
     wrapper.structTypeIdx,
     wrapper.closureInfo,
@@ -210,7 +243,7 @@ export function ensureObservableCombinatorRuntime(
     allResolveElemCapsFieldIdx,
     allResolveCalledFieldIdx,
     allResolveMetaTypeIdx,
-    exnTagIdx: ensureExnTag(ctx),
+    exnTagIdx: observableServices(ctx).ensureExnTag(ctx),
     settleClosures: executorClosures,
   };
   cache.__promiseObservableCombinators = result;
@@ -273,7 +306,7 @@ function buildObservableTypeErrorRejectInstrs(
   message: string,
 ): Instr[] {
   return buildObservableRejectInstrs(rt, preparation, [
-    ...stringConstantExternrefInstrs(ctx, message),
+    ...observableServices(ctx).stringConstantExternrefInstrs(ctx, message),
     { op: "call", funcIdx: ctx.funcMap.get("__new_TypeError")! },
   ]);
 }
@@ -315,7 +348,7 @@ export function emitObservableCombinatorPreparation(
 
   // New native result promise: `Promise.all` / `race`'s capability promise.
   fctx.body.push(
-    { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "i32.const", value: observableServices(ctx).pendingState },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
@@ -327,17 +360,21 @@ export function emitObservableCombinatorPreparation(
 
   if (method === "race") {
     fctx.body.push(
-      ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_resolve_cl")!, [
-        { op: "local.get", index: resultLocal },
-      ]),
+      ...observableServices(ctx).buildPromiseSettleClosureInstrs(
+        observable.settleClosures,
+        ctx.funcMap.get("__promise_resolve_cl")!,
+        [{ op: "local.get", index: resultLocal }],
+      ),
       { op: "extern.convert_any" },
       { op: "local.set", index: raceFulfillLocal },
     );
   }
   fctx.body.push(
-    ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_reject_cl")!, [
-      { op: "local.get", index: resultLocal },
-    ]),
+    ...observableServices(ctx).buildPromiseSettleClosureInstrs(
+      observable.settleClosures,
+      ctx.funcMap.get("__promise_reject_cl")!,
+      [{ op: "local.get", index: resultLocal }],
+    ),
     { op: "extern.convert_any" },
     { op: "local.set", index: rejectLocal },
   );
@@ -345,7 +382,7 @@ export function emitObservableCombinatorPreparation(
   // `Promise` is the same identity-stable carrier the source-level mutation
   // writes target.  Do this before iterator draining so a throwing getter wins
   // over an observable iterator getter, as required by GetPromiseResolve.
-  emitBuiltinConstructorIdentity(ctx, fctx, "Promise");
+  observableServices(ctx).emitBuiltinConstructorIdentity(ctx, fctx, "Promise");
   fctx.body.push({ op: "local.set", index: ctorLocal });
   fctx.body.push(
     buildTargetTaggedTry(
@@ -353,7 +390,7 @@ export function emitObservableCombinatorPreparation(
       { kind: "empty" },
       [
         { op: "local.get", index: ctorLocal },
-        ...stringConstantExternrefInstrs(ctx, "resolve"),
+        ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "resolve"),
         { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
         { op: "local.set", index: resolveLocal },
       ],
@@ -441,7 +478,7 @@ function emitObservableCombinatorState(
 
 /** (#5197 r3) Settle an observable aggregate through Resolve when required. */
 function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
-  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
+  return { ...rt, fulfillFuncIdx: observableServices(ctx).aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
 }
 
 /**
@@ -550,7 +587,7 @@ export function emitObservableCombinatorElement(
     buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),
   },
 ): void {
-  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+  const protoThenReplaceable = observableServices(ctx).promiseProtoThenMayBeReplaced(ctx, fctx);
   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
@@ -616,7 +653,7 @@ export function emitObservableCombinatorElement(
     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
     return [
       { op: "local.get", index: nextLocal },
-      ...stringConstantExternrefInstrs(ctx, "then"),
+      ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "then"),
       { op: "call", funcIdx: carrierBagHasIdx },
       {
         op: "if",
@@ -627,7 +664,7 @@ export function emitObservableCombinatorElement(
             { kind: "empty" },
             [
               { op: "local.get", index: nextLocal },
-              ...stringConstantExternrefInstrs(ctx, "then"),
+              ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "then"),
               { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
               { op: "local.set", index: thenLocal },
               ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),
@@ -670,7 +707,7 @@ export function emitObservableCombinatorElement(
       { kind: "empty" },
       [
         { op: "local.get", index: nextLocal },
-        ...stringConstantExternrefInstrs(ctx, "then"),
+        ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "then"),
         { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
         { op: "local.set", index: thenLocal },
         ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),
@@ -835,7 +872,7 @@ export function resolveF64VecArg(
   if (typeof vecTypeIdx !== "number" || vecTypeIdx < 0) return null;
   const structName = ctx.typeIdxToStructName.get(vecTypeIdx);
   if (!structName || !structName.startsWith("__vec_")) return null;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  const arrTypeIdx = observableServices(ctx).getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0) return null;
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array" || arrDef.element.kind !== "f64") return null;
@@ -949,8 +986,8 @@ export function emitStandalonePromiseCombinator(
   opts?: { observableResolve?: boolean },
 ): ValType {
   if (opts?.observableResolve === true && (method === "all" || method === "race")) {
-    const ids = ensureCombinatorFunctions(ctx);
-    ensureAsyncDriveRuntime(ctx);
+    const ids = observableServices(ctx).ensureCombinatorFunctions(ctx);
+    observableServices(ctx).ensureAsyncDriveRuntime(ctx);
     const observable = ensureObservableCombinatorRuntime(ctx, ids);
     if (observable) {
       return emitObservableStandalonePromiseCombinatorLiteral(
@@ -959,12 +996,12 @@ export function emitStandalonePromiseCombinator(
         method,
         elementInstrs,
         ids,
-        ensureAsyncDriveRuntime(ctx),
+        observableServices(ctx).ensureAsyncDriveRuntime(ctx),
         observable,
       );
     }
   }
-  return emitLegacyPromiseCombinator(ctx, fctx, method, elementInstrs);
+  return observableServices(ctx).emitLegacyPromiseCombinator(ctx, fctx, method, elementInstrs);
 }
 
 /** Preserve main's optional vector protocol and its legacy rejection-pair fallback. */
@@ -984,8 +1021,8 @@ export function emitStandalonePromiseCombinatorRuntime(
   },
 ): ValType {
   if (opts?.observableResolve === true && (method === "all" || method === "race")) {
-    const ids = ensureCombinatorFunctions(ctx);
-    ensureAsyncDriveRuntime(ctx);
+    const ids = observableServices(ctx).ensureCombinatorFunctions(ctx);
+    observableServices(ctx).ensureAsyncDriveRuntime(ctx);
     const observable = ensureObservableCombinatorRuntime(ctx, ids);
     if (observable) {
       return emitObservableStandalonePromiseCombinatorRuntime(
@@ -996,13 +1033,13 @@ export function emitStandalonePromiseCombinatorRuntime(
         argVecTypeIdx,
         argArrTypeIdx,
         ids,
-        ensureAsyncDriveRuntime(ctx),
+        observableServices(ctx).ensureAsyncDriveRuntime(ctx),
         observable,
         opts.boxF64Elements === true,
       );
     }
   }
-  return emitLegacyPromiseCombinatorRuntime(
+  return observableServices(ctx).emitLegacyPromiseCombinatorRuntime(
     ctx,
     fctx,
     method,

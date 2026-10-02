@@ -630,7 +630,7 @@ const widenedFoldCompilable = new Map<string, boolean>();
  * to the pre-existing dynamic path rather than refusing.
  */
 function nativeRegExpPatternCompiles(pattern: string, flags: string): boolean {
-  const key = `${flags} ${pattern}`;
+  const key = `${flags}\0${pattern}`;
   const memo = widenedFoldCompilable.get(key);
   if (memo !== undefined) return memo;
   let ok = false;

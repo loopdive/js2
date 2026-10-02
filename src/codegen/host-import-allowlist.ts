@@ -535,7 +535,7 @@ export function scanForLeakedHostImports(
   const leaks: LeakedHostImport[] = [];
   const seen = new Set<string>();
   for (const imp of imports) {
-    const key = `${imp.module} ${imp.name}`;
+    const key = `${imp.module}\0${imp.name}`;
     if (seen.has(key)) continue;
     seen.add(key);
     // #2783 — `--link`'d namespaces (`ctx.linkedNamespaces`) are left as

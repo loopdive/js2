@@ -777,14 +777,22 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curUnwind = undefined;
   }
 
-  const tryYieldDeclaration = (stmt: ts.Statement): { name: string; yieldExpr: ts.YieldExpression } | null => {
+  const tryYieldDeclaration = (
+    stmt: ts.Statement,
+  ): { name: string; yieldExpr: ts.YieldExpression; id: ts.Identifier } | null => {
     if (!ts.isVariableStatement(stmt)) return null;
     if (stmt.declarationList.declarations.length !== 1) return null;
     const declStmt = stmt.declarationList.declarations[0]!;
     if (!ts.isIdentifier(declStmt.name)) return null;
     if (!declStmt.initializer || !ts.isYieldExpression(declStmt.initializer)) return null;
-    return { name: spillNameOf(declStmt.name), yieldExpr: declStmt.initializer };
+    return { name: spillNameOf(declStmt.name), yieldExpr: declStmt.initializer, id: declStmt.name };
   };
+  // (#6798) On the JS host a bound `yield*` completion comes from a host-protocol
+  // delegate (native-gen delegation is no-host only) and may be any JS value; an
+  // f64-carrier slot turned a string completion into NaN. Keep such a non-numeric
+  // binding on the eager host path, which now returns the real completion.
+  const hostCompletionLosesValue = (target: ts.Expression): boolean =>
+    hostLane && !elemIsAny && !["number", "any", "unknown"].includes(ctx.oracle.typeFactOf(target).kind);
 
   // (#6775 S11) `<target> = yield [v];` with a side-effect-free reference: an
   // identifier, `id.name`, or `id[<literal>]` — evaluating it after the resume
@@ -1045,12 +1053,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // first so a bare `return expr;` is a completion terminator, not a raw
       // wasm `return` from compileStatement.)
       if (ts.isReturnStatement(stmt)) {
-        if (
-          (ctx.standalone || ctx.wasi) &&
-          stmt.expression &&
-          ts.isYieldExpression(stmt.expression) &&
-          stmt.expression.asteriskToken
-        ) {
+        // (#6798) Every lane: the plain return arm below compiled `return yield* x`
+        // without suspending and returned undefined on the JS host.
+        if (stmt.expression && ts.isYieldExpression(stmt.expression) && stmt.expression.asteriskToken) {
           // A delegated return inside a finally body still needs its own replacement-completion model.
           if (stateFinallyDepth > 0) return fail();
           const name = `__gen_delegation_completion_${delegationBindingNames.size}`;
@@ -1132,6 +1137,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         ts.isYieldExpression(stmt.expression.right) &&
         stmt.expression.right.asteriskToken
       ) {
+        if (hostCompletionLosesValue(stmt.expression.left)) return fail();
         const name = `__gen_delegation_completion_${delegationBindingNames.size}`;
         delegationBindingNames.add(name);
         addSpill(name);
@@ -1155,6 +1161,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           if (!lowerNestedOrRefuse(stmt, unwind, allowExpressionContinuations)) return false;
           continue;
         }
+        if (yd.yieldExpr.asteriskToken && hostCompletionLosesValue(yd.id)) return fail();
         if (!emitYield(yd.yieldExpr, yd.name, unwind)) return false;
         continue;
       }

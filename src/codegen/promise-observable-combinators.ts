@@ -7,33 +7,63 @@
 // call dispatcher enters this module only after its observable source gate has
 // admitted a direct literal or vector input.
 
-import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { buildTargetTaggedTry } from "../wasm/physical/exception-control.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import {
+import type {
   PROMISE_STATE_PENDING,
-  type PromiseExecutorClosures,
+  PromiseExecutorClosures,
   buildPromiseSettleClosureInstrs,
   ensureAsyncDriveRuntime,
   ensurePromiseExecutorClosures,
 } from "./async-scheduler.js";
-import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
-import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
-import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
-import { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
+import type { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
+import type { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+import type { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
+import type { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js";
-import { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js"; // (#6651 D5)
-import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
-import { closureBagInitInstr, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+import type { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js";
+import type { aggregateSettleFuncIdx } from "./promise-species-then.js";
+import { closureBagInitInstr } from "./closures/closure-header-layout.js";
+import type { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
-import { ensureCombinatorFunctions } from "./promise-combinators.js";
+import type { stringConstantExternrefInstrs } from "./native-strings.js";
+import type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import type { ensureCombinatorFunctions } from "./promise-combinators.js";
 import { resolveF64VecArg as resolveObservableF64VecArg } from "./promise-combinator-observable-protocol.js";
-import { emitWasiErrorConstructor } from "./registry/error-types.js";
-import { ensureExnTag } from "./registry/imports.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import type { emitWasiErrorConstructor } from "./registry/error-types.js";
+import type { ensureExnTag } from "./registry/imports.js";
+import type { addStringConstantGlobal } from "./registry/imports.js";
+
+/** Explicit compiler services; constructing the record performs no registration. */
+export interface ObservablePromiseCombinatorServices {
+  readonly ensureCombinatorFunctions: typeof ensureCombinatorFunctions;
+  readonly ensureAsyncDriveRuntime: typeof ensureAsyncDriveRuntime;
+  readonly ensurePromiseExecutorClosures: typeof ensurePromiseExecutorClosures;
+  readonly ensureObjectRuntime: typeof ensureObjectRuntime;
+  readonly ensureObjVecBuilders: typeof ensureObjVecBuilders;
+  readonly reserveApplyClosure: typeof reserveApplyClosure;
+  readonly ensureBuiltinFnMetaType: typeof ensureBuiltinFnMetaType;
+  readonly getOrCreateFuncRefWrapperTypes: typeof getOrCreateFuncRefWrapperTypes;
+  readonly ensureStandaloneBuiltinStaticMethodClosure: typeof ensureStandaloneBuiltinStaticMethodClosure;
+  readonly emitBuiltinConstructorIdentity: typeof emitBuiltinConstructorIdentity;
+  readonly reserveCarrierBagVisibility: typeof reserveCarrierBagVisibility;
+  readonly promiseProtoThenMayBeReplaced: typeof promiseProtoThenMayBeReplaced;
+  readonly aggregateSettleFuncIdx: typeof aggregateSettleFuncIdx;
+  readonly buildPromiseSettleClosureInstrs: typeof buildPromiseSettleClosureInstrs;
+  readonly emitWasiErrorConstructor: typeof emitWasiErrorConstructor;
+  readonly stringConstantExternrefInstrs: typeof stringConstantExternrefInstrs;
+  readonly addStringConstantGlobal: typeof addStringConstantGlobal;
+  readonly ensureExnTag: typeof ensureExnTag;
+  readonly pendingState: typeof PROMISE_STATE_PENDING;
+}
+
+function observableServices(ctx: CodegenContext): ObservablePromiseCombinatorServices {
+  const services = ctx.promiseObservableCombinatorServices;
+  if (!services) throw new Error("Missing observable Promise combinator pipeline services");
+  return services;
+}
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -73,15 +103,15 @@ function ensureObservableCombinatorRuntime(ctx: CodegenContext, ids: CombinatorR
   }
   if (cache.__promiseObservableCombinators !== undefined) return cache.__promiseObservableCombinators;
 
-  ensureObjectRuntime(ctx);
-  ensureObjVecBuilders(ctx);
-  reserveCarrierBagVisibility(ctx);
-  const applyClosureIdx = reserveApplyClosure(ctx);
-  ensureStandaloneBuiltinStaticMethodClosure(ctx, "Promise", "resolve");
-  const executorClosures = ensurePromiseExecutorClosures(ctx);
-  emitWasiErrorConstructor(ctx, "TypeError", 1);
-  addStringConstantGlobal(ctx, "Promise resolve is not callable");
-  addStringConstantGlobal(ctx, "Promise then is not callable");
+  observableServices(ctx).ensureObjectRuntime(ctx);
+  observableServices(ctx).ensureObjVecBuilders(ctx);
+  observableServices(ctx).reserveCarrierBagVisibility(ctx);
+  const applyClosureIdx = observableServices(ctx).reserveApplyClosure(ctx);
+  observableServices(ctx).ensureStandaloneBuiltinStaticMethodClosure(ctx, "Promise", "resolve");
+  const executorClosures = observableServices(ctx).ensurePromiseExecutorClosures(ctx);
+  observableServices(ctx).emitWasiErrorConstructor(ctx, "TypeError", 1);
+  observableServices(ctx).addStringConstantGlobal(ctx, "Promise resolve is not callable");
+  observableServices(ctx).addStringConstantGlobal(ctx, "Promise then is not callable");
 
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const newTypeErrorIdx = ctx.funcMap.get("__new_TypeError");
@@ -96,11 +126,11 @@ function ensureObservableCombinatorRuntime(ctx: CodegenContext, ids: CombinatorR
     );
   }
 
-  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF], []);
+  const wrapper = observableServices(ctx).getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF], []);
   if (!wrapper) {
     throw new Error("observable Promise combinator pipeline requires a one-argument closure wrapper");
   }
-  const allResolveMetaTypeIdx = ensureBuiltinFnMetaType(
+  const allResolveMetaTypeIdx = observableServices(ctx).ensureBuiltinFnMetaType(
     ctx,
     wrapper.structTypeIdx,
     wrapper.closureInfo,
@@ -183,7 +213,7 @@ function ensureObservableCombinatorRuntime(ctx: CodegenContext, ids: CombinatorR
     allResolveElemCapsFieldIdx,
     allResolveCalledFieldIdx,
     allResolveMetaTypeIdx,
-    exnTagIdx: ensureExnTag(ctx),
+    exnTagIdx: observableServices(ctx).ensureExnTag(ctx),
     settleClosures: executorClosures,
   };
   cache.__promiseObservableCombinators = result;
@@ -253,7 +283,7 @@ function buildObservableTypeErrorRejectInstrs(
   message: string,
 ): Instr[] {
   return buildObservableRejectInstrs(rt, preparation, [
-    ...stringConstantExternrefInstrs(ctx, message),
+    ...observableServices(ctx).stringConstantExternrefInstrs(ctx, message),
     { op: "call", funcIdx: ctx.funcMap.get("__new_TypeError")! },
   ]);
 }
@@ -295,7 +325,7 @@ function emitObservableCombinatorPreparation(
   };
 
   fctx.body.push(
-    { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "i32.const", value: observableServices(ctx).pendingState },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
@@ -307,22 +337,26 @@ function emitObservableCombinatorPreparation(
 
   if (method === "race") {
     fctx.body.push(
-      ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_resolve_cl")!, [
-        { op: "local.get", index: resultLocal },
-      ]),
+      ...observableServices(ctx).buildPromiseSettleClosureInstrs(
+        observable.settleClosures,
+        ctx.funcMap.get("__promise_resolve_cl")!,
+        [{ op: "local.get", index: resultLocal }],
+      ),
       { op: "extern.convert_any" },
       { op: "local.set", index: raceFulfillLocal },
     );
   }
   fctx.body.push(
-    ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get("__promise_reject_cl")!, [
-      { op: "local.get", index: resultLocal },
-    ]),
+    ...observableServices(ctx).buildPromiseSettleClosureInstrs(
+      observable.settleClosures,
+      ctx.funcMap.get("__promise_reject_cl")!,
+      [{ op: "local.get", index: resultLocal }],
+    ),
     { op: "extern.convert_any" },
     { op: "local.set", index: rejectLocal },
   );
 
-  emitBuiltinConstructorIdentity(ctx, fctx, "Promise");
+  observableServices(ctx).emitBuiltinConstructorIdentity(ctx, fctx, "Promise");
   fctx.body.push({ op: "local.set", index: ctorLocal });
   fctx.body.push(
     buildTargetTaggedTry(
@@ -330,7 +364,7 @@ function emitObservableCombinatorPreparation(
       { kind: "empty" },
       [
         { op: "local.get", index: ctorLocal },
-        ...stringConstantExternrefInstrs(ctx, "resolve"),
+        ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "resolve"),
         { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
         { op: "local.set", index: resolveLocal },
       ],
@@ -403,7 +437,7 @@ function emitObservableCombinatorState(
 
 /** (#5197 r3) Settle an observable aggregate through Resolve when required. */
 function aggregateRt(ctx: CodegenContext, rt: AsyncDriveRuntimeT): AsyncDriveRuntimeT {
-  return { ...rt, fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
+  return { ...rt, fulfillFuncIdx: observableServices(ctx).aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) };
 }
 
 /** Drop Promise.all's iteration-completion sentinel after every admitted element ran. */
@@ -486,7 +520,7 @@ function emitObservableCombinatorElement(
   indexInstrs: readonly Instr[],
   inputInstrs: readonly Instr[],
 ): void {
-  const protoThenReplaceable = promiseProtoThenMayBeReplaced(ctx, fctx);
+  const protoThenReplaceable = observableServices(ctx).promiseProtoThenMayBeReplaced(ctx, fctx);
   const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);
   const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);
   const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);
@@ -555,7 +589,7 @@ function emitObservableCombinatorElement(
     if (carrierBagHasIdx === undefined) return buildLegacySubscribe();
     return [
       { op: "local.get", index: nextLocal },
-      ...stringConstantExternrefInstrs(ctx, "then"),
+      ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "then"),
       { op: "call", funcIdx: carrierBagHasIdx },
       {
         op: "if",
@@ -566,7 +600,7 @@ function emitObservableCombinatorElement(
             { kind: "empty" },
             [
               { op: "local.get", index: nextLocal },
-              ...stringConstantExternrefInstrs(ctx, "then"),
+              ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "then"),
               { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
               { op: "local.set", index: thenLocal },
               ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),
@@ -593,7 +627,7 @@ function emitObservableCombinatorElement(
       { kind: "empty" },
       [
         { op: "local.get", index: nextLocal },
-        ...stringConstantExternrefInstrs(ctx, "then"),
+        ...observableServices(ctx).stringConstantExternrefInstrs(ctx, "then"),
         { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
         { op: "local.set", index: thenLocal },
         ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),
@@ -686,8 +720,8 @@ export function emitObservableStandalonePromiseCombinatorLiteral(
   method: "all" | "race",
   elementInstrs: Instr[][],
 ): ValType {
-  const ids = ensureCombinatorFunctions(ctx);
-  const rt = ensureAsyncDriveRuntime(ctx);
+  const ids = observableServices(ctx).ensureCombinatorFunctions(ctx);
+  const rt = observableServices(ctx).ensureAsyncDriveRuntime(ctx);
   const observable = ensureObservableCombinatorRuntime(ctx, ids);
 
   const reaction = observableReactionFns(ids, method);
@@ -743,8 +777,8 @@ export function emitObservableStandalonePromiseCombinatorRuntime(
   argArrTypeIdx: number,
   opts?: { boxF64Elements?: boolean },
 ): ValType {
-  const ids = ensureCombinatorFunctions(ctx);
-  const rt = ensureAsyncDriveRuntime(ctx);
+  const ids = observableServices(ctx).ensureCombinatorFunctions(ctx);
+  const rt = observableServices(ctx).ensureAsyncDriveRuntime(ctx);
   const observable = ensureObservableCombinatorRuntime(ctx, ids);
 
   const reaction = observableReactionFns(ids, method);

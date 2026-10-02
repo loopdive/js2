@@ -10,7 +10,7 @@ import type { IrPlanningIdentityContext } from "../../ir/planning-identity.js";
 import { createTypeOracle } from "../../checker/oracle-backend.js";
 import { UsageInference } from "../../checker/usage-inference.js";
 import { resolveCompileTargetProfile, type CompileTargetProfile } from "../../target-profile.js";
-import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
+import { getArrTypeIdxFromVec, getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import { RUNTIME_RECGROUP_ABI_VERSION, RUNTIME_RECGROUP_TYPE_NAMES } from "../../emit/canonical-recgroup.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
@@ -27,6 +27,98 @@ import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
 import { ProgramAbiFnctorRegistry } from "../program-abi-fnctor-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 import { readEnv } from "../../env.js";
+import {
+  PROMISE_STATE_PENDING,
+  buildPromiseSettleClosureInstrs,
+  ensureAsyncDriveRuntime,
+  ensurePromiseExecutorClosures,
+} from "../async-scheduler.js";
+import { ensureBuiltinFnMetaType } from "../builtin-fn-meta.js";
+import { emitBuiltinConstructorIdentity } from "../builtin-static-globals.js";
+import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
+import { reserveCarrierBagVisibility } from "../carrier-bag-visibility.js";
+import { getOrCreateFuncRefWrapperTypes } from "../closures/funcref-wrapper-types.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "../object-runtime.js";
+import {
+  ensureCombinatorFunctions,
+  emitStandalonePromiseCombinator as emitLegacyPromiseCombinator,
+  emitStandalonePromiseCombinatorRuntime as emitLegacyPromiseCombinatorRuntime,
+} from "../promise-combinators.js";
+import { promiseProtoThenMayBeReplaced } from "../promise-dynamic-member-read.js";
+import { aggregateSettleFuncIdx } from "../promise-species-then.js";
+import { emitWasiErrorConstructor } from "../registry/error-types.js";
+import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import type { ObservableCombinatorProtocolServices } from "../promise-combinator-observable-protocol.js";
+import type { ObservablePromiseCombinatorServices } from "../promise-observable-combinators.js";
+
+// Forward at invocation time: record construction neither registers runtime
+// support nor snapshots exports that instrumentation may replace later.
+function createPromiseCombinatorProtocolServices(): ObservableCombinatorProtocolServices {
+  return {
+    ensureCombinatorFunctions: (...args) => ensureCombinatorFunctions(...args),
+    ensureAsyncDriveRuntime: (...args) => ensureAsyncDriveRuntime(...args),
+    ensurePromiseExecutorClosures: (...args) => ensurePromiseExecutorClosures(...args),
+    ensureObjectRuntime: (...args) => ensureObjectRuntime(...args),
+    ensureObjVecBuilders: (...args) => ensureObjVecBuilders(...args),
+    reserveApplyClosure: (...args) => reserveApplyClosure(...args),
+    ensureBuiltinFnMetaType: (...args) => ensureBuiltinFnMetaType(...args),
+    getOrCreateFuncRefWrapperTypes: (...args) => getOrCreateFuncRefWrapperTypes(...args),
+    ensureStandaloneBuiltinStaticMethodClosure: (...args) => ensureStandaloneBuiltinStaticMethodClosure(...args),
+    emitBuiltinConstructorIdentity: (...args) => emitBuiltinConstructorIdentity(...args),
+    reserveCarrierBagVisibility: (...args) => reserveCarrierBagVisibility(...args),
+    promiseProtoThenMayBeReplaced: (...args) => promiseProtoThenMayBeReplaced(...args),
+    aggregateSettleFuncIdx: (...args) => aggregateSettleFuncIdx(...args),
+    buildPromiseSettleClosureInstrs: (...args) => buildPromiseSettleClosureInstrs(...args),
+    emitWasiErrorConstructor: (...args) => emitWasiErrorConstructor(...args),
+    stringConstantExternrefInstrs: (...args) => stringConstantExternrefInstrs(...args),
+    addStringConstantGlobal: (...args) => addStringConstantGlobal(...args),
+    ensureExnTag: (...args) => ensureExnTag(...args),
+    getArrTypeIdxFromVec: (...args) => getArrTypeIdxFromVec(...args),
+    emitLegacyPromiseCombinator: (...args) => emitLegacyPromiseCombinator(...args),
+    emitLegacyPromiseCombinatorRuntime: (...args) => emitLegacyPromiseCombinatorRuntime(...args),
+    get pendingState(): typeof PROMISE_STATE_PENDING {
+      return PROMISE_STATE_PENDING;
+    },
+  };
+}
+
+function createPromiseObservableCombinatorServices(): ObservablePromiseCombinatorServices {
+  return {
+    ensureCombinatorFunctions: (...args) => ensureCombinatorFunctions(...args),
+    ensureAsyncDriveRuntime: (...args) => ensureAsyncDriveRuntime(...args),
+    ensurePromiseExecutorClosures: (...args) => ensurePromiseExecutorClosures(...args),
+    ensureObjectRuntime: (...args) => ensureObjectRuntime(...args),
+    ensureObjVecBuilders: (...args) => ensureObjVecBuilders(...args),
+    reserveApplyClosure: (...args) => reserveApplyClosure(...args),
+    ensureBuiltinFnMetaType: (...args) => ensureBuiltinFnMetaType(...args),
+    getOrCreateFuncRefWrapperTypes: (...args) => getOrCreateFuncRefWrapperTypes(...args),
+    ensureStandaloneBuiltinStaticMethodClosure: (...args) => ensureStandaloneBuiltinStaticMethodClosure(...args),
+    emitBuiltinConstructorIdentity: (...args) => emitBuiltinConstructorIdentity(...args),
+    reserveCarrierBagVisibility: (...args) => reserveCarrierBagVisibility(...args),
+    promiseProtoThenMayBeReplaced: (...args) => promiseProtoThenMayBeReplaced(...args),
+    aggregateSettleFuncIdx: (...args) => aggregateSettleFuncIdx(...args),
+    buildPromiseSettleClosureInstrs: (...args) => buildPromiseSettleClosureInstrs(...args),
+    emitWasiErrorConstructor: (...args) => emitWasiErrorConstructor(...args),
+    stringConstantExternrefInstrs: (...args) => stringConstantExternrefInstrs(...args),
+    addStringConstantGlobal: (...args) => addStringConstantGlobal(...args),
+    ensureExnTag: (...args) => ensureExnTag(...args),
+    get pendingState(): typeof PROMISE_STATE_PENDING {
+      return PROMISE_STATE_PENDING;
+    },
+  };
+}
+
+function createLinkedPackageState(
+  options?: CodegenOptions,
+): Pick<CodegenContext, "linkedPackageBindings" | "linkedNamespaces"> {
+  const linkedPackageBindings = options?.linkedPackageBindings ?? new Map();
+  const linkedNamespaces: ReadonlySet<string> = new Set([
+    ...(options?.link ?? []),
+    ...Array.from(linkedPackageBindings.values(), (binding) => binding.module),
+  ]);
+  return { linkedPackageBindings, linkedNamespaces };
+}
 
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
   return targetProfile.target === "standalone" ||
@@ -86,12 +178,10 @@ export function createCodegenContext(
   // both link an explicit Wasm/embedder provider. The internal node:fs lowering
   // remains WASI-specific below so existing non-WASI code generation is byte
   // neutral when the namespace is merely declared as externally provided.
-  const linkedPackageBindings = options?.linkedPackageBindings ?? new Map();
-  const linkedNamespaces: ReadonlySet<string> = new Set([
-    ...(options?.link ?? []),
-    ...Array.from(linkedPackageBindings.values(), (binding) => binding.module),
-  ]);
+  const { linkedPackageBindings, linkedNamespaces } = createLinkedPackageState(options);
   const ctx: CodegenContext = {
+    promiseCombinatorProtocolServices: createPromiseCombinatorProtocolServices(),
+    promiseObservableCombinatorServices: createPromiseObservableCombinatorServices(),
     mod,
     targetProfile,
     programAbiSession,
