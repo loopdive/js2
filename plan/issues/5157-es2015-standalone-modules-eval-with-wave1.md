@@ -1114,3 +1114,85 @@ Accordingly, a future repair needs an explicit cross-file claim for the raw
 override hand-off, strict adopter, and tuple observation path.  The four red
 controls remain the acceptance boundary until then; this audit authorizes no
 provider implementation, test relabeling, or publication change.
+
+### 2026-10-02 evaluator-contract checkpoint plan
+
+Required quality run `36967435041`, job `110714119093`, at PR head
+`e6493c36025ab9f93dab7d5e57389b80896f6ebc` selected the interpreter
+engine but reported the **REFUSAL** provider tier. Its 15-control run yielded
+one pass and fourteen `undefined` failures. This does not establish
+fourteen argument-spread defects: that provider deliberately refuses dynamic
+code. The retained QuickJS/native-tier result remains eleven passes and the
+four executable semantic diagnostics above.
+
+Root owns only this record and `tests/issue-5157-eval-spread-arguments.test.ts`
+for the following test-instrument checkpoint; the #6739 implementation owner
+continues separately in the strict iterator worktree.
+
+1. Add an explicit positive evaluator preflight to both compiler-execution
+   helpers only when the compiled module actually imports runtime eval. Static
+   eval that compiles away must retain its provider-free execution. Admit an
+   available full interpreter or linked QuickJS tier; reject
+   `refusal` and `none` with their exact selection provenance before pretending
+   to measure compiled argument-spread semantics.
+2. Do not change the caller's engine environment, build a hidden provider,
+   skip/remove any test, soften an expected value, or alter any compiler path.
+   Clear the test262 provider memo before a successful fixture selection and
+   after the suite so another fixture's cached selection cannot leak into it.
+3. Validate a fresh QuickJS run with all fifteen registered controls and the
+   same retained four reds. Separately run the refusal-only configuration as a
+   negative instrument control: the compiler-execution helpers must report
+   unavailable semantics explicitly, not `undefined` result mismatches. That
+   run is an infrastructure non-result, not conformance data or Test262 credit.
+4. Keep the PR draft until the numeric-array/tuple semantics and the CI
+   evaluator contract actually pass. A clearer failing gate is not a repair of
+   either the compiler semantics or CI provider configuration.
+
+The unchanged 11,778-path standalone completion target remains unverified.
+
+#### Evaluator-preflight validation and checkpoint handoff
+
+Root implemented only the two-helper positive preflight and provider-memo
+cleanup. All fifteen test bodies and expected values remain intact. A compiled
+module without `js2wasm:runtime-eval` imports retains provider-free execution;
+modules that actually import it require an available executable provider. The
+fixture does not override engine settings, install/build providers, skip
+controls, or change production code. An unavailable tier fails the affected
+control with explicit selection provenance rather than an `undefined` result.
+
+The initial QuickJS attempt (session 88933) found a missing adapter and is an
+infrastructure non-result, not fifteen regressions. The first bundle build
+(49507) was denied a write by the sandbox; its authorized retry succeeded.
+`--require-cache` then correctly rejected the absent current-key adapter. Root
+used the normal builder with the existing verified QuickJS core (no dependency
+install or cold core build). Compiler bundle hash is `788f9986cdc5b39c`,
+adapter key `a181430990de94b9`; the 542,373-byte adapter passed the builder's
+linked canaries. Core SHA256 remains
+`e9f8d30bc347dbc56f31b3389f7696eb6dedc9f05ea729781fc412f09a3e6b17`.
+
+Fresh QuickJS session **97920** terminates exit 1 with **11 pass / 4 fail of
+15**, zero pending, fifteen unique registered verdicts, one test file. These
+are the same retained inline-literal lexical/non-string, numeric Array override,
+and grouped protocol diagnostics. They are not hidden or relabelled. The log
+announces the actual linked QuickJS tier and current adapter key before running
+the controls. JSON SHA256:
+`deb765dec26da3dc0f8b2a64890a36ed43f05f17902b04d7ab39d4bbf164f1f9`.
+
+The explicit refusal-only negative (session **20458**) also terminates exit 1,
+with **15 failed framework controls / 15 unique verdicts / zero pending**.
+Every failure contains the new executable-provider diagnostic and exact
+`REFUSAL` provenance; none is a measured argument-spread result. Root verified
+this across all fifteen JSON rows, not just a sample. The normal refusal builder
+created/canary-verified key `403d5e36f96e9acf`, so the negative does not depend
+on a missing-cache substitute. JSON SHA256:
+`50ecf2214b38585153720a64e07d4ed79028ae97ba7f6ad80a89d063eec12821`.
+Do not call this negative a semantic regression or count it as conformance.
+
+All logs, JSON reports, and provider-build records are retained under
+`/private/tmp/js2-5157-evaluator-preflight.lJUx9Z/`. The measured fixture hashes
+to `30bb030190588126aca1a8dbe3d4bdd52ef86e422b17da727ee004ca2927afba`.
+Current-source TypeScript 7 validation (session **10395**, Node 24, 4 GiB)
+passes. No original-Test262 or full-suite improvement is claimed. The next
+implementation must finish the numeric-array/tuple semantics and supply an
+executable evaluator in CI; this checkpoint deliberately leaves those gates
+red and the PR unready.

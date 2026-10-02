@@ -5,10 +5,16 @@
  * the linked eval provider after the native caller has expanded its spreads.
  */
 import { createContext, runInContext } from "node:vm";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
-import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import {
+  getTest262RuntimeEvalProviderModule,
+  instantiateTest262Module,
+  resetTest262RuntimeEvalProviderForTest,
+  RUNTIME_EVAL_IMPORT_MODULE,
+} from "../scripts/test262-import-object.mjs";
+import { selectCachedRuntimeEvalProvider } from "../scripts/runtime-eval-provider.mjs";
 
 const OPTIONS = {
   allowJs: true,
@@ -30,10 +36,36 @@ const SCRIPT_OPTIONS = {
   target: "standalone",
 } as const;
 
+let evalProviderValidated = false;
+
+/** A refusal provider can link eval imports but cannot measure these semantics. */
+function requireSemanticEvalProvider(module: WebAssembly.Module): void {
+  // Static eval can compile away. It must keep executing without requiring an
+  // unrelated provider; only an actual linked import needs this preflight.
+  if (!WebAssembly.Module.imports(module).some((entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE)) return;
+  if (evalProviderValidated) return;
+  const selection = selectCachedRuntimeEvalProvider();
+  if (selection.engine !== "quickjs" && selection.engine !== "interpreter") {
+    throw new Error(
+      `#5157 requires an executable standalone eval provider: ${selection.message}. ` +
+        "REFUSAL/NONE tiers are infrastructure non-results, not argument-spread verdicts.",
+    );
+  }
+  resetTest262RuntimeEvalProviderForTest();
+  expect(getTest262RuntimeEvalProviderModule("issue-5157-preflight"), selection.message).not.toBeNull();
+  evalProviderValidated = true;
+}
+
+afterAll(() => {
+  evalProviderValidated = false;
+  resetTest262RuntimeEvalProviderForTest();
+});
+
 async function run(body: string, prefix = ""): Promise<number> {
   const result = await compile(`${prefix}\nexport function test(): number {\n${body}\n}`, OPTIONS);
   expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary), "compiled module failed validation").toBe(true);
+  requireSemanticEvalProvider(new WebAssembly.Module(result.binary));
   const instance = await instantiateTest262Module(
     result.binary,
     {},
@@ -54,6 +86,7 @@ async function runRuntimeEvalScript(body: string): Promise<void> {
   const result = await compile(body, SCRIPT_OPTIONS);
   expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary), "compiled Script failed validation").toBe(true);
+  requireSemanticEvalProvider(new WebAssembly.Module(result.binary));
   const instance = await instantiateTest262Module(
     result.binary,
     {},
