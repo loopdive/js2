@@ -152,8 +152,10 @@ labelled PRs for misuse.
 
 Permitted bypass scopes:
 
-1. **`ci-status` bot commits** — automated SHA-correlation feed writes
-   under `.claude/ci-status/`. See `.github/workflows/ci-status-feed.yml`.
+1. **`ci-status` bot commits** — _retired._ The SHA-correlation feed under
+   `.claude/ci-status/` and its `ci-status-*.yml` writer workflows were
+   deleted in #6796 (the writers had been `workflow_dispatch`-only stubs
+   since 2026-07); no such commits occur any more.
 2. **Planning artifact regen** — paths under `dashboard/data*`,
    `dashboard/data.js`, `public/graph-data.json`, and `plan/goals/`,
    `plan/issues/sprints/**` when the only diff is the output of

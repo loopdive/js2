@@ -139,6 +139,11 @@ and are not bundled into this standalone artifact. If you use `-O` with the
 standalone CLI, install `binaryen` next to the runner or put `wasm-opt` on PATH;
 you can also run `wasm-opt` directly on the emitted `.wasm` afterward.
 
+Runtime requirements: the package needs Node.js ≥ 20 (`engines` in
+`package.json`). Deno ≥ 2.8.1 and Bun ≥ 1.3.14 are only needed for the optional
+`deno compile` / `bun build --compile` steps above; they are not package
+dependencies.
+
 ### Compile modes and imports
 
 The imports a module needs depend on the compile target:

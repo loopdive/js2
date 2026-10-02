@@ -237,6 +237,13 @@ jobs:
         # plan/log/3090-phase0-legacy-delete-list.md.
         run: pnpm run check:dead-exports
 
+      - name: No tracked file matches .gitignore (#6796)
+        if: steps.npm_compat.outputs.only != 'true'
+        # `git ls-files | git check-ignore --stdin --no-index` must be empty
+        # apart from the dated allow-list in the script; a stale allow-list
+        # entry fails too. Untrack an offender with `git rm --cached <path>`.
+        run: pnpm run check:tracked-ignored
+
       - name: Oracle ratchet (#1930/#3273)
         if: steps.npm_compat.outputs.only != 'true'
         # CHANGE-SCOPED (#3273, same rework as check:loc-budget /
