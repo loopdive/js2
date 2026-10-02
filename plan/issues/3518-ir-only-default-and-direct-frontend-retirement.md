@@ -493,6 +493,19 @@ The original frozen admission checker also returns four admissible1/9 cohorts.
 This is a new post-capture hash-bound observation; prior user observations remain
 ordinal-associated. Full176 and physical-comparison obligations remain unwaived.
 
+### Sol6.1 bounded physical-comparison dispatch — 2026-10-02
+
+Parent authored the [implementation and acceptance plan](../agent-context/3518-sol61-physical-comparison-plan-20261002.md)
+before assigning further source work. B owns only a new guarded launcher and
+receipt contract around unchanged V7 diagnostics; C independently reviews it;
+D checks the published PR5883 head. All are native Sol6.1 Medium assignments.
+No new compiler feature scope, fixture/baseline repair, historical-pin refresh,
+local execution or PR5753 hold release follows from this source-only dispatch.
+The measured6/6 per-arm runtime and20/20 saved-module audit remain bounded
+evidence. Full176 acceptance, broader owner correspondence, current-main
+integration and end-to-end IR equivalence are still required. Parent retains
+issue ownership, execution grants, integration and protected-queue decisions.
+
 Latest dispatch reconfirms parent ownership of implementation plans, issue
 updates, integration and protected-queue decisions. Existing native Sol6.1
 Medium agents retain isolated assignments: A validation/attribution; B frozen
