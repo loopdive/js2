@@ -239,6 +239,172 @@ the legacy field or claim historical-layout coverage proves current equivalence.
 Before implementation, specify coordinated declarations, constructors, field
 readers and prototype semantics, or a fully justified representation boundary.
 
+### PR5883 Pop proof repair plan — 2026-10-02
+
+Checkpoint c1a69649afa93b2fccc1ca4115c0c20e0d96be54 publishes the comparison
+archive and issue updates through normal hooks (including18/18 numeric-local
+controls), with all31 archived byte streams independently rechecked. Hold stays.
+D's complete CI inspection attributes all14 failures to the same line101 check;
+all14 logged values equal their original expectations, but their final value
+assertions were not reached, so no pass credit is assigned. Changed-root CI
+actually launched73 cases:59 passed,14 failed; its final13 cases never launched.
+
+Parent owns the repair specification and integration. Sol6.1 Medium D owns only
+the existing `tests/issue-5883-pop-storage-regression.test.ts` instrument once
+the exact emitted-body inspection is reviewed. No production changes are implied.
+
+1. Preserve the entire current33-case file, inputs, expectations, options and
+   120000ms timeouts. Execute it unchanged once on exactc1a69649 with one fork,
+   preserving independent terminal exit, native JSON rows, raw logs and emitted
+   WAT. No retry on observation timeout and no automatic mutation on failure.
+2. Inspect exact emitted Pop, dispatcher, storage-Pop and canonical-Get bodies
+   at O0/O2. Demonstrate the externref path's concrete call and matching length
+   write; distinguish other carrier branches. Return source/value/WAT evidence
+   before editing. Existing source shows Get owns `array.len`; storage-Pop calls
+   its allocated/filled Get before truncation. This must be checked in emission,
+   not inferred from export names or a whole-module marker.
+3. The repair must relocate the capacity-proof obligation to the exact reachable
+   Get while proving its call precedes the corresponding Pop length decrement.
+   Preserve source-Pop to dispatcher evidence and both direct/inlined dispatcher
+   routes. Reject missing/ambiguous function or carrier identification. Do not
+   concatenate unrelated bodies, delete assertions, lower expected values, skip
+   rows or alter fixtures. Parent specifies exact matcher changes after step2;
+   D then implements only that bounded instrument change.
+4. Re-execute all33 controls and then all nine changed-root files (86 cases),
+   preserving any additional failures. Complete assertions, not logged expected
+   values, establish acceptance. Run normal hooks, integrate the latest upstream
+   without dropping its stricter gate, and keep hold until protected-queue entry
+   is justified by full required CI and review. No old compiler retirement.
+
+Parent's push session99055 is terminal exit0. D now receives the sole execution
+slot for step1 only; all other agents remain source-only. The plan grants no
+test edits before step2 review and no concurrent compiler/test/hook execution.
+
+#### Emitted-path amendment and implementation grant
+
+The unchanged local run is terminal (runner59487/child59503, exit1), exactly
+19/33 pass and14 fail, zero pending. Parent independently read all14 WATs:
+storage-Pop310 is an unreachable-only stub in every case; dispatcher304 instead
+contains the inlined Pop and one call to Get306. All14 logged values match,
+but remain failed until the actual value assertions execute successfully.
+Consequently step3 means the *reachable* direct OR inlined route, never a
+mandatory proof about a dead storage body. Source-only construction cannot
+substitute for this emitted-path evidence. Preserve the first run untouched.
+
+D may now edit only this existing test file, as follows:
+
+- Retain all33 registrations, generated programs, options, timeouts, expected
+  values, zero-import/runtime checks, terminal controls, direct-Get controls and
+  explicitly non-conformance lookup receipts. No production or fixture edits.
+- Authenticate unique emitted function names and unique `__vec_externref` and
+  `__arr_externref` type declarations; derive indices from this emitted module,
+  not hardcoded306/310/2/1. Missing or duplicate matches fail closed.
+- Preserve source-Pop's call to its exact dispatcher. Select storage-Pop only
+  if dispatcher directly calls that exact index; otherwise require the existing
+  inlined-pop evidence and inspect dispatcher itself. Never concatenate bodies
+  or obtain a capacity marker from an unrelated function/carrier.
+- In the selected body, isolate the unique `ref.test (ref <externref-vec>)`
+  then-arm using balanced WAT parentheses (including nested empty-case guards).
+  Prove the sequence uses one receiver local and length local: receiver load,
+  extern conversion, length-minus-one, call to exact Get, same receiver and
+  length-minus-one, then `struct.set <externref-vec> 0`. Require one such Get
+  call and one corresponding length write in that arm, in that order.
+- Isolate Get's matching externref then-arm. Prove the logical-length comparison,
+  matching vector backing-field load, `array.len`, unsigned capacity comparison
+  and conjunction feed the conditional whose then-arm reads the exact externref
+  backing array. An `array.len` elsewhere is insufficient. Preserve the original
+  actual-value assertion after the strengthened path proof.
+- Add negative instrument assertions inside an existing P row (no new test-row
+  denominator): missing exact Get call, wrong-carrier length write, reversed
+  Get/write order, and a capacity marker moved outside the matching Get arm
+  must each be rejected. Do not mutate the real compiler module or source.
+
+Return the single-file diff for parent review before executing repaired tests.
+Only after that review: full33, then all nine changed-root files/86cases; retain
+first failures and all unmeasured rows until actual execution proves them.
+
+While D implements source-only, B receives the sole execution slot for the
+already reviewed V9 runtime pair: unchanged `run.mjs before runtime`, then
+`run.mjs after runtime`, each once, serially in its owned5753 checkout. Parent
+rechecked runner de4de8baba610fdf504a66fa5cee99a0648578c1b92837f228e388cfb84d3bad,
+config c5d09e5df4c3b737ca14dc96a63f367bc3dbe2af620013c96d2941e4b9092593
+and invocation manifest6b39d436638a428ebdef0654170c395cb47ab250d7b5af0a4d2f3b427360b3a8.
+Verify all original input pins before dispatch; no substitutes or re-freezing.
+Require six exact selected names executing out of38 declared tasks, with the32
+unselected tasks accounted separately. Retain failed outcomes; selected pending,
+missing/skipped/todo, wrong population, environment drift or infrastructure
+failure prevents acceptance. Preserve raw logs and independent terminal exits.
+No retries, timeout restarts, fixture repairs, compiler changes or installations.
+Stub admission/physical comparisons are not included in this runtime grant;
+neither six bounded cases nor equal failures waive the original176 acceptance
+population, full migration equivalence or any retirement gate. Release the slot
+after the pair is terminal, before documentation packaging or further execution.
+
+The separate Object layout audit now enumerates the coordinated native family:
+six-field ordinary prefix; primitive wrapper payload and ordinary realm state
+at6; wrapper realm state at7. A seventh inherited field would require payload/
+ordinary state7 and wrapper state8, plus ordinary, wrapper and String constructor
+operands, mixed-access consumers and fixture builders to move together. Relevant
+owners are object-layouts, ordinary-object-storage-bodies, primitive-wrapper
+layouts/bodies, realm-object-layouts, string-create/exotic/own-keys bodies and
+both native-mixed-object-access and mixed-object-access-bodies. Closure/builtin
+function and HashedString indices are unrelated and must not be shifted.
+
+This is not authority for that migration now. Native realm state intentionally
+holds actual prototypes as externref, whereas legacy protoLink encodes Proxy
+links inside ordinary storage. Native inherited subtyping must remain internally
+consistent; equivalent semantics need not require identical cross-family physical
+layout. Parent must specify and test the representation boundary before adopting
+or rejecting prefix parity. Production program-consumer reaches ordinary native
+kernel storage; wrapper/realm/mixed owners remain test-assembled, and realm
+population remains incomplete. Do not mistake isolated layout tests for complete
+production assembly. Queue-blocking Pop proof repair retains immediate priority.
+
+B's V9 runtime pair is now terminal: both shell exit receipts and runner terminal
+receipts are0, instrumentFailure false. Parent independently read both full JSON
+reports: six exact selected names passed on each arm;32 unselected tasks remain
+skipped in each38-task population, not additional passes. Init/dispatch counters
+are each1. This is bounded runtime preservation, not full176 acceptance or stub
+admission. B is instructed to release without further execution.
+
+Parent reviewed D's complete single-file Pop proof diff and its four negative
+controls. The capacity relocation negative additionally proves one original arm
+marker, zero after removal, actual out-of-arm insertion and preserved whole-body
+marker count; no silent failed replacement can satisfy the negative. Frozen test
+SHA540a85fdffa5c45ffaee58efcae0b9a97ec71992f69c1ee7e16206a8679ef668,
+101 additions/13 deletions. All original registrations/programs/options and value
+assertions remain. D receives the sole slot for repaired full33 first, then the
+full nine-file86-case changed-root population serially if33 passes. Do not edit
+during execution. Preserve each raw log/JSON and independent exit, report actual
+counts and do not omit later files merely because an ordinary test fails. Stop
+on infrastructure/population failure; no automatic repair/retry, hooks or push.
+
+The repaired standalone33-case run is now terminal exit0:33/33 pass, no pending.
+Parent independently compared all30 before/after logged program receipts (14
+Pop,8 direct-Get,8 lookup-preservation): complete source text/hash, expected and
+actual values are unchanged. All22 corresponding emitted WAT files are byte-
+identical before/after. The four instrument negatives execute inside the existing
+dense-O0 row; no population was removed. This is the test proof's correction,
+not changed compiler behavior. The separate full86-case batch remains in flight;
+neither its final13 cases nor protected-main delivery is yet credited.
+
+The full batch subsequently finished86/86, zero pending, all nine exits0,
+including the previously unlaunched13. Runner87631/PID61619 is terminal0 and
+D released the slot. Normal Prettier changes only layout: complete parsed TS
+trees match at fac751b072230291dd05f8d8b0dc23a7477fdcf267e6357f7f52f32527e00629;
+formatted source20b7ce668160da90e128ba4e97c9b785ae7e87a7f798d24956eddbd269ea7ade.
+Independent Sol6.1 source review finds no actionable defect, with explicitly
+format-specific matching and observed inlined-only runtime coverage. Exact24
+JSON streams and all46 stream hashes are archived in
+`plan/agent-context/5883-pop-proof-repair-20261002/`; first raw logs/WAT persist.
+
+Fresh upstream is39cc565790e151e4559d7526dd7c57ade6a9d74d, merging PR6416.
+Unlike the previous benchmark-only delta, this changes compiler/prototype/
+constructor paths and inventory. Preserve this tested repair checkpoint first;
+then merge exact upstream and validate the combined source rather than inheriting
+the old86/86. No source changes from upstream may be silently dropped to recover
+old receipts. Parent owns integration and the next execution slot.
+
 Latest dispatch reconfirms parent ownership of implementation plans, issue
 updates, integration and protected-queue decisions. Existing native Sol6.1
 Medium agents retain isolated assignments: A validation/attribution; B frozen

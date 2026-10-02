@@ -9,6 +9,83 @@ import { join } from "node:path";
 const artifacts = mkdtempSync(join(tmpdir(), "js2-5883-P-"));
 import { createHash } from "node:crypto";
 
+function unique<T>(matches: T[], label: string): T {
+  if (matches.length !== 1) throw new Error(`${label}: expected one match, found ${matches.length}`);
+  return matches[0]!;
+}
+
+// Extract only a matching carrier's then-arm, including nested empty guards.
+function balancedThen(body: string, start: number): string {
+  const then = /^\s*\(then\b/.exec(body.slice(start));
+  if (!then) throw new Error("missing then-arm");
+  const open = start + then[0].indexOf("(");
+  let depth = 0;
+  for (let i = open; i < body.length; i++) {
+    if (body[i] === "(") depth++;
+    if (body[i] === ")" && --depth === 0) return body.slice(open + 5, i);
+  }
+  throw new Error("unbalanced then-arm");
+}
+
+function externrefArm(body: string, vec: number): string {
+  const test = unique(
+    [...body.matchAll(new RegExp(`ref\\.test \\(ref ${vec}\\)\\s+\\(if\\b`, "g"))],
+    "externref carrier",
+  );
+  return balancedThen(body, test.index! + test[0].length);
+}
+
+function provePopGet(popBody: string, getBody: string, vec: number, arr: number, get: number) {
+  const arm = externrefArm(popBody, vec);
+  const getArm = externrefArm(getBody, vec);
+  const getCall = unique([...arm.matchAll(new RegExp(`\\bcall ${get}\\b`, "g"))], "exact Get call").index!;
+  const decrement = unique(
+    [...arm.matchAll(new RegExp(`struct\\.set ${vec} 0\\b`, "g"))],
+    "externref length write",
+  ).index!;
+  // Backreferences tie both call operands and the write to the same locals.
+  const sequence = unique(
+    [
+      ...arm.matchAll(
+        new RegExp(
+          `local\\.get (\\d+)\\s+extern\\.convert_any\\s+local\\.get (\\d+)\\s+i32\\.const 1\\s+i32\\.sub\\s+call ${get}\\s+` +
+            `local\\.get \\1\\s+local\\.get \\2\\s+i32\\.const 1\\s+i32\\.sub\\s+struct\\.set ${vec} 0\\b`,
+          "g",
+        ),
+      ),
+    ],
+    "same receiver/length Get-before-write sequence",
+  );
+  const binding = new RegExp(
+    `ref\\.cast \\(ref ${vec}\\)\\s+local\\.(?:tee|set) ${sequence[1]}\\s+` +
+      `(?:local\\.get ${sequence[1]}\\s+)?struct\\.get ${vec} 0\\s+local\\.(?:tee|set) ${sequence[2]}\\b`,
+  );
+  if (!binding.test(arm.slice(0, sequence.index))) throw new Error("missing matching receiver/length binding");
+  // The two unsigned bounds feed this exact conditional, not another carrier.
+  const guard = unique(
+    [
+      ...getArm.matchAll(
+        new RegExp(
+          `local\\.get 1\\s+local\\.get (\\d+)\\s+ref\\.cast \\(ref ${vec}\\)\\s+struct\\.get ${vec} 0\\s+i32\\.lt_u\\s+` +
+            `local\\.get 1\\s+local\\.get \\1\\s+ref\\.cast \\(ref ${vec}\\)\\s+struct\\.get ${vec} 1\\s+` +
+            `array\\.len\\s+i32\\.lt_u\\s+i32\\.and\\s+\\(if \\(result externref\\)`,
+          "g",
+        ),
+      ),
+    ],
+    "matching logical-length/capacity guard",
+  );
+  const read = balancedThen(getArm, guard.index! + guard[0].length);
+  if (
+    !new RegExp(
+      `^\\s*local\\.get ${guard[1]}\\s+ref\\.cast \\(ref ${vec}\\)\\s+struct\\.get ${vec} 1\\s+` +
+        `local\\.get 1\\s+array\\.get ${arr}\\b`,
+    ).test(read)
+  )
+    throw new Error("missing guarded externref backing read");
+  return { arm, getArm, getCall, decrement, capacityCheck: getArm.indexOf("array.len"), sequence: sequence[0] };
+}
+
 describe("5883 pop dispatcher terminal contract", () => {
   for (const [name, entries] of [
     ["empty", []],
@@ -66,10 +143,23 @@ export function test():number {const marker:any={x:7};const values:any[]=${initi
           index,
           body: result.wat.slice(match.index, headers[index + 1]?.index ?? result.wat.length),
         }));
-        const pop = functions.find((fn) => fn.name === "pop")!;
-        const dispatcher = functions.find((fn) => fn.name === "__call_m_pop_0")!;
-        const storage = functions.find((fn) => fn.name === "__vec_pop")!;
-        const get = functions.find((fn) => fn.name === "__vec_get")!;
+        const namedFunction = (name: string) =>
+          unique(
+            functions.filter((fn) => fn.name === name),
+            name,
+          );
+        const pop = namedFunction("pop");
+        const dispatcher = namedFunction("__call_m_pop_0");
+        const storage = namedFunction("__vec_pop");
+        const get = namedFunction("__vec_get");
+        const types = [...result.wat.matchAll(/^ {2}\(type \$([^\s(]+)/gm)];
+        const namedType = (name: string) =>
+          unique(
+            types.map((match, index) => ({ name: match[1], index })).filter((type) => type.name === name),
+            name,
+          ).index;
+        const vec = namedType("__vec_externref");
+        const arr = namedType("__arr_externref");
         console.log(
           JSON.stringify({
             receipt: "5883-P",
@@ -89,17 +179,47 @@ export function test():number {const marker:any={x:7};const values:any[]=${initi
         expect(pop.body).toMatch(new RegExp(`(?:return_call|call) ${dispatcher.index}\\b`));
         // The real source dispatcher contains the inlined pop/Get, or calls
         // the exact emitted storage pop; mere export presence is insufficient.
-        if (!new RegExp(`(?:return_call|call) ${storage.index}\\b`).test(dispatcher.body)) {
+        const directStorage = new RegExp(`(?:return_call|call) ${storage.index}\\b`).test(dispatcher.body);
+        if (!directStorage) {
           expect(dispatcher.body).toMatch(/__vpop_/);
-          const getCall = dispatcher.body.search(new RegExp(`(?:return_call|call) ${get.index}\\b`));
-          expect(getCall).toBeGreaterThanOrEqual(0);
-          expect(dispatcher.body.search(/struct\.set \d+ 0/)).toBeGreaterThan(getCall);
-          expect(get.body).toMatch(/array\.len/);
         }
-        const capacityCheck = storage.body.indexOf("array.len");
-        const decrement = storage.body.search(/struct\.set \d+ 0/);
-        expect(capacityCheck).toBeGreaterThanOrEqual(0);
-        expect(decrement).toBeGreaterThan(capacityCheck);
+        const selected = directStorage ? storage.body : dispatcher.body;
+        const proof = provePopGet(selected, get.body, vec, arr, get.index);
+        expect(proof.getCall).toBeGreaterThanOrEqual(0);
+        expect(proof.decrement).toBeGreaterThan(proof.getCall);
+        expect(proof.getArm).toMatch(/array\.len/);
+        expect(proof.capacityCheck).toBeGreaterThanOrEqual(0);
+        if (shape === "dense" && optimize === 0) {
+          // Mutate only instrument input strings, never the emitted module.
+          const call = `call ${get.index}`;
+          const write = `struct.set ${vec} 0`;
+          const mutateArm = (arm: string) => selected.replace(proof.arm, arm);
+          expect(() => provePopGet(mutateArm(proof.arm.replace(call, "nop")), get.body, vec, arr, get.index)).toThrow(
+            "exact Get call",
+          );
+          expect(() =>
+            provePopGet(mutateArm(proof.arm.replace(write, `struct.set ${vec + 1} 0`)), get.body, vec, arr, get.index),
+          ).toThrow("externref length write");
+          const reversed = proof.sequence
+            .replace(call, "__GET_CALL__")
+            .replace(write, call)
+            .replace("__GET_CALL__", write);
+          expect(() =>
+            provePopGet(mutateArm(proof.arm.replace(proof.sequence, reversed)), get.body, vec, arr, get.index),
+          ).toThrow("same receiver/length Get-before-write sequence");
+          const capacityCount = (body: string) => [...body.matchAll(/\barray\.len\b/g)].length;
+          expect(capacityCount(proof.getArm)).toBe(1);
+          const withoutCapacity = get.body.replace(proof.getArm, proof.getArm.replace("array.len", "nop"));
+          expect(capacityCount(externrefArm(withoutCapacity, vec))).toBe(0);
+          expect(capacityCount(withoutCapacity)).toBe(capacityCount(get.body) - 1);
+          const movedCapacity = withoutCapacity.replace(/\n {2}\)\s*$/, "\n    array.len\n  )");
+          expect(movedCapacity).not.toBe(withoutCapacity);
+          expect(capacityCount(externrefArm(movedCapacity, vec))).toBe(0);
+          expect(capacityCount(movedCapacity)).toBe(capacityCount(get.body));
+          expect(() => provePopGet(selected, movedCapacity, vec, arr, get.index)).toThrow(
+            "matching logical-length/capacity guard",
+          );
+        }
         expect(actual).toBe(expected);
       }, 120000);
     }
