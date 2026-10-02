@@ -27,6 +27,7 @@ import { isStrictContext } from "./helpers/is-strict-function.js";
 import { ensureWithHasBindingNative } from "./with-has-binding-native.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { compileExpression, compileStatement, coerceType, valTypesMatch } from "./shared.js";
+import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
 
 const OBJECT_PROTOTYPE_KEYS = new Set([
   "__defineGetter__",
@@ -1263,3 +1264,5 @@ function isFunctionOrClassBoundary(node: ts.Node): boolean {
     ts.isClassExpression(node)
   );
 }
+
+registerExpressionHelpers({ emitCaptureWithHasBinding, resolveWithBinding }); // (#6797) late-bound for the expressions/ leaves

@@ -72,6 +72,7 @@ import {
   fillBuiltinCollectionDynConstruct,
 } from "./builtin-collection-dyn-construct.js"; // (#6720)
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { arrayCtorThisCallSeen, objectConstructArm } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { buildOrdinaryConstructCall, unwrapRuntimeEvalCarrierCallee } from "./construct-under-application.js"; // (#6738)
 import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
@@ -705,6 +706,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       );
     }
     body.push(...builtinCollectionConstructArm(ctx, arity, resultLocal)); // (#6720) Map/Set carrier VALUE
+    if (arity === 0 && arrayCtorThisCallSeen(ctx)) body.push(...objectConstructArm(ctx)); // (#6771 S7) Construct(Object)
     // (#6612 / #5383 S25) §13.3.5.1 EvaluateNew step 5 — IsConstructor. Every
     // arm above answers for a callee that HAS [[Construct]]; the ordinary tail
     // below runs §10.2.2 unconditionally, so a callee that is callable but NOT

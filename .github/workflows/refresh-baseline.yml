@@ -827,15 +827,23 @@ jobs:
             --reason "test262 baseline audit commit" \
             --fallback "the hourly gated baseline-summary-sync.yml (#1951)" \
             $FORCE_ARG || RC=$?
-          if [ "$RC" -eq 10 ]; then
-            echo "decision=defer" >> "$GITHUB_OUTPUT"
-          else
-            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
-            echo "decision=proceed" >> "$GITHUB_OUTPUT"
-          fi
+          # (#6799) FAIL CLOSED: 0 = proceed, 10 = defer, anything else is a
+          # broken gate and must not be pushed past. The authoritative baseline
+          # already landed in the baselines repo above, and the gated hourly
+          # baseline-summary-sync.yml re-lands this audit copy, so refusing here
+          # cannot freeze anything.
+          case "$RC" in
+            0) echo "decision=proceed" >> "$GITHUB_OUTPUT" ;;
+            10) echo "decision=defer" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "decision=error" >> "$GITHUB_OUTPUT"
+              echo "::error title=main-push-queue-gate::gate exited ${RC}; refusing to push main (fail closed, #6799)"
+              exit 1
+              ;;
+          esac
 
       - name: Commit baseline refresh to main (audit trail)
-        if: steps.queue_gate.outputs.decision != 'defer'
+        if: steps.queue_gate.outputs.decision == 'proceed'
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
         run: |

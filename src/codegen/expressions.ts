@@ -36,7 +36,7 @@ import {
 } from "./async-scheduler.js";
 import { promiseSubclassNameOfType } from "./expressions/promise-subclass.js"; // (#5197 r3)
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { ensureExnTag } from "./registry/imports.js"; // (#3178) async-call rejection payload
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js"; // (#3178) async-call rejection payload
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -65,6 +65,19 @@ import {
 import { assertedStructFactoryExpression } from "./generic-struct-factory.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
+// (#6797) The real functions behind `helpers/core-delegates.ts` — registered below.
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+import { holeSentinelInstrs, holeTestInstrs } from "./array-holes.js";
+import { emitArraySetLengthValidation } from "./array-length-define.js";
+import { clampRelative, integerArg, requireObjectCoercible, resolveSliceDeps } from "./array-slice-native.js";
+import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
+import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
+import { emitArrayIsArrayExternrefPredicate } from "./builtin-value-read.js";
+import { registerCoreDelegates } from "./helpers/core-delegates.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { buildArrayLikeToLengthFromExternref } from "./object-runtime-enumeration.js";
+import { protoIndexBrandCompanionHasInstrs } from "./proto-index-store.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
 
@@ -86,6 +99,7 @@ import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
 import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
+import { compileNewTargetValue } from "./expressions/new-target-value.js"; // (#6774 S4)
 import { boxNullRefAsUndefined } from "./null-ref-undefined-box.js"; // (#1058)
 
 import { compileConditionalExpression, compileYieldExpression } from "./expressions/misc.js";
@@ -1627,6 +1641,7 @@ function compileExpressionInner(
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.NewKeyword && expr.name.text === "target") {
+    if (ctx.standalone) return compileNewTargetValue(ctx, fctx); // (#6774 S4) the constructor OBJECT
     if (fctx.isConstructor) {
       // (#2023) Read the live new.target class-id (set at the outermost `new`
       // site, preserved through super()). Non-zero inside a construction, so
@@ -1711,3 +1726,22 @@ registerCompileExpression(compileExpression);
 registerCompileThisKeyword(compileThisKeyword);
 registerEnsureLateImport(ensureLateImport);
 registerFlushLateImportShifts(flushLateImportShifts);
+// (#6797) Same idea for the leaves under array/ etc. that core modules call.
+registerCoreDelegates({
+  addStringConstantGlobal,
+  buildArrayLikeToLengthFromExternref,
+  buildThrowJsErrorInstrs,
+  canonicalUndefinedExternInstrs,
+  clampRelative,
+  emitArrayIsArrayExternrefPredicate,
+  emitArraySetLengthValidation,
+  emitBuiltinNamespaceObject,
+  holeSentinelInstrs,
+  holeTestInstrs,
+  integerArg,
+  protoIndexBrandCompanionHasInstrs,
+  requireObjectCoercible,
+  resolveSliceDeps,
+  sourceOverridesBuiltinPrototypeMember,
+  stringConstantExternrefInstrs,
+});

@@ -4,6 +4,7 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
+import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import { ts, forEachChild } from "../ts-api.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
@@ -511,6 +512,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     emitDeclarationArgumentsObject(ctx, fctx, decl, params, func.name);
   }
 
+  hoistParameterEvalVars(ctx, fctx, decl); // (#6774 S7)
   // Emit default-value initialization for parameters with initializers. Known
   // direct callers may inline a constant default, but first-class/dynamic
   // callers cannot; the callee must therefore retain the semantic check.

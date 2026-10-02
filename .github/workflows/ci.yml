@@ -198,6 +198,25 @@ jobs:
         # reachable invariant is "no growth, ratchet toward zero".
         run: pnpm run check:ir-layering
 
+      - name: Import-cycle ratchet (#6797)
+        if: steps.npm_compat.outputs.only != 'true'
+        # codegen, ir and frontend form one ~700-file strongly-connected
+        # component of the value-import graph, so the layers cannot be
+        # retired one at a time. Fails when the largest SCC, the number of
+        # multi-file SCCs, or any two-way directory edge count (e.g. ir->codegen)
+        # grows vs scripts/import-cycles-baseline.json. Decreases are banked
+        # post-merge (--update-on-decrease in the promote/summary-sync jobs).
+        # Intended growth: `node scripts/check-import-cycles.mjs --update` in
+        # the PR, committed, so review sees it.
+        run: pnpm run check:import-cycles
+
+      - name: src/codegen flat-directory budget (#6797)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when the number of .ts files directly in src/codegen/ (824 when
+        # #6797 was filed) grows past scripts/flat-dir-budget-baseline.json.
+        # New files go into the existing sub-directories.
+        run: pnpm run check:flat-dir-budget
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
@@ -237,6 +256,14 @@ jobs:
         # plan/log/3090-phase0-legacy-delete-list.md.
         run: pnpm run check:dead-exports
 
+      - name: Orphaned-script ratchet (#6799)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when a top-level scripts/ file is referenced by nothing that
+        # runs or documents it (package.json, root configs, .github/, .husky/,
+        # .claude/, docs/, plan/method/, other scripts/) and is not already in
+        # scripts/orphaned-scripts-baseline.json. Wire it up, delete it, or
+        # document it; bank a deletion with `-- --update-on-decrease`.
+        run: pnpm run check:orphaned-scripts
       - name: No tracked file matches .gitignore (#6796)
         if: steps.npm_compat.outputs.only != 'true'
         # `git ls-files | git check-ignore --stdin --no-index` must be empty

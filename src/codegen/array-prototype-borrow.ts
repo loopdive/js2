@@ -36,7 +36,8 @@ import {
 import { ARRAY_METHODS, compileArrayMethodCall, guardedFuncRefCastInstrs, resolveArrayInfo } from "./array-methods.js";
 import { emitArrayLikeHofArm } from "./array-like-hof-arms.js";
 import { compileArrayConcatNativeSpecFromExprs } from "./array-concat-spec.js"; // (#5145)
-import { compileProxyReceiverArrayProtoCall } from "./array-proxy-receiver.js"; // (#6651 H6)
+import { compileArrayLikeCopyWithinCall, compileProxyReceiverArrayProtoCall } from "./array-proxy-receiver.js"; // (#6651 H6, #6771 S1)
+import { arrayLikeLengthLimitGuard } from "./proxy-array-like.js"; // (#6651 H6)
 
 /** Methods supported by the array-like (externref receiver) path.
  * NOTE: map/filter/reduce/reduceRight are excluded because:
@@ -58,6 +59,8 @@ const ARRAY_LIKE_METHOD_SET = new Set([
   "indexOf",
   "lastIndexOf",
   "includes",
+  // (#6771 S1) standalone only — the §23.1.3.4 helper (array-copywithin-native.ts).
+  "copyWithin",
 ]);
 
 /** Search methods handled inline (no callback). #1360 */
@@ -325,6 +328,9 @@ export function compileArrayLikePrototypeCall(
   ) {
     return undefined;
   }
+  if (methodName === "copyWithin") {
+    return compileArrayLikeCopyWithinCall(ctx, fctx, receiverArg, callExpr.arguments.slice(1));
+  }
 
   // Bail out only for real Array vectors (`__vec_*`) and the raw array element
   // types (`__arr_*`). Those structs are opaque to `__sget_*` getters (excluded
@@ -502,6 +508,7 @@ export function compileArrayLikePrototypeCall(
   if (cbTsReturnsBool && !noJsHost(ctx)) {
     ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
   }
+  const lengthLimit = methodName === "map" ? arrayLikeLengthLimitGuard(ctx, fctx) : []; // (#6651 H6) ArrayCreate
   flushLateImportShifts(ctx, fctx);
 
   // Compile receiver to externref
@@ -524,6 +531,7 @@ export function compileArrayLikePrototypeCall(
     // #16 — re-resolve __extern_length by name after any receiver/argument
     // lowering that may shift defined-func indices.
     fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenFn });
+    fctx.body.push(...lengthLimit);
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     fctx.body.push({ op: "local.set", index: lenTmp });
   };

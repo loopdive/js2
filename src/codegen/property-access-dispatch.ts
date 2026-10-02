@@ -230,6 +230,7 @@ import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
+import { tryEmitGuardedArrayConstructorRead } from "./array/array-ctor-this.js"; // (#6771 S7)
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -663,6 +664,8 @@ export function tryConstructorPrototypeIdentity(
       !moduleTouchesConstructorProp(expr.getSourceFile()) &&
       !receiverIsPrimitiveWrapper(ctx, expr.expression)
     ) {
+      const guarded = tryEmitGuardedArrayConstructorRead(ctx, fctx, nsName, expr.expression); // (#6771 S7)
+      if (guarded !== undefined) return guarded;
       // Evaluate the receiver for its side effects (spec: MemberExpression is
       // evaluated), then discard it — the constructor identity is static.
       const objResult = compileExpression(ctx, fctx, expr.expression);

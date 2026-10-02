@@ -998,7 +998,7 @@ export interface CompileOptions {
    * `true` for project compiles.
    */
   packageLinking?: boolean | "separate" | "merge";
-  /** Optional directory for content-addressed npm provider binaries. */
+  /** Directory for content-addressed npm provider binaries; default: `node_modules/.cache/js2wasm` (#6794). */
   packageCacheDir?: string;
   /** Internal package-link import map populated by compileProject's planner. */
   linkedPackageBindings?: ReadonlyMap<string, { module: string; field: string }>;

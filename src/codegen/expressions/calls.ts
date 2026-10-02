@@ -3,6 +3,11 @@
  * Call expression compilation: direct calls, optional calls, closure calls,
  * property method calls, IIFEs, and conditional callees.
  */
+import { hoistParameterEvalVars } from "./eval-param-scope-hoist.js"; // (#6774 S7)
+import { referencesOwnNewTarget } from "./new-target-value.js"; // (#6774 S4)
+import { tryCompileStandaloneEvalSpread } from "./eval-spread-args.js"; // (#6774 S18)
+import { emitThrowReferenceError } from "../js-errors.js"; // (#6774 S8)
+import { tryCompileWithRoutedCall } from "./with-call-binding.js"; // (#6774 S15)
 import { ts, forEachChild } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot, widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
@@ -7847,6 +7852,11 @@ function compileCallExpression(
   // isDirect flag (1 = direct call, 0 = indirect) lets the host shim
   // preserve ECMA-262 §19.2.1 scope semantics — direct eval has access to
   // the caller's lexical scope, indirect eval runs in global scope.
+  // (#6774 S15) a bare call resolved through a `with` object environment
+  if (!(ts.isIdentifier(expr.expression) && expr.expression.text === "eval")) {
+    const withCall = tryCompileWithRoutedCall(ctx, fctx, expr);
+    if (withCall !== undefined) return withCall;
+  }
   {
     const evalKind = classifyEvalCallExpression(expr, ctx.checker);
     if (evalKind !== "none") {
@@ -7857,6 +7867,8 @@ function compileCallExpression(
       if (rewritten !== undefined) return rewritten;
       const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
       if (inlined !== undefined) return inlined;
+      const spreadEval = tryCompileStandaloneEvalSpread(ctx, fctx, expr); // (#6774 S18)
+      if (spreadEval !== undefined) return spreadEval;
       // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
       const runtimeEval =
         evalKind === "direct"
@@ -8100,6 +8112,12 @@ function compileCallExpression(
   //
   // Own-field initializers are deliberately NOT re-run here — the statement
   // site owns that sequencing, and this arm only replaces a no-op.
+  // (#6774 S8) An arrow created AFTER the constructor's own top-level `super()`
+  // re-runs the parent on the captured instance, then BindThisValue throws.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor !== true && ctx.standalone) {
+    const lateArrowSuper = emitLateArrowSuperCall(ctx, fctx, expr);
+    if (lateArrowSuper !== undefined) return lateArrowSuper;
+  }
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor === true) {
     const enclosingClass = resolveEnclosingClassName(fctx);
     const thisLocal = fctx.localMap.get("this");
@@ -10457,6 +10475,22 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     return undefined;
   }
   const funcExpr = callee as ts.FunctionExpression | ts.ArrowFunction;
+  // (#6774 S4) A lexical `new.target` needs the closure path's snapshot capture.
+  if (ctx.standalone && ts.isArrowFunction(funcExpr) && referencesOwnNewTarget(funcExpr)) return undefined;
+  // (#6774 S8) `(_ => super(…))()` in a derived constructor: the arrow's
+  // `super()` IS the constructor's (§13.3.7.1 walks past arrows). An
+  // argument-free expression-bodied arrow evaluates its body in this frame.
+  if (
+    ctx.standalone &&
+    fctx.isConstructor === true &&
+    ts.isArrowFunction(funcExpr) &&
+    !ts.isBlock(funcExpr.body) &&
+    expr.arguments.length === 0 &&
+    funcExpr.parameters.every((p) => p.initializer === undefined && ts.isIdentifier(p.name)) &&
+    isSuperCallExpression(funcExpr.body)
+  ) {
+    return compileExpression(ctx, fctx, funcExpr.body) ?? VOID_RESULT;
+  }
 
   // Determine parameter types from the function's declared parameters
   const paramTypes: ValType[] = [];
@@ -10614,6 +10648,7 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   // source FunctionDeclaration. The old path only padded missing numeric
   // arguments with NaN and entered the body directly, so `function (x = 1)`
   // observed NaN whenever the call omitted `x`.
+  hoistParameterEvalVars(ctx, liftedFctx, funcExpr); // (#6774 S7)
   emitDefaultParamInit(ctx, liftedFctx, funcExpr, paramTypes, captures.length);
 
   if (ts.isBlock(body)) {
@@ -10930,3 +10965,44 @@ export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: str
 }
 
 export { compileCallExpression, compileIIFE, compileOptionalCallExpression };
+
+/** (#6774 S8) `super(…)`, possibly parenthesised. */
+function isSuperCallExpression(node: ts.Node): boolean {
+  let e = node;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return ts.isCallExpression(e) && e.expression.kind === ts.SyntaxKind.SuperKeyword;
+}
+
+/**
+ * (#6774 S8) `super(…)` inside an arrow (not inside the constructor frame) whose
+ * creation statically follows a top-level `super(…)` statement of the enclosing
+ * derived constructor: [[ThisBindingStatus]] is already initialized, so after
+ * the parent constructor runs (§13.3.7.1 step 7) BindThisValue throws a
+ * ReferenceError. Declines (undefined) for any other shape.
+ */
+function emitLateArrowSuperCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  let fn: ts.Node | undefined = expr.parent;
+  let arrow: ts.ArrowFunction | undefined;
+  while (fn !== undefined && (ts.isArrowFunction(fn) || !ts.isFunctionLike(fn))) {
+    if (ts.isArrowFunction(fn)) arrow = fn;
+    fn = fn.parent;
+  }
+  if (arrow === undefined || fn === undefined || !ts.isConstructorDeclaration(fn) || fn.body === undefined)
+    return undefined;
+  const firstSuper = fn.body.statements.find(
+    (st) => ts.isExpressionStatement(st) && isSuperCallExpression(st.expression),
+  );
+  if (firstSuper === undefined || firstSuper.end > arrow.pos) return undefined;
+  const enclosingClass = resolveEnclosingClassName(fctx);
+  const thisLocal = fctx.localMap.get("this");
+  if (enclosingClass === undefined || thisLocal === undefined) return undefined;
+  const thisType = getLocalType(fctx, thisLocal);
+  if (thisType?.kind !== "ref" && thisType?.kind !== "ref_null") return undefined;
+  compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+  emitThrowReferenceError(ctx, fctx, "Super constructor may only be called once");
+  return VOID_RESULT;
+}

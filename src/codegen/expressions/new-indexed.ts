@@ -23,6 +23,7 @@ import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecTyp
 import { getOrRegisterHoleyArrayType } from "../registry/types.js";
 import { ensureHoleyArrayNew } from "../vec-elem-set.js";
 import { sparseArrayNewSplitInstrs } from "../vec-sparse-index.js";
+import { holeFilledArrayNewInstrs } from "../array/array-length-holes.js"; // (#6771 S3)
 import { compileExpression } from "../shared.js";
 import { coerceType } from "../type-coercion.js"; // (#5150) ToIndex via the ToPrimitive chokepoint
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js";
@@ -893,7 +894,7 @@ export function tryCompileIndexedBuiltinNew(
       // (#4491 lane J) LENGTH / CAPACITY split above the 16M allocation guard —
       // `new Array(4294967295)` is legal ES5. See vec-sparse-index.ts.
       fctx.body.push(...sparseArrayNewSplitInstrs(sizeLocal));
-      fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+      fctx.body.push(...holeFilledArrayNewInstrs(ctx, fctx, arrTypeIdx)); // (#6771 S3)
       fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
       return { kind: "ref_null", typeIdx: vecTypeIdx };
     }

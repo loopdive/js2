@@ -19,6 +19,7 @@ import {
 } from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
+import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../array/array-set-length-coercion.js"; // (#6771 S10a)
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
@@ -1716,13 +1717,17 @@ function compileDestructuringAssignment(
       if (
         ts.isBinaryExpression(targetExpr) &&
         targetExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(targetExpr.left)
+        (ts.isIdentifier(targetExpr.left) ||
+          // (#6774 S11) `{ x: holder.y = d }` — a member target with an initializer
+          (ctx.standalone &&
+            (ts.isPropertyAccessExpression(targetExpr.left) || ts.isElementAccessExpression(targetExpr.left))))
       ) {
         defaultExpr = targetExpr.right;
         targetExpr = targetExpr.left;
       }
 
       const fieldIdx = fields.findIndex((f) => f.name === propName);
+
       if (fieldIdx === -1) {
         // The source struct has no matching field → reading `obj[prop]` yields
         // `undefined`. Per §13.15.5.5 the default Initializer fires on undefined,
@@ -1841,6 +1846,7 @@ function compileDestructuringAssignment(
         fctx.body.push({ op: "local.get", index: tmpLocal });
         fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
         fctx.body.push({ op: "local.set", index: tmpElem });
+        if (defaultExpr) emitMemberTargetDefault(ctx, fctx, tmpElem, fieldType, defaultExpr); // (#6774 S11)
         emitAssignToTarget(ctx, fctx, targetExpr, tmpElem, fieldType);
       }
       // else: unsupported target expression in property assignment — skip
@@ -3048,6 +3054,10 @@ export function emitAssignToTarget(
         ],
         else: [],
       });
+    } else if (ctx.standalone) {
+      // (#6774 S21) A non-vec struct receiver (`t()[k]` where `t` returns an
+      // object): the write used to be dropped. PutValue through the generic set.
+      emitDynamicElementSet(ctx, fctx, target, arrType, valueLocal, valueType);
     }
   }
 }
@@ -4289,7 +4299,7 @@ function compilePropertyAssignment(
   // raise. Emitting the throw here is what gives standalone the strict-mode
   // TypeError without building that bridge.
   if (!ts.isPrivateIdentifier(target.name)) {
-    const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text);
+    const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text, objType);
     if (nonWritable !== undefined) return nonWritable;
   }
 
@@ -4869,7 +4879,7 @@ function compilePropertyAssignment(
       // so wrappers and strings get their valueOf/parse, then validate.
       let lenValKind = valType.kind;
       if (lenValKind !== "i32" && lenValKind !== "f64") {
-        coerceType(ctx, fctx, valType, { kind: "f64" });
+        emitArraySetLengthNumber(ctx, fctx, valType); // (#6771 S10a) ToUint32(v), then ToNumber(v)
         lenValKind = "f64";
       }
       // Convert f64 to i32 if needed
@@ -5572,6 +5582,7 @@ function tryEmitNonWritablePropertyWrite(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
   propName: string,
+  objType: ts.Type,
 ): InnerResult | undefined {
   if (!isNonWritableDataProperty(ctx, target.expression, propName)) return undefined;
 
@@ -5579,6 +5590,8 @@ function tryEmitNonWritablePropertyWrite(
   // must still happen even though the store never lands.
   const rhsType = compileExpression(ctx, fctx, value);
   if (rhsType === null) return null;
+  // (#6771 S10a) An array's `length`: ArraySetLength converts (twice) BEFORE its step-12 writable check.
+  if (propName === "length" && resolveArrayInfo(ctx, objType)) emitArraySetLengthCoercionEffects(ctx, fctx, rhsType);
 
   if (isStrictContext(target, ctx.inferModuleStrictArguments)) {
     fctx.body.push({ op: "drop" });
@@ -6585,3 +6598,34 @@ export {
   compileExternSetFallback,
   compilePropertyAssignment,
 };
+
+/**
+ * (#6774 S11) §13.15.5.6 step 3 for a member target: replace the read value in
+ * `valueLocal` with the initializer when it is `undefined`. A statically typed
+ * (non-externref) read is never `undefined`, so it needs no test.
+ */
+function emitMemberTargetDefault(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  valueLocal: number,
+  valueType: ValType,
+  defaultExpr: ts.Expression,
+): void {
+  if (valueType.kind !== "externref") return;
+  const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  if (undefIdx === undefined) return;
+  flushLateImportShifts(ctx, fctx);
+  fctx.body.push({ op: "local.get", index: valueLocal }, { op: "call", funcIdx: undefIdx });
+  attachDetachedAssignmentBodies(
+    fctx,
+    (body) => ({
+      then: body(() => {
+        const initType = compileExpression(ctx, fctx, defaultExpr, valueType);
+        if (initType && initType.kind !== "externref") coerceType(ctx, fctx, initType, valueType);
+        fctx.body.push({ op: "local.set", index: valueLocal });
+      }),
+      else: [],
+    }),
+    (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+  );
+}

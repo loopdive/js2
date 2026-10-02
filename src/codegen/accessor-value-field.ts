@@ -39,3 +39,22 @@ export function propertyValueIsAccessorObjectLiteral(prop: ts.Symbol): boolean {
       d.initializer.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)),
   );
 }
+
+/**
+ * (#6774 S21) True when `type` is the anonymous type of an object literal that
+ * carries a `get`/`set` accessor — every value of it is built as an open
+ * `$Object`, never as the struct `resolveWasmType` would otherwise pick.
+ */
+export function isAccessorObjectLiteralType(type: ts.Type): boolean {
+  if ((type.flags & ts.TypeFlags.Object) === 0) return false;
+  const decls = type.getSymbol()?.declarations;
+  return (
+    decls !== undefined &&
+    decls.length > 0 &&
+    decls.every(
+      (d) =>
+        ts.isObjectLiteralExpression(d) &&
+        d.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)),
+    )
+  );
+}

@@ -1050,6 +1050,10 @@ export interface FunctionContext {
    * binding so reads that occur before the first arrow remain unchanged.
    */
   lexicalThisCaptureLocal?: number;
+  /** (#6774 S4) Frame slot holding the `new.target` snapshot arrows capture. */
+  newTargetSnapshotLocal?: number;
+  /** (#6774 S4) A fnctor `new F()` body's `new.target` value: the binding naming `F`. */
+  newTargetValueNode?: ts.Expression;
   /** While lowering a compile-time direct-eval Script, an otherwise absent
    * receiver in a sloppy caller denotes the realm global object. This is
    * scoped to the foreign eval AST so ordinary strict/direct-call `this`
