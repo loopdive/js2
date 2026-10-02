@@ -49,8 +49,8 @@ import { promiseProtoThenMayBeReplaced } from "../promise-dynamic-member-read.js
 import { aggregateSettleFuncIdx } from "../promise-species-then.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
-import type { ObservableCombinatorProtocolServices } from "../promise-combinator-observable-protocol.js";
-import type { ObservablePromiseCombinatorServices } from "../promise-observable-combinators.js";
+import type { ObservableCombinatorProtocolServices } from "../promises/promise-combinator-observable-protocol.js";
+import type { ObservablePromiseCombinatorServices } from "../promises/promise-observable-combinators.js";
 
 // Forward at invocation time: record construction neither registers runtime
 // support nor snapshots exports that instrumentation may replace later.

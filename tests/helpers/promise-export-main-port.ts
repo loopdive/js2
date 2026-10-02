@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readBeforeFlatLayoutDrive } from "./flat-layout-relocation.js";
 
 export const promiseExportPrior = "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3";
 export const promiseExportMain = "422dbf01a07b58cceefc64846444485eb549d9a5";
@@ -8,8 +8,7 @@ export const promiseExportBase = "bb41a01224b8173818f4e4cde86f1fdf1905d8aa";
 export const promiseExportPath = "src/codegen/promise-combinators.ts";
 export const promiseExportFixture = "tests/fixtures/issue-3518-promise-export-main-port.json";
 const receiptHash = "5a227bc727181737e46bb2d9b857b305805abf930ff8ba7cf563fb3f3faec63e";
-export const readPromiseExportSource = (path: string): string =>
-  readFileSync(new URL("../../" + path, import.meta.url), "utf8");
+export const readPromiseExportSource = readBeforeFlatLayoutDrive;
 export const promiseExportHash = (source: string): string => createHash("sha256").update(source).digest("hex");
 export const promiseExportBlob = (source: string): string =>
   createHash("sha1")

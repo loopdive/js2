@@ -127,7 +127,7 @@ loc-budget-allow:
   # observable pipeline therefore lives in a dedicated codegen module reached
   # directly from the static-call dispatcher; it does not add declarations or
   # imports to src/codegen/promise-combinators.ts or weaken that ledger.
-  - src/codegen/promise-observable-combinators.ts
+  - src/codegen/promises/promise-observable-combinators.ts
 func-budget-allow:
   # 2026-09-30 (r3 plan): wiring inside the existing decision ladders — the
   # species hook + capability-mode tail in emitStandalonePromiseThen (already

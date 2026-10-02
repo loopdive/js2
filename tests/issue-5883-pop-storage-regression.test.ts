@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { buildVecPopBody, type VecPopEntry } from "../src/codegen/vec-pop-body.js";
+import { buildVecPopBody, type VecPopEntry } from "../src/codegen/vectors/vec-pop-body.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

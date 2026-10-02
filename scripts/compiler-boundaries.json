@@ -1818,6 +1818,18 @@
   ],
   "moves": [
     {
+      "from": "src/codegen/promise-combinator-observable-protocol.ts",
+      "to": "src/codegen/promises/promise-combinator-observable-protocol.ts"
+    },
+    {
+      "from": "src/codegen/promise-observable-combinators.ts",
+      "to": "src/codegen/promises/promise-observable-combinators.ts"
+    },
+    {
+      "from": "src/codegen/vec-pop-body.ts",
+      "to": "src/codegen/vectors/vec-pop-body.ts"
+    },
+    {
       "from": "src/codegen/prepared-async-frame-engine.ts",
       "to": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts"
     },
@@ -8209,7 +8221,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/promise-combinator-observable-protocol.ts",
+      "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -8217,7 +8229,7 @@
       "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
     },
     {
-      "path": "src/codegen/promise-observable-combinators.ts",
+      "path": "src/codegen/promises/promise-observable-combinators.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -10025,7 +10037,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/vec-pop-body.ts",
+      "path": "src/codegen/vectors/vec-pop-body.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

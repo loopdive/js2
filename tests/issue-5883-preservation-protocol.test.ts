@@ -7,8 +7,8 @@ import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js"
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
 import * as legacy from "../src/codegen/promise-combinators.js";
-import * as protocol from "../src/codegen/promise-combinator-observable-protocol.js";
-import * as separate from "../src/codegen/promise-observable-combinators.js";
+import * as protocol from "../src/codegen/promises/promise-combinator-observable-protocol.js";
+import * as separate from "../src/codegen/promises/promise-observable-combinators.js";
 import * as scheduler from "../src/codegen/async-scheduler.js";
 import { getOrRegisterVecType } from "../src/codegen/registry/types.js";
 

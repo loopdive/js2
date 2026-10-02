@@ -32,8 +32,8 @@ import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 import type * as BodyRouteAudit from "./body-route-audit.js";
-import type { ObservableCombinatorProtocolServices } from "../promise-combinator-observable-protocol.js";
-import type { ObservablePromiseCombinatorServices } from "../promise-observable-combinators.js";
+import type { ObservableCombinatorProtocolServices } from "../promises/promise-combinator-observable-protocol.js";
+import type { ObservablePromiseCombinatorServices } from "../promises/promise-observable-combinators.js";
 
 /**
  * (#5195 Step 1) One class element whose ComputedPropertyName does not fold to

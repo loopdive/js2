@@ -20,8 +20,8 @@ import * as promiseSpecies from "../src/codegen/promise-species-then.js";
 import * as errorTypes from "../src/codegen/registry/error-types.js";
 import * as imports from "../src/codegen/registry/imports.js";
 import * as registryTypes from "../src/codegen/registry/types.js";
-import * as protocol from "../src/codegen/promise-combinator-observable-protocol.js";
-import * as separate from "../src/codegen/promise-observable-combinators.js";
+import * as protocol from "../src/codegen/promises/promise-combinator-observable-protocol.js";
+import * as separate from "../src/codegen/promises/promise-observable-combinators.js";
 
 function context(): CodegenContext {
   const source = analyzeSource("export function test(): number { return 1; }", "service-context.ts");

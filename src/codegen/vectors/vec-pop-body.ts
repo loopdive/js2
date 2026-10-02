@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { FuncHandle, Instr, ValType } from "../ir/types.js";
+import type { FuncHandle, Instr, ValType } from "../../ir/types.js";
 
 /** Physical facts prepared and validated by the existing vec bridge owner. */
 export interface VecPopEntry {

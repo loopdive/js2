@@ -25,7 +25,7 @@ import { flushLateImportShifts } from "./shared.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315, #4491 T11)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
 import { guardVecElementRead } from "./vec-oob-read.js";
-import { buildVecPopBody, type VecPopEntry } from "./vec-pop-body.js";
+import { buildVecPopBody, type VecPopEntry } from "./vectors/vec-pop-body.js";
 
 export const VEC_HOST_BRIDGE_ROLE = "vec-host-bridge";
 

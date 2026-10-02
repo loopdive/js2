@@ -86,7 +86,7 @@ import {
   type ObservableCombinatorPreparation,
   type ObservableCombinatorRuntime,
   type ObservableElementCarrier,
-} from "./promise-combinator-observable-protocol.js";
+} from "./promises/promise-combinator-observable-protocol.js";
 import { ensureCombinatorFunctions, type NativeCombinator } from "./promise-combinators.js";
 
 const EXTERNREF: ValType = { kind: "externref" };

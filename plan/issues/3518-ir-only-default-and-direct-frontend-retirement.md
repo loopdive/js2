@@ -4015,3 +4015,64 @@ authorizes one cohesive helper extraction: unchanged linked-package/namespace
 state construction, preserving map identity and set order. Add explicit identity/
 default/order controls. Canonical55698 is already running on the pre-extraction
 source; do not edit inputs until it terminates. Publication remains held.
+
+### Published checkpoint and next demonstrated quality blocker
+
+Published PR5883 head5b954c36e6c68ee5178a1d71780e8a836ce96746, remote verified.
+Final104/104, canonical, import-cycle and size gates pass; normal commit and
+prepush hooks also pass, including18numeric-local IR tests. Main1a160821 is
+included. See5883-cycle-validation-20261002 and its17-stream exact archive.
+
+Fresh quality36988376465/job110778543146 passes lint, formatting, canonical,
+compiler boundaries, dialect/kind gates and import-cycle (SCC697) then fails
+step15 flat-directory budget: src/codegen832>829, exactly+3. Parent reproduced
+unchanged checker locally. The three added flat files are observable protocol,
+observable combinators and vec-pop-body; none can be hidden by a wrapper or
+baseline increase. D is auditing callers, type imports, test/fixture readers,
+inventory move rules and issue LOC grants before a parent relocation plan.
+No relocation implementation authorized yet. Hold remains; later quality steps
+are unexecuted because CI fails fast. No main delivery or retirement claim.
+
+Parent filed5883-flat-layout-repair-plan-20261002: relocate exactly the three
+new owners under codegen/promises and codegen/vectors, retaining bodies/ownership
+and exact inventory move records. A separate authenticated import-only inverse
+preserves the drive module's original-reader view. Pre-move run88642 measured
+85/176pass91fail in four historical suites; first failures are preserved and
+must remain exact outcome/error parity after move. D implements bounded paths,
+parent owns metadata grant transfer and validation. No gate/baseline increase.
+
+Downstream published-head preflight also demonstrated one tracked-ignored
+evidence-path blocker: the historical observable-vector .jsonl archive. Parent
+plans an exact-byte .jsonl.txt rename, preserving all twelve records and their
+9516-byte SHA-256 d9d792883c09853383845195ca9868ed97e506c6526b2434384c49a7f2d5f806.
+Historical patch archives retain their original paths; no ignore-rule waiver.
+The isolated preflight changed no existing input; 1396 additions are generated
+dogfood artifacts only. Five permission-denied checks remain unmeasured pending
+exact authorized reruns, not compiler failures or accepted gate passes.
+
+Parent validation on the frozen relocation:56/56 new controls pass (run57557,
+child30994), unchanged inputs. Original four-suite run50180/child31137 retains
+all176 identities/statuses:85pass91fail. Exact failure strings differ only at
+three promise-export-main-port stack coordinates (96→95,124→123,133→132);
+the first errors and every other byte match. No historical failure is waived.
+Flat directory passes829/829. Complete-mode inventory reports1785 sources,
+inventoryValid=true, architectureComplete=false; its exit1 is not a successful
+retirement check. Required inventory-only mode remains to run.
+
+Independent Sol-6.1 medium reviewers A/C find no bounded source blocker:
+all moved bodies and original test programs/assertions unchanged modulo imports,
+all metadata preserved, four-record reciprocal receipt and56 controls reviewed.
+Five formerly permission-blocked published-head gates all pass on exact rerun:
+IR fallbacks, hybrid IR-only, harness compile budget, stack balance, codegen
+fallbacks. Historical vector archive rename verified9516 bytes and unchanged
+SHA-256. Runtime104/canonical/cycle and staged integrity still pending.
+
+Final bounded validation now complete: runtime104/104 (61494/31397),
+canonical/inventory-only/cycle/flat/LOC/function/coercion/oracle all pass
+(24300/31705), unchanged pinned inputs. SCC697 and flat829/829. Required
+preservation-only dead-export check passes6/6 full and cut witnesses; strict
+closure still fails at the two dynamic imports, retirement remains uncertified.
+Staged evidence rename passes tracked-ignored with no rule change. See
+5883-relocation-validation-20261002.md and its14-stream exact archive, decoded
+and compared byte-for-byte against native results. Publication/CI remain pending;
+no hold removal or claim that the historical91 failures have been repaired.

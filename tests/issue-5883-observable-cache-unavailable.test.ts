@@ -7,7 +7,7 @@ import { createEmptyModule } from "../src/ir/types.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import * as combinators from "../src/codegen/promise-combinators.js";
 import * as scheduler from "../src/codegen/async-scheduler.js";
-import { emitObservableStandalonePromiseCombinatorLiteral } from "../src/codegen/promise-observable-combinators.js";
+import { emitObservableStandalonePromiseCombinatorLiteral } from "../src/codegen/promises/promise-observable-combinators.js";
 import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
 
 it("reports cached unavailable support instead of dereferencing null", () => {

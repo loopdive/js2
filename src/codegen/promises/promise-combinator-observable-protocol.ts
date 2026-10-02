@@ -5,38 +5,38 @@
 // The separate promise-observable-combinators implementation remains independent,
 // sharing the successful runtime cache and its resource names with this module.
 
-import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import { buildTargetTaggedTry } from "../wasm/physical/exception-control.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { allocLocal } from "./context/locals.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import type { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
-import type { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
-import type { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
-import type { reserveCarrierBagVisibility } from "./carrier-bag-visibility.js";
-import { buildClosureRefTestArms } from "./closure-classifier.js";
-import type { promiseProtoThenMayBeReplaced } from "./promise-dynamic-member-read.js";
-import type { aggregateSettleFuncIdx } from "./promise-species-then.js";
-import { closureBagInitInstr } from "./closures/closure-header-layout.js";
-import type { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
-import type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
-import type { stringConstantExternrefInstrs } from "./native-strings.js";
-import type { emitWasiErrorConstructor } from "./registry/error-types.js";
-import type { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
-import type { getArrTypeIdxFromVec } from "./registry/types.js";
+import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import { buildTargetTaggedTry } from "../../wasm/physical/exception-control.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { allocLocal } from "../context/locals.js";
+import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import type { ensureBuiltinFnMetaType } from "../builtin-fn-meta.js";
+import type { emitBuiltinConstructorIdentity } from "../builtin-static-globals.js";
+import type { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
+import type { reserveCarrierBagVisibility } from "../carrier-bag-visibility.js";
+import { buildClosureRefTestArms } from "../closure-classifier.js";
+import type { promiseProtoThenMayBeReplaced } from "../promise-dynamic-member-read.js";
+import type { aggregateSettleFuncIdx } from "../promise-species-then.js";
+import { closureBagInitInstr } from "../closures/closure-header-layout.js";
+import type { getOrCreateFuncRefWrapperTypes } from "../closures/funcref-wrapper-types.js";
+import type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "../object-runtime.js";
+import type { stringConstantExternrefInstrs } from "../native-strings.js";
+import type { emitWasiErrorConstructor } from "../registry/error-types.js";
+import type { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import type { getArrTypeIdxFromVec } from "../registry/types.js";
 import type {
   ensureCombinatorFunctions,
   emitStandalonePromiseCombinator as emitLegacyPromiseCombinator,
   emitStandalonePromiseCombinatorRuntime as emitLegacyPromiseCombinatorRuntime,
   NativeCombinator,
-} from "./promise-combinators.js";
+} from "../promise-combinators.js";
 import type {
   buildPromiseSettleClosureInstrs,
   ensureAsyncDriveRuntime,
   ensurePromiseExecutorClosures,
   PROMISE_STATE_PENDING,
   PromiseExecutorClosures,
-} from "./async-scheduler.js";
+} from "../async-scheduler.js";
 
 /** Explicit compiler services; constructing the record performs no registration. */
 export interface ObservableCombinatorProtocolServices {

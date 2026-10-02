@@ -186,7 +186,7 @@ full IR equivalence, retire either implementation, or remove the PR hold.
 
 ## Historical observable-vector review records recovered September 27
 
-`5883-observable-vector-review-20260915.jsonl` preserves the exact twelve
+`5883-observable-vector-review-20260915.jsonl.txt` preserves the exact twelve
 JSONL records from the September 15 review: twelve unique complete sources,
 eight divergences and four matching controls. These are **HISTORICAL results,
 not new candidate evidence**. No compiler or tests were run for this recovery.

@@ -79,7 +79,7 @@ import { tryEmitLinkedStaticCall } from "../standalone-linked-static-inheritance
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCombinatorRuntime,
-} from "../promise-combinator-observable-protocol.js";
+} from "../promises/promise-combinator-observable-protocol.js";
 import {
   emitStandalonePromiseCustomCapabilityCheck,
   emitStandalonePromiseCustomSettle,
@@ -90,7 +90,7 @@ import {
   emitObservableStandalonePromiseCombinatorLiteral,
   emitObservableStandalonePromiseCombinatorRuntime,
   resolveF64VecArg,
-} from "../promise-observable-combinators.js";
+} from "../promises/promise-observable-combinators.js";
 import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
 import { tryEmitClassReceiverCombinatorCall } from "../promise-class-receiver-drive.js"; // (#6651 D3)
 import { emitClassReceiverSettle, tryEmitClassReceiverSettleCall } from "../promise-class-receiver-settle.js"; // (#6651 D4)
