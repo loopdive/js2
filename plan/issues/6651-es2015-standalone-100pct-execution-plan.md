@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-28
+updated: 2026-10-02
 priority: high
 horizon: xl
 feasibility: hard
@@ -2567,6 +2567,616 @@ to be a checker defect — in a script, a top-level `var length` merges with
 lib.dom's `declare var length: number` and is typed `number` (10 test262
 files declare such a var).
 
+### 2026-10-02 — current-main frozen-scope census plan (Codex)
+
+Measurement checkout: isolated `es6-frozen-recipe-analysis/js2`, production
+HEAD `ce6631272c1fdd999bc7b55a3cc6bfa77b3e48f8`. The historical 11,030/11,778
+receipt remains historical and is not a current-main result.
+
+1. Preserve the committed 11,778-path manifest, SHA-256
+   `632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`.
+2. Verify the selected corpus bytes against gitlink
+   `b363f29d3c43c626dc852744ad64a0b48a003693`, not merely corpus HEAD.
+   Preflight compared all 11,778 selected file blob hashes: zero mismatches.
+   Primary corpus has unrelated untracked probes; they are not selected.
+   Tracked harness and src diffs against HEAD are empty.
+3. Use Node 24.19.0 / pnpm 10.30.2, standalone/auto semantics, QuickJS,
+   fresh worktree-local adapter cache and rebuilt compiler/runtime bundles.
+   Existing immutable QuickJS core artifact may be reused only after builder
+   verification; current-source adapter canaries must run on a cache miss.
+4. First run three original controls through the same authoritative wrapper:
+   Math.sign length plus restored Intl DisplayNames/Segmenter prototype-poison
+   cases. Require three registered and settled, no skips/exclusions; report
+   actual outcomes instead of assuming they pass.
+5. Then run all 16 maintained local shards using the complete exact manifest.
+   Independently audit 11,778 unique verdicts, registered/started/settled identity
+   equality, all 16 receipts, zero skips/exclusions, and intact manifest hash.
+   A green completeness validator alone permits skips and is insufficient.
+6. Keep logs/results/cache local to this checkout; do not overwrite historical
+   census artifacts. Keep the execution session alive across chat continuations;
+   the maintained runner has no interrupted-run resume support.
+
+This is an unfinished measurement plan, not a 100% claim or a source fix.
+
+Positive controls completed under authoritative runner run
+`20261002-142604`: **3 pass / 3 original tests**, zero failures, compile errors,
+skips, or exclusions. The one durable v2 shard receipt independently records
+3 registered/started/settled/verdict identities and all callbacks settled.
+This proves only these controls, not the full census.
+
+- Compiler bundle SHA-256:
+  `5b4ac5614e65f5387e709f6ff20959e835a5834f378ee026b4a6c553069af2fb`.
+- Runtime bundle SHA-256:
+  `1ff325299a2274e5816bbb93cd3779e486f101baa5f9c845bd6aae039e8849af`.
+- QuickJS adapter cache MISS key `7a96df4a220b20a1`, bundle key
+  `288d238990a24b57`, built and canary-verified, 585,565 bytes; binary SHA-256
+  `8b1bd936968e87484d56a3f3c1f407bbebc8e48b926ca82eed00858e4fcdea07`.
+- Verified immutable QuickJS core SHA prefix `e9f8d30bc347dbc5`.
+- Worktree-local launch log `.tmp/es2015-census-controls-run.log` SHA-256
+  `22057fd2027f205d8bc4a6a787b21b20bbc7789436e16c6723f6194dd82e2653`.
+- Worktree-local JSONL
+  `benchmarks/results/test262-standalone-results-20261002-142604.jsonl`
+  SHA-256 `3358977487485f6880304059405cd30bde4d54070036c69a886b9cebe919c3bf`.
+
+Next: run full original manifest with the same source/provider pair after the
+Intl shepherd's bounded publication releases the team-wide heavy lease.
+
+Full frozen census is now **running**, not complete: run ID
+`20261002-144520`, unified execution session `74723`, wrapper PID `32646`.
+The authoritative wrapper validated and snapshotted all 11,778 paths with the
+same frozen SHA-256, rebuilt unchanged current-source bundles, and verified
+the linked QuickJS pair under adapter key `7a96df4a220b20a1`. Its earlier fresh
+cache-MISS canaries are the `20261002-142604` control receipt above; do not
+mislabel the full run's cache HIT as a new canary execution.
+
+- Durable full launch log: `.tmp/es2015-frozen-full-current-main-run.log`.
+- JSONL: `benchmarks/results/test262-standalone-results-20261002-144520.jsonl`.
+- Expected receipts: matching `.shard-<1..16>-of-16.complete.json` files.
+- Exactly 16 maintained shard entries selected; first actual registration is
+  shard 9/16 with 736 originals and one unified fork worker, realm recycle.
+- Keep this same live session across continuations; do not restart from a
+  partial row count or merge this attempt with another timestamp.
+- No root compiler/source or HEAD changes while this census is active.
+  Other lanes may investigate or edit their own isolated sources, but the root
+  census holds the team-wide heavy lease until the process is truly terminal.
+
+The independent current-main eval-spread diagnostic baseline is **5 pass /
+15 controls**, 10 semantic failures, at the same `ce6631272` compiler/runtime
+bytes. This is not 15 original Test262 paths and not a census pass rate. Its
+current-source routing fix is tracked separately in local #6827; the initial
+missing-bundle attempt was infrastructure-only and is not a regression count.
+
+First completed shard receipt, **9/16**, independently audited while the full
+run remains live: **717 pass / 736 originals**, 17 runtime failures and 2
+compile errors. All 736 registered callbacks started and settled; 736 unique
+canonical verdicts match that shard's registered identity set; zero skips and
+zero official/proposal exclusions. This is one completed weighted shard, not
+a representative sample or the full ES2015 pass rate.
+
+The source audit of `object/method-definition/name-property-desc.js` also
+corrected an attribution trap: this file checks the object's `method` property,
+not the function's `name`. `verifyProperty` can emit its configurable message
+because deletion/absence fails even when the reported descriptor flag is true.
+Current leaf sources suggest anonymous closed-object deletion/tombstone coverage;
+changing descriptor flags alone would not repair actual deletability. The exact
+emitted arm and all deletion/presence/read consumers still require focused proof.
+
+Continuation checkpoint: session `74723` is confirmed live. Four completed
+receipts were independently matched to their registered original identities:
+
+- Shard 5: 715 pass, 19 fail, 2 compile errors / 736 originals.
+- Shard 7: 708 pass, 29 fail / 737 originals.
+- Shard 8: 717 pass, 16 fail, 2 compile errors / 735 originals.
+- Shard 9: 717 pass, 17 fail, 2 compile errors / 736 originals.
+
+Each receipt has equal registered/started/settled/canonical counts, all callbacks
+settled, no duplicate verdict identities, and zero official/proposal exclusions
+or skips. These four completed shards total **2,857 pass and 87 nonpasses /
+2,944 originals**. Do not extrapolate these weighted shards to the full scope.
+The live JSONL observation separately contained 3,547 unique originals, 3,441
+pass, 99 fail, and 7 compile errors; additional rows are still arriving.
+
+Upstream main subsequently advanced to
+`3c6fcfc6e4c8bd06fd7528d30593eb988387f0e8`. The clean native-eval CI branch
+integrated it as `437636697fc20c8616d3e3b79b5eba4b67e51f90`; this census
+deliberately remains pinned to `ce6631272` and must not be described as measuring
+the newer head. New Object/Reflect changes require re-grounding pending Proxy
+work before implementation; no test results from this run prove those changes.
+
+Scope-fidelity audit while session `74723` remains live: both the original
+11,778-path manifest and the runner snapshot still hash to
+`632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`.
+At this observation, all 4,172 JSONL identities were unique and inside that
+original scope; all used oracle version 14, honest lane, semantic providers auto,
+and none were skipped. The five completed receipts registered 3,680 disjoint
+original identities. This is an interim identity audit, not full completion.
+
+Latest-main source re-grounding found the two observed Object.names/symbols
+invariant failures already addressed by #6770 S7, commit `172c0dac29` (verified
+ancestor of `3c6fcfc6`): shared full-key target inventory, raw Proxy dispatch,
+and filtering only at the public Object boundary. #6828 records supersession
+rather than duplicating that patch. Re-run both originals on the newer source
+before claiming actual passes. The RegExp split Symbol-flags original is already
+tracked in #6775's residuals as reassigned closed-literal shape widening; do not
+replace its TypeError with a protocol-specific workaround or silently edit the
+other machine's held literal/inference implementation.
+
+### Front-end follow-up: `in` inside a for-of assignment default
+
+The original `test/language/statements/for-of/dstr/array-elem-init-in.js` is an
+actual compile-error row in this run. Its `for ([x = 'x' in {}] of [[]])` is valid
+JavaScript. A small parser-only control at worktree head `437636697` (compiler
+source integrated from `3c6fcfc6`) reproduced TypeScript 5.9.3 diagnostic 1005,
+comma expected at zero-based line 30, character 15; V8 `vm.Script` parses it.
+Crucially, the recovered TypeScript initializer has **two** elements (`x = 'x'`
+and `{}`), not the required single default whose RHS is the `in` expression.
+Ignoring the diagnostic would compile the wrong program.
+
+The parenthesized equivalent has one correct initializer and no diagnostics;
+the binding form `for (var [x = 0 in {}] of [[]])` also parses. The invalid
+control `for ([x = ] of [[]])` is rejected by both parsers (TS 1109). These are
+four parser controls, not four original Test262 passes. The original bytes have
+SHA-256 `ca1f9739c987c76c5a1f76603306298eebabb09ce2746a0f16a792d5e270ae16`.
+Durable output lives in the root CI worktree at
+`.tmp/for-of-in-parser-current-main-proof.log`, SHA-256
+`7c5b9f9b18914efa3fd1fe20b33f8ade125524f85b49c08b2686efb48a45ff6d`.
+The first attempted `tee` failed because that worktree's `.tmp` did not yet
+exist; only the successful rerun is the durable receipt.
+
+Implementation plan before dispatch:
+
+1. Coordinate the parser/checker entry seam with the other-machine IR owner;
+   no compiler/IR-entry source edit is authorized by this finding alone.
+2. Repair JavaScript assignment-pattern parsing before checker binding, using
+   a narrow grammar-aware front-end owner. Preserve original source positions,
+   parent links, pattern/default AST shape, and evaluation order; do not alter
+   the original corpus or add TS1005 to diagnostic tolerances.
+3. Cover nested array/object defaults, `in` operators and parentheses, ordinary
+   for-in/for-of disambiguation, strings/comments/templates, and invalid syntax.
+   Verify both Script and Module front-end consumers and mapped diagnostics.
+4. After the census lease ends, run the unchanged original plus matching
+   for-of/destructuring neighbors under the authoritative standalone runner;
+   capture fresh current-head baseline/candidate identity-matched receipts.
+5. Keep this residual open until actual compile/run semantics, invalid-input
+   rejection, source-position preservation, and normal repository gates pass.
+
+Source-only implementation has been dispatched separately for the genuinely
+unlanded AsyncFunction intrinsic and Proxy missing-set-trap receiver contracts;
+each lane must record its own MD plan, use its own latest-main worktree, and
+wait for the heavy lease before any validation/publication. Neither is a measured
+gain yet, and the still-live census is not interrupted for those branches.
+
+Follow-up source review corrected the AsyncFunction dispatch premise. #6829
+now records a genuine coordination dependency, not an implementation: a
+descriptor-only branded object would be a fake constructor. The frozen scope
+contains both `AsyncFunctionPrototype-to-string.js` and `is-a-constructor.js`;
+the latter actually constructs it. The existing generic provider publishes
+only an incomplete callback carrier, while correct construction needs planned
+provider/IR/call/construct integration. No source changed in that lane. The
+broader 18-file AsyncFunction directory is a neighbor set, not the literal goal
+manifest; the 23 GeneratorFunction originals are all in the frozen manifest.
+
+#6828 has an unvalidated current-`3c6fcfc6` Proxy missing-set-trap receiver
+checkpoint in its own fresh worktree. Review requires preserving the existing
+boolean result channel and strict false behavior, one observable trap lookup,
+late-import index correctness, and the reserved receiver-aware helper contract.
+Its added instruction builders should be extracted narrowly rather than
+silently regrowing the already-over-budget Proxy module. No pass gain is claimed.
+
+Another independently grounded leaf candidate is the actual compile-error
+original `annexB/language/statements/labeled/function-declaration.js` (`noStrict`).
+The current early-error rule at `compiler/early-errors/node-checks.ts:488`
+mistakes the inner label in `label1: label2: function f(){}` for an iteration/if
+body, because the shared `isStatementPosition` predicate also admits labeled
+parents. A scoped Terra Max writer has been dispatched to exclude label parents
+only from this rule, preserving the separate strict/generator/async/class checks
+and outer-label iteration/if/with exclusions. It must write its own atomic-ID
+MD plan before production source, retain the exact original, and validate
+positive binding semantics plus negative grammar neighbors after the lease.
+
+### Source review and live census checkpoint
+
+Session `74723` was re-polled and returned a live session handle. An independent
+JSONL observation contained 8,247 rows: 7,992 pass, 241 fail, and 14 compile
+errors, with eleven completion receipts present. These are partial counts, not
+a final population rate or a measurement of the newer `3c6fcfc6` source.
+
+#6828 extracted its instruction builders into a type-only object-model leaf
+and banked standalone Set target/handler before observable trap lookup. Root
+review nevertheless found a non-standalone regression: the explicit receiver
+trap-absent arm used the saved target local even though host/WASI did not
+initialize it. The worker must restore that lane's original target read before
+runtime validation; source checks alone did not establish behavioral safety.
+No build, test, commit, push, or pass gain is attributed to this checkpoint.
+
+The labelled-function lane reserved #6830 in its own latest-main worktree.
+Its source audit found that `collectDeclarations` and top-level body compilation
+scan direct source statements, missing a function beneath nested labels. A
+one-condition early-error exemption is therefore not a completed semantic fix.
+Keep before/after calls to the actual binding in acceptance tests, and retain
+the hoisting prerequisite rather than relying on folded `typeof` or syntax-only
+success. Coordination of the `src/codegen/declarations.ts` seam with the other
+machine's IR owner has been requested; no source edits in that seam are yet
+authorized. The issue remains unfinished and its acceptance boxes unchecked.
+
+A subsequent independent scope audit found 8,477 JSONL rows and 8,477 unique
+identities, all inside the original 11,778-path manifest. Both original and
+runner snapshot retain SHA-256
+`632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`.
+All rows retained oracle 14 / honest / auto provenance, with no skip or unknown
+status. Eleven completed receipts covered 8,098 disjoint registered identities;
+each had equal registered/recorded/canonical/started/settled counts, true
+all-callbacks-settled, standalone/auto provenance, and zero official or proposal
+exclusions. No audited receipt identity was missing from the live JSONL. This
+is still an interim audit, not completion of the remaining five shards.
+
+Root inspected the #6828 source correction: its explicit receiver absent arm
+now retains the old host/WASI target-field read when standalone target banking
+is disabled. This removes the identified uninitialized-local source regression;
+it is not runtime validation or proof that all neighboring behavior is preserved.
+A separate read-only shepherd audit is examining the actual Reflect.setPrototypeOf
+non-extensible failure against current main, accounting for the already-landed
+#5148 status helper and #6651 conjunction rather than repeating their old fix.
+
+### Additional grounded front-end residuals
+
+The live census now records `language/statements/for/head-lhs-let.js` as a
+compile error. Its actual source uses `for (let; ; )` and `for (let = 3; ; )`,
+not `for (let in {})` as an older #5158 note describes. A parser-only comparison
+at root CI head `437636697` used TypeScript 5.9.3 ScriptKind.JS and V8
+`vm.Script`; it is not a compiler run or a Test262 verdict. V8 parses the
+unchanged original (SHA-256
+`8b86eddac198ea57fff2829f34d2ded2a772fb81aa1210794fd4e73f85e8e5cf`).
+TypeScript recovers both relevant initializers as empty VariableDeclarationLists:
+`let` and `let =`, with 1134/1109/1128 diagnostics on the assignment form.
+The identifier-only form has no parse diagnostic despite its wrong AST shape.
+The indexed `[let][0]` initializer and real lexical `let x = 0` control retain
+their correct shapes; V8 rejects the strict `var let` and incomplete-assignment
+negative controls. Diagnostic suppression alone is therefore insufficient.
+Retain #143/#5271's parser residual in the full goal; do not adopt an old
+"wont-fix" carve-out. A grammar repair must preserve sloppy IdentifierReference
+versus LexicalDeclaration disambiguation and strict/module rejection, source
+positions, checker binding, and the real assigned value after the loop.
+
+The actual `annexB/language/function-code/function-redeclaration-switch.js`
+compile-error row also has newer source evidence than #3047's historical
+residual attribution. Current `checkSwitchCaseLexicalDuplicates` rejects a
+second FunctionDeclaration unconditionally, while `import-manifest.ts` already
+filters TypeScript diagnostic 2393. The normal block duplicate rule already
+models sloppy plain-function-only eligibility. A source-only Annex B audit is
+checking the switch rule and real duplicate-binding hoisting/storage before
+dispatching a fix; preserve strict/module, generator/async/class, lexical-var
+conflicts, and before/after callable semantics. Neither observation is a pass
+gain, and neither authorizes edits to the other machine's IR seams.
+
+The #6830 reader audit additionally found that correct top-level labelled
+function registration needs `index.ts`'s early name inventory and
+`ir/identity.ts`'s exact top-level-function identity, not just the four direct
+registration/body loops in `declarations.ts`. `pushProgramAbiTopLevelCallable`
+requires that identity. Preserve this coordinated prerequisite rather than
+creating a callable outside the prepared planning contract.
+
+The switch duplicate rule has been separately dispatched to the same Terra
+writer for a fresh atomic issue and managed current-main worktree, owned only
+within the narrow `duplicates.ts` rule plus its own plan and controls. Existing
+Annex B live-binding machinery is a source-audit lead, not measured semantic
+proof. In particular, require last-wins CaseBlock lexical instantiation before
+any clause executes: calling `a()` before the first declaration in an executed
+case must observe the later duplicate even if its case is never executed.
+Preserve the resulting outer Annex B binding and all negative syntax controls;
+if that reveals a lowering gap, keep the checker checkpoint unfinished.
+
+#6828 source review found another observable trap lookup in the result-aware
+`__extern_set` front guard: `noSetTrap()` reads `handler.set` before dispatch
+reads it again. A revoking getter can therefore revoke before the authoritative
+dispatch, despite its saved target. The writer is auditing that standalone
+branch and adding unannotated controls that actually activate the inherited-Set
+gate, preserving boolean/result-channel behavior and non-standalone paths.
+Saved target alone must not bypass a revoked Receiver's subsequent MOP checks.
+
+The shepherd's Reflect.setPrototypeOf audit rejected a non-$Object receiver
+explanation: direct preventExtensions markers already reify the original
+receivers on `ce6631272`. The surviving seam is the empty **prototype operand**:
+that head's `compileProtoArg` requires a nonempty literal; native canonicalizing
+the unreified `{}` to null aliases the receiver's implicit Object.prototype
+encoding and answers SameValue true before testing non-extensibility. The later
+#6770 S4 commit `9173486` removes the nonempty condition and is present in
+integrated `437636697` / upstream `3c6fcfc6`. Do not duplicate its source patch
+or claim a current pass: rerun the unchanged original and neighbors on that
+newer source when the census lease ends.
+
+The switch lane reserved #6831 in
+`/Users/thomas/.codex/worktrees/6831-annexb-switch-duplicates/js2`, branch
+`codex/6831-annexb-switch-duplicates`, with its own pre-source plan. Its narrow
+checker patch is explicitly unfinished. Deeper source review superseded the
+optimistic assumption about existing lowering: CaseBlock name collection omits
+functions, module-init Annex B globals start undefined and are assigned at
+textual evaluation, and function-body hoisting visits each clause separately.
+Neither path establishes cross-clause lexical last-wins before evaluation.
+The own issue records `statements/shared.ts`, `declarations.ts`,
+`annexb-global-live-binding.ts`, and `statements/nested-declarations.ts` seams.
+Do not publish this checkpoint as a completed semantic fix or weaken the
+before-declaration call / skipped-case controls.
+
+#6828's attempted binary result-aware guard is also explicitly not accepted.
+Root and worker source review found that `object-runtime-ordinary-set.ts`'s
+ordinary receiver fallback invokes `__extern_set` and unconditionally returns
+`i32.const 1`. An unadmitted foreign/closed store can therefore appear successful
+without a real write. Converting that boolean to channel SUCCESS would hide
+the old UNADMITTED state; resetting the channel cannot distinguish it from a
+successful accessor whose call leaves the channel untouched. The writer is
+removing that unsafe conversion and recording the dependency on a truthful
+ordinary-set outcome contract. Keep real stored-value, accessor, unsupported
+carrier, nested write, refusal, and revocation controls. Coordination of this
+runtime file with the IR migration has been requested; no cross-owner edit or
+runtime gain is claimed. Parser-entry coordination for `src/checker/index.ts`
+has separately been requested for both grounded grammar residuals.
+
+Latest live observation: session `74723` returned its live handle with 9,294
+JSONL rows (9,003 pass, 274 fail, 17 compile errors) and twelve completed shards
+3 through 14. Each observed completed receipt reported all callbacks settled.
+The remaining shards and report are still running at pinned `ce6631272`; these
+partial counts are not a final suite result or a measurement of current main.
+
+Subsequent #6828 handoff: the worker withdrew **all** production/inventory
+changes, including the new instruction leaf. Root observed no tracked source
+diff; the fresh branch remains at exact `3c6fcfc6` with only its own untracked
+blocked MD plan and future fixture. No completed fix or runtime improvement
+exists in that lane yet. The handoff requires a truthful tri-state companion
+to the ordinary-set receiver walk, single observable trap lookup, saved target
+and handler ordering, and honest unsupported-carrier behavior; no boolean-to-
+SUCCESS workaround is accepted. Preserve the new unannotated controls and
+separate actual foreign-boundary verification from native closed-carrier probes.
+
+#6831's unrun controls were corrected after source review: explicit standalone
+target, zero imports, validated Wasm, `{}` instantiation, direct module-init
+invocation, and genuine sloppy Script source. The intentional-init control now
+uses maintained `extractWasmExceptionMessage(error, instance)` and requires the
+exact `Error: issue-6831-init-observed` payload rather than String on an opaque
+Wasm exception or an arbitrary throw. `hostBridge: "always"` is documented
+only for native renderer exports, not a host provider. This is a designed
+positive-control assertion, not an observed receipt. The checker source and
+semantic controls remain unfinished pending coordinated lexical instantiation.
+
+Session `74723` remains confirmed live. A later observation records 10,430
+results: 10,095 pass, 314 fail, 21 compile errors, with shards 3 through 16
+complete. Shards 1 and 2 remain uncompleted; no final report or full pass rate
+is claimed. The census compiler/source head is still pinned to `ce6631272`.
+
+The shepherd's distinct TypedArray `some` audit found a surviving source seam
+at integrated `437636697` / `3c6fcfc6`, not merely an error-text bucket. In the
+original `TypedArray/prototype/some/get-length-uses-internal-arraylength.js`,
+the own length accessor is installed before the method call. Dynamic `new TA`
+produces the native dynamic view; `some` is not in its materialization set and
+routes through the generic HOF length path. That helper calls `__extern_length`,
+whose dynamic-view arm consults the expando's OWN length accessor before the
+internal bounds length. The descriptor MOP stores that accessor in the expando.
+The existing `__hof_ta_some` distinction only bypasses HasProperty; it does
+not supply internal ArrayLength. No later source delta examined repairs this
+seam, but current-main runtime failure is still unmeasured. Require a distinct
+TypedArray-method internal-length path while preserving observable
+LengthOfArrayLike for `Array.prototype.some.call(view, callback)` and callback
+receiver identity. Do not globally bypass own getters in `__extern_length`
+or generic `__hof_some` based only on receiver representation. The final
+selection/primitive owner map is being audited; existing coordination of
+array-methods/object-runtime remains pending, and no source edit is dispatched.
+
+Latest observation remains live at 10,909 results (10,564 pass, 323 fail,
+22 compile errors), fourteen completion receipts. Rechecking both manifest
+hashes and the worktree head confirmed the exact original scope and pinned
+`ce6631272` source remain unchanged. This is not full completion or a current-
+main pass rate.
+
+### Completed frozen census and next implementation handoff — 2026-10-02
+
+Session `74723` reached actual terminal exit 0. Run `20261002-144520` records
+**11,392 pass, 361 fail, 25 compile errors / 11,778 original paths (96.7227%)**.
+All sixteen v2 completion receipts pass the maintained completeness validator
+against the original exact manifest: 11,778 registered callbacks, physical
+rows and unique identities; zero missing, unexpected or duplicate identities;
+zero proposal/official exclusions; all callbacks started and settled. There
+are zero skip or compile-timeout verdicts. Every row has oracle version 14,
+honest lane, semantic providers auto. This is not 100%: 386 nonpasses remain.
+
+Measured source remains `ce6631272c1fdd999bc7b55a3cc6bfa77b3e48f8`, not latest
+upstream. Original and runner snapshot manifest SHA-256 both remain
+`632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`.
+Compiler/runtime bundle and QuickJS adapter hashes remain exactly those pinned
+for this run; no compiler or provider mutation occurred during the census.
+
+Durable artifacts relative to this census worktree:
+
+- `benchmarks/results/test262-standalone-results-20261002-144520.jsonl`, SHA-256
+  `a97cbc114aee0c8743701e276e1894f4c09b975065a53a10935bfc6507f0b224`.
+- `.tmp/es2015-frozen-full-current-main-run.log`, SHA-256
+  `965f07107b25225224820359471046311a0dba4085e3cf1b18e60b7897cc56b6`.
+- `benchmarks/results/test262-standalone-report-20261002-144520.json` and all
+  sixteen matching `shard-<n>-of-16.complete.json` receipts.
+
+Root independently checked the receipts, original identity set, row statuses,
+snake-case provenance fields and report summary. The wrapper's rounded 96.7%
+is consistent with the exact count; its successful exit proves completion of
+measurement, not conformance success. No historical index was published.
+
+The typed-HOF source audit is now complete and #6832 has been atomically claimed.
+Its isolated worktree is `/Users/thomas/.codex/worktrees/typedarray-some-internal-length/js2`,
+branch `codex/6832-typedarray-some-internal-length`, at `3c6fcfc6`. Its required
+plan is the [published #6832 record carried by PR #6447](https://github.com/loopdive/js2/pull/6447)
+in PR #6447, not a file already landed on this branch. Ownership is
+`hof-native.ts`, the narrowly necessary typed-array finalizer, and a pure
+instruction leaf if needed. The correct existing primitive is
+`pushTaDynViewInBoundsLen`, not the byteLength-oriented effective-length emitter.
+Mint a typed-only `some` clone even without a presence gate and rewire only
+direct dispatch; preserve generic Array borrowed-method observable length,
+detached checks and original callback receiver. No array-methods/object-runtime
+or held IR changes are needed. The prior paragraph's pending owner-map/no-
+dispatch statement is superseded. Source implementation is underway; build,
+baseline/candidate verification and publication remain unperformed.
+
+Root's separate CI branch now includes fresh upstream main
+`ff310447e51b6443c5a3c34c62bd80f38c64269e` in merge commit
+`deff58b34a8d47d3d69d52e9794eefe65343e73a`. Normal fast hooks passed, worktree is
+clean, and this merge is not pushed. The upstream delta is npm compatibility
+reports only. It does not change or retroactively upgrade the census source.
+The single heavy-test lease is released from the completed census; #6832 must
+submit its precise validation recipe before receiving the next serialized lease.
+
+### Fresh targeted baseline and attribution corrections
+
+#6832's source-only reader map proves that five direct TypedArray consumers
+share the same generic-length prologue: `forEach`, `every`, `some`, `reduce`,
+and `reduceRight`. The implementation plan was widened before source edits to
+repair those five typed-only clones, retaining generic Array borrowed-call
+LengthOfArrayLike and HasProperty semantics. `find`/`findIndex`, `join`, and
+`toLocaleString` have separate owners and are not attributed to this HOF seam.
+
+The granted serialized baseline lease produced run `20261002-173012` at clean
+production source `3c6fcfc6e4c8bd06fd7528d30593eb988387f0e8` in the #6832
+worktree. The maintained Vitest wrapper measured **3 pass / 8 registered**:
+all five unchanged original HOF internal-length rows fail; Math.sign.length
+and both original Intl poison-constructor controls pass. Root independently
+validated all eight JSONL identities against the timestamped exact manifest
+and one v2 completion receipt: no missing/duplicate/unexpected identities,
+zero exclusions/skips, oracle 14 / honest / auto. Log confirms a freshly
+built, executable-canary-verified QuickJS adapter `87f1918eeaa0cdd5`.
+This is a current-main targeted baseline, not a new full-suite pass rate.
+Production source remains unmodified. Next is the complete frozen-manifest
+intersection of these five method families, matched candidate identities,
+and host-free borrowed-method/short-circuit/detach controls before publication.
+
+A separate read-only audit of `Array/from/source-array-boundary.js` confirms
+the mapper receives the boundary number correctly: the missing expected value
+is `array[this.arrayIndex]`. The canonical script global object and the module
+global `var arrayIndex` are not synchronized through dynamically supplied
+callback receivers; its increment reaches generic property operations instead
+of the same live module binding. #6771 already attributes this row to #2727,
+whose recorded scope is stale. Do not change Array.from numeric boxing or
+iterator retrieval for it. A coherent future fix needs a runtime canonical-
+global identity guard and coordinated read/write/RMW consumers, including
+`helpers/sloppy-this-global.ts` and `expressions/unary-updates.ts`; the held
+IR/property/global-binding owners remain untouched. This is source evidence,
+not a newly measured pass or an implemented fix.
+
+PR #6436's fresh head is `c5aaa8ca0b4959c11a2b4e8f2d333edca8429c82`, a bot
+merge of main into `2d425bb8`, not a separate implementation change. Its
+top-level Intl kernel still triggers the concrete flat-directory budget
+failure. The dedicated shepherd stopped before mutation because #6809's
+authoritative claim remains owned by `ttraenkler/codex-intl-locale-parser`.
+The user has been asked whether to retain or transfer that claim. Preserve
+the clean newly created detached repair worktree; do not steal the claim,
+alter the allowance, or report the PR merge-ready before fixing the gate.
+
+### Complete five-family baseline — source attribution is not a verdict
+
+Run `20261002-173315` reached actual terminal exit 0 at unchanged `3c6fcfc6`.
+Root independently validated all **128 registered/verdict identities**, one
+settled v2 receipt, oracle 14/honest/auto, zero exclusions/skips/timeouts,
+and the original-manifest intersection: all 120 original rows in the five
+TypedArray HOF families are present, no family row is missing, and no selected
+identity is outside the frozen 11,778 scope. Result: **121 pass / 7 fail**.
+The HOF-family subtotal is **115 pass / 5 fail**; all three instrument canaries
+pass. The candidate must retain these exact 128 identities and preserve the
+115 passing HOF neighbours, rather than measuring only the five known failures.
+Both required baseline batches are complete; #6832 may now implement its
+owned HOF change under the existing serialized validation lease.
+
+Three separately attributed later-main control rows now pass:
+`Proxy/ownKeys/trap-is-missing-target-is-proxy.js`,
+`Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js`, and
+`Array/length/define-own-prop-length-no-value-order.js`. These are actual
+targeted current-main results, not #6832 gains or a projected suite total.
+
+Two Proxy controls still fail. `return-not-list-object-throws-realm.js` still
+does not throw the required TypeError. Critically,
+`call-parameters-object-getownpropertysymbols.js` now fails with
+`TypeError: Proxy ownKeys trap result must be an object`, whereas the pinned
+`ce663` census stopped at a Symbol SameValue assertion. The original valid trap
+returns `Object.getOwnPropertySymbols(target)`. Thus the earlier source-only
+assertion that the landed raw-ownKeys work repaired this entire row is not
+runtime proof and is superseded by this fresh failure. Do not chase the stale
+Symbol signature, weaken the valid-list guard, or edit already-correct public
+key filtering blindly. A separate source audit is tracing the current trap
+return/admission boundary; no Proxy fix or pass gain is claimed yet.
+
+Likewise, #6771 attributes the remaining Array length coercion-order row to
+the script-global `var length` binding merging with lib.dom's Window.length
+type, not to its already-implemented two-conversion ArraySetLength emitter.
+The global/checker ownership remains coordinated separately; do not patch
+the ArraySetLength leaf based only on the census error text.
+
+### First matched candidate evidence — five original failures repaired
+
+#6832's matched eight-row candidate `20261002-174748` reached terminal exit 0.
+Root independently validated its v2 completion receipt, exact same eight
+baseline identities, oracle 14/honest/auto, and zero exclusions, skips, compile
+errors, duplicates, missing or unexpected verdicts. **8/8 pass**: the five
+original direct TypedArray HOF internal-length failures change fail → pass;
+all three instrument controls remain pass. This is a measured five-row gain,
+not a projection of the full suite and not yet a completed publication.
+
+Candidate provenance at this measurement:
+
+- `src/codegen/hof-native.ts` SHA-256:
+  `6108ee834a5a0e81a84cad0d79a69a58f904024864db5a321753fd3191ab76a5`.
+- Compiler bundle SHA-256:
+  `09f24694ab0492755aeb12d8ea201c3457a306f9de0282c13222575de2b8c8f0`.
+- Runtime bundle SHA-256:
+  `6a14426ff68d512c7e5b115c52f0f07160e6b43f1ecd069576b22408bd765c69`.
+- Executable-canary-verified QuickJS adapter `0da63c362a8b7a3a` SHA-256:
+  `89819371db428c4b757d55eaad1815f79a1e51eeae894806289581a656d33c1f`.
+- Candidate JSONL SHA-256:
+  `d22d62915f3bdf89b87e3331328bfca5aafb9ed187e2d8666c959db2e8a21293`.
+
+The worker reports 19/19 focused host-free fixture cases passing after two
+harness-only construction errors were corrected (statement-body interpolation
+and the WebAssembly Instance overload). Those earlier harness failures are
+not conformance verdicts. A durable combined fixture/regression-gate receipt
+is still required. Matched 128-row candidate `20261002-174850` is confirmed
+live in the worker's session `71398`; keep that exact process until terminal.
+Root cannot observe agent-owned PTYs directly and does not treat that namespace
+limitation as termination. Final acceptance requires all 121 baseline-passing
+rows preserved, the five intended gains, both unrelated Proxy failures honestly
+retained, normal source/push gates, and an upstream ready PR for the finished
+fix. Do not publish a completed-fix claim or extrapolate a 100% suite result
+from the eight-row instrument set.
+
+### Completed matched family validation and published fix — #6832
+
+The preceding live-process handoff is superseded: candidate run
+`20261002-174850` completed. Root independently checked all 128 identities
+against baseline `20261002-173315`, the frozen manifest, and the settled v2
+receipt. Result: **126 pass / 2 fail**, versus **121 pass / 7 fail**.
+Exactly five intended TypedArray HOF failures changed fail → pass; all 121
+baseline passes were preserved, with zero pass → fail changes, compile errors,
+skips, exclusions, missing identities, or duplicate verdicts. All 120 original
+five-family rows pass. Both unrelated Proxy failures retain their baseline
+error strings. Oracle 14/honest/auto and the original denominator are unchanged.
+
+The source hash recorded above remained identical through publication.
+Candidate 128-row JSONL SHA-256 is
+`ca32fff58d10cb7b6e124963bd535c9ea33d0852097953ae760d20bf91970509`;
+selected manifest SHA-256 is
+`068d33154affd2d050b8bd4909da25f62587699e16646991a137e82ed1b1bcaf`.
+Artifacts remain in the isolated `typedarray-some-internal-length/js2`
+worktree under `benchmarks/results` and `.tmp/6832`; do not delete them.
+The durable scoped regression log proves **4 files / 39 tests passed**,
+including all 19 new host-free cases and the existing detach, dynamic reducer,
+and borrowed Array-method controls. Source gates and normal commit/push hooks
+passed. The heavy validation lease was explicitly returned to root.
+
+Published completed fix: [upstream PR #6447](https://github.com/loopdive/js2/pull/6447),
+non-draft, commit `94d8361a6b2ab0a2ea769ce8c3971367048c9b03` on
+`codex/6832-typedarray-some-internal-length`. Owned files are only
+`src/codegen/hof-native.ts`, the #6832 Markdown issue, and its regression test.
+The dedicated shepherd's fresh audit verified matching fork/PR heads,
+mergeability, no queue entry, no review threads, no failed checks, and two
+still-running checks. Pending CI is not a completed readiness claim.
+
+This proves a scoped five-row gain, **not** an updated full-suite percentage
+or completion of this goal. The last complete 11,778-row census remains the
+pinned `ce663127` measurement above. A later complete authoritative run is
+required to establish the current whole-suite count and eventually zero
+failures. Preserve all original paths, including Intl and dynamic-code rows.
 ## 2026-10-02 — #6770: `built-ins/Object/**` + `built-ins/Reflect/**` residue (pointer)
 
 The 49 standalone non-pass rows of `built-ins/Object/**` + `built-ins/Reflect/**`
@@ -2582,3 +3192,27 @@ tag order, Proxy `[[OwnPropertyKeys]]` surfaces, and per-operation trap lookup
 (Symbol carrier consult, symbol-keyed writes on wrapper prototypes,
 `%GeneratorFunction%` tag) and the two #3371 `Reflect.construct` CEs —
 mechanisms in #6770's record.
+
+### Remaining Proxy realm control — constructor admission, not list validation
+
+Read-only audit at `ff310447` (relevant source unchanged since `3c6fcfc6`)
+attributes `Proxy/ownKeys/return-not-list-object-throws-realm.js` to direct
+`new other.Proxy(...)` admission. The original uses
+`other = $262.createRealm().global`, an undefined-returning ownKeys trap, and
+expects the current realm's TypeError from `Object.keys(p)`. Existing
+`tracesToProxyConstructorValue` already recognizes this direct member shape,
+but `expressions/new-super.ts` restricts the proven constructor-value path to
+identifier callees. No actual Proxy reaches the correct list validator.
+
+Future implementation plan: reuse the existing proven Proxy-constructor
+predicate for member callees in both outer construction admission and inner
+`tryCompileNativeConstructFromValue` flag/admission logic, retaining the
+existing target/handler open-literal conversion and native driver. Do not
+widen arbitrary member constructors or alter the validator, realm harness,
+native driver, provenance storage, IR, or public key filters. Add host-free
+direct-member construction/trap controls and the exact original realm-error
+case; measure matched baseline/candidate original rows before claiming gains.
+The older #5196 repair covers identifier aliases only; completed #4685
+explicitly excludes this cross-realm constructor row. No fix or new pass is
+claimed. Source-owner clearance and explicit registry-allocation approval
+remain pending before assigning a new issue and implementing this slice.
