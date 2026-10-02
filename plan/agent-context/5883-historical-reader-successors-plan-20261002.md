@@ -86,3 +86,37 @@ Rerun unchanged104 runtime cases,56 flat-relocation controls, canonical typing,
 inventory, cycles, flat directory and normal hooks. Current main's incoming23
 built-in tests are separate coverage, not restoration of its removed S16
 own-name assertion. Do not alter production or claim full IR equivalence.
+
+## Parent amendment after first execution and independent review
+
+Run66222/83787 retained every input and executed836/836 passing assertions:
+176 original rows,216 earlier,24 export,420 new controls. It nevertheless
+exited1 with an unhandled Vitest onTaskUpdate RPC timeout; this is NOT accepted
+as a successful run. Earlier controls occupied68.4s of synchronous work.
+Keep that complete first output; do not raise timeouts or suppress the error.
+
+C also identified a genuine reader contract conflict: the unchanged flat
+relocation control requires readPromiseExportSource(drive) to produce5b954c36,
+whereas this checkpoint changed it to the older d7de1281 view. Both obligations
+must remain; do not rewrite the existing56 assertions to hide that difference.
+
+D may therefore additionally change ONLY the initial import/default-reader
+seams in promise-earlier-main-port.ts and the original earlier/export test
+files. Restore readPromiseExportSource as the existing flat-only reader. Give
+the later historical view a separately named export; use it as the default
+reader in the old authenticators and as an import alias at the two old suites.
+All explicit source arguments and injected mutant readers remain untouched.
+Update new controls to assert BOTH distinct endpoints and absence of a double
+peel. Original fixtures and old test assertions must remain byte-identical.
+
+For the demonstrated worker event-loop starvation, the earlier control suite
+may add one afterEach hook that awaits setImmediate between cases. No assertion,
+case population, timeout, worker count or error-handler changes. This yields
+to the existing worker RPC; it neither suppresses errors nor extends deadlines.
+Acceptance must show all216 original identities and zero unhandled errors.
+
+Format the NEW receipt and the changed layout initial-read wrapper. Its new
+receipt hash may be updated solely for formatting after deep JSON equality is
+verified; preserve the unformatted receipt in the first-run input evidence.
+Never change any original historical receipt hash. Return frozen changes to
+parent for independent review and complete rerun before publication.

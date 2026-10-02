@@ -11,7 +11,7 @@ import {
   promiseExportMain,
   promiseExportPath,
   promiseExportPrior,
-  readPromiseExportSource,
+  readHistoricalPromiseExportSource as readPromiseExportSource,
 } from "./helpers/promise-export-main-port.js";
 import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
 import { B1_DONOR_HASHES, originalB1Source } from "./helpers/native-delay-combinator-b1-inverse.mjs";

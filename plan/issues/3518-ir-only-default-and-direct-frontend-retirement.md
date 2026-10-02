@@ -4092,3 +4092,24 @@ identifies seven changed source operands; parent filed
 5883-historical-reader-successors-plan-20261002.md for bounded authenticated
 successor reconstruction. Original fixtures and all initial failures stay.
 Sol-6.1 Medium implementation starts only after parent finishes the main refresh.
+
+Published5c63 now has passing CI and a fresh MERGEABLE/CLEAN state, with no
+unresolved review threads; hold stays pending local acceptance. Successor run
+66222/83787 executes836/836 passing assertions (original176, earlier216,
+export24, new420), unchanged inputs, but exits1 on unhandled onTaskUpdate RPC
+timeout. This is not an accepted green run. C independently identifies the
+flat-only reader versus older historical-reader endpoint conflict, which would
+break an unchanged relocation assertion. Parent amended the implementation
+plan for separate named reader boundaries and a between-case scheduling yield,
+without changing old fixtures, assertions, counts or timeouts. D Sol-6.1 Medium
+owns the bounded repair; parent retains first failure and all acceptance gates.
+
+Amended successor checkpoint accepted locally:79147/85931 passes892/892 with
+no unhandled error and unchanged7183 pins. Original176 identities unchanged;
+earlier216/export24 now execute, new420 and original56 also pass. Independent
+review clears distinct flat/historical readers and original assertions. Runtime
+1025/86619 passes183/183;74842/86825 passes all eight canonical/source gates,
+unchanged inputs. Full first RPC failure remains alongside final results in
+5883-successor-validation-exact-20261002.json.txt. No production change,
+retirement, hold removal or delivered-to-main claim; normal hooks/publication
+and current protected-queue acceptance remain separate.
