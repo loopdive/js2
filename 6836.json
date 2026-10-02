@@ -1,12 +1,11 @@
 {
   "id": "6836",
   "assignee": "ttraenkler/es2015_valid_for_heads_plan_astra",
-  "requested_by": "ttraenkler/es2015_valid_for_heads_plan_astra",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "",
-  "reserved_at": "2026-10-02T21:53:40Z",
   "claimed_at": "2026-10-02T21:53:40Z",
-  "updated_at": "2026-10-02T21:53:40Z",
-  "write_id": "20888-c4uexgqs",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-02T22:16:09Z",
+  "write_id": "24597-eqmqaa0l",
+  "released_at": "2026-10-02T22:16:09Z"
 }
