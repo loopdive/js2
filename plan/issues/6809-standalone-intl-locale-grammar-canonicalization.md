@@ -299,3 +299,24 @@ there is still no generated source table, `%Intl%` route, generic locale-list
 semantics, or native error exposure. This record only accounts for the new
 module in the compiler-boundaries inventory; it grants no public API, runtime,
 or Test262 completion credit.
+
+## Current-source validation receipt (2026-10-02)
+
+At merge commit `9f4943cd8fdc4249f4bfa6e0ea31e55784e484e1`, with verified
+upstream base `ce6631272c1fdd999bc7b55a3cc6bfa77b3e48f8`:
+
+- Node 24.19.0 ran `node --max-old-space-size=4096
+  scripts/check-compiler-boundaries.mjs --mode inventory --base
+  ce6631272c1fdd999bc7b55a3cc6bfa77b3e48f8` successfully. Its report is
+  `inventory-valid-architecture-incomplete`, with `inventoryValid: true`, no
+  errors, and 1,799 tracked modules; this is an inventory receipt, not an
+  architecture-completion claim.
+- `pnpm exec vitest run tests/issue-6809-intl-locale-canonicalization.test.ts
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+  --reporter=dot` passed 1 file and all 6 controls.
+- `pnpm run typecheck` (the maintained TypeScript 7 no-emit check) passed.
+
+Provenance note: the original kernel commit
+`78c8bba2da42990222e6be0dd5184b12310fee63` carries only `Model: Codex
+Unreported Unreported`. The actual model and configured reasoning effort are
+not exposed here and are not inferred by this receipt.
