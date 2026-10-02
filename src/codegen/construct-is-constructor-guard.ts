@@ -169,7 +169,28 @@ export function constructIsConstructorGuard(
     { op: "call", funcIdx: isConstructorIdx },
     { op: "i32.eqz" },
     { op: "i32.and" },
+    // (#6773 S5) …OR proven not an object at all: nullish (`ref.is_null` —
+    // the JS `null` under the undefined-singleton regime — or the classified
+    // `undefined`, e.g. a MISSING member read `new o.nope()`) or a proven
+    // primitive, by the same positive classifiers `native-dynamic-instanceof`
+    // uses. Narrowing 1 stays for everything else: an unclassifiable carrier
+    // keeps its previous result. The union natives are registered as one batch
+    // with `__typeof_function` (required above), so each is a funcMap READ.
+    { op: "local.get", index: calleeLocalIdx },
+    { op: "ref.is_null" },
+    { op: "i32.or" },
   ];
+  for (const name of [
+    "__typeof_undefined",
+    "__typeof_number",
+    "__typeof_string",
+    "__typeof_boolean",
+    "__typeof_bigint",
+  ]) {
+    const idx = ctx.funcMap.get(name);
+    if (idx === undefined) continue;
+    condition.push({ op: "local.get", index: calleeLocalIdx }, { op: "call", funcIdx: idx }, { op: "i32.or" });
+  }
   if (notTheMarker.length > 0) condition.push(...notTheMarker, { op: "i32.and" });
 
   return [
