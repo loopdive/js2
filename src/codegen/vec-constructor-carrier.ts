@@ -55,6 +55,7 @@ import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 
 /** Name of the minted accessor, and the key the finalize arm looks it up by. */
 export const VEC_CONSTRUCTOR_CARRIER_FN = "__vec_ctor_Array";
@@ -128,12 +129,18 @@ export function ensureVecConstructorCarrier(ctx: CodegenContext): number | undef
  * Without the bag helper the guard degrades to the unconditional answer, which
  * is still strictly better than the `undefined` this replaces.
  */
-export function vecConstructorArmInstrs(ctx: CodegenContext, keyEqualsConstructor: Instr[] | null): Instr[] {
+export function vecConstructorArmInstrs(
+  ctx: CodegenContext,
+  keyEqualsConstructor: Instr[] | null,
+  anyLocal: number,
+): Instr[] {
+  const byteArm = byteVecConstructorArmInstrs(ctx, keyEqualsConstructor, anyLocal);
   const carrierIdx = ctx.funcMap.get(VEC_CONSTRUCTOR_CARRIER_FN);
-  if (carrierIdx === undefined || !keyEqualsConstructor) return [];
+  if (carrierIdx === undefined || !keyEqualsConstructor) return byteArm;
   const bagHasIdx = ctx.funcMap.get("__carrier_bag_has");
   const answer: Instr[] = [{ op: "call", funcIdx: carrierIdx }, { op: "return" }];
   return [
+    ...byteArm,
     ...keyEqualsConstructor,
     {
       op: "if",
@@ -148,6 +155,104 @@ export function vecConstructorArmInstrs(ctx: CodegenContext, keyEqualsConstructo
               { op: "i32.eqz" }, // no own `constructor` → the inherited carrier wins
               { op: "if", blockType: { kind: "empty" }, then: answer },
             ],
+    },
+  ];
+}
+
+/**
+ * (#6775 S6) An ArrayBuffer is the byte vec `$__vec_i32_byte` (a `$__vec_base`
+ * subtype; `$__resizable_ab` subtypes it), so the `$__vec_base` arm above
+ * answered `ab.constructor` with the ARRAY carrier — `ab.constructor === Array`
+ * held, and `ArrayBuffer.prototype.slice`'s SpeciesConstructor then resolved C
+ * to `Array` and threw "species is not a constructor" in any module where the
+ * species ladder is live.
+ */
+function byteVecConstructorArmInstrs(
+  ctx: CodegenContext,
+  keyEqualsConstructor: Instr[] | null,
+  anyLocal: number,
+): Instr[] {
+  const byteVecIdx = ctx.vecTypeMap.get("i32_byte");
+  if (byteVecIdx === undefined) return [];
+  return protoWalkConstructorArmInstrs(ctx, byteVecIdx, anyLocal, keyEqualsConstructor);
+}
+
+/**
+ * (#6775 S6/S7) `__extern_get(obj, "constructor")` for a nominal builtin
+ * carrier (`typeIdx`; `anyLocal` holds `obj` as anyref) whose own-property
+ * table is empty: §7.3.2 — `constructor` is inherited from [[Prototype]], so
+ * walk it. `__getPrototypeOf` answers the intrinsic prototype for the carrier
+ * (`%ArrayBuffer.prototype%`, `%DataView.prototype%`), whose companion carries
+ * the identity-seeded `constructor`. An own `constructor` in the expando bag
+ * still shadows it. `keyEqualsConstructor` defaults to a string-guarded test
+ * of param 1.
+ */
+export function protoWalkConstructorArmInstrs(
+  ctx: CodegenContext,
+  typeIdx: number,
+  anyLocal: number,
+  keyEqualsConstructor: Instr[] | null = constructorKeyTestInstrs(ctx),
+): Instr[] {
+  const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  if (!keyEqualsConstructor || getProtoIdx === undefined || externGetIdx === undefined) return [];
+  const bagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+  const walk: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: getProtoIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: externGetIdx },
+    { op: "return" },
+  ];
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...keyEqualsConstructor,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then:
+            bagHasIdx === undefined
+              ? walk
+              : [
+                  { op: "local.get", index: 0 },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: bagHasIdx },
+                  { op: "i32.eqz" },
+                  { op: "if", blockType: { kind: "empty" }, then: walk },
+                ],
+        },
+      ],
+    },
+  ];
+}
+
+/** `param1 is a string equal to "constructor"` as an i32, or null without native strings. */
+function constructorKeyTestInstrs(ctx: CodegenContext): Instr[] | null {
+  const anyStr = ctx.anyStrTypeIdx;
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (anyStr < 0 || flattenIdx === undefined || equalsIdx === undefined) return null;
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStr },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "call", funcIdx: flattenIdx },
+        ...nativeStringLiteralInstrs(ctx, "constructor"),
+        { op: "call", funcIdx: equalsIdx },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
     },
   ];
 }

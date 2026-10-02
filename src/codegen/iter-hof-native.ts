@@ -59,10 +59,11 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6773 S1) nominal `__tag` arm guard
 import { RESULT_DONE_FIELD, RESULT_VALUE_FIELD } from "./frame-core.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { sentinelAwareF64BoxInstrs } from "./generators-native.js";
-import { ensureNativeIteratorRuntime } from "./iterator-native.js";
+import { ensureNativeIteratorRuntime, userIterRecordDirectInstrs } from "./iterator-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -529,8 +530,8 @@ export function reserveIterHofSteppers(
  * (the `__array_from_iter_n` drainability set) so the `open` classifier and
  * the drain guard admit the same receivers.
  */
-function collectIterableStructTypeIdxs(ctx: CodegenContext): number[] {
-  const out: number[] = [];
+function collectIterableStructs(ctx: CodegenContext): { structName: string; typeIdx: number; hasNext: boolean }[] {
+  const out: { structName: string; typeIdx: number; hasNext: boolean }[] = [];
   for (const [structName] of ctx.structFields) {
     if (
       structName.startsWith("Wrapper") ||
@@ -541,11 +542,11 @@ function collectIterableStructTypeIdxs(ctx: CodegenContext): number[] {
       continue;
     const typeIdx = ctx.structMap.get(structName);
     if (typeIdx === undefined) continue;
-    if (ctx.funcMap.has(`${structName}_@@iterator`) || ctx.funcMap.has(`${structName}_next`)) {
-      out.push(typeIdx);
-    }
+    // (#6773 S1) `hasNext` marks a struct that is its own §7.4.2 source.
+    const hasNext = ctx.funcMap.has(`${structName}_next`);
+    if (ctx.funcMap.has(`${structName}_@@iterator`) || hasNext) out.push({ structName, typeIdx, hasNext });
   }
-  out.sort((a, b) => a - b);
+  out.sort((a, b) => a.typeIdx - b.typeIdx);
   return out;
 }
 
@@ -707,16 +708,15 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
   // The `__iterator` GetIterator ladder is only SAFE for receivers one of its
   // arms admits — everything else hits the legacy vec hard-cast. Admissible
   // here: the canonical externref `$Vec` (the always-present vec arm) and,
-  // when the USER-arm deps exist (same condition as
-  // `fillNativeIteratorLateArms`), the closed structs carrying an
+  // when the USER-arm deps exist, the closed structs carrying an
   // `@@iterator`/`next` method.
-  const userArmAvailable =
-    ctx.funcMap.has("__call_@@iterator") &&
-    ctx.funcMap.has("__call_next") &&
-    ctx.funcMap.has("__sget_value") &&
-    ctx.funcMap.has("__sget_done") &&
-    ctx.funcMap.has("__is_truthy");
-  const iterableStructTypeIdxs = userArmAvailable ? collectIterableStructTypeIdxs(ctx) : [];
+  // (#6773 S1) The gate is EXACTLY `fillNativeIteratorLateArms`'s USER-deps
+  // condition (`__call_next` + `__is_truthy`); the `__call_@@iterator` /
+  // `__sget_*` dispatchers are optional there since #3146/#4447. Demanding
+  // them excluded the classes whose `next()` throws or returns an accessor
+  // result — a module with no closed `{value, done}` struct at all.
+  const userArmAvailable = ctx.funcMap.has("__call_next") && ctx.funcMap.has("__is_truthy");
+  const iterableStructs = userArmAvailable ? collectIterableStructs(ctx) : [];
   const canonicalVecTypeIdx = ctx.structMap.get("__vec_externref");
 
   // Locals (declared at reserve): 1 = __any (anyref), 2 = __resAny (anyref),
@@ -821,20 +821,36 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
     // to the null sentinel (helpers answer the legacy `undefined`) so a
     // receiver the ladder would hard-cast-trap on (class instance, string,
     // arbitrary data struct) can never trap here.
-    const ladderTypeIdxs = [
-      ...(canonicalVecTypeIdx !== undefined ? [canonicalVecTypeIdx] : []),
-      ...iterableStructTypeIdxs,
-    ];
-    for (const t of ladderTypeIdxs) {
-      arms.push(
+    // (#6773 S1) A closed struct with a compiled `next` is its OWN source —
+    // §7.4.2 GetIteratorDirect reads `this.next` and never calls `@@iterator`
+    // — so mint the USER record directly; `__iter_hof_next` then steps it
+    // through `__iterator_next`'s USER arm (`__call_next`). Routing it through
+    // `__iterator` let the ladder's OBJ arm claim the instance in any module
+    // that bootstraps the object runtime (the runner's `Iterator` shim does),
+    // and the OBJ step then missed `next` on the closed carrier: an empty
+    // helper whose class `next()` was never called. `@@iterator`-only structs
+    // keep the ladder. Each struct arm claims through the nominal `__tag`
+    // guard (#6608) — same-layout classes are one runtime type, so a bare
+    // `ref.test` would let the first arm claim every sibling's instance.
+    const ladderArms: { claim: Instr[]; direct: boolean }[] = iterableStructs.map((s) => ({
+      claim: classArmClaimInstrs(ctx, s.structName, s.typeIdx, ANY),
+      direct: s.hasNext,
+    }));
+    if (canonicalVecTypeIdx !== undefined) {
+      const vecClaim: Instr[] = [
         { op: "local.get", index: ANY },
-        { op: "ref.test", typeIdx: t },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: iteratorIdx }, { op: "return" }],
-        },
-      );
+        { op: "ref.test", typeIdx: canonicalVecTypeIdx },
+      ];
+      ladderArms.unshift({ claim: vecClaim, direct: false });
+    }
+    for (const { claim, direct } of ladderArms) {
+      arms.push(...claim, {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: direct
+          ? [...userIterRecordDirectInstrs(ctx, 0), { op: "return" }]
+          : [{ op: "local.get", index: 0 }, { op: "call", funcIdx: iteratorIdx }, { op: "return" }],
+      });
     }
     openFn.body = [...convert, ...arms, { op: "ref.null.extern" }];
   }

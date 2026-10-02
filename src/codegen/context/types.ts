@@ -4020,9 +4020,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     /**
      * (#2025) Whether the method body reads `this` (param 0), computed at
      * registration BEFORE the TypeError-helper late import shifts function
-     * indices (which would make a finalize-time `methodFuncIdx` lookup point at
-     * the wrong function). Finalize reuses this captured value to decide whether
-     * the trampoline's null-`this` arm throws a catchable TypeError.
+     * indices. Finalize reuses it to decide whether the null-`this` arm throws
+     * a catchable TypeError; (#6789) `undefined` = body not compiled yet at
+     * registration, so finalize rescans the compiled body.
      */
     methodUsesThis?: boolean;
     /**

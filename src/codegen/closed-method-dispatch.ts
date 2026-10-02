@@ -1125,6 +1125,29 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       }
     }
 
+    // (#6773 S3) `.return()` twin of the `.next()` arm, `$LazyIterHelper` ONLY
+    // (an `$IterRec` has no observable `return`): §27.1.2.1.2 — forward
+    // IteratorClose once, never after exhaustion, answer `{undefined, true}`.
+    const returnResultIdx = ctx.funcMap.get("__iter_return_result");
+    const lazyHelperTypeIdx = ctx.structMap.get("$LazyIterHelper");
+    if ((ctx.standalone || ctx.wasi) && methodName === "return" && arity === 0 && returnResultIdx !== undefined) {
+      if (lazyHelperTypeIdx !== undefined) {
+        current = [
+          { op: "local.get", index: anyLocalIdx },
+          { op: "ref.test", typeIdx: lazyHelperTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: returnResultIdx },
+            ],
+            else: current,
+          },
+        ];
+      }
+    }
+
     // (#2583) `$__vec_base` brand arm for callback-free array search/predicate
     // methods (indexOf/lastIndexOf/includes, arity 1). A genuinely-`any` array
     // receiver compiles to a `$__vec_base`-subtyped struct, NOT an object-literal

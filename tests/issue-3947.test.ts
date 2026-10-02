@@ -104,6 +104,7 @@ beforeEach(() => {
   writeFileSync(target("ROADMAP.md"), fixture("Roadmap"));
   writeFileSync(target("README.md"), fixture("Readme", true));
   writeFileSync(target("CLAUDE.md"), fixture("Claude"));
+  writeFileSync(target("STATUS.md"), fixture("Status"));
   writeFileSync(target("plan/goals/goal-graph.md"), fixture("Goals"));
 });
 
@@ -119,7 +120,7 @@ describe("#3947 — the generated conformance block is prettier-stable", () => {
     // rewrote CLAUDE.md in the original incident.
     const config = (await prettier.resolveConfig(join(REPO_ROOT, "CLAUDE.md"))) ?? {};
 
-    for (const rel of ["ROADMAP.md", "README.md", "CLAUDE.md", "plan/goals/goal-graph.md"]) {
+    for (const rel of ["ROADMAP.md", "README.md", "CLAUDE.md", "STATUS.md", "plan/goals/goal-graph.md"]) {
       const generated = readFileSync(target(rel), "utf8");
       const formatted = await prettier.format(generated, { ...config, parser: "markdown" });
       // If this fails, prettier and the sync script disagree again and every
@@ -141,7 +142,7 @@ describe("#3947 — the generated conformance block is prettier-stable", () => {
     expect(runScript([]).code).toBe(0);
 
     const config = (await prettier.resolveConfig(join(REPO_ROOT, "CLAUDE.md"))) ?? {};
-    for (const rel of ["ROADMAP.md", "README.md", "CLAUDE.md", "plan/goals/goal-graph.md"]) {
+    for (const rel of ["ROADMAP.md", "README.md", "CLAUDE.md", "STATUS.md", "plan/goals/goal-graph.md"]) {
       const before = readFileSync(target(rel), "utf8");
       writeFileSync(target(rel), await prettier.format(before, { ...config, parser: "markdown" }));
     }

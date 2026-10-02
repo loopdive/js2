@@ -154,6 +154,7 @@ import {
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
 import * as classStaticParent from "./runtime/class-static-parent.js";
+const _classParents = classStaticParent.classParentsFor; // (#6790) one registry per instance
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
@@ -6417,35 +6418,32 @@ function _decodes(exports: Record<string, Function> | undefined, obj: object): b
 // exports while that instance is alive anyway.
 let _latestInstance: WeakRef<{ getExports: () => Record<string, Function> | undefined }> | undefined;
 
-/** (#5225) Record a linked provider's exports as a decoder for the project. */
-export function registerLinkedProviderModule(exports: Record<string, Function>): void {
-  _linkedProviderMirrors.registerProviderExports(exports);
-  _crossModuleStructs.registerModule(exports);
+/** (#6790) Open a linked project keyed by its root import object; its modules decode only each other. */
+export function beginLinkedProject(rootImports: object): void {
+  _crossModuleStructs.beginProject(rootImports);
 }
 
-/** (#5225) Record the consumer's exports as a decoder for the project. */
-export function registerLinkedConsumerModule(exports: Record<string, Function>): void {
-  _crossModuleStructs.registerModule(exports);
+/** (#5225) Record a linked provider's exports as a decoder for `rootImports`' project. */
+export function registerLinkedProviderModule(exports: Record<string, Function>, rootImports?: object): void {
+  _linkedProviderMirrors.registerProviderExports(exports);
+  _crossModuleStructs.registerModule(exports, rootImports);
+}
+
+/** (#5225) Record the consumer's exports as a decoder for `rootImports`' project. */
+export function registerLinkedConsumerModule(exports: Record<string, Function>, rootImports?: object): void {
+  _crossModuleStructs.registerModule(exports, rootImports);
 }
 
 /**
- * (#5364) Retire the linked project that is no longer live, so the NEXT one
- * starts from an empty registry.
+ * (#5364) Forget every linked project registered so far.
  *
- * Both registries above are module-level singletons with no unregister path.
- * That is correct while a process hosts one linked project, and wrong for a
- * process that hosts many: `scripts/test262-worker.mjs` runs many rows per fork
- * and since #5353 every Temporal row re-instantiates the SAME provider binary.
- * Two instances of one binary share canonical WasmGC types, so project 1's
- * `__struct_field_names` happily names a struct project 2 minted — and
- * `_owningClassObject` (#5354) then answers with project 1's class-object
- * singleton. Nothing throws; the consumer's live `C` and the instance's
- * resolved constructor are simply two unrelated mirrors, so `x instanceof C`
- * is false while `x.constructor.name` reads right.
- *
- * Call it BEFORE instantiating a project, not after tearing one down: "after"
- * has no single owner (a row can throw out of instantiate) and would leave the
- * stale entries live for exactly the window that matters.
+ * (#6790) Correctness no longer depends on it: `instantiateLinkedProviders`
+ * opens a project per call, and two instances of one provider binary — which
+ * share canonical WasmGC types, so project 1's `__struct_field_names` names a
+ * struct project 2 minted and `_owningClassObject` (#5354) would answer with
+ * project 1's class-object singleton — are never consulted across projects.
+ * Kept for the test262 seam (which retires each row before the next) and for
+ * tests that want an empty registry.
  */
 export function resetLinkedProjectRegistry(): void {
   _crossModuleStructs.reset();
@@ -6626,6 +6624,14 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
 
 const _staticMethodNames = new WeakMap<object, string[]>();
 const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
+// (#6798) Each eager generator buffer's last `yield*` completion value, read
+// (and cleared) once by `__gen_yield_star_result`.
+const _genYieldStarResults = new WeakMap<object, unknown>();
+const _takeGenYieldStarResult = (buf: object): unknown => {
+  const result = _genYieldStarResults.get(buf);
+  _genYieldStarResults.delete(buf);
+  return result;
+};
 // Static methods are invoked by host frameworks through the generic closure
 // bridge. Their object results must be readable host objects (React consumes
 // getDerivedStateFromProps' returned partial state immediately), unlike the
@@ -6677,7 +6683,8 @@ function _registerClassCtorHandler(
   parentFnctor: any,
   classNameArg: any,
   implicitDynamicParentCtor: any,
-  liveExportSource?: MarshalExportSource,
+  liveExportSource: MarshalExportSource | undefined,
+  classParents: classStaticParent.ClassParentRegistry,
 ): void {
   if (classObj == null || typeof classObj !== "object") return;
   if (liveExportSource !== undefined) _classCtorCallbackStates.set(classObj, liveExportSource);
@@ -6689,8 +6696,7 @@ function _registerClassCtorHandler(
     _classObjectByProtoStruct.set(protoObj, classObj);
   }
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
-  if (typeof classNameArg === "string" && classNameArg.length > 0)
-    classStaticParent.registerClassObject(classObj, classNameArg);
+  classStaticParent.registerClassObject(classObj, classNameArg, classParents);
   if (implicitDynamicParentCtor === 1) _classImplicitDynamicParentCtor.add(classObj);
   else _classImplicitDynamicParentCtor.delete(classObj);
   _hostProxyCache.delete(classObj);
@@ -6822,25 +6828,15 @@ function _hostPrototypeForInstance(raw: any, exports: Record<string, Function> |
   return proto != null && typeof proto === "object" ? proto : undefined;
 }
 
-/** (#4618) `__register_class_parent` import: dynamic `extends <value>`
- * parent, registered by name at the class declaration statement (see
- * emitRegisterDynamicClassParent). */
-function _registerClassParentHandler(className: any, parentValue: any): void {
-  if (typeof className !== "string" || className.length === 0) return;
-  // (#5280) A null `parentValue` is `class C extends null` — a real heritage, not a missing one; see registerClassParent.
-  classStaticParent.registerClassParent(className, parentValue);
-}
-
-/** (#4618) Lazy dynamic-parent registration for PROPERTY-ACCESS heritage
+/** (#4618) Lazy dynamic-parent resolver for PROPERTY-ACCESS heritage
  * (`class Test extends React.Component`): the compiled value read at the
  * declaration statement can cross as null through the static member lane
  * (observed in the react per-file batch), so the runtime stores the live
  * container object + key and resolves `obj[key]` host-side, on demand, when
  * the class mirror needs the parent. Memoized on first non-null resolve. */
-function _registerClassParentRefHandler(className: any, obj: any, key: any, exports?: Record<string, Function>): void {
-  if (typeof className !== "string" || className.length === 0) return;
-  if (obj == null || typeof key !== "string" || key.length === 0) return;
-  classStaticParent.registerClassParentLazy(className, () => {
+function _classParentRefResolver(obj: any, key: any, exports?: Record<string, Function>): (() => any) | undefined {
+  if (obj == null || typeof key !== "string" || key.length === 0) return undefined;
+  return () => {
     try {
       // The container is often a RAW wasm struct (the compiled module's
       // `exports` object): its props may live in the sidecar OR as real
@@ -6862,12 +6858,11 @@ function _registerClassParentRefHandler(className: any, obj: any, key: any, expo
         if (wrapped != null && wrapped !== obj) v = (wrapped as any)[key];
       }
       if (v == null) v = (obj as any)[key];
-      if (v != null) classStaticParent.rememberClassParent(className, v);
       return v;
     } catch {
       return undefined;
     }
-  });
+  };
 }
 
 /**
@@ -9627,7 +9622,7 @@ function _makeClassCtorMirrorForHost(
     const viaFnctor = _classFnctorParents.get(classObj);
     if (viaFnctor != null) return viaFnctor;
     if (className === "") return undefined;
-    const registered = classStaticParent.getClassParent(className);
+    const registered = classStaticParent.classParentOf(classObj, className);
     if (registered != null) return registered;
     // (#5354) A STATIC `class B extends A` heritage is resolved entirely inside
     // the compiler and registers nothing on the host, so neither record above
@@ -10632,6 +10627,8 @@ interface InstanceState {
   subclassCtors?: Map<string, Function[]>;
   /** user-class name → parent class name (or null). */
   userClassParents?: Map<string, string | null>;
+  /** (#6790) user-class name → dynamic `extends` value, for this instance only. */
+  classParents?: classStaticParent.ClassParentRegistry;
   /**
    * (#2637 B2) `class extends Promise` name → the host-bridged wasm
    * constructor-body callable (`$<Class>_new`, registered via
@@ -14043,21 +14040,21 @@ assert._isSameValue = isSameValue;
             classNameArg,
             implicitDynamicParentCtor,
             callbackState,
+            _classParents(instanceState),
           );
         };
-      if (name === "__register_class_parent") return _registerClassParentHandler;
+      if (name === "__register_class_parent") return _classParents(instanceState).register;
       if (name === "__register_class_parent_ref")
         return function registerClassParentRef(n: any, o: any, k: any): void {
-          _registerClassParentRefHandler(n, o, k, callbackState?.getExports());
+          _classParents(instanceState).registerLazy(n, _classParentRefResolver(o, k, callbackState?.getExports()));
         };
       if (/^__call_dynamic_class_parent_\d+$/.test(name))
         return (parentIdentity: any, receiver: any, ...args: any[]): void => {
           const className = typeof parentIdentity === "string" ? parentIdentity : "";
-          // Dynamic property-access heritage is registered by class name. A
-          // statically named top-level function parent has no class `_init`,
-          // so the compiler passes its canonical closure directly instead.
-          // Both are the same JavaScript SuperCall operation once resolved.
-          const parent = className !== "" ? classStaticParent.getClassParent(className) : parentIdentity;
+          // Property-access heritage is registered by class name, per instance
+          // (#6790). A top-level function parent has no class `_init`, so the
+          // compiler passes its canonical closure; both are one SuperCall.
+          const parent = className !== "" ? _classParents(instanceState).get(className) : parentIdentity;
           const parentCtor =
             typeof parent === "function"
               ? parent
@@ -17619,14 +17616,26 @@ assert._isSameValue = isSameValue;
           }
           const iterable = _materializeIterable(rawIterable, callbackState);
           if (iterable != null && typeof iterable[Symbol.iterator] === "function") {
-            for (const v of iterable) {
+            // (#6798) Step by hand (not for-of) so the delegate's terminal
+            // `{done: true, value}` survives: it is the `yield*` expression's value.
+            const iterator = iterable[Symbol.iterator]();
+            const next = iterator.next;
+            for (;;) {
+              const step = next.call(iterator);
+              if (Object(step) !== step) throw new TypeError("Iterator result is not an object");
+              if (step.done) {
+                _genYieldStarResults.set(buf, step.value);
+                return;
+              }
               if (buf.length >= __EAGER_GEN_LIMIT) {
+                iterator.return?.();
                 throw new RangeError("Eager generator buffer exceeded " + __EAGER_GEN_LIMIT + " yields");
               }
-              buf.push(v);
+              buf.push(step.value);
             }
           }
         };
+      if (name === "__gen_yield_star_result") return _takeGenYieldStarResult;
       // __gen_set_return: (buf, value) → void. Stashes the generator's `return`
       // value on the buffer object (a non-enumerable side property) rather than
       // pushing it as a yielded element. `__create_generator` reads it into
@@ -18463,6 +18472,7 @@ assert._isSameValue = isSameValue;
           // spec answer is "function". Probe via `__is_closure` (matches the
           // discriminator used by `_maybeWrapCallableUnknownArity`).
           if (v != null && typeof v === "object" && _isWasmStruct(v)) {
+            if (_classObjectOwnPropertyNames.has(v)) return "function"; // (#6798) class object (host twin of #6420)
             const exports = callbackState?.getExports();
             const isClosureFn = exports?.__is_closure as ((x: any) => number) | undefined;
             if (typeof isClosureFn === "function") {
@@ -18984,6 +18994,7 @@ assert._isSameValue = isSameValue;
       // wired through setInstance after instantiation. Consult it for the two
       // overlapping categories; ordinary host values stay on native typeof.
       const isCompiledClosure = (value: any): boolean => {
+        if (_classObjectOwnPropertyNames.has(value)) return true; // (#6798) a class object is a constructor
         const classifier = callbackState?.getExports()?.__is_closure;
         if (typeof classifier !== "function") return false;
         try {
@@ -19391,22 +19402,14 @@ function wrapWithContainment(
   // Dangerous properties — block entirely (return null)
   const blockedProps = new Set(["ownerDocument", "baseURI", "getRootNode"]);
 
-  // Mutation methods that need containment check
-  const mutationMethods = new Set([
-    "appendChild",
-    "removeChild",
-    "insertBefore",
-    "replaceChild",
-    "remove",
-    "append",
-    "prepend",
-    "after",
-    "before",
-    "replaceWith",
-    "insertAdjacentElement",
-    "insertAdjacentHTML",
-    "insertAdjacentText",
-  ]);
+  // (#6792) Members that mutate the receiver's PARENT or siblings. On a contained
+  // node that stays inside the fence; on domRoot itself it writes outside it, so
+  // the root may use only its inward mutators (append, innerHTML, "beforeend", …).
+  const outwardMethods = new Set(["remove", "after", "before", "replaceWith"]);
+  const outwardSetters = new Set(["outerHTML", "outerText"]);
+  const outwardPosition = /^(?:beforebegin|afterend)$/i; // insertAdjacent* position
+  const rootViolation = (verb: string) =>
+    new Error(`DOM containment violation: ${verb} "${member}" on the container root would mutate outside it`);
 
   // Helper: check if domRoot contains an element (duck-typed for mock objects)
   function isContained(el: any): boolean {
@@ -19456,6 +19459,7 @@ function wrapWithContainment(
   // For set actions
   if (action === "set" && member) {
     return (self: any, v: any) => {
+      if (self === domRoot && outwardSetters.has(member)) throw rootViolation("setting");
       if (self !== domRoot && isNodeLike(self) && !isContained(self)) {
         throw new Error(`DOM containment violation: setting "${member}" on element outside container`);
       }
@@ -19481,18 +19485,14 @@ function wrapWithContainment(
       return fn;
     }
 
-    if (mutationMethods.has(member)) {
-      return (self: any, ...args: any[]) => {
-        if (self !== domRoot && isNodeLike(self) && !isContained(self)) {
-          throw new Error(`DOM containment violation: calling "${member}" on element outside container`);
-        }
-        return self[member](...args);
-      };
-    }
-
-    // Other methods — containment check on self
+    // Containment check on self; on the root itself, refuse the outward subset.
+    const adjacent = member.startsWith("insertAdjacent");
     return (self: any, ...args: any[]) => {
-      if (self !== domRoot && isNodeLike(self) && !isContained(self)) {
+      if (self === domRoot) {
+        // Convert the position once so the value checked is the value the DOM sees.
+        if (adjacent && args.length > 0) args[0] = `${args[0]}`;
+        if (outwardMethods.has(member) || (adjacent && outwardPosition.test(args[0]))) throw rootViolation("calling");
+      } else if (isNodeLike(self) && !isContained(self)) {
         throw new Error(`DOM containment violation: calling "${member}" on element outside container`);
       }
       return self[member](...args);
@@ -19580,6 +19580,7 @@ export function buildImports(
     legacyRegExpState: _makeLegacyRegExpState(),
     subclassCtors: new Map<string, Function[]>(),
     userClassParents: new Map<string, string | null>(),
+    classParents: new classStaticParent.ClassParentRegistry(),
   };
 
   installAmbientCompatibility({

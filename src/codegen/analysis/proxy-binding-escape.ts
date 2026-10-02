@@ -192,7 +192,47 @@ function consumesExternrefCarrier(parent: ts.CallExpression | ts.NewExpression):
   const member = callee.name.text;
   if (namespace === "Reflect") return true;
   if (namespace === "Proxy") return member === "revocable";
+  // (#6775 S4) The native JSON codec walks a `$Proxy` value/replacer through
+  // its traps; a vec/struct slot copied the Proxy (running `length` and every
+  // index trap) at the binding's initialisation instead.
+  if (namespace === "JSON") return member === "stringify";
   return namespace === "Object" && OBJECT_META_STATICS.has(member);
+}
+
+/**
+ * (#6775 S2) Argument zero of `<id>.call(...)` / `<id>.apply(...)` where `<id>`
+ * resolves to a declaration initialised from
+ * `Object.getOwnPropertyDescriptor(...).get` or `.set`. Such a callee is an
+ * accessor closure whose `this` is an externref: it never casts the receiver
+ * to the binding's TypeScript target struct, so a Proxy receiver passed here
+ * does not need the struct slot — and keeping it copies the Proxy into a
+ * fresh struct (every trap vanishes; `Error.prototype.stack`'s setter rows).
+ */
+function isDescriptorAccessorReceiverArg(
+  ctx: CodegenContext,
+  parent: ts.CallExpression | ts.NewExpression,
+  outer: ts.Expression,
+): boolean {
+  if (!ts.isCallExpression(parent) || parent.arguments[0] !== outer) return false;
+  const callee = parent.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+  if (callee.name.text !== "call" && callee.name.text !== "apply") return false;
+  const decl = ctx.oracle.valueDeclarationOf(callee.expression);
+  if (decl === undefined || !ts.isVariableDeclaration(decl) || decl.initializer === undefined) return false;
+  return isDescriptorAccessorRead(decl.initializer);
+}
+
+/** (#6775) `Object.getOwnPropertyDescriptor(o, k).get` / `.set` — a runtime accessor function value. */
+export function isDescriptorAccessorRead(init: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(init) || (init.name.text !== "get" && init.name.text !== "set")) return false;
+  const gopd = init.expression;
+  return (
+    ts.isCallExpression(gopd) &&
+    ts.isPropertyAccessExpression(gopd.expression) &&
+    ts.isIdentifier(gopd.expression.expression) &&
+    gopd.expression.expression.text === "Object" &&
+    gopd.expression.name.text === "getOwnPropertyDescriptor"
+  );
 }
 
 /**
@@ -252,6 +292,12 @@ function expressionIsEscapingArgument(ctx: CodegenContext, expression: ts.Expres
   // parameter carries no type annotation reads dynamically too — see
   // `calleeParamIsUntyped` for why this cannot reopen #2615.
   if (calleeParamIsUntyped(ctx, parent, outer)) return false;
+
+  // (#6775 S2) `get.call(p)` / `set.call(p, v)` where the callee binding is an
+  // accessor pulled off a descriptor (`Object.getOwnPropertyDescriptor(o, k)
+  // .get|.set`) takes its receiver as a raw externref `this`, like the
+  // `Reflect.*` consumers above.
+  if (isDescriptorAccessorReceiverArg(ctx, parent, outer)) return false;
 
   // This includes argument zero of `.call` / `.apply`, the generic-method
   // receiver that motivated #2615. A member receiver (`p.method()`) is not in

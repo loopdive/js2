@@ -13,6 +13,7 @@ import {
   type ProviderManifestV1,
 } from "./provider-manifest.js";
 import {
+  beginLinkedProject,
   buildCompiledImports as buildCompiledImportsRuntime,
   registerLinkedConsumerModule,
   registerLinkedProviderModule,
@@ -49,7 +50,8 @@ export interface LinkedProviderHost {
 // (#5364) Re-exported so the ONE test262 instantiate seam
 // (`scripts/test262-import-object.mjs`) can retire the previous row's project
 // through the SAME runtime copy that `instantiateLinkedProviders` registers
-// into. The in-process lanes reach that copy by dynamically importing THIS
+// into. (#6790) No other caller needs it: each `instantiateLinkedProviders`
+// call opens its own project. The in-process lanes reach that copy by dynamically importing THIS
 // module; the sharded worker passes `scripts/runtime-bundle.mjs` instead. Both
 // therefore need the reset on the same object as the wiring — a reset in the
 // other copy is the silent-wrong-copy bug #5353 finding 3 describes.
@@ -263,8 +265,13 @@ export function instantiateLinkedProviders(
 ): ReadonlyMap<string, WebAssembly.Exports> {
   const providerExports = new Map<string, WebAssembly.Exports>();
   // (#5226) The consumer's own import object needs the tag too — it is the
-  // module that CATCHES what a provider throws.
-  if (artifacts.length > 0) installSharedExceptionTag(rootImports);
+  // module that CATCHES what a provider throws. (#6790) And this call is one
+  // linked project: its modules decode only each other's structs, so a second
+  // project in the same process needs no registry reset from its caller.
+  if (artifacts.length > 0) {
+    installSharedExceptionTag(rootImports);
+    beginLinkedProject(rootImports);
+  }
   for (const artifact of artifacts) {
     const providerImports = buildProviderImportObject(artifact, rootImports, host);
     installSharedExceptionTag(providerImports);
@@ -281,7 +288,7 @@ export function instantiateLinkedProviders(
     // plain FUNCTIONS never reaches `wrapLinkedProviderValue` (the loop below
     // skips `kind === "function"`), yet its `__extern_get` is exactly where a
     // consumer-minted argument arrives undecodable.
-    registerLinkedProviderModule(rawExports);
+    registerLinkedProviderModule(rawExports, rootImports);
     const exposedExports: Record<string, any> = { ...rawExports };
     // (#5383 S2d) A provider compiled for a NON-JavaScript environment
     // (`--target standalone`) hands its values to a WASM consumer, not to a
@@ -329,5 +336,5 @@ export function wireCompiledInstance(
     setInstance?: (instance: WebAssembly.Instance) => void;
   };
   (hooks.__setInstance ?? hooks.setInstance)?.(instance);
-  if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>);
+  if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>, imports);
 }

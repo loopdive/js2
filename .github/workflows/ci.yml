@@ -198,6 +198,25 @@ jobs:
         # reachable invariant is "no growth, ratchet toward zero".
         run: pnpm run check:ir-layering
 
+      - name: Import-cycle ratchet (#6797)
+        if: steps.npm_compat.outputs.only != 'true'
+        # codegen, ir and frontend form one ~700-file strongly-connected
+        # component of the value-import graph, so the layers cannot be
+        # retired one at a time. Fails when the largest SCC, the number of
+        # multi-file SCCs, or any two-way directory edge count (e.g. ir->codegen)
+        # grows vs scripts/import-cycles-baseline.json. Decreases are banked
+        # post-merge (--update-on-decrease in the promote/summary-sync jobs).
+        # Intended growth: `node scripts/check-import-cycles.mjs --update` in
+        # the PR, committed, so review sees it.
+        run: pnpm run check:import-cycles
+
+      - name: src/codegen flat-directory budget (#6797)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when the number of .ts files directly in src/codegen/ (824 when
+        # #6797 was filed) grows past scripts/flat-dir-budget-baseline.json.
+        # New files go into the existing sub-directories.
+        run: pnpm run check:flat-dir-budget
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
@@ -236,6 +255,13 @@ jobs:
         # --update with a PR note. Delete-list + method:
         # plan/log/3090-phase0-legacy-delete-list.md.
         run: pnpm run check:dead-exports
+
+      - name: No tracked file matches .gitignore (#6796)
+        if: steps.npm_compat.outputs.only != 'true'
+        # `git ls-files | git check-ignore --stdin --no-index` must be empty
+        # apart from the dated allow-list in the script; a stale allow-list
+        # entry fails too. Untrack an offender with `git rm --cached <path>`.
+        run: pnpm run check:tracked-ignored
 
       - name: Oracle ratchet (#1930/#3273)
         if: steps.npm_compat.outputs.only != 'true'
@@ -396,6 +422,17 @@ jobs:
         # Fails on duplicate IDs, filename/frontmatter ID mismatch, dangling
         # depends_on, or broken plan/issues/<id>-<slug>.md links in tracked *.md.
         run: pnpm run check:issues
+
+      - name: CLAUDE.md names only paths and CLI flags that exist (#6795)
+        if: steps.npm_compat.outputs.only != 'true'
+        # CLAUDE.md is the first file every agent reads. It named a test file
+        # that did not exist, a workflow that had been deleted, and a CLI flag
+        # src/cli.ts does not parse. Fails on any repo path (src/ scripts/
+        # tests/ plan/ docs/ .github/ .husky/ ...) that is not tracked, and on
+        # any `--flag` in the "CLI Flags" section that cli.ts does not parse.
+        # A line that deliberately names something gone ends in
+        # `<!-- historical -->`; see the script header.
+        run: pnpm run check:claude-md-paths
 
       - name: Issue-ID fresh-claim gate (#2531)
         if: steps.npm_compat.outputs.only != 'true'

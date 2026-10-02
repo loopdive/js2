@@ -22,15 +22,30 @@
 // callers consult it only after the local exports have already failed to name
 // the struct or to serve the field, so the single-module lane and the linked
 // hot path (`__extern_get` runs ~10k times per `run()` on mixed/csv-parse,
-// #3903) are byte-identical to before. With fewer than two modules registered
-// the whole thing short-circuits on one boolean.
+// #3903) are byte-identical to before. Until some project has two modules
+// registered the whole thing short-circuits on one boolean.
+//
+// (#6790) Modules are grouped into PROJECTS, one per `instantiateLinkedProviders`
+// call (keyed by its root import object), and a read only ever consults the
+// project of the module doing the reading. The registry used to be one Set for
+// the whole process, so a second project — the same provider binary
+// instantiated again, whose canonical WasmGC types alias the first's — could be
+// answered by the first project's exports unless every embedder remembered to
+// call `resetLinkedProjectRegistry()` in between, which no public entry point
+// did. Scoping by project needs no reset and, unlike a reset, leaves the first
+// project working while both are live.
 
 /**
  * Registry of the modules taking part in one linked project, and a cache of
  * which of them owns (can decode) a given compiled struct.
  */
 export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => boolean) {
-  const modules = new Set<Record<string, Function>>();
+  type Project = Set<Record<string, Function>>;
+  // Weak on both keys: a project lives as long as one of its modules (or its
+  // root import object) does. Only the newest project is held strongly.
+  let projectOf = new WeakMap<object, Project>();
+  let projectByRoot = new WeakMap<object, Project>();
+  let current: Project | undefined;
   const owners = new WeakMap<object, Record<string, Function>>();
   const states = new WeakMap<Record<string, Function>, { getExports: () => Record<string, Function> }>();
   // Sentinel for "nothing in this project can name it" (closures, vecs, plain
@@ -39,8 +54,25 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
   // `__struct_field_names` — two Wasm calls on the `__extern_get` hot path
   // (#3903, ~10k per `run()`).
   const NONE: Record<string, Function> = Object.create(null);
-  // Fast opt-out: one module (or none) means every value is already local.
+  // Fast opt-out: until some project has two modules every value is local.
   let enabled = false;
+
+  /**
+   * The modules that may decode for `local`: its own project. A host-bridge
+   * export VIEW (`Object.create(rawExports)`, see `_hostBridgeExportView`)
+   * belongs to its raw module's project. A reader with no known module (init,
+   * or a module outside every project) gets the newest project, which is what
+   * the single process-wide Set used to answer for the newest project.
+   * `undefined` when that project cannot have a foreign decoder.
+   */
+  const projectFor = (local: Record<string, Function> | undefined): Project | undefined => {
+    const own =
+      local !== undefined && canBeWeakKey(local)
+        ? (projectOf.get(local) ?? projectOf.get(Object.getPrototypeOf(local) as object))
+        : undefined;
+    const project = own ?? current;
+    return project !== undefined && project.size > 1 ? project : undefined;
+  };
 
   /**
    * Whether `exports` can name this struct's fields. `__struct_field_names` is
@@ -87,10 +119,28 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
   };
 
   return {
-    registerModule(exports: Record<string, Function> | undefined): void {
-      if (exports === undefined || !canBeWeakKey(exports) || modules.has(exports)) return;
-      modules.add(exports);
-      enabled = modules.size > 1;
+    /**
+     * (#6790) Open the project that `root`'s instantiation registers into. A
+     * module registered later with the same `root` joins it, whatever project
+     * has opened since.
+     */
+    beginProject(root: object): void {
+      current = new Set();
+      if (canBeWeakKey(root)) projectByRoot.set(root, current);
+    },
+
+    /**
+     * Add a module to `root`'s project (or the newest one). A module already in
+     * a project stays where it is — `wrapLinkedProviderValue` re-registers its
+     * provider on every crossing, possibly long after a newer project opened.
+     */
+    registerModule(exports: Record<string, Function> | undefined, root?: object): void {
+      if (exports === undefined || !canBeWeakKey(exports) || projectOf.has(exports)) return;
+      const project =
+        (root !== undefined && canBeWeakKey(root) ? projectByRoot.get(root) : undefined) ?? (current ??= new Set());
+      project.add(exports);
+      projectOf.set(exports, project);
+      if (project.size > 1) enabled = true;
     },
 
     /**
@@ -101,6 +151,8 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
      */
     decoderFor(obj: unknown, local: Record<string, Function> | undefined): Record<string, Function> | undefined {
       if (!enabled || !canBeWeakKey(obj)) return undefined;
+      const modules = projectFor(local);
+      if (modules === undefined) return undefined;
       const cached = owners.get(obj as object);
       // (#5379) A cache entry naming a RETIRED module outranks nothing: re-probe
       // the live project and prefer whatever it answers. The entry is kept as
@@ -141,6 +193,8 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
      */
     bufferDecoderFor(obj: unknown, local: Record<string, Function> | undefined): Record<string, Function> | undefined {
       if (!enabled || !canBeWeakKey(obj)) return undefined;
+      const modules = projectFor(local);
+      if (modules === undefined) return undefined;
       const cached = bufferOwners.get(obj as object);
       if (cached !== undefined && (cached === NONE || modules.has(cached))) {
         return cached === local || cached === NONE ? undefined : cached;
@@ -162,37 +216,40 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
     },
 
     /**
-     * (#5364) Forget every module of the project that just finished.
+     * (#5364) Forget every project registered so far.
      *
-     * The registry is MODULE-LEVEL state, so a process that instantiates a
-     * second linked project against the SAME provider binary (the compile-once
-     * Temporal provider, re-instantiated once per test262 row in a long-lived
-     * fork) would otherwise still hold project 1's exports. Those exports share
-     * canonical WasmGC types with project 2's, so `decodes` answers TRUE for a
-     * struct project 1 never minted and `decoderFor` hands back the wrong
-     * module — a complete, internally consistent, WRONG mirror.
+     * (#6790) No longer needed for correctness — `beginProject` scopes each
+     * instantiation — but kept for callers that want the registry empty: the
+     * test262 seam retires each row's project before the next, and the unit
+     * tests start clean. Before #6790 the registry was one Set for the whole
+     * process, so a second linked project against the SAME provider binary
+     * still held project 1's exports; those share canonical WasmGC types with
+     * project 2's, so `decodes` answered TRUE for a struct project 1 never
+     * minted and `decoderFor` handed back the wrong module.
      *
      * `owners` and `states` are deliberately NOT cleared, but NOT for the reason
      * this comment used to give. The old wording said both WeakMaps "become
      * unreachable with" the retiring project, which is only true when nothing
-     * outlives it — and plenty does: `classStaticParent`'s `classParentsByName`
-     * is a process-global STRONG map of class objects keyed by class NAME, and
-     * a host mirror handed to the embedder keeps its struct alive too. So an
-     * `owners` entry naming a retired module can and does survive a reset.
+     * outlives it — and plenty does: a host mirror handed to the embedder keeps
+     * its struct alive (and until #6790 the class-parent registry was a
+     * process-global STRONG map of class objects). So an `owners` entry naming
+     * a retired module can and does survive a reset.
      *
      * (#5379) What makes that safe is the retired-entry arm in `decoderFor`, not
-     * unreachability: a cached module that is no longer in `modules` never wins
+     * unreachability: a cached module outside the reader's project never wins
      * over a live one — the entry is re-probed against the live project first
      * and only used as the fallback. Keeping the entry rather than dropping it
      * preserves the one thing a retired module is still good for, decoding the
      * struct it minted.
      *
-     * Clearing `modules` is what actually retires the project, and dropping
-     * `enabled` back to false restores the single-module fast path
+     * Forgetting the project maps is what actually retires the projects, and
+     * dropping `enabled` back to false restores the single-module fast path
      * byte-for-byte until the next project registers two modules.
      */
     reset(): void {
-      modules.clear();
+      projectOf = new WeakMap();
+      projectByRoot = new WeakMap();
+      current = undefined;
       enabled = false;
     },
 
@@ -202,7 +259,8 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
      * no linked project is live, so the single-module lane never retries.
      */
     peersOf(local: Record<string, Function> | undefined): Record<string, Function>[] {
-      if (!enabled) return [];
+      const modules = enabled ? projectFor(local) : undefined;
+      if (modules === undefined) return [];
       const peers: Record<string, Function>[] = [];
       for (const peer of modules) if (peer !== local) peers.push(peer);
       return peers;

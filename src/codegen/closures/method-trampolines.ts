@@ -25,7 +25,12 @@ import { emitWasiErrorConstructor } from "../registry/error-types.js";
 import { allocTempLocal } from "../context/locals.js";
 import { ensureExnTag } from "../index.js";
 import { coercionInstrs } from "../type-coercion.js";
-import { classGeneratorMethodReadsReceiver, methodValueWrapperResults } from "../method-receiver-this.js"; // (#6651 A11)
+import {
+  bodyReadsReceiver,
+  classGeneratorMethodReadsReceiver,
+  methodValueWrapperResults,
+  objectLiteralMethodDefersReceiver,
+} from "../method-receiver-this.js"; // (#6651 A11, #6789)
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import {
   ensureLateImport as ensureLateImportShared,
@@ -131,28 +136,16 @@ function buildNullThisTypeErrorThrow(ctx: CodegenContext): Instr[] | null {
  * (no struct.get on null), so the trampoline must NOT throw for it. We detect a
  * `local.get 0` anywhere in the body (including nested blocks). Conservative:
  * if the body isn't available yet (idx out of range), assume it does use `this`
- * so we don't silently regress the trap→TypeError fix.
+ * so we don't silently regress the trap→TypeError fix. (#6789) For the
+ * trampoline (`guardedReadsAreSafe`), a null-tested read does not count — see
+ * {@link bodyReadsReceiver}.
  */
-function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean {
+function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number, guardedReadsAreSafe = true): boolean {
   const fn = definedFuncAt(ctx, methodFuncIdx);
   if (!fn || !Array.isArray(fn.body)) return true;
   const generatorBody = classGeneratorMethodReadsReceiver(ctx, fn.name); // (#6651 A11)
   if (generatorBody !== undefined) return generatorBody;
-  const walk = (instrs: Instr[]): boolean => {
-    for (const instr of instrs) {
-      if (instr.op === "local.get" && (instr as { index?: number }).index === 0) return true;
-      for (const key of ["body", "then", "else", "catchAll"] as const) {
-        const nested = (instr as Record<string, unknown>)[key];
-        if (Array.isArray(nested) && walk(nested)) return true;
-      }
-      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
-      if (Array.isArray(catches)) {
-        for (const c of catches) if (Array.isArray(c.body) && walk(c.body)) return true;
-      }
-    }
-    return false;
-  };
-  return walk(fn.body);
+  return bodyReadsReceiver(fn.body, guardedReadsAreSafe);
 }
 
 /**
@@ -163,13 +156,17 @@ function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolea
  * default; a caller that must DECLINE on doubt (the static sidecar) treats both
  * `true` and `undefined` as a refusal.
  */
-export function compiledBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean | undefined {
+export function compiledBodyReadsThis(
+  ctx: CodegenContext,
+  methodFuncIdx: number,
+  guardedReadsAreSafe = false, // (#6789) only the trampoline passes `true`
+): boolean | undefined {
   const fn = definedFuncAt(ctx, methodFuncIdx);
   // An EMPTY body is "not compiled yet", not "reads nothing" — a minted-but-
   // unfilled function would otherwise read as receiver-free, which is exactly
   // the wrong answer a caller gating an install on this must not be given.
   if (!fn || !Array.isArray(fn.body) || fn.body.length === 0) return undefined;
-  return methodBodyReadsThis(ctx, methodFuncIdx);
+  return methodBodyReadsThis(ctx, methodFuncIdx, guardedReadsAreSafe);
 }
 
 /**
@@ -452,19 +449,22 @@ export function emitObjectMethodAsClosure(
   const trampolineName = `__obj_meth_tramp_${methodName}_${ctx.closureCounter++}`;
   // anyref temp at the first slot past the params (closure_self + userParams).
   const anyTempLocalIdx = 1 + userParams.length;
-  // (#2025) Decide whether the method reads `this` BEFORE registering the
-  // TypeError helpers — `ensureNullThisTypeError` adds a late import that shifts
-  // defined-function indices, which would make `methodFuncIdx` stale for the
-  // body lookup. Then register the helpers (with a live fctx so the import-index
-  // flush lands here) so the null-`this` arm throws instead of trapping and
-  // finalize never registers an import mid-rebuild.
+  // (#6789) The method body is usually compiled AFTER this first value read, so
+  // it is still empty here, and an empty body reads as "never touches `this`".
+  // Record the answer only once the body is compiled (`undefined` ⇒ finalize
+  // rescans): the stale `false` dropped the TypeError arm, so `const m = obj.m;
+  // m()` trapped inside the method. The emit-time body keeps the old answer. An
+  // async/generator method's body only stores the receiver: always `false`.
   // (#2025) Capture this-usage, then register the TypeError throw helpers. The
   // registration may add a late import that shifts every DEFINED function index
   // up by `ntShift`; the forwarding `call methodFuncIdx` we emit just below is in
   // a body not yet attached to `ctx.mod.functions`, so the import-shift walker
   // can't reach it — bump the captured index by the delta ourselves (import
   // targets, < the pre-shift import count, are never shifted).
-  const methodUsesThis = methodBodyReadsThis(ctx, methodFuncIdx);
+  const methodUsesThisKnown = objectLiteralMethodDefersReceiver(memberDecl)
+    ? false
+    : compiledBodyReadsThis(ctx, methodFuncIdx, true);
+  const methodUsesThis = methodUsesThisKnown ?? methodBodyReadsThis(ctx, methodFuncIdx);
   const importsBeforeNT = ctx.numImportFuncs;
   ensureNullThisTypeError(ctx, fctx);
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
@@ -508,7 +508,7 @@ export function emitObjectMethodAsClosure(
     userParamCount: userParams.length,
     wrapperUserParams: userParams,
     wrapperResult: results[0],
-    methodUsesThis, // (#2025) captured pre-shift; finalize reuses it
+    methodUsesThis: methodUsesThisKnown, // (#2025) captured pre-shift; (#6789) undefined ⇒ finalize rescans
     // (#1809) Record whether the target is already an import at registration.
     // Import indices stay stable across late-import batches (new imports append
     // at the end, so indices < importsBefore are never shifted), so an import
@@ -734,8 +734,8 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
       // (#2025) Reuse the registration-time `methodUsesThis` (captured before
       // the TypeError-helper import shifted function indices, so it is reliable
-      // here where `t.methodFuncIdx` may be stale). Fall back to a fresh body
-      // scan only when it wasn't recorded.
+      // here where `t.methodFuncIdx` may be stale). Rescan only when it wasn't
+      // recorded — (#6789) incl. a body not yet compiled at registration.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis, sig.params[0]);
       // (#4466) Do NOT re-coerce the receiver here, and do NOT alias
@@ -1001,8 +1001,9 @@ export function ensureMethodClosureSingleton(
     const anyTempLocalIdx = 1 + userParams.length;
     // (#2025) Capture this-usage, register the throw helpers, then adjust the
     // forwarding index by any import-shift the registration caused (see the
-    // matching note in emitObjectMethodAsClosure).
-    const methodUsesThisCached = methodBodyReadsThis(ctx, methodFuncIdx);
+    // matching notes, incl. #6789's not-yet-compiled body, in emitObjectMethodAsClosure).
+    const usesThisKnownCached = compiledBodyReadsThis(ctx, methodFuncIdx, true);
+    const methodUsesThisCached = usesThisKnownCached ?? methodBodyReadsThis(ctx, methodFuncIdx);
     const importsBeforeNT = ctx.numImportFuncs;
     ensureNullThisTypeError(ctx, fctx);
     const ntShift = ctx.numImportFuncs - importsBeforeNT;
@@ -1052,7 +1053,7 @@ export function ensureMethodClosureSingleton(
       userParamCount: userParams.length,
       wrapperUserParams: userParams,
       wrapperResult: results[0],
-      methodUsesThis: methodUsesThisCached, // (#2025) captured pre-shift
+      methodUsesThis: usesThisKnownCached, // (#2025) captured pre-shift; (#6789) undefined ⇒ rescan
       // (#1809) See the per-call-site push for rationale.
       methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
     });

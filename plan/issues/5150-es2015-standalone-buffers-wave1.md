@@ -742,3 +742,43 @@ The four rows above are now IN-PROCESS cases in
 `tests/issue-5150-es2015-buffers.test.ts` (`HOST_ATOMICS_ROWS` must `pass`;
 `HOST_NO_TRAP_ROWS` must not contain `illegal cast`), so this cannot return
 silently — the host lane had no guard at all in the original wave.
+
+## 2026-09-28 census handoff: dynamic DataView constructor identity
+
+Frozen standalone census index 55 at `f924650c6c26237f62b08a362d7003d4d2b1e12d`
+records `test/built-ins/DataView/defined-byteoffset-undefined-bytelength.js`
+failing a SameValue comparison of two printed native functions. The original
+checks byte length, offset, and buffer before `sample.constructor === DataView`
+and prototype identity. The observed error is consistent with the constructor
+assertion; an assertion-specific emitted diagnostic is still required.
+Issue 4444 retains the complete 92-path shard receipts and hashes.
+
+Read-only current-base audit (`e5e69140ea74f9f143639ddfa41b94312895f3b0`)
+identifies a likely dynamic default-prototype gap. DataView's `constructProto`
+field uses null to mean intrinsic `DataView.prototype`. In
+`ta-dyn-mop.ts::fillDataViewConstructProtoArm`, getPrototypeOf has the intrinsic
+fallback, while the dynamic property-read arm delegates only for a non-null
+custom prototype. The bare `var sample` can take this dynamic route. Existing
+static/prototype paths already provide canonical constructor identity.
+
+Plan, coordinated with issue 3371's DataView construction/prototype owner:
+
+1. Verify the failing assertion and dynamic route using the exact original
+   with a matched passing constructor/prototype control.
+2. Repair generic intrinsic-prototype lookup for the null default carrier,
+   preserving custom NewTarget prototypes and instance-own precedence. Do not
+   special-case the property name `constructor` or extend ArrayBuffer's
+   different carrier incidentally.
+3. Cover offsets 0–4 with explicit undefined length; dynamic constructor and
+   prototype identity; another inherited member; custom NewTarget prototype;
+   and own-property shadowing before repeating the matched maintained cohort.
+
+No source changes or compiler runs were made by this audit. The exact source
+area overlaps issue 3371's recorded claim; independent implementation remains
+held until that ownership is reconciled.
+
+Root's fresh read-only claim check (session 84870) confirms the hold:
+authoritative upstream issue 3371 is claimed by `ttraenkler/fable-es6`
+since 2026-09-04. The script exits 3 for the occupied claim and explicitly
+identifies a different origin record as stale/shadowed. No takeover or
+competing DataView implementation was attempted.

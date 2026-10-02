@@ -449,6 +449,7 @@ function tryCompileStandaloneArrayIteratorRead(
 }
 
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
+import { tryCompileClassBuiltinSpeciesRead } from "./class-builtin-species-read.js"; // (#6775 S14)
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
@@ -5137,7 +5138,8 @@ export function compileElementAccess(
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
 
-  const functionHasInstanceRead = tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr);
+  const functionHasInstanceRead =
+    tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr) ?? tryCompileClassBuiltinSpeciesRead(ctx, fctx, expr); // (#6775 S14)
   if (functionHasInstanceRead !== undefined) return functionHasInstanceRead;
 
   // (#4731) Resolve the static Set/Map prototype iterator alias before the

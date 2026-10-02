@@ -906,7 +906,10 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
             // non-null test, so presence and value stay in agreement.
             ...nullableFieldArm("message", 1),
             ...fieldArm("name", 2),
-            ...fieldArm("stack", 3),
+            // (#6775 S1) `stack` is an ACCESSOR on %Error.prototype%, not an own
+            // data property: a null field continues to the prototype walk, which
+            // reaches the getter with the original receiver.
+            ...nullableFieldArm("stack", 3),
             ...keyEquals("constructor"),
             {
               op: "if",

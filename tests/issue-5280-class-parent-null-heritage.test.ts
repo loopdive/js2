@@ -2,7 +2,8 @@
  * #5280 — `class C extends null` must RECORD its null heritage in the
  * host-side class-parent registry.
  *
- * The registry is process-global and keyed by class NAME. A sharded test262
+ * The registry was process-global and keyed by class NAME (per instance since
+ * #6790, which removes the cross-file half). A sharded test262
  * worker runs hundreds of files in one process and `C` is one of the corpus's
  * most common class names, so dropping a null registration left the previous
  * file's `C` parent in place: `class C extends null`'s SuperCall then applied
@@ -18,18 +19,21 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  ClassParentRegistry,
   MISS,
-  getClassParent,
-  registerClassParent,
-  registerClassParentLazy,
-  rememberClassParent,
   registerClassObject,
   resolveClassStaticParent,
 } from "../src/runtime/class-static-parent.js";
 
 let seq = 0;
-/** Unique per test — the registry is module-global and never cleared. */
 const freshName = () => `C_5280_${seq++}`;
+// One registry stands in for one instance; the same-name collisions below are
+// the within-instance ones a single registry still has to order correctly.
+const registry = new ClassParentRegistry();
+const registerClassParent = (name: string, value: unknown) => registry.register(name, value);
+const registerClassParentLazy = (name: string, resolver: () => unknown) => registry.registerLazy(name, resolver);
+const rememberClassParent = (name: string, value: unknown) => registry.remember(name, value);
+const getClassParent = (name: string) => registry.get(name);
 
 describe("#5280 class-static-parent null heritage", () => {
   it("records an explicit null parent so it overrides an earlier same-name class", () => {
@@ -87,7 +91,7 @@ describe("#5280 class-static-parent null heritage", () => {
   it("reports MISS for static inheritance through a null parent", () => {
     const name = freshName();
     const classObj = {};
-    registerClassObject(classObj, name);
+    registerClassObject(classObj, name, registry);
     registerClassParent(name, null);
     expect(resolveClassStaticParent(classObj, "anything", undefined, (v) => v)).toBe(MISS);
   });
