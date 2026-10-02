@@ -291,3 +291,11 @@ pinned generated source table, not reimplement aliases in a namespace shim.
 It must coordinate the held identifier/static-call/array-like/object-runtime
 surfaces before editing them. No claim in this record changes #6717's broader
 completion status.
+
+Inventory note: `src/codegen/intl-locale-canonicalization.ts` is recorded as
+`unmigrated` migration debt targeting `backend-wasmgc`. The module is a pure,
+data-injected kernel with no imports, but it is not a clean-layer activation:
+there is still no generated source table, `%Intl%` route, generic locale-list
+semantics, or native error exposure. This record only accounts for the new
+module in the compiler-boundaries inventory; it grants no public API, runtime,
+or Test262 completion credit.
