@@ -788,9 +788,12 @@ describe("#3526 F2-S2 every func-assuming consumer fails closed on a global row"
     expect(support).toContain("resolveRuntimeHostCapabilityFuncRecord");
     // No unguarded resolution survives in the file that materializes callables.
     expect(support).not.toMatch(/[^c]resolveRuntimeHostCapabilityRecord\(/);
-    expect(irSource("async-plan.ts")).toContain("asCallableRuntimeHostCapabilityRecord(");
-    expect(irSource("async-runtime-providers.ts")).toContain("asCallableRuntimeHostCapabilityRecord(");
-    expect(irSource("runtime-manifest.ts")).toContain("isRuntimeHostCapabilityFuncId(");
+    // (#6783) The async attachment, async providers and manifest moved under
+    // src/ir/runtime/ (the old top-level files are re-export shims now); the
+    // pins follow the code, not the shim names.
+    expect(irSource("runtime/async-attachment.ts")).toContain("asCallableRuntimeHostCapabilityRecord(");
+    expect(irSource("runtime/async-providers.ts")).toContain("asCallableRuntimeHostCapabilityRecord(");
+    expect(irSource("runtime/manifest.ts")).toContain("isRuntimeHostCapabilityFuncId(");
   });
 });
 

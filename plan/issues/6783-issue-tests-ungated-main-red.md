@@ -1,10 +1,12 @@
 ---
 id: 6783
 title: "ci: ~4,100 test files run under no required check, and main is red (2 of 8 random files fail on a clean checkout)"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-02
+assignee: "ttraenkler/claude-dev-6783"
+branch: "claude/issue-6783-known-failures-gate"
 priority: critical
 horizon: l
 feasibility: medium
