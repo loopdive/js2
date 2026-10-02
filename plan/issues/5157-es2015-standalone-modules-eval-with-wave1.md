@@ -1040,3 +1040,77 @@ The exact CI-equivalent local inventory command,
 inventory --base HEAD^`, exited 0 with
 `inventory-valid-architecture-incomplete`, no inventory errors, and policy
 SHA-256 `d15e1c13e64d31a30d8fb50b0533a86455fe47ee83396497c25e576a74bea557`.
+
+### Retained four-red handoff and strict vec-family audit (2026-09-28)
+
+The draft remains intentionally unfinished.  Its four executable focused
+diagnostics are retained without a skip, expected-failure decorator, or oracle
+relaxation:
+
+1. `DIRECT_LITERAL_LEXICAL_BODY` in
+   `tests/issue-5157-eval-spread-arguments.test.ts` must produce `7`, but a
+   non-empty inline tuple literal spread currently throws an opaque Wasm
+   exception.
+2. `DIRECT_LITERAL_NONSTRING_BODY` must preserve its first expanded marker
+   identity (`1`), but the same non-empty tuple representation currently
+   throws.
+3. `STRICT_ARRAY_OVERRIDE_BODY` must produce `1` after replacing
+   `Array.prototype[Symbol.iterator]`; the compiled result remains `0`.
+4. `ORIGINAL_GROUPED_PROTOCOL_PROBE_BODY` must equal the spec-adapted isolated
+   realm oracle's `15`; the compiled result remains `23`.
+
+These are four controls but only two remaining generic seams.  The first two
+are one **non-empty tuple admission/representation** gap.  The latter two are
+one **strict vec-family Array GetMethod** gap: the grouped result is `23 =
+1 + 2 + 4 + 16`, so it already preserves done-without-value, abrupt exact
+sentinel, and non-iterable behavior, but misses the overridden-iterator bit
+`8` and incorrectly leaves the ordinary-spread bit `16`.  It is a composite
+regression control, not a third provider root cause.  The precise retained
+source controls are `DIRECT_LITERAL_LEXICAL_BODY`,
+`DIRECT_LITERAL_NONSTRING_BODY`, `STRICT_ARRAY_OVERRIDE_BODY`, and
+`ORIGINAL_GROUPED_PROTOCOL_PROBE_BODY`; the last control continues to use
+`ORIGINAL_GROUPED_PROTOCOL_ADAPTED_ORACLE_BODY` only to avoid pinning Node's
+known direct-eval-with-spread behavior.
+
+A fresh local, read-only hunk audit was limited to
+`src/codegen/iterator-native.ts`; it did not edit source or run a compiler:
+
+- The historical strict-provider owner is
+  `plan/issues/5131-es2015-strict-spread-iterator.md` (status `done`, PR 5272).
+  Its implementation owns `ensureNativeStrictSpreadRuntime`,
+  `fillNativeIteratorLateArms`, `buildIteratorBody`, and
+  `buildIteratorNextBody`, including the strict arms that this residual
+  exercises.
+- The still-in-progress #6484 plan retains broad iterator-runtime ownership,
+  but its documented open residuals are TypedArray detachment and post-delete
+  behavior, not the Array prototype-iterator override.  Its completed S4
+  branch is `codex/6484-iterator-residual-20260920a`; this audit found no
+  current #6484 hunk at the strict vec-family route.
+- The locally fetched head for the previously noted open PR #5753,
+  `fork/codex/1058-typescript-standalone` at
+  `11b39957841119c75b9703b8bad0cdcecf80f226`, has exactly one
+  `iterator-native.ts` hunk relative to merge base `4418cd851087`: a comment
+  change in `fillAnyIterNext` at historical line 1966.  It does **not** overlap
+  the current strict-family assembly at lines 2936-2942, strict object
+  GetMethod arm at 4112-4189, vec-family arms at 4550-4688, or empty-tuple
+  arms at 4705-4735.  The same one-line hunk appears on the local
+  `codex/5753-resume-20260922` checkpoint.  This is hunk evidence from the
+  fetched refs, not a claim that a remote PR was polled.
+
+The narrow `iterator-native.ts` hunk is therefore not blocked by that #5753
+change, but no independently correct provider-only repair is available.  The
+early strict vec arm snapshots backing storage before `strictObjArm` can do
+GetMethod, while a captured `Array.prototype[Symbol.iterator]` write lives in
+`ctx.protoOverrides`, not in a vec property bag.  An iterator-native-only
+reorder or vec property lookup would still miss the captured override and
+would not preserve the user iterator's `this`, single GetIterator call, or
+strict `next`/IteratorResult validation.  A strict raw-iterator adopter could
+live in `iterator-native.ts`, but it needs a receiver-preserving raw hand-off
+from `proto-override.ts`; non-empty tuple literals additionally require their
+representation owner.  Do not substitute compatibility `__iterator` after an
+override call, and do not decode tuple fields as an eval-only shortcut.
+
+Accordingly, a future repair needs an explicit cross-file claim for the raw
+override hand-off, strict adopter, and tuple observation path.  The four red
+controls remain the acceptance boundary until then; this audit authorizes no
+provider implementation, test relabeling, or publication change.
