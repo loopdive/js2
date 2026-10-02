@@ -1,12 +1,11 @@
 {
   "id": "6835",
   "assignee": "ttraenkler/find_residual_plan_astra",
-  "requested_by": "ttraenkler/find_residual_plan_astra",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "",
-  "reserved_at": "2026-10-02T20:25:23Z",
   "claimed_at": "2026-10-02T20:25:23Z",
-  "updated_at": "2026-10-02T20:25:23Z",
-  "write_id": "77542-i3stw3nx",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-02T20:53:14Z",
+  "write_id": "97720-v8ek58m3",
+  "released_at": "2026-10-02T20:53:14Z"
 }
