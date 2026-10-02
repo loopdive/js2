@@ -10,6 +10,7 @@ import { coercionPlan } from "./coercion-plan.js";
 import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { emitToInt32 } from "./binary-ops.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -3006,9 +3007,10 @@ export function coerceType(
     fctx.body.push({ op: "f64.convert_i32_s" });
     return;
   }
-  // f64 → i32
+  // f64 → i32 (#6798: a native `i32` destination wraps with ToInt32, like `| 0`)
   if (from.kind === "f64" && to.kind === "i32") {
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    if (to.int32 === true) emitToInt32(fctx);
+    else fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     return;
   }
   // externref → i32 (unbox as number to preserve value, then truncate)

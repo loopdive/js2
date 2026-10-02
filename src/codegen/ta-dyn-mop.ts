@@ -62,6 +62,7 @@ import { buildTaCtorInheritedFromOfGetArm } from "./ta-static-from-of-body.js";
 import { fillHofTaDynViewPresenceBypass } from "./hof-native.js"; // (#6651 E6)
 import { fillOrdinarySetTypedArrayArm } from "./object-runtime-ordinary-set.js"; // (#6651 E6)
 import { fillArrayBufferGetPrototypeOfArm } from "./expressions/object-get-prototype-of.js"; // (#6769 S10)
+import { protoWalkConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#6775 S7)
 
 /** Fresh synthetic FunctionContext for a native helper (the #2872 pattern). */
 function makeFctx(name: string, params: { name: string; type: ValType }[], returnType: ValType): FunctionContext {
@@ -361,13 +362,13 @@ const NAMED_PROPS: readonly NamedProp[] = [
  */
 export function fillTaDynViewMopArms(ctx: CodegenContext): void {
   if (!ctx.standalone) return; // host imports own the dynamic path
+  fillArrayBufferGetPrototypeOfArm(ctx); // (#6769 S10) buffer [[Prototype]]; (#6775 S6) also without dyn views
   const dynIdx = ctx.taDynViewTypeIdx;
   if (dynIdx < 0) {
     fillOrdinarySetTypedArrayArm(ctx); // (#6651 E6) static TA carriers only
     return;
   }
   fillHofTaDynViewPresenceBypass(ctx); // (#6651 E6) §23.2.3 HOFs: no HasProperty
-  fillArrayBufferGetPrototypeOfArm(ctx); // (#6769 S10) a buffer's [[Prototype]]
   const helpers = ensureTaDynMopElemHelpers(ctx);
   if (!helpers) return;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
@@ -1745,6 +1746,7 @@ export function fillDataViewConstructProtoArm(ctx: CodegenContext): void {
           { op: "return" },
         ],
       },
+      ...protoWalkConstructorArmInstrs(ctx, dvIdx, gAny), // (#6775 S7) else %DataView.prototype%'s
     ];
     externGetFn.body.unshift(
       { op: "local.get", index: 0 },

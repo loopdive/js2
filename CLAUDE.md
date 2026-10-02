@@ -1,4 +1,4 @@
-# js2wasm
+[Resource from github at repo://loopdive/js2/sha/1255c536b4c275a2dbe4c4605bf5cb5775584efa/contents/CLAUDE.md] # js2wasm
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 
@@ -92,10 +92,10 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
   - **Still prefer file copies for a revert-and-measure (A/B) cycle** even when alone: the copies survive a crash, can be diffed, and let you flip back and forth without touching shared refs at all.
   - **The file-copy A/B pattern:**
     ```bash
-    cp src/foo.ts .tmp/new.ts
-    git show HEAD:src/foo.ts > .tmp/base.ts
-    cp .tmp/base.ts src/foo.ts    # measure baseline
-    cp .tmp/new.ts  src/foo.ts    # restore
+    cp src/codegen/peephole.ts .tmp/new.ts
+    git show HEAD:src/codegen/peephole.ts > .tmp/base.ts
+    cp .tmp/base.ts src/codegen/peephole.ts    # measure baseline
+    cp .tmp/new.ts  src/codegen/peephole.ts    # restore
     ```
   - **Capture `.tmp/base.ts` at the FIRST edit — the measurement rationale is
     stronger than the stash-safety one (2026-08-15, #2916/#4433 cross-audit).**
@@ -131,7 +131,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 - Tests: `tests/equivalence/` (main suite, a directory — gated by `scripts/equivalence-gate.mjs`), `tests/test262.test.ts` (conformance dashboard, non-failing)
 - Test262 runner: `tests/test262-runner.ts` — TEST_CATEGORIES list
 - Test262 runner (preferred): `pnpm run test:262` — vitest-based, auto-worktree, disk cache, default 3 forks. Use `TEST262_WORKERS=5` for solo runs (no dev agents).
-- Test262 runner history: `runs/index.json` is appended by the vitest runner after each run. `benchmarks/results/report.html` reads this for the trend graph.
+- Test262 runner history: `runs/index.json` is appended by the vitest runner after each run. `website/public/benchmarks/results/report.html` reads this for the trend graph.
 - Backlog: `plan/issues/backlog/backlog.md`
 - Sprints (rolling budget-window model, #2751): live work is tagged `sprint: current` and forms one long, priority-ordered, over-provisioned TaskList (auto-synced by `scripts/sync-current-tasklist.mjs`). A numbered `plan/issues/sprints/{N}.md` is the **frozen retrospective record** written by `scripts/freeze-sprint.mjs` at token-budget rollover (≥99% spent or ≤1h left): done `current` issues are re-tagged `sprint: {N}`, not-done ones roll forward as `current`. See `plan/issues/SCHEMA.md` and #2751.
 - Issues: **flat** at `plan/issues/<id>-<slug>.md` (#1616). The on-disk
@@ -210,7 +210,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 - Goals (DAG): `plan/goals/goal-graph.md` — high-level goals with dependencies; issues belong to goals
   - Goals are not sequential milestones — they form a DAG and multiple can be active in parallel
   - Only work on issues from goals whose dependencies are met (active/activatable)
-  - Legacy milestones in `plan/milestones/` are superseded by goals
+  - Legacy milestones are superseded by goals (their directory no longer exists)
 
 ## Key Patterns
 
@@ -222,7 +222,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 - `return_call` / `return_call_ref` for tail call optimization in return position
 - Peephole pass removes redundant `ref.as_non_null` after `ref.cast`
 - Native type annotations: `type i32 = number` → emits i32 locals and i32 arithmetic
-- `nativeStrings` flag decouples WasmGC string arrays from fast mode (auto-enables for WASI)
+- `nativeStrings` compile option decouples WasmGC string arrays from fast mode (auto-enables for WASI and standalone; there is no `--nativeStrings` CLI flag — see CLI Flags)
 - **New codegen needing type info: use `ctx.oracle` (`src/checker/oracle.ts`), not the raw TS checker.** Raw `checker.getTypeAtLocation`/`ctxChecker` calls trip the oracle-ratchet gate (#1930/#3273) — 5+ independent PRs hit this same wall in one session (#3169/#3171/#3176/#3178/#3188) before landing, each needing the identical fix (route through `ctx.oracle.signatureOf`/equivalent, or grant `oracle-ratchet-allow:` only when the query genuinely needs raw `ts.Type` identity that the oracle can't express — e.g. a wasm-lowering `ValType` question, which is deliberately ABOVE what `ctx.oracle` can answer). Check the oracle's existing dispatch before reaching for `checker.*` directly.
 
 ## Type Coercion (now in `src/codegen/type-coercion.ts`)
@@ -287,7 +287,7 @@ passes (#6486 P3e, run 35178155322).
 | File                                                      | Lives in                    | Authoritative for                                                                                                          | Refreshed by                                                           | Validated by                                                                                                                                              |
 | --------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `benchmarks/results/test262-current.json`                 | main repo (committed, ~kB)  | landing-page summary, pass/total badges                                                                                    | `test262-sharded.yml` `promote-baseline` job (every push to main)      | (none)                                                                                                                                                    |
-| `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | PR regression-gate baseline (fetched fresh per CI run); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (every push to main)      | `test262-baseline-validate.yml` spot-checks 50 random `pass` entries on every PR (#1218); fails the PR if any sampled entry no longer passes on main HEAD |
+| `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | PR regression-gate baseline (fetched fresh per CI run); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (every push to main)      | `pnpm run test:262:validate-baseline` spot-checks 50 random `pass` entries against HEAD (#1218) — a manual tool, not a per-PR workflow and not a required check (`docs/ci-policy.md`) |
 | `benchmarks/results/playground-benchmark-sidebar.json`    | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline                                  | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none)                                                                                                                                                    |
 | `benchmarks/results/npm-compat.json` (+ `-perf`, `-history`, and the `website/public/` twins) | main repo (committed) | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf | `npm-compat-refresh.yml` on every push to main, 6h cron backstop (#3988); promotes via a **PR on `ci/npm-compat-refresh`**, not a direct push | pre-promote check in that workflow: refuses to publish <20 packages or entries missing `name`/`compile` |
 
@@ -295,7 +295,7 @@ passes (#6486 P3e, run 35178155322).
 **`npm-compat.json` is refreshed by CI on every merge to main
 (`npm-compat-refresh.yml`, #3988) — do NOT hand-commit it.** Until 2026-08-01
 nothing regenerated it, so changing `scripts/generate-npm-compat-report.mjs` and
-merging left `website/npm-compat.html` serving the previous JSON with green CI
+merging left `website/public/npm-compat.html` serving the previous JSON with green CI
 and no signal; that shipped stale twice in one day (#3958 rendered `39/null`;
 #3977 kept showing `lit` as `not-integrated` after its suite landed). The
 workflow regenerates, sanity-checks (refuses <20 packages, or entries missing
@@ -342,7 +342,7 @@ Two consequences worth knowing:
   perf lanes. That cost is why the manual step got skipped and why it is now
   CI's job.
 
-**Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the dedicated `refresh-committed-baseline.yml` workflow.
+**Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the workflow that used to refresh that committed copy.
 
 **The bare `node scripts/fetch-baseline-jsonl.mjs` is now SAFE — freshness is the default (#3629).** It used to be a **silent no-op whenever any cache existed**: exit 0, zero bytes of output, serving whatever was on disk. That is indistinguishable from a successful fresh fetch, and the error scales with cache age. Measured 2026-07-25: it served a **seven-day-old** cache reading `pass 25,545` while main was at `30,931` — a 5,386-test gap, an entire session's landed work invisible — to multiple dev lanes that had been told to "fetch fresh" with exactly that command.
 
@@ -430,17 +430,23 @@ not just that it passes — including the count-neutral swap case.
 ## IR Fallback Budget (#1376) — being phased out (#2855)
 
 The IR retirement gate `pnpm run check:ir-fallbacks` walks every `.ts` file
-under `playground/examples/` with `trackFallbacks: true` and aggregates
+under `website/playground/examples/` with `trackFallbacks: true` and aggregates
 rejection reasons against `scripts/ir-fallback-baseline.json`. CI fails when
 any **unintended** bucket grows.
 
 **Direction**: this budget is a transitional safety net, not a permanent
-ceiling. #2855 prioritises ratcheting the unintended buckets to zero so the
-IR path becomes the only path for the affected node kinds. Once a bucket
-hits zero, the rejection reason gets added to `STRICT_IR_REASONS` in
-`src/codegen/index.ts`, which promotes any future regression of that
-reason from a silent legacy fallback to a hard compile error. Per-bucket
-ownership + target dates live in `plan/log/ir-adoption.md`.
+ceiling. #2855 prioritises ratcheting the unintended buckets down so the
+IR path becomes the only path for the affected node kinds. A bucket reaching
+zero in `scripts/ir-fallback-baseline.json` is **necessary but not sufficient**
+to add its reason to `STRICT_IR_REASONS` in `src/codegen/index.ts` (#3341): the
+baseline is measured on the playground corpus only, and most rejection reasons
+describe constructs the IR may legitimately decline, which the legacy path must
+still catch — promoting one would turn a legitimate fallback into a hard compile
+error. A reason is promoted only once it is genuinely unreachable (the IR always
+claims and lowers that construct, so a rejection is a bug). The set is empty
+today; the bar and the promotion order are the comment above it, and post-claim
+codes are the promotion vector that works. Per-bucket ownership + target dates
+live in `plan/log/ir-adoption.md`.
 
 | Reason                       | Category   | Reduces with                         |
 | ---------------------------- | ---------- | ------------------------------------ |
@@ -473,10 +479,18 @@ rejection breakdown.
 
 ## CLI Flags
 
-- `--target wasi` — emit WASI imports (fd_write, proc_exit) instead of JS host
+- `--target <t>` — the host axis: `web` (default), `node`, `deno`, `wasi`; it also accepts the backend names `gc`, `linear` and `standalone`
+- `--target wasi` — emit WASI Preview 1 imports (fd_write, proc_exit) instead of JS host
+- `--standalone` — shorthand for `--target standalone`: pure WasmGC, no JS host, no WASI
 - `--optimize` / `-O` — run Binaryen wasm-opt on compiled binary
 - `--wit` — generate WIT interface file for Component Model
-- `--nativeStrings` — use WasmGC i16 arrays instead of wasm:js-string (auto for WASI)
+- `--utf8-storage` — dual i8/i16 string storage; implies `nativeStrings` on the WasmGC backend
+
+`nativeStrings` (WasmGC i16 arrays instead of `wasm:js-string`) is a compile
+option, not a CLI flag: `--standalone` and `--target standalone`/`wasi` turn it
+on, and `--utf8-storage` implies it. `src/cli.ts` (`--help`) is the authority for
+the flag list; `scripts/check-claude-md-paths.mjs` fails when a flag named here
+is not parsed there.
 
 ## Team & Workflow
 
@@ -523,7 +537,7 @@ Spawn dedicated agents when:
 
 Default rule: if the agent's job is "produce one document and exit," it's a subagent. If the agent's job is "stay on the task queue and grab the next thing," it's a teammate. Misusing teammates for one-shot work causes pane exhaustion because they idle forever waiting for orchestration that never comes (confirmed via Claude Code docs — see [[feedback_agent_self_termination]]).
 
-**Worktree isolation on spawn (REQUIRED for writers).** The lead runs as an un-isolated background job in `/workspace`. A background-isolation guard (`worktree.bgIsolation` in `.claude/settings.json`) blocks file writes from background-spawned agents that aren't isolated. The agent-def `isolation: worktree` frontmatter (set on developer/senior-developer/architect/product-owner) is honored for plain **subagent** spawns but is **NOT auto-applied to teammate spawns** (`team_name` set) — so **always pass `isolation: "worktree"` explicitly on every teammate `Agent` spawn**. That gives each teammate a harness-managed worktree, satisfying the guard with it ON. `bgIsolation` is **`"worktree"` (guard ON)** as of 2026-05-29 — the temporary `"none"` unblock has been removed now that teammate spawns pass `isolation: worktree` explicitly. So every background-spawned writer MUST carry explicit `isolation: "worktree"` or its file writes are blocked. Valid `bgIsolation` values are only `"worktree"` (default/on) and `"none"` — there is no auto mode (Claude Code v2.1.143+).
+**Worktree isolation on spawn (REQUIRED for writers).** The lead runs as an un-isolated background job in `/workspace`. A background-isolation guard (`worktree.bgIsolation` in `.claude/settings.json`) blocks file writes from background-spawned agents that aren't isolated. The agent-def `isolation: worktree` frontmatter (set on developer/senior-developer/architect/product-owner) is honored for plain **subagent** spawns but is **NOT auto-applied to teammate spawns** (`team_name` set) — so **always pass `isolation: "worktree"` explicitly on every teammate `Agent` spawn**. That gives each teammate a harness-managed worktree, satisfying the guard with it ON. As committed in `.claude/settings.json` (re-checked 2026-10-02), `worktree.bgIsolation` is **`"none"` — the guard is OFF**, so nothing blocks an un-isolated writer and the explicit `isolation: "worktree"` on every teammate spawn is the only thing keeping writers out of `/workspace`. Read that file for the live value rather than trusting this paragraph; at `"worktree"` the guard is ON, and every background-spawned writer MUST then carry explicit `isolation: "worktree"` or its file writes are blocked. Valid `bgIsolation` values are only `"worktree"` (default/on) and `"none"` — there is no auto mode (Claude Code v2.1.143+).
 
 **IMPORTANT: Always use team name `"js2wasm"`** — this is the single permanent team. Never create ad-hoc team names (e.g. `"wasi-conflicts"`, `"s52-wave2"`). One team, one task queue, always.
 
@@ -658,8 +672,8 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 - **Always pass your identity to `--pick` (#3965).** Without `--role`/`--model`/`--as` the picker cannot filter by lane and says so; with them it also excludes issues already claimed on the `issue-assignments` ref, read **live** at the moment of the call. Every exclusion is printed (`skipped #N: claimed by … since …`) and the funnel counts are reported, so "no picks" is never confusable with "queue empty". If it exits **6** with `claim ref: UNREADABLE`, the recommendations are UNFILTERED and may already be claimed — re-run rather than claiming from that list. Measured before this landed: 5 of 5 XL suggestions were unusable for an Opus-lane developer, and one misdirected a real dispatch onto #2949, actively held by another lane.
 - **Pull-time budget/parallelism awareness (#2751)**: before claiming, run `node scripts/budget-status.mjs --pick`. It reports the **remaining token budget**, the current **parallelism** (active agents), the **per-agent share**, and the largest task **horizon** (`XL`/`L`/`M`/`S`, from the issue's `horizon:` field, shown as a `[XL]`…`[S]` subject tag) you should pull. Claim the highest-priority task whose horizon fits. This prefers **long-horizon tasks at the start of a budget window** (large per-agent share → big rocks first) and avoids starting an oversized task late, where it would strand at the window's budget freeze; `S` tasks remain available as tail filler. With more agents active, each share shrinks → pull smaller tasks. (Budget source: the statusline caches the weekly rate-limit — the "wkly" % and "d left" it displays — to `~/.claude/js2wasm-budget.json`, which `budget-status`/`freeze-sprint` read automatically; `JS2WASM_BUDGET_REMAINING_PCT`/`JS2WASM_BUDGET_PCT` override it; with neither it assumes a fresh window.)
 - **Pull-main-first + push-on-in-progress (the branch is a live sync point)**: when an agent moves a task to **in-progress** it MUST (1) pull/merge latest `origin/main` into its worktree branch FIRST — never start on a stale base — and (2) **push that branch to origin immediately** (an initial / WIP / grounding commit is fine). Do **not** work local-only for a long window before the first push: an unpushed branch is invisible, so staleness and collisions hide until the PR finally surfaces (e.g. a ~30-min local-only window before the PR appeared). Pushing early makes the branch a **live sync point** other agents can see and rebase against, and makes the assignment concrete. Keep merging `origin/main` as work proceeds. This is additive to — not a replacement for — the merge-before-PR step and the floor/CI discipline below.
-- **Dev self-check, then stand down — the SERVER-SIDE workflow enqueues (#2786)**: the gate is GitHub's checks API, not any committed feed. When the PR's **required checks are all green** (`gh pr checks <N>` / `gh pr view <N> --json statusCheckRollup,mergeStateStatus,isDraft,labels` — authoritative list in `docs/ci-policy.md` §7 — **six**, re-verify with `gh api repos/loopdive/js2wasm/rules/branches/main --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'`: `cheap gate (main-ancestor + lint)`, `quality`, `merge shard reports`, plus `equivalence-gate`, `check for test262 regressions`, `cla-check`; `linear-tests` is NOT required, #3934), `mergeStateStatus == CLEAN`, the PR is not a draft and carries no `hold` label — the dev marks the task completed and **stands down. The dev does NOT enqueue.** The single enqueuer is now the server-side `.github/workflows/auto-enqueue.yml` (`scripts/enqueue-green-prs.mjs`): its `workflow_run`-on-completion trigger fires right after the required-check workflows finish, and with the grace window now **0** (#2786) it enqueues every just-green PR within ~one workflow-startup — without depending on any agent surviving. **Why the change:** the old "dev self-enqueue once" model relied on a backgrounded CI watcher that **died with the dev process** on stand-down, so green PRs stranded un-enqueued (#2225, #2247). Moving enqueue to the GitHub Actions workflow — the one actor that is long-lived and outside agent lifecycle — closes that hole. The merge queue still re-validates required checks on the merged state (`merge_group`), and `auto-park` (#2547) `hold`-labels any PR that fails the re-run. **NEVER enqueue or re-enqueue from a dev/agent** — re-enqueue **loops** on the queue head caused the ~3.5h cancellation churn of 2026-06-20 (re-adding the PR that is in the in-flight group rebuilds it and CANCELS its run; the workflow that drove that loop, `queue-unstick.yml`, has since been deleted — memory `project_merge_queue_requeue_cancels_run`, re-verified 2026-08-02); the workflow's single trailing-add never loops. See `.claude/skills/dev-self-merge/SKILL.md`. **Backstops (not the mechanism):** the workflow's ~30-min cron and the tech lead's per-loop open-PR sweep catch the rare stray the responsive run misses (e.g. a PR the queue dropped on main-advance). Manual `node scripts/enqueue-green-prs.mjs` forces a sweep now. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are never auto-enqueued. **Security:** the workflow's author-trust gate is now load-bearing — it enqueues only OWNER/MEMBER/COLLABORATOR PRs; external-contributor PRs require a deliberate maintainer enqueue plus a green `cla-check`.
-- **The per-PR CI feed `.claude/ci-status/pr-<N>.json` is RETIRED — do not look for it, wait on it, or gate on it.** The writer workflows (`ci-status-feed.yml`, `ci-status-basic.yml`, `ci-status-pending.yml`) are disabled (`workflow_dispatch`-only stubs); the newest file on `main` is from the PR-471 era and the directory was last touched 2026-07-05. A current PR will NEVER get a feed file — treating its absence as "CI still in flight" strands you forever. Query the checks API directly (`gh pr checks <N>`, `gh pr view <N> --json statusCheckRollup,mergeStateStatus`).
+- **Dev self-check, then stand down — the SERVER-SIDE workflow enqueues (#2786)**: the gate is GitHub's checks API, not any committed feed. When the PR's **required checks are all green** (`gh pr checks <N>` / `gh pr view <N> --json statusCheckRollup,mergeStateStatus,isDraft,labels` — authoritative list in `docs/ci-policy.md` §7 — **six**, re-verify with `gh api repos/loopdive/js2wasm/rules/branches/main --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'`: `cheap gate (main-ancestor + lint)`, `quality`, `merge shard reports`, plus `equivalence-gate`, `check for test262 regressions`, `cla-check`; `linear-tests` is NOT required, #3934), `mergeStateStatus == CLEAN`, the PR is not a draft and carries no `hold` label — the dev marks the task completed and **stands down. The dev does NOT enqueue.** The single enqueuer is now the server-side `.github/workflows/auto-enqueue.yml` (`scripts/enqueue-green-prs.mjs`): its `workflow_run`-on-completion trigger fires right after the required-check workflows finish, and with the grace window now **0** (#2786) it enqueues every just-green PR within ~one workflow-startup — without depending on any agent surviving. **Why the change:** the old "dev self-enqueue once" model relied on a backgrounded CI watcher that **died with the dev process** on stand-down, so green PRs stranded un-enqueued (#2225, #2247). Moving enqueue to the GitHub Actions workflow — the one actor that is long-lived and outside agent lifecycle — closes that hole. The merge queue still re-validates required checks on the merged state (`merge_group`), and `auto-park` (#2547) `hold`-labels any PR that fails the re-run. **NEVER enqueue or re-enqueue from a dev/agent** — re-enqueue **loops** on the queue head caused the ~3.5h cancellation churn of 2026-06-20 (re-adding the PR that is in the in-flight group rebuilds it and CANCELS its run; the workflow that drove that loop has since been deleted — memory `project_merge_queue_requeue_cancels_run`, re-verified 2026-08-02); the workflow's single trailing-add never loops. See `.claude/skills/dev-self-merge/SKILL.md`. **Backstops (not the mechanism):** the workflow's ~30-min cron and the tech lead's per-loop open-PR sweep catch the rare stray the responsive run misses (e.g. a PR the queue dropped on main-advance). Manual `node scripts/enqueue-green-prs.mjs` forces a sweep now. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are never auto-enqueued. **Security:** the workflow's author-trust gate is now load-bearing — it enqueues only OWNER/MEMBER/COLLABORATOR PRs; external-contributor PRs require a deliberate maintainer enqueue plus a green `cla-check`.
+- **The per-PR CI status feed (one JSON file per PR under a .claude/ci-status directory) is RETIRED and was deleted in #6796 — do not look for it, wait on it, or gate on it.** Its three writer workflows (ci-status-feed, ci-status-basic, ci-status-pending) were `workflow_dispatch`-only stubs and were deleted with it; the newest feed file had been from the PR-471 era and the directory was last touched 2026-07-05. A current PR will NEVER get a feed file — treating its absence as "CI still in flight" strands you forever. Query the checks API directly (`gh pr checks <N>`, `gh pr view <N> --json statusCheckRollup,mergeStateStatus`).
 - **PR-level `check for test262 regressions` (and `merge shard reports`) green is a DESIGNED no-op on `pull_request` — NOT conformance evidence.** The heavy test262 shard matrix is merge_group-only (#2519 slim-down; #3431 mg matrix; #3448/#3467 per-SHA baseline reuse), so on a PR both jobs green-skip with `SHARDS_RAN: false` — their logs literally say "shards intentionally skipped" / "no merged test262 report to diff". Never read a green PR-level regression check as "this PR causes no regressions". The REAL regression/trap gates — the #3467 per-SHA-merge-base regression diff, the catastrophic guard (#1668), the standalone floor/net guards (#1897/#2097) — run in the **`merge_group` re-validation on the merged state**. That is why `auto-park` (#2547) exists and why a fully-green PR can still fail the queue and be parked with a bot `hold` label.
 - **Silence vs. pings is the dev health signal.** A dev correctly waiting on CI runs a **background watcher** and goes quiet (see `developer.md` CI-wait protocol) — silence is the healthy state, do NOT poke a silent dev. By contrast, **repeated `idle_notification` pings mean the opposite**: a dev with no background watcher idling in-context, or one wedged (e.g. a tool-param failure loop). Treat a stream of idle pings as an escalation/health signal — redirect to unowned work, send `shutdown_request` if idle, or recognize a wedged agent (it pings but can't ack shutdown; clears on lead-session end). Don't mistake an agent waiting on an already-merged PR for one doing work — reconcile the TaskList (`completed` on merge) so it learns its PR landed.
 - **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
@@ -723,10 +737,14 @@ Before standing down, check `mergeStateStatus`:
 
 - **`CLEAN`, not draft, no `hold`** → `auto-enqueue.yml` owns it. Nothing to do
   but confirm it lands in the queue.
-- **`UNSTABLE`** → it will **never** be auto-enqueued. `auto-enqueue` takes only
-  `{CLEAN, HAS_HOOKS}`; `UNSTABLE` is deliberately excluded (#3878/#3904),
-  so a PR with every REQUIRED check green can sit forever because one
-  non-required check is red. Re-run the failed job to get back to `CLEAN`.
+- **`UNSTABLE`** → it will not be auto-enqueued while any check on the head is
+  failing. `auto-enqueue` does not read `mergeStateStatus` at all (#4094: it is a
+  stale sample, and the `ENQUEUEABLE` set in `scripts/enqueue-green-prs.mjs` is
+  dead code). It decides from real signals: not draft, no `hold` label,
+  `mergeable == MERGEABLE`, **zero failing checks — required or not**
+  (#3878/#3904) — and every required check passing or skipped. So a PR with
+  every REQUIRED check green can sit forever because one non-required check is
+  red. Re-run the failed job to clear it (the status then reads `CLEAN` again).
 - **`BEHIND`/`DIRTY`** → merge `origin/main` in and push.
 - **`hold` label from `github-actions[bot]`** → a real merged-baseline
   regression. Diagnose the cited run first; never just remove the label.
@@ -809,7 +827,7 @@ layer on top — GitHub branch protection is the hard block.
 4. **Dev blocks on CI** — polls `gh pr checks <N>` every 30s for ~2 min wall time, in-context (Sonnet idle is nearly free). Use `gh run watch <run-id>` or a `while ! done; do sleep 30; done` loop with a max timeout (~10 min before noting unusual wait, ~20 min before escalating).
 5. **On CI completion**:
    - **All required checks green AND `mergeStateStatus == CLEAN`** → run `/dev-self-merge`; if MERGE, mark the task completed and **stand down** (proceed to step 8). The dev does NOT enqueue — the server-side `auto-enqueue.yml` workflow enqueues on CI-completion (grace 0, #2786). NEVER enqueue or re-enqueue from a dev
-     - **`CLEAN` is load-bearing, not decoration (#3878, #3904).** A red **non-required** check drives `mergeStateStatus` to **`UNSTABLE`**, and `auto-enqueue` enqueues only `{CLEAN, HAS_HOOKS}` — `UNSTABLE` is _deliberately_ excluded (`scripts/enqueue-green-prs.mjs`), because it once let red PRs into the queue. So a PR can have **every required check green and never be enqueued, indefinitely**. Standing down on "required checks green" alone is exactly the stranding condition. If you see `UNSTABLE` with only non-required checks red, **re-run the failed job** (`gh run rerun <run-id> -R loopdive/js2wasm --failed`) to get back to `CLEAN` — do not enqueue, and do not stand down assuming the workflow will pick it up.
+     - **`CLEAN` is load-bearing, not decoration (#3878, #3904).** A red **non-required** check drives `mergeStateStatus` to **`UNSTABLE`**, and `auto-enqueue` treats any failing check, required or not, as ineligible (the zero-failure rule in `classifyChecks`, `scripts/enqueue-green-prs.mjs`; it ignores `mergeStateStatus` itself since #4094), because a red non-required check once let a red PR into the queue. So a PR can have **every required check green and never be enqueued, indefinitely**. Standing down on "required checks green" alone is exactly the stranding condition. If you see `UNSTABLE` with only non-required checks red, **re-run the failed job** (`gh run rerun <run-id> -R loopdive/js2wasm --failed`) to get back to `CLEAN` — do not enqueue, and do not stand down assuming the workflow will pick it up.
    - **Drift detected** (mergeable_state becomes "behind") → `git merge origin/main` in the worktree, resolve conflicts with full PR context, push again, loop back to step 4
    - **CI failure** (any required check failed) → diagnose with full PR context (the agent KNOWS what it changed), fix locally, push again, loop back to step 4
 6. **If regressions per `/dev-self-merge`**: dev fixes on branch, pushes again, loops back to step 4

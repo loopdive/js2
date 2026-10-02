@@ -251,6 +251,29 @@ function iterFamilyOperand(family: number, familyLocal?: number): Instr {
   return familyLocal === undefined ? { op: "i32.const", value: family } : { op: "local.get", index: familyLocal };
 }
 
+/**
+ * (#6773 S1) FRESH instrs minting a §7.4.2 GetIteratorDirect USER record for
+ * the iterator object held in externref local `iterLocal` —
+ * `$__IterRec{USER, vec: null, idx: 0, userIter, family: UNKNOWN}`, left on
+ * the stack as an externref. The iterator-helper opener (`__iter_hof_open`)
+ * uses it for a closed class instance with a compiled `next`: a helper's
+ * source is the receiver ITSELF (`this.next` is read, `@@iterator` is never
+ * called), which the GetIterator ladder cannot express — and the ladder's OBJ
+ * arm mis-claims such an instance once the object runtime is bootstrapped.
+ */
+export function userIterRecordDirectInstrs(ctx: CodegenContext, iterLocal: number): Instr[] {
+  const { iterRecTypeIdx, vecTypeIdx } = iterRuntimeTypes(ctx);
+  return [
+    { op: "i32.const", value: ITER_KIND_USER },
+    { op: "ref.null", typeIdx: vecTypeIdx },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: iterLocal },
+    iterFamilyOperand(ITER_FAMILY_UNKNOWN),
+    { op: "struct.new", typeIdx: iterRecTypeIdx },
+    { op: "extern.convert_any" },
+  ];
+}
+
 /** `$Promise` field layout (async-scheduler.ts): state(0) i32 — 1=FULFILLED —
  *  and value(1) externref. */
 const PROMISE_FIELD_STATE = 0;
@@ -1778,6 +1801,30 @@ export function ensureNativeIterResultObject(ctx: CodegenContext): number | unde
           ],
     exported: false,
   });
+  // (#6773 S3) `__iter_return_result(recv) -> externref` — `helper.return()`
+  // on a lazy Iterator-helper wrapper: IteratorClose through the fully-armed
+  // `__iterator_return` (its `$LazyIterHelper` prepend reaches
+  // `__lazy_iter_close`), then the §27.1.2.1.2 `{value: undefined, done: true}`.
+  const iterReturnIdx = ctx.funcMap.get("__iterator_return");
+  const returnResultIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__iter_return_result", returnResultIdx);
+  pushDefinedFunc(ctx, returnResultIdx, {
+    name: "__iter_return_result",
+    typeIdx: stepTypeIdx,
+    locals: [],
+    body: [
+      ...(iterReturnIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: iterReturnIdx },
+          ] satisfies Instr[])),
+      { op: "i32.const", value: 1 },
+      { op: "ref.null.extern" },
+      { op: "call", funcIdx },
+    ],
+    exported: false,
+  });
   return funcIdx;
 }
 
@@ -3035,6 +3082,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       undefined,
       argumentDeps,
       iteratorNextFn.locals,
+      deps ? userResultObjectCheck(ctx, nextMethodStructTypeIdxs(ctx)) : [], // (#6773 S2)
     );
   }
 
@@ -3167,6 +3215,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         sgDeps,
         closeCheck,
         Boolean(strictRuntime && objDeps?.sgetReturnIdx !== undefined && deps?.callReturnIdx === undefined),
+        deps ? ctx.funcMap.get("__call_get_return") : undefined, // (#6773 S3)
       );
     }
   }
@@ -3351,7 +3400,7 @@ export function fillIteratorMethodPresent(ctx: CodegenContext): void {
  * `__array_from_iter_n` drainability guard admits them. Same struct filter as
  * `emitIteratorMethodExport` (index.ts). Sorted for deterministic emission.
  */
-function collectUserIterableStructTypeIdxs(ctx: CodegenContext): number[] {
+function collectUserIterableStructTypeIdxs(ctx: CodegenContext, withNext?: number[]): number[] {
   const out: number[] = [];
   for (const [structName] of ctx.structFields) {
     if (
@@ -3366,9 +3415,48 @@ function collectUserIterableStructTypeIdxs(ctx: CodegenContext): number[] {
     if (ctx.funcMap.has(`${structName}_@@iterator`) || ctx.funcMap.has(`${structName}_next`)) {
       out.push(typeIdx);
     }
+    if (ctx.funcMap.has(`${structName}_next`)) withNext?.push(typeIdx); // (#6773 S2)
   }
   out.sort((a, b) => a - b);
+  withNext?.sort((a, b) => a - b);
   return out;
+}
+
+/** (#6773 S2) The closed struct types carrying a compiled `next` method. */
+function nextMethodStructTypeIdxs(ctx: CodegenContext): number[] {
+  const withNext: number[] = [];
+  collectUserIterableStructTypeIdxs(ctx, withNext);
+  return withNext;
+}
+
+/**
+ * (#6773 S2) FRESH instrs for §7.4.4 IteratorNext step 3 on the USER step's
+ * `res` (local 6): a result that is not an Object throws TypeError instead of
+ * degrading to `done`. Guarded to records whose iterator is a closed struct
+ * with a COMPILED `next` method (`nextTypeIdxs`): `__call_next` answers null
+ * both for a `next()` that RETURNED null and for a struct with no method arm
+ * (a closure-valued `next` field, which only the strict provider drives), and
+ * only the former is a proven §7.4.4 result. Empty (no check) in host mode or
+ * when the TypeError deps are missing.
+ */
+function userResultObjectCheck(ctx: CodegenContext, nextTypeIdxs: number[]): Instr[] {
+  const throwIfNotObject = nextTypeIdxs.length > 0 ? notAnObjectThrowInstrs(ctx, 6) : undefined;
+  if (throwIfNotObject === undefined) return [];
+  const { iterRecTypeIdx } = iterRuntimeTypes(ctx);
+  const cond: Instr[] = [];
+  nextTypeIdxs.forEach((typeIdx, i) => {
+    cond.push(
+      { op: "local.get", index: 1 },
+      { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+    );
+    if (i > 0) cond.push({ op: "i32.or" });
+  });
+  return [
+    ...cond,
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: 6 }, ...throwIfNotObject], else: [] },
+  ];
 }
 
 /**
@@ -3403,6 +3491,7 @@ function buildIteratorReturnBody(
    */
   closeResultCheck?: () => Instr[],
   closeUserViaProperties = false,
+  callGetReturnIdx?: number, // (#6773 S3) `__call_get_return` — class getter named `return`
 ): Instr[] {
   const { iterRecTypeIdx } = types;
   const validateClose: Instr[] = closeResultCheck ? closeResultCheck() : [{ op: "drop" }];
@@ -3601,11 +3690,39 @@ function buildIteratorReturnBody(
         },
       ]
     : [];
+  // (#6773 S3) GetMethod(userIter, "return") (§7.3.10) consults an ACCESSOR:
+  // a class getter named `return` runs first — its throw propagates — and a
+  // truthy value is called with the iterator as receiver, its result checked
+  // (§7.4.9 step 9). A struct without the getter answers null here and falls
+  // through to the method dispatch. Needs the OBJ deps' closure bridge and
+  // `ret` (3) / `closeres` (4) scratch locals.
+  const getterClose: Instr[] =
+    callGetReturnIdx !== undefined && objDeps
+      ? [
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: callGetReturnIdx },
+          { op: "local.tee", index: 3 },
+          { op: "call", funcIdx: objDeps.isTruthyIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 2 },
+              ...emptyArgsVecInstrs(types),
+              { op: "call", funcIdx: objDeps.applyClosureIdx },
+              ...(closeResultCheck ? closeResultCheck() : [{ op: "drop" } satisfies Instr]),
+              { op: "return" },
+            ],
+            else: [],
+          },
+        ]
+      : [];
   // USER close (closed-struct `__call_return` dispatch) — only when the
   // dispatcher exists; otherwise the body simply ends after the OBJ arm
   // (non-OBJ kinds ⇒ NormalCompletion no-op).
   const userClose: Instr[] =
-    callReturnIdx !== undefined
+    callReturnIdx !== undefined || getterClose.length > 0
       ? [
           // Only USER records have a user `return` to dispatch.
           { op: "local.get", index: 1 },
@@ -3621,11 +3738,16 @@ function buildIteratorReturnBody(
           { op: "local.tee", index: 2 },
           { op: "ref.is_null" },
           { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }], else: [] },
+          ...getterClose,
           // __call_return(userIter) — drop the result ({done} carrier or null when
           // the struct has no `return` method; the dispatcher returns null then).
-          { op: "local.get", index: 2 },
-          { op: "call", funcIdx: callReturnIdx },
-          { op: "drop" },
+          ...(callReturnIdx !== undefined
+            ? ([
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: callReturnIdx },
+                { op: "drop" },
+              ] satisfies Instr[])
+            : []),
         ]
       : [];
   return [
@@ -4911,6 +5033,7 @@ function buildIteratorNextBody(
   strictMethods?: StrictMethodDispatchDeps,
   argsDeps?: ArgumentsIteratorDeps,
   locals?: { name: string; type: ValType }[], // (#6651 A9) the target function's, for `readDecoder`
+  userResultCheck: Instr[] = [], // (#6773 S2) `userResultObjectCheck`, spliced after `res = __call_next(…)`
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
   const decode = readDecoder(objDeps ?? {}, locals, 1);
@@ -6005,6 +6128,7 @@ function buildIteratorNextBody(
     { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
     { op: "call", funcIdx: deps.callNextIdx },
     { op: "local.set", index: 6 },
+    ...userResultCheck,
     ...((objDeps
       ? [
           ...objCarrierTest(objDeps, () => [{ op: "local.get", index: 6 }, { op: "any.convert_extern" }]),

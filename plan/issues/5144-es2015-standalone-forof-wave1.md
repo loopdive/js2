@@ -386,3 +386,24 @@ that predates this change-set.
 - **`array-elem-init-in.js` (1).** `[ x = 'x' in {} ]` in a for-of head is
   rejected by the parser (`',' expected.`) — a parser-limitation, left alone
   per the plan's instruction not to patch the runner.
+
+## 2026-09-28 parser-only follow-up
+
+Frozen census index 56 again records the exact
+`test/language/statements/for-of/dstr/array-elem-init-in.js` as a compile error
+(`L31:16 ',' expected`); issue 4444 preserves the complete shard receipts.
+A read-only parser audit reproduces TS1005 directly from the raw JavaScript
+original and minimal `for ([x = 'x' in {}] of [[]]) {}`. No Test262 wrapper or
+project compilation is needed to reproduce it. Ordinary destructuring
+assignment and the object-pattern for-of counterpart parse without errors.
+This narrows the source of the rejection to TypeScript's array-pattern
+for-head parsing, not a runner rewrite or codegen reparse.
+
+The implementation boundary remains the central compiler's handling of valid
+JavaScript, not the Test262 runner or test source. Before any patch, identify
+an existing parser-compatibility seam and confirm ownership. A candidate must
+preserve operator precedence, evaluation count, and source mapping; it must
+not globally suppress TS1005 or rewrite arbitrary `in` expressions. Require
+Node-verified valid array/object/parenthesized/nested-default controls and
+invalid for-in/malformed-head controls before matched authoritative testing.
+No production patch or project-compiler run has been made by this audit.

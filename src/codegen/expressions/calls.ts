@@ -323,6 +323,7 @@ import {
   ensurePromiseNativeProtoGlue,
   ensureStringNativeProtoGlue,
   ensureSymbolNativeProtoGlue,
+  ensureFunctionNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
   emitTypedArrayIntrinsicCtorObject,
   emitArrayIteratorPrototypeSingleton,
@@ -1398,6 +1399,11 @@ function tryEmitNativeProtoReflectiveCall(
   // value-erased twin both already answered correctly.
   else if (brand === undefined && ifaceName === "Symbol" && wrapperWiredMember) {
     brand = ensureSymbolNativeProtoGlue(ctx);
+  }
+  // (#6775 S18) `Function.prototype.toString.call(x)` — §20.2.3.5's own body
+  // (TypeError for a non-callable `this`, incl. a Proxy over a plain object).
+  else if (brand === undefined && ifaceName === "Function" && member === "toString" && ctx.standalone) {
+    brand = ensureFunctionNativeProtoGlue(ctx);
   }
   if (brand === undefined) return undefined;
 

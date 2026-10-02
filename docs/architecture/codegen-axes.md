@@ -324,6 +324,21 @@ If you're reading this and the warning channel still exists, treat any
 new warning here as an error — it means a regression slipped past the IR
 fallback budget (`pnpm run check:ir-fallbacks`).
 
+## How to verify the layering
+
+"The IR replaces the hacks" only holds if the layers can be separated, and
+today they cannot: codegen, ir and frontend form one strongly-connected
+component of the value-import graph (697 files when it was first measured,
+2026-10-02), with 74 file-level edges from `src/ir/` into `src/codegen/`.
+`pnpm run check:import-cycles` (`scripts/check-import-cycles.mjs`, #6797)
+measures that graph and fails when the largest cycle, the number of cycles,
+or any two-way directory edge count grows; `-- --verbose` lists the cycle's
+files and every cross-directory edge, which is the cut list for the
+`ir -> codegen` work. `pnpm run check:flat-dir-budget` keeps the number of
+files directly in `src/codegen/` from growing, and `pnpm run
+check:ir-layering` counts every `src/ir/` import of `src/codegen/`,
+type-only ones included. All three run in CI's `quality` job.
+
 ## See also
 
 - [`target-architecture.md`](target-architecture.md) — the **end-state

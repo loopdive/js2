@@ -116,15 +116,24 @@ export function buildPrototypeSeedMemberTail(member: string, kind: "method" | "g
         ]
       : buildPrototypeSeedDataTail(
           defineIdx,
-          member === "@@3" ? PROTOTYPE_SEED_FLAGS.symbolTag : PROTOTYPE_SEED_FLAGS.method,
+          member === "@@3"
+            ? PROTOTYPE_SEED_FLAGS.symbolTag
+            : // (#6775 S16) §20.2.3.6 `Function.prototype[@@hasInstance]` is {w:F,e:F,c:F}.
+              member === "@@hasInstance"
+              ? PROTOTYPE_SEED_FLAGS.constant
+              : PROTOTYPE_SEED_FLAGS.method,
         )),
   ];
 }
 
-export function buildPrototypeSeedDataPropertyTail(kind: "string" | "number", defineValueIdx: number): Instr[] {
+export function buildPrototypeSeedDataPropertyTail(
+  kind: "string" | "number",
+  defineValueIdx: number,
+  flags?: number,
+): Instr[] {
   return buildPrototypeSeedDataTail(
     defineValueIdx,
-    kind === "number" ? PROTOTYPE_SEED_FLAGS.constant : PROTOTYPE_SEED_FLAGS.method,
+    flags ?? (kind === "number" ? PROTOTYPE_SEED_FLAGS.constant : PROTOTYPE_SEED_FLAGS.method),
   );
 }
 

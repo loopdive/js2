@@ -777,13 +777,66 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curUnwind = undefined;
   }
 
-  const tryYieldDeclaration = (stmt: ts.Statement): { name: string; yieldExpr: ts.YieldExpression } | null => {
+  const tryYieldDeclaration = (
+    stmt: ts.Statement,
+  ): { name: string; yieldExpr: ts.YieldExpression; id: ts.Identifier } | null => {
     if (!ts.isVariableStatement(stmt)) return null;
     if (stmt.declarationList.declarations.length !== 1) return null;
     const declStmt = stmt.declarationList.declarations[0]!;
     if (!ts.isIdentifier(declStmt.name)) return null;
     if (!declStmt.initializer || !ts.isYieldExpression(declStmt.initializer)) return null;
-    return { name: spillNameOf(declStmt.name), yieldExpr: declStmt.initializer };
+    return { name: spillNameOf(declStmt.name), yieldExpr: declStmt.initializer, id: declStmt.name };
+  };
+  // (#6798) On the JS host a bound `yield*` completion comes from a host-protocol
+  // delegate (native-gen delegation is no-host only) and may be any JS value; an
+  // f64-carrier slot turned a string completion into NaN. Keep such a non-numeric
+  // binding on the eager host path, which now returns the real completion.
+  const hostCompletionLosesValue = (target: ts.Expression): boolean =>
+    hostLane && !elemIsAny && !["number", "any", "unknown"].includes(ctx.oracle.typeFactOf(target).kind);
+
+  // (#6775 S11) `<target> = yield [v];` with a side-effect-free reference: an
+  // identifier, `id.name`, or `id[<literal>]` — evaluating it after the resume
+  // is unobservable, so the yield can be hoisted into its own state.
+  let yieldAssignCount = 0;
+  const yieldAssignNames = new Set<string>();
+  const tryYieldAssignment = (stmt: ts.Statement): { target: ts.Expression; yieldExpr: ts.YieldExpression } | null => {
+    if (!ts.isExpressionStatement(stmt) || !ts.isBinaryExpression(stmt.expression)) return null;
+    const { left, right, operatorToken } = stmt.expression;
+    if (operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isYieldExpression(right)) return null;
+    if (right.asteriskToken || (right.expression && nodeContainsYield(right.expression))) return null;
+    const simpleBase = (e: ts.Expression): boolean => ts.isIdentifier(e) || e.kind === ts.SyntaxKind.ThisKeyword;
+    const simple =
+      ts.isIdentifier(left) ||
+      (ts.isPropertyAccessExpression(left) && simpleBase(left.expression)) ||
+      (ts.isElementAccessExpression(left) &&
+        simpleBase(left.expression) &&
+        (ts.isStringLiteral(left.argumentExpression) || ts.isNumericLiteral(left.argumentExpression)));
+    return simple ? { target: left, yieldExpr: right } : null;
+  };
+  // The `let x = yield` shape with a non-declaration target: suspend into a
+  // frame spill, then assign the spill. Inside a try region the continuation
+  // arms refuse, so `try { obj.foo = yield; } finally { … }` was a #680 error.
+  // Hoisted out of `lowerStatements` (declared below; called only after).
+  const lowerYieldAssignment = (
+    stmt: ts.Statement,
+    unwind: readonly UnwindEntry[],
+  ): "lowered" | "failed" | "declined" => {
+    const ya = tryYieldAssignment(stmt);
+    if (!ya) return "declined";
+    const name = `__gen_assign_sent_${yieldAssignCount++}`;
+    yieldAssignNames.add(name);
+    addSpill(name);
+    if (!emitYield(ya.yieldExpr, name, unwind)) return "failed";
+    curStatements.push(
+      ts.factory.createExpressionStatement(
+        ts.factory.createBinaryExpression(
+          ya.target,
+          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+          ts.factory.createIdentifier(name),
+        ),
+      ),
+    );
+    return "lowered";
   };
 
   const statementsAreYieldFree = (statements: readonly ts.Statement[]): boolean =>
@@ -1000,12 +1053,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // first so a bare `return expr;` is a completion terminator, not a raw
       // wasm `return` from compileStatement.)
       if (ts.isReturnStatement(stmt)) {
-        if (
-          (ctx.standalone || ctx.wasi) &&
-          stmt.expression &&
-          ts.isYieldExpression(stmt.expression) &&
-          stmt.expression.asteriskToken
-        ) {
+        // (#6798) Every lane: the plain return arm below compiled `return yield* x`
+        // without suspending and returned undefined on the JS host.
+        if (stmt.expression && ts.isYieldExpression(stmt.expression) && stmt.expression.asteriskToken) {
           // A delegated return inside a finally body still needs its own replacement-completion model.
           if (stateFinallyDepth > 0) return fail();
           const name = `__gen_delegation_completion_${delegationBindingNames.size}`;
@@ -1087,6 +1137,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         ts.isYieldExpression(stmt.expression.right) &&
         stmt.expression.right.asteriskToken
       ) {
+        if (hostCompletionLosesValue(stmt.expression.left)) return fail();
         const name = `__gen_delegation_completion_${delegationBindingNames.size}`;
         delegationBindingNames.add(name);
         addSpill(name);
@@ -1110,9 +1161,15 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           if (!lowerNestedOrRefuse(stmt, unwind, allowExpressionContinuations)) return false;
           continue;
         }
+        if (yd.yieldExpr.asteriskToken && hostCompletionLosesValue(yd.id)) return fail();
         if (!emitYield(yd.yieldExpr, yd.name, unwind)) return false;
         continue;
       }
+
+      // 2') (#6775 S11) `<target> = yield [v];` — see `lowerYieldAssignment`.
+      const yieldAssign = lowerYieldAssignment(stmt, unwind);
+      if (yieldAssign === "failed") return false;
+      if (yieldAssign === "lowered") continue;
 
       // 2a) (#6651 A5) In a generator gated by a computed-key yield (boxed-any
       // carrier, which the f64-only continuation arms below refuse), defer the
@@ -3199,6 +3256,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // are delegated), independent of the OUTER's carrier.
     if (delegationBindingNames.has(name)) {
       spillTypes.set(name, elemIsAny ? { kind: "externref" } : { kind: "f64" });
+      continue;
+    }
+    // (#6775 S11) The `<target> = yield` spill is only ever PutValue'd, never
+    // member-read, so the boxed-any bail below does not apply to it.
+    if (yieldAssignNames.has(name)) {
+      spillTypes.set(name, carrierType);
       continue;
     }
     if (resumeBindingNames.has(name)) {

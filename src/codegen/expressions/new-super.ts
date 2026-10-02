@@ -3,6 +3,7 @@ import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 import { resolveStaticSpreadArgs } from "../static-spread-arity.js"; // (#6460)
 import { isDynamicGeneratorFunctionBinding, tryEmitDynamicGeneratorFunction } from "../generator-function-dynamic.js"; // (#6651 A9)
+import { isDescriptorAccessorRead } from "../analysis/proxy-binding-escape.js"; // (#6775 S3)
 import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -74,6 +75,7 @@ import {
   ensureObjectRuntime,
   ensureObjVecBuilders,
   reserveApplyClosure,
+  WRAPPER_PRIMITIVE_KEY, // (#6775 S5)
 } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
 import { ensureSetHelpers } from "../set-runtime.js";
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
@@ -100,7 +102,7 @@ import {
 } from "../standalone-class-construct.js"; // (#5383 S2g, #6615, #6619)
 import { resolvePromiseSubclassName } from "./promise-subclass.js"; // (#5197 r3)
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
-import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
+import { armConstructIsConstructorGuard, primitiveWrapperConstructThrow } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
@@ -108,6 +110,7 @@ import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Erro
 import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "../builtin-native-dyn-construct.js";
 import {
   emitBuiltinCollectionConstructOnNull,
+  tryEmitErrorFamilyValueConstruct,
   reserveBuiltinCollectionDynConstruct,
 } from "../builtin-collection-dyn-construct.js"; // (#6720)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -846,6 +849,10 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
           : init.expression;
     }
     if (ts.isConditionalExpression(init)) return true;
+    // (#6775 S3) An accessor read off a descriptor
+    // (`Object.getOwnPropertyDescriptor(o, k).get|.set`) is a runtime function
+    // value too — typically a built-in accessor with no [[Construct]].
+    if (isDescriptorAccessorRead(init)) return true;
   }
   const fact = ctx.oracle.typeFactOf(calleeExpr);
   if (fact.kind === "any" || fact.kind === "unknown") return true;
@@ -4570,7 +4577,6 @@ function emitTaIntrinsicConstructThrow(ctx: CodegenContext, fctx: FunctionContex
 function emitBuiltinFnNotAConstructorGuard(ctx: CodegenContext, fctx: FunctionContext, descLocal: number): void {
   emitTaIntrinsicConstructThrow(ctx, fctx, descLocal); // (#6769 S7d) `%TypedArray%` has a throwing [[Construct]]
   const isBuiltinIdx = ctx.funcMap.get("__builtinfn_is_builtin");
-  if (isBuiltinIdx === undefined) return;
   const guardBody: Instr[] = [];
   const savedBody = fctx.body;
   fctx.body = guardBody;
@@ -4579,6 +4585,10 @@ function emitBuiltinFnNotAConstructorGuard(ctx: CodegenContext, fctx: FunctionCo
   } finally {
     fctx.body = savedBody;
   }
+  // (#6775 S5) `new Object(Symbol())()` — a primitive wrapper has no [[Construct]].
+  if (ctx.objectRuntimeTypes) addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
+  fctx.body.push(...primitiveWrapperConstructThrow(ctx, descLocal, "anyref", guardBody));
+  if (isBuiltinIdx === undefined) return;
   fctx.body.push(
     { op: "local.get", index: descLocal },
     { op: "extern.convert_any" },
@@ -8702,6 +8712,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (r !== undefined) return r;
   }
 
+  {
+    const r = tryEmitErrorFamilyValueConstruct(
+      ctx,
+      fctx,
+      className,
+      expr.expression,
+      expr.arguments ?? [],
+      (e) => compileExpression(ctx, fctx, e, { kind: "externref" }),
+      (t) => coerceType(ctx, fctx, t, { kind: "externref" }),
+    ); // (#6775 S10) `var C = nativeErrors[i]; new C(msg)`
+    if (r !== undefined) return r;
+  }
   reportError(ctx, expr, `Unsupported new expression for class: ${className}`);
   return null;
 }

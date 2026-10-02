@@ -1282,8 +1282,8 @@ export function compileLinearIrFunctions(
         );
         // Build through the SAME shared from-ast as WasmGC. The narrowed
         // linear resolver exposes the landed L2 vec/aggregate and L3 string
-        // shapes; every other representation-dependent family still throws
-        // and demotes.
+        // shapes; every other representation-dependent family still throws a
+        // typed IrUnsupportedError and demotes.
         const { main, lifted, countedStringAppendPlans } = lowerFunctionAstToIr(decl, {
           checker: evidenceChecker,
           oracle: prepared.oracle,
@@ -1344,18 +1344,17 @@ export function compileLinearIrFunctions(
         progressed = true;
       } catch (e) {
         rethrowLinearOwnerInvariant(e);
-        // Fail-safe demote: the linear DIRECT path compiles this function
-        // exactly as it does today (the overlay only ever ADDS capability).
+        // (#6793) Only a typed Unsupported demotes to the linear DIRECT path.
+        // An IrInvariantError or untyped throw (a bare TypeError) is a compiler
+        // bug: classified as the WasmGC lane does, it fails the compile.
+        const outcome = classifyIrFailure(e, "build");
+        if (outcome.kind === "invariant") {
+          const detail = `linear-ir: IR build of ${name} hit invariant ${outcome.code}: ${outcome.detail}`;
+          throw new IrInvariantError(outcome.code, outcome.stage, detail, e);
+        }
         // A "call to unknown function" may resolve in a later round once
         // the callee's signature lands in `signaturesByUnitId` — keep it pending.
-        const outcome =
-          e instanceof IrUnsupportedError || e instanceof IrInvariantError ? classifyIrFailure(e, "build") : undefined;
-        lastFailure.set(ownerUnitId, {
-          func: name,
-          reason: "build",
-          detail: e instanceof Error ? e.message : String(e),
-          ...(outcome ? { outcome } : {}),
-        });
+        lastFailure.set(ownerUnitId, { func: name, reason: "build", detail: outcome.detail, outcome });
         next.push(owner);
       }
     }
