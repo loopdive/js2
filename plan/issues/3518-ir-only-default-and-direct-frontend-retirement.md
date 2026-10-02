@@ -405,6 +405,63 @@ then merge exact upstream and validate the combined source rather than inheritin
 the old86/86. No source changes from upstream may be silently dropped to recover
 old receipts. Parent owns integration and the next execution slot.
 
+Repair commit017a00642bd99c44b60196e05ec28aef6adcc290 and inspected merge
+bbd4abc201fcd8dd0a3903910258f09d7bbd419c are local, not yet published. Merge
+parents are exact017a and39cc. All43 non-overlapping incoming paths match
+upstream Git blobs; the two automatic overlaps retain only the reviewed Promise
+route delta and four checkpoint inventory rows. Normal fast hooks passed; all24
+archived result streams and formatted test20b7ce66 remain unchanged afterward.
+
+D receives the sole local execution slot on this exact merged head: canonical
+TS7, then the full nine-file86-case changed-root population, then the complete
+incoming `issue-6775-builtins-misc-residue.test.ts` and
+`test262-edition-ratchet-host-lane.test.ts` files, all serial/one fork. Record
+actual denominators for the incoming files rather than guessing them. Freeze
+source/config/fixtures throughout, preserve first failures and independent exits,
+and do not restart or repair automatically. These runs validate this composition;
+pre-merge positives remain separately labeled. Release before formatting, hooks,
+commits or push, which stay with the parent. Required remote CI still gates merge.
+
+B's source/receipt audit finds the required1+9 compile results in each V9 arm
+(20 total), all successful/terminal with errors/imports empty and saved Wasm.
+There are20 user-side empty-import observations with matching test names and
+lastCompleted ordinals, no compile-throw records. Those observations lack a
+binary hash/module identity; sequential original-source flow supports association
+but is not independent hash binding. Do not upgrade this limitation to proof.
+
+Next bounded B source assignment: prepare a separately named saved-binary audit,
+without running it or modifying the frozen V9 checker/runner/receipts. Enumerate
+exactly compile0 for2917 and compile0..8 for6655 on both arms; reject extras,
+missing records or throws. Recompute each saved binary SHA-256 against its
+successful terminal result, then (only after a future execution grant) validate
+that exact byte buffer as a WebAssembly.Module and inspect Module.imports. Never
+instantiate or execute exports; require zero actual imports on all20 binaries.
+Preserve original user-side observations as separately ordinal-associated data.
+Record this as a new post-run artifact audit, not a retroactive identity binding
+for old events. Fresh output only, no overwrite, baseline substitution or fixture
+change. Return source/pins for parent review; D keeps the execution slot.
+
+Fresh bbd4 composition validation is terminal: canonical TS7 exits0, full
+changed-root86/86 and incoming builtins23/23 pass, all7517 pinned inputs unchanged.
+The host gate first reports5/22,17 failures from sandbox `tsx` IPC listen EPERM.
+After explicit local-permission escalation, unchanged22 cases report9/22,
+13 failures: the worktree's Test262 placeholder is empty and the gate correctly
+refuses classification. Both failed runs remain intact, not relabeled.
+
+The canonical Test262 checkout matches the exact gitlink b363f29d3c43c626dc852744ad64a0b48a003693;
+its tracked test files are unchanged. Parent linked its contents into the owned
+placeholder per repository provisioning rules, without touching the canonical
+checkout or hook/shared Git configuration. Existing unrelated untracked canonical
+fixtures were neither changed nor selected by this22-case file. With dependency
+and IPC setup corrected, full unchanged22/22 passes (session84852, child79308,
+exit0). No gate/fixture/source/baseline repair or exemption was used.
+
+Next fetched main883ec89d8e4eff9e6af2f2e09cb53b20a748f390 adds documentation,
+CI/release tooling and the async representation-scope freeze; its delta from39cc
+has no compiler/runtime source changes. Integrate it while preserving new docs
+checks and independently validate its four touched tests and path-check command.
+No new main merge by this session is claimed. Parent keeps the execution slot.
+
 Latest dispatch reconfirms parent ownership of implementation plans, issue
 updates, integration and protected-queue decisions. Existing native Sol6.1
 Medium agents retain isolated assignments: A validation/attribution; B frozen
