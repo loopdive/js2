@@ -1,10 +1,10 @@
 {
   "id": "6774",
-  "assignee": "ttraenkler/opus-6774",
-  "requested_by": "ttraenkler/opus-6774",
+  "assignee": "ttraenkler/opus-6774-r2",
+  "requested_by": "ttraenkler/opus-6774-r2",
   "status": "in-progress",
-  "branch": "issue-6774-es2015-expressions-residue",
-  "claimed_at": "2026-09-30T21:06:30Z",
-  "updated_at": "2026-09-30T21:06:30Z",
-  "write_id": "1656-tmyx94ng"
+  "branch": "issue-6774-expressions-residue-r2",
+  "claimed_at": "2026-10-02T16:18:33Z",
+  "updated_at": "2026-10-02T16:18:33Z",
+  "write_id": "16615-09rjduyz"
 }
