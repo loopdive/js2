@@ -1,10 +1,11 @@
 {
   "id": "6835",
   "assignee": "ttraenkler/find_residual_diagnostics_sol",
-  "requested_by": "ttraenkler/find_residual_diagnostics_sol",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/6835-find-residual-plan",
   "claimed_at": "2026-10-02T20:58:56Z",
-  "updated_at": "2026-10-02T20:58:56Z",
-  "write_id": "2205-x6g4tg63"
+  "updated_at": "2026-10-02T21:19:48Z",
+  "write_id": "6560-2p33a0bn",
+  "released_at": "2026-10-02T21:19:48Z"
 }
