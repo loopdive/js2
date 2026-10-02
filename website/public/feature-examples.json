@@ -44514,7 +44514,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> key </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#89DDFF\"> \"</span><span style=\"color:#C3E88D\">id</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> obj</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> Record</span><span style=\"color:#89DDFF\">&#x3C;</span><span style=\"color:#FFCB6B\">string</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">></span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#89DDFF\"> {</span><span style=\"color:#F07178\"> [</span><span style=\"color:#BABED8\">key</span><span style=\"color:#F07178\">]</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#F78C6C\"> 42</span><span style=\"color:#89DDFF\"> };</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__module_init</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 3</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 42</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    struct.new </span><span style=\"color:#F78C6C\">1</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    extern.convert_any</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 83,
+      "passCount": 87,
       "totalCount": 133,
       "tests": [
         {
@@ -47842,7 +47842,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2191,
+      "passCount": 2193,
       "totalCount": 2486,
       "tests": [
         {
@@ -50866,7 +50866,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 373,
+      "passCount": 375,
       "totalCount": 461,
       "tests": [
         {
@@ -60542,7 +60542,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">export</span><span style=\"color:#C792EA\"> function</span><span style=\"color:#82AAFF\"> bar</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span><span style=\"color:#89DDFF;font-style:italic\"> return</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#89DDFF\"> }</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">export</span><span style=\"color:#C792EA\"> const</span><span style=\"color:#BABED8\"> version </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#89DDFF\"> \"</span><span style=\"color:#C3E88D\">1.0</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $bar</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 416,
+      "passCount": 420,
       "totalCount": 731,
       "tests": [
         {
@@ -63550,7 +63550,7 @@
       "editionSpread": [
         {
           "edition": "ES2015",
-          "pass": 55,
+          "pass": 57,
           "total": 68
         },
         {
@@ -63590,7 +63590,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 151,
+          "pass": 153,
           "total": 225
         }
       ]

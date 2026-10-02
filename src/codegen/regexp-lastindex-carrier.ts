@@ -425,6 +425,24 @@ export function installRegExpLastIndexCarrierArms(ctx: CodegenContext): void {
       { op: "return" },
     ]);
   }
+  // (#6772 S10) [[GetOwnProperty]]: §22.2.3.3 — a non-enumerable,
+  // non-configurable data property, writable until defined otherwise.
+  const createDescIdx = ctx.funcMap.get("__create_descriptor");
+  if (createDescIdx !== undefined) {
+    unshiftKeyArm(ctx, "__getOwnPropertyDescriptor", keyIdx, [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: readIdx },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: reTypeIdx },
+      { op: "struct.get", typeIdx: reTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+      { op: "i32.eqz" }, // flag bit 0 = writable
+      { op: "call", funcIdx: createDescIdx },
+      { op: "return" },
+    ]);
+  }
+  // §10.1.10 OrdinaryDelete step 4: non-configurable — `delete` answers false.
+  unshiftKeyArm(ctx, "__delete_property", keyIdx, [{ op: "i32.const", value: 0 }, { op: "return" }]);
   if (defineIdx !== undefined) {
     unshiftKeyArm(ctx, "__defineProperty_value", keyIdx, [
       { op: "local.get", index: 0 },

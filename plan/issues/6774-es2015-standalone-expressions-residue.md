@@ -4,7 +4,7 @@ title: "ES2015 standalone expressions residue: new.target as a value, super() in
 status: in-progress
 sprint: current
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-02
 priority: high
 horizon: xl
 feasibility: hard
@@ -116,6 +116,11 @@ func-budget-allow:
   # 2026-10-01 (#6774 S21, Opus): accessor object-literal types lower to
   # externref (they are always open `$Object`s at run time).
   - src/codegen/index.ts::resolveWasmType
+  # 2026-10-02 (#6774 r2 S22, Opus): the fnctor arm of compileSuperCall keeps the
+  # parent FUNCTION's result for the #6772 override register (+5; body in
+  # classes/ctor-return-override.ts::tryEmitFnctorSuperOverride). class-bodies.ts
+  # itself is granted above (+7 for the same hook).
+  - src/codegen/class-bodies.ts::compileSuperCall
 ---
 
 ## Problem
@@ -1325,3 +1330,163 @@ Landed partially at the project lead's request; the issue stays
   to main); `check-flat-dir-budget` OK (829/829). The 60 expressions rows
   (`--isolate --standalone`): before 40 pass, after 40 pass, identical
   non-pass set (20). Pins 21/21.
+
+### 2026-10-02 — r2: S9, S10, S20, S22 landed; S14 and S23 not done (Opus)
+
+Branch `issue-6774-expressions-residue-r2` (claim `ttraenkler/opus-6774-r2`).
+Base `ff310447`; `origin/main` @ `489d0aac` (carries PR #6448, i.e. #6772 S2)
+merged in at `fb5d5b80` before S22. The issue stays `in-progress`.
+
+**Rows: the 20 still-failing rows, `--isolate --standalone`.** Branch head
+`220353dd` vs `.tmp/6774r2/base-src` (`ff310447`): **base 0 / 20, branch
+8 / 20**, so 48 / 60 for the whole issue.
+
+| step | row | now |
+| --- | --- | --- |
+| S9 | `super/prop-dot-cls-ref-this.js`, `super/prop-expr-cls-ref-this.js` | pass |
+| S10 | `object/method-definition/name-property-desc.js`, `…/generator-property-desc.js` | pass |
+| S20 | `instanceof/prototype-getter-with-object.js` | pass |
+| S22 | `super/call-expr-value.js`, `super/call-bind-this-value.js` | pass |
+| #6772 S1b (cross-ref) | `super/call-bind-this-value-twice.js` | pass: it has a FUNCTION parent too, so S22 fixed it |
+| S14 | `call/tco-non-eval-{function,function-dynamic,global}.js` | fail: not done, see below |
+| S23 | `super/call-proto-not-ctor.js` | fail: not attempted, see below |
+| #3371 | `new.target/value-via-reflect-construct.js`, `super/call-construct-invocation.js` | compile_error (unchanged) |
+| deferred | `call/eval-spread.js`, `call/eval-spread-empty-leading.js`, `arrow-function/arrow/capturing-closure-variables-2.js`, `call/tco-non-eval-with.js`, `keyed-destructuring-…-with-bindings.js`, `yield/from-with.js` | unchanged (see the deferred table) |
+
+**What each step really fixed.** Two of the plan's diagnoses did not match
+main, so the fixes differ from the plan:
+
+- **S9** (`1fa37dbf`). The caller already publishes the real receiver
+  (`super-receiver-publish.ts`), and the `super.x` read path already selects
+  it. The gap was in the CALLEE. A static `super.m()` / `super.<getter>` call
+  passes the null instance-typed local, so the parent's `return this` read JS
+  `null`. Fix: the #6651 A11 rule for object-literal methods (a `this` read
+  as an externref value from a null struct receiver answers
+  `__current_this`, else the unbound value) now also covers class instance
+  methods and accessors, standalone only (`method-receiver-this.ts`). Probe
+  c2: 16 → 31.
+- **S10** (`67a4b05b`). The plan's premise is wrong on main: the `__anon_`
+  method slot is `(mut externref)`, and the static delete arm already clears
+  it. The rows fail inside the harness's `isConfigurable`. It does
+  `delete obj[name]` with a dynamic key on a closed struct. That is a no-op
+  success in `__delete_property`, and `hasOwnProperty` then still finds the
+  struct field. Data members fail the same way (probe j4: method, data,
+  function data and generator method all 0 on base). Fix: the #4098
+  per-instance tombstone already makes this delete real for class
+  instances. Its carrier predicate now also covers the closed object-literal
+  shapes (`__anon_<N>`, non-synthetic), standalone only
+  (`instance-tombstones.ts`). Probe j4 0 → 15. Not screened (unchanged
+  divergences): a static `o.x` read after a dynamic delete, the folded
+  `"x" in o`, and `Object.keys` / gOPD after the delete.
+- **S20** (`ee237229`). There were two gaps. First,
+  `__isPrototypeOf` casts BOTH the prototype and the candidate to
+  `$Object`. Second, the getter's inferred return is `any[]`, so
+  `Array.prototype` comes back as the module's vec ALIAS
+  (`wrapArrayProtoVecAlias`) rather than the `$NativeProto` that the chain
+  reaches. Fix: a new helper `__instanceof_carrier_chain`
+  (`native-dynamic-instanceof.ts`). It keeps the `__isPrototypeOf` answer
+  first. For a candidate that is neither `$Object` nor Proxy, it then walks
+  `__getPrototypeOf` hop by hop and compares identity at each level, with
+  both sides mapped glue → companion. At finalize, a new inverse
+  `unwrapArrayProtoVecAliasInstrs` (`vec-proto-link.ts`) is prepended at its
+  entry. Probe k2 (the row shape): 2 → 3. **Residual:** `[] instanceof F`
+  with `F.prototype = Array.prototype` and a statically known FUNCTION `F`
+  (probe k1, 96) takes the static fnctor lowering and never reaches the
+  dynamic helper.
+- **S22** (`220353dd`, after #6772 S2). Two changes:
+  - A nested `super(...)` now yields the bound `this`: the parent's override
+    when one was bound, else the instance. This is `emitSuperCallValue`,
+    standalone only.
+  - The #6772 pre-scan now also covers a top-level FUNCTION parent that may
+    return an Object. Such parents go in their own set, so `F`'s own bindings
+    are not retyped. The fnctor arm of `compileSuperCall` publishes that
+    result into `$__ctor_override` (`tryEmitFnctorSuperOverride`). From
+    there, #6772's frame-local, `this`-read and `new`-site machinery takes
+    over unchanged.
+  - Probes, pre-S22 → branch: b1 0 → 31; b2 1 → 15 (nested `super` in `try`,
+    `extends Array` / `extends Map` value, a fnctor returning a primitive).
+
+**Not done.**
+
+- **S14: much harder than the plan says, so it was skipped.** On the branch,
+  the caller `f` is a void frame. Before the call it saves `__current_this`
+  into a local and sets it to null. It then `call`s `__dyn_call_1` and
+  restores `__current_this` after the call. That restore alone makes the
+  call non-tail, before the frame-result question (void `f` vs. the
+  externref ladder) even arises. Constant stack needs all of the following:
+  - the bare-call receiver protocol changed for tail position (dropping the
+    restore is observable to a caller that reads the carrier after the call);
+  - a frame result type that matches the ladder;
+  - `return_call_ref` inside the ladder arm;
+  - for `-function-dynamic` and `-global`, two separate `eval`-alias
+    mechanisms (a spliced `var eval`, and a global `eval =` rebind).
+
+  These are four changes to the core call protocol. It needs its own design
+  pass.
+- **S23: not attempted** (optional; budget). The mechanism is unchanged from
+  the plan. One finding: no shared runtime `IsConstructor` predicate exists.
+  A `$__builtinfn` carrier (for example `parseInt`) is the only "provably not
+  a constructor" case available. File it as its own issue.
+
+**Pins:** `tests/issue-6774-r2-expressions-residue.test.ts`, 4 cases, each red
+on base:
+
+| case | base | branch |
+| --- | --- | --- |
+| S9 | 16 | 31 |
+| S10 | 0 | 15 |
+| S20 | 2 | 3 |
+| S22 | 0 (pre-S22) | 31 |
+
+With `tests/issue-6774-expressions-residue.test.ts`: 25/25. Neighbour suites
+were green, or failed identically on base:
+
+- green: `issue-5350-super-property-r1`, `-r2`, `issue-3024-static-super-arity`,
+  `issue-2025`, `issue-6789`, `issue-6651-a11`, `issue-4194-instance-expando`,
+  `issue-2916`, `issue-3962`, `issue-2702`, `issue-2740`, `issue-6769`,
+  `issue-6772-class-residue`, `issue-2018`, `issue-1824`,
+  `issue-6651-super-void-rollback`;
+- same failures on base: `issue-3522-super-accessor` (2),
+  `issue-4194-closed-struct-computed-write` (1), `issue-2703` (1),
+  `issue-2726` (3), `issue-2998` (1), `issue-4464` (5), `issue-1965` (4).
+
+**Controls** (standalone, in-process; every branch non-pass re-run on a
+main-src copy):
+
+- **S9:** 635 rows. Class/super/method-definition/function-code rows that
+  read `this` as a value; all the non-generated ones, plus every 8th
+  `dstr` / `elements` row. Base `ff310447` vs branch: 0 regressions, the 2
+  target gains, and 22 rows unmeasured (provider; see the method note).
+  Those 22 are now in the combined set below.
+- **S9 + S10 + S20, combined:** 1,753 rows on the merged tree (`fb5d5b80`).
+  The set is:
+  - the S10 set: `expressions/delete`, `Object/prototype/{hasOwnProperty,
+    propertyIsEnumerable}`, `Object/{keys,getOwnPropertyDescriptor}`,
+    `Reflect/deleteProperty`, `object/method-definition`, and every
+    `verifyProperty` / `isConfigurable` / `delete` row under
+    `expressions/object`, `statements/class/definition` and
+    `Object/{defineProperty,defineProperties}`. That includes the ES5
+    delete / own-property rows.
+  - the S20 set: `expressions/instanceof`, `Object/prototype/isPrototypeOf`,
+    `Function/prototype/Symbol.hasInstance`, `Object/getPrototypeOf`.
+  - the 22 S9 provider rows.
+
+  Branch 1,687 pass. All 66 non-pass rows are also non-pass with the four
+  touched files taken from `489d0aac`: **0 regressions**.
+- **S22:** 295 rows: `expressions/super`, `statements/class/{super,subclass}`,
+  `subclass-builtins`, and every `super(` row under class definition, class
+  expressions, `new.target` and arrows. Branch 269 pass. All 26 non-pass rows
+  are also non-pass on the pre-S22 tree: **0 regressions**.
+
+**Method note: provider key.** The QuickJS adapter key includes the compiler
+bundle hash, so every `src/` edit makes the in-process runner report
+`quickjs provider is not built` for any row that needs the provider.
+Without a pinned key, that is a silent "fail" that is the same on both
+sides of an A/B. For that reason the provider was built once, and every
+row run here used `TEST262_BUNDLE_HASH=r2fixed6774`. The adapter bytes
+were the same (587,273) before and after the changes.
+
+**Gates:** the full chain is green bare with `LOC_GATE_BASE` = `ff310447`
+(S9/S10/S20) and = `489d0aac` (merge, S22, this record). That includes
+import-cycles (largest SCC 697) and flat-dir (829/829). The S22 grant is in
+the frontmatter (`class-bodies.ts::compileSuperCall` +5).

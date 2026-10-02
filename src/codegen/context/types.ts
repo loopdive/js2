@@ -2152,6 +2152,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   structAccessorClosure: Map<string, { getGlobal?: number; setGlobal?: number }>;
   /** Set of "ClassName_propName" for static getter/setter accessor properties */
   staticAccessorSet: Set<string>;
+  /** (#6772 S12) "ClassName_propName" of every INSTANCE class accessor, filled before any accessor key is minted. */
+  classInstanceAccessorKeys: Set<string>;
   /** Set of "ClassName_methodName" for static methods (no self param) */
   staticMethodSet: Set<string>;
   /** Map from "ClassName_propName" → global index for static properties */
@@ -3409,6 +3411,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   capturedGlobalsOwner?: Map<string, FunctionContext>;
   /** Map from TS symbol name → synthetic class name for class expressions */
   classExprNameMap: Map<string, string>;
+  /** (#6772 S7) Names assigned two DIFFERENT class expressions: never put back in `classExprNameMap`. */
+  classExprAmbiguousNames: Set<string>;
   /** Map from class AST node → synthetic class name (expressions and nested declarations). */
   anonClassExprNames: Map<ts.ClassExpression | ts.ClassDeclaration, string>;
   /** Map from function/class identifier → its ES-spec .name string value */

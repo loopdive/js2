@@ -24,6 +24,11 @@ import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#51
 import { allocLocal } from "../context/locals.js"; // (#6609)
 import { popBody, pushBody } from "../context/bodies.js"; // (#6630 fallback)
 import { isStandaloneBaseClassOrPrototype } from "../class-proto-object.js"; // (#6767 step 2)
+import { tryEmitOverrideBindingGetPrototypeOf } from "../classes/ctor-return-override.js"; // (#6772 S2)
+import { classIdentityFromExpression } from "../class-static-metadata.js"; // (#6772 S6)
+import { bindingIsUniqueAndNeverWritten } from "../class-heritage-check.js"; // (#6772 S6)
+import { heritageBindsParentClass } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitLazyClassObjectGet } from "./extern.js"; // (#6772 S6)
 import { arrayTypedValueMayNotBeArray } from "../proxy-array-like.js"; // (#6651 H6)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
@@ -293,6 +298,45 @@ function tryEmitStandaloneBaseClassGetPrototypeOf(
 }
 
 /**
+ * (#6772 S6, #6767 R4) `Object.getPrototypeOf(D)` for a standalone DERIVED class
+ * spelled by an unwritten binding: §15.7.14 step 8 made the superclass the
+ * constructor's [[Prototype]], so when the heritage provably names a class of
+ * this program (`heritageBindsParentClass`) the answer is that parent's class
+ * object — the same singleton the parent's own name reads. Anything else (a
+ * parameter heritage, a rewritten binding, a parent with no class object)
+ * declines to the folds below.
+ */
+function tryEmitStandaloneDerivedClassGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!ctx.standalone) return null;
+  let bare = arg0;
+  while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
+  const className = classIdentityFromExpression(ctx, bare);
+  const declaredParent = className === undefined ? undefined : ctx.classParentMap.get(className);
+  const parent =
+    declaredParent === undefined ? undefined : (ctx.classExprNameMap.get(declaredParent) ?? declaredParent);
+  if (
+    parent === undefined ||
+    !ctx.classSet.has(parent) ||
+    !ctx.classObjectGlobals?.has(parent) ||
+    !ctx.structMap.has(parent) ||
+    !ctx.structFields.has(parent)
+  ) {
+    return null;
+  }
+  if (!heritageBindsParentClass(ctx, className!, parent)) return null;
+  const declaration = ts.isIdentifier(bare) ? ctx.oracle.valueDeclarationOf(bare) : undefined;
+  if (declaration === undefined || !bindingIsUniqueAndNeverWritten(bare as ts.Identifier, declaration)) return null;
+  const argType = compileExpression(ctx, fctx, arg0);
+  if (argType) fctx.body.push({ op: "drop" });
+  if (!emitLazyClassObjectGet(ctx, fctx, parent)) fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
  * Handle ES5 errors and intrinsic constructor/namespace relations before the
  * specialized generator, class, and typed-array getPrototypeOf cases.
  */
@@ -337,11 +381,15 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // READ, not folded — see `tryEmitDynamicProtoRuntimeRead`.
   const dynamicProtoRead = tryEmitDynamicProtoRuntimeRead(ctx, fctx, arg0);
   if (dynamicProtoRead) return dynamicProtoRead;
+  const overrideProto = tryEmitOverrideBindingGetPrototypeOf(ctx, fctx, arg0); // (#6772 S2)
+  if (overrideProto) return overrideProto;
 
   // (#6767 step 2) A standalone BASE class and its prototype read their real
   // [[Prototype]] instead of the class folds below — see the helper.
   const baseClassProto = tryEmitStandaloneBaseClassGetPrototypeOf(ctx, fctx, arg0);
   if (baseClassProto) return baseClassProto;
+  const derivedClassProto = tryEmitStandaloneDerivedClassGetPrototypeOf(ctx, fctx, arg0); // (#6772 S6)
+  if (derivedClassProto) return derivedClassProto;
 
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {

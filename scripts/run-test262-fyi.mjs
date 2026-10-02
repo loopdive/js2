@@ -296,6 +296,7 @@ export class FyiSourceExecutor {
         ...options,
         ...(test.entryFile && test.fixtureFiles ? { entryFile: test.entryFile, fixtureFiles: test.fixtureFiles } : {}),
         ...(test.selfModuleGraph === true ? { selfModuleGraph: true } : {}),
+        ...(test.requiresEntrySelfImportGraph === true ? { requiresEntrySelfImportGraph: true } : {}),
         ...(test.dynamicFixtureFiles ? { dynamicFixtureFiles: test.dynamicFixtureFiles } : {}),
       });
     });

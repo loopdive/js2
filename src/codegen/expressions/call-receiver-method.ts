@@ -2282,7 +2282,9 @@ export function compileReceiverMethodCall(
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, ngParamCount);
         const finalMethodIdx =
-          ownShadowFuncIdx(ctx, ownShadowName0) ?? ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+          ownShadowFuncIdx(ctx, ownShadowName0) ??
+          ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ??
+          funcIdx; // (#1983, #6772 S4)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const elseInstrs = fctx.body;
         fctx.body = savedBody;
@@ -2372,7 +2374,9 @@ export function compileReceiverMethodCall(
       if (!handledArgvSpreadNn) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
       // Re-lookup funcIdx: argument compilation may trigger addUnionImports
       const finalMethodIdx =
-        ownShadowFuncIdx(ctx, ownShadowName0) ?? ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+        ownShadowFuncIdx(ctx, ownShadowName0) ??
+        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ??
+        funcIdx; // (#1983, #6772 S4)
       fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
 
       // Determine return type

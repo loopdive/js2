@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11436,
-    "fail": 246,
-    "ce": 22,
+    "pass": 11474,
+    "fail": 216,
+    "ce": 14,
     "skip": 0,
     "total": 11704,
     "pct": 98,
@@ -66,12 +66,12 @@
       },
       {
         "name": "generators",
-        "pass": 2471,
-        "fail": 9,
-        "ce": 6,
+        "pass": 2474,
+        "fail": 11,
+        "ce": 1,
         "skip": 0,
         "total": 2486,
-        "pct": 99
+        "pct": 100
       },
       {
         "name": "default-parameters",
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 1026,
-        "fail": 24,
+        "pass": 1033,
+        "fail": 17,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 378,
-        "fail": 50,
+        "pass": 379,
+        "fail": 49,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -138,17 +138,17 @@
       },
       {
         "name": "class",
-        "pass": 387,
-        "fail": 16,
-        "ce": 7,
+        "pass": 394,
+        "fail": 11,
+        "ce": 5,
         "skip": 0,
         "total": 410,
-        "pct": 94
+        "pct": 96
       },
       {
         "name": "Reflect",
-        "pass": 266,
-        "fail": 57,
+        "pass": 267,
+        "fail": 56,
         "ce": 7,
         "skip": 0,
         "total": 330,
@@ -174,12 +174,12 @@
       },
       {
         "name": "computed-property-names",
-        "pass": 129,
-        "fail": 4,
+        "pass": 133,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 133,
-        "pct": 97
+        "pct": 100
       },
       {
         "name": "cross-realm",
@@ -1507,17 +1507,17 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1144,
-    "fail": 720,
+    "pass": 1150,
+    "fail": 714,
     "ce": 153,
     "skip": 18,
     "total": 2035,
-    "pct": 56,
+    "pct": 57,
     "features": [
       {
         "name": "BigInt",
-        "pass": 635,
-        "fail": 336,
+        "pass": 641,
+        "fail": 330,
         "ce": 77,
         "skip": 0,
         "total": 1048,
@@ -1525,12 +1525,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 419,
-        "fail": 214,
+        "pass": 425,
+        "fail": 208,
         "ce": 75,
         "skip": 0,
         "total": 708,
-        "pct": 59
+        "pct": 60
       },
       {
         "name": "dynamic-import",
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4248,
-    "fail": 1162,
-    "ce": 382,
+    "fail": 1165,
+    "ce": 379,
     "skip": 0,
     "total": 5792,
     "pct": 73,
@@ -2214,8 +2214,8 @@
       {
         "name": "class-methods-private",
         "pass": 1468,
-        "fail": 170,
-        "ce": 71,
+        "fail": 171,
+        "ce": 70,
         "skip": 0,
         "total": 1709,
         "pct": 86
@@ -2223,8 +2223,8 @@
       {
         "name": "class-static-methods-private",
         "pass": 1181,
-        "fail": 201,
-        "ce": 131,
+        "fail": 202,
+        "ce": 130,
         "skip": 0,
         "total": 1513,
         "pct": 78
@@ -2241,8 +2241,8 @@
       {
         "name": "class-fields-private",
         "pass": 926,
-        "fail": 137,
-        "ce": 70,
+        "fail": 138,
+        "ce": 69,
         "skip": 0,
         "total": 1133,
         "pct": 82
@@ -2466,8 +2466,8 @@
       {
         "name": "class-fields-private-in",
         "pass": 12,
-        "fail": 2,
-        "ce": 5,
+        "fail": 5,
+        "ce": 2,
         "skip": 0,
         "total": 19,
         "pct": 63
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4641,
-    "fail": 734,
-    "ce": 70,
+    "pass": 4646,
+    "fail": 731,
+    "ce": 68,
     "skip": 0,
     "total": 5445,
     "pct": 85

@@ -210,6 +210,7 @@ export function createCodegenContext(
     classAccessorSet: new Set(),
     structAccessorClosure: new Map(), // (#1888 S5c) struct accessors compiled as host-free closures
     staticAccessorSet: new Set(),
+    classInstanceAccessorKeys: new Set(),
     staticMethodSet: new Set(),
     staticProps: new Map(),
     protoOverrides: new Map(), // #1719 CPR — captured prototype-member overrides
@@ -275,6 +276,7 @@ export function createCodegenContext(
     classTagCounter: 0,
     classTagMap: new Map(),
     classExprNameMap: new Map(),
+    classExprAmbiguousNames: new Set(),
     anonClassExprNames: new Map(),
     functionNameMap: new Map(),
     sourceMap: options?.sourceMap ?? false,

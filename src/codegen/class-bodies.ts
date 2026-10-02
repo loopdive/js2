@@ -28,7 +28,13 @@ import { emitPromiseSubclassProtoLink, isStandalonePromiseSuperForwarder } from 
 // declarations/expressions (the drive gate self-limits to standalone/wasi).
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
-import { classMemberFuncKey, classMemberRestParamKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123 / #6699)
+import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
+import {
+  classAccessorFuncKey,
+  classMemberFuncKey,
+  classMemberRestParamKey,
+  fnctorAncestorOfClass,
+} from "./class-member-keys.js"; // (#1983 / #3123 / #6699 / #6772 S12)
 import { dynamicClassKeyGlobalKey, dynamicClassMemberName, isDynamicClassMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { resolveClassHeritageAlias } from "./class-expression-identity.js";
@@ -43,11 +49,18 @@ import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-ca
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
 import { definedFuncAt } from "./func-space.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
+import { emitNativeConstructRuntimeArgv } from "./expressions/new-super.js"; // (#5383 S67) runtime-length `super(...spread)` across the link
 import {
-  emitNativeConstructRuntimeArgv, // (#5383 S67) runtime-length `super(...spread)` across the link
+  emitSuperCallBindThis,
   emitSuperInitializedFlagStore,
   ensureSuperInitializedFlagLocal,
-} from "./expressions/new-super.js"; // (#5350 r3) runtime this-initialised flag
+} from "./classes/derived-ctor-this-guard.js"; // (#5350 r3 / #6772 S1b) runtime this-initialised flag
+import {
+  emitCtorFallthroughOverride,
+  emitSaveParentOverride,
+  markCtorReturnOverrideClass,
+  tryEmitFnctorSuperOverride,
+} from "./classes/ctor-return-override.js"; // (#6772 S2)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
@@ -64,6 +77,7 @@ import {
   emitThrowReferenceError,
   emitThrowTypeError,
   getFuncParamTypes,
+  getWasmFuncReturnType,
   wasmFuncReturnsVoid,
 } from "./expressions/helpers.js";
 import { compileSpreadCallArgsWithArguments } from "./expressions/spread-arguments-call.js";
@@ -1057,7 +1071,7 @@ export function collectClassDeclaration(
   if (decl.heritageClauses) {
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
-        const baseExpr = clause.types[0]!.expression;
+        const baseExpr = standaloneCommaHeritage(ctx, decl)?.value ?? clause.types[0]!.expression; // (#6772 S6)
         if (!ctx.standalone && !ctx.wasi)
           hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
         if (ts.isIdentifier(baseExpr)) {
@@ -1231,6 +1245,7 @@ export function collectClassDeclaration(
     }
   }
   if (parentStructTypeIdx !== undefined) (ctx.mod.types[parentStructTypeIdx] as StructTypeDef).superTypeIdx ??= -1;
+  markCtorReturnOverrideClass(ctx, className, decl); // (#6772 S2) before any binding of it is typed
   // Pre-register the struct type index BEFORE resolving field types.
   // This allows self-referencing fields (e.g. `next: ListNode | null` in class ListNode)
   // to resolve to `ref null $structTypeIdx` instead of falling back to externref.
@@ -1643,6 +1658,10 @@ export function collectClassDeclaration(
   // needs to see the instance member even when the static declaration appears
   // first in source order.
   for (const member of decl.members) {
+    if ((ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && !hasStaticModifier(member)) {
+      const accName = member.name ? resolveInstallableClassMemberName(ctx, className, decl, member) : undefined;
+      if (accName !== undefined) ctx.classInstanceAccessorKeys.add(`${className}_${accName}`); // (#6772 S12)
+    }
     if (!ts.isMethodDeclaration(member) || !member.name || !member.body) continue;
     const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
     if (methodName === undefined) continue;
@@ -1838,11 +1857,13 @@ export function collectClassDeclaration(
       }
 
       const getterName = `${className}_get_${propName}`;
+      // (#6772 S12) a static half with an instance twin takes its own key.
+      const getterKey = classAccessorFuncKey(ctx, className, "get", propName, hasStaticModifier(member));
       // Skip if a function with this name is already registered (e.g., when
       // both a static and instance getter share the same computed property name,
       // they produce the same function name — avoid creating duplicates that
       // leave empty-body placeholders causing "stack fallthru" validation errors).
-      if (ctx.funcMap.has(classMemberFuncKey(ctx, getterName))) continue; // (#1983)
+      if (ctx.funcMap.has(getterKey)) continue; // (#1983)
       // Getter takes self, returns the accessor return type
       const getterParams: ValType[] = [
         ctx.classExternrefBackedSet.has(className) ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
@@ -1858,8 +1879,7 @@ export function collectClassDeclaration(
 
       const getterTypeIdx = addFuncType(ctx, getterParams, getterResults, `${getterName}_type`);
       const getterFuncIdx = mintDefinedFunc(ctx);
-      const getterKey = classMemberFuncKey(ctx, getterName); // (#1983) key + display name
-      ctx.funcMap.set(getterKey, getterFuncIdx);
+      ctx.funcMap.set(getterKey, getterFuncIdx); // (#1983) key + display name
       recordFnMetaMemberDeclaration(ctx, getterName, member); // (#4440) `get p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", getterFuncIdx, {
@@ -1881,8 +1901,9 @@ export function collectClassDeclaration(
       }
 
       const setterName = `${className}_set_${propName}`;
+      const setterKey = classAccessorFuncKey(ctx, className, "set", propName, hasStaticModifier(member)); // (#6772 S12)
       // Skip if already registered (same collision guard as getter above)
-      if (ctx.funcMap.has(classMemberFuncKey(ctx, setterName))) continue; // (#1983)
+      if (ctx.funcMap.has(setterKey)) continue; // (#1983)
       // Setter takes self + value, returns void
       const setterParams: ValType[] = [
         ctx.classExternrefBackedSet.has(className) ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
@@ -1894,8 +1915,7 @@ export function collectClassDeclaration(
 
       const setterTypeIdx = addFuncType(ctx, setterParams, [], `${setterName}_type`);
       const setterFuncIdx = mintDefinedFunc(ctx);
-      const setterKey = classMemberFuncKey(ctx, setterName); // (#1983) key + display name
-      ctx.funcMap.set(setterKey, setterFuncIdx);
+      ctx.funcMap.set(setterKey, setterFuncIdx); // (#1983) key + display name
       recordFnMetaMemberDeclaration(ctx, setterName, member); // (#4440) `set p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", setterFuncIdx, {
@@ -2928,6 +2948,7 @@ function compileClassBodiesInner(
         fctx.body.push({ op: "local.get", index: selfLocal });
         fctx.body.push({ op: "call", funcIdx: implicitParentInitIdx });
         fctx.body.push({ op: "drop" });
+        emitSaveParentOverride(ctx, fctx, className); // (#6772 S2)
       } else if (classHeritageIsIntrinsicSymbol(ctx, className)) {
         // (#6651 C5) The implicit `super(...args)` constructs `%Symbol%` with a
         // NewTarget — §20.4.1.1 step 1 throws. See the predicate.
@@ -3067,7 +3088,8 @@ function compileClassBodiesInner(
           stmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword
         ) {
           compileSuperCall(ctx, fctx, className, selfLocal, stmt.expression, fields);
-          emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
+          emitSuperCallBindThis(ctx, fctx); // (#5350 r3 / #6772 S1b) BindThisValue
+          emitSaveParentOverride(ctx, fctx, className); // (#6772 S2)
           if (isDerivedClass) {
             emitOwnInstanceFieldInitializers();
           }
@@ -3170,6 +3192,7 @@ function compileClassBodiesInner(
     }
 
     // Return the struct instance
+    emitCtorFallthroughOverride(ctx, fctx, className); // (#6772 S2)
     fctx.body.push({ op: "local.get", index: selfLocal });
 
     cacheStringLiterals(ctx, fctx);
@@ -3688,10 +3711,11 @@ function compileClassBodiesInner(
       if (propName === undefined) continue; // dynamic computed name — skip
       const getterName = `${className}_get_${propName}`;
       const getterKind = accessorKindOf(member);
-      const priorGetterKind = compiledAccessors.get(getterName);
+      const getterKey = classAccessorFuncKey(ctx, className, "get", propName, getterKind === "static"); // (#6772 S12)
+      const priorGetterKind = compiledAccessors.get(getterKey);
       if (priorGetterKind !== undefined && priorGetterKind !== getterKind) continue; // other kind owns the slot
-      compiledAccessors.set(getterName, getterKind);
-      const getterLocalIdx = funcByName.get(classMemberFuncKey(ctx, getterName)); // (#1983)
+      compiledAccessors.set(getterKey, getterKind);
+      const getterLocalIdx = funcByName.get(getterKey); // (#1983)
       if (getterLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[getterLocalIdx]!;
@@ -3803,10 +3827,11 @@ function compileClassBodiesInner(
       if (propName === undefined) continue; // dynamic computed name — skip
       const setterName = `${className}_set_${propName}`;
       const setterKind = accessorKindOf(member);
-      const priorSetterKind = compiledAccessors.get(setterName);
+      const setterKey = classAccessorFuncKey(ctx, className, "set", propName, setterKind === "static"); // (#6772 S12)
+      const priorSetterKind = compiledAccessors.get(setterKey);
       if (priorSetterKind !== undefined && priorSetterKind !== setterKind) continue; // other kind owns the slot
-      compiledAccessors.set(setterName, setterKind);
-      const setterLocalIdx = funcByName.get(classMemberFuncKey(ctx, setterName)); // (#1983)
+      compiledAccessors.set(setterKey, setterKind);
+      const setterLocalIdx = funcByName.get(setterKey); // (#1983)
       if (setterLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[setterLocalIdx]!;
@@ -4498,7 +4523,12 @@ export function compileSuperCall(
         }
         const finalFnctorIdx = ctx.funcMap.get(fnctorParent) ?? fnctorIdx;
         fctx.body.push({ op: "call", funcIdx: finalFnctorIdx });
-        if (!wasmFuncReturnsVoid(ctx, finalFnctorIdx)) fctx.body.push({ op: "drop" });
+        const fnctorResult = wasmFuncReturnsVoid(ctx, finalFnctorIdx)
+          ? undefined
+          : getWasmFuncReturnType(ctx, finalFnctorIdx);
+        // (#6774 S22) a returned Object becomes `this` and `super()`'s value.
+        if (fnctorResult && !tryEmitFnctorSuperOverride(ctx, fctx, fnctorParent, fnctorResult))
+          fctx.body.push({ op: "drop" });
         return;
       }
     }
@@ -4556,10 +4586,14 @@ export function compileSuperCall(
     for (let i = 0; i < Math.min(flatArgs.length, paramTypes.length); i++) {
       compileExpression(ctx, fctx, flatArgs[i]!, paramTypes[i]);
     }
-    for (let i = paramTypes.length; i < flatArgs.length; i++) {
-      const argResult = compileExpression(ctx, fctx, flatArgs[i]!);
-      if (argResult !== null) {
-        fctx.body.push({ op: "drop" });
+    // (#6772 S1a) A parent that reads `arguments` sees the extras through
+    // `__extras_argv`, exactly as the `new` site publishes them.
+    if (flatArgs.length > paramTypes.length && ctx.funcUsesArguments.has(parentInitName)) {
+      emitSetExtrasArgv(ctx, fctx, flatArgs, paramTypes.length);
+    } else {
+      for (let i = paramTypes.length; i < flatArgs.length; i++) {
+        const argResult = compileExpression(ctx, fctx, flatArgs[i]!);
+        if (argResult !== null) fctx.body.push({ op: "drop" });
       }
     }
     for (let i = flatArgs.length; i < paramTypes.length; i++) {

@@ -46,6 +46,7 @@ import { expectedArgumentCountOfParams } from "../function-expected-argument-cou
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
+import { tryEmitClassCtorCallApply } from "../classes/class-ctor-call-apply.js"; // (#6772 S3)
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from; (#3149) native Map.groupBy
 import { isCollectionReflectiveCallShape, tryCompileCollectionReflectiveCall } from "../collections-brand.js"; // (#2604/#3171) {Map,Set,WeakMap,WeakSet}.prototype.METHOD.call brand-check
@@ -514,7 +515,9 @@ import {
   tryCompileErrorCtorCallWithoutNew,
   tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
-import { compileSuperElementMethodCall, compileSuperMethodCall, emitSuperInitializedFlagStore } from "./new-super.js";
+import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
+import { constructorFrameClassName, emitSuperCallBindThis } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
+import { emitSaveParentOverride, emitSuperCallValue } from "../classes/ctor-return-override.js"; // (#6772 S2 / #6774 S22)
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
@@ -8136,12 +8139,13 @@ function compileCallExpression(
     if (lateArrowSuper !== undefined) return lateArrowSuper;
   }
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor === true) {
-    const enclosingClass = resolveEnclosingClassName(fctx);
+    const enclosingClass = constructorFrameClassName(ctx, fctx); // (#6772 S1b)
     const thisLocal = fctx.localMap.get("this");
     if (enclosingClass !== undefined && thisLocal !== undefined) {
       compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
-      emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
-      return VOID_RESULT;
+      emitSuperCallBindThis(ctx, fctx); // (#5350 r3 / #6772 S1b) BindThisValue
+      emitSaveParentOverride(ctx, fctx, enclosingClass); // (#6772 S2)
+      return ctx.standalone ? emitSuperCallValue(ctx, fctx, thisLocal) : VOID_RESULT; // (#6774 S22) the bound `this`
     }
   }
 
@@ -8416,6 +8420,8 @@ function compileCallExpression(
       // (`Promise.prototype.then.call(Promise.prototype, …)`).
       const brandThis = tryBorrowedPrototypeBrandThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
       if (brandThis !== undefined) return brandThis;
+      const classCtorCall = tryEmitClassCtorCallApply(ctx, fctx, expr, propAccess); // (#6772 S3) §10.2.1 step 2
+      if (classCtorCall !== undefined) return classCtorCall;
 
       // (#4483) `Function.call(thisArg, …body)` / `Function.apply(thisArg, [body])`
       // are reflective spellings of the Function CONSTRUCTOR, whose [[Call]]

@@ -67,6 +67,7 @@ import { classIdentityFromExpression, hasClassStaticMethod } from "./class-stati
 import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
+import { isReturnOverrideMemberRead } from "./classes/ctor-return-override.js"; // (#6772 S2)
 import { strictThisMayBePrimitive } from "./expressions/bool-to-locale-string.js"; // (#6771 S6)
 
 // (#2726 group (b), partial) The only value properties of the global object with
@@ -1947,6 +1948,7 @@ export function compileTypeofExpression(
     if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    if (isReturnOverrideMemberRead(ctx, bareTdz)) forceRuntimeTypeof = true; // (#6772 S2)
     // (#4428) Same disagreement one level down: `typeof x[0]` on an array whose
     // element representation was widened must read the value, not the type.
     if (elementReadOfRebindWidenedArray(ctx, bareTdz) || stringWrapperIndexNeedsRuntimeTypeof(ctx, fctx, bareTdz)) {
@@ -2344,6 +2346,8 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
   }
+  // (#6772 S2) the receiver may be a constructor's foreign override object.
+  if (staticTypeof !== null && isReturnOverrideMemberRead(ctx, operand)) staticTypeof = null;
   // (#5360) Same guard as compileTypeofExpression — a parameter's `undefined`/
   // `null` type inferred from its own default initializer is not a fact about
   // the argument a JS caller passed.

@@ -60,6 +60,8 @@ import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-arr
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -117,6 +119,8 @@ function emitHandledClassExpressionBindingEffects(
   // is IsConstructor-checked before the class object exists, and before the
   // computed-key effects that follow it here.
   emitStandaloneHeritageCheck(ctx, fctx, initializer, compileExpression);
+  emitStandaloneCommaHeritageEffects(ctx, fctx, initializer, compileExpression); // (#6772 S6)
+  emitStandaloneHeritagePrototypeGet(ctx, fctx, initializer); // (#6772 S11)
   emitUnresolvedComputedAccessorNameEffects(ctx, fctx, initializer);
   const materialization = fctx.body.splice(materializationStart, materializationEnd - materializationStart);
   const effects = fctx.body.splice(materializationStart);

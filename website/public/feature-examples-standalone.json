@@ -131,7 +131,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 57,
+      "passCount": 58,
       "totalCount": 59,
       "editionSpread": [
         {
@@ -141,7 +141,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 10,
+          "pass": 11,
           "total": 11
         },
         {
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4457,
+      "passCount": 4459,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 745,
+          "pass": 747,
           "total": 752
         },
         {
@@ -1031,7 +1031,7 @@
     {
       "name": "Computed property names",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 129,
+      "passCount": 133,
       "totalCount": 133
     },
     {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2471,
+      "passCount": 2474,
       "totalCount": 2486
     },
     {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 433,
+      "passCount": 440,
       "totalCount": 461
     },
     {
@@ -1092,18 +1092,18 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 1081,
+      "passCount": 1088,
       "totalCount": 1106
     },
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 425,
+      "passCount": 429,
       "totalCount": 731,
       "editionSpread": [
         {
           "edition": "ES2015",
-          "pass": 54,
+          "pass": 56,
           "total": 68
         },
         {
@@ -1143,7 +1143,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 155,
+          "pass": 157,
           "total": 225
         }
       ]
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 967,
+      "passCount": 968,
       "totalCount": 1072
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 635,
+      "passCount": 641,
       "totalCount": 1048
     },
     {

@@ -157,6 +157,7 @@ import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
 import { isStandaloneArraySubclass } from "../array-subclass-receiver.js"; // (#2917)
+import { newSiteBuiltinParent } from "../builtin-subclass-new-site.js"; // (#6772 S10)
 import { emitArrayRootedProtoParent } from "../vec-proto-link.js"; // (#2917)
 import { arrayCtorThisCallSeen } from "../array/array-ctor-this.js"; // (#6771 S7)
 import {
@@ -3075,8 +3076,13 @@ export function compileBuiltinStaticCall(
     const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
     // (#2917) A standalone Array subclass's struct is vestigial — the instance
     // is a vec — so the struct fold answered `undefined` for `length`/indices.
+    // (#6772 S10) Same for a new-site builtin subclass (`class RE extends RegExp {}`):
+    // the instance IS the parent's carrier, so only the dynamic native knows its own keys.
+    const arg0SymName = arg0TsType.getSymbol()?.name;
     const structName =
-      isScriptGlobalThisReceiver || isStandaloneArraySubclass(ctx, arg0TsType.getSymbol()?.name)
+      isScriptGlobalThisReceiver ||
+      isStandaloneArraySubclass(ctx, arg0SymName) ||
+      (arg0SymName !== undefined && newSiteBuiltinParent(ctx, arg0SymName) !== undefined)
         ? undefined
         : resolveStructName(ctx, arg0TsType);
     const literalKeyText = (e: ts.Expression): string | undefined => {

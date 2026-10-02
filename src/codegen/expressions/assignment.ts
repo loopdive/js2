@@ -9,7 +9,7 @@ import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#6651 F4)
-import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
+import { classMemberFuncKey, isInstanceAccessorKey, staticReceiverAccessorKey } from "../class-member-keys.js"; // (#5195 Step 9 H / #6772 S12) accessor keys
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import {
@@ -72,6 +72,7 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#268
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
+import { guardThisReceiver } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
 import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
@@ -4194,6 +4195,7 @@ function compilePropertyAssignment(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  guardThisReceiver(ctx, fctx, target.expression); // (#6772 S1b)
   // A folded direct-eval body lives in the foreign `<eval>.ts` source file.
   // Its `this.#private` assignment is still lexically inside the surrounding
   // static class method, so let the private-accessor path classify it with the
@@ -4659,7 +4661,14 @@ function compilePropertyAssignment(
     // and a static field can never share a name.
     if (ctx.staticAccessorSet.has(fullName)) {
       const setterName = `${clsName}_set_${propName}`;
-      const setterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, setterName, "static"));
+      const setterKey = staticReceiverAccessorKey(
+        ctx,
+        clsName,
+        "set",
+        propName,
+        classMemberFuncKey(ctx, setterName, "static"),
+      );
+      const setterIdx = ctx.funcMap.get(setterKey); // (#6772 S12)
       if (setterIdx !== undefined) {
         return emitSetterCallWithDummy(ctx, fctx, clsName, setterName, setterIdx, value);
       }
@@ -5659,6 +5668,7 @@ function compileElementAssignment(
   target: ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  guardThisReceiver(ctx, fctx, target.expression); // (#6772 S1b)
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
 
@@ -5752,7 +5762,7 @@ function compileElementAssignment(
         const accessorKey = `${resolvedClass}_${key}`;
         if (ctx.classAccessorSet.has(accessorKey)) {
           const setterName = `${resolvedClass}_set_${key}`;
-          const funcIdx = ctx.funcMap.get(setterName);
+          const funcIdx = ctx.funcMap.get(staticReceiverAccessorKey(ctx, resolvedClass, "set", key, setterName)); // (#6772 S12)
           if (funcIdx !== undefined) {
             return emitSetterCallWithDummy(ctx, fctx, resolvedClass, setterName, funcIdx, value);
           }
@@ -5788,7 +5798,7 @@ function compileElementAssignment(
       const key = resolveComputedKeyExpression(ctx, target.argumentExpression);
       if (key !== undefined) {
         const accessorKey = `${className}_${key}`;
-        if (ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey)) {
+        if (isInstanceAccessorKey(ctx, accessorKey)) {
           const setterName = `${className}_set_${key}`;
           const funcIdx = ctx.funcMap.get(setterName);
           if (funcIdx !== undefined) {

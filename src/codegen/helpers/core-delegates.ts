@@ -14,6 +14,9 @@
  * registered once, at module scope, by `src/codegen/expressions.ts` — the same
  * registrar that wires the `shared.ts` delegates. Every wrapper forwards its
  * arguments unchanged.
+ *
+ * (#6772) The class-semantics leaves under `src/codegen/classes/` use the same
+ * mechanism for the handful of class-metadata / call-guard helpers they need.
  */
 import type { addStringConstantGlobal as AddStringConstantGlobal } from "../registry/imports.js";
 import type { buildThrowJsErrorInstrs as BuildThrowJsErrorInstrs } from "../js-errors.js";
@@ -32,25 +35,45 @@ import type { emitArrayIsArrayExternrefPredicate as EmitArrayIsArrayExternrefPre
 import type { buildArrayLikeToLengthFromExternref as BuildArrayLikeToLengthFromExternref } from "../object-runtime-enumeration.js";
 import type { sourceOverridesBuiltinPrototypeMember as SourceOverridesBuiltinPrototypeMember } from "../builtin-proto-member-override.js";
 import type { protoIndexBrandCompanionHasInstrs as ProtoIndexBrandCompanionHasInstrs } from "../proto-index-store.js";
+import type { classIdentityFromExpression as ClassIdentityFromExpression } from "../class-static-metadata.js";
+import type { compileObjectLiteralAsExternref as CompileObjectLiteralAsExternref } from "../literals.js";
+import type { sourceClassForCallee as SourceClassForCallee } from "../class-call-without-new.js";
+import type {
+  runtimeEvalMayReplaceCallee as RuntimeEvalMayReplaceCallee,
+  unwrapCallee as UnwrapCallee,
+} from "../expressions/calls-guards.js";
+import type {
+  bindingIsUniqueAndNeverWritten as BindingIsUniqueAndNeverWritten,
+  heritageExpressionNeedingRuntimeCheck as HeritageExpressionNeedingRuntimeCheck,
+} from "../class-heritage-check.js";
+import type { ensureObjectRuntime as EnsureObjectRuntime } from "../object-runtime.js";
 
 /** The core functions the leaves reach through this module. */
 export interface CoreDelegates {
   addStringConstantGlobal: typeof AddStringConstantGlobal;
+  bindingIsUniqueAndNeverWritten: typeof BindingIsUniqueAndNeverWritten;
   buildArrayLikeToLengthFromExternref: typeof BuildArrayLikeToLengthFromExternref;
   buildThrowJsErrorInstrs: typeof BuildThrowJsErrorInstrs;
   canonicalUndefinedExternInstrs: typeof CanonicalUndefinedExternInstrs;
   clampRelative: typeof ClampRelative;
+  classIdentityFromExpression: typeof ClassIdentityFromExpression;
+  compileObjectLiteralAsExternref: typeof CompileObjectLiteralAsExternref;
   emitArrayIsArrayExternrefPredicate: typeof EmitArrayIsArrayExternrefPredicate;
   emitArraySetLengthValidation: typeof EmitArraySetLengthValidation;
   emitBuiltinNamespaceObject: typeof EmitBuiltinNamespaceObject;
+  ensureObjectRuntime: typeof EnsureObjectRuntime;
+  heritageExpressionNeedingRuntimeCheck: typeof HeritageExpressionNeedingRuntimeCheck;
   holeSentinelInstrs: typeof HoleSentinelInstrs;
   holeTestInstrs: typeof HoleTestInstrs;
   integerArg: typeof IntegerArg;
   protoIndexBrandCompanionHasInstrs: typeof ProtoIndexBrandCompanionHasInstrs;
   requireObjectCoercible: typeof RequireObjectCoercible;
   resolveSliceDeps: typeof ResolveSliceDeps;
+  runtimeEvalMayReplaceCallee: typeof RuntimeEvalMayReplaceCallee;
+  sourceClassForCallee: typeof SourceClassForCallee;
   sourceOverridesBuiltinPrototypeMember: typeof SourceOverridesBuiltinPrototypeMember;
   stringConstantExternrefInstrs: typeof StringConstantExternrefInstrs;
+  unwrapCallee: typeof UnwrapCallee;
 }
 
 let registered: CoreDelegates | undefined;
@@ -96,3 +119,16 @@ export const sourceOverridesBuiltinPrototypeMember: CoreDelegates["sourceOverrid
   core().sourceOverridesBuiltinPrototypeMember(...a);
 export const stringConstantExternrefInstrs: CoreDelegates["stringConstantExternrefInstrs"] = (...a) =>
   core().stringConstantExternrefInstrs(...a);
+export const bindingIsUniqueAndNeverWritten: CoreDelegates["bindingIsUniqueAndNeverWritten"] = (...a) =>
+  core().bindingIsUniqueAndNeverWritten(...a);
+export const classIdentityFromExpression: CoreDelegates["classIdentityFromExpression"] = (...a) =>
+  core().classIdentityFromExpression(...a);
+export const compileObjectLiteralAsExternref: CoreDelegates["compileObjectLiteralAsExternref"] = (...a) =>
+  core().compileObjectLiteralAsExternref(...a);
+export const ensureObjectRuntime: CoreDelegates["ensureObjectRuntime"] = (...a) => core().ensureObjectRuntime(...a);
+export const heritageExpressionNeedingRuntimeCheck: CoreDelegates["heritageExpressionNeedingRuntimeCheck"] = (...a) =>
+  core().heritageExpressionNeedingRuntimeCheck(...a);
+export const runtimeEvalMayReplaceCallee: CoreDelegates["runtimeEvalMayReplaceCallee"] = (...a) =>
+  core().runtimeEvalMayReplaceCallee(...a);
+export const sourceClassForCallee: CoreDelegates["sourceClassForCallee"] = (...a) => core().sourceClassForCallee(...a);
+export const unwrapCallee: CoreDelegates["unwrapCallee"] = (...a) => core().unwrapCallee(...a);

@@ -33,7 +33,12 @@ import {
 } from "./proxy-receiver-generic-read.js"; // (#6651 F4)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
-import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
+import {
+  classMemberFuncKey,
+  isInstanceAccessorKey,
+  resolveMethodOwnerClass,
+  staticReceiverAccessorKey,
+} from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
@@ -457,6 +462,7 @@ import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.
 import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { identityPreservingStructuralParamCarrier } from "./identity-preserving-structural-param.js";
+import { isReturnOverrideMemberRead, returnOverrideReceiverIsDynamic } from "./classes/ctor-return-override.js"; // (#6772 S2)
 import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
   finalizeStructAndDynamicMemberGet,
@@ -1211,6 +1217,13 @@ export function resolveStructNameForExpr(
     typeName = resolveThisStructName(ctx, fctx);
   }
   typeName = typeName ?? carrierNameForAccess(ctx, resolvedCarrier, accessedMember); // (#5187)
+  // (#6772 S2) A binding of a return-override class may hold the FOREIGN
+  // override object, never castable to the struct: take the dynamic member
+  // path (it reads a real instance's fields too). Private members, and `this`
+  // outside an override-capable derived frame, keep the exact struct.
+  if (typeName !== undefined && returnOverrideReceiverIsDynamic(ctx, fctx, typeName, bareIdent, accessedMember)) {
+    return undefined;
+  }
   return typeName;
 }
 
@@ -3556,7 +3569,11 @@ function tryOpenObjectDynamicGet(
   const ownProto = ctx.standalone && propName === "__proto__" && receiverHasOwnComputedProto(ctx, expr);
   const irWithTarget = ownProto || isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
   if (!irWithTarget && !ctx.standalone) return undefined;
-  if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression)) return undefined;
+  // (#6772 S2) a return-override class binding may hold the foreign override
+  // object: read the raw MOP value (never the checker's field type).
+  if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression) && !isReturnOverrideMemberRead(ctx, expr)) {
+    return undefined;
+  }
   if (
     !irWithTarget &&
     (propName === "length" ||
@@ -5241,7 +5258,7 @@ export function compileElementAccess(
         const accessorKey = `${resolvedClass}_${key}`;
         if (ctx.classAccessorSet.has(accessorKey)) {
           const getterName = `${resolvedClass}_get_${key}`;
-          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
+          const funcIdx = ctx.funcMap.get(staticReceiverAccessorKey(ctx, resolvedClass, "get", key)); // (#6772 S12)
           if (funcIdx !== undefined) {
             const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
             return retType ?? { kind: "externref" };
@@ -5295,7 +5312,7 @@ export function compileElementAccess(
       const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
       if (key !== undefined) {
         const accessorKey = `${className}_${key}`;
-        if (ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey)) {
+        if (isInstanceAccessorKey(ctx, accessorKey)) {
           const getterName = `${className}_get_${key}`;
           const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
           if (funcIdx !== undefined) {
@@ -5309,7 +5326,7 @@ export function compileElementAccess(
         // dot-access path at property-access.ts:1361–1383.
         const methodFullName = `${className}_${key}`;
         if (ctx.classMethodSet.has(methodFullName) && !ctx.staticMethodSet.has(methodFullName)) {
-          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"));
           const structTypeIdx = ctx.structMap.get(className);
           if (funcIdx !== undefined && structTypeIdx !== undefined) {
             if (emitCachedMethodClosureAccess(ctx, fctx, methodFullName, funcIdx, structTypeIdx)) {
