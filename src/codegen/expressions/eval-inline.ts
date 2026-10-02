@@ -26,6 +26,7 @@ import { emitVariadicStringConcat, nativeStringRepr } from "../builtin-scaffold.
 import { emitGlobalEnvironmentObject } from "../global-environment.js";
 import { hoistFunctionDeclarations } from "../statements/nested-declarations.js";
 import { hoistLetConstWithTdz, hoistVarDeclarations } from "../index.js";
+import { hasSpreadArgument } from "../spread-arg-list.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, compileStatement } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -39,11 +40,13 @@ import { isStrictContext } from "../helpers/is-strict-function.js";
 import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
 import { evalCallerCapabilities, foldedEvalEarlyError } from "./eval-early-errors.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
+import { buildEvalArgumentList } from "./eval-argument-list.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import {
   emitRuntimeEvalGlobalBindingSeed,
   emitRuntimeEvalProviderActive,
   emitRuntimeEvalResultUnwrap,
+  prepareRuntimeEvalArgumentPhase,
   RUNTIME_EVAL_IMPORT_MODULE,
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
@@ -1008,6 +1011,10 @@ export function tryStaticEvalInline(
   directEval = false,
 ): InnerResult | undefined {
   if (expr.arguments.length === 0) return undefined;
+  // ArgumentListEvaluation must expand spreads before deciding which value is
+  // eval's source. The folded path only has an AST first argument, so leave
+  // every standalone spread shape to the runtime path's full list builder.
+  if (ctx.standalone && hasSpreadArgument(expr.arguments)) return undefined;
 
   // Resolve literals first. Only direct eval may widen through const bindings:
   // the splice cannot generally model indirect eval's global environment.
@@ -2037,16 +2044,22 @@ export function emitStandaloneIndirectEvalRuntime(
   }
 
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+  // Reserve every provider/global-sync artifact before ArgumentListEvaluation,
+  // but defer the observable PUSH_GLOBALS call until those user expressions
+  // have completed. Besides stabilizing late import indices, this prevents a
+  // trailing argument's Script-global write from being overwritten by a stale
+  // provider snapshot when the result is unwrapped below.
+  prepareRuntimeEvalArgumentPhase(ctx, fctx);
+  const argumentList = buildEvalArgumentList(ctx, fctx, args, "eval_indirect_args", true);
+  if (!argumentList) return undefined;
+  const sourceLocal = argumentList.sourceLocal;
 
-  const sourceType = compileExpression(ctx, fctx, args[0]!);
-  if (sourceType && sourceType.kind !== "externref") {
-    coerceType(ctx, fctx, sourceType, { kind: "externref" });
-  }
-  for (let i = 1; i < args.length; i++) {
-    const extraType = compileExpression(ctx, fctx, args[i]!);
-    if (extraType !== null) fctx.body.push({ op: "drop" });
-  }
+  // §13.3.8.1 finishes ArgumentListEvaluation before the indirect PerformEval
+  // boundary. Seed afterwards so PULL_GLOBALS retains all source/trailing
+  // argument effects; setup was preflighted above, so a provider decline cannot
+  // replay those effects on a fallback path.
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+  fctx.body.push({ op: "local.get", index: sourceLocal });
   if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -2083,13 +2096,18 @@ export function emitStandaloneGlobalScriptEvalRuntime(
     return { kind: "externref" };
   }
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
+  // Keep provider/index setup before user arguments while leaving the
+  // observable Script-global seed at the PerformEval boundary below.
+  prepareRuntimeEvalArgumentPhase(ctx, fctx);
+  const argumentList = buildEvalArgumentList(ctx, fctx, args, "eval_script_args", true);
+  if (!argumentList) return undefined;
+  const sourceLocal = argumentList.sourceLocal;
+
+  // Global Script evaluation shares the same ArgumentListEvaluation ordering:
+  // only publish the AOT snapshot once the source and all trailing arguments
+  // have run, immediately before entering the provider.
   emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
-  const sourceType = compileExpression(ctx, fctx, args[0]!);
-  if (sourceType && sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
-  for (let i = 1; i < args.length; i++) {
-    const extraType = compileExpression(ctx, fctx, args[i]!);
-    if (extraType !== null) fctx.body.push({ op: "drop" });
-  }
+  fctx.body.push({ op: "local.get", index: sourceLocal });
   if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
   const evalIdx = ensureLateImport(
     ctx,
