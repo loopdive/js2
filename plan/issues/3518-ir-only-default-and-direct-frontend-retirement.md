@@ -144,6 +144,108 @@ ownership-method lines; audit compatibility with current physical ownership.
 No live activation or PR #6195 deletion. Return exact hashes, compatibility
 findings and a current-owner/full-33 validation manifest before execution.
 
+After checkpoint8b37543 was published and its local hooks terminated, A received
+the sole execution slot for that frozen e473 composition: canonical/supplemental
+TS7, unchanged31+2 binding controls and all seven current-owner suites in its
+reviewed handoff. Preserve first failures and actual nonempty denominators; no
+automatic source/test changes or prior-base success inheritance. New main9187cce
+changes CI test262 gating, not these compiler/runtime inputs; retain the exact
+measured basis and incorporate the stricter gate before landing acceptance.
+
+Current-main binding canonical TS7 (91260) exits0; the original31 controls
+pass31/31. The supplemental project (43406) exits1 with diagnostics in existing
+owner fixtures, not the new binding files. Preserve that full-project failure.
+After unchanged runtime coverage, compare identical seven-owner-only strict
+projects on candidate and exacte473 main, and separately check full source plus
+the two new binding suites. These additional scopes attribute the errors; they
+do not replace or turn the original failing supplemental check green.
+
+The supplemental failure contains38 diagnostics. Runtime has now measured
+31/31 original binding controls,2/2 supplemental controls,149/149 module-owner,
+15/15 completion,6/6 type-authority and49/49 snapshot controls. The unchanged
+native-object-layout suite instead reports50/52: both historical Object-layout
+digest assertions fail (prefix=false and prefix=true). Attribution is pending;
+do not repin the digest, edit fixtures or count these two failures as passes.
+A's serial assignment additionally runs that entire unchanged52-case file on
+exacte473 main, preserves both raw failures and compares complete rows/error
+text with only checkout-root normalization. This is diagnosis, not authority
+to change the historical oracle. Remaining owner suites must finish before
+the execution slot transfers to C's frozen three-arm Promise comparison.
+
+All nine candidate runtime files are now terminal:427 collected,425 passing,
+2 failing,0 pending. The remaining owner suites pass81/81 extensible-self-root
+and42/42 final-parent controls. Binding-only strict TS7 exits0 (69536), while
+candidate seven-owner-only TS7 exits1 (60318); baseline attribution is pending.
+The two layout failures occur at the historical source-span hash assertion,
+before declaration execution/comparison. B receives a read-only source-lineage
+assignment to identify the actual historical/current layout delta and whether
+the native recipe tracks either layout. This does not authorize oracle changes
+or confer equivalence credit. A remains the sole local execution owner.
+
+Baseline attribution is now terminal: exacte473 seven-owner TS7 (96961) exits1
+with stdout byte-identical to candidate (60318). Its unchanged full layout file
+(38473) exits1 with50/52. Parent independently compared all52 ordered names,
+statuses and complete failure messages: equal after checkout-root substitution
+only. Thus both failures and38 typing diagnostics already exist on the exact
+baseline; neither becomes a pass. Candidate binding-only TS7 and33 binding
+controls remain separately measured positives. All granted A executions have
+terminal receipts; A is instructed to release the slot without further execution.
+
+A confirmed all15 validation runs terminal and released the slot. C received
+the reviewed manifest's explicit parent grant and started the unchanged pinned
+three-arm diagnostic, process46373, run directory
+`.tmp/5883-host-three-arm-2026-10-02T05-16-12.973Z-46373` in C's owned checkout.
+Parent independently verified that exact process live with original-main child
+output. No runtime outcome is inferred from startup. Source pins remain runner
+4cb1b7d73aada42758b1b457d7f389e79e4a7b1f79d56c39dc04814bffbdc684
+and plugin b87b2a6d158fe86fb16be291c952c7b85d5bc1722f11940be5718a6186e73234;
+subjects are immutable2bfe and published8b375. Only the manifest's execution
+grant changed. Original fixtures, full eight-case populations and35-second
+timeouts remain unchanged; original failure reproduction and both wired arms'
+exact positive assertions are required before accepting the wiring hypothesis.
+
+Live PR5883 readiness review now finds all44 checks terminal (24 success,
+19 skipped,1 failure), unchanged published head8b375, hold retained, auto-merge
+off and no unresolved review threads. Quality run36966835057/job110712310593
+fails its changed-root gate: original pop-storage-regression file has19/33
+passing and14 failures, first at line101's missing storage-body capacity marker.
+This is a demonstrated landing blocker, not a waived instrument defect. D's
+next read-only assignment must inspect all failure messages, emitted/source
+ownership and historical changes before parent specifies a repair preserving
+all33 cases and behavioral assertions. No CI retry, fixture repin or gate change.
+New main db906b60073de22c91842fbd6d46f5443cb09b7b adds benchmark artifacts
+after9187's stricter test262 gate; reviewed delta frome473 has no compiler/runtime
+changes. Integrate that gate before landing; skipped checks prove no execution.
+
+The three-arm Promise diagnostic now has independent terminal child receipts:
+untouched2bfe exits1 with exactly the two original35000ms timeouts and6/8 passes;
+identically wired2bfe and8b375 each exit0 with8/8 original assertions passing.
+Parent read every ordered row and the positive two-site transformation receipts.
+This supports the missing instance-wiring hypothesis for these two fixtures;
+it is not full Promise/IR equivalence or permission to erase original failures.
+No production fix or permanent original-fixture edit has been made.
+
+B's read-only layout lineage identifies d71b6e53ab23ac25bc810efd83c6a8ea1a6493ee
+as the entire historical/current span change: legacy Object now appends mutable
+protoLink:anyref at index6 and asserts its last-field placement. Historical
+span4195bytes/e4d546ab becomes4599bytes/b7944c4c on exacte473. The IR factory
+still defines six fields, and its constructors still supply six operands.
+The old test reads moving production source despite authenticating a historical
+span. A future historical-oracle repair must preserve the exact old span/digest
+and both prefix cases; merely changing its expected digest is prohibited.
+Current representation compatibility remains separate unresolved implementation
+work: IR wrapper payloads/realm slots already use index6. Do not blindly append
+the legacy field or claim historical-layout coverage proves current equivalence.
+Before implementation, specify coordinated declarations, constructors, field
+readers and prototype semantics, or a fully justified representation boundary.
+
+Latest dispatch reconfirms parent ownership of implementation plans, issue
+updates, integration and protected-queue decisions. Existing native Sol6.1
+Medium agents retain isolated assignments: A validation/attribution; B frozen
+comparison acceptance review without execution; C frozen Promise comparison
+awaiting the slot; D read-only live PR5883 readiness review. No new sidebar
+sessions, overlapping writers or extra migration scope are authorized here.
+
 ### B — Repair and execute the bounded extraction comparison instrument
 
 Own only the #5753 V9 runner/config and its receipt documentation. Preserve V8's
