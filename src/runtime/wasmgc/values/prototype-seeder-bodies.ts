@@ -126,14 +126,10 @@ export function buildPrototypeSeedMemberTail(member: string, kind: "method" | "g
   ];
 }
 
-export function buildPrototypeSeedDataPropertyTail(
-  kind: "string" | "number",
-  defineValueIdx: number,
-  flags?: number,
-): Instr[] {
+export function buildPrototypeSeedDataPropertyTail(kind: "string" | "number", defineValueIdx: number): Instr[] {
   return buildPrototypeSeedDataTail(
     defineValueIdx,
-    flags ?? (kind === "number" ? PROTOTYPE_SEED_FLAGS.constant : PROTOTYPE_SEED_FLAGS.method),
+    kind === "number" ? PROTOTYPE_SEED_FLAGS.constant : PROTOTYPE_SEED_FLAGS.method,
   );
 }
 

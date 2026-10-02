@@ -173,7 +173,7 @@ export interface NativeProtoBuiltinGlue {
    * `{writable:true, enumerable:false, configurable:true}` and answered as a
    * string constant by the static value read.
    */
-  dataProps?: ReadonlyArray<readonly [string, string | number] | readonly [string, string | number, number]>;
+  dataProps?: ReadonlyArray<readonly [string, string | number]>;
   /**
    * (#5194 step 1) Brand of this prototype's own `[[Prototype]]` — the parent
    * level of the builtin prototype CHAIN. `Uint8Array.prototype`'s parent is
@@ -739,7 +739,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   // (#5194 step 1) A NUMERIC value is `<View>.prototype.BYTES_PER_ELEMENT`
   // (§23.2.7.1), whose attributes are all-false — not §17's — so the numeric
   // arm boxes the constant and uses `PROTO_CONST_DEFINE_FLAGS`.
-  for (const [key, value, flags] of glue.dataProps ?? []) {
+  for (const [key, value] of glue.dataProps ?? []) {
     const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
     if (defineIdx === undefined) continue;
     const boxNumberIdx = typeof value === "number" ? ctx.funcMap.get("__box_number") : undefined;
@@ -754,7 +754,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       addStringConstantGlobal(ctx, value);
       body.push(...stringConstantExternrefInstrs(ctx, value));
     }
-    body.push(...buildPrototypeSeedDataPropertyTail(typeof value === "number" ? "number" : "string", defineIdx, flags));
+    body.push(...buildPrototypeSeedDataPropertyTail(typeof value === "number" ? "number" : "string", defineIdx));
     installed++;
   }
 

@@ -4076,3 +4076,19 @@ Staged evidence rename passes tracked-ignored with no rule change. See
 5883-relocation-validation-20261002.md and its14-stream exact archive, decoded
 and compared byte-for-byte against native results. Publication/CI remain pending;
 no hold removal or claim that the historical91 failures have been repaired.
+
+Main refresh prepared against2b8101b9bc9a1910ce32a26e5b74e8a503f5b471:
+clean automatic merge, canonical82261/43839pass;183/183 in66743/43973
+(104 unchanged runtime+56 relocation+23 incoming built-ins), unchanged pins.
+Batch54406/44597 passes canonical,inventory,cycles,flat,LOC,function,coercion,
+oracle against actual main2b. Incoming S16 removes an own-name assertion;
+its revised test is not proof of that removed obligation. No legacy retirement.
+
+Clarification of retained historical reader denominator:176 rows execute in
+two suites (layout31,native145),85pass91fail; earlier/export controls additionally
+fail collection with zero rows. Parent verified both collection messages match
+exactly before/after relocation. They were never passes. Independent attribution
+identifies seven changed source operands; parent filed
+5883-historical-reader-successors-plan-20261002.md for bounded authenticated
+successor reconstruction. Original fixtures and all initial failures stay.
+Sol-6.1 Medium implementation starts only after parent finishes the main refresh.
