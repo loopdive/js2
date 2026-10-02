@@ -747,6 +747,41 @@ function isEmptyReconstructedConstructor(ctx: CodegenContext, expr: ts.NewExpres
  */
 const dynamicProtoReceiverNamesBySource = new WeakMap<ts.SourceFile, Set<string>>();
 
+/** `Object.getOwnPropertyDescriptor(<x>, "__proto__")`. */
+function isProtoDescriptorCall(e: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(e) &&
+    ts.isPropertyAccessExpression(e.expression) &&
+    e.expression.name.text === "getOwnPropertyDescriptor" &&
+    e.arguments.length >= 2 &&
+    ts.isStringLiteralLike(e.arguments[1]!) &&
+    e.arguments[1].text === "__proto__"
+  );
+}
+
+/**
+ * Is `e` the Annex B `__proto__` SETTER — `gOPD(<x>, "__proto__").set`, a
+ * `<desc>.set` over a binding of that descriptor, or a binding of either?
+ */
+function protoSetterMatcher(source: ts.SourceFile): ((e: ts.Expression) => boolean) | undefined {
+  const descs = new Set<string>();
+  const setters = new Set<string>();
+  const isSetter = (e: ts.Expression): boolean =>
+    (ts.isIdentifier(e) && setters.has(e.text)) ||
+    (ts.isPropertyAccessExpression(e) &&
+      e.name.text === "set" &&
+      (isProtoDescriptorCall(e.expression) || (ts.isIdentifier(e.expression) && descs.has(e.expression.text))));
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      if (isProtoDescriptorCall(node.initializer)) descs.add(node.name.text);
+      else if (isSetter(node.initializer)) setters.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return descs.size > 0 || setters.size > 0 ? isSetter : undefined;
+}
+
 function dynamicProtoReceiverNames(source: ts.SourceFile): Set<string> {
   const cached = dynamicProtoReceiverNamesBySource.get(source);
   if (cached) return cached;
@@ -769,7 +804,19 @@ function dynamicProtoReceiverNames(source: ts.SourceFile): Set<string> {
     const target = unwrap(e);
     if (ts.isIdentifier(target)) names.add(target.text);
   };
+  // (#6770 S5) …and the receiver of the REFLECTIVE Annex B setter,
+  // `set.call(o, proto)` / `desc.set.call(o, proto)` over `gOPD(<x>, "__proto__")`.
+  const isProtoSetter = protoSetterMatcher(source);
   const visit = (node: ts.Node): void => {
+    if (
+      isProtoSetter !== undefined &&
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      (node.expression.name.text === "call" || node.expression.name.text === "apply") &&
+      isProtoSetter(node.expression.expression)
+    ) {
+      mark(node.arguments[0]);
+    }
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&

@@ -9,6 +9,11 @@ import { tryCompileStandaloneEvalSpread } from "./eval-spread-args.js"; // (#677
 import { emitThrowReferenceError } from "../js-errors.js"; // (#6774 S8)
 import { tryCompileWithRoutedCall } from "./with-call-binding.js"; // (#6774 S15)
 import { ts, forEachChild } from "../../ts-api.js";
+import {
+  emitOverriddenProtoMemberCall,
+  protoMemberReadIsOverridden,
+  tryEmitPrimitiveToLocaleStringInvoke,
+} from "../object-model/object-proto-to-locale-string.js"; // (#6770 S5)
 import { widenJsDefaultGuessSlot, widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
@@ -764,8 +769,11 @@ export function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContex
 export function compileProtoArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
   if (
     ctx.standalone &&
+    // (#6770 S4) an EMPTY `{}` too: compiled as anything but a `$Object` the
+    // writers coerce it to null, the encoding of the `%Object.prototype%`
+    // terminal, so `Reflect.setPrototypeOf(nonExtensible, {})` read as a
+    // same-prototype no-op and answered `true`.
     ts.isObjectLiteralExpression(arg) &&
-    arg.properties.length > 0 &&
     arg.properties.every(
       (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p),
     ) &&
@@ -1236,6 +1244,11 @@ function tryEmitNativeProtoReflectiveCall(
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
+  // (#6770 S5) `Object.prototype.toLocaleString.call(<primitive>)` — Invoke(O, "toString").
+  if (isCall && ts.isPropertyAccessExpression(expr.expression)) {
+    const invoked = tryEmitPrimitiveToLocaleStringInvoke(ctx, fctx, expr, expr.expression);
+    if (invoked !== undefined) return invoked;
+  }
 
   // Resolve the member name + declaring builtin from the receiver's symbol.
   let sym: ts.Symbol | undefined;
@@ -1282,6 +1295,10 @@ function tryEmitNativeProtoReflectiveCall(
   {
     const syntactic = wrapperProtoSyntacticMember(ctx, unwrapTransparent(receiver), member);
     if (syntactic !== undefined) ({ member, ifaceName } = syntactic);
+  }
+  // (#6770 S5) A source-overridden member's value is no longer the intrinsic closure this lowering casts to.
+  if (protoMemberReadIsOverridden(ctx, unwrapTransparent(receiver))) {
+    return emitOverriddenProtoMemberCall(ctx, fctx, expr, unwrapTransparent(receiver), isCall);
   }
 
   // TypeScript declares `Error.prototype.toString` through the broad Object

@@ -142,6 +142,11 @@ import {
   emitErrorStackGetterBody,
   emitErrorStackSetterBody,
 } from "./error-stack-accessor.js";
+import {
+  OBJECT_PROTO_GETTER_MEMBER,
+  OBJECT_PROTO_SETTER_MEMBER,
+  emitObjectProtoProtoMemberBody,
+} from "./object-proto-proto-accessor.js"; // (#6770 S5)
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
 import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
@@ -2591,6 +2596,14 @@ function makeGlue(
           ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
         }
       : {}),
+    // (#6770 S5) Annex B §B.2.2.1 `Object.prototype.__proto__`, same kind.
+    ...(name === "Object" && ctx.standalone
+      ? {
+          accessorProps: [
+            { key: "__proto__", get: OBJECT_PROTO_GETTER_MEMBER, set: OBJECT_PROTO_SETTER_MEMBER },
+          ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2602,9 +2615,9 @@ function makeGlue(
       // (#5269 D-1) The accessor pair's halves: a getter takes nothing, a
       // setter takes the value. They are not in `memberCsv`, so the table
       // below would otherwise hand them its default of 1.
-      member === ERROR_STACK_GETTER_MEMBER
+      member === ERROR_STACK_GETTER_MEMBER || member === OBJECT_PROTO_GETTER_MEMBER
         ? 0
-        : member === ERROR_STACK_SETTER_MEMBER
+        : member === ERROR_STACK_SETTER_MEMBER || member === OBJECT_PROTO_SETTER_MEMBER
           ? 1
           : name === "Number" && member === "toString"
             ? 1
@@ -2668,6 +2681,7 @@ function makeGlue(
       // them — and the setter needs the brand to identify its home object.
       (name === "Error" && member === ERROR_STACK_GETTER_MEMBER ? emitErrorStackGetterBody(c, fctx) : null) ??
       (name === "Error" && member === ERROR_STACK_SETTER_MEMBER ? emitErrorStackSetterBody(c, fctx, brand) : null) ??
+      (name === "Object" ? emitObjectProtoProtoMemberBody(c, fctx, member) : null) ?? // (#6770 S5)
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
       // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
       // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the

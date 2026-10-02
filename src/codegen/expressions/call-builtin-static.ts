@@ -10,6 +10,7 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { classStaticSidecarApplies } from "../class-static-sidecar.js"; // (#6774 S6)
 import { ts } from "../../ts-api.js";
+import { emitProxyAwareOwnKeysCall } from "../object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
 import { emitToInt32 } from "../binary-ops.js";
@@ -120,6 +121,7 @@ import {
   ensureObjectRuntime,
 } from "../object-runtime.js";
 import { isArrayCarrierValType, retainArrayIsArrayExternrefCandidate } from "../array-carrier-brand.js"; // (#4556)
+import { integrityCallLiteralArg } from "../object-model/object-literal-reflective-escape.js"; // (#6770 S2)
 import {
   BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
@@ -1935,7 +1937,10 @@ export function compileBuiltinStaticCall(
     }
 
     // Compile the argument — returns the object itself (freeze/seal return their arg)
-    let argType = compileExpression(ctx, fctx, expr.arguments[0]!);
+    // (#6770 S2) An inline literal is built as the identity-bearing `$Object`.
+    const inlineLiteral = ctx.standalone ? integrityCallLiteralArg(expr) : undefined;
+    if (inlineLiteral) compileObjectAssignArg(ctx, fctx, inlineLiteral);
+    let argType = inlineLiteral ? ({ kind: "externref" } as ValType) : compileExpression(ctx, fctx, expr.arguments[0]!);
     if (!argType) return null;
 
     // #1472 Phase B Blocker A Half 2 — object-receiver normalization.
@@ -3706,6 +3711,7 @@ export function compileBuiltinStaticCall(
     if (argResult.kind !== "externref") {
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
+    if (emitProxyAwareOwnKeysCall(ctx, fctx, expr, false)) return { kind: "externref" }; // (#6770 S7)
     const funcIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {
@@ -3765,7 +3771,9 @@ export function compileBuiltinStaticCall(
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwNotCoercible });
       fctx.body.push({ op: "local.get", index: gopsLocal });
       releaseTempLocal(fctx, gopsLocal);
-      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertySymbols") ?? funcIdx });
+      if (!emitProxyAwareOwnKeysCall(ctx, fctx, expr, true)) {
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertySymbols") ?? funcIdx });
+      } // (#6770 S7) a $Proxy answers the symbols of its [[OwnPropertyKeys]]
     } else if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
     } else {

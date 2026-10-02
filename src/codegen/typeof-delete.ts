@@ -62,6 +62,7 @@ import { isStandaloneUnavailableConstructorGlobal } from "./standalone-unavailab
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
+import { strictWrapperThisTypeofIsDynamic } from "./object-model/object-proto-to-locale-string.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
 import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
@@ -1914,6 +1915,7 @@ export function compileTypeofExpression(
   if (operand.kind === ts.SyntaxKind.ThisKeyword && fctx.directEvalSloppyThisFallback !== undefined) {
     forceRuntimeTypeof = true;
   }
+  if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) forceRuntimeTypeof = true; // (#6770 S5)
   {
     let bareTdz: ts.Expression = operand;
     while (
@@ -2330,6 +2332,7 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
+  if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) staticTypeof = null; // (#6770 S5)
   if (
     staticTypeof !== null &&
     ts.isIdentifier(guardOperand) &&

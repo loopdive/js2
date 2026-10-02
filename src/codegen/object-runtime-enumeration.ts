@@ -36,6 +36,8 @@ import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 import { definedFuncAt } from "./func-space.js";
 import { orProxyArrayLikeTest, proxyArrayLikeTypeIdx } from "./proxy-array-like.js"; // (#6651 H6)
+import { stringExoticAssignSourceInstrs } from "./object-model/object-assign-primitive-operands.js"; // (#6770 S1)
+import { nonObjectEnumerableOwnInstrs } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -803,7 +805,12 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
+        then: [
+          // (#6770 S3) EnumerableOwnProperties over the receiver's own keys
+          ...nonObjectEnumerableOwnInstrs(ctx, false),
+          { op: "local.get", index: 7 },
+          { op: "return" },
+        ],
       },
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len (#1837)
       { op: "local.get", index: 1 },
@@ -864,6 +871,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
+        { name: "keys", type: { kind: "externref" } },
+        { name: "key", type: { kind: "externref" } },
       ],
       body,
     );
@@ -892,7 +901,12 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
+        then: [
+          // (#6770 S3) EnumerableOwnProperties over the receiver's own keys
+          ...nonObjectEnumerableOwnInstrs(ctx, true),
+          { op: "local.get", index: 7 },
+          { op: "return" },
+        ],
       },
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len (#1837)
       { op: "local.get", index: 1 },
@@ -968,6 +982,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
         { name: "pair", type: { kind: "externref" } },
+        { name: "keys", type: { kind: "externref" } },
+        { name: "key", type: { kind: "externref" } },
       ],
       body,
     );
@@ -1265,8 +1281,18 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
               { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
               { op: "local.get", index: 5 },
               { op: "array.get", typeIdx: objVecArrTypeIdx },
-              { op: "local.tee", index: 12 },
+              { op: "local.set", index: 12 },
+              // (#6770 S1) ToObject(String source): its §10.4.3 index keys.
+              ...stringExoticAssignSourceInstrs(ctx, {
+                target: 0,
+                source: 12,
+                keys: 13,
+                count: 14,
+                index: 15,
+                key: 16,
+              }),
               // srcAny = any.convert_extern(srcExt)
+              { op: "local.get", index: 12 },
               { op: "any.convert_extern" },
               { op: "local.tee", index: 6 },
               // if !$Object → skip this source
@@ -1439,6 +1465,7 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
   if (!objectAssign) return;
 
   const objectKeysIdx = ctx.funcMap.get("__object_keys");
+  const ownKeysAllIdx = ctx.funcMap.get("__proxy_ownkeys_names_dispatch"); // (#6770 S7) [[OwnPropertyKeys]]
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
   const getOwnPropertyDescriptorIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
@@ -1497,9 +1524,14 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // keys = [[OwnPropertyKeys]](source)
+        // keys = [[OwnPropertyKeys]](source) — the validated full list,
+        // strings AND symbols (#6770 S7: `__object_keys` is now the
+        // enumerable-string projection, which would drop symbols and run the
+        // gopd trap a second time per key).
         { op: "local.get", index: 12 },
-        { op: "call", funcIdx: objectKeysIdx },
+        ...(ownKeysAllIdx !== undefined
+          ? ([{ op: "ref.null.extern" }, { op: "call", funcIdx: ownKeysAllIdx }] satisfies Instr[])
+          : ([{ op: "call", funcIdx: objectKeysIdx }] satisfies Instr[])),
         { op: "local.set", index: keyListLocal },
         // length = ToLength(keys.length), narrowed to the bounded native loop
         { op: "local.get", index: keyListLocal },

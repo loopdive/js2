@@ -127,6 +127,7 @@ import {
   tryEmitProxyConstructWithNewTarget,
 } from "./reflect-construct-newtarget.js"; // (#3371 r4)
 import { objectPrototypeIsImmutableInstrs } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
+import { definePropertyBooleanFrom } from "../object-model/define-rejection-channel.js"; // (#6770 S4)
 import {
   compileCallExpression,
   compileProtoArg,
@@ -741,6 +742,28 @@ function isDefinitelyPrimitivePrototype(ctx: CodegenContext, value: ts.Expressio
  * namespace statics — the caller then continues into the receiver-type method
  * dispatch. Moved unchanged so the emitted Wasm is byte-identical.
  */
+/**
+ * (#6770 S4) §28.1 — the Reflect namespace's own function properties. Any
+ * other member (`Reflect.hasOwnProperty`, `Reflect.toString`) belongs to the
+ * namespace OBJECT's [[Prototype]], %Object.prototype%, and is compiled by the
+ * ordinary receiver-method dispatch instead of the standalone refusal.
+ */
+const REFLECT_FUNCTIONS = new Set([
+  "apply",
+  "construct",
+  "defineProperty",
+  "deleteProperty",
+  "get",
+  "getOwnPropertyDescriptor",
+  "getPrototypeOf",
+  "has",
+  "isExtensible",
+  "ownKeys",
+  "preventExtensions",
+  "set",
+  "setPrototypeOf",
+]);
+
 export function compileNamespaceStaticCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1822,19 +1845,22 @@ export function compileNamespaceStaticCall(
           guardNativeReflectTarget(targetLocal, "Reflect.defineProperty called on non-object");
           // `undefinedFields` is the host-only ToPropertyDescriptor presence
           // sidecar — unused on the standalone path, so pass empty.
+          const applierStart = fctx.body.length;
           const r = emitDefinePropertyDescRuntime(ctx, fctx, objArg, keyArg, descArg, [], targetLocal);
           releaseTempLocal(fctx, targetLocal);
+          // (#6770 S4) §28.1.3 step 4: a REJECTED define answers `false`.
+          // The applier returns an externref; Reflect wants a boolean.
+          // (#1355 Slice F) For a PROXY receiver the standalone
+          // `__obj_define_from_desc` front-guard returns the defineProperty
+          // trap's booleanish externref (NOT the obj) — so we must surface
+          // that result, not unconditionally return true. For a non-proxy
+          // receiver the applier returns the (always-truthy) obj, so
+          // `__is_truthy` still yields the spec `true`. This keeps the
+          // non-proxy behaviour identical while making a proxy trap's
+          // false/true return observable through Reflect.defineProperty.
+          const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+          if (r !== null && definePropertyBooleanFrom(ctx, fctx, applierStart, isTruthyIdx)) return { kind: "i32" };
           if (r !== null) {
-            // The applier returns an externref; Reflect wants a boolean.
-            // (#1355 Slice F) For a PROXY receiver the standalone
-            // `__obj_define_from_desc` front-guard returns the defineProperty
-            // trap's booleanish externref (NOT the obj) — so we must surface
-            // that result, not unconditionally return true. For a non-proxy
-            // receiver the applier returns the (always-truthy) obj, so
-            // `__is_truthy` still yields the spec `true`. This keeps the
-            // non-proxy behaviour identical while making a proxy trap's
-            // false/true return observable through Reflect.defineProperty.
-            const isTruthyIdx = ctx.funcMap.get("__is_truthy");
             if (isTruthyIdx !== undefined) {
               fctx.body.push({ op: "call", funcIdx: isTruthyIdx });
             } else {
@@ -2685,6 +2711,8 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "local.get", index: resultLocal });
         return { kind: "externref" };
       }
+      // (#6770 S4) `Reflect.hasOwnProperty(…)` etc.: an ordinary `obj.m(…)` call.
+      if (!REFLECT_FUNCTIONS.has(reflectMethod)) return undefined;
       // Boolean-returning methods need an i32 on the stack; the rest return
       // externref. Pick the fallback shape per method so the surrounding
       // expression still type-checks even though the module is already marked

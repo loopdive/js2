@@ -2566,3 +2566,19 @@ boundary` is #2727, and `define-own-prop-length-coercion-order.js` turned out
 to be a checker defect — in a script, a top-level `var length` merges with
 lib.dom's `declare var length: number` and is typed `number` (10 test262
 files declare such a var).
+
+## 2026-10-02 — #6770: `built-ins/Object/**` + `built-ins/Reflect/**` residue (pointer)
+
+The 49 standalone non-pass rows of `built-ins/Object/**` + `built-ins/Reflect/**`
+(2026-09-30 census) are #6770's. Measured on `issue-6770-object-reflect-residue`
+with `origin/main` merged: **0 → 44 pass** across eight mechanisms —
+`Object.assign` ToObject on primitive operands, literals written through a
+reflective builtin becoming open `$Object`s, own-key order (index domain,
+String/RegExp/function intrinsics), the Reflect residue, `Object.prototype`
+members (`__proto__` own-ness, `toLocaleString` Invoke), `Object.prototype.toString`
+tag order, Proxy `[[OwnPropertyKeys]]` surfaces, and per-operation trap lookup
+(`GetMethod` on every §10.5 internal method; the eager 13-trap snapshot at
+`new Proxy` is gone). Remaining: three `Object.prototype.toString` tag rows
+(Symbol carrier consult, symbol-keyed writes on wrapper prototypes,
+`%GeneratorFunction%` tag) and the two #3371 `Reflect.construct` CEs —
+mechanisms in #6770's record.
