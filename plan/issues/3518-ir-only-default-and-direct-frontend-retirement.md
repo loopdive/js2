@@ -462,6 +462,37 @@ has no compiler/runtime source changes. Integrate it while preserving new docs
 checks and independently validate its four touched tests and path-check command.
 No new main merge by this session is claimed. Parent keeps the execution slot.
 
+Docs/CI merge d9b681a4f55ff75e765367d22370a779b5436399 contains exact883.
+No compiler/runtime, TypeScript/Vitest config, Pop fixture or host-ratchet source
+changed in this merge. The new path checker passes156 references/11 flags.
+All four incoming docs/release test files ran:53/55 pass,2 fail, zero pending.
+Both failures are release CLI refusal cases expecting1 but receiving0; they
+remain failures, not excluded coverage. Independent source audit verifies exact
+upstream883 blobs for release.mjs (affd8ad581efe81899a9317e865c12f88a4a6515)
+and its test (e2b08732ddc88af31a894c17b78a989dbb2ecd03), and no delta in any
+of the four test files. Source diagnosis: resolve(argv[1]) retains /var while
+the module URL resolves /private/var, so the CLI guard skips main. Local filesystem
+facts support that diagnosis; original JSON records statuses, not child URLs.
+No actual release was invoked by the parent, no gate/assertion was weakened,
+and no unrelated release-tool fix is included. Follow-up needs a symlink-safe
+entry guard with alias/direct/import-only controls, preserving refusal-before-
+mutation behavior. Existing55-case results stay visible as inherited Mac failures.
+
+PR5883 landing scope is expressly preservation of current Promise lowering and
+the independently tested vector storage correction, not completion of5197's
+live-vector feature acceptance. That acceptance remains unresolved/open, along
+with graph closure, managed bootstrap and full IR retirement. Required published-
+head and protected merge-group checks must pass before removing hold/landing;
+PR stubs and skipped conformance jobs do not count as executed Test262 coverage.
+
+Separate5753 progress: parent reviewed frozen saved-binary auditor a7c98264 and
+its70-input manifest2253a984, verified source pins and ran once under the held
+exclusive slot. All20 saved Wasm byte hashes match captured results; actual
+Module.imports on those exact buffers is empty20/20, without instantiation.
+The original frozen admission checker also returns four admissible1/9 cohorts.
+This is a new post-capture hash-bound observation; prior user observations remain
+ordinal-associated. Full176 and physical-comparison obligations remain unwaived.
+
 Latest dispatch reconfirms parent ownership of implementation plans, issue
 updates, integration and protected-queue decisions. Existing native Sol6.1
 Medium agents retain isolated assignments: A validation/attribution; B frozen
