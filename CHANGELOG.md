@@ -2,65 +2,8 @@
 
 ## Unreleased
 
-### Added: reusable `FyiSourceExecutor` for external test262 integrations (#3599)
-
-- `FyiSourceExecutor` and `runTest` are now exported from the new
-  `@loopdive/js2/test262-fyi` subpath (added to `package.json`'s `exports`
-  map — this subpath was previously unreachable via `import`, even though
-  `js2-test262` shipped as a bin). `executeTestFile({ ..., executor })` now
-  accepts an optional pre-existing executor: an external caller that runs
-  many test files in one long-lived process (e.g. a persistent server) can
-  reuse a single warm executor across many calls instead of paying a fresh
-  Node start + full compiler-module load per call. Omitting `executor`
-  preserves the exact prior one-shot behavior.
-- Fixed a real bug this surfaced: `FyiSourceExecutor`'s default `workerPath`
-  resolved to a `scripts/` path that only exists in the monorepo checkout,
-  not in the published package — `new FyiSourceExecutor()` with no explicit
-  `workerPath` threw `Cannot find module '.../scripts/test262-worker.mjs'`
-  when called from outside this repo. It now resolves lazily next to its own
-  module location, matching the (already-correct) logic `js2-test262`'s CLI
-  entry point used internally.
-
-### Added: relocatable standalone CLI bundle (#1775, GH #986 follow-up)
-
-- Added `pnpm run build:standalone-cli`, which writes
-  `dist/js2wasm-standalone.mjs` for `deno compile` / `bun build --compile`
-  workflows. This build bundles the core compiler dependencies and injects
-  TypeScript's `lib.*.d.ts` files into the existing bundled-lib hook, so the
-  generated file does not need to stay next to `node_modules/typescript/lib`.
-- Standalone bundles now get the package version injected at build time, so
-  `--version` does not rely on `../package.json` after the file is moved.
-- Binaryen is now an optional peer/dev dependency and is no longer bundled into
-  the standalone CLI artifact; `-O` can use an installed `binaryen` package or a
-  `wasm-opt` binary on PATH, and the emitted `.wasm` can be optimized afterward.
-- The standalone docs now recommend `--minify`, which brings the no-Binaryen
-  bundle down to roughly 8.5 MB before native runtime embedding.
-
-### Breaking: `compile()` API is now async (#1757)
-
-- The public compiler entry points — `compile`, `compileMulti`, `compileFiles`,
-  `compileToWat`, `compileProject`, and `createIncrementalCompiler().compile`
-  (plus the lower-level `compileSource` / `compileMultiSource` /
-  `compileFilesSource`) — now return a `Promise`. **Every caller must `await`
-  them.** A synchronous `compileSourceSync` (no Binaryen optimization) is
-  retained for the few contexts that cannot await (the `eval` host shim).
-- **Why:** the optional Binaryen optimizer now loads via
-  `await import("binaryen")` instead of a synchronous `require`. Binaryen ships
-  a top-level `await` that a sync `require` cannot load, which is what blocked
-  embedding it in a `bun build --compile` / `deno compile` standalone binary
-  (GH #986). With the async path the optimizer is bundled and the single-file
-  binary runs `--optimize` with Binaryen embedded — no `wasm-opt` on `PATH`
-  required. Follow-up to the #1756 `createRequire` stopgap.
-
-  Migration: `const r = compile(src)` → `const r = await compile(src)`.
-
-### Repository rename
-
-- The repo has been renamed `loopdive/js2wasm` → `loopdive/js2`.
-  GitHub provides a permanent redirect for the old URL, so existing
-  clones and PR links continue to work. New clones and CI should use
-  the new name. The `loopdive/js2wasm-baselines` baselines repo is
-  tracked separately and will be renamed in a follow-up.
+Nothing yet. Add a `## vX.Y.Z - YYYY-MM-DD` section for the next release **before** running
+`node scripts/release.mjs X.Y.Z` — the script refuses to cut a version that has no entry here.
 
 ## Historical sprint tags
 
@@ -75,11 +18,7 @@ Tagging method:
 
 ## Current test262 status
 
-Latest complete archived full-suite entry: `20260331-215747` from [benchmarks/results/runs/index.json](/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/benchmarks/results/runs/index.json)
-
-- Pass rate: `15,155 / 48,174` = `31.5%`
-- Previous full-suite entry: `15,246 / 48,174` = `31.7%`
-- Note: [benchmarks/results/test262-report.json](/Users/thomas/Documents/Arbeit/Startup/Projekte/Mosaic/code/@loopdive/ts2wasm/benchmarks/results/test262-report.json) currently points to a missing target, so the pass rate above is sourced from the run index rather than the symlink.
+The current figures are generated into [STATUS.md](STATUS.md) by `scripts/sync-conformance-numbers.mjs`; they are not repeated here.
 
 ## Sprint history
 
@@ -1442,3 +1381,783 @@ Latest complete archived full-suite entry: `20260331-215747` from [benchmarks/re
 - #1491 Node.js fs host imports (non-WASI)
 - #1493 Node.js console.error/warn stderr routing
 - #1521 Test262 CI speedup — cross-PR cache and scope filter
+
+## Releases since v0.52.0
+
+Generated from `git tag` and the merged-PR titles of each tag range (#6795); the sprint sections above are the older, hand-written history. Each entry lists the newest feature and fix PRs and counts the rest. The test262 figures are read from the artifact committed at each tag; the harness and the scored scope changed over this period (for example the oracle v8 reset in v0.61.0), so they are not comparable across releases.
+
+## v0.56.0 - 2026-05-29
+
+- Tag `v0.56.0` · range `v0.52.0..v0.56.0` · [compare](https://github.com/loopdive/js2/compare/v0.52.0...v0.56.0) · also tagged `sprint/56`
+- `package.json` still read `0.52.0` at this tag, so it is a sprint-boundary tag with no matching package version.
+- 294 merged PRs: 20 features, 151 fixes, 123 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 30,214 / 43,135 (70.0 %).
+- No `v0.53.0`, `v0.54.0` or `v0.55.0` tag was ever cut and `package.json` stayed at `0.52.0` throughout, so there is no such release; this entry covers everything since `v0.52.0` (sprints 53–56).
+
+### Features
+
+- feat(#1636-S1): add __call_fn_method_N dispatcher for this-val threading (Slice 1 of 3) ([PR 873](https://github.com/loopdive/js2/pull/873))
+- feat(#1660): CLA gate — PR template checkbox ([PR 852](https://github.com/loopdive/js2/pull/852))
+- feat(#1588) PR-C: standalone __str_to_utf8 transcoder + benchmark + ADR ([PR 571](https://github.com/loopdive/js2/pull/571))
+- feat(#1588) Phase 2 PR-B part 2: activate i8 string storage end-to-end ([PR 567](https://github.com/loopdive/js2/pull/567))
+- feat(#1588) Phase 2 PR-B part 1: dual i8/i16 string-storage scaffolding (gated, inert) ([PR 548](https://github.com/loopdive/js2/pull/548))
+- feat: enforce dual-mode architecture with --no-host-imports flag + CI gate (#1524) ([PR 432](https://github.com/loopdive/js2/pull/432))
+- feat(#1042): async CPS lowering module skeleton (gated off) ([PR 544](https://github.com/loopdive/js2/pull/544))
+- feat(#1588) Phase 2 PR-A: call-result string-encoding origins + method propagation ([PR 546](https://github.com/loopdive/js2/pull/546))
+- feat(#747): IR escape analysis on #1587 ownership (Phase 1) ([PR 545](https://github.com/loopdive/js2/pull/545))
+- feat(#1588): string encoding analysis (UTF-8/WTF-16 lattice) on IR alloc sites ([PR 538](https://github.com/loopdive/js2/pull/538))
+- feat(#1587): ownership + access-semantics analysis on IR values (Phase 1) ([PR 539](https://github.com/loopdive/js2/pull/539))
+- feat(#1586): explicit IR allocation sites with stable identity + metadata hooks ([PR 536](https://github.com/loopdive/js2/pull/536))
+- feat(scripts): auto-update conformance numbers after each test262 run (#1522) ([PR 425](https://github.com/loopdive/js2/pull/425))
+- feat(standalone): eliminate JS host string ops ([PR 408](https://github.com/loopdive/js2/pull/408))
+- feat(#1198): pre-size dense arrays at const a = [] allocation site ([PR 350](https://github.com/loopdive/js2/pull/350))
+- feat(ir): ratchet IR-fallback budget + per-kind demote-to-warning scoping (#1530) ([PR 430](https://github.com/loopdive/js2/pull/430))
+- feat(#1326c): Phase 1C-A — microtask queue + drain export (WASI standalone) ([PR 405](https://github.com/loopdive/js2/pull/405))
+- feat(#1540): JSX runtime host binding — _jsx/_jsxs/_Fragment ([PR 429](https://github.com/loopdive/js2/pull/429))
+- feat: default pass-rate to ECMAScript standard, opt-in proposals via landing-page slider ([PR 474](https://github.com/loopdive/js2/pull/474))
+- feat(#1373b Slice 1): IR async Phase C scaffolding — gate + FULFILLED/REJECTED fast paths ([PR 441](https://github.com/loopdive/js2/pull/441))
+
+### Fixes
+
+- fix(#1337): bound-function variable storage + invocation (Layer-2) ([PR 883](https://github.com/loopdive/js2/pull/883))
+- fix(ci): promote-baseline atomically syncs conformance docs (#1522) ([PR 898](https://github.com/loopdive/js2/pull/898))
+- fix(#1636-S1): gate __current_this fallback to host-dispatchable closures only ([PR 895](https://github.com/loopdive/js2/pull/895))
+- fix(ci): pre-push conformance sync + baseline direct-push to main ([PR 896](https://github.com/loopdive/js2/pull/896))
+- fix(#1690b): inner function var shadows module global instead of aliasing it ([PR 882](https://github.com/loopdive/js2/pull/882))
+- fix(ci): baseline PRs use --admin --merge instead of --auto ([PR 893](https://github.com/loopdive/js2/pull/893))
+- fix(#1530): nm_js2wasm.sh — specific Wasm proposals instead of all-proposals ([PR 886](https://github.com/loopdive/js2/pull/886))
+- fix(#1333): Annex B legacy RegExp accessors override V8 native ([PR 877](https://github.com/loopdive/js2/pull/877))
+- fix(#1695): persistent writeback for DisposableStack stored callbacks ([PR 875](https://github.com/loopdive/js2/pull/875))
+- fix(#1554): reject --standalone + --allow-fs at parse time ([PR 872](https://github.com/loopdive/js2/pull/872))
+- …and 141 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.57.0 - 2026-06-27
+
+- Tag `v0.57.0` · range `v0.56.0..v0.57.0` · [compare](https://github.com/loopdive/js2/compare/v0.56.0...v0.57.0)
+- 1049 merged PRs: 158 features, 516 fixes, 375 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,319 / 43,135 (74.9 %).
+
+### Features
+
+- perf(#2682): string read-loop fast path — hoist charCodeAt flatten/descriptor + proof-gated i32 leaf ([PR 2122](https://github.com/loopdive/js2/pull/2122))
+- feat(#2701): node:fs/promises destructured-import host-glue (slash sanitisation) ([PR 2121](https://github.com/loopdive/js2/pull/2121))
+- feat(#2699): host-glue node:url/module/os destructured function imports ([PR 2118](https://github.com/loopdive/js2/pull/2118))
+- feat(#2660): PART-1 inert receiver-struct analysis + resolveReceiverStruct ([PR 2112](https://github.com/loopdive/js2/pull/2112))
+- feat(#2693): MILESTONE — ESLint-style Linter.verify runs as Wasm in Node (host-delegated parse) ([PR 2107](https://github.com/loopdive/js2/pull/2107))
+- feat(#2660 S3a): reconstruct approved empty-body new F() as $Object (standalone canary) ([PR 2104](https://github.com/loopdive/js2/pull/2104))
+- feat(#1791): node:path posix shim (pure TS, host + standalone) ([PR 2105](https://github.com/loopdive/js2/pull/2105))
+- feat(examples): native-messaging node:process variant + 5-way comparison harness ([PR 2089](https://github.com/loopdive/js2/pull/2089))
+- feat(host-interop): #2682 Deno stdio surface (Deno.stdin/stdout.*Sync → WASI fd) + nm_deno.ts ([PR 2094](https://github.com/loopdive/js2/pull/2094))
+- feat(#2660 S2): per-fnctor prototype $Object (standalone) ([PR 2087](https://github.com/loopdive/js2/pull/2087))
+- feat(wasi): #2658 B0 spike — P3 async stream<u8> echo runs under wasmtime 44 + nm_wasi_p3 comparison instance ([PR 2092](https://github.com/loopdive/js2/pull/2092))
+- feat(#2663): with Tier-2 @@unscopables HasBinding (Slice 4, host-mode) ([PR 2082](https://github.com/loopdive/js2/pull/2082))
+- feat(#2663): with Tier-2 dynamic delete + var/object precedence — Slice 3 (ref #1472) ([PR 2065](https://github.com/loopdive/js2/pull/2065))
+- feat(#2663): with Tier-2 dynamic-scope WRITE — Slice 2 (ref #1472) ([PR 2061](https://github.com/loopdive/js2/pull/2061))
+- feat(#2663): with Tier-2 dynamic-scope READ — Slice 1 (ref #1472) ([PR 2059](https://github.com/loopdive/js2/pull/2059))
+- feat(#2660 S1): inert whole-program escape/dynamic-use gate for new F() instances ([PR 2056](https://github.com/loopdive/js2/pull/2056))
+- feat(wasi): #2657 raw wasi_snapshot_preview1 fd_read/fd_write import + nm_wasi.ts variant ([PR 2044](https://github.com/loopdive/js2/pull/2044))
+- feat(#1355): standalone Proxy ownKeys trap (Slice E, §10.5.11) ([PR 2042](https://github.com/loopdive/js2/pull/2042))
+- feat: #2528/#2645 --platform node|web + compose with node capability gate ([PR 2034](https://github.com/loopdive/js2/pull/2034))
+- feat(wasi): #2655 direct WASI P1 fd_read/fd_write for node:fs readSync/writeSync (no shim) ([PR 2037](https://github.com/loopdive/js2/pull/2037))
+- …and 138 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(#2726): hasOwnProperty-after-delete + non-configurable accessor delete (groups c/d) ([PR 2177](https://github.com/loopdive/js2/pull/2177))
+- fix(#2741): `in` operator — primitive-RHS TypeError + LHS-before-RHS eval order ([PR 2181](https://github.com/loopdive/js2/pull/2181))
+- fix(#2739): for-in walks a setPrototypeOf prototype chain (part a) ([PR 2180](https://github.com/loopdive/js2/pull/2180))
+- fix(#2687): emit __call_fn_method_N up to max closure arity (acorn parseSubscript dispatch) ([PR 2175](https://github.com/loopdive/js2/pull/2175))
+- fix(#2628): method call on a __construct_closure-built instance (new this().m()) ([PR 2172](https://github.com/loopdive/js2/pull/2172))
+- fix(#2731): symmetric delete-aware property write routing (delete+re-add re-appears in for-in) ([PR 2170](https://github.com/loopdive/js2/pull/2170))
+- fix(#2680): ToPropertyDescriptor reads proto-inherited descriptor attributes ([PR 2168](https://github.com/loopdive/js2/pull/2168))
+- fix(#2707c): TCO through ?:/&&/||/comma + recursive named-fn-expr IIFE ([PR 2159](https://github.com/loopdive/js2/pull/2159))
+- fix(#2720): full non-Unicode /i case folding in standalone regex ([PR 2166](https://github.com/loopdive/js2/pull/2166))
+- fix(wasi): #2735 stdin reactor non-EOF termination (process.exit/.destroy/in-band shutdown) ([PR 2165](https://github.com/loopdive/js2/pull/2165))
+- …and 506 more fix PRs (newest 10 shown; see the compare link).
+
+### Carried over from the former Unreleased section: Breaking: `compile()` API is now async (#1757)
+
+- The public compiler entry points — `compile`, `compileMulti`, `compileFiles`,
+  `compileToWat`, `compileProject`, and `createIncrementalCompiler().compile`
+  (plus the lower-level `compileSource` / `compileMultiSource` /
+  `compileFilesSource`) — now return a `Promise`. **Every caller must `await`
+  them.** A synchronous `compileSourceSync` (no Binaryen optimization) is
+  retained for the few contexts that cannot await (the `eval` host shim).
+- **Why:** the optional Binaryen optimizer now loads via
+  `await import("binaryen")` instead of a synchronous `require`. Binaryen ships
+  a top-level `await` that a sync `require` cannot load, which is what blocked
+  embedding it in a `bun build --compile` / `deno compile` standalone binary
+  (GH #986). With the async path the optimizer is bundled and the single-file
+  binary runs `--optimize` with Binaryen embedded — no `wasm-opt` on `PATH`
+  required. Follow-up to the #1756 `createRequire` stopgap.
+
+  Migration: `const r = compile(src)` → `const r = await compile(src)`.
+
+### Carried over from the former Unreleased section: Added: relocatable standalone CLI bundle (#1775, GH #986 follow-up)
+
+- Added `pnpm run build:standalone-cli`, which writes
+  `dist/js2wasm-standalone.mjs` for `deno compile` / `bun build --compile`
+  workflows. This build bundles the core compiler dependencies and injects
+  TypeScript's `lib.*.d.ts` files into the existing bundled-lib hook, so the
+  generated file does not need to stay next to `node_modules/typescript/lib`.
+- Standalone bundles now get the package version injected at build time, so
+  `--version` does not rely on `../package.json` after the file is moved.
+- Binaryen is now an optional peer/dev dependency and is no longer bundled into
+  the standalone CLI artifact; `-O` can use an installed `binaryen` package or a
+  `wasm-opt` binary on PATH, and the emitted `.wasm` can be optimized afterward.
+- The standalone docs now recommend `--minify`, which brings the no-Binaryen
+  bundle down to roughly 8.5 MB before native runtime embedding.
+
+## v0.58.0 - 2026-06-28
+
+- Tag `v0.58.0` · range `v0.57.0..v0.58.0` · [compare](https://github.com/loopdive/js2/compare/v0.57.0...v0.58.0)
+- 64 merged PRs: 8 features, 24 fixes, 32 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,667 / 43,135 (75.7 %).
+
+### Features
+
+- feat(#2785): type-aware box primitive — box keyed on the TS type, not the Wasm kind ([PR 2248](https://github.com/loopdive/js2/pull/2248))
+- feat(#2782): hybrid IR Row-5 — no-box NUMBER-local proof gate ([PR 2245](https://github.com/loopdive/js2/pull/2245))
+- feat(#2781): hybrid IR Row-7 — Binary `+` string-or-number proof-gate ([PR 2244](https://github.com/loopdive/js2/pull/2244))
+- feat(#2780): hybrid IR ArrayLiteral widening-escape gate ([PR 2243](https://github.com/loopdive/js2/pull/2243))
+- feat(compiler): #2771 bundle relative imports for standalone WASI compilation ([PR 2237](https://github.com/loopdive/js2/pull/2237))
+- feat(codegen): #2773 S1 keystone — reserve fnctor struct types up-front (pass-invariant typeIdx) ([PR 2234](https://github.com/loopdive/js2/pull/2234))
+- feat(process): wire weekly budget source from statusline; close #2751 ([PR 2199](https://github.com/loopdive/js2/pull/2199))
+- feat(process): rolling sprint model + budget-aware pull scheduling (#2751) ([PR 2194](https://github.com/loopdive/js2/pull/2194))
+
+### Fixes
+
+- fix(#2766): IR ElementAccess prove-then-specialize (folds #2760) ([PR 2233](https://github.com/loopdive/js2/pull/2233))
+- fix(codegen): #2714 object-spread keys enumerable in non-specific contexts ([PR 2215](https://github.com/loopdive/js2/pull/2215))
+- fix(#2757): bind object/array/member rest targets in array assignment-destructuring ([PR 2224](https://github.com/loopdive/js2/pull/2224))
+- fix(website): mobile-friendly feature test report layout ([PR 2236](https://github.com/loopdive/js2/pull/2236))
+- fix(#2774): relabel edition card summary % as edition-wide on landing page ([PR 2235](https://github.com/loopdive/js2/pull/2235))
+- fix(#2767): recover nominal type for bare-var method receiver dispatch ([PR 2228](https://github.com/loopdive/js2/pull/2228))
+- fix(#2671): recognize Promise.resolve/reject capability-ctor sites (+6 test262) ([PR 2225](https://github.com/loopdive/js2/pull/2225))
+- fix(#2729): apply ToUint8 on WasmGC Uint8Array element store ([PR 2223](https://github.com/loopdive/js2/pull/2223))
+- fix(#2764): invoke @@hasInstance handler at spec arity 1 ([PR 2221](https://github.com/loopdive/js2/pull/2221))
+- fix(#2756): array-pattern object/class default null-deref + fn-name-class NamedEvaluation ([PR 2216](https://github.com/loopdive/js2/pull/2216))
+- …and 14 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.59.0 - 2026-06-28
+
+- Tag `v0.59.0` · range `v0.58.0..v0.59.0` · [compare](https://github.com/loopdive/js2/compare/v0.58.0...v0.59.0)
+- 30 merged PRs: 5 features, 14 fixes, 11 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,704 / 43,135 (75.8 %).
+- Release notes: [docs/releases/0.59.0.md](docs/releases/0.59.0.md)
+
+### Features
+
+- feat(#2792): symbol[] OOB→undefined + native standalone __box_symbol ([PR 2261](https://github.com/loopdive/js2/pull/2261))
+- feat(#2784): S3 native-vec-aware method + element dispatch — acorn parses identifiers/calls ([PR 2260](https://github.com/loopdive/js2/pull/2260))
+- feat(cli): #2783 remove --link-node-shims alias entirely (--link node:fs only) ([PR 2258](https://github.com/loopdive/js2/pull/2258))
+- feat(cli): #2783 S1-S3 general --link <namespace> dynamic-linking flag (generalize --link-node-shims) ([PR 2256](https://github.com/loopdive/js2/pull/2256))
+- feat(#2788): hybrid IR no-box NUMBER-local gate — i32 arm (#2782 fast-follow) ([PR 2255](https://github.com/loopdive/js2/pull/2255))
+
+### Fixes
+
+- fix: present WasmGC vec fields to host as real JS arrays (#2801 layer-1) ([PR 2275](https://github.com/loopdive/js2/pull/2275))
+- fix(#2804): object spread & Object.assign copy keys + values (rep mismatch) ([PR 2274](https://github.com/loopdive/js2/pull/2274))
+- fix(#2800): read init-time any-receiver fields host-free during module-init ([PR 2272](https://github.com/loopdive/js2/pull/2272))
+- fix(#2796): diff-test host lane runs top-level after setExports (deferTopLevelInit) ([PR 2270](https://github.com/loopdive/js2/pull/2270))
+- fix(checker/codegen): #2754 transpiled-.js sync NM hosts round-trip (zero-output) + CI coverage ([PR 2268](https://github.com/loopdive/js2/pull/2268))
+- fix(host): #2795 console.log applies ToString/ToPrimitive + renders booleans as true/false ([PR 2267](https://github.com/loopdive/js2/pull/2267))
+- fix(#2794): compiled-acorn parses var-declarations (host-proxy data-struct + vec reads) ([PR 2264](https://github.com/loopdive/js2/pull/2264))
+- fix(#2795): typed-array element OOB read → JS undefined (hybrid audit Row 9) ([PR 2263](https://github.com/loopdive/js2/pull/2263))
+- fix(codegen): #2788 coerce module-init call args — array/01-basic + closures/10-mutual emit valid wasm ([PR 2259](https://github.com/loopdive/js2/pull/2259))
+- fix(#2773): S2/S2b substrate + dispatcher funcIdx over-shift fix (new this() reconstruct, dispatch symmetry, #2687 literal gap) ([PR 2247](https://github.com/loopdive/js2/pull/2247))
+- …and 4 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.59.1 - 2026-06-29
+
+- Tag `v0.59.1` · range `v0.59.0..v0.59.1` · [compare](https://github.com/loopdive/js2/compare/v0.59.0...v0.59.1)
+- 9 merged PRs: 0 features, 5 fixes, 4 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,817 / 43,135 (76.1 %).
+- Release notes: [docs/releases/0.59.1.md](docs/releases/0.59.1.md)
+
+### Fixes
+
+- fix: adopt nm_js2wasm_* rename in #2807's new test + scale files (broken main) ([PR 2285](https://github.com/loopdive/js2/pull/2285))
+- fix(#2808): for-of object-binding head recurses into nested sub-patterns ([PR 2286](https://github.com/loopdive/js2/pull/2286))
+- fix(#2807): chunk WASI fd_write below wasmtime's ~128 MiB single-write cap ([PR 2283](https://github.com/loopdive/js2/pull/2283))
+- fix(#2769): for-of typed in-bounds undefined/hole default-init ([PR 2281](https://github.com/loopdive/js2/pull/2281))
+- fix(#2758): eager-box caller-scope captures mutated by a called sibling (dstr init-skipped) ([PR 2279](https://github.com/loopdive/js2/pull/2279))
+
+## v0.59.2 - 2026-06-29
+
+- Tag `v0.59.2` · range `v0.59.1..v0.59.2` · [compare](https://github.com/loopdive/js2/compare/v0.59.1...v0.59.2)
+- 6 merged PRs: 0 features, 3 fixes, 3 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,841 / 43,135 (76.1 %).
+- Release notes: [docs/releases/0.59.2.md](docs/releases/0.59.2.md)
+
+### Fixes
+
+- fix(#2814): re-chunk ALL Native-Messaging hosts to <=1 MiB JSON frames ([PR 2294](https://github.com/loopdive/js2/pull/2294))
+- fix(#2815): suppress spurious 'Cannot find name Deno' on recognized stdio surface ([PR 2292](https://github.com/loopdive/js2/pull/2292))
+- fix(#2811): capture/globalize builtin-named vars + dstr-param closure TDZ-flag offset ([PR 2289](https://github.com/loopdive/js2/pull/2289))
+
+## v0.59.3 - 2026-06-29
+
+- Tag `v0.59.3` · range `v0.59.2..v0.59.3` · [compare](https://github.com/loopdive/js2/compare/v0.59.2...v0.59.3)
+- 9 merged PRs: 0 features, 6 fixes, 3 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,847 / 43,135 (76.1 %).
+- Release notes: [docs/releases/0.59.3.md](docs/releases/0.59.3.md)
+
+### Fixes
+
+- fix(#2817): skip dead env.__wasiStdinStop host import under --target wasi ([PR 2302](https://github.com/loopdive/js2/pull/2302))
+- fix(#2816): NM smoke scale-test expects stripped CLI output name ([PR 2304](https://github.com/loopdive/js2/pull/2304))
+- fix(#2821): harden deno-stdio test EPIPE flake via stdin file fd ([PR 2298](https://github.com/loopdive/js2/pull/2298))
+- fix(#2816): default CLI output dir to cwd, strip source extension ([PR 2297](https://github.com/loopdive/js2/pull/2297))
+- fix(#2820): reuse block-let pre-hoisted slot for non-CPS hoisted-fn captures (Bug C) ([PR 2293](https://github.com/loopdive/js2/pull/2293))
+- fix(#2726): sloppy delete of unresolvable identifier returns true (group a) ([PR 2296](https://github.com/loopdive/js2/pull/2296))
+
+## v0.59.4 - 2026-06-29
+
+- Tag `v0.59.4` · range `v0.59.3..v0.59.4` · [compare](https://github.com/loopdive/js2/compare/v0.59.3...v0.59.4)
+- 6 merged PRs: 1 feature, 3 fixes, 2 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,873 / 43,135 (76.2 %).
+- Release notes: [docs/releases/0.59.4.md](docs/releases/0.59.4.md)
+
+### Features
+
+- feat(#2827): statusline + dashboard render sprint:current window (finish #2751) ([PR 2305](https://github.com/loopdive/js2/pull/2305))
+
+### Fixes
+
+- fix(#2832): bound nm_js2wasm_node_process read-side memory (streaming re-chunk) ([PR 2309](https://github.com/loopdive/js2/pull/2309))
+- fix(#2828): ship examples/ in the npm tarball ([PR 2308](https://github.com/loopdive/js2/pull/2308))
+- fix(#2809): undefined[] externref representation — finish Sites C+D (acorn arguments milestone) ([PR 2301](https://github.com/loopdive/js2/pull/2301))
+
+## v0.59.5 - 2026-06-29
+
+- Tag `v0.59.5` · range `v0.59.4..v0.59.5` · [compare](https://github.com/loopdive/js2/compare/v0.59.4...v0.59.5)
+- 14 merged PRs: 1 feature, 8 fixes, 5 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 33,017 / 43,135 (76.5 %).
+- Release notes: [docs/releases/0.59.5.md](docs/releases/0.59.5.md)
+
+### Features
+
+- perf(#2835): pack ArrayBuffer/DataView byte buffer as array(mut i8) — 4× smaller GC footprint ([PR 2324](https://github.com/loopdive/js2/pull/2324))
+
+### Fixes
+
+- fix(#2840): exclude module-scope Uint8Array from #1886 linear analysis (.ts-direct nm_node_process) ([PR 2323](https://github.com/loopdive/js2/pull/2323))
+- fix(#2839): externref→vec materializer i8/i16 coerce + WASI native reader (#2311 regression) ([PR 2321](https://github.com/loopdive/js2/pull/2321))
+- fix(#2838): L3 — wasmClosureBridge method-this arity fallback ([PR 2319](https://github.com/loopdive/js2/pull/2319))
+- fix(#2837): route growable object literals to externref $Object (no more dropped out-of-shape writes) ([PR 2318](https://github.com/loopdive/js2/pull/2318))
+- fix(#2836): gate host-shim vec conversion on __is_vec — arrow params on compiled acorn ([PR 2317](https://github.com/loopdive/js2/pull/2317))
+- fix(#2834): make nm_js2wasm_node_process node-runnable via stdin setEncoding ([PR 2315](https://github.com/loopdive/js2/pull/2315))
+- fix(#2833): add .ts extension to native-messaging relative imports ([PR 2312](https://github.com/loopdive/js2/pull/2312))
+- fix(#2831): host-externref→wasm-vec materializer for dynamic vec-field writes ([PR 2311](https://github.com/loopdive/js2/pull/2311))
+
+## v0.60.0 - 2026-07-05
+
+- Tag `v0.60.0` · range `v0.59.5..v0.60.0` · [compare](https://github.com/loopdive/js2/compare/v0.59.5...v0.60.0)
+- 403 merged PRs: 92 features, 159 fixes, 152 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,472 / 43,106 (75.3 %).
+
+### Features
+
+- feat(#3057): runtime-kind byte codec for dynamic $__ta_dyn_view element get/set ([PR 2741](https://github.com/loopdive/js2/pull/2741))
+- feat(#3054 D+E): dynamic new <ctorVar>(rab) + resizable-ctors harness shim ([PR 2740](https://github.com/loopdive/js2/pull/2740))
+- feat(#3054 C): resizable ArrayBuffer via $__resizable_ab WasmGC subtype ([PR 2739](https://github.com/loopdive/js2/pull/2739))
+- feat(#3054 B3): proto-method write-through on TypedArray view receivers ([PR 2738](https://github.com/loopdive/js2/pull/2738))
+- feat(#3054 B2): TypedArray view accessor props + windowing constructor ([PR 2737](https://github.com/loopdive/js2/pull/2737))
+- feat(#3054 B1): shared-backing TypedArray/DataView views over ArrayBuffer ([PR 2736](https://github.com/loopdive/js2/pull/2736))
+- feat(#3053): U2 — open the IR scan for dynamic member/element reads (the claim-flip) ([PR 2730](https://github.com/loopdive/js2/pull/2730))
+- feat(#3053): U1 — wire __dyn_member_get into the IR member-read path (byte-inert-off-path) ([PR 2729](https://github.com/loopdive/js2/pull/2729))
+- feat(#3053): U0 — byte-inert __dyn_member_get carrier substrate helper ([PR 2728](https://github.com/loopdive/js2/pull/2728))
+- feat(#3051): IR class.call — void instance method in statement position ([PR 2721](https://github.com/loopdive/js2/pull/2721))
+- feat(#2949 S5.3): dynamic numeric-abstract relational lowering (byte-inert) ([PR 2702](https://github.com/loopdive/js2/pull/2702))
+- feat(website): move benchmarks to a dedicated performance page ([PR 2699](https://github.com/loopdive/js2/pull/2699))
+- feat(#2949 S5.2): dynamic strict/loose equality lowering (byte-inert) ([PR 2694](https://github.com/loopdive/js2/pull/2694))
+- feat(#2949 S5.1): dynamic-value truthiness lowering (byte-inert mechanism slice) ([PR 2690](https://github.com/loopdive/js2/pull/2690))
+- feat(#2906): async-generator for-await CONSUMER — host-free 3d-ii drive ([PR 2678](https://github.com/loopdive/js2/pull/2678))
+- feat(#2949 S5.0): builder emit plumbing for dynamic box/unbox/tag.test ([PR 2682](https://github.com/loopdive/js2/pull/2682))
+- feat(#3000-E): IR inheritance/super emission — classes.ts fully IR ([PR 2675](https://github.com/loopdive/js2/pull/2675))
+- feat(#2906): async-generator producer core — host-free settleYield drive (slice 3d-i) ([PR 2669](https://github.com/loopdive/js2/pull/2669))
+- feat(#2933): standalone fixed-arity Reflect.* static-method value reads ([PR 2668](https://github.com/loopdive/js2/pull/2668))
+- feat(#3000-C): IR constructor emission for flat classes ([PR 2662](https://github.com/loopdive/js2/pull/2662))
+- …and 72 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(#1524): test262 byteConversionValues + TA constructor-list harness globals ([PR 2732](https://github.com/loopdive/js2/pull/2732))
+- fix(#3045): materialize class-expression constructor value into its binding ([PR 2719](https://github.com/loopdive/js2/pull/2719))
+- fix(#3051): RegExp @@replace/@@split arg + flag coercion (Slice 2) ([PR 2727](https://github.com/loopdive/js2/pull/2727))
+- fix(#3051): host-wrap RegExp exec-override result for @@replace/@@split coercion ([PR 2723](https://github.com/loopdive/js2/pull/2723))
+- fix(#3037): CS1b(ii) element-access object-identity carrier (standalone) ([PR 2713](https://github.com/loopdive/js2/pull/2713))
+- fix(#3048): register __make_getter_callback for object-literal accessor/method shapes ([PR 2716](https://github.com/loopdive/js2/pull/2716))
+- fix(#3046): bind JSON.parse reviver this to the holder ([PR 2715](https://github.com/loopdive/js2/pull/2715))
+- fix(#3047): var/function same-name coexistence at var-scope top level ([PR 2714](https://github.com/loopdive/js2/pull/2714))
+- fix(#3042): value-less defineProperty defaults widened field to undefined ([PR 2711](https://github.com/loopdive/js2/pull/2711))
+- fix(#3044): stop Math.<inherited-method>() crashing codegen (op.endsWith) ([PR 2710](https://github.com/loopdive/js2/pull/2710))
+- …and 149 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.60.1 - 2026-07-06
+
+- Tag `v0.60.1` · range `v0.60.0..v0.60.1` · [compare](https://github.com/loopdive/js2/compare/v0.60.0...v0.60.1)
+- 16 merged PRs: 3 features, 5 fixes, 8 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,513 / 43,106 (75.4 %).
+
+### Features
+
+- feat(#3058): resizable-TA read proto-methods over dynamic $__ta_dyn_view (Bucket A first slice) ([PR 2759](https://github.com/loopdive/js2/pull/2759))
+- feat(#3065): IR claim non-terminating if-guard at non-void body position ([PR 2758](https://github.com/loopdive/js2/pull/2758))
+- feat(#2858): IR call-graph-closure bucket → 0 (host-mode caller-arm relaxation) ([PR 2752](https://github.com/loopdive/js2/pull/2752))
+
+### Fixes
+
+- fix(#3064): pure-Wasm escape() / unescape() for standalone/WASI ([PR 2756](https://github.com/loopdive/js2/pull/2756))
+- fix(#3062): compute DataView.byteLength/byteOffset natively in JS-host mode ([PR 2754](https://github.com/loopdive/js2/pull/2754))
+- fix(#3063): implement legacy global escape() / unescape() in JS-host mode ([PR 2755](https://github.com/loopdive/js2/pull/2755))
+- fix(#3061): compute ArrayBuffer.byteLength/byteOffset natively in JS-host mode ([PR 2753](https://github.com/loopdive/js2/pull/2753))
+- fix(#2726): clear mapped-arguments slot on delete arguments[i] (group e) ([PR 2748](https://github.com/loopdive/js2/pull/2748))
+
+## v0.61.0 - 2026-07-18
+
+- Tag `v0.61.0` · range `v0.60.1..v0.61.0` · [compare](https://github.com/loopdive/js2/compare/v0.60.1...v0.61.0)
+- 550 merged PRs: 81 features, 243 fixes, 226 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 25,003 / 43,106 (58.0 %).
+- Release notes: [docs/releases/0.61.0.md](docs/releases/0.61.0.md)
+
+### Features
+
+- feat(test262): make original harness authoritative ([PR 3267](https://github.com/loopdive/js2/pull/3267))
+- feat(#3390): drive non-constructor Promise-combinator .call receivers to native TypeError (standalone) ([PR 3329](https://github.com/loopdive/js2/pull/3329))
+- feat(#3388): async-gen yield* runtime delegation (nested/method producers, standalone) ([PR 3332](https://github.com/loopdive/js2/pull/3332))
+- feat(#802): dynamic prototype for class instances (Slices B+C, standalone) ([PR 3321](https://github.com/loopdive/js2/pull/3321))
+- feat(#2570): lazy yield* delegation on the driven async-generator machine ([PR 3312](https://github.com/loopdive/js2/pull/3312))
+- feat(porffor): prove shared heap layouts (#3299) ([PR 3263](https://github.com/loopdive/js2/pull/3263))
+- feat(ir): extract target-neutral linear memory plan ([PR 3245](https://github.com/loopdive/js2/pull/3245))
+- feat(#1044): ambient global Buffer typing under --emulate node ([PR 3233](https://github.com/loopdive/js2/pull/3233))
+- feat(#1792): node:url URL / URLSearchParams as host constructors ([PR 3217](https://github.com/loopdive/js2/pull/3217))
+- feat(linear-ir): enable selector overlay by default (#2956) ([PR 3232](https://github.com/loopdive/js2/pull/3232))
+- feat(#3101): E1 standalone bytecode interpreter library + ADR-0019 ([PR 3218](https://github.com/loopdive/js2/pull/3218))
+- feat(linear-ir): lower selector-claimed strings ([PR 3203](https://github.com/loopdive/js2/pull/3203))
+- feat(linear-ir): lower aggregate and ref-cell layouts ([PR 3200](https://github.com/loopdive/js2/pull/3200))
+- feat(porffor): prove scalar control flow through Porffor C ([PR 3198](https://github.com/loopdive/js2/pull/3198))
+- feat(#1795): node:http/https GET round-trip (axios unblocker) + fix(#3329) shared-capture cell unification ([PR 3193](https://github.com/loopdive/js2/pull/3193))
+- feat(ir): #3142 slice 2 — module-init lowering + __module_init slot patch (gate G3) ([PR 3168](https://github.com/loopdive/js2/pull/3168))
+- feat(#2956 L2): vec mutation (element store + push) through the linear-IR overlay ([PR 3179](https://github.com/loopdive/js2/pull/3179))
+- feat(#1794): node:events EventEmitter — host class + closure-callback contract (Tier 0) ([PR 3175](https://github.com/loopdive/js2/pull/3175))
+- feat(#745): S4 — union params/returns + any-boundary on the $AnyValue carrier ([PR 3171](https://github.com/loopdive/js2/pull/3171))
+- feat(#745): S3 — carrier-agnostic strict-eq / truthiness / concat for $AnyValue union locals ([PR 3169](https://github.com/loopdive/js2/pull/3169))
+- …and 61 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(ci): align Test262 pool with published baseline ([PR 3363](https://github.com/loopdive/js2/pull/3363))
+- fix(#3395 shape 2): Weak-collection typed-null → valid Wasm (child of #2039) ([PR 3343](https://github.com/loopdive/js2/pull/3343))
+- fix(#2872): slice 5 — standalone findLast/findLastIndex host-free (dyn-view two-arm + scalar-HOF any-receiver decline + __hof_* S1 undefined singleton) ([PR 3342](https://github.com/loopdive/js2/pull/3342))
+- fix(#3394): box i64/bigint at externref boundaries — invalid Wasm (child of #2039) ([PR 3341](https://github.com/loopdive/js2/pull/3341))
+- fix(#2875): reflective String proto non-string ToString — box-struct ordering + trim flatten (standalone) ([PR 3339](https://github.com/loopdive/js2/pull/3339))
+- fix(#739): host-lane representation pinning for runtime-store defines (S1) ([PR 3317](https://github.com/loopdive/js2/pull/3317))
+- fix(#3379): baseline-sync staleness guard must measure public/, not the in-repo copy (follow-up to #3375) ([PR 3298](https://github.com/loopdive/js2/pull/3298))
+- fix(#3384): unwrap wrapped JSON.parse call before reading .arguments (standalone/wasi crash) ([PR 3295](https://github.com/loopdive/js2/pull/3295))
+- fix(#2961): warning-first standalone host-import leak scan (phase 1) ([PR 3288](https://github.com/loopdive/js2/pull/3288))
+- fix(#2728): Object(Symbol()) boxes to a Symbol-wrapper object ([PR 3275](https://github.com/loopdive/js2/pull/3275))
+- …and 233 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.62.0 - 2026-07-19
+
+- Tag `v0.62.0` · range `v0.61.0..v0.62.0` · [compare](https://github.com/loopdive/js2/compare/v0.61.0...v0.62.0)
+- 28 merged PRs: 5 features, 8 fixes, 15 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 27,827 / 43,106 (64.6 %).
+
+### Features
+
+- perf(test262): rebalance shard weight maps from post-#3374 timings (#3438) ([PR 3377](https://github.com/loopdive/js2/pull/3377))
+- feat(#3251): S1 array-descriptor overlay substrate — companion $Object per vec receiver (standalone) ([PR 3327](https://github.com/loopdive/js2/pull/3327))
+- feat(hooks): pre-push LOC-regrowth ratchet check — catch #3102/#3131 locally before CI ([PR 3355](https://github.com/loopdive/js2/pull/3355))
+- perf(#3433): memoize per-call full-file assignment scans — 2.6-3.8x faster test262 v8 harness compiles ([PR 3374](https://github.com/loopdive/js2/pull/3374))
+- feat(ir): prove shared allocation-policy leverage (#3300) ([PR 3287](https://github.com/loopdive/js2/pull/3287))
+
+### Fixes
+
+- fix(release): bump jsr.json in lockstep (JSR was silently frozen at 0.60.1) ([PR 3384](https://github.com/loopdive/js2/pull/3384))
+- fix(#3387): drive nested async-gen for-await destructuring heads host-free (standalone) ([PR 3322](https://github.com/loopdive/js2/pull/3322))
+- fix(#3436): eliminate standalone harness-prelude import leak ([PR 3369](https://github.com/loopdive/js2/pull/3369))
+- fix(#3395 shape 3): mixed == string-ToNumber redundant extern.convert_any (child of #2039) ([PR 3345](https://github.com/loopdive/js2/pull/3345))
+- fix(#3428): observe test262 async completion marker in the host lane ([PR 3372](https://github.com/loopdive/js2/pull/3372))
+- fix(#3419): duplicate function declarations — spec-correct early errors + last-wins codegen + var-counter i32 gate ([PR 3368](https://github.com/loopdive/js2/pull/3368))
+- fix(#3427): dedupe duplicate top-level harness function declarations (isPrimitive) ([PR 3366](https://github.com/loopdive/js2/pull/3366))
+- fix(test262): quarantine proven same-SHA host noise ([PR 3367](https://github.com/loopdive/js2/pull/3367))
+
+## v0.63.0 - 2026-07-19
+
+- Tag `v0.63.0` · range `v0.62.0..v0.63.0` · [compare](https://github.com/loopdive/js2/compare/v0.62.0...v0.63.0)
+- 39 merged PRs: 6 features, 19 fixes, 14 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 27,834 / 43,106 (64.6 %).
+
+### Features
+
+- feat(#745 S4.5): flip unionAnyRep lane-default ON for native-string lanes ([PR 3409](https://github.com/loopdive/js2/pull/3409))
+- feat(#3461): productionize native-harness FAST oracle (host lane) ([PR 3399](https://github.com/loopdive/js2/pull/3399))
+- feat(#1373b C-1): IR async Phase C — claim the sync-pass-through population on the one-engine consistency gate ([PR 3350](https://github.com/loopdive/js2/pull/3350))
+- feat(#2662): lazy capturing-nested generators on the gc/host lane ([PR 3335](https://github.com/loopdive/js2/pull/3335))
+- feat(#2963 Tier 2a): wire Number.is* first-class values (standalone) ([PR 3359](https://github.com/loopdive/js2/pull/3359))
+- feat(#2917): standalone native 'class Sub extends Array' + extends-Object own-field fix (slice 1) ([PR 3324](https://github.com/loopdive/js2/pull/3324))
+
+### Fixes
+
+- fix(#3471): gate body-usage param inference on zero call sites (unsound f64 narrowing broke isSameValue → ~433 name/length tests) ([PR 3419](https://github.com/loopdive/js2/pull/3419))
+- fix(#3469): standalone host-free console/print output sink + async drain gate ([PR 3416](https://github.com/loopdive/js2/pull/3416))
+- fix(#3470): restore host-builtin method .name/.length sub-properties between test262 runs ([PR 3417](https://github.com/loopdive/js2/pull/3417))
+- fix(#3435): Function-typed dynamic ctor params route through __construct_closure (stacked on #3370) ([PR 3375](https://github.com/loopdive/js2/pull/3375))
+- fix(#3389 slice 2): async-gen .return()/.throw() consumer methods [DRAFT — held pending #3344] ([PR 3390](https://github.com/loopdive/js2/pull/3390))
+- fix(#3408): retire non-atomic issue-ID entrypoints in favor of the atomic allocator ([PR 3406](https://github.com/loopdive/js2/pull/3406))
+- fix(#3407): guard test262 fixture runner inner catch against duplicate/contradictory verdict rows ([PR 3405](https://github.com/loopdive/js2/pull/3405))
+- fix(#2787): capture async console.log in diff-test harness (corpus 96→99 match) ([PR 3402](https://github.com/loopdive/js2/pull/3402))
+- fix(#802): promote object-literal proto receivers to $Object (slice A) ([PR 3318](https://github.com/loopdive/js2/pull/3318))
+- fix(#3410): close legacy-origin bypass in the private-labs pre-push guard ([PR 3401](https://github.com/loopdive/js2/pull/3401))
+- …and 9 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.64.0 - 2026-07-21
+
+- Tag `v0.64.0` · range `v0.63.0..v0.64.0` · [compare](https://github.com/loopdive/js2/compare/v0.63.0...v0.64.0) · also tagged `sprint-74/begin`, `sprint/73`
+- 45 merged PRs: 6 features, 20 fixes, 19 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 29,482 / 43,106 (68.4 %).
+
+### Features
+
+- feat(ir): add a bounded multi-module overlay ([PR 3464](https://github.com/loopdive/js2/pull/3464))
+- feat(ir): compile the builtins example through IR ([PR 3463](https://github.com/loopdive/js2/pull/3463))
+- feat(#3481): host BigInt binop delegation for wrapper coercion (prereq for #3328 flip) ([PR 3458](https://github.com/loopdive/js2/pull/3458))
+- feat(ir): share module bindings across front-ends ([PR 3457](https://github.com/loopdive/js2/pull/3457))
+- feat(ir): lower shared string build and methods (#3502) ([PR 3453](https://github.com/loopdive/js2/pull/3453))
+- feat(benchmarks): add landing four-lane backend evidence (#3498) ([PR 3452](https://github.com/loopdive/js2/pull/3452))
+
+### Fixes
+
+- fix(test262): close FYI parity follow-up gaps ([PR 3456](https://github.com/loopdive/js2/pull/3456))
+- fix(#3512): stop instance fields leaking as own props of the class constructor (#3479 Slice C) ([PR 3462](https://github.com/loopdive/js2/pull/3462))
+- fix(#3511): symbol-safe array-index probe for dynamic-any element access (~40 host flips) ([PR 3461](https://github.com/loopdive/js2/pull/3461))
+- fix(#3488): route reflective gOPD().get callees through the host-callable arm ([PR 3460](https://github.com/loopdive/js2/pull/3460))
+- fix(ci): remove redundant landing benchmark separators ([PR 3454](https://github.com/loopdive/js2/pull/3454))
+- fix(test262): align FYI and project harness verdicts ([PR 3420](https://github.com/loopdive/js2/pull/3420))
+- fix(#3468): add capturing-closure own-property side table ([PR 3418](https://github.com/loopdive/js2/pull/3418))
+- fix(ir): infer typed vectors for empty arrays (#3501) ([PR 3451](https://github.com/loopdive/js2/pull/3451))
+- fix(ir): certify recursive linear call-graph types ([PR 3448](https://github.com/loopdive/js2/pull/3448))
+- fix(ir): lower typed bitwise composites to Porffor (#3499) ([PR 3447](https://github.com/loopdive/js2/pull/3447))
+- …and 10 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.64.1 - 2026-07-21
+
+- Tag `v0.64.1` · range `v0.64.0..v0.64.1` · [compare](https://github.com/loopdive/js2/compare/v0.64.0...v0.64.1)
+- 3 merged PRs: 0 features, 1 fix, 2 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 29,482 / 43,106 (68.4 %).
+
+### Fixes
+
+- fix(test262): handle absent trap baselines as unknown ([PR 3468](https://github.com/loopdive/js2/pull/3468))
+
+## v0.65.0 - 2026-07-21
+
+- Tag `v0.65.0` · range `v0.64.1..v0.65.0` · [compare](https://github.com/loopdive/js2/compare/v0.64.1...v0.65.0)
+- 20 merged PRs: 7 features, 7 fixes, 6 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 30,272 / 43,096 (70.2 %).
+
+### Features
+
+- feat(ir): complete the typed R0 migration boundary ([PR 3483](https://github.com/loopdive/js2/pull/3483))
+- feat(ir): claim exact generic Map module init ([PR 3479](https://github.com/loopdive/js2/pull/3479))
+- feat(ir): lower ambient void event callbacks ([PR 3475](https://github.com/loopdive/js2/pull/3475))
+- feat(ir): lower imported higher-order calls ([PR 3473](https://github.com/loopdive/js2/pull/3473))
+- perf(ci): saturate the serial merge queue ([PR 3472](https://github.com/loopdive/js2/pull/3472))
+- perf(ci): rebalance Test262 and reduce pipeline overhead ([PR 3470](https://github.com/loopdive/js2/pull/3470))
+- feat(ir): canonicalize callable boundary ABI ([PR 3466](https://github.com/loopdive/js2/pull/3466))
+
+### Fixes
+
+- fix(ir): preserve boolean identity at extern boundaries ([PR 3486](https://github.com/loopdive/js2/pull/3486))
+- fix(#1907): standalone BigInt64Array/BigUint64Array .prototype value read host-free ([PR 3485](https://github.com/loopdive/js2/pull/3485))
+- fix(#3409): portable pre-push format-gate watchdog (no GNU timeout dep) ([PR 3482](https://github.com/loopdive/js2/pull/3482))
+- fix(ir): finish function body-shape migration to zero ([PR 3477](https://github.com/loopdive/js2/pull/3477))
+- fix(ci): cancel Test262 when merge-group quality fails ([PR 3478](https://github.com/loopdive/js2/pull/3478))
+- fix(ci): stop polling for missing Test262 baselines ([PR 3476](https://github.com/loopdive/js2/pull/3476))
+- fix(release): keep js2wasm dependency in lockstep ([PR 3469](https://github.com/loopdive/js2/pull/3469))
+
+## v0.66.0 - 2026-07-24
+
+- Tag `v0.66.0` · range `v0.65.0..v0.66.0` · [compare](https://github.com/loopdive/js2/compare/v0.65.0...v0.66.0)
+- 76 merged PRs: 9 features, 41 fixes, 26 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 30,364 / 43,102 (70.4 %).
+
+### Features
+
+- feat(#3177): standalone %TypedArray%.of / .from statics (slice 5) ([PR 3546](https://github.com/loopdive/js2/pull/3546))
+- feat(#3400): R-FUNC per-function LOC-ceiling ratchet (check:func-budget) ([PR 3540](https://github.com/loopdive/js2/pull/3540))
+- feat(#3474): done-status integrity gate + audit (Part B) ([PR 3541](https://github.com/loopdive/js2/pull/3541))
+- feat(#3437): deterministic pre-merge test262 harness compile-time budget gate ([PR 3536](https://github.com/loopdive/js2/pull/3536))
+- feat(#2906 3c-iii): nested try/catch regions — recursive region-body producer, static handler tagging ([PR 3527](https://github.com/loopdive/js2/pull/3527))
+- feat(#2906 3c-ii-b): combined try/catch/finally regions — two-region model, producer-only ([PR 3526](https://github.com/loopdive/js2/pull/3526))
+- feat(#2906 3c-ii-a): return-through-finally + sibling try/catch regions ([PR 3524](https://github.com/loopdive/js2/pull/3524))
+- feat(#2906 3c-i): try/catch-around-await drives — catch regions as states + routed dispatcher ([PR 3522](https://github.com/loopdive/js2/pull/3522))
+- feat(#2864 D2): yield* delegation abrupt forwarding + dedicated self-suspend states ([PR 3519](https://github.com/loopdive/js2/pull/3519))
+
+### Fixes
+
+- fix(#3340): keep inverted expected-failure sentinels out of the root baseline ([PR 3569](https://github.com/loopdive/js2/pull/3569))
+- fix(#3460): unmatched typed-callable host-read direct-call → catchable TypeError, not null-deref trap ([PR 3564](https://github.com/loopdive/js2/pull/3564))
+- fix(#3024): coerce module-global writes to slot type — object-literal runtime-computed-key + for-of array-rest desync ([PR 3558](https://github.com/loopdive/js2/pull/3558))
+- fix(#3200): flatMap non-callable mapper → TypeError (§23.1.3.11 step 3) ([PR 3560](https://github.com/loopdive/js2/pull/3560))
+- fix(#3378): don't capture member/property names as free variables (deepEqual.js stale-local crash) ([PR 3559](https://github.com/loopdive/js2/pull/3559))
+- fix(#3201): slice explicit-undefined end coerces to len; re-scope Array residue ([PR 3561](https://github.com/loopdive/js2/pull/3561))
+- fix(#1325): host-free instanceof Promise in standalone (distinct $Promise struct) ([PR 3556](https://github.com/loopdive/js2/pull/3556))
+- fix(#3573): Set/Map.forEach non-callable guard + Symbol.matchAll drift (standalone) ([PR 3555](https://github.com/loopdive/js2/pull/3555))
+- fix(#3572): native WeakMap/WeakSet iterable constructor (standalone) ([PR 3554](https://github.com/loopdive/js2/pull/3554))
+- fix(#3569): well-formed surrogate escaping in standalone JSON.stringify ([PR 3553](https://github.com/loopdive/js2/pull/3553))
+- …and 31 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.67.0 - 2026-07-31
+
+- Tag `v0.67.0` · range `v0.66.0..v0.67.0` · [compare](https://github.com/loopdive/js2/compare/v0.66.0...v0.67.0)
+- 269 merged PRs: 72 features, 104 fixes, 93 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 29,856 / 43,099 (69.3 %).
+
+### Features
+
+- feat(npm-compat): add sixteen package harnesses ([PR 3847](https://github.com/loopdive/js2/pull/3847))
+- perf: restore WASI warm array and string fast paths ([PR 3844](https://github.com/loopdive/js2/pull/3844))
+- feat(ir): prepare bounded free functions before direct bodies ([PR 3841](https://github.com/loopdive/js2/pull/3841))
+- feat(ir): prove prepared component binding ownership ([PR 3845](https://github.com/loopdive/js2/pull/3845))
+- feat(runtime): bind host data bridges to genuine instances ([PR 3840](https://github.com/loopdive/js2/pull/3840))
+- feat(ir): derive prepared component dependencies ([PR 3842](https://github.com/loopdive/js2/pull/3842))
+- feat(ir): preclaim stable this-bound function calls ([PR 3839](https://github.com/loopdive/js2/pull/3839))
+- feat(ir): add strict dynamic member stores ([PR 3832](https://github.com/loopdive/js2/pull/3832))
+- feat(dogfood): add React upstream API vectors ([PR 3835](https://github.com/loopdive/js2/pull/3835))
+- perf(ir): keep Fibonacci state in native i32 ([PR 3819](https://github.com/loopdive/js2/pull/3819))
+- feat(ir): dispatch dynamic RegExp string replacement ([PR 3830](https://github.com/loopdive/js2/pull/3830))
+- feat(ir): add sealed prepared-program core ([PR 3828](https://github.com/loopdive/js2/pull/3828))
+- feat(ir): emit retained Acorn parser wrappers ([PR 3826](https://github.com/loopdive/js2/pull/3826))
+- feat(ir): bridge standalone native RegExp tests (#3791) ([PR 3823](https://github.com/loopdive/js2/pull/3823))
+- feat(ir): lower dynamic parser loops through IR ([PR 3820](https://github.com/loopdive/js2/pull/3820))
+- feat(npm-compat): add standalone lanes and package dashboard ([PR 3821](https://github.com/loopdive/js2/pull/3821))
+- perf(benchmarks): move auxiliary refreshes post-merge ([PR 3818](https://github.com/loopdive/js2/pull/3818))
+- feat(ir): support mutable dynamic parameter slots ([PR 3816](https://github.com/loopdive/js2/pull/3816))
+- feat(benchmarks): refresh complete performance baselines ([PR 3812](https://github.com/loopdive/js2/pull/3812))
+- feat(npm-compat): add ESLint and relative speed history ([PR 3813](https://github.com/loopdive/js2/pull/3813))
+- …and 52 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(runtime): compile React element APIs correctly ([PR 3843](https://github.com/loopdive/js2/pull/3843))
+- fix(codegen): preserve this for stable named .call targets ([PR 3838](https://github.com/loopdive/js2/pull/3838))
+- fix(ir): preserve counted string aggregation ([PR 3837](https://github.com/loopdive/js2/pull/3837))
+- fix(pages): resolve benchmark timing source ([PR 3834](https://github.com/loopdive/js2/pull/3834))
+- fix(benchmarks): stabilize CI timing and promotion ([PR 3833](https://github.com/loopdive/js2/pull/3833))
+- fix(npm-compat): keep package cards visible ([PR 3817](https://github.com/loopdive/js2/pull/3817))
+- fix(ci #3788): deploy Pages after Refresh Benchmarks, not just on push ([PR 3815](https://github.com/loopdive/js2/pull/3815))
+- fix(bench #3785): keep the timing wrapper out of the benchmark it times ([PR 3806](https://github.com/loopdive/js2/pull/3806))
+- fix(ir #3784): type the no-box number-local gate so it demotes instead of hard-failing ([PR 3805](https://github.com/loopdive/js2/pull/3805))
+- fix(#3663): preserve inherited descriptor flags ([PR 3749](https://github.com/loopdive/js2/pull/3749))
+- …and 94 more fix PRs (newest 10 shown; see the compare link).
+
+### Carried over from the former Unreleased section: Added: reusable `FyiSourceExecutor` for external test262 integrations (#3599)
+
+- `FyiSourceExecutor` and `runTest` are now exported from the new
+  `@loopdive/js2/test262-fyi` subpath (added to `package.json`'s `exports`
+  map — this subpath was previously unreachable via `import`, even though
+  `js2-test262` shipped as a bin). `executeTestFile({ ..., executor })` now
+  accepts an optional pre-existing executor: an external caller that runs
+  many test files in one long-lived process (e.g. a persistent server) can
+  reuse a single warm executor across many calls instead of paying a fresh
+  Node start + full compiler-module load per call. Omitting `executor`
+  preserves the exact prior one-shot behavior.
+- Fixed a real bug this surfaced: `FyiSourceExecutor`'s default `workerPath`
+  resolved to a `scripts/` path that only exists in the monorepo checkout,
+  not in the published package — `new FyiSourceExecutor()` with no explicit
+  `workerPath` threw `Cannot find module '.../scripts/test262-worker.mjs'`
+  when called from outside this repo. It now resolves lazily next to its own
+  module location, matching the (already-correct) logic `js2-test262`'s CLI
+  entry point used internally.
+
+## v0.68.0 - 2026-08-04
+
+- Tag `v0.68.0` · range `v0.67.0..v0.68.0` · [compare](https://github.com/loopdive/js2/compare/v0.67.0...v0.68.0)
+- 239 merged PRs: 34 features, 98 fixes, 107 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 30,982 / 43,505 (71.2 %).
+- Release notes: [docs/release-notes/v0.68.0.md](docs/release-notes/v0.68.0.md)
+
+### Features
+
+- feat(website): scope-reactive trend graphs + report-page edition sparklines ([PR 4104](https://github.com/loopdive/js2/pull/4104))
+- perf(arrays): keep affine indices in i32 ([PR 4069](https://github.com/loopdive/js2/pull/4069))
+- feat(eval): route standalone eval and Function through bytecode interpreter ([PR 4013](https://github.com/loopdive/js2/pull/4013))
+- feat(ir): retire prepared class methods and accessors ([PR 4081](https://github.com/loopdive/js2/pull/4081))
+- feat(#4127): give npm-compat a named correctness axis — cookie is divergent, not compatible ([PR 4080](https://github.com/loopdive/js2/pull/4080))
+- perf(strings): scalarize nested static splits ([PR 4067](https://github.com/loopdive/js2/pull/4067))
+- perf(strings): scalarize derived host results ([PR 4066](https://github.com/loopdive/js2/pull/4066))
+- feat(ir): migrate final async terminal owners ([PR 4065](https://github.com/loopdive/js2/pull/4065))
+- perf(#4122): an unresolvable assignment is not a cross-domain one — method axis 3.6x, plus #4121/#4123 ([PR 4064](https://github.com/loopdive/js2/pull/4064))
+- perf(compiler): close benchmark parity gaps ([PR 4062](https://github.com/loopdive/js2/pull/4062))
+- feat(ir): compile Promise.all continuations through IR ([PR 4059](https://github.com/loopdive/js2/pull/4059))
+- feat(ir): emit single-await async functions from prepared plans ([PR 4050](https://github.com/loopdive/js2/pull/4050))
+- feat(ir): consume async runtime plans before ABI sealing ([PR 4049](https://github.com/loopdive/js2/pull/4049))
+- feat(ir): plan module initialization before body emission ([PR 4036](https://github.com/loopdive/js2/pull/4036))
+- feat(ir): route certified Math calls through semantic intrinsics ([PR 4041](https://github.com/loopdive/js2/pull/4041))
+- feat(ir): compile flat scalar instance methods once ([PR 4040](https://github.com/loopdive/js2/pull/4040))
+- feat(#4094): derive enqueue eligibility from real signals, not the stale mergeStateStatus ([PR 4038](https://github.com/loopdive/js2/pull/4038))
+- feat(ir): define fail-closed async suspension plan ([PR 4039](https://github.com/loopdive/js2/pull/4039))
+- feat(ir): add frozen pure-math runtime manifest ([PR 4037](https://github.com/loopdive/js2/pull/4037))
+- feat(#4035): gate the host-bridge export suite behind a hostBridge policy ([PR 4002](https://github.com/loopdive/js2/pull/4002))
+- …and 14 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(#4098): per-instance own-property deletability — `delete o[k]` is real on a class instance (G1 stage 1) ([PR 4100](https://github.com/loopdive/js2/pull/4100))
+- fix(hooks): pre-commit fast lane — prettier/biome unconditional, slow checks skippable ([PR 4102](https://github.com/loopdive/js2/pull/4102))
+- fix(codegen): 12 compiler defects found compiling ESLint; 2 emit blockers remain (#4001, #4133, #4134 + 9 more) ([PR 4074](https://github.com/loopdive/js2/pull/4074))
+- fix(editions): index every test262 file, closing the standalone count gap ([PR 4093](https://github.com/loopdive/js2/pull/4093))
+- fix(#4010): S3 — own-property visibility over the carrier bags; the -684 isolated ([PR 4091](https://github.com/loopdive/js2/pull/4091))
+- fix(#4061): Object.create descriptor-argument validation (§8.10.5) — 16/17, 0 regressions ([PR 4096](https://github.com/loopdive/js2/pull/4096))
+- fix(codegen/ir): three defects blocking acorn on --target standalone ([PR 4088](https://github.com/loopdive/js2/pull/4088))
+- fix(#4140): the npm-compat promote PUSH runs husky too — and the retry loop lied about why ([PR 4094](https://github.com/loopdive/js2/pull/4094))
+- fix(#4141): heal poison rows under the shards' proposal scope; treat baseline `skip` as can't-testify ([PR 4095](https://github.com/loopdive/js2/pull/4095))
+- fix(#4120): typeof of a reified builtin constructor answers "function" ([PR 4090](https://github.com/loopdive/js2/pull/4090))
+- …and 88 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.69.0 - 2026-08-09
+
+- Tag `v0.69.0` · range `v0.68.0..v0.69.0` · [compare](https://github.com/loopdive/js2/compare/v0.68.0...v0.69.0)
+- 191 merged PRs: 62 features, 60 fixes, 69 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 31,651 / 43,505 (72.8 %).
+- Release notes: [docs/release-notes/v0.69.0.md](docs/release-notes/v0.69.0.md)
+
+### Features
+
+- perf(array): batch numeric indexOf misses ([PR 4307](https://github.com/loopdive/js2/pull/4307))
+- feat(ir): retire Builtins legacy bodies ([PR 4305](https://github.com/loopdive/js2/pull/4305))
+- feat: ES5 standalone conformance — wave 5 (#4262 error substrate, #4264 `with` value carriers +30, #4265 callable ToString) ([PR 4302](https://github.com/loopdive/js2/pull/4302))
+- feat: ES5 standalone — wave 5 follow-up (#4266 vec own-key enumeration +7, #4269 object-literal method receiver) ([PR 4299](https://github.com/loopdive/js2/pull/4299))
+- perf(strings): elide empty concat allocations ([PR 4300](https://github.com/loopdive/js2/pull/4300))
+- perf(runtime): collapse fixed host method call crossings ([PR 4293](https://github.com/loopdive/js2/pull/4293))
+- perf(strings): inline constant-needle indexOf scans ([PR 4291](https://github.com/loopdive/js2/pull/4291))
+- perf(strings): scalarize proven ASCII case conversions ([PR 4292](https://github.com/loopdive/js2/pull/4292))
+- perf(runtime): streamline non-throwing leaf imports ([PR 4289](https://github.com/loopdive/js2/pull/4289))
+- perf(strings): specialize proven rope concatenation ([PR 4287](https://github.com/loopdive/js2/pull/4287))
+- feat(linear): add native String.repeat support ([PR 4286](https://github.com/loopdive/js2/pull/4286))
+- perf(array): accelerate hot indexOf scans ([PR 4279](https://github.com/loopdive/js2/pull/4279))
+- perf(strings): avoid integer format scratch allocation ([PR 4278](https://github.com/loopdive/js2/pull/4278))
+- perf(strings): fuse native trim length scan ([PR 4277](https://github.com/loopdive/js2/pull/4277))
+- perf(codegen): cache ambient host globals per instance ([PR 4275](https://github.com/loopdive/js2/pull/4275))
+- feat(linear): cache literals and lower string searches ([PR 4274](https://github.com/loopdive/js2/pull/4274))
+- feat: ES5 standalone conformance — wave 4 (#4246 this/new, #4247 array keys, #4248 wrapper protos, #4251 harness canary, #4252 computed-key calls) ([PR 4258](https://github.com/loopdive/js2/pull/4258))
+- perf: speed up cookie host bridge and clsx arguments ([PR 4272](https://github.com/loopdive/js2/pull/4272))
+- feat(website): npm-compat measured-at shows time, not only date ([PR 4266](https://github.com/loopdive/js2/pull/4266))
+- feat(#4250): whole-program per-field write-kind verdict — fixes the literal-slot miscompile, flips JS2WASM_FNCTOR_CTOR_PARAM_SLOTS to unset⇒ON ([PR 4265](https://github.com/loopdive/js2/pull/4265))
+- …and 42 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(#4276): host-free `instanceof Object` / `instanceof Function` in standalone (+6, −0) ([PR 4311](https://github.com/loopdive/js2/pull/4311))
+- fix(benchmarks): verify array callback checksums ([PR 4298](https://github.com/loopdive/js2/pull/4298))
+- fix(async): preserve Promise rejection payload identity ([PR 4297](https://github.com/loopdive/js2/pull/4297))
+- fix(linear): reclaim safe arenas between exported calls ([PR 4288](https://github.com/loopdive/js2/pull/4288))
+- fix(dogfood): contain late jsdom host errors ([PR 4285](https://github.com/loopdive/js2/pull/4285))
+- fix(#4261): typed field access no longer erases a fnctor's prototype methods — escape-gate clause B yields to a dynamic use (standalone) ([PR 4276](https://github.com/loopdive/js2/pull/4276))
+- fix(#4241): carrier-intrinsic $bag on un-split fnctors — acorn's registry leak goes 1 entry/parse to 0 ([PR 4273](https://github.com/loopdive/js2/pull/4273))
+- fix(#4235): run the fnctor pipeline on the multi-file compile path ([PR 4269](https://github.com/loopdive/js2/pull/4269))
+- fix(#2107): stop the union-undefined erasure being silent; file #4258 ([PR 4267](https://github.com/loopdive/js2/pull/4267))
+- fix(website): standalone edition filter + issue links that pointed at unrelated PRs ([PR 4264](https://github.com/loopdive/js2/pull/4264))
+- …and 50 more fix PRs (newest 10 shown; see the compare link).
+
+## v0.70.0 - 2026-08-19
+
+- Tag `v0.70.0` · range `v0.69.0..v0.70.0` · [compare](https://github.com/loopdive/js2/compare/v0.69.0...v0.70.0)
+- 313 merged PRs: 96 features, 116 fixes, 101 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 32,615 / 43,621 (74.8 %).
+- Release notes: [docs/release-notes/v0.70.0.md](docs/release-notes/v0.70.0.md)
+
+### Features
+
+- feat(codegen-linear): #4539 link topology + calls through to C, and #4554 tier-1 address domain ([PR 4643](https://github.com/loopdive/js2/pull/4643))
+- feat(hooks): add PreToolUse guard against Claude-authored commits ([PR 4638](https://github.com/loopdive/js2/pull/4638))
+- feat(npm-compat): benchmark curated packages and run upstream suites ([PR 4619](https://github.com/loopdive/js2/pull/4619))
+- feat(#4513): IR-adopt statically-foldable computed object keys ([PR 4617](https://github.com/loopdive/js2/pull/4617))
+- feat(#4512): ref-typed ToBoolean in condition/ternary/! position — 4 residual shapes claim, invariants become clean rejects ([PR 4614](https://github.com/loopdive/js2/pull/4614))
+- feat(#4511): session-start usage-limit monitor — 5h-window cache, suspend sentinel, agent-spawn deny hook ([PR 4612](https://github.com/loopdive/js2/pull/4612))
+- feat(#4503): IR boolean brand — boolean template substitutions claim in all three lanes ([PR 4610](https://github.com/loopdive/js2/pull/4610))
+- feat(#4508): module-binding storage edges in the prepared-owner fixpoint — fibMemo and main claim standalone ([PR 4611](https://github.com/loopdive/js2/pull/4611))
+- feat(codegen): fn.prototype auto-object S1+S2 (#4480) + plain-object descriptor slice (#4479) ([PR 4609](https://github.com/loopdive/js2/pull/4609))
+- feat(npm-compat): benchmark every curated package ([PR 4608](https://github.com/loopdive/js2/pull/4608))
+- feat(#4487): array-literal spread claims over same-typed vec sources ([PR 4601](https://github.com/loopdive/js2/pull/4601))
+- feat(#3522): nested class accessors prepare compile-once (family-2 slice) ([PR 4597](https://github.com/loopdive/js2/pull/4597))
+- feat(#4471): empty object literal claims — narrowly, with the polymorphic-representation boundary measured ([PR 4593](https://github.com/loopdive/js2/pull/4593))
+- feat(#4459): value-discarding expression statements claim — the gate was selector-only ([PR 4589](https://github.com/loopdive/js2/pull/4589))
+- feat(#4461): native $Map storage in the IR — standalone Map functions claim ([PR 4583](https://github.com/loopdive/js2/pull/4583))
+- feat(#4467): numeric template-literal substitutions claim in all three lanes ([PR 4584](https://github.com/loopdive/js2/pull/4584))
+- feat(#3522): nested implicit-constructor classes prepare compile-once ([PR 4576](https://github.com/loopdive/js2/pull/4576))
+- feat(codegen): single-emitter %Function% carrier + host-free .constructor arm (#4442) ([PR 4566](https://github.com/loopdive/js2/pull/4566))
+- feat(#4424): structure-tree GVN, flag-gated OFF (upstream re-host of #4524) ([PR 4564](https://github.com/loopdive/js2/pull/4564))
+- feat(#4418): shared cached dominance analysis (upstream re-host of #4520 + spec-coverage citation) ([PR 4558](https://github.com/loopdive/js2/pull/4558))
+- …and 76 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix: follow the loopdive/js2wasm → loopdive/js2 rename (npm publish + Pages deploy) ([PR 4652](https://github.com/loopdive/js2/pull/4652))
+- fix(ci): retry transient API failures in cla-check; docs: #4540 two-memory alternative ([PR 4645](https://github.com/loopdive/js2/pull/4645))
+- fix(ci): import missing setupMarked in npm-compat report generator ([PR 4637](https://github.com/loopdive/js2/pull/4637))
+- fix(#4524): out-of-shape data define was dropped, and a borrowed-method read un-poisoned the escape ([PR 4635](https://github.com/loopdive/js2/pull/4635))
+- fix(#2668): standalone ordinary indexed set must create an all-true data property ([PR 4631](https://github.com/loopdive/js2/pull/4631))
+- fix(codegen): Function residuals (#4483) + operator smalls (#4484) + builtin-surface smalls (#4485) + module-global undefined seed (#4489) ([PR 4624](https://github.com/loopdive/js2/pull/4624))
+- fix(#4517): lower the recognised char-read loop's condition in i32 ([PR 4632](https://github.com/loopdive/js2/pull/4632))
+- fix(#1888): Array.isArray static fast path claimed every ref is an array ([PR 4629](https://github.com/loopdive/js2/pull/4629))
+- fix(website): refine compatibility report links ([PR 4628](https://github.com/loopdive/js2/pull/4628))
+- fix(website): collapse JS host source cards ([PR 4626](https://github.com/loopdive/js2/pull/4626))
+- …and 106 more fix PRs (newest 10 shown; see the compare link).
+
+### Carried over from the former Unreleased section: Repository rename
+
+- The repo has been renamed `loopdive/js2wasm` → `loopdive/js2`.
+  GitHub provides a permanent redirect for the old URL, so existing
+  clones and PR links continue to work. New clones and CI should use
+  the new name. The `loopdive/js2wasm-baselines` baselines repo is
+  tracked separately and will be renamed in a follow-up.
+
+## v0.71.0 - 2026-09-01
+
+- Tag `v0.71.0` · range `v0.70.0..v0.71.0` · [compare](https://github.com/loopdive/js2/compare/v0.70.0...v0.71.0)
+- 628 merged PRs: 83 features, 267 fixes, 278 other (infrastructure, docs, tests, planning).
+- test262 at the tag (`benchmarks/results/test262-current.json` summary): 35,392 / 48,232 (73.4 %).
+- Release notes: [docs/release-notes/v0.71.0.md](docs/release-notes/v0.71.0.md)
+
+### Features
+
+- feat(ir): prepare fast host string signatures ([PR 5379](https://github.com/loopdive/js2/pull/5379))
+- feat(3523): record a truthful non-executable module-init outcome row (R4 gap 4) ([PR 5367](https://github.com/loopdive/js2/pull/5367))
+- feat(ir): number-boundary intrinsics behind the frozen runtime manifest (#3526 F1-S1) ([PR 5364](https://github.com/loopdive/js2/pull/5364))
+- feat(deno): complete linked runtime bootstrap ([PR 5336](https://github.com/loopdive/js2/pull/5336))
+- perf(codegen): single direct compile for call-free module inits (#3523 R4 gap-1a) ✓ ([PR 5238](https://github.com/loopdive/js2/pull/5238))
+- feat(ir): nested-vec element carrier + destructuring for-of heads (#5166, #4470) ([PR 5218](https://github.com/loopdive/js2/pull/5218))
+- feat(ir): prepare fast scalar functions before direct emission ([PR 5308](https://github.com/loopdive/js2/pull/5308))
+- feat(ir): reconcile callable alias components graph-first ([PR 5297](https://github.com/loopdive/js2/pull/5297))
+- feat(ir): publish multi-source callable components atomically ([PR 5275](https://github.com/loopdive/js2/pull/5275))
+- feat(#3520): establish structural Program ABI ownership ([PR 5210](https://github.com/loopdive/js2/pull/5210))
+- feat(ir): claim counted-loop-proven string index reads via charAt (#5167) ✓ ([PR 5217](https://github.com/loopdive/js2/pull/5217))
+- feat(ir): adopt tail-position loops and finally-less try returns (#5165) ✓ ([PR 5219](https://github.com/loopdive/js2/pull/5219))
+- feat(standalone): Deno runtime integration — PR #5148 checkpoint continued ([PR 5202](https://github.com/loopdive/js2/pull/5202))
+- feat(ir): adopt mutating expression statements with property/element LHS (#5163) ([PR 5214](https://github.com/loopdive/js2/pull/5214))
+- feat(ir): adopt the comma operator and bounded dynamic-lane `in` (#5164) ([PR 5211](https://github.com/loopdive/js2/pull/5211))
+- feat(ir): activate the exact prepared field-call family (#3522 F4) ([PR 5199](https://github.com/loopdive/js2/pull/5199))
+- feat(selfhost): compile TypeScript 5 parser graph to Wasm (merge-conflict fix for #5183) ([PR 5204](https://github.com/loopdive/js2/pull/5204))
+- feat(ir): replay semantic declarations through prepared owners ([PR 5196](https://github.com/loopdive/js2/pull/5196))
+- feat(ir): own mixed primitive conditional joins ([PR 5102](https://github.com/loopdive/js2/pull/5102))
+- perf(codegen): #4406 Phase 4 — default-ON boolean ABI + numericFunctions admission filter ✓ ([PR 5171](https://github.com/loopdive/js2/pull/5171))
+- …and 63 more feature PRs (newest 20 shown; see the compare link).
+
+### Fixes
+
+- fix(es5): recover standalone Test262 regressions ([PR 5374](https://github.com/loopdive/js2/pull/5374))
+- fix(runtime): resolve struct decoders from the minting module, not the running module (#5225) ([PR 5365](https://github.com/loopdive/js2/pull/5365))
+- fix(codegen): stop extern-class name hijack on cross-module any-receivers; box boolean bridge results (#5241) ([PR 5350](https://github.com/loopdive/js2/pull/5350))
+- fix(codegen): Object.create with a dynamic class prototype mints a real instance (#5239) ([PR 5347](https://github.com/loopdive/js2/pull/5347))
+- fix(runtime): preserve provider mirrors at method-call exits; method bridges honour `this` (#5237) ([PR 5343](https://github.com/loopdive/js2/pull/5343))
+- fix(codegen): register dynamic accessor reads for the host getter bridge (#5223) ([PR 5339](https://github.com/loopdive/js2/pull/5339))
+- fix(codegen): enforce Date bridge export provenance (#3520 C39) ([PR 5345](https://github.com/loopdive/js2/pull/5345))
+- fix(#5221): `Temporal.PlainDate.from(…)` — six lowering defects behind one null deref ([PR 5334](https://github.com/loopdive/js2/pull/5334))
+- fix(ir): account exact R2 body emissions ([PR 5313](https://github.com/loopdive/js2/pull/5313))
+- fix(codegen): enforce constructor-closure export provenance ([PR 5342](https://github.com/loopdive/js2/pull/5342))
+- …and 257 more fix PRs (newest 10 shown; see the compare link).

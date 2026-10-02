@@ -14,6 +14,9 @@
 // Usage:
 //   node scripts/release.mjs <x.y.z | patch | minor | major>
 //
+// Precondition: CHANGELOG.md already has a `## vX.Y.Z ...` entry for the target
+// version, committed (#6795). The script refuses to run without one.
+//
 // What it does (the plain `pnpm version` experience, but covering BOTH packages
 // in a single commit + tag):
 //   1. Resolve a concrete target version V.
@@ -61,6 +64,16 @@ function setProxyDependency(dir, version) {
 function fail(msg) {
   console.error(`error: ${msg}`);
   process.exit(1);
+}
+
+// CHANGELOG.md ships in the npm package (`files`), and it once stopped at
+// 0.52 while the package was at 0.71 (#6795) because nothing made a release
+// require an entry. A release now needs a `## vX.Y.Z ...` heading first. The
+// version must be a whole token: `v0.59.1` must not satisfy a request for
+// `0.59.10`, and `0.5.0` must not satisfy `10.5.0`.
+export function hasChangelogEntry(changelog, version) {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^##[ \\t]+(?:.*[ \\t])?v?${escaped}(?![\\w.]*\\d)(?![\\w-])`, "m").test(changelog);
 }
 
 function git(args, opts = {}) {
@@ -383,6 +396,21 @@ function main() {
   const existingTags = git(["tag", "--list", tag]).trim();
   if (existingTags) {
     fail(`tag ${tag} already exists. Delete it first if you mean to re-cut.`);
+  }
+
+  // Refuse before touching anything: the release commit must contain only the
+  // version bump, so the CHANGELOG entry has to be committed first.
+  const changelogPath = join(repoRoot, "CHANGELOG.md");
+  let changelog = "";
+  try {
+    changelog = readFileSync(changelogPath, "utf8");
+  } catch {}
+  if (!hasChangelogEntry(changelog, target)) {
+    fail(
+      `CHANGELOG.md has no entry for ${tag}. Add a "## ${tag} - YYYY-MM-DD" section ` +
+        `(what shipped, notable fixes) and commit it BEFORE running this script — the release commit ` +
+        `contains only the version bump. See docs/releasing.md.`,
+    );
   }
 
   console.log(`Current root version: ${currentRoot}`);

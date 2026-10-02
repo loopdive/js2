@@ -409,6 +409,11 @@ it was not interpreted as an empty ledger. No claims were changed.
 
 ## Objective
 
+Historical contract: the [September 9 C representation freeze](../agent-context/3527-c-representation-scope-freeze-2026-09-09.md)
+was recovered for publication on October 2. It records the callable/fulfillment
+ABI distinction and resource/publication ownership; later implementation and
+integration updates below remain authoritative for delivery status.
+
 Prepare every supported async function-like as one immutable, AST-free
 `IrAsyncPlan` before emission, then lower that exact plan through the existing
 frame/resume runtime for JS-host, standalone, and WASI.

@@ -156,6 +156,7 @@
     "check:done-status-integrity": "node scripts/check-done-status-integrity.mjs",
     "check:verdict-oracle": "node scripts/check-verdict-oracle-bump.mjs",
     "check:issues": "node scripts/update-issues.mjs --check && node scripts/check-ir-optimization-retirement.mjs",
+    "check:claude-md-paths": "node scripts/check-claude-md-paths.mjs",
     "test:diff": "npx tsx scripts/diff-test.ts",
     "test:diff:triage": "npx tsx scripts/diff-triage.ts",
     "test:diff:gate": "npx tsx scripts/diff-test-gate.ts",

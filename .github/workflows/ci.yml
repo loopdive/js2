@@ -397,6 +397,17 @@ jobs:
         # depends_on, or broken plan/issues/<id>-<slug>.md links in tracked *.md.
         run: pnpm run check:issues
 
+      - name: CLAUDE.md names only paths and CLI flags that exist (#6795)
+        if: steps.npm_compat.outputs.only != 'true'
+        # CLAUDE.md is the first file every agent reads. It named a test file
+        # that did not exist, a workflow that had been deleted, and a CLI flag
+        # src/cli.ts does not parse. Fails on any repo path (src/ scripts/
+        # tests/ plan/ docs/ .github/ .husky/ ...) that is not tracked, and on
+        # any `--flag` in the "CLI Flags" section that cli.ts does not parse.
+        # A line that deliberately names something gone ends in
+        # `<!-- historical -->`; see the script header.
+        run: pnpm run check:claude-md-paths
+
       - name: Issue-ID fresh-claim gate (#2531)
         if: steps.npm_compat.outputs.only != 'true'
         # Rejects a PR that introduces a plan/issues/<id>-*.md whose id already

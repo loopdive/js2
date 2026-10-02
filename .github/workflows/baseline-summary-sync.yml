@@ -283,7 +283,7 @@ jobs:
             # (#3953) The #2097 high-water mark, raised just above. THIS LINE is
             # the fix: without it the raise wrote a file nothing ever committed.
             git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
-            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+            git add -f README.md ROADMAP.md STATUS.md CLAUDE.md plan/goals/goal-graph.md \
               2>/dev/null || true
           }
           stage_files
@@ -358,7 +358,7 @@ jobs:
             # commits the same old-mark/new-mark mismatch the fresh path used to.
             node scripts/sync-conformance-numbers.mjs || \
               echo "WARN: sync-conformance-numbers on re-anchored tip failed (non-fatal)"
-            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+            git add -f README.md ROADMAP.md STATUS.md CLAUDE.md plan/goals/goal-graph.md \
               2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Summary already current on main after re-anchor — nothing to push."

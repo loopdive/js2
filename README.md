@@ -25,7 +25,13 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 <!-- AUTO:conformance-standalone-end -->
 
-The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free on the same official denominator. Lower today and actively hardening — this is where the current gap is.
+The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free.
+
+<!-- AUTO:conformance-scope-start -->
+
+Both figures are scored against the same **48,232** official tests (47,146 ECMAScript standard + 1,086 Annex B). The 503 TC39 proposal-stage tests are excluded.
+
+<!-- AUTO:conformance-scope-end -->
 
 Full breakdowns, the trend graph, and benchmarks are in **[STATUS.md](./STATUS.md)**, the [Playground](https://js2wasm.loopdive.com/playground/), and the [Roadmap](./ROADMAP.md).
 
@@ -66,7 +72,7 @@ What exists today:
 - a JS-hosted compilation path passing a substantial subset of Test262 (the figure above)
 - a public browser [Playground](https://js2wasm.loopdive.com/playground/)
 - continuous conformance and benchmark reporting on every change
-- a standalone (no-JS-host) path that is in progress — host-free conformance (see the figure above) is meaningfully lower than the JS-host path and actively hardening
+- a standalone (no-JS-host) path, scored separately from the JS-host path (see the figures above)
 
 ## Quick start
 
@@ -96,7 +102,7 @@ Programmatic API:
 > `optimize` is requested.
 
 ```ts
-import { compile } from "js2wasm";
+import { compile } from "@loopdive/js2";
 
 const result = await compile(
   `
@@ -283,16 +289,21 @@ high pass rate is necessary but not sufficient for "runs real JavaScript."
 - standard-library built-ins — many are implemented, but not the full surface;
   some methods are missing or only handle the common overloads
 - `Map`, `Set`, `RegExp`, `JSON` — present but not fully spec-complete
-- standalone (no-JS-host) mode — actively in progress; host-free conformance
-  (see the two-path figures near the top) trails the JS-host path
+- standalone (no-JS-host) mode — scored separately (see the two-path figures
+  near the top)
 - getters/setters and other highly dynamic patterns — limited
 
-**Not yet** (intentionally unsupported or out of scope today):
+**Gaps** (implemented to a degree, not spec-complete — the measured pass rate
+of each area is in the generated table in [STATUS.md](./STATUS.md)):
 
-- `eval`, `with`, and dynamic `Function` construction
-- `Proxy` and `Reflect`-driven metaprogramming
-- `SharedArrayBuffer` / threads, `WeakRef` / `FinalizationRegistry`, `Temporal`
-- dropping in an arbitrary npm package unchanged
+- runtime `eval` and dynamic `Function` construction — constant strings are
+  compiled away; runtime strings go through a `dynamicCode` policy (an isolated
+  evaluator in a JS host; an interpreter-backed provider standalone). See
+  [Isolated JS-host eval](docs/js-host-eval-isolation.md) and
+  [the eval design](docs/architecture/runtime-eval-interpreter.md)
+- `Proxy` / `Reflect`, `Temporal`, `SharedArrayBuffer` / `Atomics`, `WeakRef` /
+  `FinalizationRegistry` — present, with the gaps shown in that table
+- dropping in an arbitrary npm package unchanged — not guaranteed
 
 If a pattern you rely on does not work, check the
 [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html) or
@@ -304,8 +315,9 @@ open an issue.
 That is the real risk, treated as an empirical question, not a solved one. The
 design is compiled-code-first: resolve what can be resolved statically and lower
 it directly, with no interpreter on the common paths. The genuinely unstatic
-corners (`eval`, dynamic `Function`) would need a small interpreter fallback that
-runs only on those paths — not a full engine in every module. Whether that
+corners (`eval`, dynamic `Function`) go through a small interpreter fallback that
+runs only on those paths — not a full engine in every module (see
+[the eval design](docs/architecture/runtime-eval-interpreter.md)). Whether that
 fallback stays small, and how much real code avoids it, is what the prototype is
 testing. If compatibility turns out to require shipping an engine, that is a
 negative result worth knowing. (For why *not* to just embed an interpreter or
@@ -318,8 +330,9 @@ references, which map onto JavaScript objects, closures, and arrays fairly
 directly and let the host GC manage memory instead of shipping a collector inside
 the module. Linear-memory AOT compilation is a legitimate alternative with its
 own trade-offs (more control, broader runtime support today, but a self-managed
-heap); `js2wasm` keeps a linear-memory backend for WASI-oriented targets, so this
-is a per-target choice rather than a one-way bet. See the
+heap); `js2wasm` keeps a linear-memory backend, selected with `target: "linear"`
+(`--target linear`; `--target wasi` is WasmGC-based), so this is a per-target
+choice rather than a one-way bet. See the
 [ADRs](./docs/adr/README.md) for the reasoning.
 
 **What is the realistic timeline to production-ready?**
@@ -362,7 +375,7 @@ For a long-form, technical account of the methodology — how the team is struct
 `js2wasm` validates correctness through three complementary test layers:
 
 - **Unit & equivalence tests** — `npm test` (vitest). Targeted regression coverage and JS↔Wasm equivalence assertions. See `tests/equivalence/`.
-- **Test262 conformance** — `pnpm run test:262` runs the ECMAScript test suite (~48k tests: ~43k official plus ~5k staging/proposal tests) and reports per-edition / per-path pass rates. The headline conformance figure is scored against the 43,106 official tests (proposals excluded); CI runs this sharded on every PR and the [report](https://js2wasm.loopdive.com/benchmarks/report.html) is regenerated on each merge.
+- **Test262 conformance** — `pnpm run test:262` runs the ECMAScript test suite and reports per-edition / per-path pass rates. The headline figures are scored against the official scope (proposals excluded; the exact denominator is generated in the conformance section at the top). CI runs the sharded run in the merge queue, not at PR time, and the [report](https://js2wasm.loopdive.com/benchmarks/report.html) is regenerated on each merge.
 - **Differential testing vs V8** — `pnpm run test:diff` (#1203). For each program in `tests/differential/corpus/`, the harness runs Node-V8 directly and the compiled `.wasm` and compares stdout. test262 measures spec compliance; differential testing measures whether real programs actually produce the right answer. CI gates each merge candidate (in the merge queue, not at PR level) on a delta against `benchmarks/results/diff-test-baseline.json` — no new mismatches allowed. That baseline is re-landed on every push to `main` by the `refresh-baseline` job in `.github/workflows/diff-test.yml`, so the delta stays attributable to the candidate; refresh it by hand with `pnpm run test:diff && pnpm run test:diff:gate -- --update`. Use `pnpm run test:diff:triage` to bucket mismatches by category for follow-up filing.
 
 ## Licensing

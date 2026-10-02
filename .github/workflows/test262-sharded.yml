@@ -4890,7 +4890,7 @@ jobs:
             git add -f website/index.html 2>/dev/null || true
             # Conformance numbers in prose docs (synced just above). Staged so
             # the number and its derived docs land in ONE atomic commit.
-            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+            git add -f README.md ROADMAP.md STATUS.md CLAUDE.md plan/goals/goal-graph.md \
               2>/dev/null || true
           }
           stage_files
