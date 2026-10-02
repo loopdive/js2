@@ -3,8 +3,32 @@ import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isGlobalObjectExpr } from "./global-environment.js";
+import { moduleTdzGlobalIndexForIdentifier } from "./expressions/identifier-module-storage.js";
+import { analyzeTdzAccess, emitLocalTdzCheck, emitStaticTdzThrow } from "./expressions/identifiers.js";
 import { compileExpression, skipTransparentExpressions } from "./shared.js";
+import { noJsHost } from "./js-errors.js";
+import { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 import { compileStringLiteral } from "./string-ops.js";
+
+/**
+ * (#6798) `typeof x` evaluates its reference (§13.5.3.1 → GetValue), so a
+ * let/const binding still in its TDZ throws a ReferenceError exactly like a
+ * plain read. A static typeof fold never reads the operand, so it skipped the
+ * guard (`typeof y; let y = 1` answered "number"). Emit the SAME guard the
+ * identifier read emits — the local flag, else the module flag — before a
+ * fold. A boxed (closure-captured) flag already forces the runtime read.
+ */
+export function emitTypeofTdzGuard(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): void {
+  const id = skipTransparentExpressions(operand);
+  if (!ts.isIdentifier(id) || fctx.boxedTdzFlags?.has(id.text) || fctx.annexBOuterBindings?.has(id.text)) return;
+  const localFlag = fctx.localMap.has(id.text) ? fctx.tdzFlagLocals?.get(id.text) : undefined;
+  const moduleFlag = fctx.localMap.has(id.text) ? undefined : moduleTdzGlobalIndexForIdentifier(ctx, id);
+  if (localFlag === undefined && moduleFlag === undefined) return;
+  const verdict = analyzeTdzAccess(ctx, id);
+  if (verdict === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
+  else if (verdict === "check" && localFlag !== undefined) emitLocalTdzCheck(ctx, fctx, id.text, localFlag);
+  else if (verdict === "check") emitTdzCheckAtGlobal(ctx, fctx, moduleFlag!, id.text, noJsHost(ctx));
+}
 
 function isUnshadowedRealmGlobal(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
   if (!isGlobalObjectExpr(ctx, fctx, operand)) return false;

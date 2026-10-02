@@ -679,3 +679,39 @@ isolated worktrees) on the Temporal goal. The owner's direction at ~14:00 UTC:
   agent worktrees, the #3008 whole-file gate, load-gated spawns) cost more
   wall-clock than any codegen problem; they are listed in the handoff.
 - **Handoff**: `plan/agent-context/host-lane-merge-handoff-2026-09-29.md`.
+
+## 2026-10-01 → 2026-10-02 — review-wave implementation (#6776–#6799)
+
+- **Scope.** The 24 issues of the 2026-09-30 codebase review, implemented by
+  Opus/Sonnet subagents in six waves of ≤3 concurrent agents; the lead drove
+  the PRs through the queue. 22 issues landed (table in the handoff), 2 open:
+  #6777 (PR 6383, blocked on a `compiler-boundaries.json` entry a human must
+  add) and #6783 (implemented locally, unpushed — see below).
+- **Merges** (all on 2026-10-01/02): 6390, 6391, 6393, 6394, 6396, 6397,
+  6399, 6401, 6402, 6404, 6406, 6408, 6409, 6411, 6412, 6415, 6418, 6419,
+  6424, 6425, 6428, 6429, 6430, 6431, 6438. Headline test262 unchanged by
+  design (semantics fixes + gates; no edition moved).
+- **New issues filed**: #6801–#6807 (follow-ups found by the #6779/#6787/
+  #6788 implementations), #6808 (ir→codegen cut list), #6812–#6826 (the
+  wave's out-of-scope findings, the GIT_DIR hook incident, collateral parks,
+  god-file ceilings, hygiene/packaging/CI residue).
+- **Incidents.** (1) 06:30 UTC: a test's `git init` under the pre-commit
+  hook re-initialised the shared repo as bare; every worktree lost git and
+  the harness could not resume agents; repair needs a human (#6822). (2)
+  Four collateral auto-parks from speculative queue groups (6415/6418 for
+  the other lane's standalone regressions; 6431 for 5883's import-cycle
+  growth; 6419 for 6422's) — each diagnosed via the group's base-sha chain
+  and un-held with a comment. (3) #6796 merged with `check:claude-md-paths`
+  red on the merged state (CLAUDE.md named the deleted ci-status files);
+  fixed by 6431, which itself leaked the MCP tool's `[Resource from github…]`
+  marker onto CLAUDE.md line 1 (fixed by the other lane's 6439). (4) Both
+  new #6797 ratchets are baseline-scoped and tripped on growth other PRs
+  landed; the change-scoped follow-up is staged in its worktree.
+- **Context/budget.** Two compactions; one mid-wave box restart; agent spawns
+  gated by load (3 concurrent on 4 cores); ~0.45 M subagent tokens for the
+  largest single issue (#6783).
+- **Key learnings.** Follow the queue base-sha chain before un-holding a
+  park; baseline-scoped ratchets must become change-scoped; hooks leak
+  `GIT_DIR` into tests; strip MCP resource markers before committing fetched
+  text; classifier denials on shared state are surfaced, not routed around.
+- **Handoff**: `plan/agent-context/claude-review-wave-handoff-2026-10-02.md`.

@@ -70,18 +70,10 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "binaryen": "^132.0.0",
-    "bun": ">=1.3.14",
-    "deno": ">=2.8.1"
+    "binaryen": "^132.0.0"
   },
   "peerDependenciesMeta": {
     "binaryen": {
-      "optional": true
-    },
-    "bun": {
-      "optional": true
-    },
-    "deno": {
       "optional": true
     }
   },
@@ -90,7 +82,7 @@
     "new:issue-id": "node scripts/claim-issue.mjs --allocate",
     "preview:issue-id": "node scripts/next-issue-id.mjs",
     "worktree:provision": "bash scripts/provision-worktree-deps.sh",
-    "build": "vite build --config vite.config.lib.ts && node scripts/build-test262-cli.mjs",
+    "build": "vite build --config vite.config.lib.ts && node scripts/prune-dist-declarations.mjs && node scripts/build-test262-cli.mjs",
     "build:jsr": "vite build --config vite.config.lib.ts --mode jsr && node scripts/prepare-jsr-dist.mjs",
     "build:test262-cli": "node scripts/build-test262-cli.mjs",
     "build:runtime-provider": "node scripts/build-runtime-provider.mjs",
@@ -118,6 +110,8 @@
     "check:ir-kind-neutrality": "node scripts/check-ir-kind-neutrality.mjs",
     "check:jstag-seam": "node scripts/check-jstag-seam.mjs",
     "check:ir-layering": "node scripts/check-ir-layering.mjs",
+    "check:import-cycles": "node scripts/check-import-cycles.mjs",
+    "check:flat-dir-budget": "node scripts/check-flat-dir-budget.mjs",
     "check:compiler-boundaries": "node scripts/check-compiler-boundaries.mjs",
     "check:compiler-boundaries:inventory": "node scripts/check-compiler-boundaries.mjs --mode inventory",
     "check:edition-ratchet": "npx tsx scripts/test262-edition-ratchet.ts",
@@ -142,6 +136,7 @@
     "inventory:test262-linked-harness": "npx tsx scripts/test262-linked-harness-inventory.ts",
     "check:dead-exports": "node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types --require-core-nodes",
     "check:godfiles": "node scripts/profile-godfiles.mjs --check",
+    "check:orphaned-scripts": "node scripts/check-orphaned-scripts.mjs",
     "profile:godfiles": "node scripts/profile-godfiles.mjs",
     "gen:ir-adoption": "node scripts/gen-ir-adoption.mjs",
     "check:ir-adoption": "node scripts/gen-ir-adoption.mjs --check",
@@ -154,6 +149,7 @@
     "check:test262-hard-errors": "node scripts/check-test262-hard-errors.mjs",
     "check:issue-spec-coverage": "node scripts/check-issue-spec-coverage.mjs",
     "check:done-status-integrity": "node scripts/check-done-status-integrity.mjs",
+    "check:tracked-ignored": "node scripts/check-tracked-ignored.mjs",
     "check:verdict-oracle": "node scripts/check-verdict-oracle-bump.mjs",
     "check:issues": "node scripts/update-issues.mjs --check && node scripts/check-ir-optimization-retirement.mjs",
     "check:claude-md-paths": "node scripts/check-claude-md-paths.mjs",
@@ -377,7 +373,7 @@
     "uuid": "14.0.1",
     "vite": "^6",
     "vite-plugin-dts": "^4",
-    "vitest": "^3",
+    "vitest": "^3.2.6",
     "wabt": "^1.0.39",
     "web-streams-polyfill": "4.3.0",
     "webpack": "5.109.2"

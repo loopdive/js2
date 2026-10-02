@@ -43,6 +43,23 @@ At dynamic or untyped boundaries, the compiler inserts guards, normalizes
 values, falls back to dynamic representations, or delegates to host imports when
 needed.
 
+### The one opt-in exception: `type i32 = number`
+
+Declaring `type i32 = number` and annotating a binding, parameter, field or
+return type with `i32` asks for a Wasm `i32` slot instead of an `f64`. That
+changes observable behaviour on purpose, and the rule is the same one `x | 0`
+follows (ECMAScript ToInt32):
+
+| value stored into an `i32` | result |
+| --- | --- |
+| `2 ** 31`, `4294967297` | wraps modulo 2^32: `-2147483648`, `1` |
+| `1.9`, `-1.9` | truncates toward zero: `1`, `-1` |
+| `NaN`, `Infinity`, `-Infinity` | `0` (so an `i32` division by zero is `0`) |
+| `-0` | `+0` |
+
+Arithmetic between two `i32` operands stays in i32 and wraps on overflow. Plain
+`number` bindings keep full IEEE-754 semantics.
+
 ## Why do you not implement your own GC in linear memory?
 
 Without WasmGC, a JavaScript compiler usually needs a custom object heap in

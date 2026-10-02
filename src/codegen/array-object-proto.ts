@@ -147,7 +147,6 @@ import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
-import { PROTOTYPE_SEED_FLAGS } from "../runtime/wasmgc/values/prototype-seeder-bodies.js"; // (#6775 S16)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 import {
   emitStandalonePromiseFinally,
@@ -159,6 +158,7 @@ import {
 // `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+import { ARRAY_PROTO_SYMBOL_DATA_PROPS } from "./array/array-unscopables.js"; // (#6771 S5)
 // (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
 import {
   emitTaStaticFromOfBody,
@@ -2850,7 +2850,10 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
   const brand = getBuiltinBrand(ctx, "Array");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Array", ARRAY_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Array", ARRAY_PROTO_METHODS),
+      symbolDataProps: ARRAY_PROTO_SYMBOL_DATA_PROPS, // (#6771 S5) @@unscopables
+    });
   }
   return brand;
 }
@@ -3079,14 +3082,11 @@ export function ensureFunctionNativeProtoGlue(ctx: CodegenContext): number | und
   const brand = getBuiltinBrand(ctx, "Function");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    // (#6775 S16) §20.2.3: %Function.prototype% owns `length` 0 and `name` ""
-    // as {w:F,e:F,c:T} — the symbolTag attribute word.
-    const glue = makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS);
-    glue.dataProps = [
-      ["length", 0, PROTOTYPE_SEED_FLAGS.symbolTag],
-      ["name", "", PROTOTYPE_SEED_FLAGS.symbolTag],
-    ];
-    registerNativeProtoBuiltin(ctx, glue);
+    // (#6775 S16) %Function.prototype%'s own `length` 0 / `name` "" are NOT
+    // seeded into the companion: every callable's miss walks to it, so a
+    // provider-owned function (`GeneratorFunction()`) read `name` "" instead
+    // of reaching its owner (GeneratorFunction/instance-{name,length}.js).
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS));
   }
   return brand;
 }

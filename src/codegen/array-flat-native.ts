@@ -66,6 +66,7 @@ import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { allocLocal } from "./context/locals.js";
+import { emitArraySpeciesCreate, emitArraySpeciesResultSwap, prepareArraySpeciesDeps } from "./array-species.js"; // (#6771 S4)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
@@ -547,6 +548,9 @@ export function compileArrayFlatNativeCall(
   const EXTERNREF: ValType = { kind: "externref" };
   if (ensureNativeArrayFlat(ctx, methodName) === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
+  // (#6771 S4) §23.1.3.13/14 step 5: A = ArraySpeciesCreate(O, 0). Resolved
+  // before any operand compiles (the deps register natives in one batch).
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
   const compileAsExtern = (expr: ts.Expression): void => {
     const t = compileExpression(ctx, fctx, expr, EXTERNREF);
     if (t === null) fctx.body.push({ op: "ref.null.extern" });
@@ -569,5 +573,22 @@ export function compileArrayFlatNativeCall(
     op: "call",
     funcIdx: ctx.funcMap.get(`__arrprod_${methodName}`)!,
   });
-  return EXTERNREF;
+  if (speciesDeps === undefined) return EXTERNREF;
+  // The flattened elements are republished onto the species object by
+  // CreateDataPropertyOrThrow (`emitArraySpeciesResultSwap`), whose §10.1.6.3
+  // rejections are the rows' TypeErrors (a non-extensible target; a
+  // non-configurable accessor at "0"). ORDERING UNDER-APPROXIMATION, the same
+  // one #6651 H6 records for slice/splice: the spec constructs A before the
+  // flatten; here the `constructor` read and the species call follow it.
+  const flat = allocLocal(fctx, `__arr_flat_out_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: flat });
+  const species = emitArraySpeciesCreate(
+    ctx,
+    fctx,
+    speciesDeps,
+    [{ op: "local.get", index: recv }],
+    [{ op: "f64.const", value: 0 }],
+  );
+  fctx.body.push({ op: "local.get", index: flat });
+  return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, species, EXTERNREF);
 }

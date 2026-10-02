@@ -6624,6 +6624,14 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
 
 const _staticMethodNames = new WeakMap<object, string[]>();
 const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
+// (#6798) Each eager generator buffer's last `yield*` completion value, read
+// (and cleared) once by `__gen_yield_star_result`.
+const _genYieldStarResults = new WeakMap<object, unknown>();
+const _takeGenYieldStarResult = (buf: object): unknown => {
+  const result = _genYieldStarResults.get(buf);
+  _genYieldStarResults.delete(buf);
+  return result;
+};
 // Static methods are invoked by host frameworks through the generic closure
 // bridge. Their object results must be readable host objects (React consumes
 // getDerivedStateFromProps' returned partial state immediately), unlike the
@@ -17608,14 +17616,26 @@ assert._isSameValue = isSameValue;
           }
           const iterable = _materializeIterable(rawIterable, callbackState);
           if (iterable != null && typeof iterable[Symbol.iterator] === "function") {
-            for (const v of iterable) {
+            // (#6798) Step by hand (not for-of) so the delegate's terminal
+            // `{done: true, value}` survives: it is the `yield*` expression's value.
+            const iterator = iterable[Symbol.iterator]();
+            const next = iterator.next;
+            for (;;) {
+              const step = next.call(iterator);
+              if (Object(step) !== step) throw new TypeError("Iterator result is not an object");
+              if (step.done) {
+                _genYieldStarResults.set(buf, step.value);
+                return;
+              }
               if (buf.length >= __EAGER_GEN_LIMIT) {
+                iterator.return?.();
                 throw new RangeError("Eager generator buffer exceeded " + __EAGER_GEN_LIMIT + " yields");
               }
-              buf.push(v);
+              buf.push(step.value);
             }
           }
         };
+      if (name === "__gen_yield_star_result") return _takeGenYieldStarResult;
       // __gen_set_return: (buf, value) → void. Stashes the generator's `return`
       // value on the buffer object (a non-enumerable side property) rather than
       // pushing it as a yielded element. `__create_generator` reads it into
@@ -18452,6 +18472,7 @@ assert._isSameValue = isSameValue;
           // spec answer is "function". Probe via `__is_closure` (matches the
           // discriminator used by `_maybeWrapCallableUnknownArity`).
           if (v != null && typeof v === "object" && _isWasmStruct(v)) {
+            if (_classObjectOwnPropertyNames.has(v)) return "function"; // (#6798) class object (host twin of #6420)
             const exports = callbackState?.getExports();
             const isClosureFn = exports?.__is_closure as ((x: any) => number) | undefined;
             if (typeof isClosureFn === "function") {
@@ -18973,6 +18994,7 @@ assert._isSameValue = isSameValue;
       // wired through setInstance after instantiation. Consult it for the two
       // overlapping categories; ordinary host values stay on native typeof.
       const isCompiledClosure = (value: any): boolean => {
+        if (_classObjectOwnPropertyNames.has(value)) return true; // (#6798) a class object is a constructor
         const classifier = callbackState?.getExports()?.__is_closure;
         if (typeof classifier !== "function") return false;
         try {

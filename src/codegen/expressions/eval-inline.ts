@@ -16,6 +16,8 @@
  * Non-literal arguments and parse failures fall through to the existing
  * dynamic-eval path.
  */
+import { emitDiscardedSpreadArgument } from "./eval-spread-args.js"; // (#6774 S18)
+import { registerExpressionHelpers } from "../registry/expression-helper-delegates.js";
 import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -430,7 +432,7 @@ interface FoldedEvalDeclarationNames {
 /** Collect ordinary VarDeclaredNames separately from sloppy Annex-B block
  * functions. The former collide with intervening lexical records; the latter
  * use B.3.3's cancellation rule and must fall back instead of throwing. */
-function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclarationNames {
+export function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclarationNames {
   const varNames = new Set<string>();
   const blockFunctionNames = new Set<string>();
   const visit = (node: ts.Node): void => {
@@ -1276,7 +1278,12 @@ export function tryStaticEvalInline(
   // Per §19.2.1, eval ignores their values but their effects remain ordered
   // before execution of the eval Script.
   for (let ai = 1; ai < expr.arguments.length; ai++) {
-    const t = compileExpression(ctx, fctx, expr.arguments[ai]!);
+    const extra = expr.arguments[ai]!;
+    if (ctx.standalone && ts.isSpreadElement(extra)) {
+      emitDiscardedSpreadArgument(ctx, fctx, extra); // (#6774 S18) ArgumentListEvaluation steps it
+      continue;
+    }
+    const t = compileExpression(ctx, fctx, extra);
     if (t !== null) fctx.body.push({ op: "drop" });
   }
 
@@ -2024,9 +2031,10 @@ export function emitStandaloneIndirectEvalRuntime(
   ctx: CodegenContext,
   fctx: FunctionContext,
   args: readonly ts.Expression[],
+  sourceLocal?: number, // (#6774 S18) the source already evaluated (spread args)
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
-  if (args.length === 0) {
+  if (args.length === 0 && sourceLocal === undefined) {
     // (#2875 w4-F) §19.2.1.1 step 2 — `eval()` passes `undefined`, not a String,
     // so PerformEval returns it unchanged. `ref.null.extern` is `null`, a
     // DIFFERENT value: measured, `String(eval())` read `"null"` and `typeof
@@ -2039,8 +2047,9 @@ export function emitStandaloneIndirectEvalRuntime(
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
   emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
 
-  const sourceType = compileExpression(ctx, fctx, args[0]!);
-  if (sourceType && sourceType.kind !== "externref") {
+  const sourceType = sourceLocal === undefined ? compileExpression(ctx, fctx, args[0]!) : null;
+  if (sourceLocal !== undefined) fctx.body.push({ op: "local.get", index: sourceLocal });
+  else if (sourceType && sourceType.kind !== "externref") {
     coerceType(ctx, fctx, sourceType, { kind: "externref" });
   }
   for (let i = 1; i < args.length; i++) {
@@ -2530,3 +2539,6 @@ function synthesizeThrowingFunctionStub(
   if (funcIdx === undefined) return undefined;
   return { fnName, funcIdx };
 }
+
+// (#6797) late-bound for the expressions/ leaves (eval-param-scope-hoist, eval-spread-args).
+registerExpressionHelpers({ emitStandaloneIndirectEvalRuntime, foldedEvalDeclarationNames, resolveConstantString });

@@ -3528,6 +3528,13 @@ export function taViewReceiverTypeIdx(
   return undefined;
 }
 
+function receiverHasOwnComputedProto(ctx: CodegenContext, expr: ts.PropertyAccessExpression): boolean {
+  // The member resolves to a `["__proto__"]: v` definition of an object literal.
+  return ctx.oracle
+    .declarationsOf(expr.name)
+    .some((d) => ts.isPropertyAssignment(d) && ts.isComputedPropertyName(d.name));
+}
+
 /**
  * Dynamic member READ off an open-object carrier. The established standalone
  * growable-object case keeps its reserved-accessor/callable exclusions. The
@@ -3543,7 +3550,10 @@ function tryOpenObjectDynamicGet(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | null | undefined {
-  const irWithTarget = isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
+  // (#6774 S2) `{ ["__proto__"]: v }` holds an OWN "__proto__" data property:
+  // read it raw, never through the reserved proto-walk / typed-unbox lowerings.
+  const ownProto = ctx.standalone && propName === "__proto__" && receiverHasOwnComputedProto(ctx, expr);
+  const irWithTarget = ownProto || isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
   if (!irWithTarget && !ctx.standalone) return undefined;
   if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression)) return undefined;
   if (
@@ -3987,6 +3997,14 @@ export function compilePropertyAccess(
   // file; their identifiers are compiled as externrefs, but the checker cannot
   // answer property-access queries for those unbound declarations. Keep this
   // lane dynamic so expressions such as `a1.length` and `this.shifted` remain evaluable.
+  // (#6774 S5) A spliced `eval("super.x")` resolves against the CALLER frame's home object.
+  if (
+    isForeignEvalNode(expr) &&
+    expr.expression.kind === ts.SyntaxKind.SuperKeyword &&
+    !ts.isPrivateIdentifier(expr.name)
+  ) {
+    return compileSuperPropertyAccess(ctx, fctx, expr, expr.name.text);
+  }
   if (isForeignEvalNode(expr)) {
     const foreignPoison = tryCompileFunctionPoisonRead(ctx, fctx, expr);
     if (foreignPoison !== undefined) return foreignPoison;

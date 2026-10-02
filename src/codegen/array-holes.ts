@@ -47,6 +47,9 @@ import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named pro
 import { isRegExpProtoSymbolWrite } from "./regexp-proto-symbol-writes.js"; // (#6651 B9)
 import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolated sparse-carrier proof
 import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-carrier.js"; // (#4670)
+import { armExhaustiveForNonCallableMemberLiteral } from "./class-to-primitive.js"; // (#6771 S2d)
+import { isArrayLengthConstructor } from "./array/array-length-holes.js"; // (#6771 S3)
+import { noteArrayCtorThisCall } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { readEnv } from "../env.js";
 
 /**
@@ -64,7 +67,12 @@ import { readEnv } from "../env.js";
 export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
   const pendingBagIdents = new Set<string>();
   const visit = (node: ts.Node): void => {
+    // (#6771 S2d) Not a flag of this pass, so it must not be cut off by the
+    // all-flags-set early-out below: that early-out also waits for it.
+    const exhaustiveArmed = armExhaustiveForNonCallableMemberLiteral(ctx, node);
+    noteArrayCtorThisCall(ctx, node); // (#6771 S7)
     if (
+      exhaustiveArmed &&
       ctx.usesArrayHoles &&
       ctx.protoIndexDirty &&
       ctx.protoNamedDirty &&
@@ -87,6 +95,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
         }
       }
     }
+    // (#6771 S3) `Array(n)` / `new Array(n)` stores the `$Hole` marker
+    // standalone (`holeFilledArrayNewInstrs`), so its reads must be armed too.
+    if (!ctx.usesArrayHoles && ctx.standalone && isArrayLengthConstructor(node)) ctx.usesArrayHoles = true;
     // (#6482 r4) A plain `x.length = n` arms the marker too, for the same
     // reason `isDescriptorDefineReference` does: §10.4.2.1 ArraySetLength makes
     // a shrink DELETE the dropped elements, so the store now writes the f64
@@ -151,6 +162,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (descriptorArrayReceiver !== undefined) {
       recordDescriptorArrayReceiver(ctx, descriptorArrayReceiver);
     }
+    // (#6774 S13) A tagged template's object and `raw` are FROZEN carriers, so a
+    // strict write to either must observe the refused [[Set]].
+    if (ctx.standalone && ts.isTaggedTemplateExpression(node)) ctx.inheritedSetDescriptorDirty = true;
     if (!ctx.inheritedSetDescriptorDirty) {
       // (#4602) Statically-named triggers poison only their own keys; a
       // trigger whose key cannot be named sets the module-wide flag, which
@@ -1183,11 +1197,20 @@ function isProtoMemberValueUse(node: ts.Node): boolean {
     return true;
   }
   // Object-of-a-member-access ⇒ the syntactic path handles it; not a value use.
+  // (#6771 S5) Except `[Symbol.unscopables]`: that member exists only as a
+  // companion entry (`symbolDataProps`), which only the seeder installs.
   if (
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
     unwrapExpr(parent.expression) === unwrapExpr(node)
   ) {
-    return false;
+    const key = ts.isElementAccessExpression(parent) ? unwrapExpr(parent.argumentExpression) : undefined;
+    return (
+      key !== undefined &&
+      ts.isPropertyAccessExpression(key) &&
+      key.name.text === "unscopables" &&
+      ts.isIdentifier(key.expression) &&
+      key.expression.text === "Symbol"
+    );
   }
   // `Object.defineProperty(X.prototype, …)` / `defineProperties` /
   // `Reflect.defineProperty` — the proto is a WRITE TARGET here, not a value

@@ -1,8 +1,8 @@
 ---
 id: 6717
 title: "Standalone user-visible Intl namespace/API gap: proof-first host-free semantics"
-status: ready
-assignee: null
+status: in-progress
+assignee: ttraenkler/codex-6717-intl-locale-data-foundation
 requested_by: ttraenkler/codex-es2015-manifest
 sprint: current
 priority: high
@@ -16,16 +16,19 @@ goal: standalone-gap
 parent: 4444
 related: [4444, 6712, 5206, 5355, 6442, 2961]
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-10-02
+es_edition: es2015
 ---
 
 # #6717 — Standalone user-visible `Intl` namespace/API gap
 
 ## Status and boundary
 
-This is a proof-first implementation plan only. No implementation route is
-selected, no production file is owned yet, and this issue does not claim that
-one defect explains every frozen Intl non-pass.
+This remains a proof-first plan for the user-visible runtime route: no
+namespace/provider/IR implementation route is selected or owned yet, and this
+issue does not claim that one defect explains every frozen Intl non-pass. The
+bounded, host-free data-foundation slice below is deliberately selected and
+owned; it is not a runtime implementation route.
 
 The target is the user-visible `Intl` namespace/API in `--target standalone`.
 It must eventually supply normal JavaScript semantics without host imports,
@@ -45,6 +48,149 @@ This is explicitly distinct from two completed, narrower routes:
 
 Neither route may be widened implicitly, reused as a user-global shortcut, or
 treated as evidence that the standalone user surface works.
+
+## Active bounded data-foundation claim (2026-10-02)
+
+`codex/6717-intl-locale-data-foundation` is implementing only a reproducible,
+host-free **data foundation**. The branch owns exactly:
+
+- `scripts/generate-intl-locale-data.mjs`;
+- new `assets/intl/**` pinned input, provenance, license, and generated-table
+  files;
+- `tests/issue-6717-intl-locale-data.test.ts`; and
+- this issue record.
+
+It does **not** claim a user-visible `%Intl%` namespace, a constructor,
+formatter, provider ABI, runtime/IR change, or a Test262 outcome. In
+particular, `Intl.getCanonicalLocales` remains the first complete public API
+for a later, separately cleared implementation slice; this branch supplies
+data and deterministic generation only. The frozen 74 Intl originals and the
+11,778-path ES2015 acceptance bar are unchanged.
+
+### Data-foundation implementation plan
+
+1. Pin the stable Unicode CLDR JSON `48.2.0` release by its verified immutable
+   tag commit, not a rolling branch. Admit only the small public JSON inputs
+   needed for generic language-tag canonicalization, Unicode-extension alias
+   metadata, and an available-locales inventory, plus the upstream Unicode
+   license/notice. Record every source URL, tag/commit, byte count, and
+   SHA-256 in checked-in provenance before generation.
+2. Add a Node built-in-only generator. It must fail closed on an unexpected
+   release/schema/version, missing or extra required source fields, duplicate
+   normalized keys, malformed aliases, hash/size mismatch, or generated-output
+   drift. It must use stable Unicode code-point ordering, omit timestamps and
+   host-dependent paths, and produce the same bytes on repeated generation.
+3. Emit a generic, data-derived table set rather than a test-locale whitelist:
+   language/script/region/variant aliases, Unicode extension key/type aliases,
+   likely-subtag records when provided by the admitted source, and a sorted
+   available-locales inventory. The generator must never ask host `Intl`,
+   QuickJS, or ICU at generation or runtime for semantic fallback.
+4. Add focused integrity tests for reproducibility, source/provenance hash
+   enforcement, duplicate-provenance rejection, pinned release/version
+   rejection, a known alias control, generic non-test-locale coverage, and a
+   tampered-input negative. Failed fixture generation must leave the copied
+   generated table unchanged. These are data-generation tests, not claims that
+   a compiler namespace or formatter now exists.
+
+The selected data source is CLDR JSON, not a direct ICU4X runtime dependency.
+ICU4X remains a potential future offline-reference/datagen integration subject
+to its own ownership and ABI proof; no cross-language integration is asserted
+here.
+
+### Pin and retained inputs
+
+The public Unicode CLDR JSON `48.2.0` tag resolved to
+`bb334e8d6250c9363e957e131bf7e6d08ec72f91`. Every raw URL is therefore
+pinned to that commit rather than the movable tag spelling. The retained
+Unicode-3.0 notice is the upstream `LICENSE` verbatim. The admitted source
+set is intentionally small (485,618 bytes including the notice): supplemental
+aliases, likely subtags, available locales, and the eight `u`-extension
+metadata files (`calendar`, `collation`, `currency`, `measure`, `number`,
+`segmentation`, `timezone`, and `variant`). It excludes CLDR archives,
+formatter pattern data, installed packages, and any host-derived output.
+
+`assets/intl/provenance/cldr-json-48.2.0.json` records each local path,
+upstream path and commit URL, SHA-256, and byte count. The generator embeds
+the same pin independently and rejects a changed provenance record, missing or
+extra pinned input, malformed JSON (including duplicate keys), source
+schema/version drift, or hash/size mismatch. Generated output will be
+`assets/intl/generated/locale-data.json`; it contains no generation time,
+absolute path, host-Intl lookup, or runtime fallback.
+
+The raw inputs and generator-owned output are intentionally excluded by the
+two narrow `assets/intl/...` entries in `.prettierignore`. This is not a broad
+formatting suppression: lint-staged would otherwise rewrite `*.json`, changing
+the upstream byte hashes or generator `--check` bytes. The provenance record
+remains formatter-managed; the generator remains the sole serializer for the
+two immutable data directories.
+
+This data-only step still does not expose `Intl.getCanonicalLocales` or any
+other public API. That later API must separately implement the ECMA-402
+observable coercion, validation, and duplicate-elision semantics over this
+data. The 74-row Intl diagnostic and full 11,778-path acceptance denominator
+remain unchanged.
+
+### Next public-API boundary (not owned by this data slice)
+
+The frozen manifest currently contains exactly four
+`test/intl402/Intl/getCanonicalLocales/` originals: `error-cases.js`,
+`has-property.js`, `locales-is-not-a-string.js`, and
+`overriden-arg-length.js`. They are a future acceptance design boundary, not
+credit for this branch. A separately cleared `Intl.getCanonicalLocales` slice
+must implement the full ECMA-402 grammar, observable coercion/property access,
+validation, duplicate elimination, and generic alias handling over this data;
+it may not specialize those four identities. Any namespace integration must
+coordinate ownership of the currently dirty `identifiers.ts` route and may not
+borrow the Temporal lexical shim.
+
+### Data-foundation generation and validation evidence (2026-10-02)
+
+The final generated `assets/intl/generated/locale-data.json` is 510,335 bytes
+and has SHA-256
+`e006613548e176f9bf836067be4de5afac68441acfd8142e4ed4612934c73632`.
+Its checked provenance record has SHA-256
+`7581c25f1407a1f5d7665b224b316ad23e6dd085ec9873928c31204a7f06ca30`.
+The 11 retained JSON inputs total 483,585 bytes; together with the 2,033-byte
+Unicode notice they match the admitted 485,618-byte source set. The final
+generator `--check` receipt `f57e01` revalidated every pinned input hash/size,
+the exact input file set, output reproducibility, and these counts: 766
+available locales, 7,788 likely subtags, and 29 Unicode-extension keys.
+
+Two initial fail-closed generation attempts are retained as schema-discovery
+evidence, not validation failures or Test262 results. Receipt `a2c2cc` first
+rejected CLDR's `islamicc` collision; inspection established that its alias is
+the literal canonical `islamic-civil` and its `_preferred` is exactly that same
+canonical spelling. The correction is generic: a collision is admitted only
+when the alias's metadata `_preferred` equals the already-canonical literal;
+the canonical lookup wins, and any other collision still throws. Receipt
+`0d4c46` then exposed uppercase source placeholders such as `REORDER_CODE`.
+The generator now derives placeholders generically instead of treating them as
+literal BCP-47 types. Neither rule names `islamicc` or a tested locale.
+
+The final focused suite receipt `84f35e` is 1 file / 7 pass / 0 fail (3.42 s)
+on Node 24 through the linked local Vitest route. It covers reproducibility,
+full provenance pin data, generic aliases/non-sample inventory, the legitimate
+preferred/canonical collision and an ambiguous negative collision,
+duplicate-provenance rejection, un-hashed release mismatch rejection,
+byte-identical copied regeneration, and a hash-tampered input. Each failed
+fixture generation asserts that its preexisting copied output remains
+unchanged. An earlier 5/5 receipt `b55bdc` predates the two added provenance
+negatives. Receipt `fa1e93` is a zero-executed setup error (this fresh
+worktree had no `node_modules` link); it is not a test verdict. A subsequent
+package-script invocation forwarded a literal `--`, started an unrelated
+`issue-5383` suite, and was stopped at exit 130 before any #6717 verdict; it
+is likewise a non-result. The corrected direct local route produced `b55bdc`
+and `84f35e` only after that session had terminated.
+
+Normal gates passed: TypeScript typecheck receipt `18b3d1`; Prettier
+format-check wrapper `196` / nested process `99249`; LOC and function budgets
+receipt `4e69ae`; and post-gate generator/hash/diff check `f57e01`. The two
+narrow `.prettierignore` entries for `assets/intl/pinned-input/**` and
+`assets/intl/generated/**` protect upstream/generator bytes from lint-staged's
+`*.json` rewrite; the generator remains their deterministic serializer and
+provenance JSON remains formatter-managed. This data-only evidence changes no
+Test262 verdict, does not expose `Intl.getCanonicalLocales`, and does not
+complete #6717.
 
 ## Measured starting evidence
 

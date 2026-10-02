@@ -2,6 +2,7 @@
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
+import { arrayMethodReadsProxyOperand } from "../proxy-array-like.js"; // (#6651 H6)
 export { variableStatementContainsPromiseSubclass } from "../expressions/promise-subclass.js";
 
 /**
@@ -292,6 +293,8 @@ function expressionIsEscapingArgument(ctx: CodegenContext, expression: ts.Expres
   // parameter carries no type annotation reads dynamically too — see
   // `calleeParamIsUntyped` for why this cannot reopen #2615.
   if (calleeParamIsUntyped(ctx, parent, outer)) return false;
+  // (#6651 H6) A standalone Array borrow/concat that reads the operand via the MOP.
+  if (arrayMethodReadsProxyOperand(ctx, parent, outer)) return false;
 
   // (#6775 S2) `get.call(p)` / `set.call(p, v)` where the callee binding is an
   // accessor pulled off a descriptor (`Object.getOwnPropertyDescriptor(o, k)

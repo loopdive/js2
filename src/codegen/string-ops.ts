@@ -1,4 +1,5 @@
 import { isBigIntType, isBooleanType, isStringType, isSymbolType, isVoidType } from "../checker/type-mapper.js";
+import { emitStandaloneDynamicTagCall } from "./expressions/tagged-template-standalone.js"; // (#6774 S17)
 import { widenJsDefaultGuessSymbolSlot } from "./js-default-param-type-guess.js";
 import type { Instr, ValType } from "../ir/types.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
@@ -1227,6 +1228,12 @@ export function compileTaggedTemplateExpression(
     init: [{ op: "ref.null", typeIdx: templateVecTypeIdx }],
   });
 
+  // (#6774 S13) §13.2.8.4 GetTemplateObject freezes the template and its `raw`.
+  const freezeIdx = ctx.standalone
+    ? ensureLateImport(ctx, "__object_freeze", [{ kind: "externref" }], [{ kind: "externref" }])
+    : undefined;
+  flushLateImportShifts(ctx, fctx);
+
   // Store the strings vec in a local so we can push it as an argument later
   const stringsVecType: ValType = {
     kind: "ref_null",
@@ -1268,6 +1275,10 @@ export function compileTaggedTemplateExpression(
     typeIdx: baseVecTypeIdx,
   });
   fctx.body.push({ op: "local.set", index: tmpRawVec });
+  if (freezeIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: tmpRawVec }, { op: "extern.convert_any" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_freeze") ?? freezeIdx }, { op: "drop" });
+  }
 
   // Second: build the cooked strings array
   for (const str of stringParts) {
@@ -1290,6 +1301,10 @@ export function compileTaggedTemplateExpression(
   fctx.body.push({ op: "local.get", index: tmpRawVec });
   fctx.body.push({ op: "struct.new", typeIdx: templateVecTypeIdx });
   fctx.body.push({ op: "global.set", index: cacheGlobalIdx });
+  if (freezeIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: cacheGlobalIdx }, { op: "extern.convert_any" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_freeze") ?? freezeIdx }, { op: "drop" });
+  }
   const thenBody = fctx.body;
   fctx.body = savedBody;
 
@@ -1765,6 +1780,12 @@ export function compileTaggedTemplateExpression(
         // Coerce tag to externref if needed
         if (tagResult.kind !== "externref") {
           coerceType(ctx, fctx, tagResult, { kind: "externref" });
+        }
+        if (noJsHost(ctx)) {
+          // (#6774 S17) host-free dynamic tag call
+          if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
+          const r = emitStandaloneDynamicTagCall(ctx, fctx, stringsLocal, substitutions);
+          return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, r);
         }
         const tagLocal = allocLocal(fctx, `__tt_dyn_tag_${fctx.locals.length}`, { kind: "externref" });
         fctx.body.push({ op: "local.set", index: tagLocal });

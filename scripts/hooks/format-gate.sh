@@ -1,60 +1,73 @@
 # shellcheck shell=sh
-# #3409 — portable format-gate watchdog for the pre-push hook.
+# Pre-push prettier gate (.husky/pre-push, section 3b). POSIX sh only; sourced
+# by the hook and unit-tested directly (tests/hooks/pre-push-format-gate.test.ts),
+# mirroring the #3410 push-remote-classify.sh split.
 #
-# The pre-push prettier gate (.husky/pre-push, section 3b) must bound how long
-# `pnpm run format:check` may run so a hung check never SIGTERMs at git's 300s
-# limit and silently aborts the push. It previously called GNU `timeout`
-# UNCONDITIONALLY:
+# #6799 — CHANGED FILES ONLY, NO WATCHDOG. The gate used to run the whole-tree
+# `pnpm run format:check` under a 90 s watchdog and, on timeout, print
+# "TIMED OUT — skipping" and let the push through. Measured 2026-09-30: 82 s on
+# an idle box, 108 s with one concurrent job — so the check was skipped exactly
+# when the machine was busy, i.e. whenever agents were pushing. A bounded check
+# that turns itself off under load is not a check.
 #
-#     fmt_out=$(timeout 90 pnpm run format:check 2>&1)
+# Prettier's cost is per file, so the fix is to check only the files this push
+# changes: `git diff --name-only <merge-base>..HEAD`, filtered to the globs
+# `format:check` covers (`src/**/*.ts`, `tests/**/*.ts`, `scripts/**/*.ts` — see
+# package.json). That is seconds, so it runs unbounded and its verdict is final.
+# CI's `quality` job still runs the whole-tree `format:check`.
 #
-# Stock macOS ships no `timeout` (and Homebrew's `gtimeout` may be absent), so
-# the shell returned 127 (command-not-found) BEFORE prettier ever ran. The hook
-# treats any code other than 124 as a genuine format failure and blocked the
-# push — with a blank "Offending files" section, because the real
-# `timeout: command not found` error was filtered out. `--no-verify` was the
-# only escape, and it bypasses every other pre-push guard.
-#
-# This helper is sourced by `.husky/pre-push` and unit-tested directly
-# (tests/hooks/pre-push-format-timeout.test.ts), mirroring the #3410
-# push-remote-classify.sh split. POSIX sh only.
+# (#3409's portable-watchdog logic lived here before; with no watchdog there is
+# no `timeout`/`gtimeout` probe left to get wrong on macOS.)
 
-# find_watchdog: echo the available bounded-run binary (`timeout` or the
-# Homebrew-coreutils `gtimeout`), or nothing when neither is on PATH.
-find_watchdog() {
-  if command -v timeout >/dev/null 2>&1; then
-    echo timeout
-  elif command -v gtimeout >/dev/null 2>&1; then
-    echo gtimeout
-  fi
+# format_gate_base: echo the merge-base of HEAD with upstream main, or nothing
+# when no main ref resolves. The authoritative base is UPSTREAM's main, whatever
+# the remote is called: in a fork checkout `origin` is the fork (whose main may
+# have diverged) and `upstream` is loopdive/js2, so `upstream/main` is tried
+# first, then `origin/main`.
+format_gate_base() {
+  for _fg_ref in upstream/main origin/main; do
+    if git rev-parse --verify --quiet "$_fg_ref^{commit}" >/dev/null 2>&1; then
+      _fg_base=$(git merge-base "$_fg_ref" HEAD 2>/dev/null) || continue
+      if [ -n "$_fg_base" ]; then
+        echo "$_fg_base"
+        return 0
+      fi
+    fi
+  done
+  return 0
 }
 
-# run_format_watchdog SECS CMD [ARG...]
-#
-# Runs CMD under a SECS-second watchdog when one is available; otherwise runs
-# CMD directly (no local bound — CI's `quality` job re-runs the identical
-# `format:check`, so a rare local hang defers to git's own limit rather than
-# manufacturing a failure). CMD's combined stdout+stderr is emitted on stdout so
-# the caller can capture and grep it. Returns:
-#
-#   0        CMD succeeded
-#   124      the watchdog expired (only possible when a watchdog exists)
-#   <rc>     CMD's own non-zero exit (a genuine format failure)
-#
-# The load-bearing fix: when no watchdog exists we run CMD ITSELF, so the return
-# code is always CMD's real result — NEVER a 127 from a missing `timeout` that
-# the caller would mislabel as a format failure. The watchdog-absent notice goes
-# to stderr with a non-prettier prefix so it does not pollute the caller's
-# `[warn]`/`*.ts` offending-files filter.
-run_format_watchdog() {
-  _fw_secs=$1
-  shift
-  _fw_wd=$(find_watchdog)
-  if [ -n "$_fw_wd" ]; then
-    "$_fw_wd" "$_fw_secs" "$@"
+# format_changed_files BASE: one path per line — files changed in BASE..HEAD
+# that `format:check` covers and that still exist in the working tree (prettier
+# errors on a path it cannot read; a deleted file has nothing to format).
+format_changed_files() {
+  git diff --name-only --diff-filter=d "$1..HEAD" -- 2>/dev/null |
+    grep -E '^(src|tests|scripts)/.+\.ts$' |
+    while IFS= read -r _fg_file; do
+      [ -f "$_fg_file" ] && printf '%s\n' "$_fg_file"
+    done
+  return 0
+}
+
+# run_format_gate: prettier --check over the changed files. Output goes to
+# stdout (combined) for the caller to capture; the return code is prettier's
+# (via xargs: any failing batch makes it non-zero). With no resolvable base it
+# falls back to the whole-tree `pnpm run format:check` — still unbounded, never
+# skipped. With nothing to check it returns 0 and says so.
+run_format_gate() {
+  _fg_base=$(format_gate_base)
+  if [ -z "$_fg_base" ]; then
+    echo "Pre-push: no upstream/main or origin/main ref — checking the whole tree."
+    pnpm run format:check 2>&1
     return $?
   fi
-  echo "Pre-push: no 'timeout'/'gtimeout' on PATH — running format:check without a local ${_fw_secs}s watchdog (CI 'quality' enforces it)." >&2
-  "$@"
+  _fg_files=$(format_changed_files "$_fg_base")
+  if [ -z "$_fg_files" ]; then
+    echo "Pre-push: no changed src/tests/scripts *.ts files since $(echo "$_fg_base" | cut -c1-10) — nothing to format-check."
+    return 0
+  fi
+  _fg_count=$(printf '%s\n' "$_fg_files" | wc -l | tr -d ' ')
+  echo "Pre-push: prettier --check on $_fg_count changed file(s) since $(echo "$_fg_base" | cut -c1-10)."
+  printf '%s\n' "$_fg_files" | tr '\n' '\0' | xargs -0 pnpm exec prettier --check 2>&1
   return $?
 }

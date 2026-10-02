@@ -58,6 +58,7 @@ import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
 import { buildVecLengthHoleFill } from "./vec-length-hole-fill.js";
+import { arraySetLengthDynamicParts } from "./array/array-set-length-coercion.js"; // (#6771 S10a)
 
 /** `key == "length"` over an externref key (param `keyParam`); i32 on stack. */
 function keyIsLengthInstrs(
@@ -160,6 +161,8 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
       { name: "__veclen_cap", type: { kind: "i32" } },
       { name: "__veclen_newdata", type: { kind: "anyref" } },
     );
+    // (#6771 S10a) §10.4.2.4 steps 3-5 + 12: two conversions, then the writable check.
+    const setLen = arraySetLengthDynamicParts(ctx, setFn, toNumberInstrs, setResultGlobalIdx);
 
     // An arguments object's `length` is an ordinary, configurable data
     // property (§10.4.4), not the Array-exotic index-domain length carried by
@@ -295,9 +298,11 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
             then: [
               ...argumentsLengthWrite,
               // n = ToNumber(ToPrimitive(value)); valid: integral ∧ 0 ≤ n ≤ 2**32-1.
+              ...setLen.firstConversion,
               { op: "local.get", index: 2 },
               ...toNumberInstrs,
               { op: "local.tee", index: lN },
+              ...setLen.agreesWithFirst(lN),
               { op: "f64.floor" },
               { op: "local.get", index: lN },
               { op: "f64.eq" }, // integral (false for NaN)
@@ -313,6 +318,7 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                 op: "if",
                 blockType: { kind: "empty" },
                 then: [
+                  ...setLen.nonWritableRefusal,
                   // newLen = ToUint32(n) — unsigned trunc keeps 2**32-1 as the
                   // 0xFFFFFFFF bit pattern the unsigned read arm round-trips.
                   { op: "local.get", index: lN },
