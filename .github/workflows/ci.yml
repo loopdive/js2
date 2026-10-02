@@ -857,9 +857,15 @@ jobs:
   # #1659 — Run tests/equivalence/ in CI. Previously skipped because the full
   # suite OOMed under file-parallelism. Each shard runs single-fork (peak
   # ~1 GB RAM, ~1-3 min) and gates its own failures against
-  # scripts/equivalence-baseline.json. The final required context is only a
-  # status fan-in: regression membership is independent per test, so shipping
-  # eight partial artifacts to repeat the same set comparison adds no safety.
+  # scripts/equivalence-baseline.json — per-test regressions and file-level
+  # failures (import/syntax/collect errors, unfinished tests) are per-file
+  # facts, so each shard names them in its own log.
+  #
+  # #6785 — the passing-test floor and the test-file count are WHOLE-SUITE
+  # properties no single shard can check: a file that vanishes from every
+  # shard (deleted, or a crashed worker) leaves each shard locally green. So
+  # every shard uploads its partial, and the required `equivalence-gate` job
+  # merges the eight and applies `passingFloor` / `fileCount` to the sum.
   equivalence-shard:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -876,7 +882,17 @@ jobs:
       - name: Run and gate equivalence shard ${{ matrix.shard }}/8
         env:
           SHARD: ${{ matrix.shard }}/8
+          PARTIAL_OUT: equivalence-partial-${{ matrix.shard }}.json
         run: node scripts/equivalence-gate.mjs
+      - name: Upload shard partial for the merged floor check (#6785)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: equivalence-partial-${{ matrix.shard }}
+          path: equivalence-partial-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 1
 
   equivalence-gate:
     needs: [changes, equivalence-shard]
@@ -892,3 +908,22 @@ jobs:
             exit 1
           fi
           echo "All equivalence shards passed their local baseline gates."
+      # #6785 — the gate script and baseline need only node builtins; the
+      # equivalence directory lets the merge name a test file that exists but
+      # reached no shard's report.
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            scripts/equivalence-gate.mjs
+            scripts/equivalence-baseline.json
+            tests/equivalence/
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: equivalence-partial-*
+          path: equivalence-partials
+          merge-multiple: true
+      - name: Gate the merged suite (passing floor + file count, #6785)
+        env:
+          MERGE_PARTIALS_DIR: equivalence-partials
+        run: node scripts/equivalence-gate.mjs

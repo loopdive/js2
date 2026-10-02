@@ -293,7 +293,7 @@
     "build:standalone-cli": "node scripts/build-standalone-cli.mjs",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
-    "lint": "biome lint src tests scripts --diagnostic-level=error",
+    "lint": "biome lint src tests scripts --diagnostic-level=error --max-diagnostics=none",
     "typecheck": "node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json",
     "typecheck:ts5": "node node_modules/typescript/lib/tsc.js --noEmit",
     "typecheck:ts7": "pnpm run typecheck",
@@ -384,7 +384,7 @@
   "lint-staged": {
     "*.{ts,js,mjs}": [
       "prettier --write",
-      "biome lint --diagnostic-level=error --no-errors-on-unmatched"
+      "biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched"
     ],
     "*.json": "prettier --write"
   },

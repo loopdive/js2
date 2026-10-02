@@ -155,7 +155,7 @@ async function build(src: string, env: Record<string, string> = {}) {
     return result;
   } finally {
     for (const [k, v] of saved) {
-      // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+      // Only `delete` truly unsets an env var
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }

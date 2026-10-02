@@ -65,7 +65,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
-- Run equivalence tests only: `npm test -- tests/equivalence.test.ts`
+- Run equivalence tests only: `node scripts/equivalence-gate.mjs` — runs the `tests/equivalence/` directory single-fork (~9 min) and gates it against `scripts/equivalence-baseline.json` (known failures + `passingFloor` / `fileCount`, #6785); `SHARD=1/8` runs one slice
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
 - **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)-1` (min 1 — one core is left for the shell/editor/sshd; boxes are not all 4-core, so never hardcode it). Baseline 2026-05-20 on a 4-core/16GB container, then at pool 4: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
 
@@ -128,7 +128,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 - Codegen: `src/codegen/expressions.ts`, `src/codegen/index.ts`, `src/codegen/statements.ts`, `src/codegen/type-coercion.ts`, `src/codegen/peephole.ts`
 - WIT generator: `src/wit-generator.ts` (TypeScript → WIT interface generation)
 - Optimizer: `src/optimize.ts` (Binaryen wasm-opt integration)
-- Tests: `tests/equivalence.test.ts` (main), `tests/test262.test.ts` (conformance dashboard, non-failing)
+- Tests: `tests/equivalence/` (main suite, a directory — gated by `scripts/equivalence-gate.mjs`), `tests/test262.test.ts` (conformance dashboard, non-failing)
 - Test262 runner: `tests/test262-runner.ts` — TEST_CATEGORIES list
 - Test262 runner (preferred): `pnpm run test:262` — vitest-based, auto-worktree, disk cache, default 3 forks. Use `TEST262_WORKERS=5` for solo runs (no dev agents).
 - Test262 runner history: `runs/index.json` is appended by the vitest runner after each run. `benchmarks/results/report.html` reads this for the trend graph.

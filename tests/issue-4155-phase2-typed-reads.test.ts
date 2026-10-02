@@ -45,7 +45,7 @@ async function compileStandaloneJs(src: string, flagOn: boolean): Promise<{ wat:
     return { wat: r.wat ?? "", binary: r.binary };
   } finally {
     if (saved === undefined) {
-      // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+      // Only `delete` truly unsets an env var
       delete process.env[FLAG];
     } else {
       process.env[FLAG] = saved;

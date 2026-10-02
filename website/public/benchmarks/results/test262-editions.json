@@ -49,8 +49,8 @@
   {
     "edition": "ES2015",
     "pass": 10268,
-    "fail": 1416,
-    "ce": 20,
+    "fail": 1415,
+    "ce": 21,
     "skip": 0,
     "total": 11704,
     "pct": 88,
@@ -67,8 +67,8 @@
       {
         "name": "generators",
         "pass": 2189,
-        "fail": 297,
-        "ce": 0,
+        "fail": 296,
+        "ce": 1,
         "skip": 0,
         "total": 2486,
         "pct": 88

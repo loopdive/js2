@@ -54,7 +54,7 @@ export function createDynamicFunctionImport(options: DynamicFunctionImportOption
     };
   }
   if (policy === "native") {
-    // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
+    // Explicit opt-in host-eval engine
     return (params: any, body: any) => new Function(String(params ?? ""), String(body ?? ""));
   }
   if (policy === "evaluator") {
@@ -77,7 +77,7 @@ export function createDynamicFunctionImport(options: DynamicFunctionImportOption
         if (!isDynamicCodeBuildFailure(e)) throw e;
       }
     }
-    // biome-ignore lint/security/noGlobalEval: intentional runtime new Function
+    // Intentional runtime new Function
     const hostFn = new Function(String(params ?? ""), bodyStr);
     if (!referencesThis || moduleGlobal === (globalThis as unknown)) return hostFn;
     // (#4650) A host function body's unbound `this` is the HOST global, but the

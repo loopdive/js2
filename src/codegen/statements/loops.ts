@@ -83,7 +83,14 @@ import {
   loopBodyMutatesStringReadInvariants,
   varCounterRedeclarationBlocksI32,
 } from "../../ir/analysis/loop-shape.js";
-import { emitForAwaitElementUnwrap, emitForAwaitStepCapCheck } from "./for-await-helpers.js";
+import {
+  emitForAwaitElementUnwrap,
+  emitForAwaitMarkHandled,
+  emitForAwaitStackElement,
+  emitForAwaitStepCapCheck,
+  ensureForAwaitMarkHandled,
+  initForAwaitStepCap,
+} from "./for-await-helpers.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import {
   compileForOfAssignDestructuring,
@@ -1066,6 +1073,7 @@ export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionConte
 }
 
 export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
+  ensureForAwaitMarkHandled(ctx, fctx, stmt); // (#6791) before any driver captures a func index
   // Check the TS type of the iterable to decide compilation strategy
   const exprTsType = ctx.checker.getTypeAtLocation(stmt.expression);
 
@@ -2158,6 +2166,7 @@ function compileForOfArray(
   // Gated on externref element + `usesArrayHoles`.
   if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
   emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
+  emitForAwaitMarkHandled(ctx, fctx, stmt, readElemType); // (#6791) host-lane `for await` element
   // Coerce from the READ value's type (packed i8/i16 arrive on the stack as the
   // widened i32, #2934) to the local's declared type.
   const elemLocalType = getLocalType(fctx, elemLocal);
@@ -2742,12 +2751,7 @@ function compileForOfDirectIterator(
   const wrapForAwaitClose = isForAwait && returnMethodIdx !== undefined;
   const carrierAwait = isForAwait && valueFieldType.kind === "externref" && isStandalonePromiseActive(ctx);
   const forAwaitDepth = wrapForAwaitClose ? 3 : 2;
-  let capLocal = -1;
-  if (isForAwait) {
-    capLocal = allocLocal(fctx, `__forawait_steps_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "local.set", index: capLocal });
-  }
+  const capLocal = initForAwaitStepCap(fctx, isForAwait);
 
   // Done flag: tracks whether iterator completed normally (done=true) (#851)
   const doneFlagDirect = allocLocal(fctx, `__forit_done_${fctx.locals.length}`, { kind: "i32" });
@@ -2819,13 +2823,9 @@ function compileForOfDirectIterator(
   // — a REJECTED promise throws its reason (abrupt loop completion; the
   // close-on-throw wrapper below runs IteratorClose first), a FULFILLED one
   // unwraps. Runs on the raw externref BEFORE the element coercion so the
-  // unwrapped value (not the promise) is what reaches the loop variable.
-  if (carrierAwait) {
-    const awaitTmp = allocLocal(fctx, `__forawait_val_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: awaitTmp });
-    emitForAwaitElementUnwrap(ctx, fctx, awaitTmp);
-    fctx.body.push({ op: "local.get", index: awaitTmp });
-  }
+  // unwrapped value (not the promise) is what reaches the loop variable. On the
+  // host-promise lane the element is instead marked handled (#6791).
+  emitForAwaitStackElement(ctx, fctx, stmt, valueFieldType, carrierAwait);
 
   // Coerce value to element type if needed
   const targetElemType = getLocalType(fctx, elemLocal) ?? elemType;
@@ -3193,12 +3193,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // close-on-throw, so the rejection rethrow needs no extra structure.
   const isForAwaitIter = !!stmt.awaitModifier;
   const carrierAwaitIter = isForAwaitIter && isStandalonePromiseActive(ctx);
-  let capLocalIter = -1;
-  if (isForAwaitIter) {
-    capLocalIter = allocLocal(fctx, `__forawait_steps_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "local.set", index: capLocalIter });
-  }
+  const capLocalIter = initForAwaitStepCap(fctx, isForAwaitIter);
 
   // Build loop body
   const savedBody = pushBody(fctx);
@@ -3322,6 +3317,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   // Get value: elem = value (already in resultLocal)
   fctx.body.push({ op: "local.get", index: resultLocal });
+  emitForAwaitMarkHandled(ctx, fctx, stmt, { kind: "externref" }); // (#6791) host-lane element
   fctx.body.push({ op: "local.set", index: elemLocal });
   if (!ts.isVariableDeclarationList(stmt.initializer)) {
     emitForOfAssignmentTarget(ctx, fctx, stmt.initializer, elemLocal, elemType);

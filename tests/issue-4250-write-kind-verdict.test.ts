@@ -37,7 +37,7 @@ async function run(source: string, env: Record<string, string> = {}): Promise<un
   } finally {
     for (const [k, v] of saved) {
       if (v === undefined) {
-        // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+        // Only `delete` truly unsets an env var
         delete process.env[k];
       } else process.env[k] = v;
     }
