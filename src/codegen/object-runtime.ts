@@ -10360,7 +10360,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
         : [];
     // (#4220) `<array>.constructor` on a receiver only known at RUNTIME —
     // rationale and blast radius in vec-constructor-carrier.ts.
-    const ctorBody = vecConstructorArmInstrs(ctx, keyIs("constructor"));
+    const ctorBody = vecConstructorArmInstrs(ctx, keyIs("constructor"), gAny);
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },

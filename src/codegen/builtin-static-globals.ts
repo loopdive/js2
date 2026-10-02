@@ -462,6 +462,7 @@ export function reserveBuiltinNamespaceObjectGlobal(ctx: CodegenContext, builtin
     init: [{ op: "ref.null.extern" }],
   });
   ctx.builtinObjectGlobals.set(builtinName, globalIdx);
+  noteBuiltinCollectionCarrierReserved(ctx, builtinName); // (#6775 S10) Error family
   return globalIdx;
 }
 

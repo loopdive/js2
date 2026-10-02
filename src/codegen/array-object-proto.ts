@@ -146,6 +146,8 @@ import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
 import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
+import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
+import { PROTOTYPE_SEED_FLAGS } from "../runtime/wasmgc/values/prototype-seeder-bodies.js"; // (#6775 S16)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 import {
   emitStandalonePromiseFinally,
@@ -2679,6 +2681,7 @@ function makeGlue(
       // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
       // builtin whose ToPrimitive prefers `toString` under the "default" hint.
       (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
+      (name === "Date" && member === "toJSON" ? emitDateProtoToJsonBody(c, fctx) : null) ?? // (#6775 S8)
       // ES2015 §20.5.3.4 — Error.prototype.toString is inherited by each
       // NativeError prototype, so all of those glues share the same ordered
       // property-read and Symbol-rejecting body.
@@ -3070,7 +3073,14 @@ export function ensureFunctionNativeProtoGlue(ctx: CodegenContext): number | und
   const brand = getBuiltinBrand(ctx, "Function");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS));
+    // (#6775 S16) §20.2.3: %Function.prototype% owns `length` 0 and `name` ""
+    // as {w:F,e:F,c:T} — the symbolTag attribute word.
+    const glue = makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS);
+    glue.dataProps = [
+      ["length", 0, PROTOTYPE_SEED_FLAGS.symbolTag],
+      ["name", "", PROTOTYPE_SEED_FLAGS.symbolTag],
+    ];
+    registerNativeProtoBuiltin(ctx, glue);
   }
   return brand;
 }

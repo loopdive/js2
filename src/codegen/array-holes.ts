@@ -140,6 +140,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     // member a runtime value (the static read declines), so the companion must
     // hold the builtin before the write — seeded only under this flag.
     if (!ctx.protoMemberDirty && isRegExpProtoSymbolWrite(node)) ctx.protoMemberDirty = true;
+    // (#6775 S5) `x[Symbol.toPrimitive](…)` reads the INHERITED method as a
+    // runtime value (the call lowers to Get + apply), so the companion must
+    // hold `Symbol.prototype[@@toPrimitive]`.
+    if (!ctx.protoMemberDirty && isToPrimitiveMethodCall(node)) ctx.protoMemberDirty = true;
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
@@ -1473,4 +1477,16 @@ export function joinEmptyElementTest(
       },
     ],
   };
+}
+
+/** (#6775 S5) `<expr>[Symbol.toPrimitive](…)`. */
+function isToPrimitiveMethodCall(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node) || !ts.isElementAccessExpression(node.expression)) return false;
+  const key = node.expression.argumentExpression;
+  return (
+    ts.isPropertyAccessExpression(key) &&
+    key.name.text === "toPrimitive" &&
+    ts.isIdentifier(key.expression) &&
+    key.expression.text === "Symbol"
+  );
 }

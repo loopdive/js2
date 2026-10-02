@@ -8,6 +8,8 @@
 // the compileCallExpression scope.
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { ensureSymbolNativeProtoGlue } from "../array-object-proto.js"; // (#6775 S5)
+import { buildLazyNativeProtoGetInstrs } from "../native-proto.js"; // (#6775 S5)
 import { compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { emitThrowTypeError } from "./helpers.js";
@@ -800,6 +802,7 @@ export function emitObjectCoercion(
     const finalSymIdx = ctx.funcMap.get("__new_Symbol") ?? newSymIdx;
     if (finalSymIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: finalSymIdx });
+      if (noJsHost(ctx)) linkSymbolWrapperPrototype(ctx, fctx);
       return { kind: "externref" };
     }
   }
@@ -819,4 +822,19 @@ export function emitObjectCoercion(
     }
   }
   return { kind: "externref" };
+}
+
+/**
+ * (#6775 S5) §7.1.18 ToObject, Table 13: a Symbol wrapper's [[Prototype]] is
+ * %Symbol.prototype%. The host-free builder mints the `$Object` with a null
+ * `$proto` (read as `Object.prototype`), so neither
+ * `Object.getPrototypeOf(Object(sym))` nor an inherited `w[Symbol.toPrimitive]`
+ * found the Symbol glue. Link it at the site: wrapper on the stack in and out.
+ */
+export function linkSymbolWrapperPrototype(ctx: CodegenContext, fctx: FunctionContext): void {
+  const brand = ensureSymbolNativeProtoGlue(ctx);
+  const read = brand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, brand);
+  const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+  if (!read || setProtoIdx === undefined) return;
+  fctx.body.push(...read, { op: "call", funcIdx: setProtoIdx });
 }

@@ -98,6 +98,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -140,6 +141,61 @@ export function emitRuntimeNewTargetPrototype(ctx: CodegenContext, fctx: Functio
   for (let i = 0; i < key.length; i++) fctx.body.push(key[i]!);
   fctx.body.push({ op: "call", funcIdx: getIdx });
   return true;
+}
+
+/**
+ * (#6775 S6) §25.1.3.1 for `Reflect.construct(ArrayBuffer, [len], NT)`:
+ * `ToIndex(len)` (step 2), then AllocateArrayBuffer's
+ * OrdinaryCreateFromConstructor — `? Get(NT, "prototype")` — and only THEN
+ * CreateByteDataBlock (the RangeError for an unallocatable size). The post-
+ * construction read above has the getter run after the allocation, so a
+ * throwing `prototype` getter lost to the RangeError
+ * (`data-allocation-after-object-creation.js`).
+ *
+ * Taken only when every argument is a numeric constant ToIndex accepts, so
+ * hoisting the read past the argument list and ToIndex is unobservable. The
+ * value is dropped: the byte vec has no prototype slot, so the post-write was
+ * already a no-op (`newtarget-prototype-is-not-object.js` passes through the
+ * intrinsic default) — the caller then skips the post-read entirely, keeping
+ * the getter to exactly one call.
+ */
+export function tryEmitArrayBufferNewTargetPreRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  ntLocal: number,
+): boolean {
+  const MAX_INDEX = 2 ** 53 - 1;
+  for (const arg of args) {
+    const v = numericConstant(arg);
+    if (v === undefined || !(v > -1) || v > MAX_INDEX) return false;
+  }
+  if (!emitRuntimeNewTargetPrototype(ctx, fctx, ntLocal)) return false;
+  fctx.body.push({ op: "drop" });
+  return true;
+}
+
+function numericConstant(expr: ts.Expression): number | undefined {
+  if (ts.isParenthesizedExpression(expr)) return numericConstant(expr.expression);
+  if (ts.isNumericLiteral(expr)) return Number(expr.text);
+  if (ts.isPrefixUnaryExpression(expr) && expr.operator === ts.SyntaxKind.MinusToken) {
+    const v = numericConstant(expr.operand);
+    return v === undefined ? undefined : -v;
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const l = numericConstant(expr.left);
+    const r = numericConstant(expr.right);
+    if (l === undefined || r === undefined) return undefined;
+    switch (expr.operatorToken.kind) {
+      case ts.SyntaxKind.AsteriskToken:
+        return l * r;
+      case ts.SyntaxKind.PlusToken:
+        return l + r;
+      case ts.SyntaxKind.MinusToken:
+        return l - r;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -212,6 +268,7 @@ export function applyRuntimeNewTargetPrototype(
     apply.push({ op: "i32.eqz" });
     apply.push({ op: "if", blockType: { kind: "empty" }, then: generic });
   }
+  fctx.body.push(...dataViewDetachedAfterProtoReadInstrs(ctx, resultAny));
   const guard = protoIsObjectInstrs(ctx, protoLocal);
   // No Type(V) predicates ⇒ the §10.1.14 step-3 gate cannot be emitted, and an
   // ungated write is the defect this guard exists to remove. Decline; the
@@ -220,6 +277,55 @@ export function applyRuntimeNewTargetPrototype(
   fctx.body.push(...guard);
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: apply });
   return true;
+}
+
+/**
+ * (#6775 S7) §25.3.2.1 DataView step 11: "If IsDetachedBuffer(buffer) is true,
+ * throw a TypeError" runs AFTER OrdinaryCreateFromConstructor (step 10), so a
+ * `NewTarget.prototype` getter that detaches the buffer must make the
+ * construction throw (`custom-proto-access-detaches-buffer.js`). The view
+ * carrier is either the `$__dv_window` (its `buf`) or, for an offset-0
+ * default-length view, the bare byte vec itself; detachment is the shared
+ * buffer's negative length. Any other result carries no buffer and passes.
+ */
+function dataViewDetachedAfterProtoReadInstrs(ctx: CodegenContext, resultAny: number): Instr[] {
+  const dvIdx = ctx.dvWindowTypeIdx;
+  const vecIdx = ctx.vecTypeMap.get("i32_byte");
+  if (dvIdx < 0 || vecIdx === undefined) return [];
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: DataView: buffer is detached");
+  const lengthIsNegative = (bufInstrs: Instr[]): Instr[] => [
+    ...bufInstrs,
+    { op: "struct.get", typeIdx: vecIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+  ];
+  return [
+    { op: "local.get", index: resultAny },
+    { op: "ref.test", typeIdx: dvIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: lengthIsNegative([
+        { op: "local.get", index: resultAny },
+        { op: "ref.cast", typeIdx: dvIdx },
+        { op: "struct.get", typeIdx: dvIdx, fieldIdx: 0 },
+        { op: "ref.as_non_null" },
+      ]),
+      else: [
+        { op: "local.get", index: resultAny },
+        { op: "ref.test", typeIdx: vecIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: lengthIsNegative([
+            { op: "local.get", index: resultAny },
+            { op: "ref.cast", typeIdx: vecIdx },
+          ]),
+        },
+      ],
+    },
+  ];
 }
 
 /**

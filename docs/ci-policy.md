@@ -46,10 +46,10 @@ classic endpoint (`gh api repos/loopdive/js2wasm/branches/main/protection`) answ
 | Check name                          | Workflow file                           | What it gates                                                                                                                                                                                                                                                                                |
 | ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
-| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
+| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, the stale-baseline guard (#1668), and the **completed-edition per-row gates on both lanes** (per-edition ratchet; js-host #6786) — see §3 |
 | `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
 | `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
-| `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold                                                                                                                                             |
+| `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | js-host rolling-baseline diff (`scripts/diff-test262.ts`). A **net** gate, not a per-row one: fails when net (improvements − wasm-change regressions) < 0, when any path bucket has > 50 regressions, when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions, or on any uncatchable-trap growth (#3189). A +5 / −4 diff passes it. Pass→fail rows of a **completed** edition are blocked by `merge shard reports` instead — see "What blocks a pass→fail row" in §3 |
 | `cla-check`                         | `.github/workflows/cla-check.yml`       | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded                                                                                                                                                 |
 
 ### Optional / informational checks (NOT required to merge)
@@ -349,11 +349,12 @@ Two test262 workflows currently run on PRs:
     nothing links the two, so an untested recovery path is indistinguishable
     from a working one until the moment it is needed. When disabling a
     workflow, grep the docs for its name **in the same change**.
-  - The `check for test262 regressions` job is also required. It compares
-    the merged PR report against the baseline and catches full pass→fail
-    regressions even when the inline hard guards inside `merge shard reports`
-    do not trip. It always publishes a context: on the intentional no-shards
-    path it exits cleanly without looking for artifacts.
+  - The `check for test262 regressions` job is also required. It diffs the
+    merged js-host report against the baseline and fails on the **net** rule
+    (thresholds in "What blocks a pass→fail row" below), which is tighter
+    than the inline catastrophic guard's 200. It does not fail on individual
+    pass→fail rows while net ≥ 0. It always publishes a context: on the
+    intentional no-shards path it exits cleanly without looking for artifacts.
 - **`test262-differential.yml` runs in parallel** as a diagnostic signal
   (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
   Useful for triaging "which exact tests flipped on my branch?" but the
@@ -687,16 +688,19 @@ The 57-shard matrix runs **two** test262 targets per chunk: `js-host` (the
 default WasmGC/gc lane) and `standalone` (`--target standalone
 --no-host-imports nativeStrings`, the pure-Wasm lane). `merge shard reports`
 merges **both** sets of shard artifacts and builds both reports, then runs
-three HARD inline guards. Because a failing step inside `merge shard reports`
-fails the required check, all three guards gate the merge queue **without
-any additional required-check name** — no branch-protection change is needed
-to enforce them.
+the HARD inline guards below. Because a failing step inside `merge shard
+reports` fails the required check, every one of them gates the merge queue
+**without any additional required-check name** — no branch-protection change
+is needed to enforce them. (Not listed: the #2097 standalone high-water floor
+and the #1942 compile-time guard.)
 
 | Inline guard                            | Lane           | Fails when                                                                                 | Tolerance                                                |
 | --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | Catastrophic regression guard (#1668)   | host           | `Regressions with wasm-hash change` > 200 vs `test262-current.jsonl`                       | high (200) — only a codegen/harness catastrophe trips it |
 | **Standalone regression guard (#1897)** | **standalone** | net (`improvements − wasm-change regressions`) < −15 vs `test262-standalone-current.jsonl` | tight (15) — holds the current standalone floor          |
 | Stale-baseline guard (#1668)            | both           | baselines JSONL > 50 commits behind main HEAD (promotion pipeline broken)                  | n/a                                                      |
+| Per-edition ratchet, completed edition  | standalone     | any non-passing row of a `completed` edition (ES5), minus its `exceptions`                 | none                                                     |
+| Host completed-edition gate (#6786)     | host           | any pass→not-pass row of a `completed` edition vs `test262-current.jsonl`, any net         | none (quarantine + `compile_timeout` not counted)        |
 
 **Why the standalone guard is separate and tighter.** Before #1897 the merge
 queue gated only the host lane. The standalone lane runs in the same matrix
@@ -727,6 +731,40 @@ baseline drift (corpus-version skew, `env::`-import nondeterminism); measured
 real run-to-run standalone drift was 0 regressions / +3 improvements, so 15
 sits well above the noise floor. The threshold is tunable via the
 `STANDALONE_REGRESSION_TOLERANCE` env on the guard step.
+
+### What blocks a pass→fail row (#6786)
+
+Two rules, depending on whether the row's ES edition is **completed**
+(`completed: true` in `scripts/test262-edition-ratchet-baseline.json`; ES5
+today, the only one).
+
+| Row's edition                 | Lane       | Rule                                                                                                                                                                                                                                                 | Where                                                                                                            |
+| ----------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| not completed (ES2015 onward) | js-host    | **net ≥ 0**: fail when improvements − wasm-change regressions < 0; when one path bucket (first 5 segments) has > 50 regressions; when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions; on any uncatchable-trap growth (#3189). +5 / −4 passes. | `check for test262 regressions`                                                                                  |
+| not completed                 | standalone | net ≥ −15 (#1897), plus the per-edition count ratchet: a ratcheted edition's pass count may not fall                                                                                                                                                 | `merge shard reports`                                                                                            |
+| **completed**                 | standalone | **every row passes**, except the edition's `exceptions` (each with a reason)                                                                                                                                                                         | `merge shard reports` — per-edition ratchet                                                                      |
+| **completed**                 | js-host    | **zero pass→not-pass rows** vs the host baseline, whatever the net, except the edition's `host_exceptions` (each with a reason). The host lane is not at 100 % in ES5, so it holds what passed rather than requiring every row.                      | `merge shard reports` — `Host completed-edition per-row gate (#6786)` (`test262-edition-ratchet.ts --host-lane`) |
+
+What the js-host rules do **not** count:
+
+- **The noise quarantine.** `scripts/test262-host-noise-quarantine.json` lists
+  932 exact paths that changed status between two same-SHA, pool-4 canary
+  runs of the host lane (#3426; 109 of them changed in both). Their
+  transitions are excluded from the net gate's arithmetic and from the
+  completed-edition gate, and are still printed as QUARANTINED. 150 of the 932
+  are ES5. The standalone lane never reads this file.
+- **pass → compile_timeout**, the runner-load flake (#1192). The compile-time
+  guard (#1942) owns real compile slowdowns.
+- The net gate also drops wasm-identical flips (same `wasm_sha`) and rows a
+  PR names under `regressions-allow: tests:` (#3649). The completed-edition
+  gate honours neither.
+
+Both completed-edition gates **refuse (exit 2) rather than check nothing**: no
+test262 checkout to classify rows, a missing or empty results or baseline
+JSONL, or a run with no row of a completed edition all fail the required check.
+Neither banks a baseline from a partial run, and neither can lower a floor;
+adding an exception or clearing `completed` is a reviewed hand edit to the
+baseline JSON.
 
 ### Uncatchable-trap growth ratchet (#3189)
 
@@ -921,7 +959,7 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 | `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
 | `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
-| `check for test262 regressions`     | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds.                                                                                                                                                                                                                                                                                                                                                                   |
+| `check for test262 regressions`     | `test262-sharded.yml` | js-host net gate (net ≥ 0, ≤ 50 per bucket, ratio, trap growth) below the inline catastrophic threshold. Not per-row: pass→fail rows of a completed edition are blocked by `merge shard reports` (§3, #6786).                                                                                                                                                                                                                                                                         |
 | `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 The CODEOWNERS file gates **who** can approve. The required checks gate

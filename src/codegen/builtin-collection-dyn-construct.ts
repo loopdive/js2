@@ -50,6 +50,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { noJsHost } from "./js-errors.js";
 import { addFuncType } from "./registry/types.js";
 import { emitStandaloneCollectionSuperCtor } from "./standalone-subclass-ctors.js";
+import { emitWasiErrorConstructor } from "./registry/error-constructor-delegates.js";
 
 const HELPER_NAME = "__builtin_collection_dyn_construct";
 const EXTERNREF: ValType = { kind: "externref" };
@@ -62,18 +63,36 @@ const COLLECTIONS: ReadonlyMap<string, number> = new Map([
   ["WeakSet", 0],
 ]);
 
+/**
+ * (#6775 S10) The Error family travels the same way — `var C = nativeErrors[i];
+ * new C(msg)` (`NativeErrors/message_property_native_error.js`). Their bare
+ * values are the #2907 NAMESPACE carriers (keyed by bare name), and the
+ * construct is the same `__new_<Name>` the static `new RangeError(msg)` uses,
+ * so the instance is a real `$Error_struct` with its own `message`.
+ */
+const ERRORS: readonly string[] = [
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+];
+
 function carrierGlobal(ctx: CodegenContext, name: string): number | undefined {
-  return ctx.builtinObjectGlobals.get(`ctor:${name}`);
+  return ctx.builtinObjectGlobals.get(ERRORS.includes(name) ? name : `ctor:${name}`);
 }
 
 function ensureCollectionCtor(ctx: CodegenContext, name: string): void {
   const arity = COLLECTIONS.get(name);
   if (arity !== undefined) emitStandaloneCollectionSuperCtor(ctx, name, arity);
+  else if (ERRORS.includes(name)) emitWasiErrorConstructor(ctx, name, 1);
 }
 
-/** Hook from `reserveBuiltinConstructorIdentityGlobal`: a carrier minted after the site. */
+/** Hook from the carrier-global reservations: a carrier minted after the site. */
 export function noteBuiltinCollectionCarrierReserved(ctx: CodegenContext, name: string): void {
-  if (COLLECTIONS.has(name) && ctx.funcMap.has(HELPER_NAME)) ensureCollectionCtor(ctx, name);
+  if ((COLLECTIONS.has(name) || ERRORS.includes(name)) && ctx.funcMap.has(HELPER_NAME)) ensureCollectionCtor(ctx, name);
 }
 
 /** Reserve the helper (standalone/WASI only). Returns its funcIdx, or undefined. */
@@ -91,7 +110,9 @@ export function reserveBuiltinCollectionDynConstruct(ctx: CodegenContext): numbe
     exported: false,
   });
   ctx.funcMap.set(HELPER_NAME, funcIdx);
-  for (const name of COLLECTIONS.keys()) if (carrierGlobal(ctx, name) !== undefined) ensureCollectionCtor(ctx, name);
+  for (const name of [...COLLECTIONS.keys(), ...ERRORS]) {
+    if (carrierGlobal(ctx, name) !== undefined) ensureCollectionCtor(ctx, name);
+  }
   return funcIdx;
 }
 
@@ -200,7 +221,78 @@ export function fillBuiltinCollectionDynConstruct(ctx: CodegenContext): void {
       },
     );
   }
+  for (const name of ERRORS) {
+    const globalIdx = carrierGlobal(ctx, name);
+    const ctorIdx = ctx.funcMap.get(`__new_${name}`);
+    if (globalIdx === undefined || ctorIdx === undefined) continue;
+    body.push(
+      ...identityArm(globalIdx, [{ op: "local.get", index: 1 }, { op: "call", funcIdx: ctorIdx }, { op: "return" }]),
+    );
+  }
   body.push({ op: "ref.null.extern" });
   helper.body = body;
   helper.locals = [];
+}
+
+/** `if (callee === <carrier global>) { construct }` — the identity arm shared by every family. */
+function identityArm(globalIdx: number, construct: Instr[]): Instr[] {
+  return [
+    { op: "global.get", index: globalIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+        { op: "global.get", index: globalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+        { op: "ref.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: construct },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#6775 S10) `new C(msg, …)` whose callee is typed as a NativeError / Error
+ * constructor but is not the global identifier — `var C = nativeErrors[i]`.
+ * The class-name lowering only knows the GLOBAL spelling, so this shape reached
+ * the terminal "Unsupported new expression" refusal and evaluated to
+ * `undefined`. Evaluate the callee and every argument in order, then construct
+ * through the identity helper above (`__new_<Name>(arg0)` for the Error-family
+ * carrier the value IS). A value matching no carrier keeps the pre-existing
+ * null outcome. Standalone/WASI only.
+ */
+export function tryEmitErrorFamilyValueConstruct(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+  callee: import("../ts-api.js").ts.Expression,
+  args: readonly import("../ts-api.js").ts.Expression[],
+  compile: (e: import("../ts-api.js").ts.Expression) => ValType | null,
+  toExtern: (t: ValType) => void,
+): ValType | undefined {
+  if (!noJsHost(ctx) || !ERRORS.includes(className)) return undefined;
+  const helperIdx = reserveBuiltinCollectionDynConstruct(ctx);
+  if (helperIdx === undefined) return undefined;
+  const evalTo = (e: import("../ts-api.js").ts.Expression): number => {
+    const t = compile(e);
+    if (t === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (t.kind !== "externref") toExtern(t);
+    const local = allocLocal(fctx, `__efvc_${fctx.locals.length}`, EXTERNREF);
+    fctx.body.push({ op: "local.set", index: local });
+    return local;
+  };
+  const calleeLocal = evalTo(callee);
+  const argLocals = args.map(evalTo);
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    argLocals.length > 0 ? { op: "local.get", index: argLocals[0]! } : { op: "ref.null.extern" },
+    { op: "call", funcIdx: ctx.funcMap.get(HELPER_NAME) ?? helperIdx },
+  );
+  return EXTERNREF;
 }

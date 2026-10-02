@@ -258,6 +258,11 @@ export function tryEmitNullishIdentifierCalleeTypeError(
   // `ref.is_null` alone misses the `var x = undefined` half of the family.
   fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "ref.is_null" });
+  // (#6775 S5) A provably-Symbol callee (`var sym = Symbol(); sym()`) is a
+  // primitive: §13.3.6.2 step 4 IsCallable is false whatever its value.
+  if (ctx.oracle.typeFactOf(callee).kind === "symbol") {
+    fctx.body.push({ op: "i32.const", value: 1 }, { op: "i32.or" });
+  }
   const resolvedIsUndef = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;
   if (resolvedIsUndef !== undefined) {
     fctx.body.push({ op: "local.get", index: calleeLocal });

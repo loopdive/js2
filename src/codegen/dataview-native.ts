@@ -556,6 +556,8 @@ export function emitArrayBufferSlice(
   receiver: import("../ts-api.js").ts.Expression,
   args: readonly import("../ts-api.js").ts.Expression[],
   compileExpr: (expr: import("../ts-api.js").ts.Expression, hint?: ValType) => ValType | null,
+  /** (#6775 S6) Args are the reflective closure's externref params, not source nodes. */
+  argsAreParams = false,
 ): ValType | null {
   const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" }); // (#2835) packed byte buffer
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
@@ -639,7 +641,7 @@ export function emitArrayBufferSlice(
     // `__box_number` + the ToPrimitive chokepoint pulled that whole chain into
     // the module and took the standalone binary from 51,078 to 122,604 bytes
     // (measured 2026-09-02, this file both sides).
-    if (ctx.oracle.staticJsTypeOf(args[1]!) === "number") {
+    if (!argsAreParams && ctx.oracle.staticJsTypeOf(args[1]!) === "number") {
       compileExpr(args[1]!, { kind: "f64" });
       fctx.body.push({ op: "i32.trunc_sat_f64_s" });
       fctx.body.push({ op: "local.set", index: endLocal });
@@ -1296,6 +1298,7 @@ export function emitArrayBufferProtoMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
+  if (member === "slice") return emitArrayBufferProtoSliceBody(ctx, fctx);
   if (member !== "transfer" && member !== "transferToFixedLength") return null;
   const helperIdx = ensureArrayBufferTransferHelper(ctx, member);
   if (helperIdx === undefined) return null;
@@ -1308,6 +1311,58 @@ export function emitArrayBufferProtoMemberBody(
   }
   fctx.body.push({ op: "call", funcIdx: helperIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#6775 S6) Reflective `ArrayBuffer.prototype.slice` body — the closure the
+ * DIRECT spelling `ArrayBuffer.prototype.slice.call(x, a, b)` resolves to. With
+ * no body the member refused and that spelling fell to the legacy `.call` tail,
+ * which drops `thisArg` and answers `undefined` (even for a real buffer).
+ * §25.1.5.3 steps 2-4 (RequireInternalSlot [[ArrayBufferData]], not shared)
+ * become one brand test — `$__resizable_ab` subtypes the byte vec, a
+ * SharedArrayBuffer / TypedArray / plain object does not — then the same byte
+ * pipeline the direct `ab.slice(…)` call uses, fed from the params
+ * (param 0 = wrapper, 1 = this, 2 = start, 3 = end; omitted ones are padded
+ * with `undefined` by the reflective call site).
+ */
+function emitArrayBufferProtoSliceBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  const { vecTypeIdx } = i32ByteVec(ctx);
+  fctx.body.push({ op: "local.get", index: 1 }, { op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx }, { op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(
+      ctx,
+      "TypeError",
+      "TypeError: ArrayBuffer.prototype.slice called on incompatible receiver",
+    ),
+    else: [],
+  });
+  const recv = ts.factory.createIdentifier("this");
+  const args = [ts.factory.createIdentifier("start"), ts.factory.createIdentifier("end")];
+  const slotOf = new Map<ts.Expression, number>([
+    [recv, 1],
+    [args[0]!, 2],
+    [args[1]!, 3],
+  ]);
+  return emitArrayBufferSlice(
+    ctx,
+    fctx,
+    recv,
+    args,
+    (e, hint) => {
+      const slot = slotOf.get(e)!;
+      if (slot < fctx.params.length) fctx.body.push({ op: "local.get", index: slot });
+      else fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+      if (hint?.kind === "f64") {
+        coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+        return { kind: "f64" };
+      }
+      return { kind: "externref" };
+    },
+    true,
+  );
 }
 
 /**

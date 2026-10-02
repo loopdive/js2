@@ -2211,11 +2211,19 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   // Matching it keeps member reads/round-trips consistent (`o.t ? …` works); a
   // distinct boolean identity (`o.t === true`) is the broader standalone
   // boolean-boxing gap (overlaps #1917), out of PR-C scope.
-  void boxBoolTypeIdx;
-  const boxBoolAny = (v: number): Instr[] => [
-    { op: "f64.const", value: v },
-    { op: "struct.new", typeIdx: boxNumTypeIdx },
-  ];
+  // (#6775 S4) …unless the module HAS the `$__box_boolean_struct`: then a JSON
+  // boolean is a real boolean (`JSON.parse('false') === false`, `typeof` is
+  // "boolean") — the number box answered `typeof` "number".
+  const boxBoolAny = (v: number): Instr[] =>
+    boxBoolTypeIdx >= 0
+      ? [
+          { op: "i32.const", value: v },
+          { op: "struct.new", typeIdx: boxBoolTypeIdx },
+        ]
+      : [
+          { op: "f64.const", value: v },
+          { op: "struct.new", typeIdx: boxNumTypeIdx },
+        ];
   const boxF64AnyFromLocal = (local: number): Instr[] => [
     { op: "local.get", index: local },
     { op: "struct.new", typeIdx: boxNumTypeIdx },
